@@ -3,6 +3,7 @@
 import { type ReactNode, useRef } from "react";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { UserFacingError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { useEtaCountdown } from "@/lib/use-eta-countdown";
@@ -297,6 +298,36 @@ export function ImportWarningBanner({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A connected-account import card (Google, Outlook) before its connection status is known.
+ *
+ * Same frame as the loaded card — the section, its padding, the title row with the status
+ * line under it and one button beside them — so the real card replaces it without moving.
+ * The title is real text, since it never depends on the status; only what does is
+ * placeholder. Keeps the card's `id`, so a link to its anchor still lands on it.
+ */
+export function ConnectedImportSkeleton({ id, title }: { id: string; title: string }) {
+  return (
+    <section
+      id={id}
+      aria-busy="true"
+      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-medium text-ink">{title}</h2>
+          {/* The status line: `mt-1`, one `text-sm` line (20px). */}
+          <div className="mt-1 flex h-5 items-center">
+            <Skeleton className="h-3.5 w-64 max-w-[60vw]" />
+          </div>
+          <span className="sr-only">Checking the connection…</span>
+        </div>
+        <Skeleton className="h-8 w-36 rounded-lg" />
+      </div>
+    </section>
   );
 }
 

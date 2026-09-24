@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
-import { BusyHint } from "@/components/imports/import-utils";
+import { BusyHint, ConnectedImportSkeleton } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
@@ -128,7 +128,9 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
   }, [router]);
 
   if (!status) {
-    return null;
+    // Not known yet: the card's frame with placeholders, rather than an empty panel that
+    // the card then pops into.
+    return <ConnectedImportSkeleton id="import-outlook-contacts" title="Outlook Contacts" />;
   }
 
   if (!status.configured) {
