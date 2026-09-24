@@ -126,24 +126,20 @@ export type AiOperationCostRow = {
 export type FeatureAdoptionRow = { key: FeatureKey; label: string; count: number };
 
 /**
- * Every RELEASED feature, and the table whose rows prove an account used it. A feature
- * behind a coming-soon screen (Outreach, Events) is left out: nobody can use it, so its
- * bar would only ever measure the operator's own testing. Add a feature here when its
- * page ships — the query and the labels are both built from this list.
+ * The product's core features, and the table whose rows prove an account used it.
+ * Deliberately short: connectors (Gmail, Outlook, iCloud), the API/MCP surface, phone
+ * scanning and Recruiters are left off to keep the chart about the main loop. A feature
+ * behind a coming-soon screen (Outreach, Events) is left out too: nobody can use it, so
+ * its bar would only ever measure the operator's own testing. The query and the labels
+ * are both built from this list.
  */
 const FEATURES = [
   { key: "capture", label: "Capture", table: "capture_jobs" },
-  { key: "phoneScan", label: "Phone scan", table: "capture_handoffs" },
   { key: "chat", label: "Chat", table: "chat_messages" },
   { key: "meetings", label: "Meetings", table: "meeting_sessions" },
   { key: "reminders", label: "Reminders", table: "reminders" },
   { key: "imports", label: "Imports", table: "imports" },
   { key: "goals", label: "Goals", table: "user_goals" },
-  { key: "recruiters", label: "Recruiters", table: "user_recruiter_links" },
-  { key: "gmail", label: "Gmail", table: "gmail_connections" },
-  { key: "outlook", label: "Outlook", table: "outlook_connections" },
-  { key: "icloud", label: "iCloud", table: "apple_connections" },
-  { key: "apiMcp", label: "API & MCP", table: "api_keys" },
   { key: "extension", label: "Extension", table: "extension_usage" },
 ] as const;
 

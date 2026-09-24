@@ -42,11 +42,14 @@ run(async () => {
   const labels = before.map((r) => r.label);
   check("every feature table exists and the query runs", before.length > 0);
   check("each feature appears once", new Set(labels).size === labels.length, labels.join(", "));
-  for (const released of ["Capture", "Chat", "Meetings", "Reminders", "Imports", "Calendar", "iCloud", "API & MCP", "Extension"]) {
-    check(`lists ${released}`, labels.includes(released));
-  }
-  for (const unreleased of ["Outreach", "Events", "Leads"]) {
-    check(`leaves out coming-soon ${unreleased}`, !labels.includes(unreleased));
+  const CHARTED = ["Capture", "Chat", "Meetings", "Reminders", "Imports", "Goals", "Calendar", "Extension"];
+  check(
+    "charts exactly the core features",
+    labels.length === CHARTED.length && CHARTED.every((l) => labels.includes(l)),
+    labels.join(", ")
+  );
+  for (const left of ["Outreach", "Events", "Leads", "Phone scan", "Outlook", "iCloud", "Gmail", "API & MCP", "Recruiters"]) {
+    check(`leaves out ${left}`, !labels.includes(left));
   }
   check(
     "most-used first",
