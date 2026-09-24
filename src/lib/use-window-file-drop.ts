@@ -44,11 +44,20 @@ export type WindowFileDropOptions = {
   disabled?: boolean;
   onFiles: (result: DropReadResult) => void;
   limits?: DropLimits;
+  /**
+   * Also accept a dragged link or text — a URL pulled from the address bar or another tab.
+   * Given the raw `text/uri-list` (or, failing that, `text/plain`); deciding whether it means
+   * anything is the page's job. Drags that start inside this page are never offered here: a
+   * link dragged across the page is someone rearranging, not importing.
+   */
+  onText?: (text: string) => void;
 };
 
 export type WindowFileDropState = {
-  /** A drag carrying files is over the page. */
+  /** A drag carrying files (or, with `onText`, a link) is over the page. */
   active: boolean;
+  /** What the live drag is carrying, so the overlay can say the right thing. */
+  kind: "files" | "text" | null;
   /** A drop landed and its tree is still being read. */
   reading: boolean;
 };
@@ -58,12 +67,24 @@ function carriesFiles(transfer: DataTransfer | null): boolean {
   return Array.from(transfer.types ?? []).includes("Files");
 }
 
+/**
+ * Only the types are readable until the drop itself — the data is protected while the drag
+ * is live — so this answers "could be a link", and the drop decides whether it was one.
+ */
+function carriesText(transfer: DataTransfer | null): boolean {
+  if (!transfer) return false;
+  const types = Array.from(transfer.types ?? []);
+  return types.includes("text/uri-list") || types.includes("text/plain");
+}
+
 export function useWindowFileDrop({
   disabled = false,
   onFiles,
   limits = DEFAULT_DROP_LIMITS,
+  onText,
 }: WindowFileDropOptions): WindowFileDropState {
   const [active, setActive] = useState(false);
+  const [kind, setKind] = useState<"files" | "text" | null>(null);
   const [reading, setReading] = useState(false);
 
   const depth = useRef(0);
@@ -73,6 +94,10 @@ export function useWindowFileDrop({
   const onFilesRef = useRef(onFiles);
   const disabledRef = useRef(disabled);
   const limitsRef = useRef(limits);
+  const onTextRef = useRef(onText);
+  // `dragstart` only fires for drags that begin in this document, which is exactly the set
+  // of text drags that are not an import.
+  const internalDrag = useRef(false);
   // Written in an effect rather than during render: the listeners below stay registered for
   // the life of the page, so they need the latest values without re-registering — but a ref
   // written during render is a React violation and the lint rule is right about it.
@@ -80,24 +105,41 @@ export function useWindowFileDrop({
     onFilesRef.current = onFiles;
     disabledRef.current = disabled;
     limitsRef.current = limits;
-  }, [onFiles, disabled, limits]);
+    onTextRef.current = onText;
+  }, [onFiles, disabled, limits, onText]);
 
   const reset = useCallback(() => {
     depth.current = 0;
     setActive(false);
+    setKind(null);
   }, []);
 
   useEffect(() => {
+    /** What this drag is to us: files, an outside link we were asked to take, or nothing. */
+    const payload = (transfer: DataTransfer | null): "files" | "text" | null => {
+      if (carriesFiles(transfer)) return "files";
+      if (onTextRef.current && !internalDrag.current && carriesText(transfer)) return "text";
+      return null;
+    };
+
+    const onDragStart = () => {
+      internalDrag.current = true;
+    };
+
     const onDragEnter = (e: DragEvent) => {
-      if (!carriesFiles(e.dataTransfer)) return;
+      const carried = payload(e.dataTransfer);
+      if (!carried) return;
       e.preventDefault();
       depth.current += 1;
       lastDragOverAt.current = Date.now();
-      if (!disabledRef.current) setActive(true);
+      if (!disabledRef.current) {
+        setActive(true);
+        setKind(carried);
+      }
     };
 
     const onDragOver = (e: DragEvent) => {
-      if (!carriesFiles(e.dataTransfer)) return;
+      if (!payload(e.dataTransfer)) return;
       // Unconditional, even when disabled: the alternative is the browser navigating away.
       e.preventDefault();
       if (e.dataTransfer) {
@@ -107,19 +149,31 @@ export function useWindowFileDrop({
     };
 
     const onDragLeave = (e: DragEvent) => {
-      if (!carriesFiles(e.dataTransfer)) return;
+      if (!payload(e.dataTransfer)) return;
       depth.current = Math.max(0, depth.current - 1);
-      if (depth.current === 0) setActive(false);
+      if (depth.current === 0) {
+        setActive(false);
+        setKind(null);
+      }
     };
 
     const onDrop = (e: DragEvent) => {
-      if (!carriesFiles(e.dataTransfer)) return;
+      const carried = payload(e.dataTransfer);
+      if (!carried) return;
       e.preventDefault();
       reset();
       if (disabledRef.current) return;
 
-      // Both reads happen before the first await. A `DataTransfer` is emptied the moment the
-      // handler returns, so reading it afterwards finds nothing at all.
+      if (carried === "text") {
+        // Read synchronously, for the same reason as the files below.
+        const text =
+          e.dataTransfer?.getData("text/uri-list") ||
+          e.dataTransfer?.getData("text/plain") ||
+          "";
+        if (text.trim()) onTextRef.current?.(text);
+        return;
+      }
+
       // Both reads happen before the first await. A `DataTransfer` is emptied the moment the
       // handler returns, so reading it afterwards finds nothing at all.
       const transfer = e.dataTransfer;
@@ -134,8 +188,12 @@ export function useWindowFileDrop({
         .finally(() => setReading(false));
     };
 
-    const onDragEnd = () => reset();
+    const onDragEnd = () => {
+      internalDrag.current = false;
+      reset();
+    };
 
+    window.addEventListener("dragstart", onDragStart);
     window.addEventListener("dragenter", onDragEnter);
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("dragleave", onDragLeave);
@@ -148,6 +206,7 @@ export function useWindowFileDrop({
     }, WATCHDOG_INTERVAL_MS);
 
     return () => {
+      window.removeEventListener("dragstart", onDragStart);
       window.removeEventListener("dragenter", onDragEnter);
       window.removeEventListener("dragover", onDragOver);
       window.removeEventListener("dragleave", onDragLeave);
@@ -157,7 +216,7 @@ export function useWindowFileDrop({
     };
   }, [reset]);
 
-  return { active: active && !disabled, reading };
+  return { active: active && !disabled, kind: disabled ? null : kind, reading };
 }
 
 /**
@@ -169,26 +228,50 @@ export function useWindowFileDrop({
 export function useWindowFilePaste({
   disabled = false,
   onFiles,
+  onText,
 }: {
   disabled?: boolean;
   onFiles: (files: File[]) => void;
+  /**
+   * Text pasted onto the page itself — never into a field, where the paste belongs to the
+   * field. Mirrors the drag hook's `onText`.
+   */
+  onText?: (text: string) => void;
 }): void {
   const onFilesRef = useRef(onFiles);
+  const onTextRef = useRef(onText);
   const disabledRef = useRef(disabled);
   useEffect(() => {
     onFilesRef.current = onFiles;
+    onTextRef.current = onText;
     disabledRef.current = disabled;
-  }, [onFiles, disabled]);
+  }, [onFiles, onText, disabled]);
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       if (disabledRef.current) return;
       const files = Array.from(e.clipboardData?.files ?? []);
-      if (!files.length) return;
+      if (!files.length) {
+        const text = e.clipboardData?.getData("text/plain") ?? "";
+        if (onTextRef.current && text.trim() && !isEditableTarget(e.target)) {
+          onTextRef.current(text);
+        }
+        return;
+      }
       e.preventDefault();
       onFilesRef.current(files);
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   }, []);
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
 }
