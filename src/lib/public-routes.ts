@@ -34,6 +34,8 @@ export const PUBLIC_ROUTES = [
   // The boarding-pass link preview. Fetched by X, LinkedIn and iMessage, which carry no
   // session; authenticated by nothing, because it reveals only a number and a planet.
   "/api/interest-list/ticket-image",
+  // The waitlist's share-funnel beacon: anonymous visitors, append-only, always 204.
+  "/api/interest-list/event",
   // Not actually public: these authenticate via requireExtensionUserId, which reads the
   // Clerk state clerkMiddleware populates. They are exempted from auth.protect() only so
   // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302

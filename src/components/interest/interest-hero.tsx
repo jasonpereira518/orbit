@@ -6,6 +6,7 @@ import { emailMyPass, joinInterestList } from "@/actions/interest-list";
 import { BoardingPass } from "@/components/interest/boarding-pass";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { ProofLine } from "@/components/interest/proof-line";
+import { sendInterestBeacon } from "@/components/interest/interest-beacon";
 import {
   FOUNDING_REFERRALS,
   FRONT_WAVE_REFERRALS,
@@ -97,6 +98,12 @@ export function InterestHero({
   useEffect(() => {
     readyAt.current = Date.now();
   }, []);
+
+  // An invite link opened by a person — counted from the page's JavaScript, which link
+  // previewers never run. Once per mount; `invite` is only set for a ref that resolved.
+  useEffect(() => {
+    if (invite && ref) sendInterestBeacon("ref_arrival", ref);
+  }, [invite, ref]);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);

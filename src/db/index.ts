@@ -1116,6 +1116,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_l
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
+CREATE TABLE IF NOT EXISTS interest_list_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind text NOT NULL,
+  channel text,
+  signup_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS interest_list_events_kind_created_idx ON interest_list_events(kind, created_at);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subject text NOT NULL,
@@ -1984,7 +1992,15 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // branches declared it before either merged. Rescanned every remote ref, every local branch
 // and every worktree's working file on Sep 23 2026 immediately before committing: 98 is the
 // highest claimed anywhere, so 99 is free.
-export const SCHEMA_VERSION = 99;
+//
+// 101 = interest_list_events: the waitlist's share funnel (invite-link arrivals, share
+// clicks by channel, pass requests). Append-only and anonymous.
+//
+// NOT 100, on purpose: the Leads stack is waiting to renumber onto the first free version
+// past main, which is 100, and skipping a number costs nothing while a collision skips DDL
+// in silence. Rescanned every remote ref, every local branch and every worktree's working
+// file on Sep 24 2026: 99 is the highest claimed anywhere.
+export const SCHEMA_VERSION = 101;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the

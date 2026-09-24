@@ -49,6 +49,7 @@ import {
   invalidateInterestProof,
   ticketForRow,
 } from "@/lib/interest-list-ticket";
+import { recordInterestEvent } from "@/lib/interest-list-events";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { asWelcomePlanet, planetForSignupNumber, type WelcomePlanet } from "@/lib/welcome-planets";
 
@@ -372,6 +373,8 @@ async function mailPass(
   },
   ctx: Pick<JoinContext, "sendPass">
 ) {
+  // Counted as asked, whether or not the cap below lets it send.
+  await recordInterestEvent({ kind: "pass_request", signupId: row.id });
   try {
     const key = createHash("sha256").update(row.email).digest("base64url");
     await consumeBucket("interest.pass", key, RATE_LIMITS.interestPassEmail);

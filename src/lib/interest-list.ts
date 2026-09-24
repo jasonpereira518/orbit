@@ -145,6 +145,18 @@ export function frontWaveLine(referrals: number) {
 export const SHARE_TEXT =
   "I'm on the early-access waitlist for the future of networking. Join with my link to get in line:";
 
+/** Every share control on the pass, as the funnel records it. */
+export const SHARE_CHANNELS = ["copy", "x", "linkedin", "whatsapp", "sms", "email", "qr", "native"] as const;
+export type ShareChannel = (typeof SHARE_CHANNELS)[number];
+
+/**
+ * What the page's beacon may record (`/api/interest-list/event`). `pass_request` is
+ * written by the server alone, where the request actually happens.
+ */
+export const BEACON_EVENT_KINDS = ["ref_arrival", "share_click"] as const;
+export type BeaconEventKind = (typeof BEACON_EVENT_KINDS)[number];
+export type InterestEventKind = BeaconEventKind | "pass_request";
+
 /** The subject line of the prefilled email share. */
 export const SHARE_EMAIL_SUBJECT = "Join me on the early-access waitlist";
 

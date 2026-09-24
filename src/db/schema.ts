@@ -3703,6 +3703,28 @@ export const interestListSignups = pgTable(
 );
 
 /**
+ * The waitlist's share funnel: an invite link opened (`ref_arrival`), a share control
+ * used (`share_click`, with its `channel`), a pass asked for by email (`pass_request`).
+ * Joins through a link need no row here — `interest_list_signups.referred_by_id` already
+ * records them — so arrivals → joins is one count over each table.
+ *
+ * Anonymous and append-only. `signupId` is the pass the event is about (the sharer, or
+ * the owner of the link that was opened), never the visitor: there is no visitor identity
+ * to store. No FK, like every other cross-row reference here.
+ */
+export const interestListEvents = pgTable(
+  "interest_list_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    kind: text("kind").notNull(),
+    channel: text("channel"),
+    signupId: uuid("signup_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("interest_list_events_kind_created_idx").on(t.kind, t.createdAt)]
+);
+
+/**
  * An operator-composed note to the interest list — the "occasional note on what's new" the
  * landing page promises, which the two automated emails do not cover.
  *

@@ -27,8 +27,21 @@ import {
   type InterestListFilter,
   type InterestListSort,
 } from "@/lib/admin-interest-list";
+import { readInterestFunnel } from "@/lib/interest-list-events";
+import type { ShareChannel } from "@/lib/interest-list";
 
 export const metadata = { title: "Admin · Waitlist" };
+
+const CHANNEL_LABELS: Record<ShareChannel, string> = {
+  copy: "Copied link",
+  x: "X",
+  linkedin: "LinkedIn",
+  whatsapp: "WhatsApp",
+  sms: "Text message",
+  email: "Email",
+  qr: "QR code",
+  native: "Share sheet",
+};
 
 const FILTERS: Array<{ value: InterestListFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -81,7 +94,7 @@ export default async function AdminInterestListPage({
   const q = (params.q ?? "").trim();
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
 
-  const [summary, listing, trend, sources] = await Promise.all([
+  const [summary, listing, trend, sources, funnel] = await Promise.all([
     getInterestListSummary(),
     loadInterestList({
       page: Number.isFinite(requestedPage) ? requestedPage : 1,
@@ -91,6 +104,7 @@ export default async function AdminInterestListPage({
     }),
     interestListTrend("week", 12),
     interestListSources(),
+    readInterestFunnel(30),
   ]);
 
   const query = (over: Record<string, string | number>) => {
@@ -223,6 +237,48 @@ export default async function AdminInterestListPage({
                   <Td numeric className={s.converted === 0 ? "text-muted-foreground/50" : undefined}>
                     {s.converted}
                   </Td>
+                </tr>
+              ))}
+            </AdminTable>
+          )}
+        </AdminPanel>
+      </div>
+
+      {/* Is the referral loop turning? Links opened → joins through a link, and which share
+          controls people actually use. Joins come from the signups table, the rest from
+          interest_list_events. */}
+      <div className="mb-6 grid gap-6 lg:grid-cols-2">
+        <AdminPanel title={`Referral funnel · last ${funnel.days} days`}>
+          <AdminTable minWidth="none" head={<><Th>Step</Th><Th numeric>Count</Th></>}>
+            {[
+              { label: "Invite links opened", n: funnel.arrivals },
+              {
+                label: `Joined through a link${funnel.arrivals > 0 ? ` (${Math.round((funnel.referredJoins / funnel.arrivals) * 100)}% of opens)` : ""}`,
+                n: funnel.referredJoins,
+              },
+              {
+                label: `All joins${funnel.joins > 0 ? ` (${Math.round((funnel.referredJoins / funnel.joins) * 100)}% referred)` : ""}`,
+                n: funnel.joins,
+              },
+              { label: "Passes requested by email", n: funnel.passRequests },
+            ].map((step) => (
+              <tr key={step.label} className="border-b border-border/40 last:border-0">
+                <Td className="text-muted-foreground">{step.label}</Td>
+                <Td numeric>{step.n}</Td>
+              </tr>
+            ))}
+          </AdminTable>
+        </AdminPanel>
+
+        <AdminPanel title="Shares by channel">
+          {funnel.shares.length === 0 ? (
+            <EmptyState>No shares yet.</EmptyState>
+          ) : (
+            <AdminTable minWidth="none" head={<><Th>Channel</Th><Th numeric>Uses</Th></>}>
+              {funnel.shares.map((s) => (
+                <tr key={s.channel} className="border-b border-border/40 last:border-0">
+                  <Td className="text-muted-foreground">{CHANNEL_LABELS[s.channel]}</Td>
+                  <Td numeric>{s.n}</Td>
                 </tr>
               ))}
             </AdminTable>

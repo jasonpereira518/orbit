@@ -84,6 +84,7 @@ for (const path of [
   "/_next/static/chunks/app.js",
   "/api/interest-list/unsubscribe",
   "/api/interest-list/ticket-image",
+  "/api/interest-list/event",
   "/api/track",
   "/api/csp-report",
   "/_vercel/insights/script.js",

@@ -9,7 +9,9 @@ import {
   SHARE_TITLE,
   buildShareUrl,
   type InterestTicket,
+  type ShareChannel,
 } from "@/lib/interest-list";
+import { sendInterestBeacon } from "@/components/interest/interest-beacon";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -37,6 +39,8 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
   const inputRef = useRef<HTMLInputElement>(null);
   const timer = useRef<number | null>(null);
 
+  const track = (channel: ShareChannel) => sendInterestBeacon("share_click", ticket.shareToken, channel);
+
   useEffect(() => {
     setCanShare(typeof navigator !== "undefined" && typeof navigator.share === "function");
     return () => {
@@ -62,6 +66,7 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
       }
     }
     if (!ok) return;
+    track("copy");
     setCopied(true);
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setCopied(false), 1600);
@@ -70,6 +75,7 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
   async function nativeShare() {
     try {
       await navigator.share({ title: SHARE_TITLE, text, url });
+      track("native");
     } catch {
       // Dismissed. Nothing to do.
     }
@@ -81,6 +87,7 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
       return;
     }
     setQrOpen(true);
+    track("qr");
     if (qr) return;
     try {
       // Loaded on demand: only people sharing in person pay for the encoder.
@@ -135,20 +142,20 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
         </button>
       </motion.div>
       <motion.div {...enter(1)} className="mt-2 flex flex-wrap gap-2">
-        <a href={x} target="_blank" rel="noopener noreferrer" className={PILL}>
+        <a href={x} target="_blank" rel="noopener noreferrer" className={PILL} onClick={() => track("x")}>
           Share on X
         </a>
-        <a href={linkedin} target="_blank" rel="noopener noreferrer" className={PILL}>
+        <a href={linkedin} target="_blank" rel="noopener noreferrer" className={PILL} onClick={() => track("linkedin")}>
           LinkedIn
         </a>
-        <a href={whatsapp} target="_blank" rel="noopener noreferrer" className={PILL}>
+        <a href={whatsapp} target="_blank" rel="noopener noreferrer" className={PILL} onClick={() => track("whatsapp")}>
           WhatsApp
         </a>
-        <a href={sms} className={PILL}>
+        <a href={sms} className={PILL} onClick={() => track("sms")}>
           <MessageCircle className="size-4" aria-hidden="true" />
           Text
         </a>
-        <a href={mail} className={PILL}>
+        <a href={mail} className={PILL} onClick={() => track("email")}>
           <Mail className="size-4" aria-hidden="true" />
           Email
         </a>
