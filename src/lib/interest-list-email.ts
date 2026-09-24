@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { Resend } from "resend";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getWaitlistOrigin } from "@/lib/app-url";
-import { formatTicketNumber, FRONT_WAVE_REFERRALS } from "@/lib/interest-list";
+import { FOUNDING_REFERRALS, formatTicketNumber, FRONT_WAVE_REFERRALS } from "@/lib/interest-list";
 import { waitlistHost } from "@/lib/waitlist-host";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
 
@@ -150,7 +150,7 @@ export function buildInterestListWelcomeEmail(input: {
   const headline = place ? `You're ${place} on the waitlist.` : "You're on the waitlist.";
   const opening =
     "Thanks for joining. We're opening early access in waves over the coming weeks, and you'll hear from me the moment yours opens.";
-  const moveUp = `Want in sooner? When ${FRONT_WAVE_REFERRALS} friends join with your link, you move into the front wave — the first people through the door.`;
+  const moveUp = `Want in sooner? When ${FRONT_WAVE_REFERRALS} friends join with your link, you move into the front wave — the first people through the door, and the first to get new features. At ${FOUNDING_REFERRALS} friends you also earn a founding-member badge.`;
 
   const text = [
     headline,
@@ -185,24 +185,26 @@ export function buildInterestListWelcomeEmail(input: {
   return { subject, html, text };
 }
 
-/** Sent to a referrer when their friends carry them into the front wave. */
-export function buildFrontWaveEmail(input: {
+/**
+ * The shape every referral email shares: a headline, a few paragraphs, then the invite link
+ * printed in full (the reason to write is usually "keep going") and the pass button.
+ */
+function referralEmail(input: {
+  subject: string;
+  headline: string;
+  preheader: string;
+  paragraphs: string[];
   unsubscribeUrl: string;
   planet: WelcomePlanet;
   links: EmailLinks;
+  /** Whether to print the invite link — pointless once there is no tier left to reach. */
+  invite: boolean;
 }) {
-  const subject = "You're in the front wave";
-  const headline = "You're in the front wave.";
-  const body = `${FRONT_WAVE_REFERRALS} friends joined with your link, so you're now in the first group we let in. There's nothing else to do — your invite will arrive by email when the doors open.`;
-  const thanks = "Thank you for spreading the word.";
-
   const text = [
-    headline,
+    input.headline,
     "",
-    body,
-    "",
-    thanks,
-    "",
+    ...input.paragraphs.flatMap((p) => [p, ""]),
+    ...(input.invite ? [`Your invite link: ${input.links.shareUrl}`] : []),
     `Your pass: ${input.links.ticketUrl}`,
     "",
     "— Jason",
@@ -213,16 +215,86 @@ export function buildFrontWaveEmail(input: {
   ].join("\n");
 
   const html = emailShell({
-    preheader: "Your friends moved you up.",
+    preheader: input.preheader,
     planet: input.planet,
-    headline,
-    rows: [paragraph(escapeHtml(body)), paragraph(escapeHtml(thanks)), button(input.links.ticketUrl, "See your pass")].join(
-      "\n            "
-    ),
+    headline: input.headline,
+    rows: [
+      ...input.paragraphs.map((p) => paragraph(escapeHtml(p))),
+      ...(input.invite ? [inviteLinkRow(input.links.shareUrl)] : []),
+      button(input.links.ticketUrl, "See your pass"),
+    ].join("\n            "),
     unsubscribeUrl: input.unsubscribeUrl,
   });
 
-  return { subject, html, text };
+  return { subject: input.subject, html, text };
+}
+
+/** Sent to a referrer when their friends carry them into the front wave. */
+export function buildFrontWaveEmail(input: {
+  unsubscribeUrl: string;
+  planet: WelcomePlanet;
+  links: EmailLinks;
+}) {
+  const next = FOUNDING_REFERRALS - FRONT_WAVE_REFERRALS;
+  return referralEmail({
+    ...input,
+    subject: "You're in the front wave",
+    headline: "You're in the front wave.",
+    preheader: "Your friends moved you up.",
+    paragraphs: [
+      `${FRONT_WAVE_REFERRALS} friends joined with your link, so you're now in the first group we let in — and you'll get new features before anyone else. There's nothing else to do: your invite will arrive by email when the doors open.`,
+      `Bring ${next} more and you'll also earn a founding-member badge, yours for good.`,
+      "Thank you for spreading the word.",
+    ],
+    invite: true,
+  });
+}
+
+/** Sent to a referrer when their friends earn them the founding-member badge. */
+export function buildFoundingEmail(input: {
+  unsubscribeUrl: string;
+  planet: WelcomePlanet;
+  links: EmailLinks;
+}) {
+  return referralEmail({
+    ...input,
+    subject: "You're a founding member",
+    headline: "You're a founding member.",
+    preheader: `${FOUNDING_REFERRALS} friends joined with your link.`,
+    paragraphs: [
+      `${FOUNDING_REFERRALS} friends joined with your link. That earns you a founding-member badge, on your account from the day you get in — on top of your place in the front wave.`,
+      "Thank you for bringing so many people along. It means a lot.",
+    ],
+    invite: false,
+  });
+}
+
+/**
+ * Sent to a referrer for every friend who joins below the founding tier, except the one
+ * that reaches the front wave (that friend gets its own email). `referrals` is the count
+ * including this friend.
+ */
+export function buildFriendJoinedEmail(input: {
+  unsubscribeUrl: string;
+  planet: WelcomePlanet;
+  links: EmailLinks;
+  referrals: number;
+}) {
+  const n = input.referrals;
+  const progress =
+    n < FRONT_WAVE_REFERRALS
+      ? `That's ${n} of ${FRONT_WAVE_REFERRALS}. ${FRONT_WAVE_REFERRALS - n} more and you're in the front wave — invited first, with new features before anyone else.`
+      : `That's ${n} friends so far. ${FOUNDING_REFERRALS - n} more and you'll earn a founding-member badge.`;
+  return referralEmail({
+    unsubscribeUrl: input.unsubscribeUrl,
+    planet: input.planet,
+    links: input.links,
+    subject: "A friend joined with your link",
+    headline: "A friend joined with your link.",
+    preheader: progress,
+    paragraphs: [progress],
+    invite: true,
+  });
 }
 
 /**
@@ -252,7 +324,7 @@ export function waitlistReplyTo(): string | undefined {
  * its signup row is durable either way and a Resend hiccup must not fail the submission.
  */
 async function deliver(
-  kind: "welcome" | "front-wave",
+  kind: "welcome" | "front-wave" | "founding" | "friend-joined",
   email: string,
   unsubscribeUrl: string,
   message: { subject: string; html: string; text: string }
@@ -335,4 +407,30 @@ export async function sendFrontWaveEmail(
   links: EmailLinks
 ): Promise<boolean> {
   return deliver("front-wave", email, unsubscribeUrl, buildFrontWaveEmail({ unsubscribeUrl, planet, links }));
+}
+
+/** Best-effort, like the welcome. Returns whether it sent. */
+export async function sendFoundingEmail(
+  email: string,
+  unsubscribeUrl: string,
+  planet: WelcomePlanet,
+  links: EmailLinks
+): Promise<boolean> {
+  return deliver("founding", email, unsubscribeUrl, buildFoundingEmail({ unsubscribeUrl, planet, links }));
+}
+
+/** Best-effort, like the welcome. Returns whether it sent. */
+export async function sendFriendJoinedEmail(
+  email: string,
+  unsubscribeUrl: string,
+  planet: WelcomePlanet,
+  links: EmailLinks,
+  referrals: number
+): Promise<boolean> {
+  return deliver(
+    "friend-joined",
+    email,
+    unsubscribeUrl,
+    buildFriendJoinedEmail({ unsubscribeUrl, planet, links, referrals })
+  );
 }

@@ -25,6 +25,30 @@ export const SHARE_TOKEN_MAX = 64;
  */
 export const FRONT_WAVE_REFERRALS = 3;
 
+/**
+ * Friends for the second tier: a founding-member badge on the account, on top of the front
+ * wave. Counted the same way — still-waiting friends only — so it is derived, never
+ * stored: whoever sends the invites reads the tier at that moment.
+ */
+export const FOUNDING_REFERRALS = 10;
+
+/**
+ * What each tier earns — the one wording the page's "Why invite friends?" block, the pass
+ * and the emails all use. Nothing here costs money: being first, and a mark of it.
+ */
+export const REFERRAL_TIERS = [
+  {
+    friends: FRONT_WAVE_REFERRALS,
+    name: "Front wave",
+    perk: "You're invited first, and you get new features before anyone else.",
+  },
+  {
+    friends: FOUNDING_REFERRALS,
+    name: "Founding badge",
+    perk: "A permanent founding-member badge on your account, on top of everything the front wave gets.",
+  },
+] as const;
+
 export const interestListSchema = z.object({
   email: z.email("That address doesn't look right.").max(160),
   /** Honeypot. Hidden from people, irresistible to form-filling bots. */
@@ -49,6 +73,8 @@ export type InterestTicket = {
   /** Friends who joined through this ticket's link and are still on the waitlist. */
   referrals: number;
   frontWave: boolean;
+  /** `FOUNDING_REFERRALS` still-waiting friends: the founding-member badge. */
+  founding: boolean;
   planet: WelcomePlanet;
   /** ISO string — this crosses the server-action boundary. */
   joinedAt: string;
@@ -84,14 +110,21 @@ export function positionLine(ticket: Pick<InterestTicket, "position">) {
   return `You're #${formatTicketNumber(ticket.position)} on the waitlist.`;
 }
 
-/** The front-wave meter's caption. */
+/** "1 more friend" / "7 more friends". */
+function moreFriends(n: number) {
+  return `${n} more ${n === 1 ? "friend" : "friends"}`;
+}
+
+/** The referral meter's caption: where you are, and what the next friend gets you. */
 export function frontWaveLine(referrals: number) {
-  if (referrals >= FRONT_WAVE_REFERRALS) return "You're in the front wave.";
-  const left = FRONT_WAVE_REFERRALS - referrals;
-  if (referrals === 0) {
-    return `Invite ${FRONT_WAVE_REFERRALS} friends to skip ahead to the front wave.`;
+  if (referrals >= FOUNDING_REFERRALS) return "Front wave · Founding member.";
+  if (referrals >= FRONT_WAVE_REFERRALS) {
+    return `You're in the front wave. ${moreFriends(FOUNDING_REFERRALS - referrals)} for a founding badge.`;
   }
-  return `${referrals} of ${FRONT_WAVE_REFERRALS} friends joined. ${left === 1 ? "One more" : `${left} more`} and you're in the front wave.`;
+  if (referrals === 0) {
+    return `Invite ${FRONT_WAVE_REFERRALS} friends to join the front wave.`;
+  }
+  return `${referrals} of ${FRONT_WAVE_REFERRALS} friends joined — ${FRONT_WAVE_REFERRALS - referrals} more for the front wave.`;
 }
 
 /** The prewritten share text; the URL is appended by the share target. */

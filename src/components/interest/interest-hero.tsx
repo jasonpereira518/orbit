@@ -7,6 +7,8 @@ import { BoardingPass } from "@/components/interest/boarding-pass";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { ProofLine } from "@/components/interest/proof-line";
 import {
+  FOUNDING_REFERRALS,
+  FRONT_WAVE_REFERRALS,
   INTEREST_LIST_COUNT_FLOOR,
   buildTicketUrl,
   interestListSchema,
@@ -191,8 +193,8 @@ export function InterestHero({
         <p className="mx-auto mt-5 max-w-[48ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
           {showTicket ? (
             <>
-              Your place is saved. We&apos;re letting people in wave by wave — share your link
-              to move up to the front.
+              Your place is saved. Share your link: {FRONT_WAVE_REFERRALS} friends puts you in
+              the front wave, {FOUNDING_REFERRALS} earns you a founding badge.
             </>
           ) : (
             <>
@@ -258,8 +260,8 @@ export function InterestHero({
                   <p className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#f2c14e]/25 bg-[#f2c14e]/[0.06] px-3.5 py-2.5 text-sm text-[#e8f3f1]">
                     <PlanetArt planet={invite} size={22} />
                     <span>
-                      A friend saved you a seat. Join and you&apos;ll help them reach the front
-                      wave.
+                      A friend saved you a seat. Join and you&apos;ll help them move up — then
+                      share your own link to do the same.
                     </span>
                   </p>
                 ) : null}

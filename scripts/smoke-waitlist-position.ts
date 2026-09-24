@@ -14,7 +14,7 @@
  */
 import "./smoke/_env";
 
-import { eq, like } from "drizzle-orm";
+import { and, eq, like, notLike } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { interestListSignups, rateLimitBuckets } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
@@ -23,7 +23,12 @@ import {
   invalidateInterestProof,
   readStandings,
 } from "../src/lib/interest-list-ticket";
-import { FRONT_WAVE_REFERRALS, MIN_FILL_MS, frontWaveLine } from "../src/lib/interest-list";
+import {
+  FOUNDING_REFERRALS,
+  FRONT_WAVE_REFERRALS,
+  MIN_FILL_MS,
+  frontWaveLine,
+} from "../src/lib/interest-list";
 import { joinInterestListCore, type JoinContext } from "../src/lib/interest-list-join";
 
 const PREFIX = "smoke-line-";
@@ -65,12 +70,20 @@ async function main() {
 
   console.log("\nthe front wave…");
   const frontWaveMail: string[] = [];
+  const foundingMail: string[] = [];
+  const friendMail: number[] = [];
   const ctx = (ip: string): JoinContext => ({
     ip: `smoke-line-${ip}`,
     attribution: null,
     sendWelcome: async () => undefined,
     sendFrontWave: async (email) => {
       frontWaveMail.push(email);
+    },
+    sendFounding: async (email) => {
+      foundingMail.push(email);
+    },
+    sendFriendJoined: async (_email, _u, _p, _l, referrals) => {
+      friendMail.push(referrals);
     },
   });
   const base = { website: "", elapsedMs: MIN_FILL_MS + 10 };
@@ -88,6 +101,11 @@ async function main() {
     almost?.referrals === FRONT_WAVE_REFERRALS - 1 && !almost.frontWave && almost.position === p3
   );
   check("no front-wave mail before the line is crossed", frontWaveMail.length === 0);
+  check(
+    "each friend below the line is its own note, with the running count",
+    friendMail.join(",") === Array.from({ length: FRONT_WAVE_REFERRALS - 1 }, (_, i) => i + 1).join(","),
+    friendMail.join(",")
+  );
 
   await join(`friend${FRONT_WAVE_REFERRALS}`, ref3);
   const inFront = await getTicketByShareToken(ref3);
@@ -99,24 +117,47 @@ async function main() {
     frontWaveMail.length === 1 && frontWaveMail[0] === `${PREFIX}seed3@example.test`,
     frontWaveMail.join(",")
   );
-  check("the pass says so", frontWaveLine(inFront!.referrals) === "You're in the front wave.");
+  check("the pass says so", frontWaveLine(inFront!.referrals).startsWith("You're in the front wave."));
+  check("the front-wave friend gets no separate note", !friendMail.includes(FRONT_WAVE_REFERRALS));
 
   await join("friend-extra", ref3);
-  check("a fourth friend is not news", frontWaveMail.length === 1);
+  check("a fourth friend does not repeat the front wave", frontWaveMail.length === 1);
+  check("…but is a note toward the badge", friendMail.at(-1) === FRONT_WAVE_REFERRALS + 1);
+
+  console.log("\nthe founding badge…");
+  for (let i = FRONT_WAVE_REFERRALS + 2; i < FOUNDING_REFERRALS; i += 1) {
+    await join(`friend${i}`, ref3);
+  }
+  const nearly = await getTicketByShareToken(ref3);
+  check(`${FOUNDING_REFERRALS - 1} friends is not yet founding`, nearly?.founding === false && foundingMail.length === 0);
+  await join(`friend${FOUNDING_REFERRALS}`, ref3);
+  const founder = await getTicketByShareToken(ref3);
+  check(`${FOUNDING_REFERRALS} friends is founding`, founder?.founding === true && founder.frontWave);
+  check("the founder is told exactly once", foundingMail.length === 1 && foundingMail[0] === `${PREFIX}seed3@example.test`);
+  check("the pass says so", frontWaveLine(founder!.referrals) === "Front wave · Founding member.");
+  const notesBefore = friendMail.length;
+  await join("friend-past", ref3);
+  check("past the last tier, friends are not news", friendMail.length === notesBefore && foundingMail.length === 1);
 
   console.log("\nleaving…");
-  // Two friends leave: the referrer drops back out of the front wave, to their join-order place.
+  // All but two friends leave: the referrer drops out of both tiers, to their join-order place.
   await db
     .update(interestListSignups)
     .set({ unsubscribedAt: new Date() })
-    .where(like(interestListSignups.email, `${PREFIX}friend1@%`));
-  await db
-    .update(interestListSignups)
-    .set({ unsubscribedAt: new Date() })
-    .where(like(interestListSignups.email, `${PREFIX}friend2@%`));
+    .where(
+      and(
+        like(interestListSignups.email, `${PREFIX}friend%`),
+        notLike(interestListSignups.email, `${PREFIX}friend1@%`),
+        notLike(interestListSignups.email, `${PREFIX}friend2@%`)
+      )
+    );
   const dropped = await getTicketByShareToken(ref3);
   check("friends who left stop counting", dropped?.referrals === FRONT_WAVE_REFERRALS - 1, String(dropped?.referrals));
-  check("below the line again, back in join order", dropped?.frontWave === false && dropped.position === p3, String(dropped?.position));
+  check(
+    "below the line again, back in join order",
+    dropped?.frontWave === false && !dropped.founding && dropped.position === p3,
+    String(dropped?.position)
+  );
 
   // Seed 1 leaves: everyone behind moves up, and their own pass stops resolving.
   await db.update(interestListSignups).set({ unsubscribedAt: new Date() }).where(eq(interestListSignups.email, `${PREFIX}seed1@example.test`));

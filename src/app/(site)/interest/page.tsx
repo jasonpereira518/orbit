@@ -6,9 +6,11 @@ import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { InterestHero, type HeroInitial } from "@/components/interest/interest-hero";
 import { RingsBackdrop } from "@/components/interest/rings-backdrop";
+import { WhyInvite } from "@/components/interest/why-invite";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
 import {
+  FOUNDING_REFERRALS,
   FRONT_WAVE_REFERRALS,
   SHARE_TOKEN_MAX,
   buildTicketImageUrl,
@@ -134,7 +136,11 @@ function faq(privacyHref: string): readonly FaqItem[] {
     },
     {
       q: "How do I get into the front wave?",
-      a: `Share your invite link. When ${FRONT_WAVE_REFERRALS} friends join through it, you're in.`,
+      a: `Share your invite link. When ${FRONT_WAVE_REFERRALS} friends join through it, you're in — invited first, and first to get new features.`,
+    },
+    {
+      q: "What's the founding badge?",
+      a: `Bring ${FOUNDING_REFERRALS} friends and you earn a permanent founding-member badge on your account, on top of everything the front wave gets.`,
     },
     {
       q: "What happens to my email?",
@@ -217,6 +223,8 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
             ))}
           </ul>
         </Reveal>
+
+        <WhyInvite referrals={ticket ? ticket.referrals : null} />
 
         <section className="mt-24 md:mt-32" aria-labelledby="waitlist-how">
           <Reveal className="reveal-celestial">

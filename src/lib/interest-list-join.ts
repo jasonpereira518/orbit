@@ -18,6 +18,7 @@ import { getWaitlistPageUrl } from "@/lib/app-url";
 import { ipLogTag } from "@/lib/log-redaction";
 import type { Attribution } from "@/lib/attribution-parse";
 import {
+  FOUNDING_REFERRALS,
   FRONT_WAVE_REFERRALS,
   MIN_FILL_MS,
   buildShareUrl,
@@ -30,6 +31,8 @@ import {
 import {
   buildUnsubscribeUrl,
   generateUnsubscribeToken,
+  sendFoundingEmail,
+  sendFriendJoinedEmail,
   sendFrontWaveEmail,
   sendInterestListWelcomeEmail,
   type EmailLinks,
@@ -51,12 +54,21 @@ export type WelcomeSender = (
   position: number | null
 ) => Promise<unknown>;
 
-/** Mails a referrer whose friends just carried them into the front wave. */
+/** Mails a referrer whose friends just carried them into a tier (front wave, founding). */
 export type FrontWaveSender = (
   email: string,
   unsubscribeUrl: string,
   planet: WelcomePlanet,
   links: EmailLinks
+) => Promise<unknown>;
+
+/** Mails a referrer that one more friend joined; `referrals` includes that friend. */
+export type FriendJoinedSender = (
+  email: string,
+  unsubscribeUrl: string,
+  planet: WelcomePlanet,
+  links: EmailLinks,
+  referrals: number
 ) => Promise<unknown>;
 
 export type JoinContext = {
@@ -67,6 +79,10 @@ export type JoinContext = {
   sendWelcome?: WelcomeSender;
   /** Injected by the smoke test; defaults to the real Resend send. */
   sendFrontWave?: FrontWaveSender;
+  /** Injected by the smoke test; defaults to the real Resend send. */
+  sendFounding?: FrontWaveSender;
+  /** Injected by the smoke test; defaults to the real Resend send. */
+  sendFriendJoined?: FriendJoinedSender;
 };
 
 const FORMAT_ERROR = "That address doesn't look right.";
@@ -89,6 +105,7 @@ async function plausibleTicket(): Promise<InterestTicket> {
     position: proof.count + 1,
     referrals: 0,
     frontWave: false,
+    founding: false,
     planet: planetForSignupNumber(number),
     joinedAt: new Date().toISOString(),
     shareToken: generateShareToken(),
@@ -263,21 +280,29 @@ export async function joinInterestListCore(
   if (!ticket) throw ticketError;
 
   if (credited && referrer && !referrer.unsubscribedAt && referrer.shareToken) {
-    await notifyIfFrontWave(referrer as typeof referrer & { shareToken: string }, ctx);
+    await notifyReferrer(referrer as typeof referrer & { shareToken: string }, ctx);
   }
 
   return { ok: true, ticket };
 }
 
 /**
- * The referral that takes someone to exactly `FRONT_WAVE_REFERRALS` still-waiting friends
- * is the moment they reach the front wave, so that is when they hear about it. Exactly,
- * not at-least: the fourth friend is not news. A friend who leaves and a new one who joins
- * can cross the line twice — rare, and a second "you're in" is harmless.
+ * Every credited referral is news to the referrer, and exactly one email says so:
+ *
+ *   - the friend that takes them to exactly `FRONT_WAVE_REFERRALS` → the front-wave email;
+ *   - exactly `FOUNDING_REFERRALS` → the founding-badge email;
+ *   - any other count below `FOUNDING_REFERRALS` → "a friend joined", with the gap to the
+ *     next tier;
+ *   - past `FOUNDING_REFERRALS` → nothing: there is no tier left to reach.
+ *
+ * Exactly, not at-least, and counted over still-waiting friends like the line itself. It
+ * runs once per credited insert, so no column is needed to dedupe it. A friend who leaves
+ * and a new one who joins can cross a line twice — rare, and a second "you're in" is
+ * harmless.
  *
  * Never throws: the join it rides on has already succeeded.
  */
-async function notifyIfFrontWave(
+async function notifyReferrer(
   referrer: {
     id: string;
     email: string;
@@ -295,19 +320,22 @@ async function notifyIfFrontWave(
       .where(
         and(eq(interestListSignups.referredById, referrer.id), isNull(interestListSignups.unsubscribedAt))
       );
-    if ((count?.n ?? 0) !== FRONT_WAVE_REFERRALS) return;
+    const n = count?.n ?? 0;
+    if (n < 1 || n > FOUNDING_REFERRALS) return;
     const pageUrl = getWaitlistPageUrl();
-    const send = ctx.sendFrontWave ?? sendFrontWaveEmail;
-    await send(
+    const args = [
       referrer.email,
       buildUnsubscribeUrl(referrer.unsubscribeToken),
       asWelcomePlanet(referrer.welcomePlanet),
       {
         ticketUrl: buildTicketUrl(pageUrl, referrer.shareToken),
         shareUrl: buildShareUrl(pageUrl, referrer.shareToken),
-      }
-    );
+      },
+    ] as const;
+    if (n === FRONT_WAVE_REFERRALS) await (ctx.sendFrontWave ?? sendFrontWaveEmail)(...args);
+    else if (n === FOUNDING_REFERRALS) await (ctx.sendFounding ?? sendFoundingEmail)(...args);
+    else await (ctx.sendFriendJoined ?? sendFriendJoinedEmail)(...args, n);
   } catch (err) {
-    console.error("[interest-list] front-wave notice failed", err);
+    console.error("[interest-list] referrer notice failed", err);
   }
 }

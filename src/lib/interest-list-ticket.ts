@@ -21,6 +21,7 @@ import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { interestListSignups } from "@/db/schema";
 import {
+  FOUNDING_REFERRALS,
   FRONT_WAVE_REFERRALS,
   INTEREST_LIST_COUNT_FLOOR,
   type InterestTicket,
@@ -72,13 +73,14 @@ export async function ticketForRow(row: SignupRowForTicket): Promise<InterestTic
     position: standing.position,
     referrals: standing.referrals,
     frontWave: standing.frontWave,
+    founding: standing.founding,
     planet: asWelcomePlanet(row.welcomePlanet),
     joinedAt: row.createdAt.toISOString(),
     shareToken: row.shareToken,
   };
 }
 
-export type Standing = { position: number; referrals: number; frontWave: boolean };
+export type Standing = { position: number; referrals: number; frontWave: boolean; founding: boolean };
 
 /**
  * The whole line, in one statement: every waiting row's referrals and its place.
@@ -120,6 +122,7 @@ function toStanding(row: LineRow): Standing {
     position: Math.max(1, Number(row.position)),
     referrals,
     frontWave: referrals >= FRONT_WAVE_REFERRALS,
+    founding: referrals >= FOUNDING_REFERRALS,
   };
 }
 
@@ -136,7 +139,7 @@ export async function standingFor(row: { id: string }): Promise<Standing> {
     .select({ n: countInt })
     .from(interestListSignups)
     .where(isNull(interestListSignups.unsubscribedAt));
-  return { position: (waiting?.n ?? 0) + 1, referrals: 0, frontWave: false };
+  return { position: (waiting?.n ?? 0) + 1, referrals: 0, frontWave: false, founding: false };
 }
 
 /** Every waiting row's standing, keyed by id — for the admin roster and its export. */

@@ -81,6 +81,15 @@ async function main() {
   check("welcome: without a count, says no number rather than a wrong one", !/#\d/.test(unnumbered.subject + unnumbered.text));
   check("welcome: explains the front wave", numbered.text.includes("front wave"));
   assertClean("front wave", email.buildFrontWaveEmail({ unsubscribeUrl: leave, planet: "mars", links }));
+  assertClean("founding", email.buildFoundingEmail({ unsubscribeUrl: leave, planet: "mars", links }));
+  for (const referrals of [1, 2, 4, 9]) {
+    assertClean(`friend joined (${referrals})`, email.buildFriendJoinedEmail({ unsubscribeUrl: leave, planet: "mars", links, referrals }));
+  }
+  const two = email.buildFriendJoinedEmail({ unsubscribeUrl: leave, planet: "mars", links, referrals: 2 });
+  check("friend joined: below the front wave, counts toward it", two.text.includes("2 of 3") && two.text.includes("1 more"));
+  const five = email.buildFriendJoinedEmail({ unsubscribeUrl: leave, planet: "mars", links, referrals: 5 });
+  check("friend joined: past the front wave, counts toward the badge", five.text.includes("5 more") && five.text.includes("founding"));
+  check("welcome: names both tiers", numbered.text.includes("new features") && numbered.text.includes("founding-member badge"));
   assertClean("broadcast", buildBroadcastEmail({ subject: "An update", body: "Opening line.\n\nMore.", unsubscribeUrl: leave }));
 
   console.log("\nWho it comes from:");
@@ -119,6 +128,7 @@ async function main() {
     "src/components/interest/proof-line.tsx",
     "src/components/interest/moons.tsx",
     "src/components/interest/waitlist-skeleton.tsx",
+    "src/components/interest/why-invite.tsx",
     "src/app/api/interest-list/ticket-image/route.tsx",
     "src/app/api/interest-list/unsubscribe/route.ts",
     "src/lib/interest-list.ts",

@@ -6,7 +6,13 @@ import { Moons } from "@/components/interest/moons";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import { ShareRow } from "@/components/interest/share-row";
-import { frontWaveLine, positionLine, type InterestTicket } from "@/lib/interest-list";
+import {
+  FOUNDING_REFERRALS,
+  FRONT_WAVE_REFERRALS,
+  frontWaveLine,
+  positionLine,
+  type InterestTicket,
+} from "@/lib/interest-list";
 import { DUR, EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { planetLabel } from "@/lib/welcome-planets";
@@ -91,7 +97,7 @@ export function BoardingPass({
           <RollingCount value={ticket.position} delay={full ? 0.35 : 0.1} />
         </p>
         <p className="mt-1.5 text-xs uppercase tracking-[0.14em] text-[#9aada8]">
-          {ticket.frontWave ? "Front wave" : planetLabel(ticket.planet)}
+          {ticket.founding ? "Founding member" : ticket.frontWave ? "Front wave" : planetLabel(ticket.planet)}
         </p>
       </div>
 
@@ -145,12 +151,53 @@ export function BoardingPass({
           </span>
         </motion.p>
 
+        {ticket.frontWave && !ticket.founding ? (
+          <motion.div {...rise(1.1)} className="mt-3">
+            <FoundingTrack referrals={ticket.referrals} animate={full} />
+          </motion.div>
+        ) : null}
+
         <ShareRow ticket={ticket} pageUrl={pageUrl} play={full} />
 
         <motion.p {...rise(1.5)} className="mt-4 text-xs leading-[1.6] text-[#6d807c]">
           Save this link — it&apos;s your pass. Your invite arrives by email when your wave opens.
         </motion.p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The second tier's meter, shown once the three moons are lit: a slim track from the front
+ * wave to the founding badge. The moons stay the first tier's meter; this only ever appears
+ * past it, so the two never have to agree on a scale.
+ */
+function FoundingTrack({ referrals, animate }: { referrals: number; animate: boolean }) {
+  const span = FOUNDING_REFERRALS - FRONT_WAVE_REFERRALS;
+  const done = Math.min(Math.max(referrals - FRONT_WAVE_REFERRALS, 0), span);
+  const pct = (done / span) * 100;
+  return (
+    <div>
+      <div
+        role="progressbar"
+        aria-label="Friends toward the founding badge"
+        aria-valuemin={FRONT_WAVE_REFERRALS}
+        aria-valuemax={FOUNDING_REFERRALS}
+        aria-valuenow={Math.min(referrals, FOUNDING_REFERRALS)}
+        className="h-1 w-full overflow-hidden rounded-full bg-[#e8f3f1]/[0.1]"
+      >
+        <motion.div
+          className="h-full origin-left rounded-full bg-[#f2c14e]"
+          style={{ width: `${pct}%` }}
+          initial={animate ? { scaleX: 0 } : false}
+          animate={{ scaleX: 1 }}
+          transition={animate ? { duration: DUR.slow, ease: EASE_HOUSE, delay: 1.2 } : { duration: 0 }}
+        />
+      </div>
+      <p className="mt-1.5 flex justify-between text-[11px] uppercase tracking-[0.12em] text-[#6d807c]">
+        <span>{FRONT_WAVE_REFERRALS} · Front wave</span>
+        <span>{FOUNDING_REFERRALS} · Founding badge</span>
+      </p>
     </div>
   );
 }
