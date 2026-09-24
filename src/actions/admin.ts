@@ -28,6 +28,13 @@ import {
   setConstellationConfig,
   type ConstellationConfig,
 } from "@/lib/constellation-config";
+import { setStealth } from "@/lib/site-access";
+import {
+  inviteToSite,
+  revokeSiteInvite,
+  SiteInviteError,
+  type SiteInviteResult,
+} from "@/lib/site-invites";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -833,4 +840,58 @@ export async function refreshProvidersAction(): Promise<{ ok: true }> {
   await loadProviderStatuses({ force: true });
   revalidatePath("/admin/health");
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------------ site access */
+
+function revalidateAccess() {
+  revalidatePath("/admin/access");
+  revalidatePath("/admin/growth/interest-list");
+}
+
+/**
+ * Switch stealth on or off for the whole site. Takes effect within the proxy's cache window
+ * (seconds), on every instance, with no deploy. Confirmed and reasoned in the UI because
+ * turning it off opens every page to the public.
+ */
+export async function setSiteStealthAction(input: {
+  enabled: boolean;
+  reason: string;
+}): Promise<{ ok: true; stealth: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  ops.requireReason(input.reason);
+  const mode = await setStealth(adminUserId, input.enabled);
+  revalidateAccess();
+  return { ok: true, stealth: mode.stealth };
+}
+
+/**
+ * Invite someone to create an account, stealth or not. Returns the result rather than
+ * throwing for a bad address, so the form can say what was wrong in place; Clerk and
+ * database failures still throw.
+ */
+export async function inviteToSiteAction(input: {
+  email: string;
+  notify: boolean;
+}): Promise<SiteInviteResult | { kind: "error"; message: string }> {
+  const adminUserId = await requireAdminUserId();
+  try {
+    const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify });
+    revalidateAccess();
+    return result;
+  } catch (err) {
+    if (err instanceof SiteInviteError) return { kind: "error", message: err.message };
+    throw err;
+  }
+}
+
+export async function revokeSiteInviteAction(input: {
+  invitationId: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  ops.requireReason(input.reason);
+  const { email } = await revokeSiteInvite({ adminUserId, invitationId: input.invitationId });
+  revalidateAccess();
+  return { ok: true, email };
 }
