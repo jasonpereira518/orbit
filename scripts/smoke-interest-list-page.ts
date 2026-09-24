@@ -176,6 +176,9 @@ async function main() {
   check("the page swaps out the product's icon", JSON.stringify(meta.icons ?? "").includes("/waitlist/icon.png"));
   const refMeta = await mod.generateMetadata(sp({ ref: TOKEN }));
   check("ref metadata carries the image too", JSON.stringify(refMeta.openGraph ?? "").includes("ticket-image"));
+  check("a friend's link previews as an invitation", String(refMeta.title).startsWith("A friend saved you a seat"), String(refMeta.title));
+  const badRef = await mod.generateMetadata(sp({ ref: "no-such-token" }));
+  check("an unknown ref previews as the plain page", badRef.title === "Early access — the future of networking", String(badRef.title));
   const plain = await mod.generateMetadata(sp({}));
   check("plain metadata is the default", plain.title === "Early access — the future of networking");
   check("plain metadata still previews with the generic card", JSON.stringify(plain.openGraph ?? "").includes("ticket-image"));

@@ -135,7 +135,10 @@ export function frontWaveLine(referrals: number) {
 
 /** The prewritten share text; the URL is appended by the share target. */
 export const SHARE_TEXT =
-  "I just joined the waitlist for the future of networking. Get early access:";
+  "I'm on the early-access waitlist for the future of networking. Join with my link to get in line:";
+
+/** The subject line of the prefilled email share. */
+export const SHARE_EMAIL_SUBJECT = "Join me on the early-access waitlist";
 
 /** The native share sheet's title. */
 export const SHARE_TITLE = "Early access";

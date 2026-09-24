@@ -42,6 +42,10 @@ const TITLE = "Early access — the future of networking";
 const DESCRIPTION =
   "A central intelligence for everyone you know. Join the waitlist for early access — we're opening in waves.";
 
+const INVITE_TITLE = "A friend saved you a seat — early access to the future of networking";
+const INVITE_DESCRIPTION =
+  "Join the waitlist with your friend's link. We're opening in waves, and the people who bring friends go first.";
+
 /** One token from the query, or null: trimmed, single-valued, at most SHARE_TOKEN_MAX. */
 function tokenParam(value: string | string[] | undefined): string | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -78,14 +82,21 @@ export async function generateMetadata({
   const image = planetKnown
     ? buildTicketImageUrl(origin, token!)
     : `${origin}/api/interest-list/ticket-image`;
+  // A friend's invite link previews as an invitation, not as the generic page: that card
+  // is what shows in the chat the link was pasted into, so it is what earns the click.
+  const invited = planetKnown && tokenParam(params.ref) === token;
+  const title = invited ? INVITE_TITLE : TITLE;
+  const description = invited ? INVITE_DESCRIPTION : DESCRIPTION;
   return {
     ...base,
+    title,
+    description,
     openGraph: {
-      title: TITLE,
-      description: DESCRIPTION,
+      title,
+      description,
       images: [{ url: image, width: 1200, height: 630 }],
     },
-    twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: [image] },
+    twitter: { card: "summary_large_image", title, description, images: [image] },
   };
 }
 
