@@ -10,7 +10,8 @@
 # and `smoke` status checks before merging.
 name: ci
 
-# Actions bills every job in whole minutes, so CI skips runs that cannot tell you anything:
+# CI skips runs that cannot tell you anything, so a result means something and the runners
+# stay free for the runs that do:
 #
 # - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
 #   ready for review, and on every push after that. A ready PR gets every job.
@@ -20,6 +21,12 @@ name: ci
 #   (Protected Main Branch only blocks deletion and force-pushes); if `check`/`smoke` are
 #   ever made required, drop `paths-ignore` from `pull_request`, or a docs-only PR waits
 #   forever on checks that never start.
+#
+# The repository is public, so hosted runners are free. This workflow is written to stay
+# safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
+# so a fork's PR runs with a read-only token and no secrets, and it uses none. Keep it that
+# way; the two workflows that do use secrets (ops, backup) run only on schedule or manual
+# dispatch from the default branch.
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
