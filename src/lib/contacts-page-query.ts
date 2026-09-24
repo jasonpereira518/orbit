@@ -14,7 +14,7 @@
  */
 
 import { and, eq, inArray, or, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { contactTags, contacts, tags } from "@/db/schema";
 import { getRankedContacts } from "@/actions/search";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
@@ -103,54 +103,12 @@ export async function listContactsPage(
     );
   }
 
-  // One id, or the comma-separated list the done card sends. A dropped LinkedIn archive is
-  // two imports and one card, and its button promises every person the run added — so this
-  // has to be able to answer for all of them at once.
-  // Non-uuids are dropped rather than sent: `import_job_rows.import_id` is a uuid column, so
-  // a hand-typed id would fail the cast and turn the whole page into a 500 instead of an
-  // empty list.
-  const askedForImport = Boolean(filters?.importId?.trim());
+  // One id, or the comma-separated list the done card sends. It no longer narrows the list —
+  // "Meet your 19 new people" opens everyone, with those 19 marked (`fromImport`) — so it is
+  // only read after the page is fetched. Non-uuids are dropped rather than sent:
+  // `import_job_rows.import_id` is a uuid column, so a hand-typed id would fail the cast and
+  // turn the whole page into a 500. With no usable id, nobody is marked.
   const importIds = importIdsFrom((filters?.importId ?? "").split(","));
-  if (askedForImport && !importIds.length) {
-    // Asked to narrow to an import, and not one usable id among them. An empty list is the
-    // answer; falling through would quietly widen the page to the whole network, which is
-    // the opposite of what the URL said.
-    conditions.push(sql`false`);
-  }
-  if (importIds.length) {
-    // Narrowed to the people those imports ADDED — the number the done card's button says
-    // ("Meet your 19 new people"). Every done row carries a contact id, merged ones included,
-    // so reading `contact_id` alone opened a list of everyone the import touched: a LinkedIn
-    // re-import that added 100 people and matched 2,900 promised 100 and showed 3,000.
-    //
-    // The engine's own stamp decides where it exists (`importedBy.created`, written per row
-    // by `markRowsDone`); rows staged before the stamp fall back to "created at or after the
-    // import", the rule the People list and `import-undo.ts`'s `candidateRows` use. A stamped
-    // merge never falls through to the date: someone created elsewhere mid-run and then
-    // matched is not one of this import's people, whatever the timestamps say.
-    //
-    // Scoped by both the imports and the user, so a foreign or forged id simply matches
-    // nothing rather than leaking another account's contacts. Literal table names and aliases
-    // throughout: `import_job_rows` and `imports` are not in this query's FROM clause, and the
-    // inner `contacts` gets its own alias because it and `imports` both have a `created_at`
-    // that an interpolated drizzle column would leave unqualified.
-    conditions.push(
-      sql`${contacts.id} IN (
-        SELECT r.contact_id FROM import_job_rows r
-        JOIN imports i ON i.id = r.import_id AND i.user_id = ${userId}
-        JOIN contacts rc ON rc.id = r.contact_id AND rc.user_id = ${userId}
-        WHERE r.import_id IN (${sql.join(
-          importIds.map((id) => sql`${id}::uuid`),
-          sql`, `,
-        )}) AND r.user_id = ${userId}
-          AND r.status = 'done' AND r.contact_id IS NOT NULL
-          AND (
-            (r.payload->'importedBy'->>'created') = 'true'
-            OR (NOT jsonb_exists(r.payload, 'importedBy') AND rc.created_at >= i.created_at)
-          )
-      )`
-    );
-  }
 
   // The A–Z rail is a seek, not a scroll. Asking for "S" starts the page at the first
   // contact sorting there rather than loading everyone up to it — which is the whole reason
@@ -180,9 +138,10 @@ export async function listContactsPage(
   // gets one ranked page and the "Showing X of Y" footer if that page is short of `total`.
   const hasMore = sort !== "relevance" && fetchedExtra;
 
-  const [tagsByContact, total] = await Promise.all([
+  const [tagsByContact, total, addedHere] = await Promise.all([
     tagsForContacts(page.map((r) => r.id)),
     cursor ? Promise.resolve(null) : countContacts(and(...conditions)),
+    addedByImports(userId, importIds, page.map((r) => r.id)),
   ]);
 
   return {
@@ -208,6 +167,7 @@ export async function listContactsPage(
       lastInteractionAt: row.lastInteractionAt,
       tags: tagsByContact.get(row.id) ?? [],
       matchReason: matchReasons.get(row.id) ?? null,
+      fromImport: addedHere.has(row.id),
     })),
     nextCursor: hasMore ? encodeContactsCursor(contactsCursorFor(sort, page[page.length - 1], Boolean(tier))) : null,
     total,
@@ -231,6 +191,48 @@ function matchReasonsFor(ranked: RankedContact[]): Map<string, string> {
     else if (r.matchedArms.includes("semantic")) reasons.set(r.id, "Matched by meaning");
   }
   return reasons;
+}
+
+/**
+ * Which of one page's contacts those imports ADDED — the people the done card's button
+ * counted ("Meet your 19 new people"), so they are the ones the list marks.
+ *
+ * Every done row carries a contact id, merged ones included, so reading `contact_id` alone
+ * would mark everyone the import touched: a LinkedIn re-import that added 100 people and
+ * matched 2,900 promised 100 and would have lit up 3,000. The engine's own stamp decides where
+ * it exists (`importedBy.created`, written per row by `markRowsDone`); rows staged before the
+ * stamp fall back to "created at or after the import", the rule the People list and
+ * `import-undo.ts`'s `candidateRows` use. A stamped merge never falls through to the date.
+ *
+ * Asked only about this page's ids, so it costs the same for a 19-person import as for a
+ * 3,000-person one. Scoped by both the imports and the user, so a foreign or forged id marks
+ * nobody rather than leaking another account's contacts. Literal table names and aliases
+ * throughout: the inner `contacts` gets its own alias because it and `imports` both have a
+ * `created_at` that an interpolated drizzle column would leave unqualified.
+ */
+async function addedByImports(
+  userId: string,
+  importIds: string[],
+  contactIds: string[],
+): Promise<Set<string>> {
+  if (!importIds.length || !contactIds.length) return new Set();
+  const db = await getDb();
+  const rows = rowsOf<{ contact_id: string }>(
+    await db.execute(sql`
+      SELECT DISTINCT r.contact_id FROM import_job_rows r
+      JOIN imports i ON i.id = r.import_id AND i.user_id = ${userId}
+      JOIN contacts rc ON rc.id = r.contact_id AND rc.user_id = ${userId}
+      WHERE r.import_id IN (${sql.join(importIds.map((id) => sql`${id}::uuid`), sql`, `)})
+        AND r.user_id = ${userId}
+        AND r.status = 'done'
+        AND r.contact_id IN (${sql.join(contactIds.map((id) => sql`${id}::uuid`), sql`, `)})
+        AND (
+          (r.payload->'importedBy'->>'created') = 'true'
+          OR (NOT jsonb_exists(r.payload, 'importedBy') AND rc.created_at >= i.created_at)
+        )
+    `),
+  );
+  return new Set(rows.map((r) => r.contact_id));
 }
 
 async function countContacts(where: ReturnType<typeof and>) {

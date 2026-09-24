@@ -469,17 +469,40 @@ async function main() {
   const filterAdded = filterIds.slice(0, 2);
   const filterMerged = filterIds.slice(2);
   await db.insert(contacts).values({ userId: USER, fullName: "Not From An Import" });
-  const listed = await listContactsPage(USER, { importId: filterImport });
-  check("the filter returns only the people that import added", listed.items.length === 2, String(listed.items.length));
-  check("…and they are the right two", listed.items.every((c) => filterAdded.includes(c.id)));
+  // "Meet your N new people" opens everyone, with the N marked — not a list of only them.
+  // Every page, by cursor: the list is paged, and the marks must ride along on each page the
+  // infinite scroll loads — not just the first.
+  type Listed = { items: Awaited<ReturnType<typeof listContactsPage>>["items"]; total: number | null };
+  const everyPage = async (
+    userId: string,
+    filters: Parameters<typeof listContactsPage>[1] = {},
+  ): Promise<Listed> => {
+    const first = await listContactsPage(userId, { ...filters, limit: 50 });
+    const items = [...first.items];
+    let cursor = first.nextCursor;
+    while (cursor) {
+      const next = await listContactsPage(userId, { ...filters, limit: 50, cursor });
+      items.push(...next.items);
+      cursor = next.nextCursor;
+    }
+    return { items, total: first.total };
+  };
+  const marked = (page: Listed) => page.items.filter((c) => c.fromImport).map((c) => c.id);
+  const listed = await everyPage(USER, { importId: filterImport });
+  const unfiltered = await everyPage(USER);
+  check(
+    "the import's link lists everyone, not only its people",
+    listed.items.length === unfiltered.items.length && listed.total === unfiltered.total,
+    `${listed.items.length} of ${unfiltered.items.length}`,
+  );
+  check("it marks exactly the people that import added", marked(listed).length === 2, String(marked(listed).length));
+  check("…and they are the right two", marked(listed).every((id) => filterAdded.includes(id)));
   check(
     "…never someone it merged into",
-    !listed.items.some((c) => filterMerged.includes(c.id)),
-    listed.items.map((c) => c.fullName).join(", "),
+    !listed.items.some((c) => c.fromImport && filterMerged.includes(c.id)),
+    listed.items.filter((c) => c.fromImport).map((c) => c.fullName).join(", "),
   );
-  check("…and the total agrees with the button", listed.total === 2, String(listed.total));
-  const unfiltered = await listContactsPage(USER, {});
-  check("without the filter everyone is listed", unfiltered.items.length > 2);
+  check("without an import nobody is marked", marked(unfiltered).length === 0);
 
   // Rows from before the provenance stamp fall back to the same rule the People list and the
   // undo use: created at or after the import.
@@ -491,37 +514,34 @@ async function main() {
     .update(importJobRows)
     .set({ payload: { kind: "linkedin_connection" } as never })
     .where(eq(importJobRows.importId, legacyFilter.importId));
-  const legacyListed = await listContactsPage(USER, { importId: legacyFilter.importId });
+  const legacyListed = await everyPage(USER, { importId: legacyFilter.importId });
   check(
-    "an unstamped import lists the people created with it",
-    legacyListed.items.length === 1 && legacyListed.items[0]?.id === legacyFilter.ids[0],
-    legacyListed.items.map((c) => c.fullName).join(", "),
+    "an unstamped import marks the people created with it",
+    marked(legacyListed).length === 1 && marked(legacyListed)[0] === legacyFilter.ids[0],
+    marked(legacyListed).join(", "),
   );
 
-  // …and to a whole run's, because one drop is one done card and its button promises
-  // everyone the run added, across every file in it.
+  // …and a whole run's, because one drop is one done card and its button promises everyone
+  // the run added, across every file in it.
   const { importId: secondImport, ids: secondIds } = await seedImport(USER, [
     { name: "Second File One", created: true },
   ]);
-  const bothListed = await listContactsPage(USER, {
-    importId: `${filterImport},${secondImport}`,
-  });
-  check(
-    "two imports' people come back together",
-    bothListed.items.length === 3,
-    String(bothListed.items.length),
-  );
+  const bothListed = await everyPage(USER, { importId: `${filterImport},${secondImport}` });
+  check("two imports' people are marked together", marked(bothListed).length === 3, String(marked(bothListed).length));
   check(
     "…and they are exactly those three",
-    bothListed.items.every((c) => [...filterAdded, ...secondIds].includes(c.id)),
+    marked(bothListed).every((id) => [...filterAdded, ...secondIds].includes(id)),
   );
   // A hand-typed id would fail the uuid cast and take the whole page down with it.
-  const junk = await listContactsPage(USER, { importId: "not-an-id" });
-  check("a forged id lists nobody rather than erroring", junk.items.length === 0);
-  const mixed = await listContactsPage(USER, {
-    importId: `not-an-id,${secondImport}`,
-  });
-  check("…and a good id beside it still works", mixed.items.length === 1);
+  const junk = await everyPage(USER, { importId: "not-an-id" });
+  check(
+    "a forged id marks nobody rather than erroring",
+    marked(junk).length === 0 && junk.items.length === (await everyPage(USER)).items.length,
+  );
+  const mixed = await everyPage(USER, { importId: `not-an-id,${secondImport}` });
+  check("…and a good id beside it still works", marked(mixed).length === 1);
+  const theirView = await everyPage(OTHER, { importId: filterImport });
+  check("another account's import marks nobody for this one", marked(theirView).length === 0);
 
   await reset();
   console.log("smoke-import-undo: all checks passed");

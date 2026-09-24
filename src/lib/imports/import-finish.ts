@@ -100,6 +100,23 @@ const PLAN_SETTINGS_HREF = "/settings?section=settings-plan";
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
 
 /**
+ * The done card's headline, in pieces, at any point of its count.
+ *
+ * The card counts up as people settle into orbit, so the number changes under words that must
+ * not move: the pieces let it draw the number in a fixed-width slot between them. The noun
+ * follows the number it sits next to, so the line reads right at every tick.
+ */
+export function countingHeadlineParts(n: number): { lead: string; count: number; noun: string } {
+  return { lead: "You added", count: n, noun: n === 1 ? "person" : "people" };
+}
+
+/** The same headline as one sentence — what `finishCopy` says once the count has finished. */
+export function countingHeadline(n: number): string {
+  const { lead, count, noun } = countingHeadlineParts(n);
+  return `${lead} ${count} ${noun}`;
+}
+
+/**
  * One `imports` row, in the card's terms.
  *
  * Kept here rather than in the actions file that reads the row: that file is "use server", so
@@ -176,7 +193,7 @@ export function finishCopy(summary: FinishSummary): FinishCopy {
   const headline = unfinished
     ? unfinished
     : added > 0
-      ? `You added ${people(added)}`
+      ? countingHeadline(added)
       : meetingsLogged > 0
         ? `${meetingsLogged} meeting${meetingsLogged === 1 ? "" : "s"} logged`
         : existing > 0

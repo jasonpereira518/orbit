@@ -512,7 +512,10 @@ async function finishForImport(
     avatars: people.people.slice(0, MAX_FACES).map((p) => ({
       contactId: p.id,
       name: p.name,
-      photo: p.profileImageUrl,
+      // Right after an import almost nobody has a stored photo yet — the backfill runs later —
+      // so a face that can be looked up is pointed at the on-demand route. Its initials turn
+      // into the photo if one comes back, and stay initials on a miss.
+      photo: p.profileImageUrl ?? (p.canResolvePhoto ? `/api/avatars/${p.id}` : null),
     })),
   };
 }
