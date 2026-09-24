@@ -44,6 +44,14 @@ export const ERROR_SOURCES = {
    */
   eventPageFetch: "event.page_fetch",
   oauthEventbriteCallback: "oauth.eventbrite.callback",
+  /**
+   * A CalDAV request to iCloud (`src/lib/caldav/client.ts`) exhausted its retries. Kept
+   * apart from `eventPageFetch` deliberately — the two share `guardedFetchText`'s retry
+   * ladder but not a failure domain, and folding CalDAV retry exhaustion into event-page
+   * fetch failures would make either signal harder to read. A 401 is NOT logged here — see
+   * `eventProviderSync`'s reasoning just below: that flags `needs_reauth` instead.
+   */
+  caldavSync: "caldav.sync",
   /** A Luma or Eventbrite sync that exhausted its retries. Auth failures are NOT logged here
    *  — those flag the connection `needs_reauth`, which the user can see and act on. */
   eventProviderSync: "event.provider_sync",
@@ -66,6 +74,49 @@ export const ERROR_SOURCES = {
    * and without this there is no trace that someone tried to say something and could not.
    */
   feedbackSubmit: "feedback.submit",
+  /**
+   * A capture photo that could not be kept — the configured Blob store refused it, or the
+   * insert failed. The capture itself carries on (the text was already read out of the
+   * photo), so this row is the only trace that the history will be missing a picture.
+   */
+  capturePhotoStore: "capture.photo_store",
+  /**
+   * A provider health check that could not complete. Without it the status panel just
+   * shows a stale or unavailable row and nothing says why — and the volume is bounded by
+   * a four-provider poll sitting behind a sixty-second cache.
+   */
+  providerHealthCheck: "provider.health_check",
+  /**
+   * A background backfill (embeddings, LinkedIn timeline events) threw inside `after()`,
+   * where nothing else would ever see it. Throttled per (kind, account) per hour by
+   * `recordBackfillFailure`, so a key that keeps failing is one row an hour, not one per kick.
+   */
+  backfillFailed: "backfill.failed",
+  /** A Stripe event no account matched (checkout, invoice, refund). Ids only. */
+  stripeUnattributed: "stripe.unattributed",
+  /**
+   * Resend refused an email Orbit tried to send ON ORBIT'S KEY: an interest-list welcome or
+   * follow-up, or a hosted outreach message. Invisible before — a console line Vercel keeps
+   * for an hour (every waitlist welcome of Sep 7–9 2026 died this way) or a per-message error
+   * only the sender saw. Bounded by signups and `DAILY_SEND_LIMIT`. A `RESEND_FROM_EMAIL` on
+   * an unverified domain rejects every send at once, so the ops sweep opens `resend.rejected`
+   * on one row. A user's own Resend key being refused is theirs to fix and is not recorded
+   * here — it would page Orbit about someone else's configuration.
+   */
+  resendRejected: "resend.rejected",
+  /**
+   * A provider refused or throttled one of ORBIT'S managed AI keys (`src/lib/ai-access.ts`).
+   * `kind` is the failure kind, the provider lives in context. Throttled to one row per
+   * (provider, kind) per process per hour, and the ops sweep pages on any row at all: a
+   * revoked or exhausted managed key takes AI away from every Lifetime account at once.
+   */
+  managedAi: "ai.managed",
+  /**
+   * A job feed could not be read (`src/lib/jobs/feed-fetch.ts`). Recorded only when the
+   * retry ladder was exhausted or the document did not parse — a 304 is the steady state
+   * and a few malformed listings are normal, so neither is an error.
+   */
+  jobFeedFetch: "jobs.feed_fetch",
 } as const;
 
 export type ErrorEventInput = {

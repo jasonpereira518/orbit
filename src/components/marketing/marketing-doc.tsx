@@ -21,12 +21,19 @@ export function MarketingDocShell({
   clerkOn,
   demoMode,
   signedIn,
+  switcher = true,
   children,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
   /** Server-known hint only; the header resolves the live state in the browser. */
   signedIn?: boolean;
+  /**
+   * The Privacy / Terms / Contact rail. Off for a page that borrows this chrome without
+   * belonging to that set — /connect is a setup guide, and a switcher with nothing active
+   * reads as a navigation bug rather than a choice.
+   */
+  switcher?: boolean;
   children: ReactNode;
 }): JSX.Element {
   const authProps = { clerkOn, demoMode, signedIn };
@@ -63,9 +70,11 @@ export function MarketingDocShell({
         <LandingAuthControls {...authProps} variant="header" />
       </header>
 
-      <div className="relative z-10 mx-auto w-full max-w-6xl px-6 md:px-10">
-        <DocSwitcher />
-      </div>
+      {switcher && (
+        <div className="relative z-10 mx-auto w-full max-w-6xl px-6 md:px-10">
+          <DocSwitcher />
+        </div>
+      )}
 
       <main className="relative z-10">{children}</main>
 
@@ -81,6 +90,7 @@ export function MarketingDocShell({
         <div className="flex items-center gap-6">
           {[
             { href: "/pricing", label: "Pricing" },
+            { href: "/connect", label: "Connect" },
             { href: "/interest", label: "Interest list" },
             { href: "/privacy", label: "Privacy" },
             { href: "/contact", label: "Contact" },

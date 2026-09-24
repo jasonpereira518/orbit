@@ -2,9 +2,11 @@ import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups, userSettings } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
+import { FRONT_WAVE_REFERRALS } from "@/lib/interest-list";
+import { readStandings, type Standing } from "@/lib/interest-list-ticket";
 
 /**
- * The interest-list roster: everyone who filled in the landing page's form, and when.
+ * The waitlist roster: everyone who joined, when, and where they stand in line.
  *
  * Kept apart from `admin-product-health.ts`, which owns the Growth page's ten-row summary.
  * That answers "is anyone signing up"; this answers "who, and what happened to them" — a
@@ -17,6 +19,7 @@ export const INTEREST_LIST_PAGE_SIZE = 50;
 export const INTEREST_LIST_FILTERS = [
   "all",
   "active",
+  "front-wave",
   "unsubscribed",
   "converted",
 ] as const;
@@ -41,21 +44,29 @@ export type InterestListRow = {
   landingPath: string | null;
   /** Whether this address later became an Orbit account. */
   converted: boolean;
+  /** Friends who joined through this row's link and are still waiting. */
+  referrals: number;
+  /** Place in line, or null once they have left the waitlist. See `lineSql`. */
+  position: number | null;
+  frontWave: boolean;
 };
+
+/** The two orders the roster can be read in. */
+export type InterestListSort = "newest" | "position";
 
 export type InterestListSummary = {
   total: number;
   active: number;
   unsubscribed: number;
   converted: number;
-  followUpsSent: number;
+  frontWave: number;
 };
 
 /**
  * Did this address go on to create an account?
  *
  * Matched against the `user_settings.email` mirror the Clerk webhook maintains — the same
- * join the day-3 follow-up sweep suppresses on, so the console and the mailer agree on who
+ * join the broadcast sender suppresses on, so the console and the mailer agree on who
  * counts as converted. Both sides are lowercased on write, but this is mirrored data with
  * no unique constraint, so the comparison does not assume it.
  *
@@ -71,11 +82,27 @@ const convertedSql = sql<boolean>`exists (
   where lower(u.email) = ${interestListSignups}.email
 )`;
 
+/**
+ * Still-waiting referrals, per row. Same aliasing discipline as `convertedSql`: the inner
+ * table is `r`, so the qualified outer `interest_list_signups.id` can only mean the row
+ * being counted for.
+ */
+const referralsSql = sql<number>`(
+  select count(*)::int from ${interestListSignups} as r
+  where r.referred_by_id = ${interestListSignups}.id and r.unsubscribed_at is null
+)`;
+
 function whereFor(filter: InterestListFilter) {
   if (filter === "active") {
     // "Active" means still mailable: subscribed AND not already an account. Someone who
     // converted is not a lost subscriber, but they are not an audience either.
     return and(isNull(interestListSignups.unsubscribedAt), sql`not ${convertedSql}`);
+  }
+  if (filter === "front-wave") {
+    return and(
+      isNull(interestListSignups.unsubscribedAt),
+      sql`${referralsSql} >= ${FRONT_WAVE_REFERRALS}`
+    );
   }
   if (filter === "unsubscribed") return isNotNull(interestListSignups.unsubscribedAt);
   if (filter === "converted") return sql`${convertedSql}`;
@@ -89,7 +116,9 @@ export async function getInterestListSummary(): Promise<InterestListSummary> {
     .select({
       total: countInt,
       unsubscribed: sql<number>`count(*) filter (where ${interestListSignups.unsubscribedAt} is not null)::int`,
-      followUpsSent: sql<number>`count(*) filter (where ${interestListSignups.followUpSentAt} is not null)::int`,
+      frontWave: sql<number>`count(*) filter (
+        where ${interestListSignups.unsubscribedAt} is null and ${referralsSql} >= ${FRONT_WAVE_REFERRALS}
+      )::int`,
       converted: sql<number>`count(*) filter (where ${convertedSql})::int`,
       active: sql<number>`count(*) filter (
         where ${interestListSignups.unsubscribedAt} is null and not ${convertedSql}
@@ -102,7 +131,7 @@ export async function getInterestListSummary(): Promise<InterestListSummary> {
     active: row?.active ?? 0,
     unsubscribed: row?.unsubscribed ?? 0,
     converted: row?.converted ?? 0,
-    followUpsSent: row?.followUpsSent ?? 0,
+    frontWave: row?.frontWave ?? 0,
   };
 }
 
@@ -120,7 +149,28 @@ function selection() {
     utmCampaign: interestListSignups.utmCampaign,
     landingPath: interestListSignups.landingPath,
     converted: convertedSql,
+    referrals: referralsSql,
   };
+}
+
+type SelectedRow = Omit<InterestListRow, "position" | "frontWave">;
+
+function withStanding(row: SelectedRow, standings: Map<string, Standing>): InterestListRow {
+  const standing = row.unsubscribedAt ? undefined : standings.get(row.id);
+  return {
+    ...row,
+    referrals: Number(row.referrals ?? 0),
+    position: standing?.position ?? null,
+    frontWave: standing?.frontWave ?? false,
+  };
+}
+
+/** Place in line first; rows that have left sort last, newest first among themselves. */
+function byPosition(a: InterestListRow, b: InterestListRow) {
+  if (a.position !== null && b.position !== null) return a.position - b.position;
+  if (a.position !== null) return -1;
+  if (b.position !== null) return 1;
+  return b.createdAt.getTime() - a.createdAt.getTime();
 }
 
 /**
@@ -137,11 +187,17 @@ function searchFor(q: string | undefined) {
   return sql`${interestListSignups.email} ilike ${`%${escaped}%`}`;
 }
 
-/** One page of signups, newest first — the order the question "who just joined" is asked in. */
+/**
+ * One page of signups — newest first (who just joined) or by place in line (who gets in
+ * first). Position is a window over the whole line, so the position order is sorted here
+ * from `readStandings` over the filtered set rather than in SQL; the roster is a few
+ * thousand rows at most, and this keeps `lineSql` the single definition of the line.
+ */
 export async function loadInterestList(options: {
   page: number;
   filter: InterestListFilter;
   q?: string;
+  sort?: InterestListSort;
 }): Promise<{ rows: InterestListRow[]; total: number; page: number; pageCount: number }> {
   const db = await getDb();
   const where = and(whereFor(options.filter), searchFor(options.q));
@@ -156,16 +212,26 @@ export async function loadInterestList(options: {
   // Clamp rather than trust the query string: `?page=999` on a two-page list should show
   // the last page, not an empty table that looks like the list was wiped.
   const page = Math.min(Math.max(1, options.page), pageCount);
+  const standings = await readStandings();
 
-  const rows = await db
+  if (options.sort === "position") {
+    const all = (await db.select(selection()).from(interestListSignups).where(where)) as SelectedRow[];
+    const rows = all
+      .map((r) => withStanding(r, standings))
+      .sort(byPosition)
+      .slice((page - 1) * INTEREST_LIST_PAGE_SIZE, page * INTEREST_LIST_PAGE_SIZE);
+    return { rows, total, page, pageCount };
+  }
+
+  const rows = (await db
     .select(selection())
     .from(interestListSignups)
     .where(where)
     .orderBy(desc(interestListSignups.createdAt))
     .limit(INTEREST_LIST_PAGE_SIZE)
-    .offset((page - 1) * INTEREST_LIST_PAGE_SIZE);
+    .offset((page - 1) * INTEREST_LIST_PAGE_SIZE)) as SelectedRow[];
 
-  return { rows: rows as InterestListRow[], total, page, pageCount };
+  return { rows: rows.map((r) => withStanding(r, standings)), total, page, pageCount };
 }
 
 export type InterestListTrendPoint = { bucketStart: Date; count: number };
@@ -237,17 +303,16 @@ export async function interestListSources(): Promise<InterestListSourceRow[]> {
   }));
 }
 
-/** Every matching row, for the CSV export. No pagination, same filter semantics. */
+/** Every matching row, for the CSV export, in line order. Same filter semantics. */
 export async function loadInterestListAll(
   filter: InterestListFilter
 ): Promise<InterestListRow[]> {
   const db = await getDb();
-  const rows = await db
-    .select(selection())
-    .from(interestListSignups)
-    .where(whereFor(filter))
-    .orderBy(desc(interestListSignups.createdAt));
-  return rows as InterestListRow[];
+  const [rows, standings] = await Promise.all([
+    db.select(selection()).from(interestListSignups).where(whereFor(filter)),
+    readStandings(),
+  ]);
+  return (rows as SelectedRow[]).map((r) => withStanding(r, standings)).sort(byPosition);
 }
 
 /** One row by id, for an action that needs to check what it is about to change. */
@@ -267,8 +332,8 @@ export async function loadInterestListRow(
  * Take someone off the list without losing the record of them.
  *
  * Sets the same `unsubscribed_at` the recipient's own one-click link writes, so there is
- * exactly one "is this person mailable" condition in the system rather than an operator
- * flag that the sweep would also have to learn about. Idempotent via COALESCE: re-running
+ * exactly one "is this person still waiting" condition in the system rather than an
+ * operator flag that the line would also have to learn about. Idempotent via COALESCE: re-running
  * it must not move a timestamp the subscriber themselves set earlier.
  *
  * Returns null when no row matched, so the caller can report that rather than logging an
@@ -291,9 +356,8 @@ export async function unsubscribeInterestListRow(
 /**
  * Put someone back on the list.
  *
- * The counterpart to the above, for the ordinary mistake of removing the wrong row. It
- * clears `follow_up_sent_at` alongside, matching what a rejoin through the form does —
- * otherwise a restored row would be permanently ineligible for the day-3 note.
+ * The counterpart to the above, for the ordinary mistake of removing the wrong row. The
+ * row keeps its join time, so it goes back to the place in line it had.
  */
 export async function resubscribeInterestListRow(
   id: string

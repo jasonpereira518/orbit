@@ -1,0 +1,510 @@
+{
+  "cases": [
+    {
+      "id": "cap-single-01-coffee-data-engineer",
+      "kind": "single",
+      "today": "2026-09-14",
+      "notes": "Coffee with Mateo Villanueva at Blue Heron Cafe this morning. He's a senior data engineer at Quillfeather Bank, been there four years, works on the fraud-scoring pipeline (Kafka + dbt). Moved here from Montevideo in 2021. He's thinking about going independent next year and asked how I priced my first contracts. We both run; he's doing the Lakeshore half marathon in November. Said he'd send me the dbt style guide his team uses. Nice guy, should keep in touch.",
+      "expect": {
+        "people": [
+          {
+            "name": "Mateo Villanueva",
+            "company": "Quillfeather Bank",
+            "role": "data engineer"
+          }
+        ],
+        "forbidden": [
+          "@quillfeather",
+          "linkedin.com/in"
+        ]
+      }
+    },
+    {
+      "id": "cap-single-02-call-head-of-product",
+      "kind": "single",
+      "today": "2026-09-16",
+      "notes": "Video call w/ Marit Verhoeven (Head of Product, Tidewater Analytics). She reached out after my post about onboarding funnels. Tidewater sells forecasting software to regional grocery chains, ~40 people, Series A. She's rebuilding their self-serve trial and wanted to compare notes on activation metrics; their trial-to-paid is around 9%. She asked whether I'd be open to a short paid advisory engagement, told her maybe, send details. She's based in Rotterdam, 6 hrs ahead, so mornings work best for calls.",
+      "expect": {
+        "people": [
+          {
+            "name": "Marit Verhoeven",
+            "company": "Tidewater Analytics",
+            "role": "Head of Product"
+          }
+        ],
+        "forbidden": [
+          "@tidewater"
+        ]
+      }
+    },
+    {
+      "id": "cap-single-03-call-cto-past-employer",
+      "kind": "single",
+      "today": "2026-09-21",
+      "notes": "Phone call with Olusegun Bankole this afternoon. He's the CTO of Fernhill Health, a 12-person startup doing remote cardiac monitoring for rural clinics. Before that he spent 8 years at Marlowe Medical Devices as a firmware lead. They're about to raise a seed extension and are hiring their first two backend engineers (Go, Postgres). He liked the idea of me doing a technical due-diligence review of their data pipeline before the raise. Two kids, 6 and 9; he coaches youth football on weekends.",
+      "expect": {
+        "people": [
+          {
+            "name": "Olusegun Bankole",
+            "company": "Fernhill Health",
+            "role": "CTO"
+          }
+        ],
+        "forbidden": [
+          "@fernhill"
+        ]
+      }
+    },
+    {
+      "id": "cap-single-04-coffee-ux-researcher",
+      "kind": "single",
+      "today": "2026-10-02",
+      "notes": "Met Ingrid Solberg for coffee near the office. Ingrid is a staff UX researcher at Copperline Games (mobile puzzle games, ~300 people, Oslo HQ but she works remotely from Lisbon). She ran a diary study on churn in their subscription tier and found most cancellations happen right after a season pass ends. We mostly talked about how to recruit research participants cheaply; she swears by paying people in in-game currency. She's giving a talk at the Lisbon UX meetup later this fall and said she'd share the slides afterwards.",
+      "expect": {
+        "people": [
+          {
+            "name": "Ingrid Solberg",
+            "company": "Copperline Games",
+            "role": "UX researcher"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-multi-01-dinner-four",
+      "kind": "multi",
+      "today": "2026-09-12",
+      "notes": "Dinner at Saffron Table after the Northwind Data Summit, Thursday night. Four of them plus me.\n- Yusuf Demir: ML platform lead at Brightwater Logistics. Migrating their feature store off a homegrown system; frustrated with training/serving skew. Wants to trade notes on eval tooling.\n- Camille Rousseau: founder of Petrichor Labs (climate risk data, 8 people, pre-seed). Looking for a fractional data engineer for ~2 days/week. I said I might know someone.\n- Anjali Iyer: VP Engineering at Quillfeather Bank. Quiet at first, then opened up about managing a team through a reorg. Offered to be a sounding board if I ever move into management.\n- Kwame Asante: independent consultant, previously at Brightwater with Yusuf. Does cloud cost audits for mid-size companies.\nAll of us complained about GPU pricing. Camille and Kwame already knew each other from a previous startup.",
+      "expect": {
+        "people": [
+          {
+            "name": "Yusuf Demir",
+            "company": "Brightwater Logistics",
+            "role": "ML platform"
+          },
+          {
+            "name": "Camille Rousseau",
+            "company": "Petrichor Labs",
+            "role": "founder"
+          },
+          {
+            "name": "Anjali Iyer",
+            "company": "Quillfeather Bank",
+            "role": "VP"
+          },
+          {
+            "name": "Kwame Asante",
+            "role": "consultant"
+          }
+        ],
+        "forbidden": [
+          "@quillfeather",
+          "@brightwater",
+          "@petrichor"
+        ]
+      }
+    },
+    {
+      "id": "cap-multi-02-career-fair-five",
+      "kind": "multi",
+      "today": "2026-09-24",
+      "notes": "Harrow State fall career fair, notes from the booths I hit:\n1. Larkspur Robotics: talked to Beatriz Santos, their university recruiter. They have a Summer 2027 embedded software internship, apps open Oct 1. Pittsburgh, paid, housing stipend.\n2. Quillfeather Bank: Daniel Kim, software engineer on the mobile team (Harrow State class of 2022). Told me the new-grad interview is 2 rounds + a take-home.\n3. Emberline Energy: Fatima Al-Sayed, grid analytics manager. They're hiring data analysts, not SWE. Gave me her card: fatima.alsayed@emberline-energy.example\n4. Tidewater Analytics: Liam O'Connor, engineering manager. Most interesting conversation of the day; they use Rust for the forecasting engine. Asked me to email him my GitHub.\n5. Mossgiel Consulting: Priyanka Rao, senior associate. Very polished pitch, but consulting isn't for me.",
+      "expect": {
+        "people": [
+          {
+            "name": "Beatriz Santos",
+            "company": "Larkspur Robotics",
+            "role": "recruiter"
+          },
+          {
+            "name": "Daniel Kim",
+            "company": "Quillfeather Bank",
+            "role": "software engineer"
+          },
+          {
+            "name": "Fatima Al-Sayed",
+            "company": "Emberline Energy",
+            "role": "analytics",
+            "email": "fatima.alsayed@emberline-energy.example"
+          },
+          {
+            "name": "Liam O'Connor",
+            "company": "Tidewater Analytics",
+            "role": "engineering manager"
+          },
+          {
+            "name": "Priyanka Rao",
+            "company": "Mossgiel Consulting",
+            "role": "associate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-long-01-conference-day-six",
+      "kind": "long",
+      "today": "2026-10-09",
+      "notes": "Cascadia Infra Summit, day 2. Writing this up on the train home.\n\nMorning keynote was Dr. Helena Marchetti on carbon-aware scheduling. I didn't get to talk to her (the line afterwards was huge), but her point about shifting batch jobs into low-carbon hours is worth reading up on.\n\nCoffee line before the first breakout: met Arjun Kapoor, platform engineering manager at Brightwater Logistics. They run roughly 2,000 Kubernetes nodes across three regions and just finished moving CI onto ephemeral runners. He was candid that their biggest pain is flaky integration tests, not infrastructure. He hosts a monthly platform-engineering dinner in Seattle and invited me to the next one. New baby at home, so he was running on espresso.\n\nMid-morning eBPF observability workshop: sat next to Mei Tanaka, an SRE at Fernhill Health. She's the only SRE for a 40-person engineering org and is drowning in alert noise. We compared notes on SLO-based alerting and I promised to share the burn-rate alert template we use. She's originally from Osaka and moved to Vancouver for grad school.\n\nLunch table: Oskar Nilsson, co-founder and CTO of Stillwater Compute. Six people, pre-seed, building a GPU scheduler for small research labs. He's looking for design partners and a few angel checks. His cofounder Leonor Barros was sitting with us too and actually did most of the talking about pricing; she asked what I'd pay for guaranteed spot-GPU capacity and wrote my answer down. The two of them met during their PhDs.\n\nAfternoon hallway track: long conversation with Kojo Boateng, principal engineer at Quillfeather Bank, about moving a monolith's batch jobs to event-driven workers. Their internal platform team is 25 people. He said the team is hiring two senior platform engineers and he'd be happy to refer me if I'm interested. I just need to send him my CV. Serious cyclist, commutes 20 km each way.\n\nLast session was the FinOps panel. Afterwards I talked with Rosa Jimenez, a FinOps analyst at Emberline Energy. She's building a chargeback model for their shared data platform and wanted to know how we tag multi-tenant clusters. We swapped cards and she wants to see our tagging policy doc.\n\nGeneral takeaways: everyone is fighting GPU costs, ephemeral CI is now table stakes, and nobody trusts their alerting. I should write up the carbon-aware scheduling idea for the team blog, and figure out whether the Quillfeather platform role is actually worth a conversation.\n\nTo do tomorrow:\n- send Mei the burn-rate alert template and our runbook for noisy pages\n- RSVP to Arjun's platform dinner (second Tuesday of the month)\n- decide whether to send Kojo my CV before the end of the month\n- send Rosa the tagging policy doc\n- find the paper Helena Marchetti cited in the keynote",
+      "expect": {
+        "people": [
+          {
+            "name": "Arjun Kapoor",
+            "company": "Brightwater Logistics",
+            "role": "platform engineering"
+          },
+          {
+            "name": "Mei Tanaka",
+            "company": "Fernhill Health"
+          },
+          {
+            "name": "Oskar Nilsson",
+            "company": "Stillwater Compute",
+            "role": "CTO"
+          },
+          {
+            "name": "Leonor Barros",
+            "company": "Stillwater Compute"
+          },
+          {
+            "name": "Kojo Boateng",
+            "company": "Quillfeather Bank",
+            "role": "principal engineer",
+            "opportunityKinds": [
+              "referral"
+            ]
+          },
+          {
+            "name": "Rosa Jimenez",
+            "company": "Emberline Energy",
+            "role": "FinOps"
+          }
+        ],
+        "notParticipants": [
+          "Helena Marchetti"
+        ]
+      }
+    },
+    {
+      "id": "cap-long-02-mixer-nine",
+      "kind": "long",
+      "today": "2026-10-15",
+      "notes": "Founders & Operators mixer at Hanwell Works, Wednesday evening. Maybe 60 people in the room; I had real conversations with nine of them. Rough notes before I forget:\n\n1. Amara Nwosu, founder and CEO of Kestrel Pay (B2B invoicing for small businesses in Nigeria and Ghana, seed stage, 14 people split between Lagos and London). Planning to raise a Series A early next year. Very sharp on FX risk and on why banks there still settle invoices by hand. Wants to meet angels who understand cross-border payments.\n\n2. Henrik Johansson, Head of Sales at Brambleworks. Sold a tiny analytics startup in 2019 before joining them. Gave me genuinely useful advice on pricing annual contracts: always put the three-year option first so the one-year looks cheap.\n\n3. Lucia Fernandez, senior product manager at Tidewater Analytics; leads the demand-forecasting product. Turns out we're both Harrow State alumni (she graduated two years after me). She's organizing a women-in-data breakfast next month and asked if our company would co-host.\n\n4. Tariq Mahmood, angel investor. Used to be on the risk team at Quillfeather Bank before he left to invest full time. Writes $25-50k checks into fintech infrastructure. Said he'd look at anything in B2B payments.\n\n5. Sakura Ito, design lead at Copperline Games, but leaving in December to start her own studio. Wants to talk to people who have gone freelance about how they found their first clients.\n\n6. Bartholomew Achterberg runs developer relations at Stillwater Compute. Loud, funny, seems to know everyone in the room. Offered to get me a speaking slot at their user meetup in January.\n\n7. Nomvula Dlamini, staff engineer at Halvorsen Freight, working on route optimization. Fully remote from Cape Town, in town for their offsite. Big trail runner; she's doing a 50k in the Drakensberg in November.\n\n8. Pedro Oliveira, solo founder of Lanternfish, a no-code tool for tracking lab inventory. Pre-revenue, looking for a technical cofounder. Not for me, but I know someone who might be interested.\n\n9. Grace Liang, associate at Meridian Ridge Ventures, focused on climate and logistics. Asked me who the most interesting infrastructure founders in the room were, which was a slightly awkward question to answer.\n\nOverall: good crowd, much heavier on fintech than I expected. Amara, Tariq and Grace should probably meet each other, and I owe Pedro a name.\n\nFollow-ups:\n- email Henrik to say thanks for the pricing advice\n- tell Lucia yes in principle on co-hosting the breakfast, check budget first\n- send Pedro the contact of the engineer I know who wants a cofounder role\n- reply to Bartholomew about the January meetup slot",
+      "expect": {
+        "people": [
+          {
+            "name": "Amara Nwosu",
+            "company": "Kestrel Pay",
+            "role": "CEO"
+          },
+          {
+            "name": "Henrik Johansson",
+            "company": "Brambleworks",
+            "role": "Head of Sales"
+          },
+          {
+            "name": "Lucia Fernandez",
+            "company": "Tidewater Analytics",
+            "role": "product manager"
+          },
+          {
+            "name": "Tariq Mahmood",
+            "role": "angel"
+          },
+          {
+            "name": "Sakura Ito",
+            "company": "Copperline Games",
+            "role": "design lead"
+          },
+          {
+            "name": "Bartholomew Achterberg",
+            "company": "Stillwater Compute"
+          },
+          {
+            "name": "Nomvula Dlamini",
+            "company": "Halvorsen Freight",
+            "role": "staff engineer"
+          },
+          {
+            "name": "Pedro Oliveira",
+            "company": "Lanternfish",
+            "role": "founder"
+          },
+          {
+            "name": "Grace Liang",
+            "company": "Meridian Ridge Ventures",
+            "role": "associate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-multi-03-demo-day-three",
+      "kind": "multi",
+      "today": "2026-10-20",
+      "notes": "Harrow State Venture Lab demo day this afternoon. Eight teams pitched; I talked to three founders afterwards.\n- Zanele Mokoena, CEO of Driftwood Bio: enzyme-based plastic recycling, raising a $1.5M pre-seed. Asked if I'd join as a technical advisor for 0.25%. Thinking about it.\n- Emil Haugen and Farah Siddiqui, the cofounders of Parcelwise (Emil is CTO, Farah is CEO): last-mile routing software for small courier companies. Farah wanted feedback on their pricing page; Emil and I nerded out about vehicle-routing solvers for twenty minutes.\nProf. Adebayo Ogundipe, who runs the lab, gave the closing remarks.",
+      "expect": {
+        "people": [
+          {
+            "name": "Zanele Mokoena",
+            "company": "Driftwood Bio",
+            "role": "CEO"
+          },
+          {
+            "name": "Emil Haugen",
+            "company": "Parcelwise",
+            "role": "CTO"
+          },
+          {
+            "name": "Farah Siddiqui",
+            "company": "Parcelwise",
+            "role": "CEO"
+          }
+        ],
+        "notParticipants": [
+          "Adebayo Ogundipe"
+        ]
+      }
+    },
+    {
+      "id": "cap-referral-01-refer-me",
+      "kind": "referral",
+      "today": "2026-09-17",
+      "notes": "Coffee with Siddharth Menon, senior SRE at Halvorsen Freight. We overlapped at Harrow State (he was two years ahead of me). His team has an open Site Reliability Engineer II role and he offered to refer me. Told me to send him my resume and he'll submit it through their internal referral portal. He was upfront that on-call is heavy: one week in five, with a lot of night pages from the Nordic warehouses. Also moonlights as a DJ on weekends.",
+      "expect": {
+        "people": [
+          {
+            "name": "Siddharth Menon",
+            "company": "Halvorsen Freight",
+            "opportunityKinds": [
+              "referral"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-referral-02-pass-resume-to-hiring-manager",
+      "kind": "referral",
+      "today": "2026-09-22",
+      "notes": "Lunch with Ewa Kowalczyk from Emberline Energy; she's a principal data scientist on their grid team. I told her I'm looking for applied ML roles. Emberline is opening a Forecasting ML Engineer position next month, and she offered to pass my resume straight to the hiring manager, Tobias Lindgren, and put in a good word. Tobias apparently built their original load-forecasting model. She'd also like me to review a draft blog post of hers on probabilistic forecasting.",
+      "expect": {
+        "people": [
+          {
+            "name": "Ewa Kowalczyk",
+            "company": "Emberline Energy",
+            "role": "data scientist",
+            "opportunityKinds": [
+              "referral"
+            ]
+          }
+        ],
+        "notParticipants": [
+          "Tobias Lindgren"
+        ]
+      }
+    },
+    {
+      "id": "cap-referral-03-intro-to-hiring-manager",
+      "kind": "referral",
+      "today": "2026-10-06",
+      "notes": "Quick call with Rahel Tesfaye, product designer at Copperline Games. I asked about the Senior Product Designer opening on their puzzle team. She doesn't know much about the role itself, but she knows the hiring manager well and said she'll introduce me to him over email so I can ask him directly. Also suggested I lead my portfolio with the accessibility-audit case study. She's been at Copperline three years; before that she freelanced in Addis Ababa.",
+      "expect": {
+        "people": [
+          {
+            "name": "Rahel Tesfaye",
+            "company": "Copperline Games",
+            "role": "product designer",
+            "opportunityKinds": [
+              "referral"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-messy-ocr-01-booth-typos",
+      "kind": "messy-ocr",
+      "today": "2026-09-28",
+      "notes": "Larkspur Robotics booth - Sat career fair\nHannah Oyelaran -- mech eng lead @ Larksupr,\nworks on the gripper arm. prefers\nemail over LI: hannah.o@larkspur-robotics.example\n- hiring summer interns '27?? ask again\n- said apply thru portal + ping her after\nMarcus Webb — ctrls eng, also Larkspur,\nsame team as Hannah. Harrow St grad??\nex-Tidewatr, left last yr\n- talked ROS2 vs their custom stack\n- he'll send lab tour signup link",
+      "expect": {
+        "people": [
+          {
+            "name": "Hannah Oyelaran",
+            "company": "Larkspur",
+            "role": "mech",
+            "email": "hannah.o@larkspur-robotics.example"
+          },
+          {
+            "name": "Marcus Webb",
+            "company": "Larkspur"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-messy-ocr-02-meetup-fragments",
+      "kind": "messy-ocr",
+      "today": "2026-10-13",
+      "notes": "PyData Brightwtr mtg 10/12\nChidi Okonkwo -- DS @ Fernhill Hlth\n (cardiac monitoring) - wants help\nw/ time series anomaly detctn.\n * knows Siobhan?? (Petrichor) - she\nmight want to join the reading grp\nWen-Li Huang\n - Sr. backend eng, Qullfeather Bnk\n - into climbing, Hanwell gym\n - \"send me the talk slides\"\nf/u next wk re: slides",
+      "expect": {
+        "people": [
+          {
+            "name": "Chidi Okonkwo",
+            "company": "Fernhill"
+          },
+          {
+            "name": "Wen-Li Huang",
+            "role": "backend"
+          }
+        ],
+        "notParticipants": [
+          "Siobhan"
+        ]
+      }
+    },
+    {
+      "id": "cap-email-01-forwarded-intro-thread",
+      "kind": "email",
+      "today": "2026-09-30",
+      "notes": "---------- Forwarded message ---------\nFrom: Dmitri Volkov <dmitri.volkov@halvorsen-freight.example>\nDate: Wed, Sep 30, 2026 at 9:41 AM\nSubject: Re: Intro: you <> Dmitri (route optimization)\nTo: me@mailbox.example\n\nPerfect, Tuesday at 14:00 CET works for me. I'll send a calendar invite with a video link, and I'll bring one of our solver engineers along if that's okay.\n\nBest regards,\nDmitri\n\n--\nDmitri Volkov\nDirector, Routing Algorithms\nHalvorsen Freight | Oslo, Norway\n+47 555 01 234\ndmitri.volkov@halvorsen-freight.example\n\nOn Tue, Sep 29, 2026 at 6:02 PM me@mailbox.example wrote:\n> Hi Dmitri, great to meet you too. Happy to share what worked and what didn't. Would Tuesday afternoon your time work?\n\nOn Mon, Sep 28, 2026 at 4:12 PM Dmitri Volkov <dmitri.volkov@halvorsen-freight.example> wrote:\n> Thanks Noor for connecting us! (moving you to bcc)\n>\n> Great to e-meet you. I lead the routing algorithms group at Halvorsen Freight. We plan about 40,000 truck stops a day across the Nordics and are seriously considering replacing our heuristic solver with a mixed-integer approach. Noor mentioned you did something similar for last-mile delivery, and I'd love 30 minutes to hear what worked and what didn't.",
+      "expect": {
+        "people": [
+          {
+            "name": "Dmitri Volkov",
+            "company": "Halvorsen Freight",
+            "role": "Director",
+            "email": "dmitri.volkov@halvorsen-freight.example"
+          }
+        ],
+        "notParticipants": [
+          "Noor"
+        ]
+      }
+    },
+    {
+      "id": "cap-dates-01-absolute",
+      "kind": "dates",
+      "today": "2026-09-21",
+      "hints": {
+        "eventDate": "2026-09-21"
+      },
+      "notes": "Coffee this morning with Aurelio Bianchi, COO at Petrichor Labs. They sell climate-risk scores to mid-size insurers and just closed a pilot with a regional carrier. He wants to see how we'd plug our flood data into their scoring API. I promised to send him our pitch deck by Friday Sep 25. We agreed to grab coffee again on Oct 8, after his board meeting. He's a keen sailor and races most weekends.",
+      "expect": {
+        "people": [
+          {
+            "name": "Aurelio Bianchi",
+            "company": "Petrichor Labs",
+            "role": "COO"
+          }
+        ],
+        "reminders": [
+          {
+            "dueDate": "2026-09-25"
+          },
+          {
+            "dueDate": "2026-10-08"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-dates-02-relative",
+      "kind": "dates",
+      "today": "2026-09-24",
+      "hints": {
+        "eventDate": "2026-09-24"
+      },
+      "notes": "Call with Nadia Rahman today. She's the partnerships lead at Emberline Energy. They're scoping a pilot to use our demand-response API across three substations; budget sign-off is still pending with their CFO. She asked me to follow up in two weeks, once the budget is approved. She'll also be at the Grid Futures Expo next Tuesday and I said I'd stop by their booth to meet the rest of her team.",
+      "expect": {
+        "people": [
+          {
+            "name": "Nadia Rahman",
+            "company": "Emberline Energy",
+            "role": "partnerships"
+          }
+        ],
+        "reminders": [
+          {
+            "dueDate": "2026-10-08"
+          },
+          {
+            "dueDate": "2026-09-29"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-dates-03-mixed",
+      "kind": "dates",
+      "today": "2026-10-05",
+      "hints": {
+        "eventDate": "2026-10-05"
+      },
+      "notes": "Met Haruto Sato today at the Glasswing Software office. He runs their data platform team. They want to replace their nightly batch reports with streaming dashboards and have budget for an outside contractor this quarter. I owe him a written proposal by October 16. Demo of our prototype to his team on Wednesday. He mentioned he's out on paternity leave from mid-November, so anything that needs his sign-off has to land before then.",
+      "expect": {
+        "people": [
+          {
+            "name": "Haruto Sato",
+            "company": "Glasswing Software",
+            "role": "data platform"
+          }
+        ],
+        "reminders": [
+          {
+            "dueDate": "2026-10-16"
+          },
+          {
+            "dueDate": "2026-10-07"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-mentions-01-manager-and-intro",
+      "kind": "mentions",
+      "today": "2026-09-18",
+      "notes": "Coffee with Ravi Subramaniam, staff engineer at Brambleworks (dev tools, about 150 people). He's on the build-systems team. Ravi said his manager, Elena Petrova, runs the platform org and is the one pushing their migration to hermetic builds. He offered to introduce me to his old college roommate Tomasz Wisniewski, who maintains the open-source build cache I've been evaluating, so I can ask about the roadmap. We also talked about the startup Ravi tried with Julia Brandt in 2023; it fizzled after a year, but he doesn't regret it.",
+      "expect": {
+        "people": [
+          {
+            "name": "Ravi Subramaniam",
+            "company": "Brambleworks",
+            "role": "staff engineer",
+            "opportunityKinds": [
+              "introduction"
+            ]
+          }
+        ],
+        "notParticipants": [
+          "Elena Petrova",
+          "Tomasz Wisniewski",
+          "Julia Brandt"
+        ]
+      }
+    },
+    {
+      "id": "cap-mentions-02-speaker-boss-agent",
+      "kind": "mentions",
+      "today": "2026-10-01",
+      "notes": "Lisbon UX meetup last night. Keynote was Marguerite Delacroix-Lang on dark patterns in subscription flows; great talk, didn't get to meet her. Afterwards I chatted with two people:\n- Tiago Almeida, product designer at Copperline Games. His boss, Sunita Balakrishnan, wants to start a design-systems guild across Lisbon companies; Tiago thinks we should join.\n- Leilani Kahale, freelance illustrator, mostly children's books and game art. She mentioned her agent, Bram de Vries, handles all her contracts and rates.\nBoth want to grab a drink after the next meetup.",
+      "expect": {
+        "people": [
+          {
+            "name": "Tiago Almeida",
+            "company": "Copperline Games",
+            "role": "product designer"
+          },
+          {
+            "name": "Leilani Kahale",
+            "role": "illustrator"
+          }
+        ],
+        "notParticipants": [
+          "Marguerite Delacroix-Lang",
+          "Sunita Balakrishnan",
+          "Bram de Vries"
+        ]
+      }
+    }
+  ]
+}

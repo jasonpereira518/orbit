@@ -1,0 +1,107 @@
+{
+  "label": "cheaper-capture",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-20T00:33:16.997Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 1,
+  "candidate": {
+    "thinking": {
+      "capture.parse": "minimal",
+      "capture.parse.identify": "minimal",
+      "capture.parse.details": "minimal",
+      "capture.parse.excerpt-retry": "minimal",
+      "capture.dates": "minimal",
+      "capture.transcribe.page": "minimal",
+      "capture.transcribe.audio": "minimal",
+      "meeting.transcribe": "minimal",
+      "meeting.digest": "minimal",
+      "meeting.digest.map": "minimal",
+      "meeting.digest.reduce": "minimal",
+      "chat.understand": "minimal",
+      "chat.rerank": "minimal",
+      "recruiter.scan": "minimal",
+      "extension.parse": "minimal",
+      "import.enrich": "minimal",
+      "import.linkedin.timeline": "minimal",
+      "events.why": "minimal"
+    },
+    "tiers": {
+      "recruiter.scan": "fast",
+      "extension.parse": "fast",
+      "capture.dates": "fast",
+      "import.enrich": "fast",
+      "meeting.digest.map": "fast"
+    },
+    "model": "gemini-3.8-flash",
+    "visionModels": {
+      "gemini": "gemini-3.8-flash"
+    }
+  },
+  "tasks": {
+    "capture": {
+      "cases": 20,
+      "metrics": {
+        "personRecall": 1,
+        "personPrecision": 1,
+        "fieldAccuracy": 1,
+        "opportunityRecall": 1,
+        "referralRecall": 1,
+        "reminderRecall": 1,
+        "phantomParticipants": 0,
+        "forbiddenHits": 0
+      },
+      "misses": [],
+      "p50LatencyMs": 3006.5,
+      "costMicros": 172164,
+      "costPerCaseMicros": 8608.2,
+      "usage": [
+        {
+          "operation": "capture.dates",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 20,
+          "failures": 0,
+          "inputTokens": 26647,
+          "outputTokens": 4503,
+          "cachedInputTokens": 0,
+          "costMicros": 13418,
+          "unpriced": 0
+        },
+        {
+          "operation": "capture.parse",
+          "model": "gemini-3.8-flash",
+          "calls": 18,
+          "failures": 0,
+          "inputTokens": 30260,
+          "outputTokens": 20593,
+          "cachedInputTokens": 0,
+          "costMicros": 99921,
+          "unpriced": 0
+        },
+        {
+          "operation": "capture.parse.details",
+          "model": "gemini-3.8-flash",
+          "calls": 7,
+          "failures": 0,
+          "inputTokens": 11706,
+          "outputTokens": 11135,
+          "cachedInputTokens": 0,
+          "costMicros": 50535,
+          "unpriced": 0
+        },
+        {
+          "operation": "capture.parse.identify",
+          "model": "gemini-3.8-flash",
+          "calls": 3,
+          "failures": 0,
+          "inputTokens": 2663,
+          "outputTokens": 1678,
+          "cachedInputTokens": 0,
+          "costMicros": 8290,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

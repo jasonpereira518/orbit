@@ -7,7 +7,9 @@ import {
 } from "@/db";
 import { contacts, contactEmbeddings } from "@/db/schema";
 import { normalizeCompanyKey } from "@/lib/company-name";
+import { applyNameMatchPolicy } from "@/lib/contact-search-rank";
 import { formatVectorLiteral } from "@/lib/pgvector";
+import { contentTokens } from "@/lib/search-tokens";
 import { cosineSimilarity } from "@/lib/ai";
 
 export type SearchFilters = {
@@ -46,6 +48,8 @@ export type RankedContact = {
   notes: string | null;
   aiSummary: string | null;
   keyFacts: string[];
+  /** The `contacts.opportunities` mirror, so "who can refer me?" is answerable by keyword. */
+  opportunities: string[];
   relationshipScore: number;
   priorityLevel: number;
   closenessTier: string | null;
@@ -62,10 +66,17 @@ export type RankedContact = {
   filterMatched: boolean;
 };
 
-/** Standard RRF constant: dampens the gap between adjacent ranks. */
-const RRF_K = 60;
+/**
+ * Standard RRF constant: dampens the gap between adjacent ranks.
+ *
+ * Reciprocal-rank fusion's damping constant, shared with `@/lib/memory-search`.
+ *
+ * Exported rather than copied so the two fusions cannot drift: passages and contacts are
+ * ranked by the same curve, which is what lets a future caller compare them at all.
+ */
+export const RRF_K = 60;
 /** Below this cosine similarity a semantic hit is noise (matches pgvectorSearchContacts). */
-const SEMANTIC_SIMILARITY_FLOOR = 0.25;
+export const SEMANTIC_SIMILARITY_FLOOR = 0.25;
 /** ANN over-fetch multiplier: several embedding rows collapse into one contact. */
 const OVERSCAN_FOR_DEDUPE = 4;
 /** Ceiling on the JS cosine fallback scan (1,536 floats per row). */
@@ -195,23 +206,6 @@ function filterCondition(
 
   if (!parts.length) return null;
   return sql`(${sql.join(parts, sql` and `)})`;
-}
-
-const FTS_STOPWORDS = new Set([
-  "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at", "for", "with", "from",
-  "who", "whom", "whose", "what", "which", "where", "when", "why", "how",
-  "do", "does", "did", "is", "are", "was", "were", "be", "been", "being",
-  "i", "me", "my", "we", "our", "you", "your", "they", "them", "their", "it", "its",
-  "know", "knows", "anyone", "someone", "somebody", "people", "person", "contact", "contacts",
-  "can", "could", "would", "should", "have", "has", "had", "that", "this", "these", "those",
-]);
-
-/** Content-bearing tokens from a natural-language query, for OR-expansion. */
-function contentTokens(query: string): string[] {
-  return [...new Set(
-    query.toLowerCase().split(/[^a-z0-9]+/)
-      .filter((t) => t.length >= 3 && !FTS_STOPWORDS.has(t))
-  )].slice(0, 8);
 }
 
 async function ftsArm(
@@ -578,7 +572,9 @@ export async function hybridSearchContacts(
     return rows.map((h) => ({ ...h, relevance: max > 0 ? h.rrfScore / max : 0 }));
   };
 
-  let results = normalizeToOwnMax(hydrated);
+  // Name matches first for a one-word lookup, and a note that merely mentions the name
+  // does not sit beside the person it names. See `applyNameMatchPolicy`.
+  let results = applyNameMatchPolicy(normalizeToOwnMax(hydrated), options.query);
 
   // Recall guard: an over-narrow filter should widen, not starve. Filtered
   // hits stay first (spec-mandated order); backfill is appended after them,
@@ -640,6 +636,7 @@ async function hydrate(
       notes: true,
       aiSummary: true,
       keyFacts: true,
+      opportunities: true,
       relationshipScore: true,
       priorityLevel: true,
       closenessTier: true,
@@ -665,6 +662,7 @@ async function hydrate(
       notes: row.notes,
       aiSummary: row.aiSummary,
       keyFacts: row.keyFacts ?? [],
+      opportunities: row.opportunities ?? [],
       relationshipScore: row.relationshipScore ?? 0,
       priorityLevel: row.priorityLevel ?? 0,
       closenessTier: row.closenessTier,

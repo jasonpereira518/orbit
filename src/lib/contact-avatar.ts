@@ -1,15 +1,27 @@
-import { put } from "@vercel/blob";
+import { createHash } from "node:crypto";
+import { putAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
-import { isDurableAvatarUrl, isUnusableAvatarUrl } from "@/lib/contact-avatar-url";
+import { internalFetch } from "@/lib/internal-auth";
+import { reportError } from "@/lib/report-error";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import {
+  isDurableAvatarUrl,
+  isUnfetchableImageUrl,
+} from "@/lib/contact-avatar-url";
 
 export {
   isDurableAvatarUrl,
+  isUnfetchableImageUrl,
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
 
-/** Max raw download we'll attempt before giving up. */
+/**
+ * Max raw download we'll attempt before giving up. Must not exceed the encoder's own input
+ * limit (`AVATAR_ENCODE_MAX_INPUT_BYTES` in `avatar-encode.ts`, which this file may not
+ * import), or the route would 413 a photo we chose to fetch.
+ */
 const MAX_DOWNLOAD_BYTES = 5_000_000;
 /** Target max for the sharp-decode fallback path (raw bytes, unresized). */
 const MAX_PERSIST_BYTES = 220_000;
@@ -56,15 +68,67 @@ function warnMissingBlobOnce() {
   );
 }
 
-/** Thrown when Microlink quota is exhausted. */
-export class MicrolinkRateLimitError extends Error {
+/**
+ * A photo source refused us for quota. This is a DEFERRAL, never a "no photo".
+ *
+ * Both free tiers are quota'd too, not just Microlink: unavatar.io's anonymous limit is
+ * 25 lookups a day (`x-rate-limit-limit: 25`, `retry-after` ~86,400s). Before this class
+ * existed, a 429 from Unavatar came back from `downloadImageBytes` as a plain null, the
+ * backfill recorded the contact as having no photo, and `profile_image_checked_at` then
+ * muted it for 30 days — so after the first 25 lookups of a day, the rest of the network
+ * was written off for a month, even though ~70% of LinkedIn profiles DO resolve there.
+ */
+export class AvatarSourceRateLimitError extends Error {
   readonly resetAt: number;
+  readonly source: string;
 
-  constructor(resetAt: number) {
-    super("LinkedIn photo lookup rate limit hit");
-    this.name = "MicrolinkRateLimitError";
+  constructor(resetAt: number, source: string, message = `${source} rate limit hit`) {
+    super(message);
+    this.name = "AvatarSourceRateLimitError";
     this.resetAt = resetAt;
+    this.source = source;
   }
+}
+
+/** Thrown when Microlink quota is exhausted. */
+export class MicrolinkRateLimitError extends AvatarSourceRateLimitError {
+  constructor(resetAt: number) {
+    super(resetAt, "microlink", "LinkedIn photo lookup rate limit hit");
+    this.name = "MicrolinkRateLimitError";
+  }
+}
+
+export type AvatarQuotaSource = "unavatar" | "microlink";
+
+/**
+ * Takes one lookup from the user's daily slice and from the app-wide allowance for this
+ * source. Returns the deferral to throw when either is spent, or null to go ahead.
+ * `userId: null` is for tests and scripts only. A limiter that cannot count defers too:
+ * spending quota we cannot see is exactly what this exists to stop.
+ */
+export async function claimAvatarSourceLookup(
+  source: AvatarQuotaSource,
+  userId: string | null
+): Promise<AvatarSourceRateLimitError | null> {
+  if (userId === null) return null;
+  const label = source === "unavatar" ? "unavatar.io" : "microlink";
+  try {
+    await consumeBucket("avatarSource.user", `${source}:${userId}`, RATE_LIMITS.avatarSourceUser);
+    if (!(source === "microlink" && process.env.MICROLINK_API_KEY?.trim())) {
+      await consumeBucket("avatarSource.shared", source, RATE_LIMITS.avatarSourceShared);
+    }
+    return null;
+  } catch (err) {
+    const retryAfterMs = isRateLimitedError(err) ? err.retryAfterSec * 1000 : 60_000;
+    return new AvatarSourceRateLimitError(Date.now() + retryAfterMs, label);
+  }
+}
+
+/** Process-local Unavatar cooldown (ms since epoch). Same shape as Microlink's. */
+let unavatarCooldownUntil = 0;
+
+function noteUnavatarRateLimit(resetAtMs: number) {
+  unavatarCooldownUntil = Math.max(unavatarCooldownUntil, resetAtMs, Date.now() + 60_000);
 }
 
 /** Process-local Microlink cooldown (ms since epoch). */
@@ -113,7 +177,11 @@ function parseRateLimitReset(res: Response): number {
 }
 
 function noteMicrolinkHeaders(res: Response) {
-  const remaining = Number(res.headers.get("x-rate-limit-remaining"));
+  // An absent header is not "zero remaining": `Number(null)` is 0, which used to trip a
+  // cooldown on every Microlink response that simply omitted the header.
+  const raw = res.headers.get("x-rate-limit-remaining");
+  if (raw === null || raw.trim() === "") return;
+  const remaining = Number(raw);
   if (Number.isFinite(remaining) && remaining <= 0) {
     noteMicrolinkRateLimit(parseRateLimitReset(res));
   }
@@ -134,52 +202,96 @@ export function parseImageDataUrl(
 }
 
 /**
- * Resolve a LinkedIn profile photo and return a durable Blob URL.
- * Tries Microlink (OG image) first, then Unavatar as a fallback.
- * Throws {@link MicrolinkRateLimitError} only when Microlink is limited
- * and the Unavatar fallback also fails (so callers can surface quota).
+ * Resolve a LinkedIn profile photo and return a durable URL.
+ *
+ * Unavatar runs first: it costs nothing and, measured against 25 real LinkedIn
+ * profiles, returned a genuine headshot for 18 of them (a generated SVG silhouette for
+ * the rest, which `downloadImageBytes` rejects). It is NOT unmetered — the anonymous
+ * limit is 25 lookups a day — so both tiers are quota'd, and together they give roughly
+ * 50 lookups a day rather than 25.
+ *
+ * Throws {@link AvatarSourceRateLimitError} whenever a quota'd tier refused us and no
+ * photo was found, so callers defer the contact instead of recording it as photoless.
+ *
+ * `userId` pays for the lookup from its daily share; null only in tests.
  */
 export async function fetchLinkedInPhotoUrl(
   contactId: string,
-  linkedinUrl: string
+  linkedinUrl: string,
+  userId: string | null
 ): Promise<string | null> {
   const slug = linkedinSlug(linkedinUrl);
   if (!slug) return null;
+
+  // Free tier, but quota'd: 25 anonymous lookups a day. Nothing stores this URL —
+  // `persistAvatar` returns inline/Blob bytes.
+  let deferred: AvatarSourceRateLimitError | null = null;
+  if (Date.now() < unavatarCooldownUntil) {
+    deferred = new AvatarSourceRateLimitError(unavatarCooldownUntil, "unavatar.io");
+  } else {
+    const budget = await claimAvatarSourceLookup("unavatar", userId);
+    if (budget) {
+      deferred = budget;
+    } else {
+      const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
+      try {
+        const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
+        if (fromUnavatar) return fromUnavatar;
+      } catch (err) {
+        if (!(err instanceof AvatarSourceRateLimitError)) throw err;
+        noteUnavatarRateLimit(err.resetAt);
+        deferred = err;
+      }
+    }
+  }
+
+  // Metered tier. Report exhaustion rather than silently returning "no photo".
+  if (isMicrolinkRateLimited()) {
+    throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
+  }
+  const microlinkBudget = await claimAvatarSourceLookup("microlink", userId);
+  if (microlinkBudget) throw deferred ?? microlinkBudget;
 
   const normalized = linkedinUrl.includes("linkedin.com/in/")
     ? linkedinUrl.trim()
     : `https://www.linkedin.com/in/${slug}`;
 
-  let microlinkLimited = false;
-
-  if (!isMicrolinkRateLimited()) {
-    try {
-      const imageUrl = await resolveLinkedInOgImage(normalized);
-      if (imageUrl) {
-        const photoUrl = await downloadAndPersistAvatar(contactId, imageUrl);
-        if (photoUrl) return photoUrl;
-      }
-    } catch (err) {
-      // A broken photo store fails the same way for Unavatar — don't retry it.
-      if (err instanceof AvatarStorageError) throw err;
-      if (err instanceof MicrolinkRateLimitError) {
-        microlinkLimited = true;
-      }
-      // Fall through to Unavatar.
+  try {
+    const imageUrl = await resolveLinkedInOgImage(normalized);
+    if (imageUrl) {
+      const photoUrl = await downloadAndPersistAvatar(contactId, imageUrl);
+      if (photoUrl) return photoUrl;
     }
-  } else {
-    microlinkLimited = true;
+  } catch (err) {
+    // A broken photo store, or exhausted quota, are both worth surfacing.
+    if (err instanceof AvatarStorageError) throw err;
+    if (err instanceof AvatarSourceRateLimitError) throw err;
   }
 
-  // Unavatar resolves public LinkedIn avatars without spending Microlink quota.
-  const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
-  const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
-  if (fromUnavatar) return fromUnavatar;
-
-  if (microlinkLimited) {
-    throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
-  }
+  // Microlink found nothing, but Unavatar never got a real look: defer, don't fail.
+  if (deferred) throw deferred;
   return null;
+}
+
+/**
+ * Resolve a photo from Gravatar by email address. Free and unmetered, so it runs
+ * alongside Unavatar ahead of Microlink's quota.
+ *
+ * `d=404` is load-bearing. Without it Gravatar happily serves a generated identicon
+ * for every address on earth, so we would persist a placeholder for every contact
+ * and — because that placeholder is a perfectly valid JPEG — never look again.
+ */
+export async function fetchGravatarPhotoUrl(
+  contactId: string,
+  email: string
+): Promise<string | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized.includes("@")) return null;
+  const hash = createHash("sha256").update(normalized, "utf8").digest("hex");
+  return downloadAndPersistAvatar(
+    contactId,
+    `https://gravatar.com/avatar/${hash}?s=256&d=404`
+  );
 }
 
 /**
@@ -192,11 +304,33 @@ export async function downloadAndPersistAvatar(
   imageUrl: string
 ): Promise<string | null> {
   if (isDurableAvatarUrl(imageUrl)) return imageUrl;
-  if (isUnusableAvatarUrl(imageUrl)) return null;
+  if (isUnfetchableImageUrl(imageUrl)) return null;
 
   const downloaded = await downloadImageBytes(imageUrl);
   if (!downloaded) return null;
   return persistAvatar(contactId, downloaded.buf, downloaded.contentType);
+}
+
+/**
+ * A photograph is never a vector.
+ *
+ * Unavatar answers LinkedIn lookups with HTTP 200 and a GENERATED PERSON SILHOUETTE
+ * in SVG — it ignores `fallback=false` for that provider. sharp decodes SVG happily,
+ * so without this guard the placeholder is stored as though it were a real headshot
+ * and `isDurableAvatarUrl` then reports it as done, meaning the contact is never
+ * looked at again. Every LinkedIn contact would end up with a permanent fake face.
+ *
+ * A silhouette that admits it is a silhouette is strictly better than one that lies:
+ * the honest one is retryable and reads as "no photo yet".
+ */
+function isVectorContentType(contentType: string): boolean {
+  return contentType === "image/svg+xml" || contentType === "image/svg";
+}
+
+/** Magic-byte check, for placeholders whose content-type does not admit to being SVG. */
+function looksLikeSvg(buf: Buffer): boolean {
+  const head = buf.subarray(0, 256).toString("utf8").trimStart().toLowerCase();
+  return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"));
 }
 
 export async function downloadImageBytes(
@@ -204,7 +338,7 @@ export async function downloadImageBytes(
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   const fromDataUrl = parseImageDataUrl(imageUrl);
   if (fromDataUrl) return fromDataUrl;
-  if (isUnusableAvatarUrl(imageUrl)) return null;
+  if (isUnfetchableImageUrl(imageUrl)) return null;
 
   try {
     const res = await fetch(imageUrl, {
@@ -217,19 +351,75 @@ export async function downloadImageBytes(
       signal: AbortSignal.timeout(8_000),
       redirect: "follow",
     });
+    if (res.status === 429) {
+      throw new AvatarSourceRateLimitError(parseRateLimitReset(res), new URL(res.url || imageUrl).host);
+    }
     if (!res.ok) return null;
 
     const contentType = (res.headers.get("content-type") || "image/jpeg")
       .split(";")[0]
       .trim();
     if (!contentType.startsWith("image/")) return null;
+    if (isVectorContentType(contentType)) return null;
 
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.byteLength === 0 || buf.byteLength > MAX_DOWNLOAD_BYTES) return null;
+    // Sniff too: a placeholder served as image/png that is really SVG still counts.
+    if (looksLikeSvg(buf)) return null;
     return { buf, contentType };
-  } catch {
+  } catch (err) {
+    // Quota is not a missing image — let callers defer instead of writing the contact off.
+    if (err instanceof AvatarSourceRateLimitError) throw err;
     return null;
   }
+}
+
+/**
+ * How long one encode round trip may take. It resizes a photo of at most 5MB, but it can
+ * land on a cold function, and its caller is a backfill tick with a 15s budget.
+ */
+const AVATAR_ENCODE_TIMEOUT_MS = 8_000;
+
+/** The bytes are not an image the encoder can decode — the caller keeps them as they are. */
+class UndecodableImageError extends Error {}
+
+/** The encoder route itself failed — not the same thing as an image it cannot decode. */
+class AvatarEncoderUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AvatarEncoderUnavailableError";
+  }
+}
+
+/**
+ * Encode through `/api/avatars/encode`, the one function that carries `sharp`.
+ *
+ * On Vercel `next.config.ts` strips `sharp` from every other function's bundle (it was
+ * over a gigabyte of Functions Storage per deployment), so this is the only way to reach
+ * it from there. Targets `getAppBaseUrl()` via `internalFetch`, like every other internal
+ * kick — which means a preview deployment encodes on production.
+ */
+async function encodeViaRoute(buf: Buffer): Promise<Buffer> {
+  let res: Response;
+  try {
+    res = await internalFetch("/api/avatars/encode", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: new Uint8Array(buf),
+      signal: AbortSignal.timeout(AVATAR_ENCODE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new AvatarEncoderUnavailableError("The photo encoder could not be reached", {
+      cause: err,
+    });
+  }
+  if (res.status === 422) throw new UndecodableImageError();
+  if (!res.ok) {
+    throw new AvatarEncoderUnavailableError(`The photo encoder answered ${res.status}`);
+  }
+  const out = Buffer.from(await res.arrayBuffer());
+  if (out.byteLength === 0) throw new AvatarEncoderUnavailableError("The photo encoder sent no bytes");
+  return out;
 }
 
 /**
@@ -241,16 +431,24 @@ async function encodeAvatar(
   contentType: string
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   try {
-    const sharp = (await import("sharp")).default;
-    const out = await sharp(buf)
-      .rotate()
-      .resize(256, 256, { fit: "cover", withoutEnlargement: true })
-      .jpeg({ quality: 82, mozjpeg: true })
-      .toBuffer();
-    if (out.byteLength === 0) return null;
+    // `VERCEL` is exactly what gates the trace exclusion in next.config.ts: where `sharp` is
+    // missing from this function's bundle we go over HTTP, everywhere else (dev, local
+    // builds, tsx scripts) it is called directly.
+    let out: Buffer;
+    if (process.env.VERCEL) {
+      out = await encodeViaRoute(buf);
+    } else {
+      const { encodeAvatarJpeg } = await import("@/lib/avatar-encode");
+      out = await encodeAvatarJpeg(buf);
+    }
     return { buf: out, contentType: "image/jpeg" };
-  } catch {
-    // Fall back to raw bytes when sharp can't decode (rare formats).
+  } catch (err) {
+    // A broken encoder is a fault, and unlike an undecodable image it would otherwise store
+    // full-size photos everywhere with nothing to say so. Report it, then degrade.
+    if (err instanceof AvatarEncoderUnavailableError) {
+      reportError(err, { where: "avatar.encode", level: "warning" });
+    }
+    // Fall back to raw bytes when the image can't be encoded (rare formats).
     if (
       !contentType.startsWith("image/") ||
       buf.byteLength === 0 ||
@@ -287,12 +485,7 @@ async function persistAvatar(
   }
 
   try {
-    const blob = await put(`avatars/${contactId}.jpg`, encoded.buf, {
-      access: "public",
-      contentType: encoded.contentType,
-      addRandomSuffix: false,
-    });
-    return blob.url;
+    return await putAvatarBlob(contactId, encoded.buf, encoded.contentType);
   } catch (err) {
     throw new AvatarStorageError(
       `Couldn't save the photo to Blob storage: ${

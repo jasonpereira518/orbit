@@ -19,6 +19,8 @@ import {
 import type { OutreachChannel } from "@/lib/outreach-types";
 import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
 import { useState } from "react";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type ProspectInfo = {
   email: string | null;
@@ -58,9 +60,13 @@ export function OutreachActions({
         : body;
     navigator.clipboard.writeText(text);
     start(async () => {
-      await markMessageAction({ messageId, status: "copied" });
-      toast.success("Copied to clipboard");
-      refresh();
+      try {
+        await markMessageAction({ messageId, status: "copied" });
+        toast.success(TOAST_COPY.copied);
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+      }
     });
   }
 
@@ -75,24 +81,32 @@ export function OutreachActions({
     } else if (channel === "linkedin" && prospect.linkedinUrl) {
       navigator.clipboard.writeText(body);
       window.open(buildLinkedInUrl(prospect.linkedinUrl), "_blank");
-      toast.success("Draft copied — paste in LinkedIn messaging");
+      toast.success("Draft copied — paste it into LinkedIn");
     }
 
     start(async () => {
-      await markMessageAction({ messageId, status: "opened" });
-      refresh();
+      try {
+        await markMessageAction({ messageId, status: "opened" });
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+      }
     });
   }
 
   function handleSend() {
     start(async () => {
       try {
-        await sendOutreachMessageAction(messageId);
+        const res = await sendOutreachMessageAction(messageId);
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
         toast.success(`${channelLabel(channel)} sent`);
         setDangerOpen(false);
         refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Send failed");
+        toast.error(friendlyError(err, TOAST_COPY.sendFailed));
       }
     });
   }

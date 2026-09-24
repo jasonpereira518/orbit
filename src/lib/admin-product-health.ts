@@ -14,6 +14,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { countInt, num } from "@/lib/admin-metrics";
+import { AI_OPERATION_IDS, type AiOperationId } from "@/lib/ai-operations";
 
 /**
  * Product reads that `/admin/growth` cannot answer from `admin-trends.ts`.
@@ -29,28 +30,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Every `operation` a `recordUsage` call site can emit, so the screen can show what has
  * NEVER been used — which is the most decision-useful output on the page and is invisible
- * to a GROUP BY, since absent rows produce no group.
- *
- * Keep in sync with the `operation:` literals in `src/lib/ai.ts` and the `lib/*` callers.
+ * to a GROUP BY, since absent rows produce no group. Derived from the operation registry,
+ * which `tsc` holds every call site to.
  */
-export const KNOWN_OPERATIONS = [
-  "capture.parse",
-  "capture.parse.identify",
-  "capture.parse.details",
-  "capture.parse.excerpt-retry",
-  "capture.dates",
-  "capture.transcribe.audio",
-  "capture.transcribe.images",
-  "chat.answer",
-  "search.embed",
-  "search.embed.batch",
-  "contact.summary",
-  "followup.draft",
-  "outreach.draft",
-  "outreach.apollo",
-  "import.linkedin.timeline",
-  "import.enrich",
-] as const;
+export const KNOWN_OPERATIONS: readonly AiOperationId[] = AI_OPERATION_IDS;
 
 export type FeatureAdoptionRow = {
   operation: string;
