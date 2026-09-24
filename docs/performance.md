@@ -9,6 +9,8 @@ How Orbit stays fast, what guards it, and how to measure before guessing.
 | `npm run perf:pages` (`scripts/smoke-page-budgets.ts`) | CI (`npm test`) | The dashboard, graph and notification-panel scans pulling `notes` or base64 avatars again, or their statement counts creeping up. 3,000-contact fixture. |
 | `scripts/smoke-write-path.ts` | CI | An embedding-provider call sneaking back onto the request path of a contact save. |
 | `scripts/smoke-import-perf.ts` | by hand (`npm run test:smoke`) | Per-row statements in the import engine (wall-clock budgets, so not in CI). |
+| `scripts/smoke-behavior-golden.ts` | CI | ANY change in what the MCP server (`tools/list` + every tool), the extension API, `/api/v1`, the page loaders, the contact/settings actions return, or in what their writes leave in the database. A characterization snapshot (`scripts/fixtures/behavior-golden.json`) for behavior-preserving work: re-record with `--update` only on code you trust, ideally in a worktree at the commit before your change. |
+| `scripts/smoke-due-follow-ups-parity.ts` | CI | `loadDueFollowUps` (MCP, `/api/v1/followups`, the `followup.due` webhook) drifting from the dashboard's due list. |
 | `perf.slow` rows in `error_events` | production | Any traced call (`src/lib/perf-trace.ts`) over 10 s, by account. The ops sweep alerts on a burst. |
 | Vercel Speed Insights | production | Core Web Vitals per route, in the Vercel dashboard. |
 
@@ -35,11 +37,14 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 - **Loops that await the network per item get a deadline** (`src/lib/time-budget.ts`); unattempted items are pending for the next tick, never a longer function.
 - **One poll per tab.** Anything periodic joins the app pulse (`src/lib/app-pulse.ts`) rather than adding a timer.
 - **Wrap anything that can take seconds in `traced()`** so a slow account leaves a row you can find later.
+- **Heavy SDKs load on first use.** The AI SDKs (inside `ai-access.ts`'s client builders and `ai-key-check.ts`), `@vercel/blob` (`blob-lazy.ts`), Resend and Twilio are imported where a request actually uses them; a static import of any of them lands on nearly every route's cold start.
 
 ## Measuring
 
 - Statement shape and count: `DEBUG_QUERIES=1 npx tsx scripts/smoke-page-budgets.ts` lists every statement a page issues.
 - Real plans: enable Drizzle's `logger: true` locally, paste the SQL into Neon's SQL editor with `EXPLAIN (ANALYZE, BUFFERS)`, and read `shared read` — that is the cold-storage cost.
-- Bundles: `npm run analyze` (`next experimental-analyze`, Turbopack-native).
+- Bundles: `npm run analyze` (`next experimental-analyze`, Turbopack-native). For numbers per route, `node scripts/dev/bundle-report.mjs` after a build: first-load client JS (raw and gzip), preloaded fonts, and the server JS each route's function traces (what a cold start evaluates), API routes included.
+- Round trips, row width and CPU for the hot read paths (dashboard, graph, contacts, every MCP tool, the extension): `scripts/dev/efficiency-bench.ts` seeds a 3,000-contact account once, then reports statements, sequential depth (wall time under `ORBIT_SIM_DB_LATENCY_MS` ÷ that latency), payload and CPU. Run it at two commits against copies of the same seeded directory to compare.
+- `cache()` only deduplicates inside a React render. In route handlers (MCP, extension, `/api/v1`) and Server Actions it is a pass-through, so a helper that is "request-cached" on a page runs again on every call there — pass the row you already hold instead (`entitlementsFromSettings`, `resolveApolloKey(userId, row)`).
 - Lighthouse on `/`, `/pricing`, `/dashboard` in the in-app browser before and after a change to the marketing tree or the shell.
 - Real-user Core Web Vitals: weekly, or after any change touching `/graph`, `/`, or `/capture` — the three heaviest client trees (the sky-atlas graph, the landing page's three.js globe, capture's lazy-loaded form) — check Speed Insights in the Vercel dashboard, filtered to Production, for LCP/INP/CLS regressions on those routes specifically. Complements the Lighthouse check above with real traffic instead of a synthetic run.
