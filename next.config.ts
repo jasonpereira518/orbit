@@ -6,6 +6,7 @@ import {
   hostMatchValue,
   isStealth,
   stealthRedirects,
+  localWaitlistRewrites,
   waitlistHost,
   waitlistRedirects,
   waitlistRewrites,
@@ -57,7 +58,7 @@ const nextConfig: NextConfig = {
     return [...waitlistRedirects(), ...stealthRedirects()];
   },
   async rewrites() {
-    return { beforeFiles: waitlistRewrites(), afterFiles: [], fallback: [] };
+    return { beforeFiles: [...waitlistRewrites(), ...localWaitlistRewrites()], afterFiles: [], fallback: [] };
   },
   env: {
     // Inlined at build time; /api/health reports it so "which build is this" has an answer

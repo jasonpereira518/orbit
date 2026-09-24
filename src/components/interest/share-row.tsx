@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Share2 } from "lucide-react";
+import { Check, Copy, MessageCircle, Share2 } from "lucide-react";
 import { motion } from "motion/react";
 import { SHARE_TEXT, SHARE_TITLE, buildShareUrl, type InterestTicket } from "@/lib/interest-list";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
@@ -12,10 +12,10 @@ const PILL =
   "inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e8f3f1]/[0.14] px-3 text-sm text-[#e8f3f1] transition-colors hover:border-[#e8f3f1]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60";
 
 /**
- * The pass's share tools: the invite link in a read-only field, Copy, X, LinkedIn, and —
+ * The pass's share tools: the invite link in a read-only field, Copy, Messages (copies the intro and the link), LinkedIn, and —
  * only after mount, only where the browser has one — the native share sheet.
  *
- * Share intents open in a new tab; the text is prewritten (`SHARE_TEXT`) and the URL is the
+ * LinkedIn opens in a new tab; the text is prewritten (`SHARE_TEXT`) and the URL is the
  * `?ref=` link, so whoever follows it lands on the invited state and the referral counts.
  * `pageUrl` is the waitlist page on its own domain (`getWaitlistPageUrl`).
  */
@@ -24,14 +24,17 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
   const url = buildShareUrl(pageUrl, ticket.shareToken);
   const text = SHARE_TEXT;
   const [copied, setCopied] = useState(false);
+  const [messageCopied, setMessageCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const timer = useRef<number | null>(null);
+  const messageTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setCanShare(typeof navigator !== "undefined" && typeof navigator.share === "function");
     return () => {
       if (timer.current) window.clearTimeout(timer.current);
+      if (messageTimer.current) window.clearTimeout(messageTimer.current);
     };
   }, []);
 
@@ -66,7 +69,22 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
     }
   }
 
-  const x = `https://twitter.com/intent/tweet?${new URLSearchParams({ text, url })}`;
+  // Messages has no web share intent, so this copies the intro and the link together, ready
+  // to paste into any thread.
+  async function copyMessage() {
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      ok = true;
+    } catch {
+      ok = false;
+    }
+    if (!ok) return;
+    setMessageCopied(true);
+    if (messageTimer.current) window.clearTimeout(messageTimer.current);
+    messageTimer.current = window.setTimeout(() => setMessageCopied(false), 1600);
+  }
+
   const linkedin = `https://www.linkedin.com/sharing/share-offsite/?${new URLSearchParams({ url })}`;
 
   const enter = (i: number) =>
@@ -97,9 +115,10 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
         </button>
       </motion.div>
       <motion.div {...enter(1)} className="mt-2 flex flex-wrap gap-2">
-        <a href={x} target="_blank" rel="noopener noreferrer" className={PILL}>
-          Share on X
-        </a>
+        <button type="button" onClick={copyMessage} className={PILL} aria-live="polite">
+          {messageCopied ? <Check className="size-4" aria-hidden="true" /> : <MessageCircle className="size-4" aria-hidden="true" />}
+          {messageCopied ? "Copied — paste in Messages" : "Share on Messages"}
+        </button>
         <a href={linkedin} target="_blank" rel="noopener noreferrer" className={PILL}>
           LinkedIn
         </a>
