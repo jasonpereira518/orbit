@@ -20,6 +20,30 @@ node scripts/bench/app-responsiveness.mjs http://localhost:3001 never,opened,ref
 npx tsx scripts/bench/constellation-layout.ts
 ```
 
+### Open, zoom and pan — the before/after method
+
+`constellation-interactions.mjs` measures the three core interactions the same way every time,
+so two builds can be compared. Full method in the script's header; in short:
+
+```bash
+npx tsx scripts/bench/constellation-fixtures.ts 100,1000,2500,5000,10000   # payloads, .bench-data/
+ORBIT_BENCH=1 npx next build --profile
+node scripts/bench/serve-static-bench.mjs 3417 --h2 &                       # HTTP/2, as production
+# the other build (e.g. a worktree at the base commit), same server code:
+BENCH_NEXT_DIR=/path/to/base/.next node scripts/bench/serve-static-bench.mjs 3418 --h2 &
+node scripts/bench/constellation-interactions.mjs 100,1000,2500,5000,10000 --reps 5 \
+  --ab before=https://localhost:3418/bench/constellation,after=https://localhost:3417/bench/constellation --out ab.json
+node scripts/bench/constellation-report.mjs ab.json
+```
+
+- **Open**: the payload is fetched (`?data=fetch`) with 40ms emulated RTT and a cold cache; the
+  app's own `constellation:*` performance marks split it into data → renderer → layout → paint
+  → interactive (`src/lib/graph/open-marks.ts`; also visible in DevTools' Timings track).
+- **Zoom**: 0.05 → 2.4 (and back) about the sun over exactly 3s on an exponential curve.
+- **Pan**: a 240px circle at the opening framing, and a 1,800px line at zoom 0.5, 3s each.
+- Per gesture: average FPS, minimum FPS (1000 ÷ longest frame), long tasks (> 50ms).
+- `--ab` interleaves the two builds, alternating which goes first; medians of `--reps`.
+
 `--ablate` strips one visual layer at a time (`nolabels`, `nonebula`, `nodust`, `noanim`,
 `notwinkle`, `novpwill`, …) to price it. It is a diagnostic, not a
 measurement of the product: it answers "which part of the sky costs the frames".
@@ -107,6 +131,132 @@ The structural numbers, from `constellation-browser.mjs` on the same two builds:
 | 10,000 | 196 → 34 | 2,067 → 559 | 25.9 → 21.5 |
 
 `--ablate nonebula` now hides the canvas (`.constellation-nebula-wash`) rather than the boxes.
+
+### Open, zoom and pan, before → after the open pass (September 24, 2026)
+
+`constellation-interactions.mjs --ab`, the base commit (instrumentation and method only) against
+the fixes, interleaved, M4 Pro, 1440x900, HTTP/2 with 40ms RTT, cold cache. Machine under heavy
+unrelated load (load average 8–41), which the interleaving and the control filter are for.
+
+| Scenario | Contacts | Metric | before | after | Change |
+|---|---:|---|---:|---:|---:|
+| Open | 100 | Time to interactive (ms) | 689 | 425 | -38.3% |
+| Open | 100 | Data fetch start → interactive (ms) | 532 | 190 | -64.3% |
+| Open | 100 | Long tasks until interactive | 0 | 0 | 0% |
+| Open | 1,000 | Time to interactive (ms) | 655 | 330 | -49.6% |
+| Open | 1,000 | Data fetch start → interactive (ms) | 515 | 176 | -65.8% |
+| Open | 1,000 | Long tasks until interactive | 0 | 0 | 0% |
+| Open | 2,500 | Time to interactive (ms) | 678 | 347 | -48.8% |
+| Open | 2,500 | Data fetch start → interactive (ms) | 523 | 210 | -59.8% |
+| Open | 2,500 | Long tasks until interactive | 0 | 0 | 0% |
+| Open | 5,000 | Time to interactive (ms) | 698 | 381 | -45.4% |
+| Open | 5,000 | Data fetch start → interactive (ms) | 563 | 232 | -58.8% |
+| Open | 5,000 | Long tasks until interactive | 0 | 1 | new |
+| Open | 10,000 | Time to interactive (ms) | 697 | 465 | -33.3% |
+| Open | 10,000 | Data fetch start → interactive (ms) | 565 | 331 | -41.4% |
+| Open | 10,000 | Long tasks until interactive | 1 | 2 | +100.0% |
+| Zoom in (0.05 → 2.4, 3s) | 100 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 100 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 100 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom in (0.05 → 2.4, 3s) | 1,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 1,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 1,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom in (0.05 → 2.4, 3s) | 2,500 | Avg FPS | 58.7 | 58.7 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 2,500 | Min FPS | 29.9 | 29.9 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 2,500 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom in (0.05 → 2.4, 3s) | 5,000 | Avg FPS | 59.0 | 59.0 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 5,000 | Min FPS | 29.9 | 29.9 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 5,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom in (0.05 → 2.4, 3s) | 10,000 | Avg FPS | 58.7 | 59.0 | +0.5% |
+| Zoom in (0.05 → 2.4, 3s) | 10,000 | Min FPS | 20.0 | 29.9 | +49.5% |
+| Zoom in (0.05 → 2.4, 3s) | 10,000 | Long tasks (>50ms) | 1 | 0 | -100.0% |
+| Zoom out (2.4 → 0.05, 3s) | 100 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 100 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 100 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom out (2.4 → 0.05, 3s) | 1,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 1,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 1,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom out (2.4 → 0.05, 3s) | 2,500 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 2,500 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 2,500 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom out (2.4 → 0.05, 3s) | 5,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 5,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 5,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom out (2.4 → 0.05, 3s) | 10,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 10,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Zoom out (2.4 → 0.05, 3s) | 10,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, overview (circle, 3s) | 100 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, overview (circle, 3s) | 100 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, overview (circle, 3s) | 100 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, overview (circle, 3s) | 1,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, overview (circle, 3s) | 1,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, overview (circle, 3s) | 1,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, overview (circle, 3s) | 2,500 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, overview (circle, 3s) | 2,500 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, overview (circle, 3s) | 2,500 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, overview (circle, 3s) | 5,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, overview (circle, 3s) | 5,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, overview (circle, 3s) | 5,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, overview (circle, 3s) | 10,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, overview (circle, 3s) | 10,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, overview (circle, 3s) | 10,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 100 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 100 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 100 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 1,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 1,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 1,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 2,500 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 2,500 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 2,500 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 5,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 5,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 5,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 10,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 10,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Pan, close-up @0.5 (1,800px, 3s) | 10,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+
+**Open, by stage** (median ms; `constellation:*` marks)
+
+| Contacts | TTI before (range) | TTI after (range) | boot ms | data ms | renderer ms | layout ms | paint ms | settle ms |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 689 (659–826) | 425 (314–447) | 157 → 232 | 45 → 46 | 116 → 27 | 4 → 3 | 350 → 103 | 14 → 11 |
+| 1,000 | 655 (631–694) | 330 (314–346) | 140 → 167 | 48 → 54 | 121 → 16 | 14 → 10 | 317 → 66 | 15 → 16 |
+| 2,500 | 678 (663–681) | 347 (327–360) | 147 → 140 | 48 → 55 | 120 → 18 | 22 → 17 | 315 → 103 | 16 → 14 |
+| 5,000 | 698 (679–713) | 381 (364–398) | 140 → 140 | 55 → 64 | 126 → 18 | 39 → 28 | 328 → 114 | 16 → 16 |
+| 10,000 | 697 (696–747) | 465 (446–472) | 134 → 137 | 60 → 73 | 135 → 23 | 73 → 53 | 286 → 175 | 7 → 4 |
+
+Medians over the repetitions kept per size (before/after) — 100: 4/3, 1,000: 4/5, 2,500: 5/5, 5,000: 5/5, 10,000: 5/5. Dropped for a control frame rate under 55fps: before 100: 1, after 100: 2. Median control FPS on an empty page (before / after): 100: 60.3 / 60.6, 1,000: 60.25 / 60.4, 2,500: 60.4 / 60.3, 5,000: 60.7 / 60.6, 10,000: 60.2 / 60.6.
+Opening zoom (before / after) — the framing must not change: 100: 0.157 / 0.157, 1,000: 0.05 / 0.05, 2,500: 0.05 / 0.05, 5,000: 0.05 / 0.05, 10,000: 0.05 / 0.05.
+
+What moved the open, stage by stage:
+
+- **paint** (−180 to −250ms, the largest): the chart's two `next/dynamic` boundaries suspended
+  after the payload arrived, and React holds a boundary's content until 300ms after its fallback
+  appeared. The sky was ready by ~440ms and shown at ~640ms. `constellation-modules.ts` renders
+  the chart once its modules are loaded, with no Suspense fallback. The rest is the first
+  framing's refine waiting two animation frames for React Flow's measurements, not a flat 100ms.
+- **renderer** (−100ms): the shell and renderer chunks are preloaded from `ConstellationIntro`,
+  alongside the payload, instead of after it and one after the other.
+- **layout** (−20ms at 10,000, −25%): numeric clearance-grid keys and `hashUnitStream`. The same
+  positions: every `constellation-layout.ts` fingerprint is unchanged.
+- **data** got slightly slower (+6 to +13ms): the payload now shares the connection and the main
+  thread with the chunk downloads it used to wait for.
+
+Not improved, and why:
+
+- **Zoom and pan** were already at the frame-rate ceiling from the passes above. The source-mapped
+  profile of a full zoom at 2,500 has the main thread ~72% idle, with no long tasks and React
+  commits under 6ms. What is left is one dropped frame per zoom-in at 2,500 and up, in the
+  0.18–0.25 band where ~250 labelled stars mount (style and layerize, not script). Rare 100–250ms
+  frames with no main-thread work behind them came and went with machine load, on both builds.
+- **Long tasks at 5,000–10,000 went up** (0 → 1, 1 → 2; ~150ms total at 10,000 against ~75ms).
+  Without the Suspense boundaries, layout and the first render run back to back in one task
+  instead of being spread across the throttled reveal. The open is 230ms sooner, but at 10,000
+  the page is unresponsive for up to ~90ms at a time during it. A layout worker would move the
+  53ms layout off the main thread (but not off the critical path); not done here.
+- **Layout is still recomputed from scratch** on every open. The whole-sky layout needs every
+  contact (clusters pack by size), so a partial payload cannot draw a stable first frame.
 
 ### The rest of the app
 

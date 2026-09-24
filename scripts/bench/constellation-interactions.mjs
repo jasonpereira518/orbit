@@ -274,7 +274,7 @@ const median = (xs) => {
   const v = xs.filter((x) => typeof x === "number").sort((a, b) => a - b);
   if (!v.length) return null;
   const m = Math.floor(v.length / 2);
-  return v.length % 2 ? v[m] : Math.round(((v[m - 1] + v[m]) / 2) * 10) / 10;
+  return v.length % 2 ? v[m] : Math.round(((v[m - 1] + v[m]) / 2) * 1000) / 1000;
 };
 
 /** Median of every numeric leaf across runs of the same shape. */
