@@ -135,7 +135,8 @@ check(
   "old privacy links follow",
   show(onApp("/interest/privacy")) === show({ kind: "redirect", to: "https://join.example/privacy" })
 );
-check("stealth closes the landing, pricing, connect and contact", ["/", "/pricing", "/connect", "/contact"].every((p) => (STEALTH_CLOSED_PAGES as readonly string[]).includes(p)));
+check("stealth closes pricing, connect and contact", ["/pricing", "/connect", "/contact"].every((p) => (STEALTH_CLOSED_PAGES as readonly string[]).includes(p)));
+check("stealth leaves the landing page open", !(STEALTH_CLOSED_PAGES as readonly string[]).includes("/"));
 check("stealth hides the API schema", (STEALTH_HIDDEN_API as readonly string[]).includes("/api/v1/openapi.json"));
 check("every stealth redirect is temporary, so launch undoes it", redirects.every((r) => !r.permanent));
 
