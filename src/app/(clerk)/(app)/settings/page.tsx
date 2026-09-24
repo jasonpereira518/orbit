@@ -6,6 +6,7 @@ import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
 import { TargetCompaniesSettings } from "@/components/settings/target-companies-settings";
 import { getSchools, getTargetCompanies } from "@/actions/target-companies";
+import { CreditsSettings } from "@/components/settings/credits-settings";
 import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
@@ -206,6 +207,7 @@ export default async function SettingsPage() {
           {shows("settings-help") ? (
             <HelpSettings feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)} />
           ) : null}
+          <CreditsSettings />
         </SettingsSection>
       </Group>
 
