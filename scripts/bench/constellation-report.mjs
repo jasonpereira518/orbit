@@ -69,6 +69,38 @@ const range = (runs, pick) => {
   return v.length ? `${Math.min(...v)}–${Math.max(...v)}` : "—";
 };
 
+/** A `--suite frame` run: gestures scored against the 120Hz frame budget. */
+const isFrameSuite = Object.values(B.get(sizes[0])?.gestures ?? {}).some((g) => g && "over8" in g);
+
+if (isFrameSuite) {
+  const FRAME_GESTURES = [
+    ["summary-cross", "Zoom across the summary view (0.09 ↔ 0.25)"],
+    ["pinch-trackpad", "Trackpad pinch (0.05 → 1 → 0.05)"],
+    ["wheel-notch", "Mouse-wheel notches"],
+    ["hover-sweep", "Hover star to star"],
+    ["hover-drift", "Pointer drifting over the sky"],
+    ["search-type", "Typing a search + camera flight"],
+    ["cluster-click", "Clicking a cluster (flight in)"],
+  ];
+  const pct = (g) => (g && g.frames ? `${fmt((100 * g.over8) / g.frames, 1)}%` : "—");
+  const rows = [];
+  rows.push(`| Gesture | Contacts | Frames over 8.3ms: ${before} | ${after} | Change | p95 frame ms: ${before} | ${after} | Worst frame ms: ${before} | ${after} | Long frames (LoAF): ${before} | ${after} | Commits/event: ${before} | ${after} |`);
+  rows.push("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+  for (const [key, name] of FRAME_GESTURES) {
+    for (const n of sizes) {
+      const b = B.get(n).gestures[key], a = A.get(n).gestures[key];
+      if (!b || !a) continue;
+      rows.push(
+        `| ${name} | ${fmt(n)} | ${fmt(b.over8)} (${pct(b)}) | ${fmt(a.over8)} (${pct(a)}) | ${change(b.over8, a.over8)} | ${fmt(b.workP95Ms, 1)} | ${fmt(a.workP95Ms, 1)} | ${fmt(b.workMaxMs, 1)} | ${fmt(a.workMaxMs, 1)} | ${fmt(b.loafs)} | ${fmt(a.loafs)} | ${fmt(b.commitsPerEvent, 2)} | ${fmt(a.commitsPerEvent, 2)} |`
+      );
+    }
+  }
+  console.log(rows.join("\n"));
+  const reps = sizes.map((n) => `${fmt(n)}: ${B.get(n).reps}/${A.get(n).reps}`).join(", ");
+  console.log(`\nFrame cost = main-thread time from a frame's rAF to after its paint; over 8.33ms drops a frame at 120Hz. Medians over the repetitions kept (${before}/${after}) — ${reps}. Dropped for a control frame rate under ${minControl}fps: ${dropped.length ? dropped.join(", ") : "none"}.`);
+  process.exit(0);
+}
+
 const SCENARIOS = [
   ["zoom-in", "Zoom in (0.05 → 2.4, 3s)"],
   ["zoom-out", "Zoom out (2.4 → 0.05, 3s)"],
