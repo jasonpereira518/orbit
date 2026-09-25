@@ -59,4 +59,17 @@ const existing = buildSiteInviteEmail({
 check("it signs in rather than boarding", existing.html.includes("Sign in to Orbit") && !existing.html.includes("Board Orbit"));
 check("it has no board-by date", !existing.html.includes("Board by") && !existing.text.includes("Board by"));
 
+console.log("\nTwo passes: printed for Apple Mail, still for everyone else…");
+check("the still pass is visible with no CSS at all", /<div class="still">/.test(invite.html));
+check(
+  "the printed pass ships hidden inline, Outlook included",
+  /class="kinetic" style="display:none;max-height:0;overflow:hidden;mso-hide:all;"/.test(invite.html) &&
+    invite.html.includes("<!--[if !mso]><!-->")
+);
+check("WebKit clients reveal the printed pass", /-webkit-min-device-pixel-ratio:0\)\s*\{\s*\.kinetic \{ display:block/.test(invite.html));
+check("Gmail is switched back to the still pass", invite.html.includes("u + .body .kinetic") && invite.html.includes('<body class="body"'));
+check("reduced motion cancels the animation", invite.html.includes("prefers-reduced-motion: reduce"));
+check("both passes carry the ticket link", invite.html.split(`href="${url.replace(/&/g, "&amp;")}"`).length - 1 >= 3);
+check("the printed pass is stamped", invite.html.includes(">CLEARED</div>"));
+
 console.log("\nThe invitation email reads right.");
