@@ -9,6 +9,7 @@
  * outcome lands, the other runner's UPDATE matches zero rows.
  */
 import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
 import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
@@ -45,7 +46,6 @@ export const CAPTURE_JOB_RETENTION_DAYS = 30;
 /** A job that failed this recently is still shown on /capture so the person sees why. */
 const FAILED_VISIBLE_MS = 24 * 60 * 60 * 1000;
 
-const CAPTURE_INPUT_MAX_CHARS = 100_000;
 
 // ---------------------------------------------------------------------------------------
 // The client's view
@@ -77,7 +77,7 @@ export type CaptureJobView = {
   updatedAt: string;
 };
 
-export function toCaptureJobView(row: CaptureJobRow): CaptureJobView {
+export function toCaptureJobView(row: Omit<CaptureJobRow, "sourceText">): CaptureJobView {
   return {
     id: row.id,
     status: row.status,
@@ -150,9 +150,14 @@ export async function findActiveCaptureJobs(
   userId: string,
   limit = 25,
   now = new Date()
-): Promise<CaptureJobRow[]> {
+): Promise<Omit<CaptureJobRow, "sourceText">[]> {
   const db = await getDb();
   return db.query.captureJobs.findMany({
+    // Everything but the assembled corpus the model read (`source_text`, written by the
+    // runner, up to a whole meeting transcript per job). Nothing downstream of this reads
+    // it — the page and the polling client see `toCaptureJobView`, which never has — and
+    // this list is re-fetched while a queue is in flight.
+    columns: { sourceText: false },
     where: and(
       eq(captureJobs.userId, userId),
       or(

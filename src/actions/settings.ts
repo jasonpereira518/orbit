@@ -50,12 +50,12 @@ export async function getSettings() {
   const settings = await ensureUserSettings(userId);
 
   const provider = resolveAiProvider(settings?.aiProvider);
-  // Run alongside entitlements rather than after: neither depends on the other, and
-  // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
-  // check, so serializing them would only add latency.
+  // Run alongside entitlements rather than after: neither depends on the other. The Apollo
+  // check is handed the row loaded above, so it neither re-reads user_settings nor
+  // re-derives entitlements from a second copy of it. (The AI half deliberately re-reads.)
   const [entitlements, hasApolloKey, ai] = await Promise.all([
     getEntitlements(userId),
-    userHasApolloKey(userId),
+    userHasApolloKey(userId, settings),
     getAiAccessStatus(userId),
   ]);
   // Mirrors the two runtime resolvers so this card states what would actually be used:

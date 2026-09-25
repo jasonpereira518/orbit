@@ -1,10 +1,29 @@
 "use server";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
+import { importRowProblemLine } from "@/lib/import-errors";
+import {
+  countImportPeople,
+  listImportPeople,
+  type ImportPeoplePage,
+  type ImportPersonOutcome,
+} from "@/lib/imports/import-people";
+import {
+  finishPartFromImport,
+  type FinishSummary,
+} from "@/lib/imports/import-finish";
+import { importIdsFrom, isImportId } from "@/lib/imports/import-ids";
+import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
+import {
+  performUndo,
+  previewUndo,
+  type UndoPreview,
+  type UndoResult,
+} from "@/lib/imports/import-undo";
 import {
   contacts,
   gmailConnections,
@@ -13,6 +32,7 @@ import {
   outlookConnections,
   userSettings,
   type CalendarEventRowPayload,
+  type ImportStats,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
@@ -55,7 +75,11 @@ import {
   windowCalendarEvents,
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
-import { fetchGooglePeopleContacts, getValidAccessToken, hasContactsScope } from "@/lib/gmail";
+import {
+  fetchGooglePeopleContacts,
+  getValidAccessToken,
+  hasContactsScope,
+} from "@/lib/gmail";
 import {
   fetchOutlookContacts,
   getValidAccessToken as getValidOutlookAccessToken,
@@ -64,6 +88,8 @@ import {
 import { actionFailure } from "@/lib/action-failure";
 import { lastCompletedImportAt } from "@/lib/import-history";
 import { UserFacingError } from "@/lib/errors";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { demoAddressBookPreview, recordDemoContactsImport } from "@/lib/demo-workspace-actions";
 
 function simpleHash(input: string) {
   let h = 0;
@@ -83,19 +109,26 @@ function simpleHash(input: string) {
 function linkedInMessageExternalId(
   conversationId: string,
   date: Date | null,
-  content: string
+  content: string,
 ) {
   return `li-msg:${conversationId}:${date ? date.toISOString() : "unknown"}:${simpleHash(content.slice(0, 240))}`;
 }
 
 /** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
-function hasEncodingArtifacts(rows: { firstName: string; lastName: string; company: string; position: string }[]) {
+function hasEncodingArtifacts(
+  rows: {
+    firstName: string;
+    lastName: string;
+    company: string;
+    position: string;
+  }[],
+) {
   return rows.some(
     (r) =>
       r.firstName.includes("�") ||
       r.lastName.includes("�") ||
       r.company.includes("�") ||
-      r.position.includes("�")
+      r.position.includes("�"),
   );
 }
 
@@ -104,12 +137,19 @@ function hasEncodingArtifacts(rows: { firstName: string; lastName: string; compa
  * `LinkedInExportError` is forwarded word for word: anything else is a bug, or
  * PapaParse's own wording, and was never written to be read in a toast.
  */
-async function linkedInExportErrorMessage(err: unknown, where: string): Promise<string> {
+async function linkedInExportErrorMessage(
+  err: unknown,
+  where: string,
+): Promise<string> {
   // A LinkedInExportError is about the person's file. Anything else is a parser fault, and
   // it used to be reported to them as "is it the right export?" with no trace anywhere.
   return err instanceof LinkedInExportError
     ? err.message
-    : actionFailure(err, "Couldn’t read that file — is it the LinkedIn export this card asks for?", where);
+    : actionFailure(
+        err,
+        "Couldn’t read that file — is it the LinkedIn export this card asks for?",
+        where,
+      );
 }
 
 type PreviewRefusal = { error: string };
@@ -133,12 +173,14 @@ export async function previewLinkedInCsv(csvText: string) {
   try {
     parsed = parseLinkedInConnectionsCsv(csvText);
   } catch (err) {
-    return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin"));
+    return refusal(
+      await linkedInExportErrorMessage(err, "imports.preview-linkedin"),
+    );
   }
   const { columns, rows, warnings } = parsed;
   if (hasEncodingArtifacts(rows)) {
     warnings.push(
-      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding."
+      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding.",
     );
   }
   const db = await getDb();
@@ -206,7 +248,7 @@ export async function previewLinkedInCsv(csvText: string) {
 export async function startLinkedInImport(
   csvText: string,
   fileName: string,
-  selectedIds?: string[]
+  selectedIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -253,7 +295,7 @@ export async function startLinkedInImport(
           url: row.url,
         },
       };
-    })
+    }),
   );
 
   after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
@@ -289,11 +331,329 @@ export type ImportJobStatus = {
    * job, and a "completed" toast that never mentions them hides the loss.
    */
   failedRows: number;
+  /** Drive imports: docs actually read (skipped and unchanged ones excluded). */
+  docsRead: number;
 };
 
-/** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
-export async function getImportJobStatus(importId: string): Promise<ImportJobStatus> {
+/** One row's worth of trouble, named for the person rather than for the database. */
+export type ImportRowProblem = {
+  status: "failed" | "skipped";
+  /** Who the row was about, when the payload says. */
+  who: string | null;
+  reason: string;
+};
+
+export type ImportDetail = {
+  item: ImportHistoryItem;
+  counts: { done: number; skipped: number; failed: number; pending: number };
+  problems: ImportRowProblem[];
+  /** Problems beyond the ones listed. */
+  moreProblems: number;
+  /** How many distinct people this import added, and how many it matched to someone already here. */
+  people: { added: number; existing: number };
+};
+
+/** Problem rows shown before it stops being a list and starts being a dump. */
+const IMPORT_PROBLEM_SAMPLE = 25;
+
+/**
+ * Everything the detail sheet shows for one import.
+ *
+ * This is the first thing anywhere to read `import_job_rows.error_message`. The engine has
+ * been writing a per-row reason all along — which row, and why — and until now the only
+ * signal a person got was an aggregate count with no way to find out what was in it.
+ *
+ * Rows survive as long as the import does (they cascade with it, and `purgeUserData` covers
+ * them), so this works for old imports too.
+ */
+export async function getImportDetail(
+  importId: string,
+): Promise<ImportDetail | null> {
   const userId = await requireUserId();
+  // Not a uuid, so not an import: "no such import" is the true answer, not a failed cast.
+  if (!isImportId(importId)) return null;
+  const db = await getDb();
+
+  const row = await db.query.imports.findFirst({
+    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+  });
+  if (!row) return null;
+
+  // One grouped count, served by `import_job_rows_import_status_idx`.
+  const grouped = rowsOf<{ status: string; n: number }>(
+    await db
+      .select({ status: importJobRows.status, n: sql<number>`count(*)::int` })
+      .from(importJobRows)
+      .where(
+        and(
+          eq(importJobRows.importId, importId),
+          eq(importJobRows.userId, userId),
+        ),
+      )
+      .groupBy(importJobRows.status),
+  );
+
+  const counts = { done: 0, skipped: 0, failed: 0, pending: 0 };
+  for (const g of grouped) {
+    if (g.status === "done") counts.done += g.n;
+    else if (g.status === "skipped") counts.skipped += g.n;
+    else if (g.status === "failed") counts.failed += g.n;
+    else counts.pending += g.n;
+  }
+
+  const problemRows = rowsOf<{
+    status: string;
+    payload: unknown;
+    errorMessage: string | null;
+  }>(
+    await db
+      .select({
+        status: importJobRows.status,
+        payload: importJobRows.payload,
+        errorMessage: importJobRows.errorMessage,
+      })
+      .from(importJobRows)
+      .where(
+        and(
+          eq(importJobRows.importId, importId),
+          eq(importJobRows.userId, userId),
+          inArray(importJobRows.status, ["failed", "skipped"]),
+        ),
+      )
+      .orderBy(importJobRows.rowIndex)
+      .limit(IMPORT_PROBLEM_SAMPLE),
+  );
+
+  const problems: ImportRowProblem[] = problemRows.map((r) => ({
+    status: r.status === "failed" ? "failed" : "skipped",
+    who: nameFromRowPayload(r.payload),
+    // Mapped here rather than in the client so a raw driver string never crosses the wire.
+    // Orbit's own row copy (a Drive doc's skip reason) passes through as written.
+    reason: importRowProblemLine(
+      r.status === "failed" ? "failed" : "skipped",
+      r.errorMessage,
+    ),
+  }));
+
+  const totalProblems = counts.failed + counts.skipped;
+  const people = await countImportPeople(userId, importId, row.createdAt);
+
+  return {
+    item: {
+      id: row.id,
+      importType: row.importType,
+      fileName: row.fileName,
+      status: row.status,
+      totalRows: row.totalRows,
+      rowsProcessed: row.rowsProcessed,
+      contactsCreated: row.contactsCreated,
+      contactsUpdated: row.contactsUpdated,
+      duplicatesFound: row.duplicatesFound,
+      errorMessage: row.errorMessage,
+      createdAt: row.createdAt,
+      stats: {
+        skipped: row.stats?.skipped,
+        blockedByPlan: row.stats?.blockedByPlan,
+        failedRows: row.stats?.failedRows,
+        interactionsLogged: row.stats?.interactionsLogged,
+        remindersCreated: row.stats?.remindersCreated,
+        messagesImported: row.stats?.messagesImported,
+        meetingsLogged: row.stats?.meetingsLogged,
+        errorCode: row.stats?.errorCode,
+        docsRead: row.stats?.docsRead,
+        docsAlreadyImported: row.stats?.docsAlreadyImported,
+        flaggedCommitments: row.stats?.flaggedCommitments,
+        // Without these the sheet goes on offering an undo for an import that has already
+        // had one — the row beside it, which reads the same fields through `listImports`,
+        // would say "Undone" at the same moment.
+        undoneAt: row.stats?.undoneAt,
+        undoneRemoved: row.stats?.undoneRemoved,
+        undoneKept: row.stats?.undoneKept,
+      },
+    },
+    counts,
+    problems,
+    moreProblems: Math.max(0, totalProblems - problems.length),
+    people,
+  };
+}
+
+/** One page of the people an import added, or matched to someone already here. */
+export async function getImportPeople(
+  importId: string,
+  outcome: ImportPersonOutcome,
+  offset = 0,
+): Promise<ImportPeoplePage> {
+  const userId = await requireUserId();
+  if (!isImportId(importId)) return { people: [], hasMore: false };
+  return listImportPeople(userId, importId, outcome, offset);
+}
+
+/** What the done card shows for the most recent completed import. See `finishCopy` in
+ *  `import-finish.ts` for how these numbers become words. */
+export type LatestFinishedImport = FinishSummary & {
+  /** Set once this import's undo has run — Task 9 checks this before rendering the card. */
+  undoneAt: string | null;
+  /** Up to `MAX_FACES` of the people it added, for the swarm scene. */
+  avatars: { contactId: string; name: string; photo: string | null }[];
+};
+
+/**
+ * One import row, as the done card's arithmetic.
+ *
+ * Shared by both entry points below so the refresh path and the just-finished-a-run path
+ * cannot drift into two readings of the same row.
+ */
+async function finishForImport(
+  userId: string,
+  row: typeof imports.$inferSelect,
+): Promise<LatestFinishedImport> {
+  const people = await listImportPeople(userId, row.id, "added", 0);
+  return {
+    // The numbers themselves are `finishPartFromImport`'s, in the pure finish module, where
+    // a smoke can hold them — this adds only what needs the database.
+    ...finishPartFromImport(row),
+    undoneAt: row.stats?.undoneAt ?? null,
+    avatars: people.people.slice(0, MAX_FACES).map((p) => ({
+      contactId: p.id,
+      name: p.name,
+      // Right after an import almost nobody has a stored photo yet — the backfill runs later —
+      // so a face that can be looked up is pointed at the on-demand route. Its initials turn
+      // into the photo if one comes back, and stay initials on a miss.
+      photo: p.profileImageUrl ?? (p.canResolvePhoto ? `/api/avatars/${p.id}` : null),
+    })),
+  };
+}
+
+/**
+ * The most recent completed import, shaped for the done card. Null once there isn't one.
+ *
+ * This is the REFRESH path only — the card a person comes back to. While a run is still in the
+ * page's memory the queue asks `getFinishedImportsFor` with the ids that run actually wrote,
+ * because "newest on the account" is not the same claim and has been wrong in both directions:
+ * a drop of unreadable files, or a run whose every step broke, would otherwise celebrate
+ * somebody else's import and offer a button into its people.
+ */
+export async function getLatestFinishedImport(): Promise<LatestFinishedImport | null> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const row = await db.query.imports.findFirst({
+    where: and(eq(imports.userId, userId), eq(imports.status, "completed")),
+    orderBy: [desc(imports.createdAt)],
+  });
+  if (!row) return null;
+  return finishForImport(userId, row);
+}
+
+/** A run's ids are one per queued step, and a drop is capped well below this. */
+const MAX_RUN_IMPORTS = 12;
+
+/**
+ * The imports a single run produced, each shaped for the done card.
+ *
+ * Returned as parts rather than pre-summed: `mergeFinishSummaries` is pure and already carries
+ * the rule (and its own smoke), so the arithmetic stays in one testable place. Rows that are
+ * not this user's, not completed, or already undone simply do not come back — an empty array
+ * is a run with nothing to celebrate, and the caller draws no card.
+ */
+export async function getFinishedImportsFor(
+  importIds: string[],
+): Promise<LatestFinishedImport[]> {
+  // Only uuid-shaped ids reach `inArray` on a uuid column: one forged id would otherwise fail
+  // the cast and take the whole run's card down with it.
+  const wanted = importIdsFrom(importIds).slice(0, MAX_RUN_IMPORTS);
+  if (!wanted.length) return [];
+  const userId = await requireUserId();
+  const db = await getDb();
+  const rows = await db.query.imports.findMany({
+    where: and(
+      eq(imports.userId, userId),
+      eq(imports.status, "completed"),
+      inArray(imports.id, wanted),
+    ),
+  });
+  // Back into the order the steps ran in — `findMany` has no reason to preserve it, and the
+  // sources line is "From Connections.csv and messages.csv", not whatever Postgres returned.
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const ordered = wanted
+    .map((id) => byId.get(id))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .filter((row) => !row.stats?.undoneAt);
+  return Promise.all(ordered.map((row) => finishForImport(userId, row)));
+}
+
+/** Preview of what undoing this import would remove — see `previewUndo` in `import-undo.ts`. */
+export async function previewImportUndo(importId: string): Promise<UndoPreview | null> {
+  const userId = await requireUserId();
+  // The same answer as an import that does not exist, which the dialog already handles.
+  if (!isImportId(importId)) return null;
+  return previewUndo(userId, importId);
+}
+
+/**
+ * Wall-clock ceiling on the whole undo, across every `performUndo` call this action makes —
+ * well inside the route's own 300s `maxDuration`. `performUndo`'s own budget
+ * (`UNDO_BUDGET_MS`, ~20s) bounds ONE invocation so a single call can't blow past a request's
+ * time limit on its own; this bounds how long THIS action spends draining the whole job
+ * before handing back to the caller. Both exist because a large enough import still needs
+ * more than one round trip, and neither layer alone can promise "finished" in one request —
+ * this loop drains what it can inside its ceiling, and a caller that gets back `done: false`
+ * is expected to call `undoImport` again (see `UndoResult.done`'s own doc comment).
+ */
+const UNDO_ACTION_BUDGET_MS = 120_000;
+
+/**
+ * Undo an import: remove the people it created, if nobody has touched them since. Loops on
+ * `performUndo` while it reports `done: false` (a budget-exhausted single call, not a
+ * finished one — see `UNDO_ACTION_BUDGET_MS` above), accumulating `removed` across calls, so
+ * a caller only needs to retry when even 120s wasn't enough to finish a very large import.
+ */
+export async function undoImport(importId: string): Promise<UndoResult> {
+  const userId = await requireUserId();
+  // What `performUndo` answers for an import it cannot find: nothing removed, nothing left.
+  if (!isImportId(importId)) return { removed: 0, kept: 0, done: true, remaining: 0 };
+  const startedAt = Date.now();
+  let removed = 0;
+  let result: UndoResult = { removed: 0, kept: 0, done: true, remaining: 0 };
+  do {
+    result = await performUndo(userId, importId);
+    removed += result.removed;
+  } while (!result.done && Date.now() - startedAt < UNDO_ACTION_BUDGET_MS);
+  revalidatePath("/imports");
+  // The people just removed were on the People list too — and the done card's own button
+  // links there, filtered to this import.
+  revalidatePath("/contacts");
+  return { ...result, removed };
+}
+
+/** A person's name out of whichever row payload this import type stages. */
+function nameFromRowPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  const candidates = [
+    p.fullName,
+    p.name,
+    p.displayName,
+    p.title,
+    p.summary,
+    p.email,
+    p.from,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  const first = typeof p.firstName === "string" ? p.firstName : "";
+  const last = typeof p.lastName === "string" ? p.lastName : "";
+  const joined = `${first} ${last}`.trim();
+  return joined || null;
+}
+
+/** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
+export async function getImportJobStatus(
+  importId: string,
+): Promise<ImportJobStatus> {
+  const userId = await requireUserId();
+  if (!isImportId(importId)) throw new Error("Import session not found");
   const db = await getDb();
   const row = await db.query.imports.findFirst({
     where: and(eq(imports.id, importId), eq(imports.userId, userId)),
@@ -312,12 +672,14 @@ export async function getImportJobStatus(importId: string): Promise<ImportJobSta
     interactionsLogged: row.stats?.interactionsLogged ?? 0,
     remindersCreated: row.stats?.remindersCreated ?? 0,
     failedRows: row.stats?.failedRows ?? 0,
+    docsRead: row.stats?.docsRead ?? 0,
   };
 }
 
 /** Stop a processing import; rows already written are kept. */
 export async function cancelImportSession(importId: string) {
   const userId = await requireUserId();
+  if (!isImportId(importId)) throw new Error("Import session not found");
   const db = await getDb();
   const existing = await db.query.imports.findFirst({
     where: and(eq(imports.id, importId), eq(imports.userId, userId)),
@@ -369,12 +731,17 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
   try {
     parsed = parseLinkedInMessagesCsv(csvText);
   } catch (err) {
-    return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin-messages"));
+    return refusal(
+      await linkedInExportErrorMessage(
+        err,
+        "imports.preview-linkedin-messages",
+      ),
+    );
   }
   const { columns, messages } = parsed;
   if (!messages.length) {
     return refusal(
-      "No messages found in that file — upload messages.csv from your LinkedIn data download"
+      "No messages found in that file — upload messages.csv from your LinkedIn data download",
     );
   }
 
@@ -396,11 +763,18 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
   ]);
 
   const self = resolveSelfIdentity(messages, storedSelfUrl);
-  const conversations = resolveConversations(messages, existing, self.url || null);
+  const conversations = resolveConversations(
+    messages,
+    existing,
+    self.url || null,
+  );
 
   // Per-thread sent/received split, so an inverted owner guess is visible on the review
   // screen rather than discovered later in twenty thousand mislabelled rows.
-  const directionByConversation = new Map<string, { sent: number; received: number }>();
+  const directionByConversation = new Map<
+    string,
+    { sent: number; received: number }
+  >();
   for (const m of messages) {
     const direction = messageDirection(m, self);
     if (!direction || !m.conversationId) continue;
@@ -419,7 +793,8 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
     title: c.conversationTitle,
     messageCount: c.messageCount,
     sentByYou: directionByConversation.get(c.conversationId)?.sent ?? null,
-    receivedFromThem: directionByConversation.get(c.conversationId)?.received ?? null,
+    receivedFromThem:
+      directionByConversation.get(c.conversationId)?.received ?? null,
     latestDate: c.latestDate?.toISOString() ?? null,
     sampleContent: c.sampleContent,
     match: c.match,
@@ -469,14 +844,17 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
 export async function startLinkedInMessagesImport(
   csvText: string,
   fileName: string,
-  selectedConversationIds?: string[]
+  selectedConversationIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
 
   const { messages } = parseLinkedInMessagesCsv(csvText);
   // Same owner the preview resolved, from the same stored URL — see `storedSelfLinkedInUrl`.
-  const self = resolveSelfIdentity(messages, await storedSelfLinkedInUrl(userId));
+  const self = resolveSelfIdentity(
+    messages,
+    await storedSelfLinkedInUrl(userId),
+  );
   const conversations = resolveConversations(messages, [], self.url || null);
   const selected =
     selectedConversationIds === undefined
@@ -527,7 +905,11 @@ export async function startLinkedInMessagesImport(
           messages: msgs
             .filter((m) => m.content.trim())
             .map((m) => ({
-              id: linkedInMessageExternalId(conv.conversationId, m.parsedDate, m.content),
+              id: linkedInMessageExternalId(
+                conv.conversationId,
+                m.parsedDate,
+                m.content,
+              ),
               body: m.content,
               // `null`, not an epoch sentinel: an unparseable date must be excluded from
               // the conversation's date range, not silently reported as 1970 (see
@@ -542,7 +924,7 @@ export async function startLinkedInMessagesImport(
             })),
         },
       };
-    })
+    }),
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
@@ -552,13 +934,100 @@ export async function startLinkedInMessagesImport(
   return { importId: importRow.id, totalRows: selectedConversations.length };
 }
 
-export async function listImports() {
+/** What the history list actually renders. Everything else stays on the server. */
+export type ImportHistoryItem = {
+  id: string;
+  importType: string;
+  fileName: string | null;
+  status: string;
+  totalRows: number | null;
+  rowsProcessed: number | null;
+  contactsCreated: number | null;
+  contactsUpdated: number | null;
+  duplicatesFound: number | null;
+  errorMessage: string | null;
+  createdAt: Date;
+  stats: {
+    skipped?: number;
+    blockedByPlan?: number;
+    failedRows?: number;
+    interactionsLogged?: number;
+    remindersCreated?: number;
+    messagesImported?: number;
+    meetingsLogged?: number;
+    errorCode?: string;
+    docsRead?: number;
+    docsAlreadyImported?: number;
+    flaggedCommitments?: NonNullable<ImportStats["flaggedCommitments"]>;
+    /** Set once this import's undo finished — the row then says so instead of its chips. */
+    undoneAt?: string;
+    undoneRemoved?: number;
+    undoneKept?: number;
+  };
+};
+
+/**
+ * Rows per page. History is a record, not a feed — nobody scrolls past a screenful.
+ *
+ * Deliberately not exported: this is a "use server" file, and a single non-async export makes
+ * every export in it fail to compile. TypeScript does not catch that.
+ */
+const IMPORT_HISTORY_PAGE = 25;
+
+/**
+ * Recent imports, narrowed to what the list draws.
+ *
+ * Two things were wrong with returning the rows whole. It had no limit, and it selected the
+ * entire `stats` blob — which for a multi-chunk messages import carries `touchedContactIds`,
+ * an array of every contact UUID the job touched. Those went straight into the RSC payload of
+ * a page that never reads them. The `(user_id, created_at)` index already backs the ordering.
+ */
+export async function listImports(
+  options: { limit?: number; offset?: number } = {},
+): Promise<ImportHistoryItem[]> {
   const userId = await requireUserId();
   const db = await getDb();
-  return db.query.imports.findMany({
+  const rows = await db.query.imports.findMany({
     where: eq(imports.userId, userId),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
+    limit: options.limit ?? IMPORT_HISTORY_PAGE,
+    offset: options.offset,
+    columns: {
+      id: true,
+      importType: true,
+      fileName: true,
+      status: true,
+      totalRows: true,
+      rowsProcessed: true,
+      contactsCreated: true,
+      contactsUpdated: true,
+      duplicatesFound: true,
+      errorMessage: true,
+      createdAt: true,
+      stats: true,
+    },
   });
+
+  return rows.map((r) => ({
+    ...r,
+    // Picked field by field rather than spread: `stats` is where `touchedContactIds` lives.
+    stats: {
+      skipped: r.stats?.skipped,
+      blockedByPlan: r.stats?.blockedByPlan,
+      failedRows: r.stats?.failedRows,
+      interactionsLogged: r.stats?.interactionsLogged,
+      remindersCreated: r.stats?.remindersCreated,
+      messagesImported: r.stats?.messagesImported,
+      meetingsLogged: r.stats?.meetingsLogged,
+      errorCode: r.stats?.errorCode,
+      docsRead: r.stats?.docsRead,
+      docsAlreadyImported: r.stats?.docsAlreadyImported,
+      flaggedCommitments: r.stats?.flaggedCommitments,
+      undoneAt: r.stats?.undoneAt,
+      undoneRemoved: r.stats?.undoneRemoved,
+      undoneKept: r.stats?.undoneKept,
+    },
+  }));
 }
 
 /** When the last LinkedIn import finished — the LinkedIn line on the Integrations overview. */
@@ -749,7 +1218,10 @@ export async function confirmCalendarImport(payload: {
     .insert(imports)
     .values({
       userId,
-      importType: payload.kind === "ics" ? CALENDAR_ICS_IMPORT_TYPE : CALENDAR_CSV_IMPORT_TYPE,
+      importType:
+        payload.kind === "ics"
+          ? CALENDAR_ICS_IMPORT_TYPE
+          : CALENDAR_CSV_IMPORT_TYPE,
       fileName: payload.fileName,
       status: "processing",
       totalRows: rowPayloads.length,
@@ -764,7 +1236,7 @@ export async function confirmCalendarImport(payload: {
         userId,
         rowIndex: index,
         payload: rowPayload,
-      }))
+      })),
     );
   }
 
@@ -797,9 +1269,15 @@ export async function previewGoogleContacts(): Promise<{
   people: GoogleContactPerson[];
 }> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    return { connected: true, contactsScopeGranted: true, people: await demoAddressBookPreview(userId) };
+  }
   const db = await getDb();
   const conn = await db.query.gmailConnections.findFirst({
-    where: and(eq(gmailConnections.userId, userId), eq(gmailConnections.status, "active")),
+    where: and(
+      eq(gmailConnections.userId, userId),
+      eq(gmailConnections.status, "active"),
+    ),
   });
   if (!conn) {
     return { connected: false, contactsScopeGranted: false, people: [] };
@@ -869,9 +1347,12 @@ export async function previewGoogleContacts(): Promise<{
  * own the writes is what fixes that.
  */
 export async function confirmGoogleContactsImport(
-  selectedIds: string[]
+  selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
+  }
   const db = await getDb();
 
   const accessToken = await getValidAccessToken(userId);
@@ -909,7 +1390,7 @@ export async function confirmGoogleContactsImport(
         phone: row.phone,
         photoUrl: row.photoUrl ?? "",
       },
-    }))
+    })),
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
@@ -940,9 +1421,20 @@ export async function previewOutlookContacts(): Promise<{
   people: OutlookContactPerson[];
 }> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    const people = await demoAddressBookPreview(userId);
+    return {
+      connected: true,
+      contactsScopeGranted: true,
+      people: people.map(({ photoUrl: _photo, ...p }) => p),
+    };
+  }
   const db = await getDb();
   const conn = await db.query.outlookConnections.findFirst({
-    where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
+    where: and(
+      eq(outlookConnections.userId, userId),
+      eq(outlookConnections.status, "active"),
+    ),
   });
   if (!conn) return { connected: false, contactsScopeGranted: false, people: [] };
   if (!hasOutlookContactsScope(conn.scopes)) {
@@ -1004,9 +1496,12 @@ export async function previewOutlookContacts(): Promise<{
  * to a snapshot-and-handoff.
  */
 export async function confirmOutlookContactsImport(
-  selectedIds: string[]
+  selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
+  }
   const db = await getDb();
 
   const conn = await db.query.outlookConnections.findFirst({
@@ -1050,7 +1545,7 @@ export async function confirmOutlookContactsImport(
         email: row.email,
         phone: row.phone,
       },
-    }))
+    })),
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
@@ -1091,7 +1586,7 @@ export type ContactsFilePerson = {
  */
 export async function previewContactsFile(
   text: string,
-  fileName: string
+  fileName: string,
 ): Promise<
   | { error: string }
   | {
@@ -1115,7 +1610,7 @@ export async function previewContactsFile(
               err,
               "Couldn’t read that file — export your contacts again as a vCard (.vcf) and try that",
               "imports.preview-contacts-file",
-              { fileName }
+              { fileName },
             ),
     };
   }
@@ -1194,7 +1689,7 @@ export async function previewContactsFile(
 export async function confirmContactsFileImport(
   text: string,
   fileName: string,
-  selectedIds: string[]
+  selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -1206,10 +1701,11 @@ export async function confirmContactsFileImport(
     ...new Set(
       selectedIds
         .map((id) => Number(id))
-        .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length)
+        .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length),
     ),
   ].sort((a, b) => a - b);
-  if (selectedIndexes.length === 0) throw new Error("No contacts selected to import");
+  if (selectedIndexes.length === 0)
+    throw new Error("No contacts selected to import");
 
   const [importRow] = await db
     .insert(imports)
@@ -1243,7 +1739,7 @@ export async function confirmContactsFileImport(
           notes: row.notes,
         },
       };
-    })
+    }),
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
@@ -1278,19 +1774,32 @@ export type GooglePhotoMatchResult = {
  */
 export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    return { connected: true, contactsScopeGranted: true, matched: 0, remaining: 0 };
+  }
   const db = await getDb();
 
   const conn = await db.query.gmailConnections.findFirst({
     where: and(
       eq(gmailConnections.userId, userId),
-      eq(gmailConnections.status, "active")
+      eq(gmailConnections.status, "active"),
     ),
   });
   if (!conn) {
-    return { connected: false, contactsScopeGranted: false, matched: 0, remaining: 0 };
+    return {
+      connected: false,
+      contactsScopeGranted: false,
+      matched: 0,
+      remaining: 0,
+    };
   }
   if (!hasContactsScope(conn.scopes)) {
-    return { connected: true, contactsScopeGranted: false, matched: 0, remaining: 0 };
+    return {
+      connected: true,
+      contactsScopeGranted: false,
+      matched: 0,
+      remaining: 0,
+    };
   }
 
   const accessToken = await getValidAccessToken(userId);
@@ -1317,8 +1826,8 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
         sql`(${contacts.profileImageUrl} IS NULL
              OR btrim(${contacts.profileImageUrl}) = ''
              OR ${contacts.profileImageUrl} LIKE '%unavatar.io%'
-             OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%')`
-      )
+             OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%')`,
+      ),
     );
 
   let matched = 0;

@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   actionItems,
@@ -21,6 +21,7 @@ import {
   getGoalAlignedContactIds,
 } from "@/lib/dashboard-aggregates";
 import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
+import { compareDueFollowUps, DUE_FOLLOW_UP_CAP } from "@/lib/due-follow-ups";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
@@ -83,8 +84,6 @@ const GRAPH_PREVIEW_CONTACT_CAP = 150;
 const GOAL_ALIGNED_CAP = 5;
 /** Rows on the "recently updated" card. */
 const RECENT_CONTACT_CAP = 6;
-/** Rows on the "due follow-ups" card. */
-const DUE_FOLLOW_UP_CAP = 12;
 /** Rows on the reminders card. */
 const REMINDER_CAP = 20;
 /** Rows on the suggestions card. */
@@ -134,21 +133,26 @@ function isDiscoveryEligible(c: {
  * in `getDashboardData` de-duplicates on read for that case (and for rows already
  * written by one).
  */
-const suggestionRefreshInFlight = new Map<string, Promise<void>>();
+const suggestionRefreshInFlight = new Map<string, Promise<number>>();
 
-export function refreshOutreachSuggestions(userId: string): Promise<void> {
+/** The shared rebuild, resolving with how many suggestions it inserted. */
+function refreshOutreachSuggestionsCounted(userId: string): Promise<number> {
   const existing = suggestionRefreshInFlight.get(userId);
   if (existing) return existing;
 
-  // Result discarded on purpose: no caller reads the inserted rows, and a shared promise
-  // must not hand two callers the same mutable array.
+  // Rows discarded on purpose: no caller reads the inserted rows, and a shared promise
+  // must not hand two callers the same mutable array. Only the count survives.
   const run = buildOutreachSuggestions(userId)
-    .then(() => undefined)
+    .then((rows) => rows.length)
     .finally(() => {
       suggestionRefreshInFlight.delete(userId);
     });
   suggestionRefreshInFlight.set(userId, run);
   return run;
+}
+
+export function refreshOutreachSuggestions(userId: string): Promise<void> {
+  return refreshOutreachSuggestionsCounted(userId).then(() => undefined);
 }
 
 async function buildOutreachSuggestions(userId: string) {
@@ -240,26 +244,40 @@ async function buildOutreachSuggestions(userId: string) {
     });
   }
 
-  const withMessageHistory = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.interactionType, "linkedin_message")
-    ),
-  });
+  // Per-contact count / latest / earliest LinkedIn message, aggregated in Postgres. This
+  // used to pull every linkedin_message row with every column (raw_notes included) just to
+  // fold them into these three figures in JS. `interaction_date` is NOT NULL, so the old
+  // `interactionDate || createdAt` fallback never reached createdAt; mapWith runs the
+  // column's own driver mapper, so max/min come back as the same Date values.
+  const messageStatRows = await db
+    .select({
+      contactId: interactions.contactId,
+      count: sql<number>`count(*)::int`,
+      last: sql<Date>`max(${interactions.interactionDate})`.mapWith(
+        interactions.interactionDate
+      ),
+      first: sql<Date>`min(${interactions.interactionDate})`.mapWith(
+        interactions.interactionDate
+      ),
+    })
+    .from(interactions)
+    .where(
+      and(
+        eq(interactions.userId, userId),
+        eq(interactions.interactionType, "linkedin_message")
+      )
+    )
+    .groupBy(interactions.contactId);
   const messageStats = new Map<
     string,
     { count: number; last: Date; first: Date }
   >();
-  for (const m of withMessageHistory) {
-    const d = m.interactionDate || m.createdAt;
-    const prev = messageStats.get(m.contactId);
-    if (!prev) {
-      messageStats.set(m.contactId, { count: 1, last: d, first: d });
-    } else {
-      prev.count += 1;
-      if (d > prev.last) prev.last = d;
-      if (d < prev.first) prev.first = d;
-    }
+  for (const m of messageStatRows) {
+    messageStats.set(m.contactId, {
+      count: Number(m.count),
+      last: m.last,
+      first: m.first,
+    });
   }
 
   for (const c of all) {
@@ -484,8 +502,13 @@ export async function ensureOutreachSuggestions(userId: string) {
     columns: { id: true },
   });
   if (existing) return false;
-  await refreshOutreachSuggestions(userId);
-  return true;
+  // True when the queue may have changed under a concurrent read: this build inserted
+  // rows, or it joined a rebuild someone else started (whose delete could have removed rows
+  // that read saw). A build of our own that found nothing to suggest changed nothing — no
+  // auto row existed for its delete to remove — so there is nothing to re-read.
+  const joined = suggestionRefreshInFlight.has(userId);
+  const inserted = await refreshOutreachSuggestionsCounted(userId);
+  return joined || inserted > 0;
 }
 
 export async function maybeRefreshOutreachSuggestions(userId: string) {
@@ -804,9 +827,25 @@ export async function getDashboardData(
   // the link into /graph is where that lives — so this is always the engaged scope.
   const previewFilterActive = constellationConfig.enabled;
   const previewEligibleCount = eligibleIds.size;
-  const previewVisibleContacts = previewFilterActive
+  const { clusters: builtClusters, byContactId: clusterByContactId } =
+    buildConstellationClusters(lightContacts);
+  const engagedContacts = previewFilterActive
     ? lightContacts.filter((c) => eligibleIds.has(c.id))
     : lightContacts;
+  // The preview draws constellations only — no lone stars. Keep a contact only when at
+  // least one other shown contact shares its company/school cluster; singletons and Deep
+  // Space are individual connections, which belong on /graph.
+  const shownPerCluster = new Map<string, number>();
+  for (const c of engagedContacts) {
+    const ref = clusterByContactId.get(c.id);
+    if (ref && ref.kind !== "other") {
+      shownPerCluster.set(ref.id, (shownPerCluster.get(ref.id) ?? 0) + 1);
+    }
+  }
+  const previewVisibleContacts = engagedContacts.filter((c) => {
+    const ref = clusterByContactId.get(c.id);
+    return ref !== undefined && (shownPerCluster.get(ref.id) ?? 0) >= 2;
+  });
 
   // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
   // to be hidden and render far fewer than the cap allows.
@@ -825,24 +864,11 @@ export async function getDashboardData(
       .map((c) => c.id)
   );
 
-  const tierRank = { inner: 0, mid: 1, outer: 2 } as const;
+  // Shared with `loadDueFollowUps`, which answers this list for the MCP and chat tools
+  // without the rest of the dashboard.
   const dueFollowUpOrder = lightContacts
     .filter((c) => dueFollowUpIds.has(c.id))
-    .sort((a, b) => {
-      const aTime = a.nextFollowUpAt ? new Date(a.nextFollowUpAt).getTime() : 0;
-      const bTime = b.nextFollowUpAt ? new Date(b.nextFollowUpAt).getTime() : 0;
-      if (aTime !== bTime) return aTime - bTime;
-      const aTier = closenessCohort.byId.get(a.id)?.tier ?? "outer";
-      const bTier = closenessCohort.byId.get(b.id)?.tier ?? "outer";
-      const tierDiff = tierRank[aTier] - tierRank[bTier];
-      if (tierDiff !== 0) return tierDiff;
-      const priorityDiff = (b.priorityLevel || 0) - (a.priorityLevel || 0);
-      if (priorityDiff !== 0) return priorityDiff;
-      // Without a final tiebreaker two contacts due the same day, in the same tier, at the
-      // same priority order arbitrarily, and the list this is sliced to twelve from
-      // reshuffles on every load.
-      return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-    });
+    .sort((a, b) => compareDueFollowUps(a, b, closenessCohort));
   const dueFollowUpTopIds = dueFollowUpOrder.slice(0, DUE_FOLLOW_UP_CAP).map((c) => c.id);
 
   // The reminder and suggestion lists are filtered and capped HERE, before hydration, so
@@ -973,7 +999,6 @@ export async function getDashboardData(
   // Clusters still see the whole network — a cluster's count is "how many people at Acme",
   // which a capped sample cannot answer — but they only ever needed three columns, and the
   // light scan has them.
-  const { clusters: builtClusters } = buildConstellationClusters(lightContacts);
   const clusters = toNamedGraphClusters(builtClusters);
 
   // companies, schools and tags come from `getDashboardVocabularies`, not from a pass over

@@ -6,6 +6,7 @@ import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
 import { TargetCompaniesSettings } from "@/components/settings/target-companies-settings";
 import { getSchools, getTargetCompanies } from "@/actions/target-companies";
+import { CreditsSettings } from "@/components/settings/credits-settings";
 import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
@@ -24,6 +25,9 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
+import { speechAllowance } from "@/lib/speech-quota";
+import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 /**
  * Anchor for a card that stands alone. Ids and grouping live in `sections.ts`.
@@ -83,6 +87,7 @@ function Group({
 }
 
 export default async function SettingsPage() {
+  const userId = await requireUserId();
   const [
     initialSettings,
     initialGoals,
@@ -91,15 +96,25 @@ export default async function SettingsPage() {
     visibility,
     targetCompanies,
     schools,
+    meetingAllowance,
+    shortformAllowance,
   ] = await Promise.all([
     getSettings(),
     listGoals(),
     getDisplayProfile(),
     getPlanOverview(),
-    requireUserId().then(resolveSurfaceVisibility),
+    resolveSurfaceVisibility(userId),
     getTargetCompanies(),
     getSchools(),
+    speechAllowance(userId, "meeting"),
+    speechAllowance(userId, "shortform"),
   ]);
+  // `speechAllowance` returns a Date; the panel below is a client component, so hand it
+  // down as an ISO string the same way `managed-ai-policy`'s allowance already does.
+  const speechAllowances: SpeechAllowances = {
+    meeting: { ...meetingAllowance, resetsAt: meetingAllowance.resetsAt.toISOString() },
+    shortform: { ...shortformAllowance, resetsAt: shortformAllowance.resetsAt.toISOString() },
+  };
 
   const { hidden } = visibility;
   const shows = (id: SettingsSectionId) => !hidden.has(surfaceKeyForSettingsId(id));
@@ -123,6 +138,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-10">
+      <RenderStamp />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Settings
@@ -182,6 +198,7 @@ export default async function SettingsPage() {
           initialSettings={initialSettings}
           canUseRecruiters={initialSettings.plan.canUseRecruiters}
           inboxVisible={!hidden.has("page.recruiters")}
+          speechAllowances={speechAllowances}
         />
       </Group>
 
@@ -194,6 +211,7 @@ export default async function SettingsPage() {
           {shows("settings-help") ? (
             <HelpSettings feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)} />
           ) : null}
+          <CreditsSettings />
         </SettingsSection>
       </Group>
 

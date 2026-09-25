@@ -34,6 +34,9 @@ on:
     # Offset from the :07 import backstop so the two long-running hourly jobs are never in
     # flight together.
     - cron: "23 * * * *"
+    # Once a day: the Deepgram usage reconciliation. An arbitrary quiet hour, offset from
+    # the hourly jobs above so it never runs alongside them.
+    - cron: "41 5 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -116,6 +119,19 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
+      # Connector write-back. Rides the ten-minute schedule for the same reason the webhook
+      # drain does: a write that failed can wait, and its own route keeps its latency off the
+      # sweep above.
+      - name: Drain the connector outbox
+        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 55 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/connectors/outbox/drain"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
       # Continuous connector sync (Google Calendar today). Its own schedule rather than a
       # rider on the ten-minute sweep: that sweep is the alerting path and is already budgeted
       # to 55s, and a provider call of unpredictable latency must not make the alert cadence
@@ -147,6 +163,19 @@ jobs:
           curl -sS --fail-with-body --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/jobs/feed/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Deepgram usage reconciliation (daily). Compares what Deepgram billed each meeting
+      # against what the browser self-reported, and alerts on the gap — see
+      # src/app/api/ops/speech-usage/route.ts.
+      - name: Reconcile Deepgram usage (daily)
+        if: github.event.schedule == '41 5 * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 55 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/ops/speech-usage"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

@@ -1,7 +1,6 @@
 import { outreachFromAddress } from "@/lib/outreach-sender";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { Resend } from "resend";
 import { getDb } from "@/db";
 import {
   outreachCampaigns,
@@ -144,6 +143,9 @@ export async function sendOutreachMessage(input: {
       hostedFrom: config.fromEmail,
     });
 
+    // Imported here for the same reason as Twilio below: this module sits under every page
+    // that can reach an outreach action, and only an actual email send needs the SDK.
+    const { Resend } = await import("resend");
     const resend = new Resend(config.resendApiKey);
     const result = await resend.emails.send(
       outreachEmailPayload({

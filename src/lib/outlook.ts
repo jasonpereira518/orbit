@@ -459,14 +459,21 @@ type GraphContact = {
   mobilePhone?: string;
 };
 
-/** One-shot fetch of all Outlook contacts (Microsoft Graph), paging until exhausted. */
+/**
+ * One-shot fetch of all Outlook contacts (Microsoft Graph), paging until exhausted.
+ *
+ * `select` narrows the read for a caller that uses only some of the fields; fields not
+ * selected come back as their empty defaults. The name fields decide which contacts are
+ * kept, so every selection must include `displayName,givenName,surname`.
+ */
 export async function fetchOutlookContacts(
-  accessToken: string
+  accessToken: string,
+  select = "displayName,givenName,surname,companyName,jobTitle,emailAddresses,businessPhones,mobilePhone"
 ): Promise<OutlookContact[]> {
   const people: OutlookContact[] = [];
   let url:
     | string
-    | null = `https://graph.microsoft.com/v1.0/me/contacts?$top=200&$select=displayName,givenName,surname,companyName,jobTitle,emailAddresses,businessPhones,mobilePhone`;
+    | null = `https://graph.microsoft.com/v1.0/me/contacts?$top=200&$select=${select}`;
 
   while (url) {
     const res = await fetch(url, {

@@ -28,6 +28,8 @@ import {
   type NoteBatchMeeting,
 } from "@/db/schema";
 import type { TranscribeOptions, TranscriptionResult } from "@/lib/ai";
+import { deepgramEnabled } from "@/lib/deepgram";
+import { recordSpeechSeconds, speechAllowance } from "@/lib/speech-quota";
 
 export type MeetingAttendee = { name: string; email?: string | null };
 
@@ -40,8 +42,13 @@ export const ABANDONED_SESSION_TTL_DAYS = 30;
 /** How far back the capture page looks for a meeting to offer resuming. */
 export const RESUMABLE_WINDOW_DAYS = 7;
 
-/** Statuses a chunk may still land in. `ended` is here for the outbox draining after Stop. */
-const ACCEPTS_CHUNKS: MeetingSessionStatus[] = ["recording", "ended"];
+/**
+ * Statuses a chunk — or a stream token — may still land in. `ended` is here for the
+ * outbox draining after Stop, and because a token can legitimately be minted moments
+ * before the first chunk arrives. Exported so the stream-token route checks the same
+ * list rather than keeping a second one that could drift.
+ */
+export const ACCEPTS_CHUNKS: MeetingSessionStatus[] = ["recording", "ended"];
 
 /** Statuses the capture page offers to resume. */
 const UNFINISHED: MeetingSessionStatus[] = ["recording", "ended", "analyzed"];
@@ -352,7 +359,7 @@ export type IngestChunkResult =
       /** True when this seq was already stored and nothing was transcribed. */
       duplicate: boolean;
     }
-  | { ok: false; status: 400 | 404 | 409 | 410; error: string };
+  | { ok: false; status: 400 | 402 | 404 | 409 | 410; error: string };
 
 /** A chunk this far past the start is not a real recording. Three hours plus slack. */
 const MAX_CHUNK_OFFSET_MS = 4 * 60 * 60_000;
@@ -405,6 +412,25 @@ export async function ingestMeetingChunk(
   let text = "";
   let engine: MeetingSegmentEngine = "silent";
   if (wav && wav.byteLength > 0) {
+    // Recovery is not free: this chunk goes to Deepgram on Orbit's key, exactly like a live
+    // one, so it is refused once the month's meeting hours are gone. Checked here rather
+    // than only inside the transcriber so it is a clean 402 the recorder can act on — and so
+    // a meeting whose live socket never opened cannot run past the cap chunk by chunk.
+    // A quota that cannot be READ throws out of here, which is a 502 the recorder retries:
+    // meetings fail closed.
+    //
+    // ONLY WHEN DEEPGRAM IS THE ENGINE. The cap exists to bound what Orbit spends on its own
+    // key, and `ORBIT_DEEPGRAM=off` is an incident lever that sends every surface back to the
+    // user's own OpenAI or Gemini key. With the switch off, this chunk costs Orbit nothing,
+    // so a spent cap has nothing to protect and refusing would lock a paying account out of
+    // its own meeting during exactly the incident the lever was pulled for. The allowance is
+    // not even read in that case: it could only produce a refusal we would have to ignore.
+    if (deepgramEnabled()) {
+      const allowance = await speechAllowance(userId, "meeting");
+      if (allowance.exhausted) {
+        return { ok: false, status: 402, error: "You’ve used this month’s meeting transcription minutes" };
+      }
+    }
     const previous = await findSegment(session.id, meta.seq - 1);
     const result = await transcribe(
       userId,
@@ -413,7 +439,12 @@ export async function ingestMeetingChunk(
         base64: Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength).toString("base64"),
         filename: `meeting-${meta.seq}.wav`,
       },
-      { contextText: previous?.text ?? null, allowEmpty: true, operation: "meeting.transcribe" },
+      {
+        contextText: previous?.text ?? null,
+        allowEmpty: true,
+        operation: "meeting.transcribe",
+        sessionId: session.id,
+      },
     );
     text = result.text.trim();
     engine = result.engine;
@@ -443,16 +474,212 @@ export async function ingestMeetingChunk(
     }
   }
 
-  await db
+  // A chunk Orbit did not pay Deepgram for raises the session's off-Deepgram total by
+  // exactly its own span, in the same statement that advances the clock. That covers the
+  // fallback engines (Deepgram errored and `transcribeAudioWithAI` used the user's own
+  // Whisper or Gemini key) and a silent chunk, which is never sent to anyone at all.
+  //
+  // Safe to add here because a seq already stored returns far above this, before any write:
+  // the only way to reach this statement is to have just inserted this segment, so no chunk
+  // can be counted twice however often the recorder retries it.
+  const offDeepgramDelta = engine === "deepgram" ? 0 : Math.max(0, Math.round(meta.endMs) - Math.round(meta.startMs));
+
+  const [updated] = await db
     .update(meetingSessions)
     .set({
       lastSeq: sql`greatest(${meetingSessions.lastSeq}, ${meta.seq})`,
       durationMs: sql`greatest(${meetingSessions.durationMs}, ${Math.round(meta.endMs)})`,
+      offDeepgramMs: sql`${meetingSessions.offDeepgramMs} + ${offDeepgramDelta}`,
       updatedAt: new Date(),
     })
-    .where(eq(meetingSessions.id, session.id));
+    .where(eq(meetingSessions.id, session.id))
+    .returning(); // bare: a field selector breaks over the Db union (see recordLiveSegments)
+
+  // METERED AS A POSITION ON THE MEETING'S CLOCK, not as this chunk's own duration — the
+  // same number `recordLiveSegments` books, into the same session-keyed row, so the two
+  // paths converge on one high-water mark instead of each adding their own. That is what
+  // stops a recovery chunk during a healthy live stretch from being charged twice: it books
+  // a total the live path has already booked, and `greatest(...)` keeps the larger.
+  //
+  // MINUS THE AUDIO ORBIT NEVER PAID FOR. The clock alone is not Orbit's spend: when
+  // Deepgram errors mid-meeting a chunk falls through to the user's own key and books
+  // nothing, and booking the raw elapsed clock on the next Deepgram chunk would then charge
+  // the user's meeting cap for that whole stretch too. `offDeepgramMs` is what the meeting
+  // spent elsewhere, and the difference is what Deepgram actually carried. The difference
+  // only grows — a fallback chunk raises both terms by the same span — so subtracting it
+  // does not break the high-water rule the two paths depend on.
+  //
+  // Only booked when DEEPGRAM ran: a chunk on the user's own key, and a silent chunk, cost
+  // Orbit nothing, and this meter exists to count Orbit's Deepgram spend.
+  //
+  // ONE CASE STILL OVER-BOOKS, against the user, and it is the price of the high-water rule.
+  // A fallback chunk that arrives OUT OF ORDER — after a later chunk already carried the clock
+  // past its span — raises `offDeepgramMs` without lowering `durationMs`, so the difference
+  // dips below a figure already booked and `greatest(...)` keeps the higher, earlier one.
+  // Deepgram at 0-60s, Deepgram at 120-180s, then the user's own key arriving late for
+  // 60-120s books 180 seconds for 120 seconds of Orbit's spend. It is bounded by the
+  // out-of-order span and can never exceed the clock, so it is a fraction of the bug this
+  // replaced — but it is the same direction as that bug, and the honest fix is a running sum
+  // rather than a high-water mark, which is the one thing the two paths cannot share.
+  if (engine === "deepgram") {
+    await recordSpeechSeconds({
+      userId,
+      kind: "meeting",
+      source: "file",
+      sessionId: session.id,
+      seconds: deepgramSecondsFor(updated ?? {
+        durationMs: Math.round(meta.endMs),
+        offDeepgramMs: offDeepgramDelta,
+      }),
+    });
+  }
 
   return { ok: true, seq: meta.seq, text, engine, duplicate: false };
+}
+
+export type LiveSegmentInput = {
+  seq: number;
+  startMs: number;
+  endMs: number;
+  speaker: string | null;
+  text: string;
+};
+
+export type RecordLiveSegmentsResult =
+  | { ok: true; written: number; durationMs: number }
+  | { ok: false; status: 400 | 404 | 409 | 410; error: string };
+
+const MAX_LIVE_BATCH = 200;
+const MAX_LIVE_TEXT_LEN = 5_000;
+
+/**
+ * Runtime shape check, not just a static one: `segments` reaches this function through a
+ * route that does `JSON.parse` and an `as LiveSegmentInput[]` cast, so nothing upstream
+ * actually guarantees a field is the type it claims to be. A missing or wrong-typed field
+ * (no `text`, a non-string `speaker`, a numeric field sent as a string) must come back as
+ * this function's ordinary 400, not throw a `TypeError` out of `.length` or `Math.round`
+ * that the caller has to catch as a 502.
+ *
+ * An empty batch is valid here — `recordLiveSegments` turns it into a no-op success rather
+ * than an error; see there for why.
+ */
+function validateLiveSegments(segments: LiveSegmentInput[]): string | null {
+  if (segments.length > MAX_LIVE_BATCH) return "Too many segments in one batch";
+  for (const s of segments) {
+    if (!s || typeof s !== "object") return "Bad segment";
+    if (!Number.isInteger(s.seq) || s.seq < 0 || s.seq > MAX_SEQ) return "Bad chunk number";
+    if (!Number.isFinite(s.startMs) || !Number.isFinite(s.endMs)) return "Bad chunk timing";
+    if (s.startMs < 0 || s.endMs < s.startMs || s.endMs > MAX_CHUNK_OFFSET_MS) return "Bad chunk timing";
+    if (typeof s.text !== "string") return "Segment text is missing";
+    if (s.text.length > MAX_LIVE_TEXT_LEN) return "Segment text is too long";
+    if (s.speaker !== null && typeof s.speaker !== "string") return "Bad segment speaker";
+  }
+  return null;
+}
+
+/**
+ * Write a batch of live (Deepgram) segments in one statement and meter the seconds they
+ * cover, same shape as `ingestMeetingChunk` but for finished sentences streamed straight
+ * from the browser rather than uploaded audio.
+ *
+ * `(session_id, seq)` still makes a repeat a no-op: `onConflictDoNothing` drops any seq
+ * already stored, so a retried batch writes nothing new. Usage is metered from the
+ * highest `endMs` across the WHOLE session so far (not just this batch), and
+ * `recordSpeechSeconds` keeps that a high-water mark per session — so re-reporting the
+ * same total, or a lower one from an out-of-order batch, never double-charges.
+ */
+export async function recordLiveSegments(
+  userId: string,
+  sessionId: string,
+  input: { recorderId: string; segments: LiveSegmentInput[] },
+): Promise<RecordLiveSegmentsResult> {
+  const invalid = validateLiveSegments(input.segments);
+  if (invalid) return { ok: false, status: 400, error: invalid };
+
+  const session = await getMeetingSession(userId, sessionId);
+  if (!session) return { ok: false, status: 404, error: "Meeting not found" };
+
+  if (!ACCEPTS_CHUNKS.includes(session.status)) {
+    return { ok: false, status: 410, error: "This meeting is no longer recording" };
+  }
+  if (session.status === "recording" && session.recorderId && input.recorderId !== session.recorderId) {
+    return { ok: false, status: 409, error: "Another tab is recording this meeting" };
+  }
+
+  // An empty batch (a heartbeat, or a retry that lost its race entirely) is a no-op
+  // success, the same shape of event as a batch that lands but conflicts on every seq —
+  // not an error. Returning here also keeps the two `Math.max(...)` calls below from ever
+  // running on an empty array, which would evaluate to `-Infinity`.
+  if (!input.segments.length) {
+    return { ok: true, written: 0, durationMs: session.durationMs };
+  }
+
+  const db = await getDb();
+  const inserted = await db
+    .insert(meetingTranscriptSegments)
+    .values(
+      input.segments.map((s) => ({
+        sessionId: session.id,
+        userId,
+        seq: s.seq,
+        startMs: Math.round(s.startMs),
+        endMs: Math.round(s.endMs),
+        text: s.text,
+        engine: "deepgram" as MeetingSegmentEngine,
+        speaker: s.speaker,
+      })),
+    )
+    .onConflictDoNothing({
+      target: [meetingTranscriptSegments.sessionId, meetingTranscriptSegments.seq],
+    })
+    .returning();
+
+  const maxSeq = Math.max(...input.segments.map((s) => s.seq));
+  const maxEndMs = Math.max(...input.segments.map((s) => Math.round(s.endMs)));
+
+  const [row] = await db
+    .update(meetingSessions)
+    .set({
+      lastSeq: sql`greatest(${meetingSessions.lastSeq}, ${maxSeq})`,
+      durationMs: sql`greatest(${meetingSessions.durationMs}, ${maxEndMs})`,
+      updatedAt: new Date(),
+    })
+    .where(eq(meetingSessions.id, session.id))
+    .returning(); // bare: a field selector breaks over the Db union (see ingestMeetingChunk's sibling calls)
+
+  // The same expression `ingestMeetingChunk` books, off the same two columns, which is what
+  // keeps the two paths converging on one high-water mark rather than each charging its own
+  // total. This path never moves `offDeepgramMs` itself: a live segment arrived over a
+  // Deepgram socket that is billed for as long as it is open, silences included.
+  //
+  // The two paths are MOSTLY exclusive, not strictly. `LiveCoverageGate.release()` flushes
+  // chunks it was holding when the socket drops or the meeting ends — including a silent one
+  // held while the socket was perfectly healthy — and a chunk with three or more uncovered
+  // seconds uploads even though the socket carried the rest of it. Either one raises
+  // `offDeepgramMs` for audio the open socket did in fact bill, so the meter reads low by at
+  // most a chunk per drop. That is Orbit's money, not the user's, and the nightly
+  // reconciliation job is what notices if it stops being a rounding error.
+  await recordSpeechSeconds({
+    userId,
+    kind: "meeting",
+    source: "stream",
+    sessionId: session.id,
+    seconds: deepgramSecondsFor(row ?? { durationMs: maxEndMs, offDeepgramMs: session.offDeepgramMs }),
+  });
+
+  return { ok: true, written: inserted.length, durationMs: row?.durationMs ?? maxEndMs };
+}
+
+/**
+ * What the meeting meter books for a session: the seconds of its clock that Orbit actually
+ * paid Deepgram for.
+ *
+ * Both metering paths go through here so they cannot compute it two ways. Clamped at zero
+ * because nothing good comes of a negative meter reading if the two columns ever disagree —
+ * a chunk whose span lands outside the clock, say.
+ */
+function deepgramSecondsFor(session: { durationMs: number; offDeepgramMs: number }): number {
+  return Math.ceil(Math.max(0, session.durationMs - session.offDeepgramMs) / 1000);
 }
 
 async function findSegment(sessionId: string, seq: number): Promise<MeetingSegmentRow | null> {
@@ -469,7 +696,7 @@ async function findSegment(sessionId: string, seq: number): Promise<MeetingSegme
 
 export type MeetingTranscript = {
   session: MeetingSessionRow;
-  segments: Pick<MeetingSegmentRow, "seq" | "startMs" | "endMs" | "text" | "engine">[];
+  segments: Pick<MeetingSegmentRow, "seq" | "startMs" | "endMs" | "text" | "engine" | "speaker">[];
   /** The spoken text only, in order, one paragraph per chunk. What the analysis reads. */
   text: string;
   /** Seqs missing from 0..lastSeq — chunks that never arrived. */
@@ -490,6 +717,7 @@ export async function getMeetingTranscript(
       endMs: meetingTranscriptSegments.endMs,
       text: meetingTranscriptSegments.text,
       engine: meetingTranscriptSegments.engine,
+      speaker: meetingTranscriptSegments.speaker,
     })
     .from(meetingTranscriptSegments)
     .where(eq(meetingTranscriptSegments.sessionId, session.id))

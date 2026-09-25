@@ -3,8 +3,33 @@
 import { Profiler, useEffect, useState, type ProfilerOnRenderCallback } from "react";
 import { ConstellationIntro } from "@/components/graph/constellation-intro";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
+import {
+  ConstellationLoading,
+  CONSTELLATION_STAGE_HEIGHT,
+} from "@/components/graph/constellation-loading";
 import { buildSyntheticGraphPayload } from "@/lib/graph/synthetic-network";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
+import { markOpenStage } from "@/lib/graph/open-marks";
+
+type Payload = ReturnType<typeof buildSyntheticGraphPayload>;
+
+/**
+ * `?data=fetch`: the payload comes over the network, as a fixture written by
+ * `scripts/bench/constellation-fixtures.ts` and served by `serve-static-bench.mjs`, so opening
+ * pays for a real transfer and parse the way the real page pays for its RSC payload. The dates
+ * the server would send as `Date`s are revived, since JSON carries them as strings.
+ */
+async function fetchPayload(n: number, seed: number): Promise<Payload> {
+  const res = await fetch(`/bench-data/constellation-${n}-${seed}.json`);
+  if (!res.ok) throw new Error(`fixture ${n}/${seed}: ${res.status}`);
+  const payload = (await res.json()) as Payload;
+  for (const c of payload.contacts) {
+    const row = c as { lastInteractionAt: unknown; nextFollowUpAt: unknown };
+    if (typeof row.lastInteractionAt === "string") row.lastInteractionAt = new Date(row.lastInteractionAt);
+    if (typeof row.nextFollowUpAt === "string") row.nextFollowUpAt = new Date(row.nextFollowUpAt);
+  }
+  return payload;
+}
 
 type BenchCommit = { phase: string; actual: number; base: number; at: number };
 
@@ -34,42 +59,53 @@ const onRender: ProfilerOnRenderCallback = (_id, phase, actual, base, _start, co
 };
 
 export function ConstellationBench() {
-  const [payload, setPayload] = useState<ReturnType<typeof buildSyntheticGraphPayload> | null>(
-    null
-  );
+  const [payload, setPayload] = useState<Payload | null>(null);
 
   // After hydration, not during render: the page is server-rendered and the size lives in the
   // URL. The real page's payload also only reaches the chart after its own boundary resolves.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const n = Math.max(1, Number(params.get("n") ?? 1000));
+    const seed = Number(params.get("seed") ?? 1);
     const startedAt = performance.now();
-    const data = buildSyntheticGraphPayload(n, { seed: Number(params.get("seed") ?? 1) });
-    window.__bench = {
-      n,
-      startedAt,
-      payloadMs: performance.now() - startedAt,
-      commits: [],
+    markOpenStage("data-fetch-start");
+    const received = (data: Payload) => {
+      markOpenStage("data-received");
+      window.__bench = {
+        n,
+        startedAt,
+        payloadMs: performance.now() - startedAt,
+        commits: [],
+      };
+      setPayload(data);
     };
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- runs once, after hydration, by design (see above)
-    setPayload(data);
+    if (params.get("data") === "fetch") {
+      void fetchPayload(n, seed).then(received);
+      return;
+    }
+    received(buildSyntheticGraphPayload(n, { seed }));
   }, []);
 
-  if (!payload) return null;
-
   // The same nesting as src/app/(clerk)/(app)/(main)/graph/page.tsx, so the stage has the
-  // same box, the intro the same host, and the chart the same lazy chunk.
+  // same box, the intro the same host, and the chart the same lazy chunk. Like that page, the
+  // intro and the loading panel are up before the payload is — there they sit outside the
+  // Suspense boundary the payload streams into, and hydrate with the page shell.
   return (
     <div className="min-h-dvh bg-background p-4">
       <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
         <h1 className="px-1 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
-          Constellation bench · {payload.contacts.length.toLocaleString()} contacts
+          Constellation bench
+          {payload ? ` · ${payload.contacts.length.toLocaleString()} contacts` : ""}
         </h1>
         <div className={`relative rounded-2xl ${STAGE_GROUND}`}>
           <ConstellationIntro />
-          <Profiler id="constellation" onRender={onRender}>
-            <NetworkGraphLazy initialData={payload} />
-          </Profiler>
+          {payload ? (
+            <Profiler id="constellation" onRender={onRender}>
+              <NetworkGraphLazy initialData={payload} />
+            </Profiler>
+          ) : (
+            <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
+          )}
         </div>
       </div>
     </div>

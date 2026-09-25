@@ -3,7 +3,24 @@
 import { Copy, ExternalLink, Mail } from "lucide-react";
 import type { ContactFollowUpSendOptions } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+
+/**
+ * The one-line hint above the draft. Until the send options arrive it is a placeholder bar of
+ * the same line height (`text-xs` = 16px), with the old words kept for screen readers.
+ */
+function SendHint({ hint, loading }: { hint: string; loading: boolean }) {
+  if (!loading) return <p className="text-xs text-muted-foreground">{hint}</p>;
+  return (
+    <div className="flex h-4 items-center">
+      <Skeleton className="h-3 w-56 max-w-full" />
+      <span role="status" aria-live="polite" className="sr-only">
+        {hint}
+      </span>
+    </div>
+  );
+}
 
 export function FollowUpDraftComposer({
   contactName,
@@ -50,15 +67,38 @@ export function FollowUpDraftComposer({
         ? "email"
         : "note";
 
+  if (!draft && pending) {
+    // The draft is being written: the shape it will land in — the text box and the row of
+    // actions under it — rather than a line of text the box then pushes aside.
+    return (
+      <div className="space-y-3">
+        <SendHint hint={hint} loading={!sendOptions} />
+        <div className="space-y-2 rounded-lg border border-input px-2.5 py-2">
+          <Skeleton className="h-3.5 w-11/12" />
+          <Skeleton className="h-3.5 w-full" />
+          <Skeleton className="h-3.5 w-4/5" />
+          <Skeleton className="h-3.5 w-full" />
+          <Skeleton className="h-3.5 w-2/3" />
+          <Skeleton className="h-3.5 w-1/3" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Skeleton className="h-7 w-20 rounded-lg" />
+          <Skeleton className="h-7 w-24 rounded-lg" />
+        </div>
+        <span role="status" aria-live="polite" className="sr-only">
+          Drafting a follow-up…
+        </span>
+      </div>
+    );
+  }
+
   if (!draft) {
     return (
       <div className="space-y-2">
-        <p className="text-xs text-muted-foreground">{hint}</p>
+        <SendHint hint={hint} loading={!sendOptions} />
         <p className="text-sm text-muted-foreground">
-          {pending
-            ? "Drafting a follow-up…"
-            : emptyHint ||
-              `Generate a warm follow-up grounded in your history with ${contactName}.`}
+          {emptyHint ||
+            `Generate a warm follow-up grounded in your history with ${contactName}.`}
         </p>
       </div>
     );
@@ -66,7 +106,7 @@ export function FollowUpDraftComposer({
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">{hint}</p>
+      <SendHint hint={hint} loading={!sendOptions} />
       <Textarea
         rows={8}
         value={draft}

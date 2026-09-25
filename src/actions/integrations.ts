@@ -7,6 +7,13 @@ import { listWebhookEndpoints } from "@/actions/webhook-endpoints";
 import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { getLastLinkedInImportAt } from "@/actions/imports";
+import { listCalendarSubscriptions } from "@/actions/calendar";
+import { listEventConnections } from "@/lib/events/connections";
+import { requireUserId } from "@/lib/auth";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { withDemoIntegrationStatuses } from "@/lib/demo-workspace-connections";
+import { connectionSummary } from "@/lib/connection-status";
+import { CONNECTOR_STATUS_LOOKUP_IDS } from "@/lib/connectors/status";
 import {
   accountPageStatus,
   aiPageStatus,
@@ -48,18 +55,22 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, linkedin] = await Promise.all([
-    settle(getSettings()),
-    settle(getCalendarFeedStatus()),
-    settle(listApiKeys()),
-    settle(listWebhookEndpoints()),
-    settle(getGmailConnectionStatus()),
-    settle(getOutlookConnectionStatus()),
-    settle(getLastLinkedInImportAt()),
-  ]);
+  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns] =
+    await Promise.all([
+      settle(getSettings()),
+      settle(getCalendarFeedStatus()),
+      settle(listApiKeys()),
+      settle(listWebhookEndpoints()),
+      settle(getGmailConnectionStatus()),
+      settle(getOutlookConnectionStatus()),
+      settle(getLastLinkedInImportAt()),
+      settle(listCalendarSubscriptions()),
+      settle(requireUserId().then((id) => listEventConnections(id))),
+    ]);
   const now = new Date();
   const pages: IntegrationStatuses["pages"] = {};
   const accounts: IntegrationStatuses["accounts"] = {};
+  const connectors: IntegrationStatuses["connectors"] = {};
 
   if (settings === "unknown") {
     pages.ai = "unknown";
@@ -117,10 +128,71 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
   // Assistants sign in through Clerk and leave no record in Orbit, so there is nothing to report.
   pages.assistants = { state: "none", detail: "Works on every plan" };
 
+  // --- the connector catalog ------------------------------------------------------------
+  // Keyed by connector id, not by page: the catalog answers for things that are not pages
+  // (`calendar_ics`, `luma`, `eventbrite`, `apollo`, `zapier`) and wants one short line each,
+  // where an account page describes the same connection per feature.
+  connectors.google = google === "unknown" ? "unknown" : connectionSummary(google);
+  connectors.outlook = outlook === "unknown" ? "unknown" : connectionSummary(outlook);
+  connectors.linkedin = pages.linkedin;
+
+  // Inbound calendar subscriptions, distinct from the reminders feed, which is the OUTBOUND
+  // feed Orbit publishes. Two different directions that have shared a word for too long.
+  connectors.calendar_ics =
+    icsSubs === "unknown"
+      ? "unknown"
+      : icsSubs.length === 0
+        ? { state: "off", detail: "No feeds" }
+        : {
+            state: icsSubs.some((s) => s.lastSyncStatus === "error") ? "partial" : "on",
+            detail: plural(icsSubs.length, "feed"),
+          };
+
+  if (eventConns === "unknown") {
+    connectors.luma = "unknown";
+    connectors.eventbrite = "unknown";
+  } else {
+    for (const id of ["luma", "eventbrite"] as const) {
+      // `luma` and `luma_ics` are separate providers on the same platform; either one means
+      // Luma is connected as far as the catalog is concerned.
+      const conns = eventConns.filter((c) => c.provider.startsWith(id));
+      connectors[id] =
+        conns.length === 0
+          ? { state: "off", detail: "Not connected" }
+          : conns.some((c) => c.status === "needs_reauth")
+            ? { state: "partial", detail: "Reconnect needed" }
+            : { state: "on", detail: "Connected" };
+    }
+  }
+
+  // Apollo and Zapier have no connection of their own: Apollo is a key on user_settings and
+  // Zapier is whatever API keys exist. Both are read from data already fetched above.
+  connectors.apollo =
+    settings === "unknown"
+      ? "unknown"
+      : settings.outreach.apollo
+        ? { state: "on", detail: "Key saved" }
+        : { state: "off", detail: "No key yet" };
+
+  connectors.zapier =
+    keys === "unknown"
+      ? "unknown"
+      : keys.length > 0
+        ? { state: "on", detail: plural(keys.length, "key") }
+        : { state: "off", detail: "No keys" };
+
+  // The registry and this action must answer for the same connectors. The smoke test checks
+  // the list against the registry; this checks the implementation against the list.
+  for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
+    if (!(id in connectors)) connectors[id] = { state: "off", detail: "Not connected" };
+  }
+
   const attention = attentionItems({
     accounts,
     ai: settings === "unknown" ? "unknown" : { ready: settings.hasApiKey },
   });
 
-  return { pages, accounts, attention };
+  const statuses: IntegrationStatuses = { pages, accounts, attention, connectors };
+  const demo = await isDemoWorkspace(await requireUserId()).catch(() => false);
+  return demo ? withDemoIntegrationStatuses(statuses) : statuses;
 }

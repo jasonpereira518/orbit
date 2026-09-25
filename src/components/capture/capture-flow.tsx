@@ -60,6 +60,9 @@ const SOURCE_LABEL: Record<CaptureJobSource, string> = {
   meeting: "a meeting",
   scan: "a scan",
   phone: "your phone",
+  // A job the public API enqueued (POST /v1/notes) — shown on resume, since one of these
+  // can now sit in `ready`/`reviewing` waiting for the person to open /capture themselves.
+  api: "a note you sent in",
 };
 
 export function CaptureFlow({
@@ -71,6 +74,8 @@ export function CaptureFlow({
   hasApiKey = true,
   aiReason = null,
   canTranscribe = false,
+  canUseMeetings = false,
+  meetingsDeniedMessage,
   resumableMeeting = null,
   ignoredCount = 0,
   quota,
@@ -87,6 +92,10 @@ export function CaptureFlow({
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
   aiReason?: AiAccessDenial | null;
   canTranscribe?: boolean;
+  /** Meeting recording is Orbit Pro and Lifetime only. False shows an upgrade prompt instead of the recorder. */
+  canUseMeetings?: boolean;
+  /** `FEATURE_DENIAL.meetings`, read on the server — this file is a client component and cannot import `@/lib/entitlements` (it reaches the database). */
+  meetingsDeniedMessage: string;
   resumableMeeting?: ResumableMeeting | null;
   ignoredCount?: number;
   quota?: { used: number; limit: number | null } | null;
@@ -397,6 +406,8 @@ export function CaptureFlow({
                 hasApiKey={hasApiKey}
                 aiReason={aiReason}
                 canTranscribe={canTranscribe}
+                canUseMeetings={canUseMeetings}
+                meetingsDeniedMessage={meetingsDeniedMessage}
                 onBusyChange={setMeetingBusy}
                 onAnalyzed={onMeetingAnalyzed}
                 panelId={capturePanelId("meeting")}
@@ -666,7 +677,7 @@ function MeetingHeader({ job, analysis, readOnly }: { job: CaptureJobView; analy
         sessionId={job.meetingSessionId ?? undefined}
       />
       {analysis.missingSeqs.length > 0 && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">
+        <p className="text-xs text-amber-700 dark:text-warning">
           {analysis.missingSeqs.length} minute{analysis.missingSeqs.length === 1 ? "" : "s"} of this meeting never reached Orbit, so they are not in the summary.
         </p>
       )}

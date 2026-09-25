@@ -1,5 +1,4 @@
 import { and, desc, eq, isNull, notExists, sql } from "drizzle-orm";
-import { Resend } from "resend";
 import { getDb } from "@/db";
 import {
   broadcastRecipients,
@@ -7,7 +6,6 @@ import {
   interestListSignups,
   userSettings,
 } from "@/db/schema";
-import { getAppBaseUrl } from "@/lib/app-url";
 import { BODY_MAX, BODY_MIN, SUBJECT_MAX, SUBJECT_MIN } from "@/lib/broadcast-limits";
 import {
   ACCENT,
@@ -16,16 +14,19 @@ import {
   FONT_STACK,
   MUTED,
   TEXT,
+  WAITLIST_FOOTER,
   buildUnsubscribeUrl,
   escapeHtml,
+  waitlistReplyTo,
+  waitlistSender,
 } from "@/lib/interest-list-email";
 
 /**
- * Operator-composed notes to the interest list.
+ * Operator-composed notes to the waitlist.
  *
- * The landing page promises "the occasional note on what's new in Orbit", and until this
- * existed the list was write-only: two automated emails and no way to send the thing that
- * was actually promised.
+ * Same rules as every waitlist email (`lib/interest-list-email.ts`): sent from the
+ * waitlist's own sender, with no product name, logo or app link in the shell. What the
+ * operator writes in the body is theirs to keep equally quiet.
  */
 
 /** Ceiling on one send request, so a run cannot outlive its invocation. */
@@ -53,9 +54,6 @@ export function buildBroadcastEmail(input: {
   body: string;
   unsubscribeUrl: string;
 }) {
-  const appUrl = getAppBaseUrl();
-  const logoUrl = `${appUrl}/orbit-logo.png`;
-
   // Blank lines separate paragraphs; single newlines stay inside one.
   const paragraphs = input.body
     .replace(/\r\n/g, "\n")
@@ -66,9 +64,11 @@ export function buildBroadcastEmail(input: {
   const text = [
     input.body.trim(),
     "",
+    "— Jason",
+    "",
     "—",
-    "You're getting this because you joined Orbit's interest list.",
-    `Unsubscribe any time: ${input.unsubscribeUrl}`,
+    WAITLIST_FOOTER,
+    `Leave the waitlist: ${input.unsubscribeUrl}`,
   ].join("\n");
 
   const html = `<!doctype html>
@@ -78,21 +78,6 @@ export function buildBroadcastEmail(input: {
       <tr>
         <td align="center" style="padding:40px 20px;">
           <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
-            <tr>
-              <td style="padding-bottom:30px;">
-                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td style="padding-right:11px;" valign="middle">
-                      <img src="${logoUrl}" alt="" width="40" height="40"
-                           style="display:block;border:0;outline:none;text-decoration:none;width:40px;height:40px;border-radius:50%;" />
-                    </td>
-                    <td valign="middle">
-                      <span style="font-size:20px;font-weight:600;color:${TEXT};letter-spacing:-0.01em;">Orbit</span>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
 ${paragraphs
   .map(
     (block, i) =>
@@ -111,8 +96,8 @@ ${paragraphs
             </tr>
             <tr>
               <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid rgba(232,243,241,0.14);padding-top:22px;">
-                You're getting this because you joined Orbit's interest list.
-                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Unsubscribe any time</a>.
+                ${WAITLIST_FOOTER}
+                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Leave the waitlist</a>.
               </td>
             </tr>
           </table>
@@ -175,10 +160,9 @@ export async function deleteDraftBroadcast(id: string) {
 /**
  * Who a broadcast goes to.
  *
- * Exactly the audience the console calls "active": subscribed, and not already an account.
- * The same two exclusions the day-3 sweep uses, and for the same reasons — mailing someone
- * who unsubscribed is the one unforgivable bug here, and mailing "what's new" to an existing
- * user reads as a product that does not know its own customers.
+ * Exactly the audience the console calls "waiting": still on the list, and not already an
+ * account. Mailing someone who left is the one unforgivable bug here, and mailing the
+ * waitlist to an existing user reads as a product that does not know its own customers.
  */
 export async function audienceFor(): Promise<
   Array<{ id: string; email: string; unsubscribeToken: string }>
@@ -209,12 +193,6 @@ export async function audienceFor(): Promise<
     );
 }
 
-function fromAddress() {
-  const configured = process.env.RESEND_FROM_EMAIL?.trim();
-  if (!configured) return null;
-  return configured.includes("<") ? configured : `Jason from Orbit <${configured}>`;
-}
-
 /** A single send, used by both the test-send and the real one. */
 async function deliver(input: {
   to: string;
@@ -224,10 +202,12 @@ async function deliver(input: {
   unsubscribeUrl: string;
 }): Promise<{ ok: boolean; error?: string }> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
-  const from = fromAddress();
+  const from = waitlistSender();
   if (!apiKey || !from) return { ok: false, error: "Resend is not configured." };
 
   try {
+    // Loaded on send, inside the same try: the SDK stays off cold starts that send nothing.
+    const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
     const { error } = await resend.emails.send({
       from,
@@ -235,7 +215,7 @@ async function deliver(input: {
       subject: input.subject,
       html: input.html,
       text: input.text,
-      replyTo: process.env.CONTACT_INBOX_EMAIL?.trim() || undefined,
+      replyTo: waitlistReplyTo(),
       headers: {
         "List-Unsubscribe": `<${input.unsubscribeUrl}>`,
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

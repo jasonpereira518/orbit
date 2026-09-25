@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronDown, CircleDashed } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -86,7 +86,11 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
               exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -3 }}
               transition={{ duration: DUR.fast, ease: EASE_HOUSE }}
             >
-              {label}
+              {/* Shimmer on the stage name only — the detail beside it is a fact, not
+                  the "still working" signal. `data-text` must mirror the label. */}
+              <span className="t-shimmer max-w-full truncate align-bottom" data-text={label}>
+                {label}
+              </span>
               {current?.detail ? (
                 <span className="text-muted-foreground/70"> · {current.detail}</span>
               ) : null}
@@ -202,13 +206,13 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
                     <span className="mt-1 flex flex-wrap gap-1">
                       {step.refs.map((ref) =>
                         ref.kind === "contact" ? (
-                          <Link
+                          <IntentLink
                             key={`${step.id}-${ref.id}`}
                             href={`/contacts/${ref.id}`}
                             className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
                           >
                             {ref.name}
-                          </Link>
+                          </IntentLink>
                         ) : (
                           <span
                             key={`${step.id}-${ref.id}`}

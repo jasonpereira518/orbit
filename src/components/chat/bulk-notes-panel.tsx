@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { History, X } from "lucide-react";
@@ -46,7 +46,7 @@ import {
   useScanDropZone,
 } from "@/components/scan/scan-controls";
 import { finishBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
-import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
+import { releaseScanPage, type ScanPage } from "@/lib/scan-page";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import {
   pickLockedParticipant,
@@ -1658,13 +1658,13 @@ function PersonReviewCard({
                 />
                 <span>
                   Update{" "}
-                  <Link
+                  <IntentLink
                     href={`/contacts/${d.id}`}
                     className="text-primary underline"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {d.fullName}
-                  </Link>
+                  </IntentLink>
                   {d.company ? ` (${d.company})` : ""}
                 </span>
               </label>
@@ -1736,7 +1736,7 @@ function Field({
       <Label
         className={cn(
           "text-xs",
-          lowConfidence && "text-amber-700 dark:text-amber-400"
+          lowConfidence && "text-amber-700 dark:text-warning"
         )}
       >
         {label}

@@ -1,3 +1,4 @@
+import { initialsFromName } from "@/lib/initials";
 import {
   buildConstellationFit,
   constellationFitEdges,
@@ -17,6 +18,7 @@ import {
   withAlpha,
 } from "@/lib/school-color";
 import { hashUnit } from "@/lib/hash";
+import { hashUnitStream } from "@/lib/hash-stream";
 
 export { orderConstellationMembers };
 
@@ -201,12 +203,6 @@ export function displayName(c: {
   return preferred || c.fullName;
 }
 
-export function initialsFromName(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 function toIso(value: Date | string | null | undefined) {
   if (!value) return null;
@@ -280,6 +276,9 @@ function labelClear(
   );
 }
 
+const GRID_OFFSET = 2 ** 20;
+const GRID_STRIDE = 2 ** 21;
+
 /**
  * The placed stars, bucketed so a clearance test looks at neighbours rather than everyone.
  *
@@ -291,10 +290,15 @@ function labelClear(
  * one field, so it grew with the square of the network.
  */
 class ClearanceGrid {
-  private cells = new Map<string, Array<{ x: number; y: number }>>();
+  private cells = new Map<number, Array<{ x: number; y: number }>>();
 
+  /**
+   * One number per cell rather than a `"cx,cy"` string: the test below looks up nine cells per
+   * candidate, and building and hashing those strings was most of the layout's time at 10,000
+   * contacts. Exact for |cx|, |cy| < 2^20 cells — over a hundred million world px either way.
+   */
   private static key(cx: number, cy: number) {
-    return `${cx},${cy}`;
+    return (cx + GRID_OFFSET) * GRID_STRIDE + (cy + GRID_OFFSET);
   }
 
   add(p: { x: number; y: number }) {
@@ -347,10 +351,12 @@ function scatterField(
     let spot: { x: number; y: number } | null = null;
     let attempt = 0;
     let rounds = 0;
+    // The same values as hashUnit(seedPrefix + ":" + id, salt), hashing the string once per star.
+    const hash = hashUnitStream(`${seedPrefix}:${id}`);
     while (!spot && rounds < 200) {
       for (let tries = 0; tries < 24 && !spot; tries++, attempt++) {
-        const u = hashUnit(`${seedPrefix}:${id}`, attempt * 2 + 1);
-        const v = hashUnit(`${seedPrefix}:${id}`, attempt * 2 + 2);
+        const u = hash(attempt * 2 + 1);
+        const v = hash(attempt * 2 + 2);
         const angle = u * Math.PI * 2;
         // sqrt() → uniform density over the annulus
         const radius = Math.sqrt(
@@ -648,12 +654,46 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
  * - Deep Space and singletons rim the sky beyond the last shell.
  * - Nothing overlaps: stars, figures, and lines all keep their distance.
  */
+export type HybridGraphLayout = { nodes: LayoutNode[]; edges: LayoutEdge[] };
+
 export function buildHybridGraphLayout(
   contacts: GraphContactInput[],
   userName: string
-): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
+): HybridGraphLayout {
+  const steps = buildHybridGraphLayoutSteps(contacts, userName);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/**
+ * `buildHybridGraphLayout`, one phase at a time: it yields between phases so a caller can give
+ * the main thread back in between (`src/lib/graph/sky-layout.ts`). At 10,000 contacts the whole
+ * layout is ~50ms in one piece — a long task on its own — and no phase is more than ~15ms.
+ * Drained without pausing, it is exactly the synchronous layout.
+ */
+export function* buildHybridGraphLayoutSteps(
+  contacts: GraphContactInput[],
+  userName: string
+): Generator<void, HybridGraphLayout, void> {
+  // `clusterBrandColor` normalises, looks up and mixes a colour on every call, and a layout asks
+  // about each cluster once for itself and again for every line of its figure. Scoped to this
+  // one layout, so it neither outlives it nor ships to pages that never lay out a sky.
+  const brandMemo = new Map<string, string>();
+  const brandOf = (name: string, kind?: string) => {
+    const key = `${kind ?? ""}|${name}`;
+    let color = brandMemo.get(key);
+    if (color === undefined) {
+      color = clusterBrandColor(name, kind);
+      brandMemo.set(key, color);
+    }
+    return color;
+  };
+
   const fit = buildConstellationFit(contacts);
   const { byContactId, fits } = fit;
+  yield;
 
   const eligible = fit.clusters.filter((c) => fits.has(c.id));
   const satellites = familySatellites(contacts, eligible);
@@ -661,6 +701,7 @@ export function buildHybridGraphLayout(
     ...buildClusterGeometry(fits.get(cluster.id)!, satellites.get(cluster.id)),
     family: clusterFamily(cluster),
   }));
+  yield;
   const { centers, skyEdge } = packClusterShells(geoms);
 
   const positions = new Map<string, PolarPosition>();
@@ -698,11 +739,12 @@ export function buildHybridGraphLayout(
     }
   }
 
+  yield;
   const clusterNodes: LayoutNode[] = [];
   const clusterColorById = new Map<string, string>();
   for (const geom of geoms) {
     const cluster = geom.cluster;
-    const color = clusterBrandColor(cluster.name, cluster.kind);
+    const color = brandOf(cluster.name, cluster.kind);
     clusterColorById.set(cluster.id, color);
 
     const memberPositions = cluster.contactIds
@@ -861,6 +903,7 @@ export function buildHybridGraphLayout(
 
   // Constellation path edges only — brand-tinted lines along each figure,
   // synthesized from the same fit that placed the stars.
+  yield;
   const edges: LayoutEdge[] = [];
   for (const fitEdge of constellationFitEdges(fit)) {
     const reason = fitEdge.clusterKind === "school" ? "school" : "company";
@@ -872,7 +915,7 @@ export function buildHybridGraphLayout(
       company: fitEdge.clusterName,
     };
     const layoutEdge = peerEdgeToLayoutEdge(peer);
-    const brand = clusterBrandColor(fitEdge.clusterName, reason);
+    const brand = brandOf(fitEdge.clusterName, reason);
     edges.push({
       ...layoutEdge,
       type: "labeled",

@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
 import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
 import { AiUsageCard } from "@/components/settings/ai-usage-card";
+import { SpeechUsageCard, type SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
@@ -70,6 +71,8 @@ export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
     case "contacts_file":
       return null;
     case "calendar":
+      return null;
+    case "drive_docs":
       return null;
   }
 }
@@ -137,6 +140,7 @@ export function IntegrationsDialog({
   inboxVisible,
   initialSettings,
   canUseRecruiters,
+  speechAllowances,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -159,6 +163,7 @@ export function IntegrationsDialog({
   inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  speechAllowances: SpeechAllowances;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -180,6 +185,7 @@ export function IntegrationsDialog({
           inboxVisible={inboxVisible}
           initialSettings={initialSettings}
           canUseRecruiters={canUseRecruiters}
+          speechAllowances={speechAllowances}
         />
       </DialogContent>
     </Dialog>
@@ -198,6 +204,7 @@ function DialogBody({
   inboxVisible,
   initialSettings,
   canUseRecruiters,
+  speechAllowances,
 }: {
   /**
    * False from the moment the dialog starts closing. Base UI only unmounts the body once
@@ -221,6 +228,7 @@ function DialogBody({
   inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  speechAllowances: SpeechAllowances;
 }) {
   const job = useImportJob();
   // The Overview's "Connect Google" / "Connect Microsoft", which start the consent screen
@@ -583,6 +591,7 @@ function DialogBody({
                       initialSettings={initialSettings}
                       canUseRecruiters={canUseRecruiters}
                       onOpenPage={openPage}
+                      speechAllowances={speechAllowances}
                     />
                   </>
                 )}
@@ -602,6 +611,7 @@ function Panel({
   initialSettings,
   canUseRecruiters,
   onOpenPage,
+  speechAllowances,
 }: {
   id: IntegrationTabId;
   active: boolean;
@@ -609,6 +619,7 @@ function Panel({
   initialSettings: Settings;
   canUseRecruiters: boolean;
   onOpenPage: (page: IntegrationTabId) => void;
+  speechAllowances: SpeechAllowances;
 }) {
   switch (id) {
     // One page per account, not a stack of cards. `returnTo` is the page itself: the page is
@@ -650,6 +661,7 @@ function Panel({
         <div className="space-y-5">
           <AiSettings initialSettings={initialSettings} />
           <DecisionModelSettings initialSettings={initialSettings} />
+          <SpeechUsageCard speech={speechAllowances} />
           <AiUsageCard />
         </div>
       );

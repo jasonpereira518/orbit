@@ -455,6 +455,33 @@ export function friendlyError(err: unknown, fallback: string): string {
 }
 
 /**
+ * The text a person should see for a failure that was already reduced to a plain string
+ * before it could reach `friendlyError`.
+ *
+ * `ImportJobSnapshot`/`QueuedImport` (see `src/lib/import-job-runner.ts`,
+ * `src/lib/imports/use-import-queue.ts`) store a failed job's error as a bare `string` —
+ * view state, not an error carrier — so by the time a toast renders it, the original
+ * `UserFacingError` instance is long gone and `friendlyError`'s `isUserFacingError` check
+ * can never see it: `instanceof` has nothing left to test. `userFacing` is how the catch
+ * site (which still had the real object) hands that identity forward instead — set it from
+ * `isUserFacingError(err)` at the moment of the catch, alongside the stringified message.
+ *
+ * Everything else — raw driver/server text, `userFacing` unset or false — still goes
+ * through `friendlyError` exactly as before, so a Postgres or OAuth body is never shown
+ * verbatim just because some other kind's failure happened to flow through here too.
+ */
+export function failureText(
+  text: string | null | undefined,
+  userFacing: boolean | undefined,
+  fallback: string,
+): string {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) return fallback;
+  if (userFacing) return trimmed;
+  return friendlyError(trimmed, fallback);
+}
+
+/**
  * Stable machine code for an AI provider failure.
  *
  * Mirrors `aiProviderErrorMessage`'s branches, but yields a low-cardinality token instead

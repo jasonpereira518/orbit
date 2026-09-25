@@ -9,6 +9,7 @@
  */
 import { formatDistance } from "date-fns";
 import type { IntegrationTabId } from "@/components/settings/sections";
+import type { ConnectorStatusId } from "@/lib/connectors/status";
 import type { ConnectionHealth } from "@/lib/connection-status";
 
 export type AccountProvider = "google" | "microsoft";
@@ -47,6 +48,14 @@ export type IntegrationStatuses = {
   pages: Partial<Record<IntegrationTabId, PageStatus | "unknown">>;
   accounts: Partial<Record<AccountProvider, AccountStatus | "unknown">>;
   attention: AttentionItem[];
+  /**
+   * One line per registered connector, keyed by `ConnectorStatusId` rather than by page.
+   * The connector catalog answers for ids that are not pages at all (`calendar_ics`, `luma`,
+   * `eventbrite`, `apollo`, `zapier`), and `smoke-integration-statuses.ts` asserts the action
+   * really answers for every registered one — so these live beside the page lines rather
+   * than being folded into them.
+   */
+  connectors: Partial<Record<ConnectorStatusId, PageStatus | "unknown">>;
 };
 
 /** The fields of `GmailConnectionStatus` this module reads. */

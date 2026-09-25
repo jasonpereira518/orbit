@@ -44,10 +44,11 @@ export type TokenCounts = {
 };
 
 /**
- * Who was billed for a call. "typesafe" is the decision model — a ledger value, never a
- * provider a person picks for chat (see `DecisionGrant` in ai-access.ts).
+ * Who was billed for a call. "typesafe" is the decision model and "deepgram" is Orbit's
+ * hosted speech-to-text — ledger values, neither one a provider a person picks for chat (see
+ * `DecisionGrant` in ai-access.ts and `@/lib/deepgram`).
  */
-export type UsageProvider = AiProvider | "typesafe";
+export type UsageProvider = AiProvider | "typesafe" | "deepgram";
 
 export type UsageMeta = {
   userId: string;

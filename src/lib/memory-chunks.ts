@@ -15,7 +15,8 @@
  * The chunker is pure and the writer is not; `scripts/smoke-memory-chunks.ts` drives the
  * chunker directly, which is where the boundary rules are pinned.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import { memoryChunks } from "@/db/schema";
 import { computeContentHash } from "@/lib/search";
@@ -129,6 +130,72 @@ export function chunkHeader(input: {
   return parts.join(" · ");
 }
 
+/**
+ * What an interaction's passages were built FROM, as one md5.
+ *
+ * This is the staleness signal for content, and it is deliberately not the same thing as
+ * `content_hash` (which is per chunk, over the rendered passage) or `embedded_hash` (which
+ * asks whether the vector is current). It answers: does this chunk set still describe the row
+ * as it stands now?
+ *
+ * It exists because the sweep's claim used to be a pure anti-join — an interaction with no
+ * passages — so a note was indexed once and never looked at again. Editing it left the
+ * original passages quotable forever. A hook on the write path could not fix that: three of
+ * the five paths that change this text are bulk (the import upsert, the calendar ingest
+ * upsert, and `events/connect.ts`), and per-row re-indexing is exactly what those paths pass
+ * `skipEmbedding` to avoid. A hash the CLAIM can compute covers all five, including ones
+ * nobody has written yet.
+ *
+ * Fixed-width fields first, free text last, so a `|` inside a note cannot shift the fields
+ * around it. The date is epoch SECONDS rather than a formatted timestamp: no timezone, no
+ * precision mismatch between `toISOString` and `to_char`. The raw interaction type is hashed
+ * rather than its rendered label, because the label is derived from it and the SQL side
+ * should not have to reproduce a TypeScript lookup table.
+ */
+export function memorySourceHash(input: {
+  text: string | null | undefined;
+  occurredAt: Date | null;
+  interactionType: string | null;
+  contactId: string | null;
+}): string {
+  const seconds =
+    input.occurredAt && !Number.isNaN(input.occurredAt.getTime())
+      ? String(Math.floor(input.occurredAt.getTime() / 1000))
+      : "";
+  const canonical = [
+    seconds,
+    input.interactionType ?? "",
+    input.contactId ?? "",
+    input.text ?? "",
+  ].join("|");
+  return createHash("md5").update(canonical, "utf8").digest("hex");
+}
+
+/**
+ * The same hash, rendered in SQL over an `interactions` row.
+ *
+ * It MUST stay byte-for-byte equivalent to `memorySourceHash` above; the two are next to each
+ * other so a change to one is an obvious omission in the other. Postgres `md5()` is core (not
+ * pgcrypto, so PGlite has it too) and agrees with node's md5 on UTF-8 input, including
+ * multi-byte characters and the empty string — `scripts/smoke-memory-search.ts` pins that,
+ * and pins the consequence too: if the two ever disagree, the sweep re-chunks every
+ * interaction on every run forever, which shows up there as a second sweep doing work.
+ *
+ * `nullif(raw_notes, '')` mirrors the TypeScript `raw_notes || ai_summary`: an empty string
+ * falls through to the summary, exactly as a falsy value does in JavaScript.
+ *
+ * @param alias - the table alias the surrounding query gave `interactions`.
+ */
+export function memorySourceHashSql(alias = "i"): SQL {
+  const t = sql.raw(alias);
+  return sql`md5(
+    coalesce(floor(extract(epoch from ${t}.interaction_date))::bigint::text, '')
+    || '|' || coalesce(${t}.interaction_type, '')
+    || '|' || coalesce(${t}.contact_id::text, '')
+    || '|' || coalesce(nullif(${t}.raw_notes, ''), ${t}.ai_summary, '')
+  )`;
+}
+
 /** Turn one piece of writing into drafts ready to store. Pure. */
 export function buildMemoryChunks(input: {
   text: string | null | undefined;
@@ -178,6 +245,8 @@ export async function syncMemoryChunks(
     sourceKind: MemorySourceKind;
     sourceId: string;
     drafts: MemoryChunkDraft[];
+    /** `memorySourceHash` of the row these drafts came from — the sweep's staleness signal. */
+    sourceHash?: string | null;
   },
   options: { db?: Awaited<ReturnType<typeof getDb>> } = {}
 ): Promise<{ written: number; reused: number }> {
@@ -211,6 +280,7 @@ export async function syncMemoryChunks(
       chunkIndex: draft.chunkIndex,
       content: draft.content,
       contentHash: draft.contentHash,
+      sourceHash: input.sourceHash ?? null,
       embeddedHash: carried?.embeddedHash ?? null,
       embedding: carried?.embedding ?? null,
     };
@@ -255,32 +325,46 @@ export async function deleteMemoryChunks(
 }
 
 /**
- * Repoint chunks when two contacts merge.
+ * Fold an interaction's mentions into its passages' `contact_ids`.
  *
- * `contact_id` moves by foreign key, but `contact_ids` is an array the database will not
- * rewrite on its own — leave it and a merged-away id stays in the index forever, so the
- * dinner note stops being findable from the surviving contact.
+ * `contact_ids` is what makes a note naming four people findable from any of them, but the
+ * chunker cannot fill it on its own: `interaction_mentions` is written AFTER the interaction
+ * row it hangs off (`note-batch-save.ts`), so at chunk time there is nothing to read. Without
+ * this, a dinner note stays findable only from the person it happened to be filed under.
+ *
+ * Reads the mentions in SQL rather than taking rows, which makes it idempotent — it
+ * recomputes the union instead of appending to it, so a re-saved batch cannot grow the array
+ * with duplicates. Content is untouched, so nothing becomes stale and nothing is re-embedded.
+ *
+ * Raw SQL because this is one set-based UPDATE over a uuid[] with a correlated subquery;
+ * expressing it through the builder would render the array functions by hand anyway.
  */
-export async function repointMemoryChunks(
+export async function syncMemoryChunkMentions(
   userId: string,
-  fromContactId: string,
-  toContactId: string,
+  interactionIds: string[],
   options: { db?: Awaited<ReturnType<typeof getDb>> } = {}
 ): Promise<void> {
+  const ids = [...new Set(interactionIds)];
+  if (!ids.length) return;
   const db = options.db ?? (await getDb());
-  await db
-    .update(memoryChunks)
-    .set({
-      contactId: sql`case when ${memoryChunks.contactId} = ${fromContactId}::uuid then ${toContactId}::uuid else ${memoryChunks.contactId} end`,
-      contactIds: sql`(
-        select coalesce(array_agg(distinct elem), '{}')
-        from unnest(array_replace(${memoryChunks.contactIds}, ${fromContactId}::uuid, ${toContactId}::uuid)) as elem
-      )`,
-    })
-    .where(
-      and(
-        eq(memoryChunks.userId, userId),
-        sql`${fromContactId}::uuid = any(${memoryChunks.contactIds}) or ${memoryChunks.contactId} = ${fromContactId}::uuid`
-      )
-    );
+  await db.execute(sql`
+    UPDATE memory_chunks m
+       SET contact_ids = (
+             SELECT coalesce(array_agg(DISTINCT e), '{}')
+               FROM unnest(
+                      m.contact_ids || coalesce(
+                        (SELECT array_agg(im.contact_id)
+                           FROM interaction_mentions im
+                          WHERE im.user_id = m.user_id
+                            AND im.interaction_id = m.source_id),
+                        '{}'::uuid[])
+                    ) AS e
+           )
+     WHERE m.user_id = ${userId}
+       AND m.source_kind = 'interaction'
+       AND m.source_id = ANY(${sql`ARRAY[${sql.join(
+         ids.map((id) => sql`${id}::uuid`),
+         sql`, `
+       )}]`})
+  `);
 }

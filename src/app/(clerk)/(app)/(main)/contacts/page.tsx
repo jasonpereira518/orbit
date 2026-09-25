@@ -12,6 +12,7 @@ import { ContactsList } from "@/components/contacts/contacts-list";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 const SORTS: ContactSort[] = ["name", "closeness", "recent", "relevance"];
 
@@ -25,6 +26,8 @@ export default async function ContactsPage({
     followUp?: string;
     sort?: string;
     letter?: string;
+    /** Marks one import's new people in the list (`ContactsList` draws them in yellow). */
+    importId?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -44,6 +47,7 @@ export default async function ContactsPage({
     followUp: params.followUp === "due" ? ("due" as const) : undefined,
     sort,
     letter: params.letter,
+    importId: params.importId,
   };
 
   // The duplicates button streams in behind the list (`DuplicatesButton` below): its count
@@ -95,6 +99,7 @@ export default async function ContactsPage({
         </>
       }
     >
+      <RenderStamp />
       <div className="space-y-6">
         <ContactQuotaNotice
           used={planOverview.usage.used}
@@ -105,6 +110,7 @@ export default async function ContactsPage({
           initialCompany={params.company || ""}
           initialMinScore={params.minScore || ""}
           initialFollowUp={params.followUp || ""}
+          importId={params.importId}
         >
           {/*
             Keyed on the filters so a new query starts from a clean list rather than appending
@@ -113,7 +119,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, sort].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, sort, params.importId].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}

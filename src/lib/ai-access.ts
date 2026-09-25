@@ -1,7 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
-import OpenAI from "openai";
-import { and, eq, gte, sql } from "drizzle-orm";
+// Types only at the top: the SDKs themselves load on the first client built. This module is
+// reached by most server routes (the app layout, the app pulse, health), and evaluating three
+// provider SDKs — @google/genai pulls google-auth-library, protobufjs and ws — was part of
+// every cold start for routes that never make a model call.
+import type Anthropic from "@anthropic-ai/sdk";
+import type { GoogleGenAI } from "@google/genai";
+import type OpenAI from "openai";
+import { and, eq, gte, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
@@ -21,6 +25,8 @@ import {
 } from "@/lib/ai-providers";
 import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
+import { deepgramEnabled } from "@/lib/deepgram";
+import { speechAllowance } from "@/lib/speech-quota";
 import {
   systemOneRequest,
   type SystemOneRequest,
@@ -247,25 +253,35 @@ function keyFor(grant: AiGrant<AiProvider>, provider: AiProvider): string {
   return key;
 }
 
-export function geminiClient(grant: AiGrant<AiProvider>): GoogleGenAI {
-  return new GoogleGenAI({ apiKey: keyFor(grant, "gemini") });
+// The grant is checked before the SDK loads, so a forged or mismatched grant is refused
+// without ever importing a provider.
+export async function geminiClient(grant: AiGrant<AiProvider>): Promise<GoogleGenAI> {
+  const apiKey = keyFor(grant, "gemini");
+  const { GoogleGenAI } = await import("@google/genai");
+  return new GoogleGenAI({ apiKey });
 }
 
-export function openaiClient(grant: AiGrant<AiProvider>): OpenAI {
-  return new OpenAI({ apiKey: keyFor(grant, "openai") });
+export async function openaiClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  const apiKey = keyFor(grant, "openai");
+  const { default: OpenAI } = await import("openai");
+  return new OpenAI({ apiKey });
 }
 
-export function anthropicClient(grant: AiGrant<AiProvider>): Anthropic {
-  return new Anthropic({ apiKey: keyFor(grant, "anthropic") });
+export async function anthropicClient(grant: AiGrant<AiProvider>): Promise<Anthropic> {
+  const apiKey = keyFor(grant, "anthropic");
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  return new Anthropic({ apiKey });
 }
 
 /**
  * OpenRouter is the OpenAI SDK pointed somewhere else. `keyFor` keeps the invariant that a
  * grant minted for one provider cannot build another's client.
  */
-export function openrouterClient(grant: AiGrant<AiProvider>): OpenAI {
+export async function openrouterClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  const apiKey = keyFor(grant, "openrouter");
+  const { default: OpenAI } = await import("openai");
   return new OpenAI({
-    apiKey: keyFor(grant, "openrouter"),
+    apiKey,
     baseURL: "https://openrouter.ai/api/v1",
     defaultHeaders: {
       "HTTP-Referer": getAppBaseUrl(),
@@ -279,7 +295,7 @@ export function isOpenAiShaped(provider: AiProvider): boolean {
   return provider === "openai" || provider === "openrouter";
 }
 
-export function openAiShapedClient(grant: AiGrant<AiProvider>): OpenAI {
+export function openAiShapedClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
   return grant.provider === "openrouter" ? openrouterClient(grant) : openaiClient(grant);
 }
 
@@ -433,6 +449,14 @@ export async function managedUsageThisMonth(userId: string, now = new Date()): P
         eq(usageEvents.userId, userId),
         eq(usageEvents.keyOwner, "orbit"),
         gte(usageEvents.createdAt, start),
+        // Deepgram rows carry keyOwner "orbit" too — it's Orbit's own key, but it is a hosted
+        // service metered by `speech_usage`, not an LLM call against the managed allowance.
+        // Without this exclusion, `UNPRICED_CALL_MICROS.transcription` (managedCostSql's
+        // fallback for a null-cost transcription row, which Deepgram rows always are — see
+        // the note in ai.ts) would charge every voice note against the same monthly cap that
+        // gates a Lifetime account's chat and capture calls, so recording a few voice notes
+        // could throttle that account out of its own AI completions.
+        ne(usageEvents.provider, "deepgram"),
       ),
     );
   const [reserved] = await db
@@ -716,7 +740,7 @@ export type AiAccessStatus = {
   hasPersonalKey: boolean;
   /** This deployment holds at least one managed key. */
   managedConfigured: boolean;
-  /** Voice and meeting capture have an engine (see `AiAccess.canTranscribe`). */
+  /** Voice and meeting capture have an engine — Deepgram's quota or `AiAccess.canTranscribe()`. */
   canTranscribe: boolean;
   /** This month's managed allowance — eligible accounts only. */
   allowance: ManagedAllowance | null;
@@ -747,6 +771,11 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
     reason = "managed_limit";
   }
 
+  // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
+  // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
+  // callers rely on.
+  const deepgram = deepgramEnabled() ? !(await speechAllowance(userId, "shortform")).exhausted : false;
+
   return {
     ready: reason === null,
     reason,
@@ -758,7 +787,7 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
     eligibility: access.eligibility,
     hasPersonalKey: facts.personal[facts.selectedProvider],
     managedConfigured: Object.values(managedKeysConfigured()).some(Boolean),
-    canTranscribe: access.canTranscribe(),
+    canTranscribe: deepgram || access.canTranscribe(),
     allowance,
   };
 }

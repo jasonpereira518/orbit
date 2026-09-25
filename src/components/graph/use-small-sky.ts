@@ -49,9 +49,9 @@ export function isSmallSkyViewport(viewport: {
 /**
  * Whether this viewport gets the canvas constellation.
  *
- * Safe to call during render: `NetworkGraph` is only ever reached through
- * `next/dynamic({ ssr: false })`, so the first render happens in the browser and the
- * answer is right on frame one — no flash, no double mount.
+ * Safe to call during render: `NetworkGraph` is only ever rendered once its chunk has loaded
+ * in the browser (`constellation-modules.ts`), so the first render happens in the browser and
+ * the answer is right on frame one — no flash, no double mount.
  */
 export function useSmallSky(): boolean {
   const raw = useMediaQuery(SMALL_SKY_QUERY);

@@ -310,7 +310,16 @@ run(async () => {
     components: { securitySchemes: Record<string, unknown> };
   };
   check("it declares its OpenAPI version", doc.openapi.startsWith("3."), doc.openapi);
-  for (const path of ["/me", "/events", "/contacts", "/followups", "/webhook-endpoints"]) {
+  for (const path of [
+    "/me",
+    "/events",
+    "/contacts",
+    "/followups",
+    "/followups/{id}",
+    "/notes",
+    "/interactions",
+    "/webhook-endpoints",
+  ]) {
     check(`it documents ${path}`, Boolean(doc.paths[path]));
   }
   check("it documents bearer auth", Boolean(doc.components.securitySchemes.bearerAuth));

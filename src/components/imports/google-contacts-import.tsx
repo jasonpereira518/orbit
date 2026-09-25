@@ -8,7 +8,7 @@ import {
 } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
-import { BusyHint } from "@/components/imports/import-utils";
+import { BusyHint, ConnectedImportSkeleton } from "@/components/imports/import-utils";
 import { useImportJob } from "@/lib/import-job-runner";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
 import { useGoogleConnection } from "@/components/settings/use-provider-connection";
@@ -39,7 +39,9 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
   const contactsGranted = contacts.contactsScopeGranted && (status?.canImportContacts ?? true);
 
   if (!status) {
-    return null;
+    // Not known yet: the card's frame with placeholders, rather than an empty panel that
+    // the card then pops into.
+    return <ConnectedImportSkeleton id="import-google-contacts" title="Google Contacts" />;
   }
 
   if (!status.configured) {
@@ -58,7 +60,10 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
   }
 
   return (
-    <section id="import-google-contacts" className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section
+      id="import-google-contacts"
+      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
@@ -72,7 +77,13 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
           {status.status === "disarmed" ? (
             <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
               <span>{calendarPauseLine(status.syncError)}</span>
-              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={connect}>
+              <Button
+                variant="link"
+                size="sm"
+                className="h-auto px-0"
+                disabled={busy}
+                onClick={connect}
+              >
                 Reconnect Google
               </Button>
             </p>
@@ -84,10 +95,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
         </div>
         <div className="flex flex-wrap gap-2">
           {!status.connected || !contactsGranted ? (
-            <Button
-              disabled={busy}
-              onClick={connect}
-            >
+            <Button disabled={busy} onClick={connect}>
               {status.connected || status.status === "needs_reauth"
                 ? "Reconnect Google"
                 : "Connect Google"}

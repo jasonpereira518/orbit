@@ -73,7 +73,7 @@ type Adapter = {
 
 const geminiAdapter: Adapter = {
   async submit(grant, model, operation, requests) {
-    const client = geminiClient(grant);
+    const client = await geminiClient(grant);
     const thinking = geminiThinkingConfig(model, aiOperationThinking(operation));
     const job = await client.batches.create({
       model,
@@ -98,7 +98,7 @@ const geminiAdapter: Adapter = {
   },
 
   async poll(grant, job) {
-    const client = geminiClient(grant);
+    const client = await geminiClient(grant);
     const batch = await client.batches.get({ name: job.providerBatchId });
     const state = String(batch.state ?? "");
     if (state === "JOB_STATE_FAILED" || state === "JOB_STATE_CANCELLED" || state === "JOB_STATE_EXPIRED") {
@@ -126,13 +126,13 @@ const geminiAdapter: Adapter = {
   },
 
   async cleanup(grant, job) {
-    await geminiClient(grant).batches.delete({ name: job.providerBatchId });
+    await (await geminiClient(grant)).batches.delete({ name: job.providerBatchId });
   },
 };
 
 const openaiAdapter: Adapter = {
   async submit(grant, model, operation, requests) {
-    const client = openaiClient(grant);
+    const client = await openaiClient(grant);
     const thinking = aiOperationThinking(operation);
     const jsonl = requests
       .map((r) =>
@@ -169,7 +169,7 @@ const openaiAdapter: Adapter = {
   },
 
   async poll(grant, job) {
-    const client = openaiClient(grant);
+    const client = await openaiClient(grant);
     const batch = await client.batches.retrieve(job.providerBatchId);
     if (["failed", "expired", "cancelled"].includes(batch.status)) {
       return { state: "failed", reason: batch.errors?.data?.[0]?.message ?? batch.status };
@@ -202,7 +202,7 @@ const openaiAdapter: Adapter = {
   },
 
   async cleanup(grant, job) {
-    const client = openaiClient(grant);
+    const client = await openaiClient(grant);
     const batch = await client.batches.retrieve(job.providerBatchId).catch(() => null);
     for (const id of [job.providerMeta?.inputFileId, batch?.output_file_id, batch?.error_file_id]) {
       if (id) await client.files.delete(id).catch(() => null);
@@ -212,7 +212,7 @@ const openaiAdapter: Adapter = {
 
 const anthropicAdapter: Adapter = {
   async submit(grant, model, operation, requests) {
-    const client = anthropicClient(grant);
+    const client = await anthropicClient(grant);
     const batch = await client.messages.batches.create({
       requests: requests.map((r) => ({
         custom_id: r.customId,
@@ -228,7 +228,7 @@ const anthropicAdapter: Adapter = {
   },
 
   async poll(grant, job) {
-    const client = anthropicClient(grant);
+    const client = await anthropicClient(grant);
     const batch = await client.messages.batches.retrieve(job.providerBatchId);
     if (batch.processing_status !== "ended") return { state: "pending" };
 
@@ -259,7 +259,7 @@ const anthropicAdapter: Adapter = {
   },
 
   async cleanup(grant, job) {
-    await anthropicClient(grant).messages.batches.delete(job.providerBatchId);
+    await (await anthropicClient(grant)).messages.batches.delete(job.providerBatchId);
   },
 };
 

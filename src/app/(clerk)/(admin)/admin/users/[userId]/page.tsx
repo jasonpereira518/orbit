@@ -721,7 +721,7 @@ export default async function AdminUserDetailPage({
                 </DefinitionRow>
                 <DefinitionRow label="Goals">{configuration.goalCount}</DefinitionRow>
                 <DefinitionRow label="Theme">
-                  {identity.theme ?? "system"}
+                  {identity.theme ?? "light"}
                 </DefinitionRow>
               </dl>
             </AdminPanel>

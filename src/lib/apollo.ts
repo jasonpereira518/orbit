@@ -12,7 +12,7 @@ import {
   type NormalizedProspect,
   type OutreachSearchSource,
 } from "@/lib/outreach-types";
-import { getEntitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
 import type { IncomingExperience } from "@/lib/contact-profile";
 
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search";
@@ -124,11 +124,20 @@ export type LinkedInProfileEnrichment = {
 export const APOLLO_DAILY_LIMIT_MESSAGE =
   "You’ve used today’s Apollo lookups on Orbit’s key — add your own Apollo key in Settings, or try again tomorrow";
 
-async function resolveApolloKey(userId: string): Promise<{ apiKey: string; hosted: boolean } | null> {
-  const db = await getDb();
-  const settings = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
+/** A caller's already-loaded `user_settings` row, so the key check need not re-read it. */
+type LoadedSettingsRow = typeof userSettings.$inferSelect;
+
+async function resolveApolloKey(
+  userId: string,
+  // Optional: a caller already holding the account's row (e.g. `getSettings`) passes it and
+  // skips the re-read. Omitted, this reads the row exactly as before.
+  loadedSettings?: LoadedSettingsRow
+): Promise<{ apiKey: string; hosted: boolean } | null> {
+  const settings =
+    loadedSettings ??
+    (await (await getDb()).query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+    }));
   const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
   if (personal) return { apiKey: personal, hosted: false };
 
@@ -137,14 +146,19 @@ async function resolveApolloKey(userId: string): Promise<{ apiKey: string; hoste
   // payment cannot fund forever. It stays subscription-only (Lifetime and Free users add
   // their own key in Settings, which the short-circuit above already prefers), and is now
   // also capped per day (`spendHostedApollo`).
-  const { canUseHostedEnrichment } = await getEntitlements(userId);
+  const { canUseHostedEnrichment } = loadedSettings
+    ? entitlementsFromSettings(userId, loadedSettings)
+    : await getEntitlements(userId);
   if (!canUseHostedEnrichment) return null;
   const hosted = process.env.APOLLO_API_KEY || null;
   return hosted ? { apiKey: hosted, hosted: true } : null;
 }
 
-export async function getApolloApiKey(userId: string): Promise<string | null> {
-  return (await resolveApolloKey(userId))?.apiKey ?? null;
+export async function getApolloApiKey(
+  userId: string,
+  loadedSettings?: LoadedSettingsRow
+): Promise<string | null> {
+  return (await resolveApolloKey(userId, loadedSettings))?.apiKey ?? null;
 }
 
 /** Counts `units` hosted calls against the user's day. A user's own key never gets here. */
@@ -160,8 +174,11 @@ async function spendHostedApollo(userId: string, kind: "search" | "enrich", unit
   }
 }
 
-export async function userHasApolloKey(userId: string): Promise<boolean> {
-  return Boolean(await getApolloApiKey(userId));
+export async function userHasApolloKey(
+  userId: string,
+  loadedSettings?: LoadedSettingsRow
+): Promise<boolean> {
+  return Boolean(await getApolloApiKey(userId, loadedSettings));
 }
 
 function personLocation(person: ApolloPerson) {

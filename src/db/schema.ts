@@ -224,6 +224,48 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   /**
+   * SHA-256 of the BCC logging address's token, hex — never the token itself.
+   *
+   * Same rule as `calendar_feed_token` two lines up, and for a sharper reason: that one is a
+   * read credential, this one is a WRITE path. Anyone holding the plaintext can put
+   * interactions in this account, so a copy of this table must not hand that over.
+   */
+  /*
+   * Its UNIQUE index (`user_settings_inbound_log_token_uidx`, partial on NOT NULL) is
+   * declared in `src/db/index.ts` rather than here, because this table is the two-argument
+   * `pgTable` form with no index array. Uniqueness is load-bearing, not decorative: a
+   * collision would route one person's mail into another's account.
+   */
+  inboundLogToken: text("inbound_log_token"),
+  inboundLogTokenCreatedAt: timestamp("inbound_log_token_created_at", {
+    withTimezone: true,
+  }),
+  /** Last message accepted at that address, for the "is this working?" line in settings. */
+  inboundLogLastReceivedAt: timestamp("inbound_log_last_received_at", {
+    withTimezone: true,
+  }),
+  /**
+   * The opaque per-account identifier that rides on Deepgram's usage records for dictation
+   * and voice notes, as `shortform:<speechTagId>` (see `src/lib/speech-tag-id.ts`).
+   *
+   * A random value stored here rather than the Clerk user id, because a tag leaves Orbit:
+   * Deepgram's zero-retention flag covers audio and transcripts, not the usage records the
+   * nightly reconciliation job reads back, so a raw account id in them would link every
+   * dictation an account ever makes to that account, in a third party's system, forever.
+   * A meeting needs no such column — it is already tagged with its own session uuid, which
+   * is per-recording and therefore unlinkable on its own.
+   *
+   * Random and stored rather than an HMAC of the user id, because the job has to resolve a
+   * tag for accounts with no `speech_usage` rows at all, which a stored value answers with
+   * one indexed lookup. Minted lazily on the first tagged request, so no backfill is needed.
+   *
+   * Not a credential: it authenticates nothing and grants nothing, which is why it takes no
+   * `_token` suffix. Deliberately NOT in `PRESERVED_SETTINGS_COLUMNS` (user-data.ts) — a
+   * data delete drops the row, so the account's next dictation mints a fresh value and the
+   * link to whatever Deepgram still holds is severed, which is the point of the delete.
+   */
+  speechTagId: text("speech_tag_id"),
+  /**
    * Billing. Entitlements are resolved exclusively from these columns by
    * `src/lib/entitlements.ts` — never by calling Clerk's `has()` or Stripe at a gate.
    * Stripe sells both paid tiers (the Pro subscription and the one-time Lifetime), and
@@ -362,6 +404,14 @@ export const userSettings = pgTable("user_settings", {
   suspendedAt: timestamp("suspended_at", { withTimezone: true }),
   suspendedReason: text("suspended_reason"),
   suspendedBy: text("suspended_by"),
+  /**
+   * When this account was found to be allowed in while the site was in stealth: it existed
+   * before stealth was switched on, it accepted an admin's invitation, or it is an admin.
+   * Written once, the first time a stealth check needs the answer, so the Clerk lookup behind
+   * it is paid once per account rather than once per request (`src/lib/site-access.ts`).
+   * Null means "never checked", not "held" — held accounts are recomputed, never stored.
+   */
+  stealthClearedAt: timestamp("stealth_cleared_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -375,6 +425,16 @@ export const userSettings = pgTable("user_settings", {
   uniqueIndex("user_settings_stripe_customer_uidx")
     .on(t.stripeCustomerId)
     .where(sql`${t.stripeCustomerId} is not null`),
+  /**
+   * The nightly reconciliation job turns a `shortform:<speechTagId>` tag back into an
+   * account with this index, so the lookup is a direct hit rather than a scan of every
+   * settings row. Unique because a tag that resolved to two accounts would reconcile one
+   * account's Deepgram spend against the other's meter. Partial for the same reason as the
+   * Stripe index above: null is the common value until an account first dictates.
+   */
+  uniqueIndex("user_settings_speech_tag_uidx")
+    .on(t.speechTagId)
+    .where(sql`${t.speechTagId} is not null`),
 ]);
 
 export const companies = pgTable(
@@ -1216,7 +1276,7 @@ export const contactOpportunities = pgTable(
 );
 
 export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
-export type MeetingSegmentEngine = "whisper" | "gemini" | "silent";
+export type MeetingSegmentEngine = "deepgram" | "whisper" | "gemini" | "silent";
 
 /**
  * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
@@ -1243,6 +1303,24 @@ export const meetingSessions = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     durationMs: integer("duration_ms").default(0).notNull(),
+    /**
+     * Milliseconds of this meeting's clock that Orbit did NOT pay Deepgram for — a chunk
+     * that fell through to the user's own Whisper or Gemini key when Deepgram errored, and
+     * a silent chunk, which is never sent anywhere at all.
+     *
+     * The meeting meter counts Orbit's Deepgram spend, and both metering paths book
+     * `durationMs - offDeepgramMs` rather than the raw elapsed clock. It is stored as the
+     * complement (what Deepgram did not carry) rather than as the covered total because a
+     * fallback chunk raises this by exactly what it raises `durationMs` by, which leaves the
+     * difference flat — so the number both paths book only ever grows, and the
+     * `greatest(...)` high-water upsert in `recordSpeechSeconds` still converges on one
+     * value instead of the two paths each adding their own.
+     *
+     * Only the chunk-recovery path moves it. Live segments arrive over an open Deepgram
+     * socket that is billed for the whole time it is open, including its silences, and the
+     * recorder's coverage gate never uploads a chunk for a stretch the live path carried.
+     */
+    offDeepgramMs: integer("off_deepgram_ms").default(0).notNull(),
     /** Highest segment seq stored, so a resumed recorder continues numbering after it. */
     lastSeq: integer("last_seq").default(-1).notNull(),
     digest: jsonb("digest").$type<MeetingDigest>(),
@@ -1269,6 +1347,8 @@ export const meetingTranscriptSegments = pgTable(
     endMs: integer("end_ms").notNull(),
     text: text("text").notNull(),
     engine: text("engine").$type<MeetingSegmentEngine>().notNull(),
+    /** Deepgram diarization label ("0", "1", ...), null for engines that don't diarize. */
+    speaker: text("speaker"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1276,6 +1356,31 @@ export const meetingTranscriptSegments = pgTable(
     index("meeting_segments_user_idx").on(t.userId),
   ]
 );
+
+/**
+ * Metered speech-to-text on Orbit's key. One row per meeting session (updated as segments
+ * land) or per short-form recording. Seconds, not requests: Deepgram bills per second and
+ * the plan caps are hours.
+ */
+export const speechUsage = pgTable(
+  "speech_usage",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").$type<"meeting" | "shortform">().notNull(),
+    seconds: integer("seconds").default(0).notNull(),
+    source: text("source").$type<"stream" | "file">().notNull(),
+    sessionId: uuid("session_id"),
+    requestId: text("request_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("speech_usage_user_created_idx").on(t.userId, t.createdAt),
+    uniqueIndex("speech_usage_session_uidx").on(t.sessionId),
+  ]
+);
+
+export type SpeechUsageRow = typeof speechUsage.$inferSelect;
 
 /** The stored analysis of a meeting. Mirrors `meetingDigestSchema` in `src/lib/meeting-digest.ts`. */
 export type MeetingDigest = {
@@ -1489,10 +1594,56 @@ export type ImportStats = {
    */
   scanStartedAt?: string;
 
+  // --- Google Drive import ---
+  docsRead?: number;
+  /** Docs skipped because the same text was already saved from an earlier import. */
+  docsAlreadyImported?: number;
+  /**
+   * Past-due commitments worth a look (see `drive-reminder-rules.ts`). Shown in the import's
+   * detail sheet; nothing is written for one unless the person makes it a reminder.
+   */
+  flaggedCommitments?: {
+    id: string;
+    key: string;
+    title: string;
+    personName: string | null;
+    contactId: string | null;
+    dueDateIso: string;
+    sourceExcerpt: string;
+    actionKind: ReminderActionKind;
+    docName: string;
+  }[];
+
   /** Wall-clock milliseconds across every invocation of this job. */
   durationMs?: number;
   /** SQL statements issued across every invocation. The cost this work exists to bound. */
   statements?: number;
+  /**
+   * Why this import stopped, as one of `ImportFailureCode` in `src/lib/import-errors.ts`.
+   *
+   * Classified where the error was thrown, from the error *instance* — a `ReauthRequiredError`
+   * or a Postgres `code` — which the stored message has already thrown away. The renderers
+   * fall back to classifying `error_message` when this is absent, so every row written before
+   * this existed still reads properly and no backfill is needed.
+   *
+   * Lives in `stats` rather than a column of its own precisely because it needs no DDL and no
+   * SCHEMA_VERSION bump.
+   */
+  errorCode?: string;
+
+  /**
+   * The moment this job made its last write, frozen by the engine when it marks the import
+   * `completed` or `failed`. Undo reads it to tell the interactions this import wrote from
+   * the ones that arrived after it; `updated_at` cannot stand in, because an admin retry
+   * bumps that long after the run. Absent on imports written before this field existed, and
+   * undo falls back to `updated_at` for those. See `lib/imports/import-undo.ts`.
+   */
+  runEndedAt?: string;
+
+  /** Set when an import was undone: when, and what went. See `lib/imports/import-undo.ts`. */
+  undoneAt?: string;
+  undoneRemoved?: number;
+  undoneKept?: number;
 };
 
 export const imports = pgTable("imports", {
@@ -1544,6 +1695,31 @@ export type GmailSenderRowPayload = {
   firm: string | null;
   /** Capped at scan time; the classifier only reads the most recent few. */
   messageIds: string[];
+};
+
+/** One picked Google Doc or Slides deck in a Drive import. `contactIds` is written on success. */
+export type DriveFileRowPayload = {
+  kind: "drive_file";
+  fileId: string;
+  name: string;
+  mimeType: string;
+  /** ISO. Also the date anchor for the parse: "next Tuesday" means next from when it was written. */
+  modifiedTime: string;
+  /** Everyone the doc's save touched. The row's own `contact_id` holds only the first. */
+  contactIds?: string[];
+  /**
+   * `hashSourceNote` of the exported text, written only when the row finishes (`done`). A
+   * done row carrying it is the proof a later import uses to skip the unchanged doc.
+   */
+  sourceHash?: string;
+  /**
+   * How many runs have started reading this row. Bumped before the export; a row that has
+   * been started twice without finishing is skipped rather than retried, so a doc that kills
+   * the function can't loop forever.
+   */
+  attempts?: number;
+  /** How many times Google's rate limit sent this row back to wait for a later run. */
+  rateLimitHandoffs?: number;
 };
 
 /**
@@ -1691,12 +1867,17 @@ export type ImportJobRowPayload =
   | OutlookContactRowPayload
   | ContactsFileRowPayload
   | LinkedInMessageThreadRowPayload
-  | CalendarEventRowPayload;
+  | CalendarEventRowPayload
+  | DriveFileRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload
 ): payload is GmailSenderRowPayload {
   return payload.kind === "gmail_sender";
+}
+
+export function isDriveFileRow(payload: ImportJobRowPayload): payload is DriveFileRowPayload {
+  return payload.kind === "drive_file";
 }
 
 export function isOutlookSenderRow(
@@ -1899,6 +2080,13 @@ export const memoryChunks = pgTable(
     chunkIndex: integer("chunk_index").default(0).notNull(),
     content: text("content").notNull(),
     contentHash: text("content_hash").notNull(),
+    /**
+     * md5 of the source this chunk set was built from — the same value on every chunk of one
+     * source. The sweep claims an interaction that has no chunk carrying the hash of its
+     * CURRENT text, which covers "never indexed" and "indexed, then edited" in one predicate.
+     * Nullable because v79 rows predate it; they read as stale once and are re-chunked.
+     */
+    sourceHash: text("source_hash"),
     /**
      * The hash that was embedded, which is the staleness predicate: a chunk is pending when
      * `embedded_hash IS DISTINCT FROM content_hash`. Per chunk, so editing paragraph three
@@ -2181,10 +2369,31 @@ export type EventProviderSyncCursor = {
   gmail?: { after?: number; pageToken?: string | null } | null;
 };
 
+/**
+ * A connector's incremental cursor. Deliberately open: a DAV connector stores a ctag, a
+ * Graph connector a delta link, a CRM an updated-since timestamp. One jsonb column beats a
+ * column per provider, and the shape is the connector's business.
+ */
+export type ConnectorSyncCursor = {
+  /** Opaque provider cursor: delta link, page token, sync token. */
+  cursor?: string | null;
+  /** DAV collection tag, for connectors that poll a collection. */
+  ctag?: string | null;
+  /** High-water mark for `updated_since`-style APIs. */
+  syncedThrough?: string | null;
+};
+
 export type ProviderSyncCursor = {
   /** Explicitly nullable, not merely optional: "no cursor yet" and "cursor deliberately
    *  cleared after a 410" are the same state, and callers pass it around as `| null`. */
   calendar?: CalendarSyncCursor | null;
+  /**
+   * Google Contacts' delta position. Safe to keep beside `calendar` ONLY because the Google
+   * lane now writes this whole object once per run (see `syncGoogleConnection`) instead of
+   * each capability overwriting the jsonb with its own single key — which is the erasure the
+   * Gmail-scan comment above describes, and the reason that cursor had to live elsewhere.
+   */
+  contacts?: { syncToken?: string | null; pageToken?: string | null } | null;
   /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
   luma?: EventProviderSyncCursor | null;
   eventbrite?: EventProviderSyncCursor | null;
@@ -2335,6 +2544,83 @@ export const outlookConnections = pgTable(
   ]
 );
 
+/**
+ * An iCloud CalDAV connection.
+ *
+ * Shaped like `gmail_connections` / `outlook_connections` — same status column, same
+ * `syncStateColumns()` — so `provider-connections.ts` can treat all three alike. The
+ * difference is the credential: Apple has no OAuth for CalDAV, so this holds an
+ * app-specific password the user generated at appleid.apple.com, encrypted at rest.
+ * It is long-lived and revocable only by the user, at Apple.
+ */
+export const appleConnections = pgTable(
+  "apple_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    /** The Apple ID itself, which is also the calendar owner's address for self-detection. */
+    emailAddress: text("email_address").notNull(),
+    appPasswordEncrypted: text("app_password_encrypted").notNull(),
+    /** Resolved once at connect time; re-resolved only on a reconnect. */
+    principalUrl: text("principal_url"),
+    calendarHomeUrl: text("calendar_home_url"),
+    /**
+     * Always null. Apple grants no scopes for a CalDAV app-specific password — this column
+     * exists only so the shared claim SQL in `provider-connections.ts` (which does
+     * `RETURNING id, user_id, email_address, scopes, sync_cursor, sync_failures` for every
+     * provider, and whose header explicitly rejects per-provider branching) can stay
+     * provider-agnostic. A dead column costs less than a special case.
+     */
+    scopes: text("scopes"),
+    /** Same two values, same reasoning, as the other connection tables. */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("apple_connections_user_idx").on(t.userId),
+    index("apple_connections_due_idx").on(t.nextSyncAt).where(sql`next_sync_at is not null`),
+  ]
+);
+
+/**
+ * One row per calendar Orbit could read, for every provider.
+ *
+ * Before this, the cursor lived on the connection and each provider synced exactly one
+ * calendar — Google's `primary`, Graph's default. iCloud accounts routinely hold several with
+ * no obvious primary, so the choice becomes the user's and the cursor moves down here.
+ *
+ * `provider` + `connectionId` rather than a foreign key: the three connection tables are
+ * separate by design (see `provider-connections.ts`), so there is no single parent to
+ * reference. Deletes are handled explicitly in `user-data.ts`.
+ */
+export const calendarSources = pgTable(
+  "calendar_sources",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"google" | "microsoft" | "apple">().notNull(),
+    connectionId: uuid("connection_id").notNull(),
+    /** The provider's own id: `primary`, a Graph calendar id, or a CalDAV collection path. */
+    calendarId: text("calendar_id").notNull(),
+    displayName: text("display_name"),
+    color: text("color"),
+    /** True for subscribed and other people's calendars. Sub-project 2 must not write to these. */
+    readOnly: integer("read_only").notNull().default(0),
+    enabled: integer("enabled").notNull().default(1),
+    syncCursor: jsonb("sync_cursor").$type<CalendarSyncCursor>(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("calendar_sources_user_idx").on(t.userId),
+    uniqueIndex("calendar_sources_conn_cal_uidx").on(t.connectionId, t.calendarId),
+  ]
+);
+
 export type ChatRecommendation = {
   contact_id?: string | null;
   recruiter_id?: string | null;
@@ -2465,7 +2751,7 @@ export const usageEvents = pgTable(
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
     /** "typesafe" is the decision model (Jev), which is not a selectable chat provider. */
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "openrouter" | "typesafe">().notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "openrouter" | "typesafe" | "deepgram">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
       .$type<"completion" | "multimodal" | "embedding" | "transcription" | "decision">()
@@ -3660,6 +3946,24 @@ export const constellationSettings = pgTable("constellation_settings", {
   updatedBy: text("updated_by"),
 });
 
+/**
+ * Site-wide switches an operator flips from the admin console. A single row, pinned by a
+ * CHECK the way `constellation_settings` is.
+ *
+ * `stealth_enabled` is null until an admin first touches it, and null defers to the
+ * `SITE_STEALTH` env var — so a deployment that has never been toggled keeps behaving the
+ * way its environment says. `stealth_since` is when stealth was last switched ON: accounts
+ * created after it need an invitation to get in (`src/lib/site-access.ts`).
+ */
+export const siteSettings = pgTable("site_settings", {
+  id: integer("id").primaryKey().default(1),
+  stealthEnabled: boolean("stealth_enabled"),
+  stealthSince: timestamp("stealth_since", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
+  updatedBy: text("updated_by"),
+});
+
 export const appSurfaceFlags = pgTable("app_surface_flags", {
   surfaceKey: text("surface_key").primaryKey(),
   hiddenAt: timestamp("hidden_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4402,6 +4706,65 @@ export const eventProviderConnections = pgTable(
 );
 
 /**
+ * Every connector credential that is not Gmail or Outlook.
+ *
+ * One table with a `connector_id` discriminator, unlike `gmail_connections` /
+ * `outlook_connections`, which are byte-identical twins kept apart only because migrating
+ * them is a one-way door (see `provider-connections.ts`). Nothing here is deployed yet, so
+ * the generic shape costs nothing and saves ~20 near-identical tables.
+ *
+ * `capabilities` is the enabled-capability list, and the reason write-back is opt-in: a
+ * connection can hold a scope without Orbit acting on it, so revoking a capability is a row
+ * update rather than an OAuth round trip.
+ */
+export const connectorConnections = pgTable(
+  "connector_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Matches a `ConnectorManifest.id` in `src/lib/connectors/registry.ts`. */
+    connectorId: text("connector_id").notNull(),
+    authKind: text("auth_kind")
+      .$type<"oauth2" | "api_key" | "dav_password" | "api_token">()
+      .notNull(),
+    /** Account name or workspace, shown so a user can tell two connections apart. */
+    label: text("label"),
+    /** Remote account/workspace/portal id, when the provider has one. */
+    accountRef: text("account_ref"),
+    apiKeyEncrypted: text("api_key_encrypted"),
+    accessTokenEncrypted: text("access_token_encrypted"),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    scopes: text("scopes"),
+    /**
+     * Enabled capability ids. Reads are written at connect time; a write capability lands
+     * here only when the user turns it on, which is what keeps Orbit from putting rows in
+     * someone else's system because a scope happened to be granted.
+     */
+    capabilities: jsonb("capabilities").$type<string[]>().default([]).notNull(),
+    /**
+     * Exactly two values, matching the Gmail/Outlook and event-provider rule: disconnecting
+     * deletes the row, so a third value nothing writes would be dead code.
+     */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
+    // The shared helper types this as `ProviderSyncCursor`, whose shape is Google/Outlook's.
+    // A connector's cursor is its own business — a DAV ctag, a Graph delta link, an
+    // updated-since mark — so the column keeps one name and one DDL line but its own type.
+    syncCursor: jsonb("sync_cursor").$type<ConnectorSyncCursor>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("connector_connections_user_uidx").on(t.userId, t.connectorId),
+    index("connector_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
+);
+
+/**
  * One row per page view, written by `POST /api/track` from the client beacon in
  * `src/components/analytics/pageview-beacon.tsx`.
  *
@@ -4465,6 +4828,14 @@ export const pageViews = pgTable(
      */
     isBot: boolean("is_bot").notNull().default(false),
     /**
+     * Orbit's own traffic: an admin or the showcase account, or a browser an admin opted out
+     * from `/admin/analytics`. Kept rather than dropped for the same reason as `isBot`, and
+     * filtered out of every aggregate by `admin-analytics.ts`. The read side ALSO excludes
+     * admin user ids at query time, so rows from before this column existed are covered
+     * without a backfill that would have to know `ADMIN_USER_IDS` inside a migration.
+     */
+    isInternal: boolean("is_internal").notNull().default(false),
+    /**
      * Milliseconds on the page, patched best-effort by the `pagehide` beacon. NULL means
      * the beacon never landed — a tab killed, a crashed browser, a blocked request. That
      * is not zero, and summing it as zero would understate every average on the page.
@@ -4491,6 +4862,7 @@ export const pageViews = pgTable(
     index("page_views_session_idx").on(t.sessionId, t.createdAt),
     index("page_views_visitor_idx").on(t.visitorHash, t.createdAt),
     index("page_views_country_created_idx").on(t.country, t.createdAt),
+    index("page_views_internal_created_idx").on(t.isInternal, t.createdAt),
   ]
 );
 
@@ -4543,6 +4915,111 @@ export type NewEventRecord = typeof events.$inferInsert;
 export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
+export type ConnectorConnection = typeof connectorConnections.$inferSelect;
+
+/**
+ * What an Orbit row is called in someone else's system.
+ *
+ * Write-back needs this to be an update rather than a duplicate the second time: without a
+ * recorded remote id, re-sending a follow-up creates a second task. Keyed by connection, so
+ * disconnecting and reconnecting starts clean rather than pointing at rows the new grant may
+ * not even be able to see.
+ */
+export const externalLinks = pgTable(
+  "external_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    /** `reminder` | `interaction` | `contact` — the Orbit side. */
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    /** The provider's id for the same thing. */
+    remoteId: text("remote_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_links_entity_uidx").on(
+      t.userId,
+      t.connectorId,
+      t.entityType,
+      t.entityId
+    ),
+  ]
+);
+
+export type ExternalLink = typeof externalLinks.$inferSelect;
+
+/**
+ * Pending writes to other people's systems.
+ *
+ * Deliberately the same shape and the same retry rules as `outbound_webhook_deliveries`: an
+ * at-least-once queue with a jittered ladder and a dead state. The unique index only keeps a
+ * still-`pending` row from being queued twice — a retried server action against an action
+ * already in flight is a no-op. It does NOT block re-queuing a `delivered` or `dead` row:
+ * `enqueueOutbox` revives those in place with a fresh payload (see its own doc comment),
+ * because a completed follow-up must be re-sendable and a provider outage must not
+ * permanently poison the key. What stops two DRAINS from both sending the same claimed row
+ * is the drain's own claim-with-lease (see `drainOutbox` in `src/lib/connectors/outbox.ts`),
+ * not this index.
+ *
+ * Each column here does exactly one job, deliberately. Three rounds of double-delivery bugs
+ * on this table all came from one column doing two: `next_attempt_at` was the retry schedule
+ * AND the lease AND the lock, and `attempts` was the retry counter AND the mutual-exclusion
+ * token — so `enqueueOutbox`'s perfectly reasonable `attempts: 0` reset on a revive handed a
+ * long-gone drain a token that matched a live row (ABA). Now: `next_attempt_at` means only
+ * "when to retry", `attempts` means only "how many tries so far", and ownership lives in
+ * `claimed_by`/`claimed_until`, which nothing but the claim and its release ever writes.
+ */
+export const connectorOutbox = pgTable(
+  "connector_outbox",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    /** `writeTask` | `logActivity` | `writeContact`, matching the manifest's capabilities. */
+    action: text("action").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    status: text("status")
+      .$type<"pending" | "delivered" | "failed" | "dead">()
+      .default("pending")
+      .notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    /** ONLY "when to retry". Never a lease, never a lock — see the table comment. */
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    /**
+     * The identity of the drain that currently holds this row, or NULL when nobody does.
+     *
+     * A fresh uuid per claim, never reused, so a write from a long-abandoned owner can never
+     * match a live row no matter what any business rule resets in between. Every write that
+     * follows a delivery carries `AND claimed_by = <the uuid I claimed with>`.
+     */
+    claimedBy: uuid("claimed_by"),
+    /** When that claim lapses and another drain may take the row. Always set from `now()`. */
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+    /** First 200 characters only, like every other error column here. */
+    lastError: text("last_error"),
+    lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("connector_outbox_action_uidx").on(
+      t.userId,
+      t.connectorId,
+      t.action,
+      t.entityType,
+      t.entityId
+    ),
+    // The drain's only scan.
+    index("connector_outbox_due_idx").on(t.status, t.nextAttemptAt),
+  ]
+);
+
+export type ConnectorOutboxRow = typeof connectorOutbox.$inferSelect;
 export type EventAlias = typeof eventAliases.$inferSelect;
 export type EventCompany = typeof eventCompanies.$inferSelect;
 export type TargetCompany = typeof targetCompanies.$inferSelect;

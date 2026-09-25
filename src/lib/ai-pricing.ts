@@ -1,4 +1,5 @@
 import type { AiProvider } from "@/lib/ai-providers";
+import { DEEPGRAM_MODEL } from "@/lib/deepgram-params";
 
 /**
  * Provider list prices, USD per 1M tokens.
@@ -94,6 +95,14 @@ const PRICES: Record<string, PriceEntry> = {
   // input tokens, and output is free ("too cheap to meter"). A prefix row so every pinned
   // `jev-1.x.y` resolves; move it to exact ids if TypeSafe ever prices versions differently.
   "jev-": { input: 0.042, output: 0 },
+
+  // Deepgram — Orbit's own hosted speech-to-text (`@/lib/deepgram`), metered on Orbit's key
+  // rather than BYOK. It bills per second of audio, not per token, and `usage_events` has no
+  // separate duration column — so the caller reports the audio length in `inputTokens` (one
+  // "token" = one second) and this row prices that unit like any other: $0.0043/min ÷ 60 ≈
+  // 72 micros/sec, i.e. $72 per 1,000,000 seconds of audio. `output` stays 0; there is no
+  // second leg to a transcription call.
+  [DEEPGRAM_MODEL]: { input: 72, output: 0 },
 };
 
 /**

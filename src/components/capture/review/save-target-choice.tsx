@@ -83,7 +83,7 @@ export function SaveTargetChoice({
             </Link>
           )}
           {lowConfidence && (
-            <span className="text-amber-700 dark:text-amber-400">Looks like a match — worth a glance</span>
+            <span className="text-amber-700 dark:text-warning">Looks like a match — worth a glance</span>
           )}
         </div>
       )}
