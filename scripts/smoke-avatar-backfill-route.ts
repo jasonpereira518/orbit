@@ -9,8 +9,11 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
+import { eq } from "drizzle-orm";
 import { POST } from "../src/app/api/contacts/avatar-backfill/route";
 import { backfillContactAvatars } from "../src/actions/contacts";
+import { getDb } from "../src/db";
+import { contacts } from "../src/db/schema";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -41,9 +44,16 @@ run(async () => {
   // Demo mode resolves to demo-user, as the in-app caller would be.
   env.NODE_ENV = "development";
   env.ORBIT_DEMO_DATA = "off";
-  const viaRoute = await post({ origin: "https://orbit.test" }, { skipIds: ["00000000-0000-4000-8000-000000000000"] });
+  // The runner shares one PGlite per shard, and other scripts leave `demo-user` contacts
+  // behind. Left in play, the first call would attempt (and stamp as checked) their lookups
+  // and the second would find nothing, so the two answers differ by run order alone. Skipping
+  // them makes both calls answer from the same state.
+  const db = await getDb();
+  const leftovers = await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.userId, "demo-user"));
+  const skipIds = ["00000000-0000-4000-8000-000000000000", ...leftovers.map((c) => c.id)];
+  const viaRoute = await post({ origin: "https://orbit.test" }, { skipIds });
   const routeBody = await viaRoute.json();
-  const direct = await backfillContactAvatars({ skipIds: ["00000000-0000-4000-8000-000000000000"] });
+  const direct = await backfillContactAvatars({ skipIds });
   check("same-origin succeeds", viaRoute.status === 200, String(viaRoute.status));
   check(
     "the route returns exactly what the action returns",
