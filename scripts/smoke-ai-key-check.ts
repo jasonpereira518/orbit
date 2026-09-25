@@ -86,8 +86,15 @@ async function main() {
   check("house voice: curly apostrophes, no trailing period",
     copy.every((m) => !m.includes("'") && !m.endsWith(".")));
 
-  console.log("\nEvery provider has a real probe");
+  console.log("\nEvery provider has a probe — three real, one deliberately fail-closed");
   check("gemini, openai and anthropic", ["gemini", "openai", "anthropic"].every((p) => typeof KEY_PROBES[p as AiProvider] === "function"));
+  // OpenRouter's real check is Task 5's job; until then KEY_PROBES.openrouter must refuse
+  // every key, never accept one. Exercises the REAL registry, not an injected stub — a
+  // later change that quietly turned this into a no-op would fail here.
+  check(
+    "openrouter's probe fails closed, against the real registry",
+    (await checkAiKey("openrouter", "sk-or-v1-realkey", { probes: KEY_PROBES })) === "rejected"
+  );
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

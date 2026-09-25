@@ -197,6 +197,10 @@ async function setUpUser(args: Args, keys: ReturnType<typeof evalKeys>) {
     geminiApiKeyEncrypted: keys.gemini ? encrypt(keys.gemini) : null,
     openaiApiKeyEncrypted: keys.openai ? encrypt(keys.openai) : null,
     anthropicApiKeyEncrypted: keys.anthropic ? encrypt(keys.anthropic) : null,
+    // Task 8 wires OpenRouter into the eval properly; until then `keys.openrouter` is read
+    // and discarded, so a run against it fails clearly (key_required) rather than silently
+    // dropping the key someone thought they'd set.
+    openrouterApiKeyEncrypted: null,
     // Only on a `--decisions jev` run: a baseline must measure the path without Jev.
     typesafeApiKeyEncrypted: args.decisions === "jev" && keys.typesafe ? encrypt(keys.typesafe) : null,
   };
