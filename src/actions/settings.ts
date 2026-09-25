@@ -185,6 +185,7 @@ function embeddingBackendFor(
     geminiApiKeyEncrypted: string | null;
     openaiApiKeyEncrypted: string | null;
     anthropicApiKeyEncrypted: string | null;
+    openrouterApiKeyEncrypted: string | null;
   } | null,
   eligibility: ManagedEligibility
 ) {
@@ -196,6 +197,7 @@ function embeddingBackendFor(
       gemini: Boolean(settings?.geminiApiKeyEncrypted),
       openai: Boolean(settings?.openaiApiKeyEncrypted),
       anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
+      openrouter: Boolean(settings?.openrouterApiKeyEncrypted),
     },
     managed: managedKeysConfigured(),
   });
@@ -250,6 +252,10 @@ export async function saveAiSettings(input: {
       provider === "anthropic" && encrypted
         ? encrypted
         : (existing?.anthropicApiKeyEncrypted ?? null),
+    openrouterApiKeyEncrypted:
+      provider === "openrouter" && encrypted
+        ? encrypted
+        : (existing?.openrouterApiKeyEncrypted ?? null),
   };
 
   if (existing) {
@@ -307,7 +313,9 @@ export async function clearApiKey(provider?: AiProvider) {
       ? { geminiApiKeyEncrypted: null }
       : active === "openai"
         ? { openaiApiKeyEncrypted: null }
-        : { anthropicApiKeyEncrypted: null };
+        : active === "anthropic"
+          ? { anthropicApiKeyEncrypted: null }
+          : { openrouterApiKeyEncrypted: null };
 
   await db
     .update(userSettings)

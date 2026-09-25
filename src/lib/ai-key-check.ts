@@ -47,6 +47,15 @@ export const KEY_PROBES: Record<AiProvider, KeyProbe> = {
   anthropic: async (apiKey, signal) => {
     await new Anthropic({ apiKey, maxRetries: 0 }).models.list({ limit: 1 }, { signal });
   },
+  // Fails closed on purpose: this is not a real check yet. Task 5 replaces it with a real
+  // `GET https://openrouter.ai/api/v1/key` probe. Until then it must never report a key as
+  // accepted — the OAuth callback (a later task) verifies the key it receives through this
+  // same function, and an always-ok probe would let it store a key that cannot work.
+  openrouter: async () => {
+    throw Object.assign(new Error("OpenRouter key check is not implemented yet"), {
+      status: 401,
+    });
+  },
 };
 
 export function isKeyRejection(err: unknown): boolean {

@@ -27,17 +27,19 @@ export const TIMEOUT_MESSAGE = "That took too long — try again in a moment";
 export const AI_INCOMPLETE_MESSAGE = "The AI’s answer got cut off — try again";
 
 /** The labels `lib/ai.ts` passes to `aiProviderErrorMessage`. */
-export const AI_PROVIDER_LABELS = ["Gemini", "OpenAI", "Anthropic"] as const;
+export const AI_PROVIDER_LABELS = ["Gemini", "OpenAI", "Anthropic", "OpenRouter"] as const;
 export type AiProviderLabel = (typeof AI_PROVIDER_LABELS)[number];
 
 export function aiProviderLabel(
-  provider: "gemini" | "openai" | "anthropic"
+  provider: "gemini" | "openai" | "anthropic" | "openrouter"
 ): AiProviderLabel {
   return provider === "gemini"
     ? "Gemini"
     : provider === "openai"
       ? "OpenAI"
-      : "Anthropic";
+      : provider === "openrouter"
+        ? "OpenRouter"
+        : "Anthropic";
 }
 
 /** Orbit's own no-key errors, thrown from `lib/ai.ts` before any provider is called. */

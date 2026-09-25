@@ -99,6 +99,9 @@ const MANAGED_ENV: Record<AiProvider, string> = {
   gemini: "ORBIT_MANAGED_GEMINI_API_KEY",
   openai: "ORBIT_MANAGED_OPENAI_API_KEY",
   anthropic: "ORBIT_MANAGED_ANTHROPIC_API_KEY",
+  // Never read: MANAGED_PROVIDER_ORDER excludes openrouter, so managedKey() never looks this
+  // name up. Present only to satisfy the Record — Orbit holds no OpenRouter key.
+  openrouter: "ORBIT_MANAGED_OPENROUTER_API_KEY",
 };
 
 /**
@@ -111,6 +114,9 @@ const LOCAL_ENV: Record<AiProvider, string> = {
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  // Never read as a MANAGED key, for the same reason as MANAGED_ENV.openrouter above — but
+  // named to match anyway, in case something outside the gate ever reads it directly.
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 /**
@@ -155,6 +161,8 @@ export function managedKeysConfigured(): Record<AiProvider, boolean> {
     gemini: Boolean(managedKey("gemini")),
     openai: Boolean(managedKey("openai")),
     anthropic: Boolean(managedKey("anthropic")),
+    // Orbit holds no OpenRouter key — never a managed provider (managed-ai-policy.ts).
+    openrouter: false,
   };
 }
 
@@ -455,6 +463,7 @@ export class AiAccess {
       gemini: decryptOrNull(row?.geminiApiKeyEncrypted),
       openai: decryptOrNull(row?.openaiApiKeyEncrypted),
       anthropic: decryptOrNull(row?.anthropicApiKeyEncrypted),
+      openrouter: decryptOrNull(row?.openrouterApiKeyEncrypted),
     };
     for (const [provider, key] of Object.entries(decrypted)) {
       if (key) personal[provider as AiProvider] = key;
@@ -503,11 +512,14 @@ export class AiAccess {
         gemini: Boolean(this.personal.gemini),
         openai: Boolean(this.personal.openai),
         anthropic: Boolean(this.personal.anthropic),
+        openrouter: Boolean(this.personal.openrouter),
       },
       managed: {
         gemini: Boolean(this.managed.gemini),
         openai: Boolean(this.managed.openai),
         anthropic: Boolean(this.managed.anthropic),
+        // Orbit holds no OpenRouter key — never a managed provider (managed-ai-policy.ts).
+        openrouter: false,
       },
     };
   }
@@ -709,6 +721,7 @@ export function aiReadyFromSettings(
     geminiApiKeyEncrypted?: string | null;
     openaiApiKeyEncrypted?: string | null;
     anthropicApiKeyEncrypted?: string | null;
+    openrouterApiKeyEncrypted?: string | null;
     compedPlan?: "orbit" | "lifetime" | null;
     lifetimePurchasedAt?: Date | null;
     subscriptionPlan?: "orbit" | null;
@@ -727,6 +740,7 @@ export function aiReadyFromSettings(
       gemini: Boolean(row?.geminiApiKeyEncrypted),
       openai: Boolean(row?.openaiApiKeyEncrypted),
       anthropic: Boolean(row?.anthropicApiKeyEncrypted),
+      openrouter: Boolean(row?.openrouterApiKeyEncrypted),
     },
     managed: configured,
   });

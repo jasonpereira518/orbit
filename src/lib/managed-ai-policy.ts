@@ -72,6 +72,8 @@ export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibil
  * The order Orbit reaches for its own keys when the user's chosen provider has none
  * configured. Cheapest first: the managed path is paid for once, at checkout, forever.
  */
+// OpenRouter is deliberately absent: Orbit holds no OpenRouter key, so it is never a managed
+// provider, and this order is exactly the set of providers Orbit will ever pay for.
 export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["gemini", "openai", "anthropic"];
 
 /**
@@ -85,12 +87,17 @@ export const MANAGED_MODELS: Record<AiProvider, readonly string[]> = {
   gemini: ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
   openai: ["gpt-4o-mini", "gpt-4.1-mini"],
   anthropic: ["claude-haiku-4-5"],
+  // Unreachable: MANAGED_PROVIDER_ORDER excludes openrouter, so this arm exists only to
+  // satisfy the Record — Orbit never selects it as a managed provider.
+  openrouter: [],
 };
 
 export const MANAGED_DEFAULT_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.8-flash",
   openai: "gpt-4o-mini",
   anthropic: "claude-haiku-4-5",
+  // Unreachable for the same reason as MANAGED_MODELS.openrouter above.
+  openrouter: "google/gemini-3.8-flash",
 };
 
 export function managedModel(provider: AiProvider, requested: string | null | undefined): string {

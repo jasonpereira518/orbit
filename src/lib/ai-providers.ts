@@ -1,5 +1,5 @@
-export type AiProvider = "gemini" | "openai" | "anthropic";
-export type EmbeddingBackend = "gemini" | "openai";
+export type AiProvider = "gemini" | "openai" | "anthropic" | "openrouter";
+export type EmbeddingBackend = "gemini" | "openai" | "openrouter";
 
 export const AI_PROVIDERS: Array<{
   id: AiProvider;
@@ -25,6 +25,12 @@ export const AI_PROVIDERS: Array<{
     keyPlaceholder: "sk-ant-...",
     envVar: "ANTHROPIC_API_KEY",
   },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    keyPlaceholder: "sk-or-v1-...",
+    envVar: "OPENROUTER_API_KEY",
+  },
 ];
 
 export const PROVIDER_MODELS: Record<
@@ -48,6 +54,20 @@ export const PROVIDER_MODELS: Record<
     { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (cheapest)" },
     { value: "claude-opus-4-5", label: "Claude Opus 4.5" },
   ],
+  /**
+   * Verified against `GET https://openrouter.ai/api/v1/models` on 2026-09-23; every one
+   * advertises `response_format`, `structured_outputs`, `tools` and `tool_choice`. OpenRouter
+   * slugs are NOT Orbit's model ids with a vendor prefix — Anthropic uses dots where Orbit
+   * uses dashes (`anthropic/claude-haiku-4.5` against Orbit's `claude-haiku-4-5`) — so this
+   * list is literal. Do not invent additions or derive it from the other providers' lists.
+   */
+  openrouter: [
+    { value: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+    { value: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite (cheapest)" },
+    { value: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
+    { value: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
+    { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
+  ],
 };
 
 /**
@@ -62,6 +82,7 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.8-flash",
   openai: "gpt-4o-mini",
   anthropic: "claude-sonnet-4-5",
+  openrouter: "google/gemini-3.8-flash",
 };
 
 /**
@@ -103,7 +124,7 @@ export function anthropicAcceptsTemperature(model: string): boolean {
 }
 
 export function resolveAiProvider(value?: string | null): AiProvider {
-  if (value === "openai" || value === "anthropic" || value === "gemini") {
+  if (value === "openai" || value === "anthropic" || value === "gemini" || value === "openrouter") {
     return value;
   }
   return "gemini";
@@ -117,6 +138,7 @@ function modelBelongsToProvider(provider: AiProvider, model: string) {
     return model.startsWith("gpt-") || model.startsWith("o");
   }
   if (provider === "anthropic") return model.startsWith("claude-");
+  if (provider === "openrouter") return model.includes("/");
   return false;
 }
 

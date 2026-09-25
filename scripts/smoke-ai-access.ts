@@ -67,6 +67,7 @@ import {
   MANAGED_AI_ENABLED,
   MANAGED_DEFAULT_MODELS,
   MANAGED_MODELS,
+  MANAGED_PROVIDER_ORDER,
   chooseCompletionKey,
   chooseEmbeddingKey,
   managedCallAllowed,
@@ -211,14 +212,14 @@ const facts = (over: Partial<KeyFacts>): KeyFacts => ({
   eligibility: null,
   selectedProvider: "gemini",
   selectedModel: "gemini-3.5-flash",
-  personal: { gemini: false, openai: false, anthropic: false },
-  managed: { gemini: true, openai: false, anthropic: false },
+  personal: { gemini: false, openai: false, anthropic: false, openrouter: false },
+  managed: { gemini: true, openai: false, anthropic: false, openrouter: false },
   ...over,
 });
 
 function purePolicy() {
   console.log("\nThe rule, as a matrix");
-  const own = { gemini: true, openai: false, anthropic: false };
+  const own = { gemini: true, openai: false, anthropic: false, openrouter: false };
   const pick = (f: KeyFacts) => {
     const c = chooseCompletionKey(f);
     return c.ok ? `${c.source}:${c.provider}:${c.model}` : `refused:${c.reason}`;
@@ -227,8 +228,8 @@ function purePolicy() {
   check("Lifetime + no key → Orbit's key", pick(facts({ eligibility: "lifetime" })) === "managed:gemini:gemini-3.5-flash");
   check("non-Lifetime + own key → their key", pick(facts({ personal: own })) === "personal:gemini:gemini-3.5-flash");
   check("non-Lifetime + no key → refused, never Orbit's key", pick(facts({})) === "refused:key_required");
-  check("non-Lifetime + no key + managed keys configured → still refused", pick(facts({ managed: { gemini: true, openai: true, anthropic: true } })) === "refused:key_required");
-  check("Lifetime + no key + no managed key → managed_unavailable", pick(facts({ eligibility: "lifetime", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:managed_unavailable");
+  check("non-Lifetime + no key + managed keys configured → still refused", pick(facts({ managed: { gemini: true, openai: true, anthropic: true, openrouter: true } })) === "refused:key_required");
+  check("Lifetime + no key + no managed key → managed_unavailable", pick(facts({ eligibility: "lifetime", managed: { gemini: false, openai: false, anthropic: false, openrouter: false } })) === "refused:managed_unavailable");
   check("Pro resolves to no managed eligibility", managedEligibility("orbit", false) === null && managedEligibility("free", false) === null);
   if (MANAGED_AI_ENABLED) {
     check("Lifetime and demo are eligible", managedEligibility("lifetime", false) === "lifetime" && managedEligibility("free", true) === "demo");
@@ -238,7 +239,7 @@ function purePolicy() {
     check("…and 'demo' is the localhost dev-key path only", managedEligibility("free", true) === "demo");
   }
   check("a demo account with no key anywhere is told to add one — it was never promised Orbit's AI",
-    pick(facts({ eligibility: "demo", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:key_required");
+    pick(facts({ eligibility: "demo", managed: { gemini: false, openai: false, anthropic: false, openrouter: false } })) === "refused:key_required");
 
   console.log("\nManaged keys run managed models");
   // The allowlist protects Orbit's money; with managed AI off the only key behind that path
@@ -261,9 +262,9 @@ function purePolicy() {
     const c = chooseEmbeddingKey(f);
     return c.ok ? `${c.source}:${c.provider}` : `refused:${c.reason}`;
   };
-  check("Anthropic-only, not Lifetime → refused", emb(facts({ selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true } })) === "refused:key_required");
-  check("Anthropic-only on Lifetime → Orbit's Gemini", emb(facts({ eligibility: "lifetime", selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true } })) === "managed:gemini");
-  check("a personal OpenAI key beats a managed Gemini one", emb(facts({ eligibility: "lifetime", personal: { gemini: false, openai: true, anthropic: false } })) === "personal:openai");
+  check("Anthropic-only, not Lifetime → refused", emb(facts({ selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false } })) === "refused:key_required");
+  check("Anthropic-only on Lifetime → Orbit's Gemini", emb(facts({ eligibility: "lifetime", selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false } })) === "managed:gemini");
+  check("a personal OpenAI key beats a managed Gemini one", emb(facts({ eligibility: "lifetime", personal: { gemini: false, openai: true, anthropic: false, openrouter: false } })) === "personal:openai");
 
   console.log("\nThe allowance");
   const cap = MANAGED_AI_BUDGET.monthlyCostMicros;
@@ -645,7 +646,12 @@ async function byokOnly() {
 
     console.log("\nLocalhost still runs on the developer's .env.local");
     setNodeEnv("development");
-    check("…and only then does a key count as configured", Object.values(managedKeysConfigured()).every(Boolean));
+    check(
+    "…and only then does a key count as configured",
+    MANAGED_PROVIDER_ORDER.every((p) => managedKeysConfigured()[p]) &&
+      // OpenRouter is never a managed provider — Orbit holds no key for it.
+      !managedKeysConfigured().openrouter
+  );
     let local = await lastSent(() => json(U.localDev));
     check("`next dev`: the key from .env.local went on the wire", local.req?.key === DEV_KEY, local.req?.key ?? local.err);
     await account(U.localDev, { aiModel: "gemini-2.5-pro" });

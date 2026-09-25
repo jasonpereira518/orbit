@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  openrouter_api_key_encrypted text,
   typesafe_api_key_encrypted text,
   wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
@@ -1759,7 +1760,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // was still in review. Rescanned against every remote branch and every local worktree on
 // Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
 // the highest found anywhere and is still free.
-export const SCHEMA_VERSION = 86;
+//
+// 104 (this branch, integrations-dialog P3) = user_settings.openrouter_api_key_encrypted —
+// OpenRouter becomes a provider the type system knows about, ahead of the one-click connect
+// flow. Rescanned every local and remote ref on Sep 25 2026: 86 is still this branch's own
+// number, and 87 through 103 have all been claimed elsewhere at one point or another; 104 is
+// the next free integer and is still free.
+export const SCHEMA_VERSION = 104;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3308,6 +3315,11 @@ const alters = [
   `ALTER TABLE user_settings ALTER COLUMN ai_model SET DEFAULT 'gemini-3.8-flash'`,
   `UPDATE user_settings SET ai_model_migrated_from = ai_model, ai_model = 'gemini-3.8-flash'
      WHERE ai_model = 'gemini-3.5-flash' AND ai_model_migrated_from IS NULL`,
+  // Schema v104: user_settings.openrouter_api_key_encrypted — a person's own OpenRouter key,
+  // the BYOK path P3 of the integrations dialog simplification turns into a one-click
+  // connect. OpenRouter is never a managed provider (Orbit holds no key for it), so this
+  // column only ever holds a key the account saved itself.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openrouter_api_key_encrypted text`,
 ];
 
 /**

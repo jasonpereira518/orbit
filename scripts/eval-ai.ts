@@ -182,6 +182,9 @@ function evalKeys(keysFrom?: string) {
     gemini: read("ORBIT_EVAL_GEMINI_KEY", "GEMINI_API_KEY"),
     openai: read("ORBIT_EVAL_OPENAI_KEY", "OPENAI_API_KEY"),
     anthropic: read("ORBIT_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"),
+    // No adapter calls OpenRouter yet (a later task adds it); kept here only so `keys[provider]`
+    // type-checks for every AiProvider.
+    openrouter: read("ORBIT_EVAL_OPENROUTER_KEY", "OPENROUTER_API_KEY"),
     typesafe: read("ORBIT_EVAL_TYPESAFE_KEY", "TYPESAFE_API_KEY"),
   };
 }

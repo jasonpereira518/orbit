@@ -25,7 +25,12 @@ function check(label: string, ok: boolean, detail?: string) {
 }
 
 const withStatus = (message: string, status: number) => Object.assign(new Error(message), { status });
-const all = (probe: KeyProbe): Record<AiProvider, KeyProbe> => ({ gemini: probe, openai: probe, anthropic: probe });
+const all = (probe: KeyProbe): Record<AiProvider, KeyProbe> => ({
+  gemini: probe,
+  openai: probe,
+  anthropic: probe,
+  openrouter: probe,
+});
 
 async function main() {
   console.log("Verdicts");
