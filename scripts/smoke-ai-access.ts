@@ -266,6 +266,48 @@ function purePolicy() {
   check("Anthropic-only on Lifetime → Orbit's Gemini", emb(facts({ eligibility: "lifetime", selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false } })) === "managed:gemini");
   check("a personal OpenAI key beats a managed Gemini one", emb(facts({ eligibility: "lifetime", personal: { gemini: false, openai: true, anthropic: false, openrouter: false } })) === "personal:openai");
 
+  const noManaged = { gemini: false, openai: false, anthropic: false, openrouter: false };
+
+  const pickedWithGemini = chooseEmbeddingKey({
+    eligibility: null,
+    selectedProvider: "openrouter",
+    selectedModel: "",
+    personal: { gemini: true, openai: false, anthropic: false, openrouter: true },
+    managed: noManaged,
+  });
+  check(
+    "a personal gemini key still embeds when openrouter is selected",
+    pickedWithGemini.ok && pickedWithGemini.provider === "gemini",
+  );
+
+  const pickedWithOpenai = chooseEmbeddingKey({
+    eligibility: null,
+    selectedProvider: "openrouter",
+    selectedModel: "",
+    personal: { gemini: false, openai: true, anthropic: false, openrouter: true },
+    managed: noManaged,
+  });
+  check(
+    "a personal openai key still embeds when openrouter is selected",
+    pickedWithOpenai.ok && pickedWithOpenai.provider === "openai",
+  );
+
+  const pickedOpenrouterOnly = chooseEmbeddingKey({
+    eligibility: null,
+    selectedProvider: "openrouter",
+    selectedModel: "",
+    personal: { gemini: false, openai: false, anthropic: false, openrouter: true },
+    managed: noManaged,
+  });
+  check(
+    "openrouter embeds only when there is nothing else",
+    pickedOpenrouterOnly.ok && pickedOpenrouterOnly.provider === "openrouter",
+  );
+  check(
+    "an openrouter-only account can embed at all",
+    pickedOpenrouterOnly.ok,
+  );
+
   console.log("\nThe allowance");
   const cap = MANAGED_AI_BUDGET.monthlyCostMicros;
   check("under the cap → allowed", managedCallAllowed({ spentMicros: cap - 1, calls: 0 }, "chat.answer"));

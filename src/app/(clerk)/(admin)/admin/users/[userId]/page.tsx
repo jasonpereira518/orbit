@@ -695,6 +695,9 @@ export default async function AdminUserDetailPage({
                 <DefinitionRow label="Anthropic key">
                   <SecretState present={configuration.keys.anthropic} />
                 </DefinitionRow>
+                <DefinitionRow label="OpenRouter key">
+                  <SecretState present={configuration.keys.openrouter} />
+                </DefinitionRow>
                 <DefinitionRow label="Apollo key">
                   <SecretState present={configuration.keys.apollo} />
                 </DefinitionRow>

@@ -282,7 +282,18 @@ export function chooseCompletionKey(facts: KeyFacts): KeyChoice {
   };
 }
 
-const EMBEDDING_ORDER: readonly EmbeddingBackend[] = ["openai", "gemini"];
+/**
+ * Personal-key preference for embeddings, cheapest usable first.
+ *
+ * `openrouter` is LAST on purpose, and it is the one member that is not preferred when it
+ * is the selected provider. Stored vectors carry no record of which backend wrote them, and
+ * `saveAiSettings` reacts to a backend change by DELETING every `contact_embeddings` row so
+ * the two spaces are never compared. That is correct, and it is also a full re-index paid
+ * for in the person's own API spend — not something to hand someone for pressing Connect.
+ * So an account that already has a Gemini or OpenAI key keeps embedding with it, and
+ * OpenRouter embeds only for an account that has nothing else.
+ */
+const EMBEDDING_ORDER: readonly EmbeddingBackend[] = ["openai", "gemini", "openrouter"];
 
 /**
  * Search embeddings. Anthropic has none, so an Anthropic user embeds with OpenAI or Gemini.
@@ -292,8 +303,10 @@ const EMBEDDING_ORDER: readonly EmbeddingBackend[] = ["openai", "gemini"];
  */
 export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend> {
   const selected = facts.selectedProvider;
+  // Anthropic has no embeddings API at all, and OpenRouter must not displace an existing
+  // key (see EMBEDDING_ORDER) — so neither is promoted to the front.
   const order: EmbeddingBackend[] =
-    selected === "anthropic"
+    selected === "anthropic" || selected === "openrouter"
       ? [...EMBEDDING_ORDER]
       : [selected, ...EMBEDDING_ORDER.filter((p) => p !== selected)];
 
