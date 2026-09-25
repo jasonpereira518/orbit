@@ -403,26 +403,50 @@ function selfTestMechanism() {
   );
 }
 
+/**
+ * Every file under `src/lib` that can build an OpenRouter client — anything referencing
+ * `openAiShapedClient` or `openrouterClient` (the only two ways to get one; see
+ * `ai-access.ts`). Discovered rather than a fixed list, so a new file that starts building
+ * one is covered automatically instead of depending on someone remembering to add it here.
+ * Fix round 2: `checkRoutingBypass` used to hardcode `src/lib/ai.ts` only, so the exact
+ * same bug in `ai-tools.ts` (fix round 1) landed with no per-call check at all — the guard
+ * wasn't failing, it was never looking.
+ */
+function filesBuildingOpenRouterClients(): string[] {
+  return walkDir("src/lib").filter((file) =>
+    /\bopenAiShapedClient\b|\bopenrouterClient\b/.test(readFileSync(file, "utf8"))
+  );
+}
+
 function checkRoutingBypass() {
   console.log('\nevery ".create(" call an openrouter-admitting branch reaches passes through withOpenRouterRouting');
   selfTestMechanism();
-  const AI = "src/lib/ai.ts";
-  const sf = parse(AI);
-  const blocks = openRouterAdmittingBlocks(sf);
-  if (blocks.length === 0) {
+  const files = filesBuildingOpenRouterClients();
+  check(
+    "found at least one file that can build an OpenRouter client (the check itself is not vacuous)",
+    files.length > 0,
+    files.join(", ")
+  );
+  let anyBlocks = false;
+  for (const file of files) {
+    const sf = parse(file);
+    const blocks = openRouterAdmittingBlocks(sf);
+    if (blocks.length === 0) continue;
+    anyBlocks = true;
+    for (const block of blocks) {
+      for (const { line, fn, call } of createCallsIn(block, sf)) {
+        check(
+          `${file}:${line} (${fn}) routes its OpenRouter .create( through withOpenRouterRouting`,
+          passesThroughRouting(call)
+        );
+      }
+    }
+  }
+  if (!anyBlocks) {
     check(
-      "ai.ts has no openrouter-admitting branch yet (Task 3 has not landed) — nothing real to check here",
+      "no openrouter-admitting branch yet in any client-building file (Task 3 has not landed) — nothing real to check here",
       true
     );
-    return;
-  }
-  for (const block of blocks) {
-    for (const { line, fn, call } of createCallsIn(block, sf)) {
-      check(
-        `${AI}:${line} (${fn}) routes its OpenRouter .create( through withOpenRouterRouting`,
-        passesThroughRouting(call)
-      );
-    }
   }
 }
 
