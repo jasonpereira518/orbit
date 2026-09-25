@@ -1,6 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
+import { internalAccountSql } from "@/lib/analytics-internal";
 
 /**
  * Time-bucketed growth and activation, for `/admin/growth`.
@@ -258,8 +259,9 @@ export async function userTotalsTrend(
  *
  * Read from `page_views`, which records `user_id` on signed-in views. This is the measure
  * that sees the person who opens their network every morning and edits nothing, who is
- * invisible to the write-based active count. Bots are excluded the same way the traffic
- * page excludes them; anonymous views have no account and are not counted.
+ * invisible to the write-based active count. Bots and Orbit's own accounts are excluded the
+ * same way the traffic page excludes them; anonymous views have no account and are not
+ * counted.
  */
 export async function viewersTrend(
   grain: Grain = "week",
@@ -272,7 +274,9 @@ export async function viewersTrend(
       SELECT user_id, created_at
       FROM page_views
       WHERE is_bot = false
+        AND is_internal = false
         AND user_id IS NOT NULL
+        AND NOT ${internalAccountSql(sql`user_id`)}
         AND created_at >= ${SPINE_START}
     )
     SELECT spine.bucket_start,
