@@ -713,7 +713,7 @@ const ContactRow = memo(function ContactRow({
                         <span className="mx-1.5">·</span>
                       </>
                     )}
-                    <span className="font-medium text-amber-700 dark:text-amber-300">
+                    <span className="font-medium text-amber-700 dark:text-warning">
                       {overdueText}
                     </span>
                     {lastTouch && (

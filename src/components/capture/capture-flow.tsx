@@ -677,7 +677,7 @@ function MeetingHeader({ job, analysis, readOnly }: { job: CaptureJobView; analy
         sessionId={job.meetingSessionId ?? undefined}
       />
       {analysis.missingSeqs.length > 0 && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">
+        <p className="text-xs text-amber-700 dark:text-warning">
           {analysis.missingSeqs.length} minute{analysis.missingSeqs.length === 1 ? "" : "s"} of this meeting never reached Orbit, so they are not in the summary.
         </p>
       )}

@@ -1736,7 +1736,7 @@ function Field({
       <Label
         className={cn(
           "text-xs",
-          lowConfidence && "text-amber-700 dark:text-amber-400"
+          lowConfidence && "text-amber-700 dark:text-warning"
         )}
       >
         {label}

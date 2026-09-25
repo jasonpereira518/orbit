@@ -227,7 +227,7 @@ export const ReminderRow = memo(function ReminderRow({
                 <span
                   className={cn(
                     "tabular-nums",
-                    due.bucket === "overdue" && "font-medium text-amber-700 dark:text-amber-300",
+                    due.bucket === "overdue" && "font-medium text-amber-700 dark:text-warning",
                     due.bucket === "today" && "font-medium text-primary"
                   )}
                 >
