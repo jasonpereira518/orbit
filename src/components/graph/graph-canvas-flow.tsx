@@ -19,6 +19,7 @@ import {
   useStoreApi,
   type Node,
   type Edge,
+  type DefaultEdgeOptions,
   type EdgeTypes,
   type NodeMouseHandler,
   type OnNodesChange,
@@ -206,6 +207,20 @@ const nodeTypes = {
 const edgeTypes: EdgeTypes = {
   labeled: LabeledEdge,
   straight: LabeledEdge,
+};
+
+/*
+ * Module constants, not inline literals: React Flow copies these props into its store whenever
+ * their identity changes (its StoreUpdater compares by reference), and every store write runs
+ * every drawn node's, edge's and handle's selector. Inline, each re-render of the chart — one a
+ * frame while stars mount during a zoom — made two such writes for nothing.
+ */
+const NODE_ORIGIN: [number, number] = [0.5, 0.5];
+const NO_EDGES: Edge[] = [];
+const DEFAULT_EDGE_OPTIONS: DefaultEdgeOptions = {
+  type: "straight",
+  selectable: false,
+  focusable: false,
 };
 
 /**
@@ -626,6 +641,51 @@ function measuredOf(measured: Measurements, id: string) {
   return box ? { measured: box } : null;
 }
 
+/**
+ * `list`, or the previous array when every element is the same object in the same order.
+ *
+ * React Flow stores `nodes` and `edges` whenever the array's identity changes, and each store
+ * write runs every drawn node's and edge's selector. The memos that build them rebuild on inputs
+ * that often leave the result unchanged — every mount batch recomputes the edges, most of which
+ * add no line — and a new array with the same elements was still a write.
+ */
+function useSameArrayIfUnchanged<T>(list: T[]): T[] {
+  const [kept, setKept] = useState(list);
+  if (kept === list) return kept;
+  if (kept.length === list.length && kept.every((item, i) => item === list[i])) return kept;
+  setKept(list);
+  return list;
+}
+
+/**
+ * The nodes to hand React Flow: `nodes`, plus whatever just left it, kept one more commit as
+ * `hidden`.
+ *
+ * React Flow drops a removed node from its store the moment it receives the new list, but the
+ * node's wrapper is still mounted and subscribed until React unmounts it, and the wrapper's
+ * selector reads `nodeLookup.get(id).internals` — a TypeError for every removed node on every
+ * store update in between. React catches each one, but an exception captures a stack: entering
+ * the summary view (hundreds of stars leaving over a few frames) threw ~600 of them and cost
+ * frames of 30–250ms. A hidden node is still in the store, so its wrapper unmounts cleanly
+ * (hidden nodes are not visible ones); it is dropped at the next change, by which time nothing
+ * is subscribed to it. Nothing is drawn differently: a hidden node renders nothing.
+ */
+function useHiddenBeforeRemoved(nodes: Node[]): Node[] {
+  const [handed, setHanded] = useState<{ from: Node[]; out: Node[] }>(() => ({
+    from: nodes,
+    out: nodes,
+  }));
+  if (handed.from === nodes) return handed.out;
+  const staying = new Set(nodes.map((n) => n.id));
+  const leaving = handed.from.filter((n) => !staying.has(n.id) && !n.hidden);
+  const out =
+    leaving.length === 0
+      ? nodes
+      : [...nodes, ...leaving.map((n) => ({ ...n, hidden: true }))];
+  setHanded({ from: nodes, out });
+  return out;
+}
+
 type SkyState = {
   layout: ReturnType<typeof buildHybridGraphLayout>;
   layoutKey: string;
@@ -887,6 +947,9 @@ function GraphCanvasInner({
     },
     [applyMoving]
   );
+  // Stable for the same reason as NODE_ORIGIN: React Flow stores its move callbacks.
+  const onMoveStart = useCallback(() => setMoving(true), [setMoving]);
+  const onMoveEnd = useCallback(() => setMoving(false), [setMoving]);
   /**
    * At most one zoom a frame.
    *
@@ -2046,16 +2109,18 @@ function GraphCanvasInner({
   );
 
   const isEmpty = filteredContacts.length === 0;
+  const flowNodes = useHiddenBeforeRemoved(useSameArrayIfUnchanged(nodes));
+  const flowEdges = useSameArrayIfUnchanged(isEmpty ? NO_EDGES : edges);
 
   return (
     <>
       <ReactFlow
-        nodes={nodes}
-        edges={isEmpty ? [] : edges}
+        nodes={flowNodes}
+        edges={flowEdges}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        nodeOrigin={[0.5, 0.5]}
+        nodeOrigin={NODE_ORIGIN}
         minZoom={SKY_MIN_ZOOM}
         maxZoom={SKY_MAX_ZOOM}
         onlyRenderVisibleElements
@@ -2087,15 +2152,11 @@ function GraphCanvasInner({
         onNodeMouseLeave={onNodeMouseLeave}
         onPaneClick={onPaneClick}
         proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{
-          type: "straight",
-          selectable: false,
-          focusable: false,
-        }}
+        defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
         nodesDraggable={false}
         ref={stageRef}
-        onMoveStart={() => setMoving(true)}
-        onMoveEnd={() => setMoving(false)}
+        onMoveStart={onMoveStart}
+        onMoveEnd={onMoveEnd}
         className="constellation-stage"
       >
         <DefaultViewFitter
