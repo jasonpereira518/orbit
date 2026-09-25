@@ -110,7 +110,9 @@ export async function getSettings() {
           ? Boolean(settings?.geminiApiKeyEncrypted)
           : p.id === "openai"
             ? Boolean(settings?.openaiApiKeyEncrypted)
-            : Boolean(settings?.anthropicApiKeyEncrypted),
+            : p.id === "anthropic"
+              ? Boolean(settings?.anthropicApiKeyEncrypted)
+              : Boolean(settings?.openrouterApiKeyEncrypted),
       /** Orbit holds a managed key for this provider AND this account may use it. */
       managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id],
     })),
