@@ -4813,6 +4813,14 @@ export const pageViews = pgTable(
      */
     isBot: boolean("is_bot").notNull().default(false),
     /**
+     * Orbit's own traffic: an admin or the showcase account, or a browser an admin opted out
+     * from `/admin/analytics`. Kept rather than dropped for the same reason as `isBot`, and
+     * filtered out of every aggregate by `admin-analytics.ts`. The read side ALSO excludes
+     * admin user ids at query time, so rows from before this column existed are covered
+     * without a backfill that would have to know `ADMIN_USER_IDS` inside a migration.
+     */
+    isInternal: boolean("is_internal").notNull().default(false),
+    /**
      * Milliseconds on the page, patched best-effort by the `pagehide` beacon. NULL means
      * the beacon never landed — a tab killed, a crashed browser, a blocked request. That
      * is not zero, and summing it as zero would understate every average on the page.
@@ -4839,6 +4847,7 @@ export const pageViews = pgTable(
     index("page_views_session_idx").on(t.sessionId, t.createdAt),
     index("page_views_visitor_idx").on(t.visitorHash, t.createdAt),
     index("page_views_country_created_idx").on(t.country, t.createdAt),
+    index("page_views_internal_created_idx").on(t.isInternal, t.createdAt),
   ]
 );
 
