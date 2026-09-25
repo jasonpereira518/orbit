@@ -85,6 +85,8 @@ import {
   getValidAccessToken as getValidOutlookAccessToken,
 } from "@/lib/outlook";
 import { actionFailure } from "@/lib/action-failure";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { demoAddressBookPreview, recordDemoContactsImport } from "@/lib/demo-workspace-actions";
 
 function simpleHash(input: string) {
   let h = 0;
@@ -1258,6 +1260,9 @@ export async function previewGoogleContacts(): Promise<{
   people: GoogleContactPerson[];
 }> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    return { connected: true, contactsScopeGranted: true, people: await demoAddressBookPreview(userId) };
+  }
   const db = await getDb();
   const conn = await db.query.gmailConnections.findFirst({
     where: and(
@@ -1336,6 +1341,9 @@ export async function confirmGoogleContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
+  }
   const db = await getDb();
 
   const accessToken = await getValidAccessToken(userId);
@@ -1403,6 +1411,10 @@ export async function previewOutlookContacts(): Promise<{
   people: OutlookContactPerson[];
 }> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    const people = await demoAddressBookPreview(userId);
+    return { connected: true, people: people.map(({ photoUrl: _photo, ...p }) => p) };
+  }
   const db = await getDb();
   const conn = await db.query.outlookConnections.findFirst({
     where: and(
@@ -1472,6 +1484,9 @@ export async function confirmOutlookContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
+  }
   const db = await getDb();
 
   const accessToken = await getValidOutlookAccessToken(userId);
@@ -1737,6 +1752,9 @@ export type GooglePhotoMatchResult = {
  */
 export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
   const userId = await requireUserId();
+  if (await isDemoWorkspace(userId)) {
+    return { connected: true, contactsScopeGranted: true, matched: 0, remaining: 0 };
+  }
   const db = await getDb();
 
   const conn = await db.query.gmailConnections.findFirst({
