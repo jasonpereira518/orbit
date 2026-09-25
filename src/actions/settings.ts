@@ -211,30 +211,30 @@ async function managedEligibilityFor(userId: string): Promise<ManagedEligibility
   return managedEligibility(plan, isDemoAccount(userId));
 }
 
-export async function saveAiSettings(input: {
+/**
+ * The write `saveAiSettings` performs once a key has been checked (or there is none to
+ * check) — resolve the model, compare the embedding backend before and after, write the
+ * row, and clear `contact_embeddings` when the backend changed. Extracted so the OpenRouter
+ * OAuth callback (`src/app/api/openrouter/callback/route.ts`) can share it: that callback
+ * stores a key and selects a provider, which is exactly the write the embedding guard
+ * exists for, and a callback that wrote the row directly would bypass the only thing
+ * keeping vector state coherent. `saveAiSettings`'s own behaviour is unchanged — same
+ * order, same deletes, same return shape.
+ */
+export async function applyAiKeyChange(input: {
+  userId: string;
   provider: AiProvider;
   model?: string;
-  apiKey?: string;
-}) {
-  const userId = await requireUserId();
+  /** Already encrypted (`encrypt()` from `@/lib/crypto`), or null to leave the stored key alone. */
+  encryptedKey: string | null;
+}): Promise<{ embeddingReset: boolean }> {
+  const { userId, provider, model, encryptedKey } = input;
   const db = await getDb();
   const existing = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
 
-  const provider = resolveAiProvider(input.provider);
-  const aiModel = resolveAiModel(provider, input.model);
-  // Only a NEWLY entered key is checked; saving a model change with the key left blank
-  // costs no provider call.
-  const newKey = input.apiKey?.trim() || null;
-  let keyNote: string | null = null;
-  if (newKey) {
-    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
-    // Returned, not thrown: a thrown message is a digest in production.
-    if (!outcome.save) return { ok: false as const, error: outcome.error };
-    keyNote = outcome.note;
-  }
-  const encrypted = newKey ? encrypt(newKey) : null;
+  const aiModel = resolveAiModel(provider, model);
 
   const eligibility = await managedEligibilityFor(userId);
   const previousBackend = existing
@@ -243,20 +243,20 @@ export async function saveAiSettings(input: {
 
   const nextKeyState = {
     geminiApiKeyEncrypted:
-      provider === "gemini" && encrypted
-        ? encrypted
+      provider === "gemini" && encryptedKey
+        ? encryptedKey
         : (existing?.geminiApiKeyEncrypted ?? null),
     openaiApiKeyEncrypted:
-      provider === "openai" && encrypted
-        ? encrypted
+      provider === "openai" && encryptedKey
+        ? encryptedKey
         : (existing?.openaiApiKeyEncrypted ?? null),
     anthropicApiKeyEncrypted:
-      provider === "anthropic" && encrypted
-        ? encrypted
+      provider === "anthropic" && encryptedKey
+        ? encryptedKey
         : (existing?.anthropicApiKeyEncrypted ?? null),
     openrouterApiKeyEncrypted:
-      provider === "openrouter" && encrypted
-        ? encrypted
+      provider === "openrouter" && encryptedKey
+        ? encryptedKey
         : (existing?.openrouterApiKeyEncrypted ?? null),
   };
 
@@ -282,22 +282,47 @@ export async function saveAiSettings(input: {
   }
 
   const nextBackend = embeddingBackendFor(provider, nextKeyState, eligibility);
-  if (
-    previousBackend &&
-    nextBackend &&
-    previousBackend !== nextBackend
-  ) {
+  const embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
+  if (embeddingReset) {
     // Different embedding spaces can't be compared — clear stale vectors.
-    await db
-      .delete(contactEmbeddings)
-      .where(eq(contactEmbeddings.userId, userId));
+    await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
   }
+
+  return { embeddingReset };
+}
+
+export async function saveAiSettings(input: {
+  provider: AiProvider;
+  model?: string;
+  apiKey?: string;
+}) {
+  const userId = await requireUserId();
+
+  const provider = resolveAiProvider(input.provider);
+  // Only a NEWLY entered key is checked; saving a model change with the key left blank
+  // costs no provider call.
+  const newKey = input.apiKey?.trim() || null;
+  let keyNote: string | null = null;
+  if (newKey) {
+    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
+    // Returned, not thrown: a thrown message is a digest in production.
+    if (!outcome.save) return { ok: false as const, error: outcome.error };
+    keyNote = outcome.note;
+  }
+  const encrypted = newKey ? encrypt(newKey) : null;
+
+  const { embeddingReset } = await applyAiKeyChange({
+    userId,
+    provider,
+    model: input.model,
+    encryptedKey: encrypted,
+  });
 
   revalidatePath("/settings");
   revalidatePath("/chat");
   return {
     ok: true as const,
-    embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend),
+    embeddingReset,
     keyNote,
   };
 }

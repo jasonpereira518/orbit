@@ -31,6 +31,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-friendly-error": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-oauth-return": "pure",
+  "smoke-openrouter-oauth": "pure",
   "smoke-report-error": "pure",
   "smoke-toast-actions": "pure",
   "smoke-timeline-cost": "pure",

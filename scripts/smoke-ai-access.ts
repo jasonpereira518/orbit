@@ -195,11 +195,16 @@ function sourceGuard() {
   // OpenRouter's own bare host, unlike the other three, is also where a person's browser
   // legitimately links out — the credits page (errors.ts's quota copy, verified by curl to
   // be /settings/credits — /credits itself 308s there) and the authorize URL (Task 5).
-  // Excluding only those two paths, rather than requiring "/api", keeps the bare-host
+  // Task 5 adds two more narrow exceptions, both raw HTTP because OpenRouter has no SDK:
+  // `ai-key-check.ts`'s save-time probe (`GET /api/v1/key`, the same file and reasoning
+  // that already exempts the other three probes' SDK constructors) and the OAuth
+  // callback's code-for-key exchange (`POST /api/v1/auth/keys`), which mints the very key
+  // the gate later hands out — it has nothing of its own to ask the gate either.
+  // Excluding only these specific paths, rather than requiring "/api", keeps the bare-host
   // literal itself tripping the guard everywhere else — including a split host/path form
   // (`const H = "https://openrouter.ai"; fetch(\`${H}/api/v1/...\`)`) that a "must contain
   // /api" pattern would miss, since the literal alone carries no path.
-  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|openrouter\.ai(?!\/(settings\/credits|auth)\b)/;
+  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|openrouter\.ai(?!\/(settings\/credits|auth|api\/v1\/key|api\/v1\/auth\/keys)\b)/;
 
   const offenders: string[] = [];
   for (const file of [...walk("src"), ...walk("scripts")]) {
@@ -230,6 +235,8 @@ function sourceGuard() {
   );
   check("…but not a plain link to OpenRouter's credits page", !providerHost.test("https://openrouter.ai/settings/credits"));
   check("…nor the OAuth authorize URL (Task 5)", !providerHost.test("https://openrouter.ai/auth"));
+  check("…nor the save-time key-check probe (Task 5)", !providerHost.test("https://openrouter.ai/api/v1/key"));
+  check("…nor the OAuth code-for-key exchange (Task 5)", !providerHost.test("https://openrouter.ai/api/v1/auth/keys"));
   const ai = readFileSync("src/lib/ai.ts", "utf8");
   check("ai.ts imports the SDKs for types only", !valueImport.test(ai) && /import type OpenAI/.test(ai));
   check("every ai.ts provider path starts at resolveAiAccess", (ai.match(/resolveAiAccess\(/g) ?? []).length >= 6);

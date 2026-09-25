@@ -235,11 +235,12 @@ const ALLOWLIST: Record<string, string> = {
     "has its own `provider === \"openrouter\"` line right below the three narrowed ones.",
   "src/actions/settings.ts:250": "same independent-ternary shape as line 246 — see that entry.",
   "src/actions/settings.ts:254": "same independent-ternary shape as line 246 — see that entry.",
-  "src/actions/settings.ts:314": "clearApiKey's `patch` ternary — the final `else` arm is " +
+  "src/actions/settings.ts:339": "clearApiKey's `patch` ternary — the final `else` arm is " +
     "the literal `{ openrouterApiKeyEncrypted: null }`, so the three narrowed comparisons " +
-    "plus that default are exhaustive over AiProvider.",
-  "src/actions/settings.ts:316": "same ternary as line 314 — see that entry.",
-  "src/actions/settings.ts:318": "same ternary as line 314 — see that entry.",
+    "plus that default are exhaustive over AiProvider. (Line shifted by Task 5's " +
+    "`applyAiKeyChange` extraction — was line 314.)",
+  "src/actions/settings.ts:341": "same ternary as line 339 — see that entry.",
+  "src/actions/settings.ts:343": "same ternary as line 339 — see that entry.",
 };
 
 function checkExhaustiveness() {
