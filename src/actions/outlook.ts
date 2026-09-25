@@ -16,6 +16,9 @@ import { requireSyncUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
+import { demoOutlookConnectionStatus } from "@/lib/demo-workspace-connections";
+import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
 import {
   OUTLOOK_SCAN_IMPORT_TYPE,
   runOutlookRecruiterScanJob,
@@ -57,6 +60,8 @@ export type OutlookConnectionStatus = {
 
 export async function getOutlookConnectionStatus(): Promise<OutlookConnectionStatus> {
   const userId = await requireUserId();
+  const demoEmail = await demoWorkspaceEmail(userId);
+  if (demoEmail) return demoOutlookConnectionStatus(demoEmail);
   const summary = getOutlookOAuthConfigSummary();
   if (!summary.configured) {
     return {
@@ -148,6 +153,8 @@ export async function startOutlookOAuth(input: {
  */
 export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
+  // Nothing is stored to disconnect, and `alsoDelete` would purge the seeded workspace.
+  if (await isDemoWorkspace(userId)) return;
   const db = await getDb();
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
   // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
@@ -221,6 +228,10 @@ function toScanStatus(row: typeof imports.$inferSelect): OutlookScanStatus {
 export async function startOutlookRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
   return asActionResult(async () => {
     const userId = await requireSyncUser();
+    const demoEmail = await demoWorkspaceEmail(userId);
+    if (demoEmail) {
+      return { importId: await recordDemoRecruiterScan(userId, OUTLOOK_SCAN_IMPORT_TYPE, demoEmail) };
+    }
     const db = await getDb();
 
     const conn = await db.query.outlookConnections.findFirst({

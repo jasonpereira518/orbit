@@ -10,7 +10,7 @@ import { OFFLINE_MESSAGE, friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { SPRING_PILL } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { movePage, releaseScanPage, type ScanPage } from "@/lib/scan-capture";
+import { movePage, releaseScanPage, type ScanPage } from "@/lib/scan-page";
 import { MAX_SCAN_PAGES, ScanError, classifyScanFile } from "@/lib/scan-image";
 
 /**

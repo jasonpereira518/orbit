@@ -26,6 +26,23 @@ export function isTrackedPath(pathname: string): boolean {
   return true;
 }
 
+/**
+ * The `localStorage` flag behind "don't count this browser" on `/admin/analytics`. The
+ * beacon sends `internal: true` while it is set, which is the only way the operator's
+ * SIGNED-OUT visits to the landing page can be told apart from a prospect's. Neutral on
+ * purpose, like the session key: storage keys are visible in devtools on the waitlist too.
+ */
+export const INTERNAL_BROWSER_KEY = "pv_x";
+
+/** Whether this browser was opted out of traffic analytics. Never throws. */
+export function isInternalBrowser(): boolean {
+  try {
+    return localStorage.getItem(INTERNAL_BROWSER_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /** Query parameters worth keeping when a URL leaves for a third party: campaign tags only. */
 const VENDOR_KEPT_PARAMS = ["utm_source", "utm_medium", "utm_campaign"] as const;
 

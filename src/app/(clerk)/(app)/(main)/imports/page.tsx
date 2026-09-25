@@ -11,6 +11,7 @@ import { ImportHub } from "@/components/imports/import-hub";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import type { ProviderCalendarInput } from "@/lib/imports/calendar-sources";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 /** Large connections imports process in the background via after(); allow it room to run. */
 export const maxDuration = 300;
@@ -62,6 +63,7 @@ export default async function ImportsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
+      <RenderStamp />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Imports

@@ -17,11 +17,8 @@
  * catch, not when they render, so there is no path by which a Postgres or OAuth body reaches
  * the summary line.
  */
-import {
-  RUN_ORDER,
-  type Detected,
-  type ImportTarget,
-} from "@/lib/imports/detect-import-file";
+import type { Detected, ImportTarget } from "@/lib/imports/detect-import-file";
+import { RUN_ORDER } from "@/lib/imports/import-constants";
 import { joinList } from "@/lib/imports/join-list";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 

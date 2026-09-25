@@ -33,6 +33,9 @@ import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
+import { demoGmailConnectionStatus } from "@/lib/demo-workspace-connections";
+import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
 
@@ -72,6 +75,8 @@ export type GmailConnectionStatus = {
 
 export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus> {
   const userId = await requireUserId();
+  const demoEmail = await demoWorkspaceEmail(userId);
+  if (demoEmail) return demoGmailConnectionStatus(demoEmail);
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
     return {
@@ -172,6 +177,8 @@ export async function startGmailOAuth(input: {
 
 export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
+  // Nothing is stored to disconnect, and `alsoDelete` would purge the seeded workspace.
+  if (await isDemoWorkspace(userId)) return;
   const db = await getDb();
   const grant = await db.query.gmailConnections.findFirst({
     where: eq(gmailConnections.userId, userId),
@@ -254,6 +261,10 @@ export async function startGmailRecruiterScan(): Promise<
 > {
   return asActionResult(async () => {
     const userId = await requireSyncUser();
+    const demoEmail = await demoWorkspaceEmail(userId);
+    if (demoEmail) {
+      return { importId: await recordDemoRecruiterScan(userId, GMAIL_SCAN_IMPORT_TYPE, demoEmail) };
+    }
     const db = await getDb();
 
     const conn = await db.query.gmailConnections.findFirst({
@@ -368,6 +379,18 @@ export type GmailSendIdentity = {
 
 export async function getGmailSendIdentity(): Promise<GmailSendIdentity> {
   const userId = await requireUserId();
+  const demoEmail = await demoWorkspaceEmail(userId);
+  if (demoEmail) {
+    const profile = await getCurrentUserProfile().catch(() => null);
+    return {
+      connected: true,
+      canSend: true,
+      sendingAs: demoEmail,
+      displayName: profile?.name?.trim() || null,
+      loginEmail: demoEmail,
+      matchesLogin: true,
+    };
+  }
   const db = await getDb();
 
   const conn = await db.query.gmailConnections.findFirst({

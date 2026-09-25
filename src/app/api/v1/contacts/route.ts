@@ -77,7 +77,8 @@ export const GET = apiHandler({ scope: "read", bucket: "apiRead" }, async (reque
   const { q, limit, cursor } = parsed.data;
 
   if (q) {
-    const ranked = await hybridSearchContacts(caller.userId, { query: q, limit });
+    // `publicContact` never exposes notes or opportunities, so they are not read.
+    const ranked = await hybridSearchContacts(caller.userId, { query: q, limit, withProse: false });
     return apiOk({ contacts: ranked.map(publicContact) });
   }
 

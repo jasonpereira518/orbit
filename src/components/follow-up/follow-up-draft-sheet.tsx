@@ -50,22 +50,32 @@ export function FollowUpDraftSheet({
     setSendOptions(null);
 
     start(async () => {
-      try {
-        const [options, result] = await Promise.all([
-          getContactFollowUpSendOptions(contactId),
-          // Opening the sheet shows the draft already written for this context; only
-          // Regenerate below pays for a new one.
-          draftContactFollowUp(contactId, { reuse: true }),
-        ]);
-        if (session !== sessionRef.current) return;
-        setSendOptions(options);
-        setDraft(result.body);
-      } catch (err) {
-        if (session !== sessionRef.current) return;
-        toast.error(
-          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
-        );
-      }
+      // Two independent reads, each shown as soon as it lands. They used to share one
+      // `Promise.all`, so the quick send-options read waited on the model call behind the
+      // draft, and a draft that failed (no AI key, a provider error) left "Loading send
+      // options…" on screen for good — with the send buttons it gates. Server Actions go out
+      // one at a time anyway, so asking for the options first costs the draft nothing.
+      let reported = false;
+      const report = (err: unknown) => {
+        if (session !== sessionRef.current || reported) return;
+        reported = true;
+        toast.error(friendlyError(err, TOAST_COPY.draftFollowUpFailed));
+      };
+      const optionsRead = getContactFollowUpSendOptions(contactId).then(
+        (options) => {
+          if (session === sessionRef.current) setSendOptions(options);
+        },
+        report
+      );
+      // Opening the sheet shows the draft already written for this context; only
+      // Regenerate below pays for a new one.
+      const draftRead = draftContactFollowUp(contactId, { reuse: true }).then(
+        (result) => {
+          if (session === sessionRef.current) setDraft(result.body);
+        },
+        report
+      );
+      await Promise.all([optionsRead, draftRead]);
     });
   }, [open, contactId]);
 

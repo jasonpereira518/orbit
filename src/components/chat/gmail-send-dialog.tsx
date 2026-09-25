@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Check, Copy, ExternalLink, Loader2, Mail } from "lucide-react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useCallback, useEffect, useId, useState } from "react";
 import { toast } from "@/lib/toast";
 
@@ -334,9 +334,9 @@ function Blocker({
     return (
       <p className="text-sm text-muted-foreground">
         {text}{" "}
-        <Link href={`/contacts/${contactId}`} className="underline underline-offset-2 hover:text-foreground">
+        <IntentLink href={`/contacts/${contactId}`} className="underline underline-offset-2 hover:text-foreground">
           Open their profile
-        </Link>{" "}
+        </IntentLink>{" "}
         to fix it.
       </p>
     );

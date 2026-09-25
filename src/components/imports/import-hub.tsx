@@ -59,7 +59,7 @@ import { extractLinkedInProfileRefs } from "@/lib/linkedin-paste";
 import { startGmailOAuth } from "@/actions/gmail";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
-import { MAX_CONTACTS_FILE_BYTES } from "@/lib/contacts-file";
+import { MAX_CONTACTS_FILE_BYTES } from "@/lib/imports/import-constants";
 import { MAX_DROP_DEPTH } from "@/lib/capture/file-drop";
 import {
   calendarSources,

@@ -118,7 +118,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     );
 
   if (provider === "anthropic") {
-    const client = anthropicClient(grant);
+    const client = await anthropicClient(grant);
     const tools: Anthropic.Tool[] = input.tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -167,7 +167,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
   }
 
   if (provider === "openai") {
-    const client = openaiClient(grant);
+    const client = await openaiClient(grant);
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = input.tools.map((t) => ({
       type: "function",
       function: { name: t.name, description: t.description, parameters: toolParameters(t.inputSchema) },
@@ -222,7 +222,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
   }
 
   // Gemini.
-  const client = geminiClient(grant);
+  const client = await geminiClient(grant);
   const functionDeclarations: FunctionDeclaration[] = input.tools.map((t) => ({
     name: t.name,
     description: t.description,

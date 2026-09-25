@@ -27,6 +27,13 @@ export type HybridSearchOptions = {
   filters?: SearchFilters | null;
   expansionTerms?: string[];
   limit?: number;
+  /**
+   * `false` hydrates without `notes` and `opportunities` (returned as `null` and `[]`).
+   * Ranking never reads either, so the order and every other field are unchanged; a caller
+   * that discards them — the MCP surface, a name lookup — stops paying for multi-KB of
+   * free text per candidate. Defaults to `true`.
+   */
+  withProse?: boolean;
 };
 
 /**
@@ -564,7 +571,8 @@ export async function hybridSearchContacts(
     .slice(0, limit * 2)
     .map(([id]) => id);
 
-  let hydrated = await hydrate(userId, orderedIds, fused, filter);
+  const withProse = options.withProse ?? true;
+  let hydrated = await hydrate(userId, orderedIds, fused, filter, withProse);
   hydrated = hydrated.slice(0, limit);
 
   const normalizeToOwnMax = (rows: RankedContact[]): RankedContact[] => {
@@ -615,7 +623,8 @@ async function hydrate(
   userId: string,
   orderedIds: string[],
   fused: Map<string, { score: number; arms: ArmName[] }>,
-  filter: SQL | null
+  filter: SQL | null,
+  withProse = true
 ): Promise<RankedContact[]> {
   if (orderedIds.length === 0) return [];
   const db = await getDb();
@@ -633,17 +642,20 @@ async function hydrate(
       location: true,
       email: true,
       industry: true,
-      notes: true,
+      notes: withProse,
       aiSummary: true,
       keyFacts: true,
-      opportunities: true,
+      opportunities: withProse,
       relationshipScore: true,
       priorityLevel: true,
       closenessTier: true,
     },
     with: { contactTags: { with: { tag: true } } },
   });
-  const byId = new Map(rows.map((r) => [r.id, r]));
+  // A runtime column switch leaves Drizzle unable to type the two prose columns as present,
+  // so they are read as optional: absent exactly when `withProse` is false.
+  type HydratedRow = (typeof rows)[number] & { notes?: string | null; opportunities?: string[] | null };
+  const byId = new Map((rows as HydratedRow[]).map((r) => [r.id, r]));
   const out: RankedContact[] = [];
   for (const id of orderedIds) {
     const row = byId.get(id);
@@ -659,7 +671,7 @@ async function hydrate(
       location: row.location,
       email: row.email,
       industry: row.industry,
-      notes: row.notes,
+      notes: row.notes ?? null,
       aiSummary: row.aiSummary,
       keyFacts: row.keyFacts ?? [],
       opportunities: row.opportunities ?? [],

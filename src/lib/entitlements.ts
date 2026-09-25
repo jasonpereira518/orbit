@@ -204,22 +204,32 @@ function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements 
  * background code resolve identically. Same rationale as the mirrored `email` column.
  */
 export const getEntitlements = cache(
-  async (userId: string): Promise<Entitlements> => {
-    const row = await ensureUserSettings(userId);
-    const { plan, source } = resolvePlan(row);
-    // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
-    // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
-    // from a free account, and the pricing surfaces should still tell the truth about
-    // what was bought. Only the gates are lifted.
-    if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
-    // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
-    // even while a Pro subscription is still winding down. Buying Lifetime cancels Pro on
-    // the spot (`endProForLifetime`), so the two are never meant to overlap; the resolver
-    // no longer unions a lingering subscription's enrichment back in.
-    const hostedEnrichment = plan === "orbit";
-    return entitlementsForPlan(plan, source, { hostedEnrichment });
-  }
+  async (userId: string): Promise<Entitlements> =>
+    entitlementsFromSettings(userId, await ensureUserSettings(userId))
 );
+
+/**
+ * `getEntitlements` for a caller that already holds the account's `user_settings` row.
+ *
+ * `cache()` only deduplicates inside a React render. In a route handler or a Server Action
+ * it is a pass-through, so a path that has just read the row (an API key check, say) and
+ * then calls `getEntitlements` reads it again. Resolving from the row in hand is the same
+ * computation on the same data, one round trip cheaper.
+ */
+export function entitlementsFromSettings(userId: string, row: BillingColumns): Entitlements {
+  const { plan, source } = resolvePlan(row);
+  // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
+  // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
+  // from a free account, and the pricing surfaces should still tell the truth about
+  // what was bought. Only the gates are lifted.
+  if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
+  // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
+  // even while a Pro subscription is still winding down. Buying Lifetime cancels Pro on
+  // the spot (`endProForLifetime`), so the two are never meant to overlap; the resolver
+  // no longer unions a lingering subscription's enrichment back in.
+  const hostedEnrichment = plan === "orbit";
+  return entitlementsForPlan(plan, source, { hostedEnrichment });
+}
 
 export const FEATURE_DENIAL: Record<FeatureKey, string> = {
   outreach: "Outreach is available on Orbit Pro and Orbit Lifetime.",

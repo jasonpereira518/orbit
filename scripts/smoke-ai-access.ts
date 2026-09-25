@@ -484,7 +484,7 @@ async function realGate() {
   const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
   let threw = false;
   try {
-    geminiClient(forged);
+    await geminiClient(forged);
   } catch {
     threw = true;
   }
@@ -492,7 +492,7 @@ async function realGate() {
   const real = await (await resolveAiAccess(U.lifetimeNone)).completion("x");
   threw = false;
   try {
-    (await import("../src/lib/ai-access")).openaiClient(real);
+    await (await import("../src/lib/ai-access")).openaiClient(real);
   } catch {
     threw = true;
   }
@@ -746,7 +746,7 @@ async function byokOnly() {
     const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
     let threw = false;
     try {
-      geminiClient(forged);
+      await geminiClient(forged);
     } catch {
       threw = true;
     }

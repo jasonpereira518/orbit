@@ -18,6 +18,11 @@ const CommandPaletteDialog = dynamic(
   { ssr: false }
 );
 
+/** The dialog's code, fetched ahead of the first ⌘K. Bandwidth only — nothing mounts. */
+function preloadDialog() {
+  void import("@/components/layout/command-palette-dialog").catch(() => {});
+}
+
 /**
  * ⌘K / Ctrl+K from anywhere in the app: jump to a person or a page, start a capture, or
  * hand a question to the ask bar.
@@ -37,6 +42,29 @@ export function CommandPalette({
   const [open, setOpen] = useState(false);
   // Stays mounted after the first open so a second ⌘K does not wait on the chunk again.
   const [loaded, setLoaded] = useState(false);
+
+  // The first ⌘K used to wait ~300 ms with nothing on screen: the dialog is lazy, and its
+  // first render suspends — React then holds the (empty) fallback for its minimum reveal
+  // time even when the chunk is already cached. So once the page is idle, fetch the chunk
+  // AND mount the dialog, closed: the lazy component resolves in the background and the
+  // first ⌘K only has to flip `open`. Closed, it does no work — its people search, and the
+  // highlighted-profile prefetch, only run while open.
+  useEffect(() => {
+    const warm = () => {
+      preloadDialog();
+      setLoaded(true);
+    };
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(warm);
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(warm, 2000);
+    return () => window.clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

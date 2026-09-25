@@ -1574,6 +1574,7 @@ CREATE TABLE IF NOT EXISTS page_views (
   city text,
   device text NOT NULL,
   is_bot boolean NOT NULL DEFAULT false,
+  is_internal boolean NOT NULL DEFAULT false,
   dwell_ms integer,
   load_ms integer,
   nav_type text,
@@ -1584,6 +1585,7 @@ CREATE INDEX IF NOT EXISTS page_views_route_created_idx ON page_views(route, cre
 CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, created_at);
 CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
 CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
+CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_internal, created_at);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1998,7 +2000,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // and user_settings.stealth_cleared_at. NOT 100 or 101: the waitlist-referral branch claims
 // 101 and skipped 100 for a sibling. Rescanned every remote ref, every local branch and every
 // worktree's working file on Sep 24 2026: 101 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 102;
+//
+// 103 = page_views.is_internal (traffic analytics accuracy pass). Rescanned every remote ref,
+// every local branch and every worktree's working file on Sep 24 2026: 102 was the highest
+// claimed anywhere.
+export const SCHEMA_VERSION = 103;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3629,6 +3635,11 @@ const alters = [
   // allowed in, so the Clerk lookup behind that answer runs once per account.
   `CREATE TABLE IF NOT EXISTS site_settings (id integer PRIMARY KEY DEFAULT 1, stealth_enabled boolean, stealth_since timestamptz, updated_at timestamptz NOT NULL DEFAULT now(), updated_by text, CONSTRAINT site_settings_single_row CHECK (id = 1))`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stealth_cleared_at timestamptz`,
+  // Schema v103: `page_views.is_internal`, Orbit's own traffic (admins, the showcase account,
+  // and browsers an admin opted out). No backfill: the read side also excludes admin user ids
+  // at query time, which covers every row from before this column without the migration
+  // having to know ADMIN_USER_IDS. The index lives in the template (step 4 of applySchema).
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS is_internal boolean NOT NULL DEFAULT false`,
 ];
 
 /**

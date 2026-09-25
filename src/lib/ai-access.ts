@@ -1,6 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
-import OpenAI from "openai";
+// Types only at the top: the SDKs themselves load on the first client built. This module is
+// reached by most server routes (the app layout, the app pulse, health), and evaluating three
+// provider SDKs — @google/genai pulls google-auth-library, protobufjs and ws — was part of
+// every cold start for routes that never make a model call.
+import type Anthropic from "@anthropic-ai/sdk";
+import type { GoogleGenAI } from "@google/genai";
+import type OpenAI from "openai";
 import { and, eq, gte, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
@@ -240,16 +244,24 @@ function keyFor(grant: AiGrant<AiProvider>, provider: AiProvider): string {
   return key;
 }
 
-export function geminiClient(grant: AiGrant<AiProvider>): GoogleGenAI {
-  return new GoogleGenAI({ apiKey: keyFor(grant, "gemini") });
+// The grant is checked before the SDK loads, so a forged or mismatched grant is refused
+// without ever importing a provider.
+export async function geminiClient(grant: AiGrant<AiProvider>): Promise<GoogleGenAI> {
+  const apiKey = keyFor(grant, "gemini");
+  const { GoogleGenAI } = await import("@google/genai");
+  return new GoogleGenAI({ apiKey });
 }
 
-export function openaiClient(grant: AiGrant<AiProvider>): OpenAI {
-  return new OpenAI({ apiKey: keyFor(grant, "openai") });
+export async function openaiClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  const apiKey = keyFor(grant, "openai");
+  const { default: OpenAI } = await import("openai");
+  return new OpenAI({ apiKey });
 }
 
-export function anthropicClient(grant: AiGrant<AiProvider>): Anthropic {
-  return new Anthropic({ apiKey: keyFor(grant, "anthropic") });
+export async function anthropicClient(grant: AiGrant<AiProvider>): Promise<Anthropic> {
+  const apiKey = keyFor(grant, "anthropic");
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  return new Anthropic({ apiKey });
 }
 
 /**

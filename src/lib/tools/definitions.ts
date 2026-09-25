@@ -20,7 +20,8 @@ import { getDb } from "@/db";
 import { actionItems, contacts, interactions } from "@/db/schema";
 import { hybridSearchContacts } from "@/lib/hybrid-search";
 import { findOrgRosters } from "@/lib/chat-roster";
-import { getDashboardData } from "@/lib/reminders";
+import { loadDueFollowUps } from "@/lib/due-follow-ups";
+import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import { getNetworkStats } from "@/lib/network-stats";
@@ -120,10 +121,12 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         "notes",
       ],
     },
-    async run(userId, args: { query: string; limit: number }) {
+    async run(userId, args: { query: string; limit: number }, ctx) {
       const ranked = await hybridSearchContacts(userId, {
         query: args.query,
         limit: args.limit,
+        // MCP's allowlist drops `notes`, so it is not read for that surface at all.
+        withProse: ctx.surface === "chat",
       });
       return ranked.map((c) => ({
         id: c.id,
@@ -152,25 +155,41 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     resultLabel: "contact",
     async run(userId, args: { contactId: string }, ctx) {
       const db = await getDb();
-      // Scoped by userId as well as id: an id is guessable in principle, and this is the
-      // one tool that returns free-text notes.
-      const contact = await db.query.contacts.findFirst({
-        where: and(eq(contacts.id, args.contactId), eq(contacts.userId, userId)),
-      });
+      // Both reads at once: the interactions are scoped by userId too, so a contact that is
+      // not the caller's reads nothing of anyone else's and the result is simply discarded.
+      const [contact, recent] = await Promise.all([
+        // Scoped by userId as well as id: an id is guessable in principle, and this is the
+        // one tool that returns free-text notes. Only the fields returned below — the row
+        // also carries the stored avatar, up to ~120 KB of base64 this never used.
+        db.query.contacts.findFirst({
+          where: and(eq(contacts.id, args.contactId), eq(contacts.userId, userId)),
+          columns: {
+            id: true,
+            fullName: true,
+            company: true,
+            title: true,
+            email: true,
+            location: true,
+            linkedinUrl: true,
+            closenessTier: true,
+            notes: true,
+            aiSummary: true,
+          },
+        }),
+        db.query.interactions.findMany({
+          where: and(eq(interactions.userId, userId), eq(interactions.contactId, args.contactId)),
+          orderBy: [desc(interactions.interactionDate)],
+          limit: 10,
+          columns: {
+            interactionType: true,
+            interactionDate: true,
+            source: true,
+            aiSummary: true,
+            rawNotes: true,
+          },
+        }),
+      ]);
       if (!contact) return toolError("No such contact.");
-
-      const recent = await db.query.interactions.findMany({
-        where: and(eq(interactions.userId, userId), eq(interactions.contactId, args.contactId)),
-        orderBy: [desc(interactions.interactionDate)],
-        limit: 10,
-        columns: {
-          interactionType: true,
-          interactionDate: true,
-          source: true,
-          aiSummary: true,
-          rawNotes: true,
-        },
-      });
 
       // Truncated for MCP: that is the field an attacker can write to, and there is no
       // reason an outside model needs more than this much of it at once. Chat gets the
@@ -232,16 +251,16 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     title: "Who to follow up with",
     description: "People the user owes a follow-up, or whose relationship is going cold.",
     inputSchema: { limit: z.number().int().min(1).max(25).default(10) },
-    // Read-only BY CONSTRUCTION: it reads getDashboardData, not generateDueFollowUps,
-    // which creates reminders. A tool named like a reader that writes is how an agent
-    // surprises the person it is working for.
+    // Read-only BY CONSTRUCTION: it reads the dashboard's due list (`loadDueFollowUps`),
+    // not generateDueFollowUps, which creates reminders. A tool named like a reader that
+    // writes is how an agent surprises the person it is working for.
     annotations: { readOnlyHint: true },
     surfaces: BOTH,
     scope: "read",
     resultLabel: "followups",
     async run(userId, args: { limit: number }) {
-      const data = await getDashboardData(userId);
-      return data.dueFollowUps.slice(0, args.limit).map((c) => ({
+      const due = await loadDueFollowUps(userId);
+      return due.slice(0, args.limit).map((c) => ({
         contactId: c.id,
         name: c.fullName,
         company: c.company,
@@ -319,16 +338,18 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     scope: "read",
     resultLabel: "overview",
     async run(userId) {
-      const [stats, dashboard] = await Promise.all([
-        getNetworkStats(userId),
-        getDashboardData(userId),
+      // One cohort read for both halves: `cache()` would not share it in a route handler.
+      const cohort = getClosenessCohortSlim(userId);
+      const [stats, due] = await Promise.all([
+        getNetworkStats(userId, { cohort }),
+        loadDueFollowUps(userId, { cohort }),
       ]);
       // The headline copy is written for a dashboard card ("Gravity well detected"), which
       // would read as nonsense quoted back by an assistant. Only the numbers cross over.
       return {
         stats: stats.items.map((i) => ({ label: i.label, value: i.value })),
-        dueFollowUpCount: dashboard.dueFollowUps.length,
-        recentContacts: dashboard.dueFollowUps.slice(0, 5).map((c) => ({
+        dueFollowUpCount: due.length,
+        recentContacts: due.slice(0, 5).map((c) => ({
           contactId: c.id,
           name: c.fullName,
           company: c.company,
@@ -360,9 +381,6 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       args: { contactId: string; since?: string; until?: string; limit: number },
       ctx
     ) {
-      const contact = await ownedContact(userId, args.contactId);
-      if (!contact) return toolError("No such contact.");
-
       const db = await getDb();
       const since = dayBound(args.since, false);
       const until = dayBound(args.until, true);
@@ -376,7 +394,10 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // The count is the point of half the questions this answers ("how often do we
       // actually talk?"), and it has to be the real total rather than the length of a
       // capped list, for the same reason `findOrgRosters` counts separately from listing.
-      const [rows, totals] = await Promise.all([
+      // The ownership check runs alongside rather than first: both reads are scoped by
+      // userId, so for a contact that is not the caller's they find nothing and are dropped.
+      const [contact, rows, totals] = await Promise.all([
+        ownedContact(userId, args.contactId),
         db.query.interactions.findMany({
           where,
           orderBy: [desc(interactions.interactionDate), desc(interactions.sameDayOrder)],
@@ -391,6 +412,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         }),
         db.select({ n: sql<number>`count(*)::int` }).from(interactions).where(where),
       ]);
+      if (!contact) return toolError("No such contact.");
 
       // Raw note text is withheld over MCP, not truncated. `get_contact` is the ONE
       // documented exception to the fan-out rule — one person, by id, capped — and a
@@ -454,7 +476,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // have to know which kind of name they are holding.
       const [rosters, named] = await Promise.all([
         findOrgRosters(userId, args.target),
-        hybridSearchContacts(userId, { query: args.target, limit: 5 }),
+        // A name lookup: only id, name, company and title are read below.
+        hybridSearchContacts(userId, { query: args.target, limit: 5, withProse: false }),
       ]);
 
       // The shortest path is no path: if the target is already a contact, say so first.

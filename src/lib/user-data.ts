@@ -1,5 +1,5 @@
 import { cancelBatchJobsFor } from "@/lib/ai-batch";
-import { del } from "@vercel/blob";
+import { del } from "@/lib/blob-lazy";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
@@ -153,16 +153,29 @@ type Db = Awaited<ReturnType<typeof getDb>>;
 export type ExportSource = {
   name: string;
   page: (userId: string, limit: number, offset: number) => SQL;
+  /**
+   * Single-table sources only: `page` with `columns` in place of `*`. The export uses it to
+   * name exactly the columns that survive redaction (in table order), so vectors and raw
+   * bytes it would drop anyway are never read or shipped. Same rows, same order.
+   */
+  pageColumns?: (columns: SQL, userId: string, limit: number, offset: number) => SQL;
+  /**
+   * Column -> the expression selected in its place under the same name, for a column the
+   * `transform` only inspects. Must be provably output-identical after `transform`.
+   */
+  columnExpressions?: Record<string, SQL>;
   transform?: (row: Record<string, unknown>) => Record<string, unknown>;
 };
 
 /** Every row of `table` whose `user_id` is this user, in a stable order. */
 export function ownRowsSource(table: PgTable, orderBy = "id"): ExportSource {
   const name = getTableName(table);
+  const pageColumns: NonNullable<ExportSource["pageColumns"]> = (columns, userId, limit, offset) =>
+    sql`SELECT ${columns} FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`;
   return {
     name,
-    page: (userId, limit, offset) =>
-      sql`SELECT * FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`,
+    page: (userId, limit, offset) => pageColumns(sql`*`, userId, limit, offset),
+    pageColumns,
   };
 }
 
@@ -174,6 +187,12 @@ const withUrl = (source: ExportSource, prefix: string): ExportSource => ({
 });
 const contactsSource: ExportSource = {
   ...own(contacts),
+  // An inline avatar is replaced below whatever its bytes are, so only its `data:` prefix is
+  // read. `LIKE 'data:%'` is exactly `startsWith("data:")` (case-sensitive, no wildcards in
+  // the prefix); every other value, null included, passes through untouched.
+  columnExpressions: {
+    profile_image_url: sql`CASE WHEN profile_image_url LIKE 'data:%' THEN 'data:' ELSE profile_image_url END`,
+  },
   // Inline bytes and public Blob URLs become the owner-only avatar route.
   transform: (row) => {
     const url = typeof row.profile_image_url === "string" ? row.profile_image_url : null;

@@ -19,10 +19,12 @@ import {
   useStoreApi,
   type Node,
   type Edge,
-  type DefaultEdgeOptions,
   type EdgeTypes,
   type NodeMouseHandler,
   type OnNodesChange,
+  type NodeOrigin,
+  type DefaultEdgeOptions,
+  type ProOptions,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -213,15 +215,16 @@ const edgeTypes: EdgeTypes = {
  * Module constants, not inline literals: React Flow copies these props into its store whenever
  * their identity changes (its StoreUpdater compares by reference), and every store write runs
  * every drawn node's, edge's and handle's selector. Inline, each re-render of the chart — one a
- * frame while stars mount during a zoom — made two such writes for nothing.
+ * frame while stars mount during a zoom — made such writes for nothing.
  */
-const NODE_ORIGIN: [number, number] = [0.5, 0.5];
-const NO_EDGES: Edge[] = [];
+const NODE_ORIGIN: NodeOrigin = [0.5, 0.5];
+const PRO_OPTIONS: ProOptions = { hideAttribution: true };
 const DEFAULT_EDGE_OPTIONS: DefaultEdgeOptions = {
   type: "straight",
   selectable: false,
   focusable: false,
 };
+const NO_EDGES: Edge[] = [];
 
 /**
  * The zoomed-out summary view.
@@ -947,9 +950,6 @@ function GraphCanvasInner({
     },
     [applyMoving]
   );
-  // Stable for the same reason as NODE_ORIGIN: React Flow stores its move callbacks.
-  const onMoveStart = useCallback(() => setMoving(true), [setMoving]);
-  const onMoveEnd = useCallback(() => setMoving(false), [setMoving]);
   /**
    * At most one zoom a frame.
    *
@@ -2108,6 +2108,10 @@ function GraphCanvasInner({
     [measured]
   );
 
+  // ReactFlow calls these with (event, viewport); both are ignored, as before.
+  const onMoveStart = useCallback(() => setMoving(true), [setMoving]);
+  const onMoveEnd = useCallback(() => setMoving(false), [setMoving]);
+
   const isEmpty = filteredContacts.length === 0;
   const flowNodes = useHiddenBeforeRemoved(useSameArrayIfUnchanged(nodes));
   const flowEdges = useSameArrayIfUnchanged(isEmpty ? NO_EDGES : edges);
@@ -2151,7 +2155,7 @@ function GraphCanvasInner({
         onPaneMouseMove={onClusterPointerMove}
         onNodeMouseLeave={onNodeMouseLeave}
         onPaneClick={onPaneClick}
-        proOptions={{ hideAttribution: true }}
+        proOptions={PRO_OPTIONS}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
         nodesDraggable={false}
         ref={stageRef}

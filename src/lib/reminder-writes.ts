@@ -18,6 +18,7 @@ import {
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
 import { findReminderListForUser, getInboxListId } from "@/lib/reminder-lists";
+import { settle, unwrap } from "@/lib/settled";
 
 export type CreateReminderInput = {
   contactId?: string;
@@ -92,12 +93,26 @@ export async function scheduleContactFollowUpForUser(
   days = 7
 ) {
   const db = await getDb();
-  const inboxId = await getInboxListId(userId);
-
-  const contact = await db.query.contacts.findFirst({
+  // The inbox lookup (which lazily creates the Inbox, before any not-found check — as it
+  // always has), the contact and its pending reminder need nothing from each other, so all
+  // three start together. Outcomes are taken in the old order: an inbox failure first, then
+  // the contact read and its not-found, then the reminder. The reminder read is scoped to
+  // this user, so starting it before the ownership check reads nothing foreign.
+  const inboxRead = settle(getInboxListId(userId));
+  const contactRead = settle(db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: { id: true, fullName: true, preferredName: true },
-  });
+  }));
+  const existingRead = settle(db.query.reminders.findFirst({
+    where: and(
+      eq(reminders.userId, userId),
+      eq(reminders.contactId, contactId),
+      eq(reminders.status, "pending")
+    ),
+  }));
+  const inboxId = unwrap(await inboxRead);
+
+  const contact = unwrap(await contactRead);
   if (!contact) throw new Error("Contact not found");
 
   const due = new Date();
@@ -110,13 +125,7 @@ export async function scheduleContactFollowUpForUser(
     contactId,
   });
 
-  const existing = await db.query.reminders.findFirst({
-    where: and(
-      eq(reminders.userId, userId),
-      eq(reminders.contactId, contactId),
-      eq(reminders.status, "pending")
-    ),
-  });
+  const existing = unwrap(await existingRead);
 
   let row;
   if (existing) {

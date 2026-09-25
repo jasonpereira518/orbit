@@ -13,7 +13,7 @@
  * submit button.
  */
 
-import { put } from "@vercel/blob";
+import { put } from "@/lib/blob-lazy";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { feedback, feedbackScreenshots } from "@/db/schema";
