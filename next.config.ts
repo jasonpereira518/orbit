@@ -2,10 +2,7 @@ import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
 import { buildSecurityHeaders } from "./src/lib/security-headers";
 import {
-  STEALTH_ROBOTS,
   hostMatchValue,
-  isStealth,
-  stealthRedirects,
   localWaitlistRewrites,
   waitlistHost,
   waitlistRedirects,
@@ -27,18 +24,15 @@ const nextConfig: NextConfig = {
   // report-only (CSP_ENFORCE=1 to enforce). See src/lib/security-headers.ts.
   //
   // The waitlist's own domain (WAITLIST_HOST) gets a policy of its own that names no
-  // other origin, and in stealth mode (SITE_STEALTH=1) everything else is `noindex`.
-  // See src/lib/waitlist-host.ts.
+  // other origin. Stealth's `noindex` is NOT here: stealth is a runtime switch (the admin
+  // console's), so the proxy sets it per response. See src/lib/waitlist-host.ts.
   async headers() {
     const base = {
       dev: process.env.NODE_ENV !== "production",
       enforce: process.env.CSP_ENFORCE === "1",
       clerkPublishableKey: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     };
-    const appHeaders = [
-      ...buildSecurityHeaders(base),
-      ...(isStealth() ? [{ key: "X-Robots-Tag", value: STEALTH_ROBOTS }] : []),
-    ];
+    const appHeaders = buildSecurityHeaders(base);
     const host = waitlistHost();
     if (!host) return [{ source: "/(.*)", headers: appHeaders }];
     const match = [{ type: "host" as const, value: hostMatchValue(host) }];
@@ -51,11 +45,11 @@ const nextConfig: NextConfig = {
       { source: "/(.*)", missing: match, headers: appHeaders },
     ];
   },
-  // The waitlist host serves the waitlist and nothing else; stealth closes sign-up and moves
-  // old /interest links to it. Redirects run before the proxy and before public/ is served,
-  // which is why the allowlist lives here rather than in src/proxy.ts.
+  // The waitlist host serves the waitlist and nothing else. Redirects run before the proxy
+  // and before public/ is served, which is why the allowlist lives here rather than in
+  // src/proxy.ts. Stealth's redirects on the app host are the proxy's: they change at runtime.
   async redirects() {
-    return [...waitlistRedirects(), ...stealthRedirects()];
+    return waitlistRedirects();
   },
   async rewrites() {
     return { beforeFiles: [...waitlistRewrites(), ...localWaitlistRewrites()], afterFiles: [], fallback: [] };
@@ -150,6 +144,11 @@ const nextConfig: NextConfig = {
   },
   // Turbopack can fail to resolve @clerk/shared's wildcard `./*` package exports.
   turbopack: {
+    // Worktrees live inside the main checkout (.claude/worktrees/*), so without this Next
+    // walks up past the worktree's own package-lock.json, picks the main checkout's, and
+    // makes THAT the project root: every worktree's dev server then covers all the others.
+    // Pinned, a cold .next went from 1.6 GB to 280 MB and first compiles got ~20% faster.
+    root: import.meta.dirname,
     resolveAlias: {
       "@clerk/shared/apiUrlFromPublishableKey":
         "./node_modules/@clerk/shared/dist/apiUrlFromPublishableKey.mjs",

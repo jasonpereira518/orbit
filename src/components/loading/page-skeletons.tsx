@@ -446,7 +446,7 @@ export function CapturePageSkeleton() {
 export function ChatPageSkeleton() {
   return (
     // Same phone height as the chat page itself, so the load doesn't jump.
-    <div className="flex h-[calc(100dvh-11rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-[calc(100dvh-4rem)]">
+    <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-[calc(100dvh-4rem)]">
       <div className="shrink-0 space-y-2">
         <Skeleton className="h-9 w-64" />
         {/* The page hides its subtitle on phones. */}

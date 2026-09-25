@@ -195,6 +195,7 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 id={row.id}
                 email={row.email}
                 unsubscribed={row.status === "unsubscribed"}
+                invitable={row.status === "active"}
               />
             </Td>
           </tr>

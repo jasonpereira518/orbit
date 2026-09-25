@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { isClerkConfigured, isDemoMode } from "@/lib/demo-account";
 import { ensureLocalDemoData } from "@/lib/demo-data/ensure";
 import { needsOnboarding } from "@/lib/onboarding";
+import { isHeldByStealth } from "@/lib/site-access";
 import { ensureUserSettings } from "@/lib/user-settings";
 
 export class UnauthorizedError extends Error {
@@ -24,6 +25,19 @@ export class AccountSuspendedError extends Error {
   constructor(public readonly suspendedAt: Date) {
     super("Account suspended");
     this.name = "AccountSuspendedError";
+  }
+}
+
+/**
+ * Thrown by `requireUserId()` for an account stealth is holding: one created while the site
+ * was in stealth, without an admin's invitation (see `src/lib/site-access.ts`). A subclass of
+ * `UnauthorizedError` so every route that already answers 401 for "not signed in" answers
+ * the same for this; `(app)/layout.tsx` sends the person to the waitlist instead.
+ */
+export class AccountHeldError extends UnauthorizedError {
+  constructor() {
+    super("This account is waiting for an invitation");
+    this.name = "AccountHeldError";
   }
 }
 
@@ -107,6 +121,7 @@ export const requireUserId = cache(async (): Promise<string> => {
     if (settings.suspendedAt) {
       throw new AccountSuspendedError(settings.suspendedAt);
     }
+    if (await isHeldByStealth(userId, settings)) throw new AccountHeldError();
     return userId;
   }
 

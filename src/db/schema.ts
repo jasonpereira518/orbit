@@ -403,6 +403,14 @@ export const userSettings = pgTable("user_settings", {
   suspendedAt: timestamp("suspended_at", { withTimezone: true }),
   suspendedReason: text("suspended_reason"),
   suspendedBy: text("suspended_by"),
+  /**
+   * When this account was found to be allowed in while the site was in stealth: it existed
+   * before stealth was switched on, it accepted an admin's invitation, or it is an admin.
+   * Written once, the first time a stealth check needs the answer, so the Clerk lookup behind
+   * it is paid once per account rather than once per request (`src/lib/site-access.ts`).
+   * Null means "never checked", not "held" — held accounts are recomputed, never stored.
+   */
+  stealthClearedAt: timestamp("stealth_cleared_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -3918,6 +3926,24 @@ export const constellationSettings = pgTable("constellation_settings", {
   /** Inbound/outbound `linkedin_message` counts a contact needs to qualify on messages alone. */
   minInboundMessages: integer("min_inbound_messages").notNull().default(3),
   minOutboundMessages: integer("min_outbound_messages").notNull().default(3),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
+  updatedBy: text("updated_by"),
+});
+
+/**
+ * Site-wide switches an operator flips from the admin console. A single row, pinned by a
+ * CHECK the way `constellation_settings` is.
+ *
+ * `stealth_enabled` is null until an admin first touches it, and null defers to the
+ * `SITE_STEALTH` env var — so a deployment that has never been toggled keeps behaving the
+ * way its environment says. `stealth_since` is when stealth was last switched ON: accounts
+ * created after it need an invitation to get in (`src/lib/site-access.ts`).
+ */
+export const siteSettings = pgTable("site_settings", {
+  id: integer("id").primaryKey().default(1),
+  stealthEnabled: boolean("stealth_enabled"),
+  stealthSince: timestamp("stealth_since", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
   updatedBy: text("updated_by"),

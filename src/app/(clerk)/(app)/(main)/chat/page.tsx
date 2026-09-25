@@ -38,7 +38,7 @@ export default async function ChatPage() {
      * the composer under it. Measured at 375x812: page top 89px, Capture top 735px. The
      * safe-area term matters in standalone mode, where the nav rides above the home bar.
      */
-    <div className="flex h-[calc(100dvh-11rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
+    <div className="flex h-[calc(100dvh-11.375rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
       <RenderStamp />
       <div className="shrink-0">
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">

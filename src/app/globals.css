@@ -312,8 +312,9 @@
  * so a toast painted straight over a running job card.
  *
  * The mobile baseline clears the fixed nav pill: `layout/mobile-nav.tsx` is
- * `bottom-0` with `pb-[calc(0.5rem+env(safe-area-inset-bottom))]` around a
- * ~55px pill, so ~4.25rem is the occupied band.
+ * `bottom-0` with `pb-[calc(0.875rem+env(safe-area-inset-bottom))]` around a
+ * ~55px pill, so ~4.625rem is the occupied band. (0.875rem, not 0.5rem, so the
+ * lifted glass lens, which overhangs the pill, clears the screen's bottom edge.)
  *
  * The breakpoint is 48rem (Tailwind's `md`, where `md:hidden` takes the nav
  * away) and NOT sonner's own 600px mobile breakpoint — otherwise toasts in the
@@ -328,7 +329,7 @@
  * to go in the block above, and `check:tokens` will not tell you otherwise. */
 :root {
   --orbit-corner-bottom: calc(
-    4.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+    4.625rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
   );
   --orbit-corner-right: 0.75rem;
 
@@ -659,6 +660,18 @@
 
 .dark .liquid-glass.liquid-glass-pill::before {
   opacity: 0.85;
+}
+
+/* The body of the mobile tab bar's glass lens (nav-lens.tsx). Opaque on purpose: it
+ * hides the real icons under the lens so only their bent copy shows. Matched by eye to
+ * what the translucent CSS pill it replaces (white/70, dark white/10) looks like over
+ * this bar, so swapping between the two doesn't change the colour. */
+:root {
+  --nav-lens-fill: #fdfdfb;
+}
+
+.dark {
+  --nav-lens-fill: #232b3b;
 }
 
 /* Full-height variant of .liquid-glass, for the notifications window — a panel
