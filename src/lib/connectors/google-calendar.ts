@@ -24,10 +24,13 @@
  *    connection is broken", and counting it as a failure would walk a perfectly healthy
  *    connection up the backoff ladder and eventually disarm it.
  */
+import { googleFetchWithRetry } from "@/lib/google-fetch";
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
 import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
 import { calendarExternalIdBase } from "@/lib/ingest/external-id";
 import type { NetworkEvent } from "@/lib/ingest/events";
+import type { Engines } from "@/lib/decisions/engine";
+import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import type { CalendarSyncCursor } from "@/db/schema";
 
 const CALENDAR_API = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -73,6 +76,15 @@ type GoogleEvent = {
   end?: { dateTime?: string; date?: string };
   attendees?: GoogleAttendee[];
   organizer?: { email?: string; displayName?: string; self?: boolean };
+  /** Where the event came from, when another app created it — a Luma or Partiful page. */
+  source?: { url?: string; title?: string };
+  /**
+   * Google's own privacy switch. False means the organiser chose to hide the guest list from
+   * guests, and the API still returns it to the calendar owner — so honouring it is on us.
+   */
+  guestsCanSeeOtherGuests?: boolean;
+  /** Set when Google truncated the guest list; what came back is not the whole room. */
+  attendeesOmitted?: boolean;
 };
 
 type GoogleEventsPage = {
@@ -90,6 +102,16 @@ export type CalendarFetchResult = {
   tombstones: number;
   /** Emails Google itself marked `self`, used to filter the calendar owner out. */
   selfEmails: string[];
+  /**
+   * The recurrence/query window this page was fetched against. Only the CalDAV connector
+   * (`apple-calendar.ts`) sets this — Google's and Microsoft's incremental sync is unbounded
+   * by date, so they have no window whose containment a cursor could usefully assert. It
+   * exists here, on the type every connector shares, rather than as a CalDAV-only return
+   * shape, only so `advanceCursor` can persist it onto `CalendarSyncCursor.windowStart` /
+   * `windowEnd` — the fields `caldav/client.ts`'s ctag fallback short-circuit depends on
+   * (`windowCoveredByCursor`) and that nothing was writing, leaving that short-circuit dead.
+   */
+  window?: { from: Date; to: Date };
 };
 
 function parseWhen(when: GoogleEvent["start"]): Date | null {
@@ -126,6 +148,13 @@ export function toParsedEvent(raw: GoogleEvent): ParsedCalendarEvent | null {
     organizer: raw.organizer
       ? { name: raw.organizer.displayName || "", email: raw.organizer.email || "" }
       : null,
+    url: raw.source?.url || null,
+    status: raw.status || null,
+    // Two ways the guest list is not ours to keep: the organiser hid it, or Google itself
+    // truncated it. Either way, storing what we happen to have been handed would be storing
+    // other people's contact details they did not agree to share with this room.
+    guestsVisible: raw.guestsCanSeeOtherGuests !== false && raw.attendeesOmitted !== true,
+    selfResponse: (raw.attendees || []).find((a) => a.self)?.responseStatus ?? null,
   };
 }
 
@@ -163,7 +192,6 @@ export type FetchPageOptions = {
 export async function fetchCalendarPage(opts: FetchPageOptions): Promise<CalendarFetchResult> {
   const { accessToken, cursor } = opts;
   const now = opts.now ?? new Date();
-  const doFetch = opts.fetchImpl ?? fetch;
 
   const params = new URLSearchParams({
     singleEvents: "true",
@@ -182,8 +210,11 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
   // first sync restarts from the beginning every run and never reaches its last page.
   if (cursor?.pageToken) params.set("pageToken", cursor.pageToken);
 
-  const res = await doFetch(`${CALENDAR_API}?${params}`, {
+  const res = await googleFetchWithRetry(`${CALENDAR_API}?${params}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    // Well inside the scheduler's 60-second per-connection budget.
+    timeoutMs: 20_000,
+    fetchImpl: opts.fetchImpl,
   });
 
   if (res.status === 410) throw new CalendarSyncTokenExpiredError();
@@ -229,6 +260,28 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
  * is already tested. This function's only opinions are which identifier to key on and how to
  * phrase the note.
  */
+function toNetworkEvent(event: ParsedCalendarEvent & { start: Date }, selfEmails: string[]): NetworkEvent | null {
+  const people = counterpartsOf(event, selfEmails);
+  if (people.length === 0) return null;
+  return {
+    externalIdBase: calendarExternalIdBase(event.uid),
+    type: "meeting",
+    timestamp: event.start,
+    participants: people.map((p) => ({
+      name: p.name || null,
+      email: p.email || null,
+    })),
+    summary: event.summary || null,
+    notes: [
+      event.summary ? `Meeting: ${event.summary}` : "Calendar meeting",
+      event.location ? `Location: ${event.location}` : "",
+      event.description ? event.description.slice(0, 500) : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
 export function toNetworkEvents(
   events: ParsedCalendarEvent[],
   selfEmails: string[]
@@ -238,29 +291,29 @@ export function toNetworkEvents(
     if (!event.start) continue;
     const classification = classifyCalendarEvent(event, selfEmails);
     if (!classification.keep) continue;
-
-    const people = counterpartsOf(event, selfEmails);
-    if (people.length === 0) continue;
-
-    out.push({
-      externalIdBase: calendarExternalIdBase(event.uid),
-      type: "meeting",
-      timestamp: event.start,
-      participants: people.map((p) => ({
-        name: p.name || null,
-        email: p.email || null,
-      })),
-      summary: event.summary || null,
-      notes: [
-        event.summary ? `Meeting: ${event.summary}` : "Calendar meeting",
-        event.location ? `Location: ${event.location}` : "",
-        event.description ? event.description.slice(0, 500) : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    });
+    const shaped = toNetworkEvent({ ...event, start: event.start }, selfEmails);
+    if (shaped) out.push(shaped);
   }
   return out;
+}
+
+/**
+ * `toNetworkEvents` with the decision model reading each event the rules would keep
+ * (decisions/calendar.ts). Without Jev it is exactly `toNetworkEvents`.
+ */
+export async function toNetworkEventsDecided(
+  engines: Engines,
+  events: ParsedCalendarEvent[],
+  selfEmails: string[]
+): Promise<{ events: NetworkEvent[]; skippedByDecision: number; keptByDecision: number }> {
+  const { decided, skippedByDecision, keptByDecision } = await decideCalendarEvents(engines, events, selfEmails);
+  const out: NetworkEvent[] = [];
+  for (const { event, classification } of decided) {
+    if (!event.start || !classification.keep) continue;
+    const shaped = toNetworkEvent({ ...event, start: event.start }, selfEmails);
+    if (shaped) out.push(shaped);
+  }
+  return { events: out, skippedByDecision, keptByDecision };
 }
 
 /**

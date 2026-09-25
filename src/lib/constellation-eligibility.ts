@@ -175,14 +175,6 @@ export function constellationEligibility(
   return { eligible: false, reason: "none" };
 }
 
-export function isConstellationEligible(
-  counts: ContactSignalCounts | undefined,
-  fields: ConstellationContactFields,
-  thresholds: ConstellationThresholds
-): boolean {
-  return constellationEligibility(counts, fields, thresholds).eligible;
-}
-
 /*
  * There is deliberately no "safety floor" here any more.
  *

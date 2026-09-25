@@ -41,7 +41,16 @@ export function buildSecurityHeaders(options: {
   dev: boolean;
   enforce: boolean;
   clerkPublishableKey: string | undefined;
+  /**
+   * `"waitlist"` is the policy for the waitlist's own domain (src/lib/waitlist-host.ts).
+   * Response headers are readable by anyone, and the app's policy names the app's Clerk
+   * domain and, origin by origin, what the product does (Deepgram, Google Drive, camera and
+   * microphone). The waitlist page needs none of it, so its policy names none of it.
+   */
+  surface?: "app" | "waitlist";
 }): SecurityHeader[] {
+  if (options.surface === "waitlist") return waitlistHeaders(options);
+
   const clerkHost = clerkFrontendApiHost(options.clerkPublishableKey);
   const clerk = clerkHost ? `https://${clerkHost}` : null;
 
@@ -54,7 +63,11 @@ export function buildSecurityHeaders(options: {
       clerk,
       "https://*.clerk.accounts.dev",
       "https://challenges.cloudflare.com",
-      "https://va.vercel-scripts.com"
+      "https://va.vercel-scripts.com",
+      // Google Picker for Drive imports
+      "https://apis.google.com",
+      // Google Identity Services: mints the Picker's drive.file-only token in the browser
+      "https://accounts.google.com/gsi/client"
     )}`,
     `connect-src ${join(
       "'self'",
@@ -63,7 +76,14 @@ export function buildSecurityHeaders(options: {
       "https://*.ingest.sentry.io",
       "https://*.ingest.us.sentry.io",
       "https://va.vercel-scripts.com",
-      "https://vitals.vercel-insights.com"
+      "https://vitals.vercel-insights.com",
+      // Google Picker for Drive imports
+      "https://www.googleapis.com",
+      // Google Identity Services (host-wide, as Google advises for connect-src)
+      "https://accounts.google.com",
+      // Live meeting/mic transcription: the browser streams audio straight to Deepgram over a
+      // 30-second token our server mints (src/lib/deepgram-live.ts).
+      "wss://api.deepgram.com"
     )}`,
     // Avatars redirect to Blob, LinkedIn's CDN, unavatar and Clerk; the set is open by design.
     `img-src 'self' data: blob: https:`,
@@ -72,7 +92,17 @@ export function buildSecurityHeaders(options: {
     // Capture records voice and photos in the browser before upload.
     `media-src 'self' blob: data:`,
     `worker-src 'self' blob:`,
-    `frame-src ${join("'self'", clerk, "https://*.clerk.accounts.dev", "https://challenges.cloudflare.com")}`,
+    `frame-src ${join(
+      "'self'",
+      clerk,
+      "https://*.clerk.accounts.dev",
+      "https://challenges.cloudflare.com",
+      // Google Picker for Drive imports
+      "https://docs.google.com",
+      "https://drive.google.com",
+      // Google Identity Services' own frames
+      "https://accounts.google.com"
+    )}`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,
@@ -85,8 +115,10 @@ export function buildSecurityHeaders(options: {
     { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
     { key: "X-Frame-Options", value: "DENY" },
     {
+      // `display-capture` is already `self` by default; stated so that tightening this list
+      // later cannot silently break meeting capture and the feedback screenshot.
       key: "Permissions-Policy",
-      value: "camera=(self), microphone=(self), geolocation=(), payment=()",
+      value: "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=()",
     },
     {
       key: options.enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only",
@@ -95,6 +127,47 @@ export function buildSecurityHeaders(options: {
   ];
   if (!options.dev) {
     // Two years, subdomains included. `preload` deliberately not yet: it is irreversible.
+    headers.unshift({
+      key: "Strict-Transport-Security",
+      value: "max-age=63072000; includeSubDomains",
+    });
+  }
+  return headers;
+}
+
+const VERCEL_ANALYTICS = ["https://va.vercel-scripts.com", "https://vitals.vercel-insights.com"];
+const SENTRY_INGEST = ["https://*.ingest.sentry.io", "https://*.ingest.us.sentry.io"];
+
+/** The waitlist domain's headers: the same protections, and no origin beyond its own. */
+function waitlistHeaders(options: { dev: boolean; enforce: boolean }): SecurityHeader[] {
+  const directives = [
+    `default-src 'self'`,
+    `script-src ${join("'self'", "'unsafe-inline'", options.dev && "'unsafe-eval'", VERCEL_ANALYTICS[0])}`,
+    `connect-src ${join("'self'", ...SENTRY_INGEST, ...VERCEL_ANALYTICS)}`,
+    `img-src 'self' data: blob:`,
+    `style-src 'self' 'unsafe-inline'`,
+    `font-src 'self' data:`,
+    `frame-src 'none'`,
+    `object-src 'none'`,
+    `base-uri 'self'`,
+    `form-action 'self'`,
+    `frame-ancestors 'none'`,
+    `report-uri /api/csp-report`,
+  ];
+  const headers: SecurityHeader[] = [
+    { key: "X-Content-Type-Options", value: "nosniff" },
+    { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+    { key: "X-Frame-Options", value: "DENY" },
+    {
+      key: "Permissions-Policy",
+      value: "camera=(), microphone=(), display-capture=(), geolocation=(), payment=()",
+    },
+    {
+      key: options.enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only",
+      value: directives.join("; "),
+    },
+  ];
+  if (!options.dev) {
     headers.unshift({
       key: "Strict-Transport-Security",
       value: "max-age=63072000; includeSubDomains",

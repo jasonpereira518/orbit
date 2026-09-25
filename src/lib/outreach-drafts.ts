@@ -1,4 +1,5 @@
 import { completeJson } from "@/lib/ai";
+import { withWritingPreferences } from "@/lib/writing-instructions";
 import type { OutreachChannel } from "@/lib/outreach-types";
 
 export type DraftInput = {
@@ -20,6 +21,12 @@ export type DraftInput = {
   stepIndex?: number;
   previousBody?: string | null;
   variationHint?: string;
+  /**
+   * The sender's own style notes (`user_settings.writing_instructions`), loaded by whoever
+   * owns the request — never here, so a batch loads them once and no other caller inherits
+   * them by accident.
+   */
+  writingInstructions?: string | null;
 };
 
 export type GeneratedDraft = {
@@ -115,7 +122,7 @@ Critical rules:
 - Never leave placeholders like [My Name] or [Your Name].
 - Do not use identical phrasing across people — vary openers and hooks.
 Return JSON: { "subject": string|null, "body": string }`,
-    user: `${goalsBlock}
+    user: `${withWritingPreferences(goalsBlock, input.writingInstructions)}
 
 Prospect:
 ${prospectBlock}

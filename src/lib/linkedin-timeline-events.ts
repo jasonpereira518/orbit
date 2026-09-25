@@ -5,6 +5,9 @@
 
 import { z } from "zod";
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
+import { qualifiesForTimelineAi } from "@/lib/timeline-cost";
 import { parseInteractionDateFromNotes } from "@/lib/interaction-date";
 
 export type LinkedInTimelineMessage = {
@@ -40,6 +43,125 @@ function stableHash(input: string) {
   return Math.abs(h).toString(36);
 }
 
+type UsableMessage = LinkedInTimelineMessage & { index: number; content: string; date: Date | null };
+
+const TIMELINE_SYSTEM = `You extract relationship timeline events from a LinkedIn DM thread.
+Return strict JSON:
+{ "events": [ { "type": "meeting"|"in_person"|"reach_out", "summary": string, "dateHint": string|null, "sourceMessageIndex": number } ] }
+
+Rules:
+- Only include meetings that were proposed or confirmed, and in-person meetups/events clearly referenced.
+- Skip ordinary small talk. Do NOT list every message.
+- dateHint should be an explicit or relative date phrase from the message when present (e.g. "next Tuesday", "March 3", "tomorrow").
+- sourceMessageIndex must match a [#N] index from the transcript.
+- Max 8 events. Prefer precision over volume.
+- Do not invent events.`;
+
+/**
+ * What the extractor knows before any model call: the messages worth reading, the
+ * rule-based reach-out event (which needs no model), and the prompt — null when the thread
+ * does not qualify for one. Split out so the batched path can submit the prompt now and
+ * turn the answer into events later, from exactly the same inputs.
+ */
+export function prepareTimelineExtraction(
+  scopeId: string,
+  messages: LinkedInTimelineMessage[]
+): { usable: UsableMessage[]; baseEvents: LinkedInTimelineEvent[]; prompt: { system: string; user: string } | null } {
+  const usable: UsableMessage[] = messages
+    .map((m, index) => ({ ...m, index, content: m.content.trim(), date: m.parsedDate }))
+    .filter((m) => m.content.length > 0)
+    .slice(0, 80);
+
+  if (usable.length === 0) return { usable, baseEvents: [], prompt: null };
+
+  const baseEvents: LinkedInTimelineEvent[] = [];
+  // Initial reach-out = earliest message in the thread
+  const first = [...usable].sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0))[0];
+  if (first) {
+    baseEvents.push({
+      interactionType: "reach_out",
+      interactionDate: first.date || new Date(),
+      summary: `Initial LinkedIn reach-out: ${first.content.slice(0, 140)}`,
+      rawNotes: first.content,
+      externalId: `li-event:${scopeId}:reach_out:${stableHash(first.content.slice(0, 80))}`,
+    });
+  }
+
+  // A single message is a reach-out and nothing else — there is no reply in which a
+  // meeting could have been proposed. Skipping the model here is most threads in an
+  // export, at no loss (audit A6).
+  if (!qualifiesForTimelineAi(usable.length)) return { usable, baseEvents, prompt: null };
+
+  const transcript = usable
+    .map((m) => {
+      const when = m.date ? m.date.toISOString().slice(0, 10) : "unknown-date";
+      return `[#${m.index} · ${when} · from:${m.from || "?"}] ${m.content.slice(0, 500)}`;
+    })
+    .join("\n")
+    .slice(0, 14_000);
+
+  return { usable, baseEvents, prompt: { system: TIMELINE_SYSTEM, user: `Thread:\n${transcript}` } };
+}
+
+/** The model's answer as events. Throws when the answer is not the shape it promised. */
+export function timelineEventsFromAnswer(
+  scopeId: string,
+  usable: UsableMessage[],
+  content: string
+): LinkedInTimelineEvent[] {
+  const parsed = eventsSchema.parse(parseAiJson(content));
+  const first = [...usable].sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0))[0];
+  const events: LinkedInTimelineEvent[] = [];
+  for (const ev of parsed.events) {
+    if (ev.type === "reach_out") continue; // already added by prepare
+    const src = typeof ev.sourceMessageIndex === "number" ? usable.find((m) => m.index === ev.sourceMessageIndex) : null;
+    const ref = src?.date || first?.date || new Date();
+    const fromHint = ev.dateHint ? parseInteractionDateFromNotes(ev.dateHint, ref) : null;
+    const fromBody = src ? parseInteractionDateFromNotes(src.content, ref) : null;
+    const when = fromHint || fromBody || ref;
+    events.push({
+      interactionType: ev.type,
+      interactionDate: when,
+      summary: ev.summary.trim().slice(0, 240),
+      rawNotes: src?.content || ev.summary,
+      externalId: `li-event:${scopeId}:${ev.type}:${stableHash(`${ev.summary}:${ev.sourceMessageIndex ?? ""}:${ev.dateHint ?? ""}`)}`,
+    });
+  }
+  return events;
+}
+
+/** What a thread yields with no model at all: keyword-matched meetings and meetups. */
+export function heuristicTimelineEvents(scopeId: string, usable: UsableMessage[]): LinkedInTimelineEvent[] {
+  const events: LinkedInTimelineEvent[] = [];
+  for (const m of usable) {
+    const lower = m.content.toLowerCase();
+    const looksMeeting = /\b(meet|meeting|call|zoom|google meet|calendly|schedule|sync)\b/.test(lower);
+    const looksInPerson = /\b(in person|coffee|lunch|dinner|office|campus|conference|meetup)\b/.test(lower);
+    if (!looksMeeting && !looksInPerson) continue;
+    const ref = m.date || new Date();
+    const when = parseInteractionDateFromNotes(m.content, ref) || ref;
+    const type = looksInPerson ? "in_person" : "meeting";
+    events.push({
+      interactionType: type,
+      interactionDate: when,
+      summary: m.content.slice(0, 140),
+      rawNotes: m.content,
+      externalId: `li-event:${scopeId}:${type}:${stableHash(m.content.slice(0, 80))}`,
+    });
+  }
+  return events;
+}
+
+/** Drops events that would collide on their externalId. */
+export function dedupeTimelineEvents(events: LinkedInTimelineEvent[]): LinkedInTimelineEvent[] {
+  const seen = new Set<string>();
+  return events.filter((e) => {
+    if (seen.has(e.externalId)) return false;
+    seen.add(e.externalId);
+    return true;
+  });
+}
+
 /**
  * Rule + AI hybrid: always emit initial reach-out; ask the model for meetings
  * and in-person events with date hints resolved against message timestamps.
@@ -58,124 +180,33 @@ function stableHash(input: string) {
 export async function extractLinkedInTimelineEvents(
   userId: string,
   scopeId: string,
-  messages: LinkedInTimelineMessage[]
+  messages: LinkedInTimelineMessage[],
+  options?: { engines?: Engines }
 ): Promise<LinkedInTimelineEvent[]> {
-  const usable = messages
-    .map((m, index) => ({
-      ...m,
-      index,
-      content: m.content.trim(),
-      date: m.parsedDate,
-    }))
-    .filter((m) => m.content.length > 0)
-    .slice(0, 80);
-
+  const { usable, baseEvents, prompt } = prepareTimelineExtraction(scopeId, messages);
   if (usable.length === 0) return [];
+  if (!prompt) return dedupeTimelineEvents(baseEvents);
 
-  const events: LinkedInTimelineEvent[] = [];
-
-  // Initial reach-out = earliest message in the thread
-  const first = [...usable].sort((a, b) => {
-    const ta = a.date?.getTime() ?? 0;
-    const tb = b.date?.getTime() ?? 0;
-    return ta - tb;
-  })[0];
-  if (first) {
-    const when = first.date || new Date();
-    events.push({
-      interactionType: "reach_out",
-      interactionDate: when,
-      summary: `Initial LinkedIn reach-out: ${first.content.slice(0, 140)}`,
-      rawNotes: first.content,
-      externalId: `li-event:${scopeId}:reach_out:${stableHash(first.content.slice(0, 80))}`,
-    });
+  // The model is asked one thing here: did these two ever arrange to meet? Most threads
+  // never do, and for those the rule-derived events are the whole answer. A decision model
+  // that is sure no meeting is proposed returns them now. Without one, the call runs.
+  const engines = options?.engines ?? (await openEngines(userId));
+  if (await gateSkips(engines, "timeline", { messages: gateText(prompt.user) })) {
+    return dedupeTimelineEvents(baseEvents);
   }
-
-  const transcript = usable
-    .map((m) => {
-      const when = m.date
-        ? m.date.toISOString().slice(0, 10)
-        : "unknown-date";
-      return `[#${m.index} · ${when} · from:${m.from || "?"}] ${m.content.slice(0, 500)}`;
-    })
-    .join("\n")
-    .slice(0, 14_000);
 
   try {
     const content = await completeJson(userId, {
-    operation: "import.linkedin.timeline",
+      operation: "import.linkedin.timeline",
+      // The fast tier (FAST_MODELS in ai.ts), not the user's chat model: extraction of at
+      // most eight short events does not need it, and this runs once per conversation.
       temperature: 0.1,
-      system: `You extract relationship timeline events from a LinkedIn DM thread.
-Return strict JSON:
-{ "events": [ { "type": "meeting"|"in_person"|"reach_out", "summary": string, "dateHint": string|null, "sourceMessageIndex": number } ] }
-
-Rules:
-- Only include meetings that were proposed or confirmed, and in-person meetups/events clearly referenced.
-- Skip ordinary small talk. Do NOT list every message.
-- dateHint should be an explicit or relative date phrase from the message when present (e.g. "next Tuesday", "March 3", "tomorrow").
-- sourceMessageIndex must match a [#N] index from the transcript.
-- Max 8 events. Prefer precision over volume.
-- Do not invent events.`,
-      user: `Thread:\n${transcript}`,
+      system: prompt.system,
+      user: prompt.user,
     });
-
-    const parsed = eventsSchema.parse(parseAiJson(content));
-    for (const ev of parsed.events) {
-      if (ev.type === "reach_out") continue; // already added
-      const src =
-        typeof ev.sourceMessageIndex === "number"
-          ? usable.find((m) => m.index === ev.sourceMessageIndex)
-          : null;
-      const ref = src?.date || first?.date || new Date();
-      const fromHint = ev.dateHint
-        ? parseInteractionDateFromNotes(ev.dateHint, ref)
-        : null;
-      const fromBody = src
-        ? parseInteractionDateFromNotes(src.content, ref)
-        : null;
-      const when = fromHint || fromBody || ref;
-
-      events.push({
-        interactionType: ev.type,
-        interactionDate: when,
-        summary: ev.summary.trim().slice(0, 240),
-        rawNotes: src?.content || ev.summary,
-        externalId: `li-event:${scopeId}:${ev.type}:${stableHash(
-          `${ev.summary}:${ev.sourceMessageIndex ?? ""}:${ev.dateHint ?? ""}`
-        )}`,
-      });
-    }
+    return dedupeTimelineEvents([...baseEvents, ...timelineEventsFromAnswer(scopeId, usable, content)]);
   } catch {
     // Heuristic fallback without AI
-    for (const m of usable) {
-      const lower = m.content.toLowerCase();
-      const looksMeeting =
-        /\b(meet|meeting|call|zoom|google meet|calendly|schedule|sync)\b/.test(
-          lower
-        );
-      const looksInPerson =
-        /\b(in person|coffee|lunch|dinner|office|campus|conference|meetup)\b/.test(
-          lower
-        );
-      if (!looksMeeting && !looksInPerson) continue;
-      const ref = m.date || new Date();
-      const when = parseInteractionDateFromNotes(m.content, ref) || ref;
-      const type = looksInPerson ? "in_person" : "meeting";
-      events.push({
-        interactionType: type,
-        interactionDate: when,
-        summary: m.content.slice(0, 140),
-        rawNotes: m.content,
-        externalId: `li-event:${scopeId}:${type}:${stableHash(m.content.slice(0, 80))}`,
-      });
-    }
+    return dedupeTimelineEvents([...baseEvents, ...heuristicTimelineEvents(scopeId, usable)]);
   }
-
-  // Dedupe by externalId
-  const seen = new Set<string>();
-  return events.filter((e) => {
-    if (seen.has(e.externalId)) return false;
-    seen.add(e.externalId);
-    return true;
-  });
 }

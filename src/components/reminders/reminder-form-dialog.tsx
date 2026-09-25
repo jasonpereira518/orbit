@@ -1,17 +1,26 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
 import { createReminder, updateReminder } from "@/actions/reminders";
-import { searchContactsForPicker } from "@/actions/contacts";
 import type { ReminderActionKind } from "@/db/schema";
 import {
   ACTION_KIND_LABELS,
   REMINDER_ACTION_KINDS,
   inferReminderActionKind,
 } from "@/lib/reminder-action-kind";
-import { toLocalYmd } from "@/components/ui/date-picker";
+import { DatePickerButton } from "@/components/ui/date-picker";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ReminderContactPicker } from "@/components/reminders/reminder-contact-picker";
+import { dueDayOf, shortDayLabel } from "@/lib/reminder-due-bucket";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,12 +31,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-
-type ContactOption = {
-  id: string;
-  fullName: string;
-  preferredName: string | null;
-};
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type ReminderFormValues = {
   id?: string;
@@ -36,14 +41,19 @@ export type ReminderFormValues = {
   dueDate?: Date | string | null;
   listId?: string | null;
   contactId?: string | null;
+  /** Shown on the contact picker before anything is searched. */
+  contactName?: string | null;
   actionKind?: ReminderActionKind | "auto";
 };
 
+/**
+ * The due date as the picker's YYYY-MM-DD. A date-only value keeps its own date (see
+ * `dueDayOf`); converting UTC midnight into a zone west of UTC showed the day before.
+ */
 function dueToInput(value: Date | string | null | undefined): string {
   if (!value) return "";
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return toLocalYmd(date);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return dueDayOf(value, tz) ?? "";
 }
 
 export function ReminderFormFields({
@@ -54,6 +64,9 @@ export function ReminderFormFields({
   defaultListId,
   initial,
   idPrefix = "reminder",
+  autoFocusTitle = true,
+  compact = false,
+  onCancel,
 }: {
   open: boolean;
   onClose: () => void;
@@ -62,6 +75,11 @@ export function ReminderFormFields({
   defaultListId?: string | null;
   initial?: ReminderFormValues | null;
   idPrefix?: string;
+  autoFocusTitle?: boolean;
+  /** One column, for the narrow detail pane. */
+  compact?: boolean;
+  /** What Cancel does, when it isn't `onClose` — the detail pane discards edits instead. */
+  onCancel?: () => void;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -69,11 +87,10 @@ export function ReminderFormFields({
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [selectedListId, setSelectedListId] = useState("");
-  const [contactId, setContactId] = useState("");
+  const [contact, setContact] = useState<{ id: string; name: string } | null>(null);
   const [actionKind, setActionKind] = useState<ReminderActionKind | "auto">(
     "auto"
   );
-  const [contacts, setContacts] = useState<ContactOption[]>([]);
 
   useEffect(() => {
     if (!open) return;
@@ -81,7 +98,11 @@ export function ReminderFormFields({
     setDescription(initial?.description?.trim() || "");
     setDueDate(dueToInput(initial?.dueDate));
     setSelectedListId(initial?.listId || defaultListId || lists[0]?.id || "");
-    setContactId(initial?.contactId ?? "");
+    setContact(
+      initial?.contactId
+        ? { id: initial.contactId, name: initial.contactName?.trim() || "Linked contact" }
+        : null
+    );
     setActionKind(
       mode === "edit"
         ? initial?.actionKind && initial.actionKind !== "auto"
@@ -91,32 +112,10 @@ export function ReminderFormFields({
     );
   }, [open, initial, defaultListId, lists, mode]);
 
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    searchContactsForPicker()
-      .then((rows) => {
-        if (cancelled) return;
-        setContacts(
-          rows.map((c) => ({
-            id: c.id,
-            fullName: c.fullName,
-            preferredName: c.preferredName,
-          }))
-        );
-      })
-      .catch(() => {
-        if (!cancelled) toast.error("Could not load contacts");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
   function submit() {
     const trimmed = title.trim();
     if (!trimmed) {
-      toast.error("Title is required");
+      toast.error("Give it a title first");
       return;
     }
     start(async () => {
@@ -126,7 +125,7 @@ export function ReminderFormFields({
             ? inferReminderActionKind({
                 title: trimmed,
                 description,
-                contactId: contactId || null,
+                contactId: contact?.id ?? null,
               })
             : actionKind;
 
@@ -137,7 +136,7 @@ export function ReminderFormFields({
             description: description.trim() || null,
             dueDate: dueDate || null,
             ...(lists.length > 0 ? { listId: selectedListId || null } : {}),
-            contactId: contactId || null,
+            contactId: contact?.id ?? null,
             actionKind: kind,
           });
           toast.success("Reminder updated");
@@ -147,24 +146,31 @@ export function ReminderFormFields({
             description: description.trim() || undefined,
             dueDate: dueDate || undefined,
             listId: selectedListId || undefined,
-            contactId: contactId || undefined,
+            contactId: contact?.id || undefined,
             actionKind: kind,
           });
-          toast.success("Reminder created");
+          toast.success(TOAST_COPY.reminderSet);
         }
         onClose();
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error
-            ? err.message
-            : mode === "edit"
-              ? "Could not update reminder"
-              : "Could not create reminder"
+          friendlyError(
+            err,
+            mode === "edit"
+              ? "Couldn’t update that reminder — try again?"
+              : "Couldn’t create that reminder — try again?"
+          )
         );
       }
     });
   }
+
+  const kindItems = [
+    ...(mode === "create" ? [{ value: "auto", label: "Auto-detect" }] : []),
+    ...REMINDER_ACTION_KINDS.map((k) => ({ value: k, label: ACTION_KIND_LABELS[k] })),
+  ];
+  const listItems = lists.map((l) => ({ value: l.id, label: l.name }));
 
   return (
     <div className="space-y-3">
@@ -174,8 +180,11 @@ export function ReminderFormFields({
           id={`${idPrefix}-title`}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+          }}
           placeholder="Call Alex about intro"
-          autoFocus
+          autoFocus={autoFocusTitle}
         />
       </div>
 
@@ -185,73 +194,85 @@ export function ReminderFormFields({
           id={`${idPrefix}-notes`}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          rows={2}
+          rows={compact ? 3 : 2}
           placeholder="Optional context"
         />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className={compact ? "grid gap-3" : "grid gap-3 sm:grid-cols-2"}>
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-due`}>Due date</Label>
-          <Input
-            id={`${idPrefix}-due`}
-            type="date"
-            value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
-          />
+          <div className="flex items-center gap-1.5">
+            <DatePickerButton
+              value={dueDate || null}
+              onSelect={setDueDate}
+              onClear={() => setDueDate("")}
+              label={dueDate ? shortDayLabel(dueDate) : "No date"}
+              className="h-8 flex-1 justify-start font-normal"
+            />
+            {dueDate ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="tap-target relative"
+                aria-label="Clear due date"
+                onClick={() => setDueDate("")}
+              >
+                <X className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>
         </div>
         {lists.length > 0 ? (
           <div className="space-y-2">
             <Label htmlFor={`${idPrefix}-list`}>List</Label>
-            <select
-              id={`${idPrefix}-list`}
-              className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm"
+            <Select
               value={selectedListId}
-              onChange={(e) => setSelectedListId(e.target.value)}
+              onValueChange={(v) => setSelectedListId(String(v ?? ""))}
+              items={listItems}
             >
-              {lists.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id={`${idPrefix}-list`} className="h-8 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false} className="p-1">
+                {listItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value} className="py-1.5 pl-2">
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         ) : null}
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-contact`}>Contact</Label>
-          <select
+          <ReminderContactPicker
             id={`${idPrefix}-contact`}
-            className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm"
-            value={contactId}
-            onChange={(e) => setContactId(e.target.value)}
-          >
-            <option value="">None</option>
-            {contacts.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.preferredName?.trim() || c.fullName}
-              </option>
-            ))}
-          </select>
+            value={contact}
+            onChange={setContact}
+            placeholder="None"
+            triggerClassName="w-full"
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-kind`}>Action type</Label>
-          <select
-            id={`${idPrefix}-kind`}
-            className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm"
+          <Select
             value={actionKind}
-            onChange={(e) =>
-              setActionKind(e.target.value as ReminderActionKind | "auto")
-            }
+            onValueChange={(v) => setActionKind((v ?? "auto") as ReminderActionKind | "auto")}
+            items={kindItems}
           >
-            {mode === "create" ? (
-              <option value="auto">Auto-detect</option>
-            ) : null}
-            {REMINDER_ACTION_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {ACTION_KIND_LABELS[k]}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id={`${idPrefix}-kind`} className="h-8 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false} className="p-1">
+              {kindItems.map((item) => (
+                <SelectItem key={item.value} value={item.value} className="py-1.5 pl-2">
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -261,7 +282,7 @@ export function ReminderFormFields({
           variant="outline"
           size="sm"
           disabled={pending}
-          onClick={onClose}
+          onClick={onCancel ?? onClose}
         >
           Cancel
         </Button>
