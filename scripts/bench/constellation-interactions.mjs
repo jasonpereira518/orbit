@@ -46,6 +46,25 @@
  * the count of long tasks (> 50ms, PerformanceObserver `longtask`) that started in the window.
  * Each size runs `--reps` times; the report uses the median of each metric.
  *
+ * FRAME SUITE (`--suite frame`, method /2) — the interactions that drop
+ * frames on a 120Hz display, each set up untimed and recorded like the gestures above:
+ *   summary-cross    zoom 0.09 → 0.25 → 0.09 over 3s: out of the summary view, across the 0.2
+ *                    cluster-name threshold, and back.
+ *   pinch-trackpad   ctrl-wheel (a trackpad pinch) with small deltas, two events a frame, zooming
+ *                    0.05 → 1 → 0.05 over 3s.
+ *   wheel-notch      mouse-wheel notches (±100) at 0.3: every 180ms for 1.5s, then every 90ms.
+ *   hover-sweep      at zoom 0.5, the pointer moves to a new star every frame for 2s.
+ *   hover-drift      at the opening view, the pointer drifts across the whole sky for 3s, one
+ *                    mousemove a frame, over clusters and the gaps between them.
+ *   search-type      "stri" typed 120ms a key from the home view, then 2s for the camera flight
+ *                    and the late semantic update; the search is cleared afterwards.
+ *   cluster-click    a click on the cluster name nearest the centre from home; 1.5s of flight,
+ *                    summary exit and star mounting.
+ * Extra per-gesture metrics: each frame's main-thread cost (rAF → after paint): how many exceed
+ * 8.33ms (a dropped frame at 120Hz) and 16.7ms, p50/p95/max; long
+ * animation frames (LoAF, > 50ms, with the scripts that ran in them), and React commits (count,
+ * total ms, most in one frame; per hover for hover-sweep).
+ *
  * `--trace-dir d` adds one more, unscored repetition that records each gesture as a Chrome trace
  * (`d/<label>-<n>-<gesture>.json`; DevTools → Performance → Load profile). Unscored because
  * tracing costs frames of its own.
@@ -54,7 +73,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { launch } from "../dev/cdp.mjs";
 
-export const METHOD = "constellation-interactions/1";
+export const METHOD = "constellation-interactions/2";
 
 const argv = process.argv.slice(2);
 const flag = (name) => {
@@ -68,6 +87,16 @@ const reps = Number(flag("--reps") ?? 3);
 const label = flag("--label") ?? "run";
 const out = flag("--out");
 const traceDir = flag("--trace-dir");
+/**
+ * `--suite frame`: the frame-budget suite (see FRAME SUITE below) instead of the open/zoom/pan one.
+ * `--uncapped`: lift headless Chrome's 60Hz vsync cap. Diagnostic only: rAF then spins far faster
+ * than any display and in-page drivers send unrealistic event rates. The frame suite measures the
+ * 120Hz budget without it — see `work` in `record`.
+ */
+const suite = flag("--suite") ?? "open";
+const uncapped = argv.includes("--uncapped");
+/** `--gestures a,b`: run only these gestures of the suite (for iterating on one fix). */
+const onlyGestures = flag("--gestures")?.split(",") ?? null;
 const base = flag("--base") ?? process.env.BENCH_URL ?? "https://localhost:3417/bench/constellation";
 /**
  * `--ab before=URL,after=URL`: measure two builds interleaved — every repetition runs both, in
@@ -94,6 +123,20 @@ try {
   new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__lt.push({ s: e.startTime, d: e.duration }); })
     .observe({ type: "longtask", buffered: true });
 } catch {}
+window.__loaf = [];
+try {
+  new PerformanceObserver((l) => {
+    for (const e of l.getEntries()) {
+      window.__loaf.push({
+        s: e.startTime,
+        d: e.duration,
+        block: e.blockingDuration,
+        styleLayout: e.renderStart && e.styleAndLayoutStart ? e.startTime + e.duration - e.styleAndLayoutStart : 0,
+        scripts: (e.scripts || []).map((x) => ({ fn: x.sourceFunctionName || x.invoker || "?", url: (x.sourceURL || "").split("/").pop(), d: x.duration, forced: x.forcedStyleAndLayoutDuration })),
+      });
+    }
+  }).observe({ type: "long-animation-frame", buffered: true });
+} catch {}
 `;
 
 /** The in-page gesture kit. */
@@ -111,23 +154,43 @@ window.__ix = (() => {
   async function record(ms, driver) {
     const lt0 = window.__lt.length;
     const ts = [];
+    // Main-thread cost of each frame: from its rAF callback (where the driver's input lands) to a
+    // message posted from that callback, which runs after the frame's style, layout and paint.
+    // A frame whose cost is over 8.33ms would drop on a 120Hz display even though headless Chrome
+    // paces at 60Hz — the pacing keeps input rates realistic, the cost is what the budget needs.
+    const work = [];
+    const channel = new MessageChannel();
+    let frameStart = 0;
+    channel.port1.onmessage = () => work.push(performance.now() - frameStart);
     driver.start?.();
     const t0 = performance.now();
     await new Promise((res) => {
       function f(t) {
         ts.push(t);
+        frameStart = performance.now();
         const el = t - t0;
-        if (el < ms) { driver.step(Math.min(el, ms)); requestAnimationFrame(f); } else { driver.step(ms); res(); }
+        if (el < ms) { driver.step(Math.min(el, ms)); channel.port2.postMessage(null); requestAnimationFrame(f); } else { driver.step(ms); channel.port2.postMessage(null); res(); }
       }
       requestAnimationFrame(f);
     });
     driver.end?.();
     // A long task still running when the window closes reports when it ends.
     await new Promise((r) => setTimeout(r, 120));
+    const loafs = (window.__loaf || []).filter((l) => l.s >= t0 && l.s < t0 + ms);
+    const commits = (window.__bench?.commits || []).filter((c) => c.at >= t0 && c.at < t0 + ms);
+    // Commits per frame: bucket each commit into the frame interval it landed in.
+    let maxPerFrame = 0;
+    for (let i = 1; i < ts.length; i++) {
+      const k = commits.filter((c) => c.at >= ts[i - 1] && c.at < ts[i]).length;
+      if (k > maxPerFrame) maxPerFrame = k;
+    }
+    const scriptTotals = {};
+    for (const l of loafs) for (const x of l.scripts) scriptTotals[x.fn] = (scriptTotals[x.fn] || 0) + x.d;
     const d = ts.slice(1).map((t, i) => t - ts[i]);
     const span = (ts.at(-1) - ts[0]) / 1000;
     const lts = window.__lt.slice(lt0).filter((l) => l.s >= t0 && l.s < t0 + ms);
     const sorted = [...d].sort((a, b) => a - b);
+    const pct = (xs, p) => { if (!xs.length) return 0; const v = [...xs].sort((a, b) => a - b); return v[Math.floor(p * (v.length - 1))]; };
     const longest = Math.max(0, ...d);
     return {
       avgFps: Math.round((d.length / span) * 10) / 10,
@@ -139,6 +202,21 @@ window.__ix = (() => {
       frames: d.length,
       endZoom: Math.round(zoomNow() * 1000) / 1000,
       stars: document.querySelectorAll(".react-flow__node-contact").length,
+      over8: work.filter((x) => x > 1000 / 120).length,
+      over16: work.filter((x) => x > 1000 / 60).length,
+      over8Pct: Math.round((1000 * work.filter((x) => x > 1000 / 120).length) / Math.max(1, work.length)) / 10,
+      workP50Ms: Math.round(pct(work, 0.5) * 10) / 10,
+      workP95Ms: Math.round(pct(work, 0.95) * 10) / 10,
+      workMaxMs: Math.round(Math.max(0, ...work) * 10) / 10,
+      workTotalMs: Math.round(work.reduce((a, x) => a + x, 0)),
+      loafs: loafs.length,
+      loafMs: Math.round(loafs.reduce((a, l) => a + l.d, 0)),
+      loafTopScripts: Object.entries(scriptTotals).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => k + ":" + Math.round(v)).join(" "),
+      commits: commits.length,
+      commitMs: Math.round(commits.reduce((a, c) => a + c.actual, 0)),
+      maxCommitsPerFrame: maxPerFrame,
+      events: driver.events ?? null,
+      commitsPerEvent: driver.events ? Math.round((commits.length / driver.events) * 100) / 100 : null,
     };
   }
 
@@ -162,7 +240,146 @@ window.__ix = (() => {
     };
   }
 
-  return { zoomNow, wheelTo, record, zoomCurve, panCircle, panLine };
+  const ctrlWheel = (deltaY) => { const c = centre(); pane().dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, view: window, clientX: c.x, clientY: c.y, deltaY, deltaMode: 0, ctrlKey: true })); };
+  /** How much one unit of ctrl-wheel delta zooms here (React Flow scales pinches ×10 on macOS). */
+  function pinchFactor() {
+    const k0 = zoomNow();
+    ctrlWheel(-10);
+    const k1 = zoomNow();
+    wheelTo(k0);
+    return Math.log2(k1 / k0) / 10;
+  }
+
+  /** zoom(t) from→mid→from, as trackpad pinch events: \`perFrame\` small ctrl-wheel events a frame. */
+  function pinch(from, mid, ms, perFrame) {
+    let per;
+    const d = { events: 0 };
+    d.start = () => { per = pinchFactor(); };
+    d.step = (el) => {
+      const half = ms / 2;
+      const t = el < half ? el / half : 1 - (el - half) / half;
+      const target = from * Math.pow(mid / from, Math.max(0, Math.min(1, t)));
+      const total = Math.log2(target / zoomNow()) / per;
+      if (Math.abs(total) < 1e-3) return;
+      for (let i = 0; i < perFrame; i++) { ctrlWheel(-total / perFrame); d.events++; }
+    };
+    return d;
+  }
+
+  /** Mouse-wheel notches: in ×4, out ×4, …, every \`slow\`ms for half the window, then every \`fast\`ms. */
+  function notches(ms, slow, fast) {
+    let last = -1e9, i = 0;
+    const d = { events: 0 };
+    d.step = (el) => {
+      const gap = el < ms / 2 ? slow : fast;
+      if (el - last < gap) return;
+      last = el;
+      wheel(Math.floor(i++ / 4) % 2 ? 100 : -100);
+      d.events++;
+    };
+    return d;
+  }
+
+  /** Stars in the view, nearest the centre first. */
+  function starsInView(limit) {
+    const vw = innerWidth, vh = innerHeight;
+    return [...document.querySelectorAll(".react-flow__node-contact")]
+      .map((el) => ({ el, r: el.getBoundingClientRect() }))
+      .filter(({ r }) => r.width > 0 && r.left > 0 && r.top > 0 && r.right < vw && r.bottom < vh)
+      .sort((a, b) => Math.hypot(a.r.left - vw / 2, a.r.top - vh / 2) - Math.hypot(b.r.left - vw / 2, b.r.top - vh / 2))
+      .slice(0, limit)
+      .map(({ el }) => el);
+  }
+
+  /** A new star under the pointer every frame. */
+  function hoverSweep() {
+    let stars = [], i = 0, prev = null;
+    const d = { events: 0 };
+    d.start = () => { stars = starsInView(200); };
+    d.step = () => {
+      if (!stars.length) return;
+      const next = stars[i++ % stars.length];
+      const r = next.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      if (prev) prev.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, view: window, relatedTarget: next, clientX: x, clientY: y }));
+      next.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, view: window, relatedTarget: prev ?? pane(), clientX: x, clientY: y }));
+      prev = next;
+      d.events++;
+    };
+    d.end = () => { if (prev) prev.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, view: window, relatedTarget: pane() })); };
+    return d;
+  }
+
+  /** Type \`text\` into the chart's search, one key every \`gap\`ms, then keep recording. */
+  function type(text, gap) {
+    let input, last = -1e9, k = 1;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    const d = { events: 0 };
+    d.start = () => { input = document.querySelector('input[placeholder^="Search name"]'); input?.focus(); };
+    d.step = (el) => {
+      if (!input || k > text.length || el - last < gap) return;
+      last = el;
+      setter.call(input, text.slice(0, k++));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      d.events++;
+    };
+    return d;
+  }
+
+  /** Click the cluster name nearest the centre, once. */
+  function clusterClick() {
+    let done = false;
+    const d = { events: 0 };
+    d.step = () => {
+      if (done) return;
+      done = true;
+      const vw = innerWidth, vh = innerHeight;
+      const el = [...document.querySelectorAll(".react-flow__node-clusterLabel")]
+        .map((e) => ({ e, r: e.getBoundingClientRect() }))
+        .filter(({ r }) => r.width > 0 && r.left > 0 && r.top > 0 && r.right < vw && r.bottom < vh)
+        .sort((a, b) => Math.hypot(a.r.left + a.r.width / 2 - vw / 2, a.r.top - vh / 2) - Math.hypot(b.r.left + b.r.width / 2 - vw / 2, b.r.top - vh / 2))[0]?.e;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const o = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };
+      el.dispatchEvent(new MouseEvent("mousedown", { ...o, buttons: 1 }));
+      el.dispatchEvent(new MouseEvent("mouseup", o));
+      el.dispatchEvent(new MouseEvent("click", o));
+      d.events++;
+    };
+    return d;
+  }
+
+  /** zoom from→to→from over ms (pixel wheel, one event a frame). */
+  const zoomThere = (from, to, ms) => ({ step(el) { const h = ms / 2; const t = el < h ? el / h : 1 - (el - h) / h; wheelTo(from * Math.pow(to / from, Math.max(0, Math.min(1, t)))); } });
+
+  function clearSearch() {
+    const input = document.querySelector('input[placeholder^="Search name"]');
+    if (!input) return;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.blur();
+  }
+
+  /** The pointer drifting across the sky: a slow lemniscate over the pane, one move a frame. */
+  function drift(ms) {
+    let r;
+    const d = { events: 0 };
+    d.start = () => { r = pane().getBoundingClientRect(); };
+    d.step = (el) => {
+      const a = (el / ms) * Math.PI * 2;
+      const x = r.left + r.width * (0.5 + 0.42 * Math.sin(a));
+      const y = r.top + r.height * (0.5 + 0.38 * Math.sin(a) * Math.cos(a));
+      const target = document.elementFromPoint(x, y) ?? pane();
+      target.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+      target.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+      d.events++;
+    };
+    return d;
+  }
+
+  function goHome() { document.querySelector('button[aria-label="Reset map to home"]')?.click(); }
+
+  return { zoomNow, wheelTo, record, zoomCurve, panCircle, panLine, pinch, notches, hoverSweep, type, clusterClick, zoomThere, clearSearch, goHome, drift };
 })();
 `;
 
@@ -206,7 +423,15 @@ async function traced(cdp, expr, file) {
 
 async function runOnce(n, traced_, { label, base }) {
   // The bench server's certificate is self-signed.
-  const cdp = await launch({ width: 1440, height: 900, gpu: true, extraArgs: ["--ignore-certificate-errors"] });
+  const cdp = await launch({
+    width: 1440,
+    height: 900,
+    gpu: true,
+    extraArgs: [
+      "--ignore-certificate-errors",
+      ...(uncapped ? ["--disable-gpu-vsync", "--disable-frame-rate-limit"] : []),
+    ],
+  });
   try {
     await cdp.goto("data:text/html,<body></body>");
     const controlFps = await cdp.evaluate(`new Promise((res) => { const ts = []; const t0 = performance.now(); (function f(t) { ts.push(t); if (t - t0 < 2000) requestAnimationFrame(f); else res(Math.round(((ts.length - 1) / ((ts.at(-1) - ts[0]) / 1000)) * 10) / 10); })(t0); })`);
@@ -253,16 +478,32 @@ async function runOnce(n, traced_, { label, base }) {
 
     const gestures = {};
     const measure = async (name, setup, expr) => {
+      if (onlyGestures && !onlyGestures.includes(name)) return;
       await evaluateWithin(cdp, setup);
       await cdp.sleep(SETTLE_MS);
       const file = traced_ ? join(traceDir, `${label}-${n}-${name}.json`) : null;
       gestures[name] = file ? await traced(cdp, expr, file) : await evaluateWithin(cdp, expr);
     };
 
-    await measure("zoom-in", `__ix.wheelTo(${MIN_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.zoomCurve(${MIN_ZOOM}, ${MAX_ZOOM}, ${GESTURE_MS}))`);
-    await measure("zoom-out", `__ix.wheelTo(${MAX_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.zoomCurve(${MAX_ZOOM}, ${MIN_ZOOM}, ${GESTURE_MS}))`);
-    await measure("pan-overview", `__ix.wheelTo(${homeZoom})`, `__ix.record(${GESTURE_MS}, __ix.panCircle(240, ${GESTURE_MS}))`);
-    await measure("pan-closeup", `__ix.wheelTo(${CLOSEUP_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.panLine(-1800, ${GESTURE_MS}))`);
+    if (suite === "frame") {
+      await measure("summary-cross", `__ix.wheelTo(0.09)`, `__ix.record(${GESTURE_MS}, __ix.zoomThere(0.09, 0.25, ${GESTURE_MS}))`);
+      await measure("pinch-trackpad", `__ix.wheelTo(${MIN_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.pinch(${MIN_ZOOM}, 1, ${GESTURE_MS}, 2))`);
+      await measure("wheel-notch", `__ix.wheelTo(0.3)`, `__ix.record(${GESTURE_MS}, __ix.notches(${GESTURE_MS}, 180, 90))`);
+      await measure("hover-sweep", `__ix.wheelTo(${CLOSEUP_ZOOM})`, `__ix.record(2000, __ix.hoverSweep())`);
+      await measure("hover-drift", `__ix.wheelTo(${homeZoom})`, `__ix.record(${GESTURE_MS}, __ix.drift(${GESTURE_MS}))`);
+      await measure("search-type", `__ix.wheelTo(${homeZoom})`, `__ix.record(2500, __ix.type("stri", 120))`);
+      // Back to the unsearched sky, and home, before the click.
+      await evaluateWithin(cdp, `__ix.clearSearch()`);
+      await cdp.sleep(1200);
+      await evaluateWithin(cdp, `__ix.goHome()`);
+      await cdp.sleep(1500);
+      await measure("cluster-click", `void 0`, `__ix.record(1500, __ix.clusterClick())`);
+    } else {
+      await measure("zoom-in", `__ix.wheelTo(${MIN_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.zoomCurve(${MIN_ZOOM}, ${MAX_ZOOM}, ${GESTURE_MS}))`);
+      await measure("zoom-out", `__ix.wheelTo(${MAX_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.zoomCurve(${MAX_ZOOM}, ${MIN_ZOOM}, ${GESTURE_MS}))`);
+      await measure("pan-overview", `__ix.wheelTo(${homeZoom})`, `__ix.record(${GESTURE_MS}, __ix.panCircle(240, ${GESTURE_MS}))`);
+      await measure("pan-closeup", `__ix.wheelTo(${CLOSEUP_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.panLine(-1800, ${GESTURE_MS}))`);
+    }
 
     return { controlFps, open, gestures, errors: cdp.consoleErrors.slice(0, 5) };
   } finally {
@@ -303,7 +544,13 @@ for (const n of sizes) {
         const g = r.gestures;
         console.log(
           `control ${r.controlFps} · TTI ${r.open.tti}ms ${JSON.stringify(r.open.stages)} lt ${r.open.longTasks} · ` +
-            Object.entries(g).map(([k, v]) => `${k} ${v.avgFps}/${v.minFps}fps lt ${v.longTasks}`).join(" · ") +
+            Object.entries(g)
+              .map(([k, v]) =>
+                suite === "frame"
+                  ? `${k} >8.3ms ${v.over8}/${v.frames} p95 ${v.workP95Ms}ms max ${v.workMaxMs} loaf ${v.loafs} commits ${v.commits}${v.commitsPerEvent !== null ? ` (${v.commitsPerEvent}/ev)` : ""}`
+                  : `${k} ${v.avgFps}/${v.minFps}fps lt ${v.longTasks}`
+              )
+              .join(" · ") +
             (r.errors.length ? `  ERR ${r.errors.join(" | ").slice(0, 200)}` : "")
         );
       } catch (err) {
@@ -330,5 +577,5 @@ for (const n of sizes) {
     results[t.label].push({ n, reps: done.length, controlFps, open, gestures, runs: done });
   }
 }
-if (out) writeFileSync(out, JSON.stringify({ method: METHOD, labels: targets.map((t) => t.label), results }, null, 2));
+if (out) writeFileSync(out, JSON.stringify({ method: METHOD, suite, uncapped, labels: targets.map((t) => t.label), results }, null, 2));
 process.exit(0);

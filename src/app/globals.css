@@ -1197,21 +1197,13 @@
   will-change: transform;
 }
 
-/**
- * Constellation lines get their own layer too, for a different reason: not motion, isolation.
- *
- * Lines are added and removed as a pan brings stars in and out of view, and each change
- * invalidates the line's bounding box — for a long diagonal, a large rectangle — in whatever
- * layer it paints into. Sharing the viewport's layer, that re-rastered every nebula wash under
- * the box, and radial gradients the size of a cluster are the costliest pixels in the sky.
- * Seating related companies together packed more nebulae under those boxes, and a close-up pan
- * across a 10,000-person sky fell from 60fps to 36. In a layer of their own, lines repaint only
- * lines. It adds no layer count to speak of — there is one edge container — where giving each
- * nebula a layer instead fixed the same frames at the cost of hundreds of layers.
+/*
+ * Constellation lines used to get a layer of their own while the camera moved, to keep a line's
+ * repaint from re-rastering the cluster washes under it (large radial gradients). The washes are
+ * an image now (`useSkyBitmap` in graph-nodes.tsx), cheap to re-raster, and that layer had turned
+ * into the chart's worst cost: sitting under the stars, it made Chrome give every star painted
+ * above it a layer too — 97 layers mid-zoom at 1,000 contacts, against 17 without it.
  */
-.constellation-stage.constellation-moving .react-flow__edges {
-  will-change: transform;
-}
 
 .constellation-edge-label {
   font-size: 8px;
