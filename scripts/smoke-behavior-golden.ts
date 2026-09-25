@@ -154,7 +154,18 @@ function normalizeString(s: string): string {
     .replace(ISO_RE, "<ts>")
     // Bare calendar days (a follow-up item's key, say) are relative to the day the
     // workspace was seeded, which is the day the suite runs.
-    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "<date>");
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "<date>")
+    // The same days written for people ("Jul 25, 2026" in a summary, a reminder's body).
+    .replace(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}, \d{4}\b/g, "<day>");
+}
+
+/**
+ * A search vector indexes those written days too, as a bare day-of-month lexeme ('25':32).
+ * A vector cannot say which number was a day, so every one- and two-digit lexeme is
+ * dropped ('3' in "3-4x" goes with them); the vector still compares on its words.
+ */
+function normalizeTsv(s: string): string {
+  return normalizeString(s).replace(/'\d{1,2}':[0-9A-D,]+ ?/g, "").trim();
 }
 
 function normalize(value: unknown): unknown {
@@ -167,7 +178,9 @@ function normalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalize);
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[normalizeString(k)] = normalize(v);
+    for (const [k, v] of Object.entries(value)) {
+      out[normalizeString(k)] = k === "search_tsv" && typeof v === "string" ? normalizeTsv(v) : normalize(v);
+    }
     return out;
   }
   return value;
