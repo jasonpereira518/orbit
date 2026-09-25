@@ -97,6 +97,14 @@ export function OnboardingFlow({
   const hotspots = step.hotspots ?? [];
   const showCursor = !reducedMotion && !offerFor && hotspots.length > 0;
 
+  // Record the first view. Once a step is stored the first-run gate stops sending this
+  // person back here (see `needsOnboarding`), so the tour shows once even if they leave
+  // without finishing or skipping. Done on mount, not in the page render, so a prefetch
+  // of /onboarding can't count as a view.
+  useEffect(() => {
+    if (!initialStepId) void saveOnboardingStep(TOUR_STEPS[0]!.id);
+  }, [initialStepId]);
+
   const goTo = useCallback((index: number) => {
     const next = Math.max(0, Math.min(LAST_INDEX, index));
     setStepIndex(next);
