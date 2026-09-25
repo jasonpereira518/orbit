@@ -218,7 +218,13 @@ const KEYS_BY_LENGTH = [...INDEX.keys()].sort((a, b) => b.length - a.length);
 /** Shorter than this, a name is never matched as part of a longer alias. */
 const MIN_PARTIAL_NAME = 4;
 
+/**
+ * Pure lookups, so a dropped entry is just recomputed — to the same `Brand` object, since
+ * every hit comes out of `INDEX`. Capped (oldest out first) because the keys are arbitrary
+ * company names and a long-lived server instance would otherwise keep every one it saw.
+ */
 const memo = new Map<string, Brand | null>();
+const MEMO_MAX = 5000;
 
 /**
  * Resolve a company or school name to its brand, or null when it is not one we know.
@@ -273,6 +279,7 @@ export function lookupBrand(
     }
   }
 
+  if (memo.size >= MEMO_MAX) memo.delete(memo.keys().next().value!);
   memo.set(memoKey, hit);
   return hit;
 }

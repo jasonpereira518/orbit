@@ -7,6 +7,12 @@ import { listApiKeys } from "@/actions/api-keys";
 import { listWebhookEndpoints } from "@/actions/webhook-endpoints";
 import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
+import { listCalendarSubscriptions } from "@/actions/calendar";
+import { listEventConnections } from "@/lib/events/connections";
+import { requireUserId } from "@/lib/auth";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { withDemoIntegrationStatuses } from "@/lib/demo-workspace-connections";
+import { CONNECTOR_STATUS_LOOKUP_IDS, type ConnectorStatusId } from "@/lib/connectors/status";
 import type { IntegrationTabId } from "@/components/settings/sections";
 
 export type IntegrationStatus = {
@@ -15,9 +21,19 @@ export type IntegrationStatus = {
   detail: string;
 };
 
-/** `unknown` stands in for a lookup that failed or timed out — see `settle`. */
+/**
+ * `unknown` stands in for a lookup that failed or timed out — see `settle`.
+ *
+ * Keyed by two things that are not the same kind of thing: `IntegrationTabId` (settings
+ * sections — `ai`, `outreach`, `calendar`, `api`, `webhooks` — plus the tab ids `google`,
+ * `linkedin`, `outlook`, `gmail`) and `ConnectorStatusId` (registry ids this action answers
+ * for). They overlap on `google`/`linkedin`/`outlook`, which is intentional — those ids name
+ * both a tab and a connector. `calendar_ics`, `luma`, `eventbrite`, `apollo` and `zapier` are
+ * connector-only: they aren't tabs today, but `integrations-settings.tsx` only ever reads
+ * `statuses[tab]` for a real `IntegrationTabId`, so widening the key type here is additive.
+ */
 export type IntegrationStatuses = Partial<
-  Record<IntegrationTabId, IntegrationStatus | "unknown">
+  Record<IntegrationTabId | ConnectorStatusId, IntegrationStatus | "unknown">
 >;
 
 /**
@@ -50,14 +66,17 @@ function plural(n: number, word: string) {
  * lookups — two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook] = await Promise.all([
-    settle(getSettings()),
-    settle(getCalendarFeedStatus()),
-    settle(listApiKeys()),
-    settle(listWebhookEndpoints()),
-    settle(getGmailConnectionStatus()),
-    settle(getOutlookConnectionStatus()),
-  ]);
+  const [settings, feed, keys, webhooks, google, outlook, icsSubs, eventConns] =
+    await Promise.all([
+      settle(getSettings()),
+      settle(getCalendarFeedStatus()),
+      settle(listApiKeys()),
+      settle(listWebhookEndpoints()),
+      settle(getGmailConnectionStatus()),
+      settle(getOutlookConnectionStatus()),
+      settle(listCalendarSubscriptions()),
+      settle(requireUserId().then((id) => listEventConnections(id))),
+    ]);
 
   const statuses: IntegrationStatuses = {};
 
@@ -119,5 +138,57 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
   // LinkedIn has no connection to report — it is a CSV you upload each time.
   statuses.linkedin = { state: "off", detail: "Upload a CSV export" };
 
-  return statuses;
+  // Inbound calendar subscriptions, distinct from `statuses.calendar`, which is the OUTBOUND
+  // feed Orbit publishes. Two different directions that have shared a word for too long.
+  statuses.calendar_ics =
+    icsSubs === "unknown"
+      ? "unknown"
+      : icsSubs.length === 0
+        ? { state: "off", detail: "No feeds" }
+        : {
+            state: icsSubs.some((s) => s.lastSyncStatus === "error") ? "partial" : "on",
+            detail: plural(icsSubs.length, "feed"),
+          };
+
+  if (eventConns === "unknown") {
+    statuses.luma = "unknown";
+    statuses.eventbrite = "unknown";
+  } else {
+    for (const id of ["luma", "eventbrite"] as const) {
+      // `luma` and `luma_ics` are separate providers on the same platform; either one means
+      // Luma is connected as far as the catalog is concerned.
+      const conns = eventConns.filter((c) => c.provider.startsWith(id));
+      statuses[id] =
+        conns.length === 0
+          ? { state: "off", detail: "Not connected" }
+          : conns.some((c) => c.status === "needs_reauth")
+            ? { state: "partial", detail: "Reconnect needed" }
+            : { state: "on", detail: "Connected" };
+    }
+  }
+
+  // Apollo and Zapier have no connection of their own: Apollo is a key on user_settings and
+  // Zapier is whatever API keys exist. Both are read from data already fetched above.
+  statuses.apollo =
+    settings === "unknown"
+      ? "unknown"
+      : settings.outreach.apollo
+        ? { state: "on", detail: "Key saved" }
+        : { state: "off", detail: "No key yet" };
+
+  statuses.zapier =
+    keys === "unknown"
+      ? "unknown"
+      : keys.length > 0
+        ? { state: "on", detail: plural(keys.length, "key") }
+        : { state: "off", detail: "No keys" };
+
+  // The registry and this action must answer for the same connectors. The smoke test checks
+  // the list against the registry; this checks the implementation against the list.
+  for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
+    if (!(id in statuses)) statuses[id] = { state: "off", detail: "Not connected" };
+  }
+
+  const demo = await isDemoWorkspace(await requireUserId()).catch(() => false);
+  return demo ? withDemoIntegrationStatuses(statuses) : statuses;
 }

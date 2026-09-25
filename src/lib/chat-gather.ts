@@ -63,7 +63,7 @@ const GATHER_SYSTEM = `You are the research step for Orbit, a personal networkin
 
 The answer-writer already has the contacts listed under "Already found", with their summaries, notes and recent interactions. Do not look those up again unless you need something specific about one of them.
 
-Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record.
+Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, and get_goals when the question is open-ended enough that what they are working towards decides the answer.
 
 Make at most three lookups per turn. When you have what the question needs — or when nothing more would help — reply with the single word DONE and make no lookups.
 
@@ -122,6 +122,16 @@ function describeCall(call: ToolCall, ctx: ChatContext): string {
       return "Checking your reminders";
     case "get_network_overview":
       return "Looking at your network as a whole";
+    case "get_timeline": {
+      const name = typeof args.contactId === "string" ? nameOf(args.contactId) : null;
+      return name ? `Reading your history with ${name}` : "Reading a person's history";
+    }
+    case "get_goals":
+      return "Checking what you're working towards";
+    case "find_path_to":
+      return `Looking for a way in to ${text("target")}`;
+    case "list_open_commitments":
+      return "Checking what you owe people";
     default:
       return "Looking something up";
   }
@@ -152,7 +162,21 @@ function contactsIn(name: string, result: unknown): Array<{ id: string; name: st
       );
     case "due_followups":
     case "list_reminders":
+    case "list_open_commitments":
       return rows.flatMap((r) => (str(r?.contactId) ? [{ id: r.contactId, name: str(r.name ?? r.contactName) }] : []));
+    case "get_timeline": {
+      // Not an array: one person, the one the caller asked for.
+      const r = result as { contactId?: unknown; name?: unknown } | null;
+      return r && str(r.contactId) ? [{ id: r.contactId as string, name: str(r.name) }] : [];
+    }
+    case "find_path_to": {
+      const r = result as { alreadyKnown?: unknown; introducers?: unknown } | null;
+      const people = [
+        ...(Array.isArray(r?.alreadyKnown) ? r.alreadyKnown : []),
+        ...(Array.isArray(r?.introducers) ? r.introducers : []),
+      ] as Array<{ contactId?: unknown; name?: unknown }>;
+      return people.flatMap((p) => (str(p?.contactId) ? [{ id: p.contactId as string, name: str(p.name) }] : []));
+    }
     case "search_notes":
       return rows.flatMap((r) =>
         Array.isArray(r?.contactIds) ? r.contactIds.filter(str).map((id: string) => ({ id, name: null })) : []

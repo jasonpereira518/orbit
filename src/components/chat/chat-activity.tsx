@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronDown, CircleDashed } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -202,13 +202,13 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
                     <span className="mt-1 flex flex-wrap gap-1">
                       {step.refs.map((ref) =>
                         ref.kind === "contact" ? (
-                          <Link
+                          <IntentLink
                             key={`${step.id}-${ref.id}`}
                             href={`/contacts/${ref.id}`}
                             className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
                           >
                             {ref.name}
-                          </Link>
+                          </IntentLink>
                         ) : (
                           <span
                             key={`${step.id}-${ref.id}`}

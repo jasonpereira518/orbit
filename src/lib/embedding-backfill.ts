@@ -24,7 +24,13 @@ import { createEmbeddingsBatch } from "@/lib/ai";
 import { embedWithBisect, planEmbeddingBatches } from "@/lib/embedding-batches";
 import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
 import { internalFetch } from "@/lib/internal-auth";
-import { buildContactEmbeddingContent, computeContentHash, persistEmbeddingVectors } from "@/lib/search";
+import {
+  buildContactEmbeddingContent,
+  computeContentHash,
+  CONTACT_EMBEDDING_COLUMNS,
+  CONTACT_EMBEDDING_WITH,
+  persistEmbeddingVectors,
+} from "@/lib/search";
 import { backfillMemoryChunks, pendingMemorySourceCount } from "@/lib/memory-backfill";
 import { resolveAiAccess } from "@/lib/ai-access";
 import { reportError } from "@/lib/report-error";
@@ -141,11 +147,9 @@ export async function runEmbeddingBackfill(
       where: and(eq(contacts.userId, userId), isNotNull(contacts.embeddingStaleAt)),
       orderBy: [asc(contacts.embeddingStaleAt)],
       limit: CLAIM_SIZE,
-      with: {
-        contactTags: { with: { tag: true } },
-        profile: true,
-        experiences: true,
-      },
+      // Only what the embedding text is built from (plus id) — see CONTACT_EMBEDDING_COLUMNS.
+      columns: CONTACT_EMBEDDING_COLUMNS,
+      with: CONTACT_EMBEDDING_WITH,
     });
     if (stale.length === 0) break;
 
@@ -317,6 +321,12 @@ export async function runEmbeddingBackfill(
  * unsearchable — which is exactly the regression this phase was written to repair the first
  * time. If you add a calendar source, add it here.
  *
+ * `microsoft_calendar` and `apple_calendar` joined the list here, alongside `google_calendar` —
+ * until now they were the ONLY calendar sources missing, meaning every Outlook meeting synced
+ * since Outlook calendar sync shipped had never been embedded, and so had never reached chat or
+ * search. Existing rows are picked up retroactively the next time this sweep runs, exactly like
+ * any other previously-excluded source — there is no separate backfill needed.
+ *
  * The content check is what keeps a meeting with no text at all out of the claim
  * entirely rather than needing a "clear the flag" branch the way the profile phase does —
  * there is no flag here to clear. A meeting the provider refused on its own is listed in
@@ -326,7 +336,7 @@ export async function runEmbeddingBackfill(
 const PENDING_MEETINGS = sql`
   FROM interactions i
   JOIN contacts c ON c.id = i.contact_id
-  WHERE i.source IN ('calendar_import', 'calendar_sync', 'google_calendar')
+  WHERE i.source IN ('calendar_import', 'calendar_sync', 'google_calendar', 'microsoft_calendar', 'apple_calendar')
     AND i.interaction_type = 'meeting'
     AND i.external_id IS NOT NULL
     AND (btrim(c.full_name) <> '' OR btrim(coalesce(i.raw_notes, '')) <> '')

@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { notTourExample } from "@/lib/onboarding-examples/sql";
 import { tourRailVisible } from "@/lib/tour/tour-state";
 import {
+  appleConnections,
   calendarSubscriptions,
   contacts,
   gmailConnections,
@@ -27,7 +28,10 @@ import {
 import { getEntitlements } from "@/lib/entitlements";
 import { deriveConnectionHealth } from "@/lib/connection-status";
 import { getGmailOAuthConfigSummary, hasCalendarScope } from "@/lib/gmail";
-import { getOutlookOAuthConfigSummary } from "@/lib/outlook";
+import {
+  getOutlookOAuthConfigSummary,
+  hasCalendarScope as hasOutlookCalendarScope,
+} from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
 
@@ -122,6 +126,56 @@ function googleCalendarFacts(
   };
 }
 
+/** Mirrors `googleCalendarFacts` exactly, for the Outlook grant instead of the Gmail one. */
+function microsoftCalendarFacts(
+  configured: boolean,
+  status: unknown,
+  nextSyncAt: unknown,
+  syncError: unknown,
+  scopes: unknown
+): HealthInput["microsoftCalendar"] {
+  const resolved = text(status);
+  if (!configured || !resolved || !hasOutlookCalendarScope(text(scopes))) return null;
+  const reason = text(syncError);
+  return {
+    paused:
+      deriveConnectionHealth({
+        status: resolved,
+        nextSyncAt: toDate(nextSyncAt),
+        syncError: reason,
+        calendarScopeGranted: true,
+      }) === "disarmed",
+    reason,
+  };
+}
+
+/**
+ * Unlike `googleCalendarFacts`/`microsoftCalendarFacts`, no `configured` gate (Apple has no
+ * OAuth app to configure) and no scope check (Apple grants none — see
+ * `apple_connections.scopes`'s own comment, and `account-alerts.ts`'s `appleCalendar` doc
+ * comment for why a revoked app-specific password reads as the same "disarmed" state as a
+ * sync that gave up on its own).
+ */
+function appleCalendarFacts(
+  status: unknown,
+  nextSyncAt: unknown,
+  syncError: unknown
+): HealthInput["appleCalendar"] {
+  const resolved = text(status);
+  if (!resolved) return null;
+  const reason = text(syncError);
+  return {
+    paused:
+      deriveConnectionHealth({
+        status: resolved,
+        nextSyncAt: toDate(nextSyncAt),
+        syncError: reason,
+        calendarScopeGranted: true,
+      }) === "disarmed",
+    reason,
+  };
+}
+
 export async function loadAccountHealthInput(
   userId: string,
   now: Date = new Date()
@@ -176,6 +230,25 @@ export async function loadAccountHealthInput(
       outlookHasRefresh: sql<boolean | null>`(
         SELECT ${outlookConnections.refreshTokenEncrypted} IS NOT NULL FROM ${outlookConnections}
         WHERE ${outlookConnections.userId} = ${userId} LIMIT 1)`,
+      outlookNextSyncAt: sql<Date | string | null>`(
+        SELECT ${outlookConnections.nextSyncAt} FROM ${outlookConnections}
+        WHERE ${outlookConnections.userId} = ${userId} LIMIT 1)`,
+      outlookSyncError: sql<string | null>`(
+        SELECT ${outlookConnections.syncError} FROM ${outlookConnections}
+        WHERE ${outlookConnections.userId} = ${userId} LIMIT 1)`,
+      outlookScopes: sql<string | null>`(
+        SELECT ${outlookConnections.scopes} FROM ${outlookConnections}
+        WHERE ${outlookConnections.userId} = ${userId} LIMIT 1)`,
+
+      appleStatus: sql<string | null>`(
+        SELECT ${appleConnections.status} FROM ${appleConnections}
+        WHERE ${appleConnections.userId} = ${userId} LIMIT 1)`,
+      appleNextSyncAt: sql<Date | string | null>`(
+        SELECT ${appleConnections.nextSyncAt} FROM ${appleConnections}
+        WHERE ${appleConnections.userId} = ${userId} LIMIT 1)`,
+      appleSyncError: sql<string | null>`(
+        SELECT ${appleConnections.syncError} FROM ${appleConnections}
+        WHERE ${appleConnections.userId} = ${userId} LIMIT 1)`,
 
       // Disabled feeds are not syncing by choice; only an enabled one can be "failing".
       calendarErrorCount: sql<number>`(
@@ -276,6 +349,14 @@ export async function loadAccountHealthInput(
       row.gmailSyncError,
       row.gmailScopes
     ),
+    microsoftCalendar: microsoftCalendarFacts(
+      getOutlookOAuthConfigSummary().configured,
+      row.outlookStatus,
+      row.outlookNextSyncAt,
+      row.outlookSyncError,
+      row.outlookScopes
+    ),
+    appleCalendar: appleCalendarFacts(row.appleStatus, row.appleNextSyncAt, row.appleSyncError),
 
     calendarErrorCount: num(row.calendarErrorCount),
     calendarErrorLabel: text(row.calendarErrorLabel),

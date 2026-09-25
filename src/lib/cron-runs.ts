@@ -16,6 +16,7 @@ import { reportError } from "@/lib/report-error";
 
 /** `ops.sweep` is the ten-minute known-condition sweep (`src/lib/ops-sweep.ts`). */
 export type CronJobName =
+  | "connectors.outbox"
   | "imports.process-stalled"
   | "jobs.feed-sweep"
   | "ops.sweep"

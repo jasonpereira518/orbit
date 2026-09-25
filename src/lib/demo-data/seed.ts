@@ -44,6 +44,7 @@ import {
 } from "@/lib/recruiters";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { DEMO_GOALS, DEMO_PEOPLE, type DemoPerson } from "@/lib/demo-data/network";
+import { buildExtendedCast, seedExtendedSurfaces, type ExtendedCast } from "@/lib/demo-data/seed-extended";
 
 /** Written to every seeded row that has a `source`, so demo rows can always be told apart. */
 export const DEMO_SOURCE = "demo-seed";
@@ -51,6 +52,17 @@ export const DEMO_SOURCE = "demo-seed";
 const DAY = 86_400_000;
 
 export type DemoSeedSummary = Record<string, number>;
+
+export type DemoSeedOptions = {
+  /**
+   * The extended workspace: the cast's fuller histories, a long tail of lighter
+   * relationships, portraits, mentions linking people, and the newer surfaces (captures,
+   * a recorded meeting, opportunities, every import type). Off by default because the base
+   * workspace is the fixture `scripts/smoke-behavior-golden.ts` records against, and must
+   * not move under it. On for localhost and the demo workspace.
+   */
+  extended?: boolean;
+};
 
 /**
  * Fill an account with the demo workspace: the network, its timelines and briefs, and a
@@ -61,13 +73,17 @@ export type DemoSeedSummary = Record<string, number>;
  * on neon-http), so each surface after the network is written independently and a failure
  * in one is logged rather than taking the rest down with it.
  */
-export async function seedDemoWorkspace(userId: string): Promise<DemoSeedSummary> {
+export async function seedDemoWorkspace(
+  userId: string,
+  opts: DemoSeedOptions = {}
+): Promise<DemoSeedSummary> {
   const now = Date.now();
   const ago = (days: number) => new Date(now - days * DAY);
   const ahead = (days: number) => new Date(now + days * DAY);
 
   const summary: DemoSeedSummary = {};
-  const contactIdByName = await seedNetwork(userId, ago, ahead, summary);
+  const extended = opts.extended ? buildExtendedCast() : null;
+  const contactIdByName = await seedNetwork(userId, ago, ahead, summary, extended);
 
   const surfaces: Array<[string, () => Promise<void>]> = [
     ["reminders", () => seedReminders(userId, contactIdByName, ahead, summary)],
@@ -78,6 +94,9 @@ export async function seedDemoWorkspace(userId: string): Promise<DemoSeedSummary
     ["imports", () => seedImports(userId, ago, summary)],
     ["goals", () => seedGoals(userId, summary)],
   ];
+  if (extended) {
+    surfaces.push(["extended", () => seedExtendedSurfaces(userId, extended, contactIdByName, now, summary)]);
+  }
   for (const [name, run] of surfaces) {
     try {
       await run();
@@ -105,16 +124,22 @@ async function seedNetwork(
   userId: string,
   ago: (d: number) => Date,
   ahead: (d: number) => Date,
-  summary: DemoSeedSummary
+  summary: DemoSeedSummary,
+  extended: ExtendedCast | null
 ): Promise<Map<string, string>> {
   const db = await getDb();
+  const people = extended?.people ?? DEMO_PEOPLE;
+  // Where each row says it came from. The base workspace marks everything `demo-seed`; the
+  // extended one uses the sources a synced account really has, so provenance reads as live.
+  const contactSource = (p: DemoPerson) => extended?.contactSource.get(p.fullName) ?? DEMO_SOURCE;
+  const touchSource = (type: string) => (extended ? extendedTouchSource(type) : DEMO_SOURCE);
 
   const resolver = await createCompanyResolver(userId);
-  await resolver.prime(DEMO_PEOPLE.map((p) => p.company ?? null));
+  await resolver.prime(people.map((p) => p.company ?? null));
 
-  const ids = new Map(DEMO_PEOPLE.map((p) => [p.fullName, randomUUID()]));
+  const ids = new Map(people.map((p) => [p.fullName, randomUUID()]));
   const rows: NewContact[] = [];
-  for (const p of DEMO_PEOPLE) {
+  for (const p of people) {
     const touches = p.touches ?? [];
     // Interaction stamps come only from real touches — the app distinguishes "we spoke"
     // from "you added them", and seeded data must not blur that.
@@ -136,7 +161,8 @@ async function seedNetwork(
       relationshipScore: p.closeness,
       statedCloseness: p.closeness,
       priorityLevel: p.priority ?? 0,
-      source: DEMO_SOURCE,
+      source: contactSource(p),
+      ...(extended ? extendedPhotoColumns(extended.photos.get(p.fullName) ?? null) : {}),
       howMet: p.howMet,
       metContext: p.metContext ?? null,
       dateMet: ago(p.metDaysAgo),
@@ -156,13 +182,13 @@ async function seedNetwork(
   await db.insert(contacts).values(rows);
   summary.contacts = rows.length;
 
-  const identityRows = DEMO_PEOPLE.flatMap((p) =>
+  const identityRows = people.flatMap((p) =>
     identityKeysFor({ email: p.email, linkedinUrl: p.linkedinUrl }).map((k) => ({
       userId,
       contactId: ids.get(p.fullName)!,
       kind: k.kind,
       value: k.value,
-      source: DEMO_SOURCE,
+      source: contactSource(p),
     }))
   );
   if (identityRows.length) {
@@ -174,7 +200,7 @@ async function seedNetwork(
   const interactionRows: (typeof interactions.$inferInsert)[] = [];
   const itemRows: (typeof actionItems.$inferInsert)[] = [];
   const briefRows: (typeof contactBriefs.$inferInsert)[] = [];
-  for (const p of DEMO_PEOPLE) {
+  for (const p of people) {
     const contactId = ids.get(p.fullName)!;
     const mine: { id: string; interactionDate: Date; interactionType: string; aiSummary: null; rawNotes: string }[] = [];
     for (const t of p.touches ?? []) {
@@ -186,7 +212,7 @@ async function seedNetwork(
         contactId,
         interactionType: t.type,
         interactionDate,
-        source: DEMO_SOURCE,
+        source: touchSource(t.type),
         rawNotes: t.notes,
         topics: t.topics ?? [],
         actionItems: t.actionItems ?? [],
@@ -223,7 +249,7 @@ async function seedNetwork(
   // Work history and profiles, so the profile timeline has roles and schools.
   const experienceRows: (typeof contactExperiences.$inferInsert)[] = [];
   const profileRows: (typeof contactProfiles.$inferInsert)[] = [];
-  for (const p of DEMO_PEOPLE) {
+  for (const p of people) {
     const contactId = ids.get(p.fullName)!;
     let sortIndex = 0;
     for (const [organization, title, startYear, endYear] of p.history ?? []) {
@@ -269,14 +295,14 @@ async function seedNetwork(
   if (profileRows.length) await db.insert(contactProfiles).values(profileRows);
   summary.experiences = experienceRows.length;
 
-  const tagNames = [...new Set(DEMO_PEOPLE.flatMap((p) => p.tags ?? []))].sort();
+  const tagNames = [...new Set(people.flatMap((p) => p.tags ?? []))].sort();
   if (tagNames.length) {
     const insertedTags = await db
       .insert(tags)
       .values(tagNames.map((name) => ({ userId, name })))
       .returning();
     const tagIdByName = new Map(insertedTags.map((t) => [t.name, t.id]));
-    const links = DEMO_PEOPLE.flatMap((p) =>
+    const links = people.flatMap((p) =>
       (p.tags ?? []).map((name) => ({
         contactId: ids.get(p.fullName)!,
         tagId: tagIdByName.get(name)!,
@@ -287,6 +313,28 @@ async function seedNetwork(
   }
 
   return ids;
+}
+
+/**
+ * A portrait, or — for the few left as initials on purpose — a "looked, found nothing" stamp,
+ * so the avatar backfill never spends a lookup on their `example.*` addresses.
+ */
+function extendedPhotoColumns(photo: string | null): Pick<NewContact, "profileImageUrl" | "profileImageCheckedAt"> {
+  return photo ? { profileImageUrl: photo, profileImageCheckedAt: null } : { profileImageUrl: null, profileImageCheckedAt: new Date() };
+}
+
+/** The integration a touch of this type arrives through on a connected account. */
+function extendedTouchSource(type: string): string {
+  switch (type) {
+    case "email":
+      return "gmail";
+    case "meeting":
+      return "google_calendar";
+    case "linkedin_message":
+      return "linkedin_messages";
+    default:
+      return "ai_capture";
+  }
 }
 
 function summaryFor(p: DemoPerson) {

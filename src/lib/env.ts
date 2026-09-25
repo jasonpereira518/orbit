@@ -57,6 +57,12 @@ export const EXPECTED_IN_PRODUCTION = [
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REDIRECT_URI",
+  // Unset, every voice note, meeting and dictation falls back to the user's own OpenAI or
+  // Gemini key, and an account with neither cannot transcribe at all.
+  "DEEPGRAM_API_KEY",
+  // Unset, the nightly Deepgram usage reconciliation (/api/ops/speech-usage) cannot call
+  // Deepgram's project-scoped usage API and logs it rather than checking for under-reporting.
+  "DEEPGRAM_PROJECT_ID",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [
@@ -139,6 +145,29 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     }
     if (has(env, "APP_BASE_URL") && !env.APP_BASE_URL!.startsWith("https://")) {
       errors.push("APP_BASE_URL must be an https:// URL in production");
+    }
+
+    // The waitlist's own domain (src/lib/waitlist-host.ts). Optional — but once it is set,
+    // its mail needs a sender of its own: falling back to the app's sender would put the
+    // app's domain in the From line of the one thing that must never show it.
+    if (has(env, "WAITLIST_HOST")) {
+      // A public mailbox provider (a gmail.com RESEND_FROM_EMAIL, say) is shared by millions
+      // and identifies nothing, so it never counts as the app's domain.
+      const appDomains = [hostOf(env.APP_BASE_URL), emailDomain(env.RESEND_FROM_EMAIL)].filter(
+        (d): d is string => Boolean(d) && !PUBLIC_MAIL_DOMAINS.has(d!)
+      );
+      if (!has(env, "WAITLIST_FROM_EMAIL")) {
+        errors.push("WAITLIST_FROM_EMAIL is required when WAITLIST_HOST is set");
+      }
+      for (const name of ["WAITLIST_FROM_EMAIL", "WAITLIST_REPLY_TO"] as const) {
+        const domain = emailDomain(env[name]);
+        if (domain && appDomains.some((app) => relatedDomains(domain, app))) {
+          errors.push(`${name} must not be on the app's own domain`);
+        }
+      }
+      if (has(env, "WAITLIST_BASE_URL") && !env.WAITLIST_BASE_URL!.startsWith("https://")) {
+        errors.push("WAITLIST_BASE_URL must be an https:// URL in production");
+      }
     }
 
     if (has(env, "STRIPE_SECRET_KEY")) {
@@ -333,4 +362,39 @@ export function checkDrizzleCommand(
     };
   }
   return { allowed: true, reason: `target ${target} is not the production host` };
+}
+
+/** Mailbox providers anyone can sign up to — never evidence of whose domain it is. */
+const PUBLIC_MAIL_DOMAINS: ReadonlySet<string> = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "icloud.com",
+  "me.com",
+  "yahoo.com",
+  "proton.me",
+  "protonmail.com",
+]);
+
+/** The hostname of a URL, lowercased, or null. */
+function hostOf(url: string | undefined): string | null {
+  if (!url?.trim()) return null;
+  try {
+    return new URL(url.trim()).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** The domain of an address, bare or `Name <addr>`, lowercased, or null. */
+function emailDomain(value: string | undefined): string | null {
+  const match = /@([^>\s]+)>?\s*$/.exec(value?.trim() ?? "");
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** One domain is the other or sits under it — `jasonpereira.live` vs `orbit.jasonpereira.live`. */
+function relatedDomains(a: string, b: string) {
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }

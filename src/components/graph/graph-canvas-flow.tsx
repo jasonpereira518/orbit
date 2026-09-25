@@ -23,6 +23,9 @@ import {
   type EdgeTypes,
   type NodeMouseHandler,
   type OnNodesChange,
+  type NodeOrigin,
+  type DefaultEdgeOptions,
+  type ProOptions,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -73,6 +76,8 @@ import {
 } from "@/lib/graph/sky-selection";
 import { starSubtitle, starVisual, zoomRelief } from "@/lib/graph/star-style";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
+import { markOpenStage } from "@/lib/graph/open-marks";
+import { markFirstPaintThenInteractive } from "@/lib/graph/open-marks-paint";
 import { CAMERA_MS } from "@/lib/motion";
 import { Loader2 } from "lucide-react";
 
@@ -114,6 +119,7 @@ function DefaultViewFitter({
     let cancelled = false;
     let tries = 0;
     let timeoutId: number | undefined;
+    let rafId: number | undefined;
 
     const centerNow = () => {
       if (cancelled) return;
@@ -139,11 +145,17 @@ function DefaultViewFitter({
           }
           return;
         }
-        // One refine after layout settles (no animation) — the first pass
-        // above ran before nodes were DOM-measured, so it under-estimates
-        // extents and frames too tight. This is the frame callers should
-        // actually reveal.
-        timeoutId = window.setTimeout(() => {
+        // One refine once the nodes are measured (no animation) — the first
+        // pass above ran before they were, so it can under-estimate extents
+        // and frame too tight. This is the frame callers should actually
+        // reveal.
+        //
+        // React Flow measures nodes with a ResizeObserver, which reports in the
+        // frame they first lay out — after that frame's rAF callbacks — so the
+        // sizes are in its store by the next frame's. This was a flat 100ms,
+        // which on opening the chart was most of the wait between the sky
+        // being ready and it being shown.
+        const refine = () => {
           if (cancelled) return;
           const size = storeApi.getState();
           if (size.width < 48 || size.height < 48) {
@@ -161,7 +173,10 @@ function DefaultViewFitter({
             if (cancelled) return;
             onSettledRef.current?.();
           });
-        }, 100);
+        };
+        rafId = requestAnimationFrame(() => {
+          rafId = requestAnimationFrame(refine);
+        });
       });
     };
 
@@ -171,6 +186,7 @@ function DefaultViewFitter({
     return () => {
       cancelled = true;
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
     };
     // Mounted fresh per request (see the key at the call site) — refs hold the rest
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -192,6 +208,16 @@ const edgeTypes: EdgeTypes = {
   labeled: LabeledEdge,
   straight: LabeledEdge,
 };
+
+// Module constants rather than inline literals, so <ReactFlow> sees the same props each render.
+const NODE_ORIGIN: NodeOrigin = [0.5, 0.5];
+const PRO_OPTIONS: ProOptions = { hideAttribution: true };
+const DEFAULT_EDGE_OPTIONS: DefaultEdgeOptions = {
+  type: "straight",
+  selectable: false,
+  focusable: false,
+};
+const NO_EDGES: Edge[] = [];
 
 /**
  * The zoomed-out summary view.
@@ -609,6 +635,7 @@ function contactIds(nodes: LayoutNodes) {
  * the chosen one is ever imported.
  */
 export function GraphCanvasFlow(props: GraphChartProps) {
+  markOpenStage("renderer-loaded");
   const { filteredContacts, layout, layoutKey } = useGraphLayout(props);
 
   // Deliberately not keyed on the layout. Remounting per change — which a refresh did once
@@ -714,7 +741,9 @@ function GraphCanvasInner({
    * an intro run, never start one.
    */
   useEffect(() => {
-    if (viewportReady) markGraphViewportReady();
+    if (!viewportReady) return;
+    markGraphViewportReady();
+    markFirstPaintThenInteractive();
   }, [viewportReady]);
 
   // The entrance plays once per arrival; drop the class afterwards so a star scrolled back
@@ -1788,17 +1817,21 @@ function GraphCanvasInner({
     });
   }, []);
 
+  // ReactFlow calls these with (event, viewport); both are ignored, as before.
+  const onMoveStart = useCallback(() => setMoving(true), [setMoving]);
+  const onMoveEnd = useCallback(() => setMoving(false), [setMoving]);
+
   const isEmpty = filteredContacts.length === 0;
 
   return (
     <>
       <ReactFlow
         nodes={nodes}
-        edges={isEmpty ? [] : edges}
+        edges={isEmpty ? NO_EDGES : edges}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        nodeOrigin={[0.5, 0.5]}
+        nodeOrigin={NODE_ORIGIN}
         minZoom={SKY_MIN_ZOOM}
         maxZoom={SKY_MAX_ZOOM}
         onlyRenderVisibleElements
@@ -1829,16 +1862,12 @@ function GraphCanvasInner({
         onPaneMouseMove={onClusterPointerMove}
         onNodeMouseLeave={onNodeMouseLeave}
         onPaneClick={onPaneClick}
-        proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{
-          type: "straight",
-          selectable: false,
-          focusable: false,
-        }}
+        proOptions={PRO_OPTIONS}
+        defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
         nodesDraggable={false}
         ref={stageRef}
-        onMoveStart={() => setMoving(true)}
-        onMoveEnd={() => setMoving(false)}
+        onMoveStart={onMoveStart}
+        onMoveEnd={onMoveEnd}
         className="constellation-stage"
       >
         <DefaultViewFitter

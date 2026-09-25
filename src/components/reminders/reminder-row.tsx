@@ -2,7 +2,7 @@
 
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import Link from "next/link";
-import { memo, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useCallback, type KeyboardEvent, type MouseEvent } from "react";
 import {
   Check,
   Coffee,
@@ -88,7 +88,7 @@ export const ReminderRow = memo(function ReminderRow({
   snoozeOpen,
   moreOpen,
   handlers,
-  rowRef,
+  registerRow,
 }: {
   item: ReminderRowData;
   today: string;
@@ -101,8 +101,16 @@ export const ReminderRow = memo(function ReminderRow({
   snoozeOpen: boolean;
   moreOpen: boolean;
   handlers: ReminderRowHandlers;
-  rowRef?: (el: HTMLLIElement | null) => void;
+  /** Records this row's `<li>` under its id (null on detach). Stable, so the memo holds. */
+  registerRow?: (id: string, el: HTMLLIElement | null) => void;
 }) {
+  // No cleanup returned, so React calls it with null on detach — as the old inline ref did.
+  const rowRef = useCallback(
+    (el: HTMLLIElement | null) => {
+      registerRow?.(item.id, el);
+    },
+    [registerRow, item.id]
+  );
   const due = dueLabelFor(item.dueDay, today);
   const KindIcon = KIND_ICONS[item.actionKind];
   const isDone = item.status === "done";

@@ -1,5 +1,5 @@
 import { cancelBatchJobsFor } from "@/lib/ai-batch";
-import { del } from "@vercel/blob";
+import { del } from "@/lib/blob-lazy";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
@@ -13,7 +13,9 @@ import {
   apiIdempotencyKeys,
   agentSendRequests,
   apiKeys,
+  appleConnections,
   billingEvents,
+  calendarSources,
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
@@ -24,6 +26,8 @@ import {
   chatThreads,
   closenessCohorts,
   companies,
+  connectorConnections,
+  connectorOutbox,
   contactBriefs,
   contactEmbeddings,
   memoryChunks,
@@ -43,6 +47,7 @@ import {
   eventProviderConnections,
   events,
   extensionUsage,
+  externalLinks,
   feedback,
   feedbackScreenshots,
   gateEvents,
@@ -65,6 +70,7 @@ import {
   recruiterScanState,
   reminderLists,
   reminders,
+  speechUsage,
   suggestedReminders,
   tags,
   targetCompanies,
@@ -147,16 +153,29 @@ type Db = Awaited<ReturnType<typeof getDb>>;
 export type ExportSource = {
   name: string;
   page: (userId: string, limit: number, offset: number) => SQL;
+  /**
+   * Single-table sources only: `page` with `columns` in place of `*`. The export uses it to
+   * name exactly the columns that survive redaction (in table order), so vectors and raw
+   * bytes it would drop anyway are never read or shipped. Same rows, same order.
+   */
+  pageColumns?: (columns: SQL, userId: string, limit: number, offset: number) => SQL;
+  /**
+   * Column -> the expression selected in its place under the same name, for a column the
+   * `transform` only inspects. Must be provably output-identical after `transform`.
+   */
+  columnExpressions?: Record<string, SQL>;
   transform?: (row: Record<string, unknown>) => Record<string, unknown>;
 };
 
 /** Every row of `table` whose `user_id` is this user, in a stable order. */
 export function ownRowsSource(table: PgTable, orderBy = "id"): ExportSource {
   const name = getTableName(table);
+  const pageColumns: NonNullable<ExportSource["pageColumns"]> = (columns, userId, limit, offset) =>
+    sql`SELECT ${columns} FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`;
   return {
     name,
-    page: (userId, limit, offset) =>
-      sql`SELECT * FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`,
+    page: (userId, limit, offset) => pageColumns(sql`*`, userId, limit, offset),
+    pageColumns,
   };
 }
 
@@ -168,6 +187,12 @@ const withUrl = (source: ExportSource, prefix: string): ExportSource => ({
 });
 const contactsSource: ExportSource = {
   ...own(contacts),
+  // An inline avatar is replaced below whatever its bytes are, so only its `data:` prefix is
+  // read. `LIKE 'data:%'` is exactly `startsWith("data:")` (case-sensitive, no wildcards in
+  // the prefix); every other value, null included, passes through untouched.
+  columnExpressions: {
+    profile_image_url: sql`CASE WHEN profile_image_url LIKE 'data:%' THEN 'data:' ELSE profile_image_url END`,
+  },
   // Inline bytes and public Blob URLs become the owner-only avatar route.
   transform: (row) => {
     const url = typeof row.profile_image_url === "string" ? row.profile_image_url : null;
@@ -270,12 +295,27 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   connections: {
-    exports: [own(gmailConnections), own(outlookConnections), own(calendarSubscriptions), own(eventProviderConnections)],
+    exports: [
+      own(gmailConnections),
+      own(outlookConnections),
+      own(appleConnections),
+      own(calendarSources),
+      own(calendarSubscriptions),
+      own(eventProviderConnections),
+      own(connectorConnections),
+      own(externalLinks),
+      own(connectorOutbox),
+    ],
     counts: [
       gmailConnections,
       outlookConnections,
+      appleConnections,
+      calendarSources,
       calendarSubscriptions,
       eventProviderConnections,
+      connectorConnections,
+      externalLinks,
+      connectorOutbox,
     ],
     run: async (db, userId) => {
       // Read before the delete: once the row is gone there is nothing to revoke with.
@@ -286,18 +326,31 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         })
         .from(gmailConnections)
         .where(eq(gmailConnections.userId, userId));
+      // Before the connection tables: `calendar_sources` has no FK (the three connection
+      // tables are separate by design — see provider-connections.ts), so nothing cascades it.
+      await db.delete(calendarSources).where(eq(calendarSources.userId, userId));
       await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
       await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
       // Best-effort and time-boxed (see oauth-revoke.ts): a Google outage must never
       // block an erasure. Outlook has no per-app revoke endpoint; Luma keys and Eventbrite
-      // tokens have none Orbit can call.
+      // tokens have none Orbit can call. Apple's app-specific password is revocable only by
+      // the user, at appleid.apple.com — there is nothing here to call either.
       for (const grant of googleGrants) await revokeGoogleGrant(grant);
       await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+      await db.delete(appleConnections).where(eq(appleConnections.userId, userId));
       // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as
       // the Gmail/Outlook rows above, and it must not outlive the account.
       await db
         .delete(eventProviderConnections)
         .where(eq(eventProviderConnections.userId, userId));
+      // Holds encrypted OAuth tokens, API keys and iCloud app passwords for every connector
+      // that is not Gmail or Outlook. Same class of secret as the rows above, and it must
+      // not outlive the account.
+      await db.delete(connectorConnections).where(eq(connectorConnections.userId, userId));
+      // The outbox may hold an unsent payload and external_links maps this user's rows into
+      // other systems. Both go with the connection that produced them.
+      await db.delete(connectorOutbox).where(eq(connectorOutbox.userId, userId));
+      await db.delete(externalLinks).where(eq(externalLinks.userId, userId));
     },
   },
   events: {
@@ -435,10 +488,13 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
-    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews)],
-    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents],
+    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews), own(speechUsage)],
+    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents, speechUsage],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
+      // Deepgram usage meter (v89) — same reasoning as `usage_events` above: it is a record
+      // of what the account did, not a financial or operational record anyone else needs.
+      await db.delete(speechUsage).where(eq(speechUsage.userId, userId));
       // The extension's per-user rate-limit window, keyed on `user_id` as the primary key
       // with no parent to cascade from. A counter, not prose — but it is keyed on the person,
       // and it was the FOURTH user-scoped table found unpurged. Caught the first time
@@ -662,6 +718,8 @@ const PRESERVED_SETTINGS_COLUMNS = {
   suspendedAt: true,
   suspendedReason: true,
   suspendedBy: true,
+  // Stealth admission is about the account, not its contents: a delete must not re-hold it.
+  stealthClearedAt: true,
   createdAt: true,
   lastActiveAt: true,
   termsAcceptedAt: true,

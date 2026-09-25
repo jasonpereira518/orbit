@@ -23,19 +23,12 @@ import {
   scanEncodeAttempts,
 } from "@/lib/scan-image";
 
-export type ScanPage = {
-  /** Stable across re-renders so the filmstrip can key on it and animate properly. */
-  id: string;
-  filename: string;
-  mimeType: string;
-  /** Raw base64, no data: URL prefix — what `CaptureMediaFile` expects. */
-  base64: string;
-  /** Object URL for the thumbnail. Revoke it with `releaseScanPage`. */
-  previewUrl: string;
-  width: number;
-  height: number;
-  bytes: number;
-};
+import type { ScanPage } from "@/lib/scan-page";
+
+// The page shape and its small helpers live in the DOM-free `scan-page.ts`, so holders of
+// pages need not import this module; re-exported here for everyone who already does.
+export type { ScanPage } from "@/lib/scan-page";
+export { movePage, releaseScanPage } from "@/lib/scan-page";
 
 let pageSeq = 0;
 function nextPageId() {
@@ -315,24 +308,6 @@ export async function rasterizePdf(
   } finally {
     await loadingTask.destroy();
   }
-}
-
-export function releaseScanPage(page: ScanPage) {
-  URL.revokeObjectURL(page.previewUrl);
-}
-
-/**
- * Move a page earlier or later. Pure and bounds-safe: an out-of-range `to` clamps, and a
- * no-op move returns the same array. The send order is the array order.
- */
-export function movePage<T>(pages: readonly T[], from: number, to: number): T[] {
-  if (from < 0 || from >= pages.length) return [...pages];
-  const target = Math.max(0, Math.min(pages.length - 1, to));
-  if (target === from) return [...pages];
-  const next = [...pages];
-  const [page] = next.splice(from, 1);
-  next.splice(target, 0, page!);
-  return next;
 }
 
 export { MAX_SCAN_PAGES };

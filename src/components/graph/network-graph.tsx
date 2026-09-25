@@ -1,7 +1,6 @@
 "use client";
 
 import { emitTourEvent } from "@/lib/tour/tour-events";
-import dynamic from "next/dynamic";
 import {
   useCallback,
   useEffect,
@@ -39,6 +38,7 @@ import {
 import type { GraphNodeData } from "@/lib/graph-layout";
 import { Starfield } from "@/components/graph/constellation-starfield";
 import { useSmallSky } from "@/components/graph/use-small-sky";
+import { useSkyRenderer } from "@/components/graph/use-sky-renderer";
 import {
   buildContactHaystackIndex,
   findClusterMatch,
@@ -88,29 +88,6 @@ type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
  */
 markGraphChunkLoaded();
 
-/**
- * The two renderers, each in its own chunk.
- *
- * Only the branch that renders is ever requested, which is the whole point: a phone must
- * not download, parse, or mount `@xyflow/react` and the per-contact DOM nodes that come
- * with it. See `use-small-sky.ts` for which device gets which.
- */
-const GraphCanvasFlow = dynamic(
-  () =>
-    import("@/components/graph/graph-canvas-flow").then((m) => ({
-      default: m.GraphCanvasFlow,
-    })),
-  { ssr: false, loading: () => null }
-);
-
-const GraphCanvasMobile = dynamic(
-  () =>
-    import("@/components/graph/graph-canvas-mobile").then((m) => ({
-      default: m.GraphCanvasMobile,
-    })),
-  { ssr: false, loading: () => null }
-);
-
 function introInFlight() {
   const status = getIntroRun().status;
   return status === "running" || status === "arriving";
@@ -145,14 +122,21 @@ export function NetworkGraph({
   /**
    * Which renderer draws the sky.
    *
-   * Safe during render because this component is only ever reached through
-   * `next/dynamic({ ssr: false })`, so the first render already happens in the browser
-   * and the answer is right on frame one — no flash, no double mount. The dashboard
+   * Safe during render because this component is only ever rendered once its chunk has
+   * loaded in the browser (`constellation-modules.ts`; never on the server, never in
+   * hydration), so the answer is right on frame one — no flash, no double mount. The dashboard
    * preview takes the same branch: a 300px sky on a phone is where the DOM chart's cost
    * is least justified.
    */
   const smallSky = useSmallSky();
-  const Chart = smallSky ? GraphCanvasMobile : GraphCanvasFlow;
+  /**
+   * The two renderers, each in its own chunk, and only the one this viewport draws with is ever
+   * requested: a phone must not download, parse, or mount `@xyflow/react` and the per-contact
+   * DOM nodes that come with it. See `use-small-sky.ts` for which device gets which, and
+   * `constellation-modules.ts` for why this is not `next/dynamic`. Null until it has loaded,
+   * which after `preloadConstellation()` is usually never.
+   */
+  const renderer = useSkyRenderer(smallSky);
 
   const [data, setData] = useState<GraphPayload | null>(initialData);
   const [company, setCompany] = useState("all");
@@ -472,11 +456,14 @@ export function NetworkGraph({
   const searchRequestId = useRef(0);
   const suppressSearchHomeRef = useRef(false);
   // Built once per data load instead of re-joined per contact on every
-  // keystroke inside matchGraphContacts.
-  const contactHaystackIndex = useMemo(
-    () => (data ? buildContactHaystackIndex(data.contacts) : new Map<string, string>()),
-    [data]
-  );
+  // keystroke inside matchGraphContacts — and only on the first search, not
+  // at mount: most visits never search, and at 10,000 contacts building it
+  // was ~10ms of the render that opens the chart.
+  const contactHaystackIndex = useMemo(() => {
+    let index: Map<string, string> | null = null;
+    return () =>
+      (index ??= data ? buildContactHaystackIndex(data.contacts) : new Map<string, string>());
+  }, [data]);
 
   const requestDefaultView = useCallback(() => {
     setFocusCluster(null);
@@ -543,7 +530,7 @@ export function NetworkGraph({
     // Instant local match across name, role, school, tags, keywords, etc.
     // `reframe` moves the camera; semantic enrichment only updates highlights
     // so finishing a word doesn't yank the view back out to the full map.
-    const localMatch = matchGraphContacts(data.contacts, q, contactHaystackIndex);
+    const localMatch = matchGraphContacts(data.contacts, q, contactHaystackIndex());
     const applySearchResults = (
       extraIds: string[] = [],
       reframe = true
@@ -796,7 +783,7 @@ export function NetworkGraph({
           "flex items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50",
           compact
             ? "h-[300px]"
-            : "h-[calc(100dvh-14.75rem)] md:h-[calc(100dvh-10.5rem)]"
+            : "h-[calc(100dvh-15.125rem)] md:h-[calc(100dvh-10.5rem)]"
         )}
       >
         Loading constellation…
@@ -825,11 +812,11 @@ export function NetworkGraph({
             ? "h-[300px] rounded-2xl"
             : // Below md the app's floating bottom nav is a fixed pill ~4rem tall; a taller
             // box ran the canvas (and its Key / full-screen / home buttons) underneath it,
-            // where they could not be tapped at all. 14.75rem, down from 18.5rem, because
+            // where they could not be tapped at all. 15.125rem, down from 18.5rem, because
             // the page's description is hidden on phones and the chart takes its height.
             // Keep in step with CONSTELLATION_STAGE_HEIGHT and the nav's height
             // (layout/mobile-nav.tsx).
-            "h-[calc(100dvh-14.75rem)] max-h-[calc(100dvh-14.75rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
+            "h-[calc(100dvh-15.125rem)] max-h-[calc(100dvh-15.125rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
           fullscreenActive &&
             "rounded-none border-0 !h-dvh !max-h-none",
           cssFullscreen && "!fixed inset-0 z-[100] w-screen"
@@ -1276,7 +1263,7 @@ export function NetworkGraph({
           </>
         )}
 
-        <Chart
+        {renderer && <renderer.Chart
           data={data}
           constellationFilterOn={constellationFilterOn}
           onShowAll={() => setScope(true)}
@@ -1301,7 +1288,7 @@ export function NetworkGraph({
           onHover={setHoveredId}
           onFocusCluster={focusClusterById}
           compact={compact}
-        />
+        />}
       </div>
 
       {!compact && (

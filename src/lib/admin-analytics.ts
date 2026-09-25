@@ -3,15 +3,24 @@ import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { series, type Grain } from "@/lib/admin-trends";
 import { num, toDate } from "@/lib/admin-metrics";
+import { internalAccountSql } from "@/lib/analytics-internal";
 
 /**
  * Read side of the traffic pipeline, for `/admin/analytics`. Writes live in
  * `src/lib/page-views.ts`.
  *
- * TWO RULES, both of which the numbers depend on and neither of which SQL enforces.
+ * THREE RULES, all of which the numbers depend on and none of which SQL enforces.
  *
- * BOTS ARE ALWAYS EXCLUDED. Every query here filters `is_bot = false`. `PV` below is the
+ * BOTS ARE ALWAYS EXCLUDED. Every query here filters `is_bot = false`. `pv()` below is the
  * only place that predicate is written, so a new aggregate cannot forget it.
+ *
+ * SO IS ORBIT'S OWN TRAFFIC — `is_internal` rows, and any row from an admin or the showcase
+ * account (see `analytics-internal.ts`), in the same fragment. The one exception is
+ * `accountTraffic`, which is asked about one named account and answers for it whoever it is.
+ *
+ * WINDOWS START WHEN TRACKING DID. A 90-day range over twelve days of data divided the
+ * visitor-days by 90; `measuredWindow` clamps every per-day figure and chart to the first
+ * recorded view.
  *
  * "UNIQUE VISITORS" IS VISITOR-DAYS. The visitor hash is salted per UTC day, so the same
  * person on three days is three hashes and `count(distinct visitor_hash)` over a range
@@ -19,8 +28,21 @@ import { num, toDate } from "@/lib/admin-metrics";
  * in the type below and printed on screen; do not quietly relabel it "people" anywhere.
  */
 
-/** The one place the bot predicate is written. */
-const PV = sql`page_views pv WHERE pv.is_bot = false`;
+/** Whether a page_views row (aliased `pv`) is Orbit's own traffic. */
+const internalRow = () => sql`(pv.is_internal OR ${internalAccountSql(sql`pv.user_id`)})`;
+
+/** The one place the bot and internal predicates are written. Carries its own WHERE. */
+const pv = () => sql`page_views pv WHERE pv.is_bot = false AND NOT ${internalRow()}`;
+
+/** Bots only: for `accountTraffic`, which reports on one named account whoever it is. */
+const PV_ANY_ACCOUNT = sql`page_views pv WHERE pv.is_bot = false`;
+
+/**
+ * A (visitor, UTC day) pair. The visitor salt rotates at UTC midnight, so the day must be
+ * cut in UTC too — `date_trunc` alone uses the session's time zone, and on any zone but UTC
+ * one visitor's single hash was split across two "days" and counted twice.
+ */
+const VISITOR_DAY = sql`(pv.visitor_hash, date_trunc('day', pv.created_at AT TIME ZONE 'UTC'))`;
 
 /** Ranges the page offers. A closed set — never interpolated from a query string. */
 export type Range = "7d" | "30d" | "90d";
@@ -44,32 +66,74 @@ function since(range: Range, now: Date): string {
   return new Date(now.getTime() - rangeDays(range) * 86_400_000).toISOString();
 }
 
+/**
+ * The window a range actually has data for: from the later of the range start and the first
+ * recorded view, to now.
+ *
+ * Tracking began on the day ANALYTICS_SALT was set. Before this, a 90-day range twelve days
+ * after launch divided its visitor-days by 90 and the per-day figure read 7.5x low, while the
+ * chart drew seventy-eight empty days that looked exactly like seventy-eight quiet ones.
+ */
+export type MeasuredWindow = {
+  from: Date;
+  /** Days covered, fractional, never below one — a per-day rate over an hour is meaningless. */
+  days: number;
+  /** True when tracking began inside the range, so the range's own label overstates it. */
+  clamped: boolean;
+};
+
+function measuredWindow(range: Range, now: Date, firstView: Date | null): MeasuredWindow {
+  const rangeFrom = new Date(now.getTime() - rangeDays(range) * 86_400_000);
+  const clamped = firstView != null && firstView > rangeFrom;
+  const from = clamped ? firstView! : rangeFrom;
+  return {
+    from,
+    days: Math.max(1, (now.getTime() - from.getTime()) / 86_400_000),
+    clamped,
+  };
+}
+
+/** A one-page anonymous session with at least this much time on the page read it; not a bounce. */
+export const ENGAGED_SECONDS = 30;
+
 export type TrafficTotals = {
   views: number;
   /** Distinct (visitor, day) pairs. NOT a headcount — see this module's note. */
   visitorDays: number;
   /**
-   * Mean visitor-days per day, the closest honest answer to "how many people". NOT
+   * Visitor-days per MEASURED day, the closest honest answer to "how many people". NOT
    * rounded here — over a 90-day range a real trickle of visitors rounds to zero, and a
    * tile reading "~0/day" next to a non-zero total looks like a bug. The page formats it.
    */
   avgDailyVisitors: number;
+  window: MeasuredWindow;
   sessions: number;
-  /** Median seconds from a session's first pageview to its last. Null with no sessions. */
+  /**
+   * Median seconds from a session's first view to its last, plus the time on that last page.
+   * Sessions whose length is UNKNOWN — one view, and its exit beacon never landed — are left
+   * out rather than counted as zero. Null with no measurable sessions.
+   */
   medianSessionSeconds: number | null;
-  /** Sessions with exactly one pageview. */
+  /** Sessions the median was taken over. */
+  measuredSessions: number;
+  /**
+   * Anonymous sessions — the marketing visits — that saw one page and left inside
+   * `ENGAGED_SECONDS`. Signed-in sessions are product use, where one page (a pinned
+   * dashboard) is normal, so they are in neither this nor its denominator.
+   */
   bouncedSessions: number;
+  /** Anonymous sessions: the bounce denominator. */
+  anonymousSessions: number;
   signedInViews: number;
   /** Rows excluded as automated, so a crawler wave is visible rather than merely absent. */
   botViews: number;
+  /** Rows excluded as Orbit's own traffic, so the filter is visible rather than silent. */
+  internalViews: number;
 };
 
 /**
  * The headline tiles.
  *
- * Session duration is measured FIRST PAGEVIEW TO LAST, plus the final view's recorded
- * dwell when the exit beacon landed. A one-page session with no dwell is therefore zero,
- * not unknown — which is why the bounce count sits beside it rather than being folded in.
  * The median, not the mean: one person who left a tab open over a weekend would otherwise
  * set the average for the week.
  */
@@ -82,55 +146,69 @@ export async function trafficTotals(
   const result = await db.execute(sql`
     WITH v AS (
       SELECT pv.visitor_hash, pv.session_id, pv.user_id, pv.created_at, pv.dwell_ms
-      FROM ${PV} AND pv.created_at >= ${from}
+      FROM ${pv()} AND pv.created_at >= ${from}
     ),
     sessions AS (
       SELECT session_id,
              count(*)::int AS views,
-             -- First pageview to last, plus however long the visitor stayed on that last
-             -- page when the exit beacon landed. The ordered array_agg picks the newest
-             -- row's dwell without a correlated subquery per session.
-             EXTRACT(EPOCH FROM (max(created_at) - min(created_at)))
-               + COALESCE((array_agg(dwell_ms ORDER BY created_at DESC))[1], 0) / 1000.0
-               AS seconds
+             bool_and(user_id IS NULL) AS anonymous,
+             -- The newest row's dwell, without a correlated subquery per session.
+             (array_agg(dwell_ms ORDER BY created_at DESC))[1] AS last_dwell_ms,
+             EXTRACT(EPOCH FROM (max(created_at) - min(created_at))) AS span_seconds
       FROM v
       GROUP BY session_id
     ),
-    bots AS (
-      SELECT count(*)::int AS n FROM page_views
-      WHERE is_bot = true AND created_at >= ${from}
+    excluded AS (
+      SELECT count(*) FILTER (WHERE pv.is_bot)::int AS bots,
+             count(*) FILTER (WHERE NOT pv.is_bot AND ${internalRow()})::int AS internal
+      FROM page_views pv
+      WHERE pv.created_at >= ${from}
     )
     SELECT
       (SELECT count(*)::int FROM v) AS views,
-      (SELECT count(DISTINCT (visitor_hash, date_trunc('day', created_at)))::int FROM v) AS visitor_days,
+      (SELECT count(DISTINCT (visitor_hash, date_trunc('day', created_at AT TIME ZONE 'UTC')))::int FROM v) AS visitor_days,
       (SELECT count(*)::int FROM sessions) AS sessions,
-      (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds) FROM sessions) AS median_seconds,
-      (SELECT count(*)::int FROM sessions WHERE views = 1) AS bounced,
+      (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY span_seconds + COALESCE(last_dwell_ms, 0) / 1000.0)
+         FROM sessions WHERE views > 1 OR last_dwell_ms IS NOT NULL) AS median_seconds,
+      (SELECT count(*)::int FROM sessions WHERE views > 1 OR last_dwell_ms IS NOT NULL) AS measured_sessions,
+      (SELECT count(*)::int FROM sessions
+         WHERE anonymous AND views = 1 AND COALESCE(last_dwell_ms, 0) < ${ENGAGED_SECONDS * 1000}) AS bounced,
+      (SELECT count(*)::int FROM sessions WHERE anonymous) AS anonymous_sessions,
       (SELECT count(*)::int FROM v WHERE user_id IS NOT NULL) AS signed_in,
-      (SELECT n FROM bots) AS bot_views
+      (SELECT bots FROM excluded) AS bot_views,
+      (SELECT internal FROM excluded) AS internal_views,
+      (SELECT min(created_at) FROM page_views) AS first_view
   `);
   const row = rowsOf<{
     views: number;
     visitor_days: number;
     sessions: number;
     median_seconds: string | number | null;
+    measured_sessions: number;
     bounced: number;
+    anonymous_sessions: number;
     signed_in: number;
     bot_views: number;
+    internal_views: number;
+    first_view: string | null;
   }>(result)[0];
 
   const visitorDays = num(row?.visitor_days);
-  const days = rangeDays(range);
+  const window = measuredWindow(range, now, toDate(row?.first_view));
   return {
     views: num(row?.views),
     visitorDays,
-    avgDailyVisitors: days > 0 ? visitorDays / days : 0,
+    avgDailyVisitors: visitorDays / window.days,
+    window,
     sessions: num(row?.sessions),
     medianSessionSeconds:
       row?.median_seconds == null ? null : Math.round(num(row.median_seconds)),
+    measuredSessions: num(row?.measured_sessions),
     bouncedSessions: num(row?.bounced),
+    anonymousSessions: num(row?.anonymous_sessions),
     signedInViews: num(row?.signed_in),
     botViews: num(row?.bot_views),
+    internalViews: num(row?.internal_views),
   };
 }
 
@@ -138,6 +216,12 @@ export type TrafficPoint = {
   bucketStart: Date;
   views: number;
   visitorDays: number;
+  /**
+   * The bucket covers only part of its period: the first one (the window or tracking began
+   * inside it) and the last (it is still running). Drawn marked, so a short bar at either end
+   * does not read as a drop.
+   */
+  partial: boolean;
 };
 
 /**
@@ -150,6 +234,9 @@ export type TrafficPoint = {
  * One extra bucket reaches back past the window start, and the join counts only views at
  * or after it, so the bars sum to the headline exactly; the first bar is simply partial.
  *
+ * Buckets before the first recorded view are dropped rather than drawn as zeros: an empty
+ * day before tracking existed is not a quiet day, and the chart could not tell them apart.
+ *
  * `from` uses JS time and the spine uses SQL `now()`. Both are "now" in any real request.
  */
 export async function trafficTrend(range: Range = "30d"): Promise<TrafficPoint[]> {
@@ -157,25 +244,41 @@ export async function trafficTrend(range: Range = "30d"): Promise<TrafficPoint[]
   const grain = rangeGrain(range);
   const from = since(range, new Date());
   const result = await db.execute(sql`
-    WITH spine AS (${series(grain, rangeBuckets(range) + 1)})
+    WITH spine AS (${series(grain, rangeBuckets(range) + 1)}),
+    first AS (SELECT min(created_at) AS at FROM page_views)
     SELECT spine.bucket_start,
            count(pv.id)::int AS views,
-           count(DISTINCT pv.visitor_hash)::int AS visitors
+           count(DISTINCT pv.visitor_hash)::int AS visitors,
+           (SELECT at FROM first) AS first_view
     FROM spine
     LEFT JOIN page_views pv
       ON pv.is_bot = false
+     AND NOT ${internalRow()}
      AND pv.created_at >= ${from}
      AND date_trunc(${grain}, pv.created_at) = spine.bucket_start
+    WHERE spine.bucket_start >= date_trunc(${grain}, coalesce((SELECT at FROM first), now()))
     GROUP BY spine.bucket_start
     ORDER BY spine.bucket_start
   `);
-  return rowsOf<{ bucket_start: string; views: number; visitors: number }>(result).map(
-    (r) => ({
-      bucketStart: toDate(r.bucket_start) ?? new Date(0),
+  const rows = rowsOf<{
+    bucket_start: string;
+    views: number;
+    visitors: number;
+    first_view: string | null;
+  }>(result);
+  const firstView = toDate(rows[0]?.first_view);
+  const windowStart = new Date(from);
+  const startsInside = (bucket: Date) =>
+    bucket < windowStart || (firstView != null && bucket < firstView);
+  return rows.map((r, i) => {
+    const bucketStart = toDate(r.bucket_start) ?? new Date(0);
+    return {
+      bucketStart,
       views: num(r.views),
       visitorDays: num(r.visitors),
-    })
-  );
+      partial: i === rows.length - 1 || (i === 0 && startsInside(bucketStart)),
+    };
+  });
 }
 
 export type RouteRow = {
@@ -184,6 +287,8 @@ export type RouteRow = {
   visitorDays: number;
   /** Median seconds on the page, from the exit beacon. Null when none ever landed. */
   medianDwellSeconds: number | null;
+  /** Views the median was taken over — the ones whose exit beacon landed. */
+  dwellSamples: number;
 };
 
 export async function topRoutes(
@@ -195,9 +300,10 @@ export async function topRoutes(
   const result = await db.execute(sql`
     SELECT pv.route,
            count(*)::int AS views,
-           count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))::int AS visitor_days,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY pv.dwell_ms) AS median_dwell
-    FROM ${PV} AND pv.created_at >= ${since(range, now)}
+           count(DISTINCT ${VISITOR_DAY})::int AS visitor_days,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY pv.dwell_ms) AS median_dwell,
+           count(pv.dwell_ms)::int AS dwell_samples
+    FROM ${pv()} AND pv.created_at >= ${since(range, now)}
     GROUP BY pv.route
     ORDER BY views DESC
     LIMIT ${limit}
@@ -207,12 +313,14 @@ export async function topRoutes(
     views: number;
     visitor_days: number;
     median_dwell: string | number | null;
+    dwell_samples: number;
   }>(result).map((r) => ({
     route: r.route,
     views: num(r.views),
     visitorDays: num(r.visitor_days),
     medianDwellSeconds:
       r.median_dwell == null ? null : Math.round(num(r.median_dwell) / 1000),
+    dwellSamples: num(r.dwell_samples),
   }));
 }
 
@@ -246,7 +354,7 @@ export async function routeLoadTimes(
            percentile_cont(0.5) WITHIN GROUP (ORDER BY pv.load_ms) AS p50,
            percentile_cont(0.75) WITHIN GROUP (ORDER BY pv.load_ms) AS p75,
            percentile_cont(0.95) WITHIN GROUP (ORDER BY pv.load_ms) AS p95
-    FROM ${PV} AND pv.created_at >= ${since(range, now)}
+    FROM ${pv()} AND pv.created_at >= ${since(range, now)}
       AND pv.load_ms IS NOT NULL AND pv.nav_type IN ('hard', 'soft')
     GROUP BY pv.route, pv.nav_type
     ORDER BY samples DESC
@@ -284,6 +392,9 @@ export type GeoRow = {
  * region and city underneath, and running that as separate queries would put three
  * statements on the budget to answer one question.
  *
+ * Views with no country (off Vercel, or a header Vercel could not fill) roll up to a null
+ * country row, so the country bars add up to the total instead of silently dropping them.
+ *
  * Rows are never joined to `user_id` anywhere in the UI. At Orbit's traffic a city and a
  * timestamp together are close enough to an identifier that pairing them with an account
  * would turn an aggregate report into a location history.
@@ -300,8 +411,8 @@ export async function geoBreakdown(
            GROUPING(pv.region) AS g_region,
            GROUPING(pv.city) AS g_city,
            count(*)::int AS views,
-           count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))::int AS visitor_days
-    FROM ${PV} AND pv.created_at >= ${since(range, now)} AND pv.country IS NOT NULL
+           count(DISTINCT ${VISITOR_DAY})::int AS visitor_days
+    FROM ${pv()} AND pv.created_at >= ${since(range, now)}
     GROUP BY GROUPING SETS ((pv.country), (pv.country, pv.region), (pv.country, pv.region, pv.city))
     ORDER BY views DESC
   `);
@@ -343,33 +454,43 @@ export async function geoBreakdown(
 export type SourceRow = { label: string; views: number; visitorDays: number };
 
 /**
- * Where traffic came from: external referrer hosts and named UTM campaigns.
+ * Where traffic came from: external referrer hosts, UTM sources and UTM campaigns.
  *
- * Both halves in one statement, tagged by `kind`. "Direct" is left implicit — a row for it
+ * Sources and campaigns are separate lists. They were one, grouped on
+ * `COALESCE(utm_campaign, utm_source)`, which ranked a channel ("twitter") against a
+ * campaign ("launch") as if they were the same kind of thing. All three in one statement,
+ * tagged by `kind`. These are LANDINGS, not visits: tags and referrers are only on the view
+ * a visitor arrived on. "Direct" is left implicit — a row for it
  * would swamp the chart and say only "most people typed the URL", which the totals
  * already imply.
  */
 export async function sourceBreakdown(
   range: Range = "30d",
   now: Date = new Date()
-): Promise<{ referrers: SourceRow[]; campaigns: SourceRow[] }> {
+): Promise<{ referrers: SourceRow[]; sources: SourceRow[]; campaigns: SourceRow[] }> {
   const db = await getDb();
   const from = since(range, now);
   const result = await db.execute(sql`
     SELECT 'referrer' AS kind,
            pv.referrer_host AS label,
            count(*)::int AS views,
-           count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))::int AS visitor_days
-    FROM ${PV} AND pv.created_at >= ${from} AND pv.referrer_host IS NOT NULL
+           count(DISTINCT ${VISITOR_DAY})::int AS visitor_days
+    FROM ${pv()} AND pv.created_at >= ${from} AND pv.referrer_host IS NOT NULL
     GROUP BY pv.referrer_host
     UNION ALL
-    SELECT 'campaign' AS kind,
-           COALESCE(pv.utm_campaign, pv.utm_source) AS label,
+    SELECT 'source' AS kind,
+           pv.utm_source AS label,
            count(*)::int AS views,
-           count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))::int AS visitor_days
-    FROM ${PV} AND pv.created_at >= ${from}
-      AND (pv.utm_campaign IS NOT NULL OR pv.utm_source IS NOT NULL)
-    GROUP BY COALESCE(pv.utm_campaign, pv.utm_source)
+           count(DISTINCT ${VISITOR_DAY})::int AS visitor_days
+    FROM ${pv()} AND pv.created_at >= ${from} AND pv.utm_source IS NOT NULL
+    GROUP BY pv.utm_source
+    UNION ALL
+    SELECT 'campaign' AS kind,
+           pv.utm_campaign AS label,
+           count(*)::int AS views,
+           count(DISTINCT ${VISITOR_DAY})::int AS visitor_days
+    FROM ${pv()} AND pv.created_at >= ${from} AND pv.utm_campaign IS NOT NULL
+    GROUP BY pv.utm_campaign
     ORDER BY views DESC
   `);
   const rows = rowsOf<{
@@ -385,6 +506,7 @@ export async function sourceBreakdown(
   });
   return {
     referrers: rows.filter((r) => r.kind === "referrer").map(shape).slice(0, 15),
+    sources: rows.filter((r) => r.kind === "source").map(shape).slice(0, 15),
     campaigns: rows.filter((r) => r.kind === "campaign").map(shape).slice(0, 15),
   };
 }
@@ -399,8 +521,8 @@ export async function deviceBreakdown(
   const result = await db.execute(sql`
     SELECT pv.device,
            count(*)::int AS views,
-           count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))::int AS visitor_days
-    FROM ${PV} AND pv.created_at >= ${since(range, now)}
+           count(DISTINCT ${VISITOR_DAY})::int AS visitor_days
+    FROM ${pv()} AND pv.created_at >= ${since(range, now)}
     GROUP BY pv.device
     ORDER BY views DESC
   `);
@@ -422,8 +544,22 @@ export type FunnelStage = {
   count: number;
   /** What this stage is a fraction OF, for the "9 of 14" rendering. Null on the first. */
   of: number | null;
+  /**
+   * The population `of` counts, named — the column used to say "of the stage above" for
+   * every row, which was wrong for three of five. The page prints this instead.
+   */
+  ofLabel: string | null;
+  /**
+   * Which population the stage belongs to: traffic, the interest list, or accounts. They are
+   * measured over the same days but are different people, and the page scales each group's
+   * bars on its own rather than drawing all three as one narrowing funnel.
+   */
+  group: "traffic" | "interest" | "accounts";
   note?: string;
 };
+
+/** How long an account gets to activate or pay before it counts against the rate. */
+export const FUNNEL_MATURITY_DAYS = 7;
 
 /**
  * Visitor through to paid, as DAILY COHORTS rather than per-person attribution.
@@ -435,6 +571,13 @@ export type FunnelStage = {
  * in the same window. Those are different populations measured over the same days — which
  * is what a funnel at this scale can support, and nothing here should be read as "this
  * visitor became that customer".
+ *
+ * ACTIVATED AND PAID ARE MEASURED ON MATURE ACCOUNTS ONLY — created at least
+ * `FUNNEL_MATURITY_DAYS` ago. An account made yesterday has had no time to do either, and
+ * counting it scored every recent signup as a non-conversion, so the 7-day view reported
+ * rates near zero whatever actually happened.
+ *
+ * Orbit's own accounts (admins, the showcase account) are excluded from every stage.
  *
  * `buildFunnel` in `admin-metrics.ts` covers signup onward and stops before money. This
  * one deliberately spans the whole thing, because the question it exists to answer —
@@ -456,11 +599,11 @@ export async function acquisitionFunnel(
   // data starts. See the note on `measuredFrom`.
   const traffic = await db.execute(sql`
     SELECT
-      count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))::int AS visitors,
-      count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))
+      count(DISTINCT ${VISITOR_DAY})::int AS visitors,
+      count(DISTINCT ${VISITOR_DAY})
         FILTER (WHERE pv.route IN ('/pricing', '/interest'))::int AS intent,
       (SELECT min(created_at) FROM page_views) AS first_view
-    FROM ${PV} AND pv.created_at >= ${from} AND pv.user_id IS NULL
+    FROM ${pv()} AND pv.created_at >= ${from} AND pv.user_id IS NULL
   `);
   const t = rowsOf<{ visitors: number; intent: number; first_view: string | null }>(
     traffic
@@ -473,36 +616,59 @@ export async function acquisitionFunnel(
   const firstView = toDate(t?.first_view);
   const measuredFrom =
     firstView && firstView.toISOString() > from ? firstView.toISOString() : from;
+  const matureBefore = new Date(
+    now.getTime() - FUNNEL_MATURITY_DAYS * 86_400_000
+  ).toISOString();
 
-  // `isOnboarded` in admin-metrics.ts is the JS form of the same predicate: the column
+  // `isOnboarded` in admin-metrics.ts is the JS form of the activation predicate: the column
   // alone undercounts, because `needsOnboarding` treats any contact or import as onboarded
   // and backfills the timestamp later. The two must not drift.
   //
   // The paid test is `mrr_delta_cents > 0` OR a lifetime purchase. The MRR test alone —
   // which is what `paidSignupsByChannel` uses, correctly, for a per-month figure — scores
   // zero for every Lifetime customer, because a one-off payment moves no recurring revenue.
+  // An account whose cash was refunded in full is not paid, whatever it bought: refunds are
+  // summed from `amount_cents` against payments and lifetime purchases, the same cash columns
+  // `billing-events.ts` nets, never against an MRR delta.
   const accounts = await db.execute(sql`
+    WITH s AS (
+      SELECT s.user_id, s.created_at, s.onboarding_completed_at, s.lifetime_purchased_at,
+             s.created_at < ${matureBefore} AS mature
+      FROM user_settings s
+      WHERE s.created_at >= ${measuredFrom} AND NOT ${internalAccountSql(sql`s.user_id`)}
+    ),
+    flagged AS (
+      SELECT s.mature,
+             (s.onboarding_completed_at IS NOT NULL
+               OR EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE})
+               OR EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id)) AS activated,
+             ((s.lifetime_purchased_at IS NOT NULL OR coalesce(m.bought, false))
+               AND NOT (coalesce(m.cash_in, 0) > 0 AND coalesce(m.refunded, 0) >= m.cash_in)) AS paid
+      FROM s
+      LEFT JOIN LATERAL (
+        SELECT bool_or(b.mrr_delta_cents > 0 OR b.kind = 'lifetime') AS bought,
+               sum(b.amount_cents) FILTER (WHERE b.kind IN ('lifetime', 'payment')) AS cash_in,
+               sum(b.amount_cents) FILTER (WHERE b.kind = 'refund') AS refunded
+        FROM billing_events b
+        WHERE b.user_id = s.user_id
+      ) m ON true
+    )
     SELECT
-      count(*)::int AS signups,
-      count(*) FILTER (
-        WHERE s.onboarding_completed_at IS NOT NULL
-           OR EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE})
-           OR EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id)
-      )::int AS activated,
-      count(*) FILTER (
-        WHERE s.lifetime_purchased_at IS NOT NULL
-           OR EXISTS (
-             SELECT 1 FROM billing_events b
-             WHERE b.user_id = s.user_id
-               AND (b.mrr_delta_cents > 0 OR b.kind = 'lifetime')
-           )
-      )::int AS paid,
-      (SELECT count(*)::int FROM interest_list_signups WHERE created_at >= ${measuredFrom}) AS interest
-    FROM user_settings s
-    WHERE s.created_at >= ${measuredFrom}
+      (SELECT count(*)::int FROM flagged) AS signups,
+      (SELECT count(*)::int FROM flagged WHERE mature) AS mature,
+      (SELECT count(*)::int FROM flagged WHERE mature AND activated) AS activated,
+      (SELECT count(*)::int FROM flagged WHERE mature AND paid) AS paid,
+      (SELECT count(*)::int FROM interest_list_signups il
+        WHERE il.created_at >= ${measuredFrom}
+          AND NOT EXISTS (
+            SELECT 1 FROM user_settings u
+            WHERE lower(u.email) = lower(il.email)
+              AND ${internalAccountSql(sql`u.user_id`)}
+          )) AS interest
   `);
   const a = rowsOf<{
     signups: number;
+    mature: number;
     activated: number;
     paid: number;
     interest: number;
@@ -510,27 +676,59 @@ export async function acquisitionFunnel(
 
   const visitors = num(t?.visitors);
   const signups = num(a?.signups);
+  const mature = num(a?.mature);
+  const matureLabel = `accounts ${FUNNEL_MATURITY_DAYS}+ days old`;
 
   return [
     {
-      label: "Unique visitors",
+      label: "Visitor-days",
       count: visitors,
       of: null,
+      ofLabel: null,
+      group: "traffic",
       note:
         measuredFrom === from
           ? "anonymous visitor-days, not people"
           : `anonymous visitor-days, not people · every stage counted from ${measuredFrom.slice(0, 10)}, when tracking began`,
     },
-    { label: "Reached pricing or interest", count: num(t?.intent), of: visitors },
+    {
+      label: "Reached pricing or interest",
+      count: num(t?.intent),
+      of: visitors,
+      ofLabel: "visitor-days",
+      group: "traffic",
+    },
     {
       label: "Joined the interest list",
       count: num(a?.interest),
       of: visitors,
+      ofLabel: "visitor-days",
+      group: "interest",
       note: "not linkable to an account except by email",
     },
-    { label: "Created an account", count: signups, of: visitors },
-    { label: "Activated", count: num(a?.activated), of: signups },
-    { label: "Paid", count: num(a?.paid), of: signups },
+    {
+      label: "Created an account",
+      count: signups,
+      of: visitors,
+      ofLabel: "visitor-days",
+      group: "accounts",
+    },
+    {
+      label: "Activated",
+      count: num(a?.activated),
+      of: mature,
+      ofLabel: matureLabel,
+      group: "accounts",
+      note: `only accounts at least ${FUNNEL_MATURITY_DAYS} days old, so a new signup is not a miss`,
+    },
+    {
+      label: "Paid",
+      count: num(a?.paid),
+      of: mature,
+      ofLabel: matureLabel,
+      group: "accounts",
+      note: "net of full refunds",
+    },
   ];
 }
 
@@ -571,7 +769,13 @@ export type ImportsByProviderRow = {
   updated: number;
 };
 
-/** Import jobs that finished, grouped by provider. `updated_at` is the completion time. */
+/**
+ * Import jobs that finished, grouped by provider, dated by when they STARTED.
+ *
+ * Not `updated_at`: neither table has a completion timestamp, and `updated_at` moves on any
+ * later write, so an old import touched again jumped into the current window. `created_at`
+ * never moves, and an import runs in minutes, so the day it started is the day it happened.
+ */
 export async function importsByProvider(
   range: Range = "30d",
   now: Date = new Date()
@@ -583,7 +787,8 @@ export async function importsByProvider(
            coalesce(sum(contacts_created), 0)::int AS created,
            coalesce(sum(contacts_updated), 0)::int AS updated
     FROM imports
-    WHERE status = 'completed' AND updated_at >= ${since(range, now)}
+    WHERE status = 'completed' AND created_at >= ${since(range, now)}
+      AND NOT ${internalAccountSql(sql`user_id`)}
     GROUP BY import_type
     ORDER BY count DESC
   `);
@@ -604,7 +809,10 @@ export type CapturesBySourceRow = {
   updated: number;
 };
 
-/** Saved capture jobs, grouped by how the notes arrived. Counts come out of `result.saved`. */
+/**
+ * Saved capture jobs, grouped by how the notes arrived. Counts come out of `result.saved`.
+ * Dated by `created_at` for the reason `importsByProvider` gives.
+ */
 export async function capturesBySource(
   range: Range = "30d",
   now: Date = new Date()
@@ -616,7 +824,8 @@ export async function capturesBySource(
            coalesce(sum((result -> 'saved' ->> 'created')::int), 0)::int AS created,
            coalesce(sum((result -> 'saved' ->> 'updated')::int), 0)::int AS updated
     FROM capture_jobs
-    WHERE status = 'saved' AND updated_at >= ${since(range, now)}
+    WHERE status = 'saved' AND created_at >= ${since(range, now)}
+      AND NOT ${internalAccountSql(sql`user_id`)}
     GROUP BY source_kind
     ORDER BY count DESC
   `);
@@ -653,15 +862,20 @@ export async function outreachByChannel(
 
 export type EngagementDepth = {
   chatQueries: number;
-  /** `reason = 'Merged by hand'` only — the one string that's specifically the "Merge
-   *  into…" button, as opposed to a matcher-generated reason shared by both the
-   *  duplicate-review queue and the fully automatic sweep. */
+  /**
+   * Merges a PERSON confirmed: the "Merge into…" button and the duplicate-review queue.
+   * Told apart from the automatic sweep and import-time resolution by `confidence IS NULL`
+   * — every automatic caller of `mergeContacts` records the matcher's confidence, and
+   * `mergeDuplicatePair` (the only person-driven path) never does. Not by `reason`: the
+   * review queue passes the matcher's own reason string, which the sweep shares, so the old
+   * `reason = 'Merged by hand'` test left every queue merge out.
+   */
   manualMerges: number;
-  /** Signed-in views of `/graph` — the chart has no other record of being opened. */
+  /** ACCOUNTS that opened `/graph` — the chart has no other record of being opened. */
   graphViews: number;
-  /** Signed-in views of `/upgrade` — every checkout CTA lands here regardless of which
-   *  one was clicked, so this is upgrade INTENT, not a completed purchase (see `paid`
-   *  in `acquisitionFunnel` for that). */
+  /** ACCOUNTS that reached `/upgrade`. Every checkout CTA lands there regardless of which
+   *  one was clicked, so this is upgrade INTENT, not a completed purchase (see `paid` in
+   *  `acquisitionFunnel` for that). Accounts rather than views, so a reload is not intent. */
   upgradePageViews: number;
 };
 
@@ -674,12 +888,14 @@ export async function engagementDepth(
   const result = await db.execute(sql`
     SELECT
       (SELECT count(*)::int FROM chat_messages
-        WHERE role = 'user' AND created_at >= ${from}) AS chat_queries,
+        WHERE role = 'user' AND created_at >= ${from}
+          AND NOT ${internalAccountSql(sql`user_id`)}) AS chat_queries,
       (SELECT count(*)::int FROM contact_merges
-        WHERE reason = 'Merged by hand' AND merged_at >= ${from}) AS manual_merges,
-      (SELECT count(*)::int FROM ${PV}
+        WHERE confidence IS NULL AND merged_at >= ${from}
+          AND NOT ${internalAccountSql(sql`user_id`)}) AS manual_merges,
+      (SELECT count(DISTINCT pv.user_id)::int FROM ${pv()}
         AND pv.route = '/graph' AND pv.user_id IS NOT NULL AND pv.created_at >= ${from}) AS graph_views,
-      (SELECT count(*)::int FROM ${PV}
+      (SELECT count(DISTINCT pv.user_id)::int FROM ${pv()}
         AND pv.route = '/upgrade' AND pv.user_id IS NOT NULL AND pv.created_at >= ${from}) AS upgrade_page_views
   `);
   const row = rowsOf<{
@@ -740,7 +956,7 @@ export async function accountTraffic(
   const summary = await db.execute(sql`
     WITH v AS (
       SELECT pv.session_id, pv.created_at, pv.dwell_ms
-      FROM ${PV} AND pv.user_id = ${userId} AND pv.created_at >= ${from}
+      FROM ${PV_ANY_ACCOUNT} AND pv.user_id = ${userId} AND pv.created_at >= ${from}
     ),
     sessions AS (
       SELECT session_id,
@@ -753,7 +969,7 @@ export async function accountTraffic(
     SELECT
       (SELECT count(*)::int FROM v) AS views,
       (SELECT count(*)::int FROM sessions) AS sessions,
-      (SELECT count(DISTINCT date_trunc('day', created_at))::int FROM v) AS active_days,
+      (SELECT count(DISTINCT date_trunc('day', created_at AT TIME ZONE 'UTC'))::int FROM v) AS active_days,
       (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds) FROM sessions) AS median_seconds,
       (SELECT COALESCE(sum(dwell_ms), 0) FROM v) AS total_dwell_ms,
       (SELECT count(dwell_ms)::int FROM v) AS with_dwell,
@@ -774,9 +990,10 @@ export async function accountTraffic(
   const routeRows = await db.execute(sql`
     SELECT pv.route,
            count(*)::int AS views,
-           count(DISTINCT date_trunc('day', pv.created_at))::int AS visitor_days,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY pv.dwell_ms) AS median_dwell
-    FROM ${PV} AND pv.user_id = ${userId} AND pv.created_at >= ${from}
+           count(DISTINCT date_trunc('day', pv.created_at AT TIME ZONE 'UTC'))::int AS visitor_days,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY pv.dwell_ms) AS median_dwell,
+           count(pv.dwell_ms)::int AS dwell_samples
+    FROM ${PV_ANY_ACCOUNT} AND pv.user_id = ${userId} AND pv.created_at >= ${from}
     GROUP BY pv.route
     ORDER BY views DESC
     LIMIT 15
@@ -798,6 +1015,7 @@ export async function accountTraffic(
       views: number;
       visitor_days: number;
       median_dwell: string | number | null;
+      dwell_samples: number;
     }>(routeRows).map((r) => ({
       route: r.route,
       views: num(r.views),
@@ -806,6 +1024,7 @@ export async function accountTraffic(
       visitorDays: num(r.visitor_days),
       medianDwellSeconds:
         r.median_dwell == null ? null : Math.round(num(r.median_dwell) / 1000),
+      dwellSamples: num(r.dwell_samples),
     })),
   };
 }
@@ -817,6 +1036,8 @@ export type AccountTrafficRow = {
   sessions: number;
   activeDays: number;
   totalDwellSeconds: number;
+  /** Share of views with a recorded dwell, as on `AccountTraffic`. */
+  dwellCoverage: number;
   lastSeen: Date | null;
 };
 
@@ -834,19 +1055,20 @@ export async function topAccountsByTraffic(
   now: Date = new Date()
 ): Promise<AccountTrafficRow[]> {
   const db = await getDb();
-  // A CTE rather than joining onto `PV` directly: that fragment carries its own WHERE, so
+  // A CTE rather than joining onto `pv()` directly: that fragment carries its own WHERE, so
   // a LEFT JOIN written after it would land after the WHERE clause and not parse.
   const result = await db.execute(sql`
     WITH v AS (
       SELECT pv.user_id, pv.session_id, pv.created_at, pv.dwell_ms
-      FROM ${PV} AND pv.user_id IS NOT NULL AND pv.created_at >= ${since(range, now)}
+      FROM ${pv()} AND pv.user_id IS NOT NULL AND pv.created_at >= ${since(range, now)}
     )
     SELECT v.user_id,
            s.email,
            count(*)::int AS views,
            count(DISTINCT v.session_id)::int AS sessions,
-           count(DISTINCT date_trunc('day', v.created_at))::int AS active_days,
+           count(DISTINCT date_trunc('day', v.created_at AT TIME ZONE 'UTC'))::int AS active_days,
            COALESCE(sum(v.dwell_ms), 0) AS total_dwell_ms,
+           count(v.dwell_ms)::int AS with_dwell,
            max(v.created_at) AS last_seen
     FROM v
     LEFT JOIN user_settings s ON s.user_id = v.user_id
@@ -861,6 +1083,7 @@ export async function topAccountsByTraffic(
     sessions: number;
     active_days: number;
     total_dwell_ms: string | number | null;
+    with_dwell: number;
     last_seen: string | null;
   }>(result).map((r) => ({
     userId: r.user_id,
@@ -869,6 +1092,7 @@ export async function topAccountsByTraffic(
     sessions: num(r.sessions),
     activeDays: num(r.active_days),
     totalDwellSeconds: Math.round(num(r.total_dwell_ms) / 1000),
+    dwellCoverage: num(r.views) > 0 ? num(r.with_dwell) / num(r.views) : 0,
     lastSeen: toDate(r.last_seen),
   }));
 }

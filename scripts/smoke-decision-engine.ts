@@ -86,8 +86,10 @@ async function chain() {
   const started = Date.now();
   r = await decide(both(slowJev, afterSlow), { engines: ["jev", "llm"], budgetMs: 1000, jevMs: 200 }, request);
   check("a slow Jev is cut at its share of the budget", slowJev.calls[0]?.timeoutMs === 200);
+  // The 200 ms cut is a setTimeout, which can land a millisecond early by Date.now() (CI saw
+  // 801). decide() reports the clock honestly, so allow jitter — a fresh budget would be 1000.
   check("…and the chat model gets what REMAINS, not a fresh budget",
-    r.engine === "llm" && (afterSlow.calls[0]?.timeoutMs ?? 9999) <= 800, afterSlow.calls[0]);
+    r.engine === "llm" && (afterSlow.calls[0]?.timeoutMs ?? 9999) <= 810, afterSlow.calls[0]);
   check("…so the chain ends inside the budget", Date.now() - started < 1000, `${Date.now() - started}ms`);
 
   const neverStarted = scripted(yes(0.4));

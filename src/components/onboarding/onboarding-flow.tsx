@@ -97,6 +97,14 @@ export function OnboardingFlow({
   planFlags,
 }: OnboardingFlowProps) {
   const [pending, start] = useTransition();
+
+  // Record the first view (from #302). Once a step is stored the first-run gate stops sending
+  // this person back here (see `needsOnboarding`), so onboarding shows once even if they leave
+  // without choosing a path. On mount rather than in the page render, so a prefetch of
+  // /onboarding can't count as a view.
+  useEffect(() => {
+    if (!initialStepId) void saveOnboardingStep("welcome");
+  }, [initialStepId]);
   const [path, setPath] = useState<OnboardingPath | null>(() =>
     isOnboardingPath(initialPath) ? initialPath : null,
   );

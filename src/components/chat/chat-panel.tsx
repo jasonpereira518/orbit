@@ -75,6 +75,8 @@ import { OrbitMark } from "@/components/chat/orbit-mark";
 import { AnswerActions } from "@/components/chat/answer-actions";
 import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
+import { Skeleton } from "@/components/ui/skeleton";
+import { createThreadPrefetcher } from "@/lib/chat-thread-prefetch";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
@@ -118,7 +120,7 @@ type ChatResult = Extract<
   { ok: true }
 >;
 
-type ThreadSummary = {
+export type ThreadSummary = {
   id: string;
   title: string | null;
   createdAt: Date | string;
@@ -197,6 +199,8 @@ type ThreadMessage = UserMessage | AssistantMessage;
 
 /** One version of the last turn — see `getChatThread`'s `versions` and `@/lib/chat-versions`. */
 type VersionRow = { version: number; userMessageId: string; assistantMessageId: string };
+/** One shared empty list, so a non-last AssistantBubble's `versions` prop keeps its identity. */
+const EMPTY_VERSIONS: VersionRow[] = [];
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -237,8 +241,24 @@ function initialQuestionFromUrl() {
   return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
 }
 
-export function ChatPanel() {
-  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+type LoadedThread = Awaited<ReturnType<typeof getChatThread>>;
+
+export function ChatPanel({
+  initialThreads = null,
+}: {
+  /**
+   * The history list as the page read it on the server, so the rail paints with it rather
+   * than fetching after mount. `null` when the page could not read it: the panel then loads
+   * it itself, as it always did, and shows a placeholder list until that settles.
+   */
+  initialThreads?: ThreadSummary[] | null;
+} = {}) {
+  const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads ?? []);
+  /**
+   * Whether the history list has been read at least once. Until then an empty list means
+   * "not known yet", not "none" — the rail shows a placeholder, never "no saved chats".
+   */
+  const [threadsLoaded, setThreadsLoaded] = useState(initialThreads !== null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
   /** Every version of the current thread's LAST turn, oldest first. One entry is the normal case. */
@@ -249,6 +269,11 @@ export function ChatPanel() {
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [question, setQuestion] = useState(initialQuestionFromUrl);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
+  /** The list on screen, readable from async work (a thread revalidation checks it is untouched). */
+  const messagesRef = useRef(messages);
+  useLayoutEffect(() => {
+    messagesRef.current = messages;
+  });
   const [contextOpen, setContextOpen] = useState(false);
   const [contextSaving, setContextSaving] = useState(false);
   /**
@@ -515,9 +540,18 @@ export function ChatPanel() {
       setThreads(rows);
     } catch {
       // History is non-blocking on first paint
+    } finally {
+      // Settled either way: a failed read falls back to the empty list it always showed,
+      // rather than a placeholder that never resolves.
+      setThreadsLoaded(true);
     }
   }, []);
 
+  // Still read on mount even when the page handed a list down. That list can come out of the
+  // router's cache of this page (`staleTimes.dynamic`), so coming back within its window would
+  // otherwise show the history as it was on the last visit — missing the chat just started,
+  // or still listing one just deleted. Showing it first and replacing it is safe; trusting it
+  // is not.
   useEffect(() => {
     void refreshThreads();
   }, [refreshThreads]);
@@ -584,55 +618,148 @@ export function ChatPanel() {
     return created.id;
   }, [threadId]);
 
-  const loadThread = useCallback(async (id: string) => {
-    setLoadingThread(true);
-    try {
-      const { thread, messages: rows, sent, versions: loadedVersions, versionSlot: loadedSlot } = await getChatThread(id);
-      setThreadId(thread.id);
-      setThreadTitle(thread.title);
-      setContextNotes(thread.contextNote ?? "");
-      setVersions(loadedVersions);
-      setVersionSlot(loadedSlot);
+  /**
+   * History rows read ahead of the click — see `@/lib/chat-thread-prefetch` for the rules
+   * that keep a prefetched thread from ever being the wrong one or a stale one.
+   */
+  const [threadPrefetch] = useState(() => createThreadPrefetcher(getChatThread));
+  useEffect(() => () => threadPrefetch.dispose(), [threadPrefetch]);
+  // The thread being left may have gained messages, versions or a title while it was open,
+  // and the one arrived at is now the live copy — neither should be served from a prefetch.
+  const prevThreadIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    threadPrefetch.forget(prevThreadIdRef.current);
+    threadPrefetch.forget(threadId);
+    prevThreadIdRef.current = threadId;
+  }, [threadId, threadPrefetch]);
+  const threadIdRef = useRef(threadId);
+  useLayoutEffect(() => {
+    threadIdRef.current = threadId;
+  });
+  const prefetchHandlers = useMemo(
+    () => ({
+      // Never the open thread: it is the one thing on screen that can change under an entry.
+      hover: (id: string) => {
+        if (id !== threadIdRef.current) threadPrefetch.hover(id);
+      },
+      leave: () => threadPrefetch.leave(),
+      now: (id: string) => {
+        if (id !== threadIdRef.current) threadPrefetch.prefetch(id);
+      },
+    }),
+    [threadPrefetch]
+  );
+
+  /**
+   * Which `loadThread` call is the latest. A load that a newer one has overtaken applies
+   * nothing: with a prefetched thread arriving instantly beside an ordinary one still in
+   * flight, the order results land in no longer follows the order of the clicks.
+   */
+  const loadSeqRef = useRef(0);
+
+  /**
+   * Put a loaded thread on screen and return the message list it set. `opening` is the first
+   * paint of a thread (composer cleared, edit closed, pinned to the bottom); a revalidation
+   * swaps the rows in place and leaves all of that as the person has it.
+   */
+  const applyThread = useCallback((loaded: LoadedThread, { opening }: { opening: boolean }) => {
+    const { thread, messages: rows, sent, versions: loadedVersions, versionSlot: loadedSlot } = loaded;
+    setThreadId(thread.id);
+    setThreadTitle(thread.title);
+    setContextNotes(thread.contextNote ?? "");
+    setVersions(loadedVersions);
+    setVersionSlot(loadedSlot);
+    if (opening) {
       setEditingUserId(null);
       stickToBottomRef.current = true;
-      setMessages(
-        rows.map((row) =>
-          row.role === "user"
-            ? {
-                id: row.id,
-                role: "user" as const,
-                content: row.content,
-                mentionNames: row.attachedContacts?.length
-                  ? row.attachedContacts.map((c) => c.name)
-                  : undefined,
-              }
-            : {
-                id: row.id,
-                role: "assistant" as const,
-                answer: row.content,
-                recommendations: row.recommendations || [],
-                // Answers written before this column existed have none, and simply show no
-                // summary rather than a fabricated one.
-                steps: row.activity ?? undefined,
-                evidence: row.evidence ?? undefined,
-                proposedActions: row.proposedActions ?? undefined,
-                feedback: row.feedback ?? null,
-                // It came out of the database, so by definition there is a row to rate.
-                persisted: true,
-                sentTo: sent[row.id],
-              }
-        )
-      );
-      const lastUser = [...rows].reverse().find((row) => row.role === "user");
-      setLastUserQuery(lastUser?.content ?? "");
+    }
+    const next: ThreadMessage[] = rows.map((row) =>
+      row.role === "user"
+        ? {
+            id: row.id,
+            role: "user" as const,
+            content: row.content,
+            mentionNames: row.attachedContacts?.length
+              ? row.attachedContacts.map((c) => c.name)
+              : undefined,
+          }
+        : {
+            id: row.id,
+            role: "assistant" as const,
+            answer: row.content,
+            recommendations: row.recommendations || [],
+            // Answers written before this column existed have none, and simply show no
+            // summary rather than a fabricated one.
+            steps: row.activity ?? undefined,
+            evidence: row.evidence ?? undefined,
+            proposedActions: row.proposedActions ?? undefined,
+            feedback: row.feedback ?? null,
+            // It came out of the database, so by definition there is a row to rate.
+            persisted: true,
+            sentTo: sent[row.id],
+          }
+    );
+    messagesRef.current = next;
+    setMessages(next);
+    const lastUser = [...rows].reverse().find((row) => row.role === "user");
+    setLastUserQuery(lastUser?.content ?? "");
+    if (opening) {
       clearComposer();
       requestAnimationFrame(() => scrollToBottom(false));
-    } catch (err) {
-      toast.error(friendlyError(err, "Couldn’t load that chat — try again?"));
-    } finally {
-      setLoadingThread(false);
     }
+    return next;
   }, [clearComposer, scrollToBottom, setContextNotes]);
+
+  /**
+   * Open a saved thread. `prefetched: true` — only from a history click — lets it use a read
+   * that started on hover; every other caller (a reload after a version switch or a stream,
+   * the `?thread=` return) always reads fresh.
+   */
+  const loadThread = useCallback(async (id: string, opts?: { prefetched?: boolean }) => {
+    const seq = ++loadSeqRef.current;
+    const taken = opts?.prefetched ? threadPrefetch.take(id) : null;
+    const ready = taken && "value" in taken && taken.value.thread.id === id ? taken.value : null;
+    // A prefetch older than THREAD_PREFETCH_FRESH_MS shows at once, then is re-read below.
+    const revalidate = ready && taken && "fresh" in taken && !taken.fresh;
+    // An already-landed prefetch swaps straight in: no spinner frame in between.
+    if (!ready) setLoadingThread(true);
+    try {
+      let loaded: LoadedThread;
+      if (ready) {
+        loaded = ready;
+      } else if (taken && "promise" in taken && taken.promise) {
+        // Still in flight: wait for it, but a failure — or a result for any other thread —
+        // falls back to the ordinary read.
+        const early = await taken.promise.catch(() => null);
+        loaded = early && early.thread.id === id ? early : await getChatThread(id);
+      } else {
+        loaded = await getChatThread(id);
+      }
+      if (seq !== loadSeqRef.current) return;
+      const shown = applyThread(loaded, { opening: true });
+      if (revalidate) {
+        const pending = ("promise" in taken && taken.promise) || getChatThread(id);
+        void pending.then(
+          (current) => {
+            // Only onto the same untouched thread: another load, a send or an edit since the
+            // stale copy went up wins over this read, and an unchanged thread is left as is.
+            if (seq !== loadSeqRef.current || current.thread.id !== id) return;
+            if (messagesRef.current !== shown) return;
+            if (JSON.stringify(current) === JSON.stringify(loaded)) return;
+            applyThread(current, { opening: false });
+          },
+          () => {}
+        );
+      }
+    } catch (err) {
+      if (seq === loadSeqRef.current) {
+        toast.error(friendlyError(err, "Couldn’t load that chat — try again?"));
+      }
+    } finally {
+      // An overtaken load leaves the spinner to the one that overtook it.
+      if (seq === loadSeqRef.current) setLoadingThread(false);
+    }
+  }, [applyThread, threadPrefetch]);
 
   const saveContext = useCallback(async () => {
     setContextSaving(true);
@@ -711,6 +838,7 @@ export function ChatPanel() {
       start(async () => {
         try {
           await deleteChatThread(id);
+          threadPrefetch.forget(id);
           setThreads((prev) => prev.filter((t) => t.id !== id));
           if (threadId === id) {
             setThreadId(null);
@@ -725,7 +853,7 @@ export function ChatPanel() {
         }
       });
     },
-    [clearComposer, threadId, resetContext]
+    [clearComposer, threadId, resetContext, threadPrefetch]
   );
 
   const sendQuestion = useCallback(
@@ -1144,6 +1272,54 @@ export function ChatPanel() {
 
   const headerTitle = threadTitle?.trim() || "New chat";
 
+  // Bubble handlers that never change identity, so the `memo` on UserBubble/AssistantBubble
+  // holds while streaming (a setMessages per frame) and composer keystrokes re-render the
+  // panel. Each takes the message id and reads the latest committed render's state and
+  // functions through a ref — the same values the old per-render closures captured.
+  const bubbleLive = useRef({ messages, threadId, versionSlot, lastUserQuery, sendQuestion, sendVersioned, loadThread });
+  useLayoutEffect(() => {
+    bubbleLive.current = { messages, threadId, versionSlot, lastUserQuery, sendQuestion, sendVersioned, loadThread };
+  });
+  const bubbleHandlers = useMemo(
+    () => ({
+      startEdit: (id: string) => setEditingUserId(id),
+      cancelEdit: () => setEditingUserId(null),
+      submitEdit: (userMessageId: string, text: string) => {
+        const { messages: current, sendVersioned: send } = bubbleLive.current;
+        const i = current.findIndex((m) => m.id === userMessageId);
+        if (i < 0) return;
+        const nextAssistant = current[i + 1];
+        if (nextAssistant?.role === "assistant") send(nextAssistant.id, text);
+      },
+      regenerate: (assistantMessageId: string) => bubbleLive.current.sendVersioned(assistantMessageId),
+      askAgain: () => bubbleLive.current.sendQuestion(bubbleLive.current.lastUserQuery),
+      followUp: (q: string) => bubbleLive.current.sendQuestion(q),
+      actionSettled: (messageId: string, actionId: string, next: StoredProposedAction) =>
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId && m.role === "assistant"
+              ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
+              : m
+          )
+        ),
+      switchVersion: async (version: number) => {
+        const { threadId: tid, versionSlot: slot, loadThread: load } = bubbleLive.current;
+        if (!tid || !slot) return;
+        try {
+          await switchChatVersion(tid, slot, version);
+          await load(tid);
+        } catch (err) {
+          toast.error(friendlyError(err, "Couldn’t switch versions — try again?"));
+        }
+      },
+    }),
+    []
+  );
+  const selectThread = useCallback(
+    (id: string) => void loadThread(id, { prefetched: true }),
+    [loadThread]
+  );
+
   return (
     <ChatThreadProvider value={threadId}>
       {/*
@@ -1168,9 +1344,13 @@ export function ChatPanel() {
           open={railOpen}
           onToggle={toggleRail}
           threads={threads}
+          loading={!threadsLoaded}
           activeId={threadId}
           busy={busy}
-          onSelect={(id) => void loadThread(id)}
+          onSelect={selectThread}
+          onIntent={prefetchHandlers.hover}
+          onIntentEnd={prefetchHandlers.leave}
+          onIntentNow={prefetchHandlers.now}
           onNew={startNewChat}
           onDelete={removeThread}
         />
@@ -1194,7 +1374,16 @@ export function ChatPanel() {
             <DropdownMenuContent align="start" className="w-72">
               <DropdownMenuLabel>Recent chats</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {threads.length === 0 ? (
+              {!threadsLoaded && threads.length === 0 ? (
+                // Not read yet — a placeholder list, never "no saved chats" for someone who has some.
+                <div aria-busy="true" aria-label="Loading recent chats">
+                  {["w-3/4", "w-1/2", "w-2/3"].map((width) => (
+                    <div key={width} className="flex h-9 items-center px-2">
+                      <Skeleton className={cn("h-3.5", width)} />
+                    </div>
+                  ))}
+                </div>
+              ) : threads.length === 0 ? (
                 <div className="px-2 py-3 text-xs text-muted-foreground">
                   No saved chats yet.
                 </div>
@@ -1203,8 +1392,11 @@ export function ChatPanel() {
                   <DropdownMenuItem
                     key={thread.id}
                     className="group items-start gap-2 py-2"
+                    onPointerEnter={() => prefetchHandlers.hover(thread.id)}
+                    onPointerLeave={prefetchHandlers.leave}
+                    onFocus={() => prefetchHandlers.now(thread.id)}
                     onClick={() => {
-                      void loadThread(thread.id);
+                      void loadThread(thread.id, { prefetched: true });
                       setHistoryOpen(false);
                     }}
                   >
@@ -1321,45 +1513,20 @@ export function ChatPanel() {
                         msg={msg}
                         editable={isLastUser && !busy}
                         editing={editingUserId === msg.id}
-                        onStartEdit={() => setEditingUserId(msg.id)}
-                        onCancelEdit={() => setEditingUserId(null)}
-                        onSubmitEdit={(text) => {
-                          const nextAssistant = messages[i + 1];
-                          if (nextAssistant?.role === "assistant") sendVersioned(nextAssistant.id, text);
-                        }}
+                        onStartEdit={bubbleHandlers.startEdit}
+                        onCancelEdit={bubbleHandlers.cancelEdit}
+                        onSubmitEdit={bubbleHandlers.submitEdit}
                       />
                     ) : (
                       <AssistantBubble
                         key={msg.id}
                         msg={msg}
-                        onRetry={
-                          isLastAssistant ? () => sendVersioned(msg.id) : () => sendQuestion(lastUserQuery)
-                        }
+                        onRetry={isLastAssistant ? bubbleHandlers.regenerate : bubbleHandlers.askAgain}
                         retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
-                        onFollowUp={(q) => sendQuestion(q)}
-                        onActionSettled={(actionId, next) =>
-                          setMessages((prev) =>
-                            prev.map((m) =>
-                              m.id === msg.id && m.role === "assistant"
-                                ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
-                                : m
-                            )
-                          )
-                        }
-                        versions={isLastAssistant ? versions : []}
-                        onSwitchVersion={
-                          isLastAssistant
-                            ? async (version) => {
-                                if (!threadId || !versionSlot) return;
-                                try {
-                                  await switchChatVersion(threadId, versionSlot, version);
-                                  await loadThread(threadId);
-                                } catch (err) {
-                                  toast.error(friendlyError(err, "Couldn’t switch versions — try again?"));
-                                }
-                              }
-                            : undefined
-                        }
+                        onFollowUp={bubbleHandlers.followUp}
+                        onActionSettled={bubbleHandlers.actionSettled}
+                        versions={isLastAssistant ? versions : EMPTY_VERSIONS}
+                        onSwitchVersion={isLastAssistant ? bubbleHandlers.switchVersion : undefined}
                       />
                     );
                   })}
@@ -1651,9 +1818,10 @@ const UserBubble = memo(function UserBubble({
   /** Only the very last user turn can be edited — versions exist for the last turn only. */
   editable?: boolean;
   editing?: boolean;
-  onStartEdit?: () => void;
+  /** Called with this bubble's message id — a stable handler shared by every bubble. */
+  onStartEdit?: (id: string) => void;
   onCancelEdit?: () => void;
-  onSubmitEdit?: (text: string) => void;
+  onSubmitEdit?: (id: string, text: string) => void;
 }) {
   const [text, setText] = useState(msg.content);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
@@ -1670,7 +1838,7 @@ const UserBubble = memo(function UserBubble({
   function submit() {
     const trimmed = text.trim();
     if (!trimmed) return;
-    onSubmitEdit?.(trimmed);
+    onSubmitEdit?.(msg.id, trimmed);
   }
 
   if (editing) {
@@ -1723,7 +1891,7 @@ const UserBubble = memo(function UserBubble({
       {editable && (
         <button
           type="button"
-          onClick={onStartEdit}
+          onClick={() => onStartEdit?.(msg.id)}
           aria-label="Edit this question"
           title="Edit"
           className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
@@ -1748,10 +1916,11 @@ const AssistantBubble = memo(function AssistantBubble({
   onSwitchVersion,
 }: {
   msg: AssistantMessage;
-  onRetry?: () => void;
+  /** Called with this bubble's message id — the handlers are stable and shared by every bubble. */
+  onRetry?: (id: string) => void;
   retryLabel?: string;
   onFollowUp?: (question: string) => void;
-  onActionSettled?: (actionId: string, next: StoredProposedAction) => void;
+  onActionSettled?: (messageId: string, actionId: string, next: StoredProposedAction) => void;
   /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
   versions?: VersionRow[];
   onSwitchVersion?: (version: number) => void;
@@ -1850,7 +2019,7 @@ const AssistantBubble = memo(function AssistantBubble({
                 messageId={msg.id}
                 action={action}
                 contactName={"contactId" in action.args && action.args.contactId ? nameById.get(action.args.contactId) : null}
-                onSettled={(next) => onActionSettled?.(action.id, next)}
+                onSettled={(next) => onActionSettled?.(msg.id, action.id, next)}
               />
             ))}
           </div>
@@ -1862,7 +2031,7 @@ const AssistantBubble = memo(function AssistantBubble({
               answer={msg.answer}
               persisted={Boolean(msg.persisted)}
               initialFeedback={msg.feedback ?? null}
-              onRetry={onRetry}
+              onRetry={onRetry && (() => onRetry(msg.id))}
               retryLabel={retryLabel}
             />
             {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}

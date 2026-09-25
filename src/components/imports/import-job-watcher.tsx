@@ -1,14 +1,18 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
-import {
-  clearImportJob,
-  useImportJob,
-} from "@/lib/import-job-runner";
+import { clearImportJob, useImportJob } from "@/lib/import-job-runner";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { friendlyError } from "@/lib/errors";
+import { failureText } from "@/lib/errors";
+
+/**
+ * Module-level, not a ref: the shell (or this component) can remount while a finished job's
+ * snapshot is still in the store, since the clear timer below is cancelled on cleanup. A
+ * per-mount ref forgot the job and announced it again, once per remount.
+ */
+const handledJobIds = new Set<string>();
 
 /**
  * Lives in the app shell so background imports keep notifying after you leave
@@ -17,24 +21,34 @@ import { friendlyError } from "@/lib/errors";
 export function ImportJobWatcher() {
   const router = useRouter();
   const job = useImportJob();
-  const handledId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!job) return;
     if (job.status === "running") return;
-    if (handledId.current === job.id) return;
-    handledId.current = job.id;
+    // Cleared by the timer below either way: if we already announced this job (a remount
+    // saw its lingering snapshot), just drop it without another toast.
+    if (handledJobIds.has(job.id)) {
+      clearImportJob();
+      return;
+    }
+    handledJobIds.add(job.id);
+    // Stable ids make sonner replace, not stack, if anything still slips through.
+    const toastId = `import-${job.id}`;
 
     if (job.status === "completed") {
-      if (job.resultMessage) toast.success(job.resultMessage);
-      if (job.enrichmentMessage) toast.message(job.enrichmentMessage);
+      if (job.resultMessage) toast.success(job.resultMessage, { id: toastId });
+      if (job.enrichmentMessage) toast.message(job.enrichmentMessage, { id: `${toastId}-enrichment` });
       router.refresh();
     } else if (job.status === "cancelled") {
-      if (job.resultMessage) toast.message(job.resultMessage);
+      if (job.resultMessage) toast.message(job.resultMessage, { id: toastId });
       router.refresh();
     } else if (job.status === "failed") {
-      // `job.error` is whatever the background runner stored, which can be raw.
-      toast.error(friendlyError(job.error, TOAST_COPY.importFailed));
+      // `job.error` is whatever the background runner stored, which can be raw — unless
+      // `job.userFacingError` says it was already written to be read (see `failureText`).
+      toast.error(
+        failureText(job.error, job.userFacingError, TOAST_COPY.importFailed),
+        { id: toastId },
+      );
     }
 
     // Keep snapshot briefly so the Imports page can clear local UI, then drop it.

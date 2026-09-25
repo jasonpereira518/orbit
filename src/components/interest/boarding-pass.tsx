@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { motion } from "motion/react";
 import { Moons } from "@/components/interest/moons";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import { ShareRow } from "@/components/interest/share-row";
-import { formatTicketNumber, moonsLine, passengerLine, type InterestTicket } from "@/lib/interest-list";
+import { frontWaveLine, positionLine, type InterestTicket } from "@/lib/interest-list";
 import { DUR, EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { planetLabel } from "@/lib/welcome-planets";
@@ -25,9 +24,10 @@ function joinedLabel(iso: string) {
 }
 
 /**
- * The ticket. A stub (planet, moons, number) and a details pane (passenger line, moons
- * line, share tools) with a perforated seam between them; the seam runs vertically from
- * `sm` up and horizontally on phones, where the stub stacks above the details.
+ * The early-access pass. A stub (planet, the front-wave moons, place in line) and a
+ * details pane (place line, front-wave line, share tools) with a perforated seam between
+ * them; the seam runs vertically from `sm` up and horizontally on phones, where the stub
+ * stacks above the details.
  *
  * `entrance: "flip"` is the in-place reveal after a join: everything assembles in order
  * (seam draws, number rolls, planet springs in, moons drop, lines rise). `"direct"` is a
@@ -42,14 +42,13 @@ function joinedLabel(iso: string) {
  */
 export function BoardingPass({
   ticket,
-  appUrl,
-  signUpHref,
+  pageUrl,
   entrance,
   headingRef,
 }: {
   ticket: InterestTicket;
-  appUrl: string;
-  signUpHref: string;
+  /** The waitlist page on its own domain; the share link is built on it. */
+  pageUrl: string;
   entrance: "flip" | "direct";
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
@@ -80,7 +79,7 @@ export function BoardingPass({
             // Keyed on mount: motion reads `initial` once, when the element first renders.
             // Remounting after hydration is what makes the drop actually play.
             key={mounted ? "play" : "ssr"}
-            count={ticket.moons}
+            lit={ticket.referrals}
             play={mounted && !reduced}
             size={RING_SIZE}
           />
@@ -88,10 +87,12 @@ export function BoardingPass({
         </motion.span>
         <p className="mt-3 font-[family-name:var(--font-display)] text-[28px] leading-none tracking-tight text-[#e8f3f1]">
           <span aria-hidden="true">#</span>
-          <span className="sr-only">Number </span>
-          <RollingCount value={ticket.number} delay={full ? 0.35 : 0.1} />
+          <span className="sr-only">Place in line: </span>
+          <RollingCount value={ticket.position} delay={full ? 0.35 : 0.1} />
         </p>
-        <p className="mt-1.5 text-xs uppercase tracking-[0.14em] text-[#9aada8]">{planetLabel(ticket.planet)}</p>
+        <p className="mt-1.5 text-xs uppercase tracking-[0.14em] text-[#9aada8]">
+          {ticket.frontWave ? "Front wave" : planetLabel(ticket.planet)}
+        </p>
       </div>
 
       {/* Seam: a plain dashed line, drawn with a scale transform (not `pathLength`, which
@@ -127,7 +128,7 @@ export function BoardingPass({
         </motion.div>
 
         <motion.p {...rise(0.95)} className="text-xs uppercase tracking-[0.16em] text-[#9aada8]">
-          Orbit · Interest list
+          Early access pass
         </motion.p>
         <motion.h3
           {...rise(1.0)}
@@ -135,25 +136,19 @@ export function BoardingPass({
           tabIndex={-1}
           className="mt-2 font-[family-name:var(--font-display)] text-[22px] leading-[1.15] tracking-tight text-[#e8f3f1] outline-none"
         >
-          Passenger {formatTicketNumber(ticket.number)}, bound for{" "}
-          <em className="italic text-landing-accent">{planetLabel(ticket.planet)}</em>.
-          <span className="sr-only">{passengerLine(ticket)}</span>
+          {positionLine(ticket)}
         </motion.h3>
         <motion.p {...rise(1.05)} className="mt-2 text-sm text-[#9aada8]">
-          Joined {joinedLabel(ticket.joinedAt)} · {moonsLine(ticket.moons)}
+          Joined {joinedLabel(ticket.joinedAt)} ·{" "}
+          <span className="text-[#f2c14e]">
+            {frontWaveLine(ticket.referrals)}
+          </span>
         </motion.p>
 
-        <ShareRow ticket={ticket} appUrl={appUrl} play={full} />
+        <ShareRow ticket={ticket} pageUrl={pageUrl} play={full} />
 
         <motion.p {...rise(1.5)} className="mt-4 text-xs leading-[1.6] text-[#6d807c]">
-          Save this link — it&apos;s your page. Not one for waiting?{" "}
-          <Link
-            href={signUpHref}
-            className="text-landing-accent underline decoration-[#f2c14e]/35 underline-offset-4 transition-colors hover:decoration-[#f2c14e]/90"
-          >
-            Orbit is live — start free
-          </Link>
-          .
+          This is your pass. Your invite arrives by email when your wave opens.
         </motion.p>
       </div>
     </div>

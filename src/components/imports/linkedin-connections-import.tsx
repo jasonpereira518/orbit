@@ -7,19 +7,17 @@ import { toast } from "@/lib/toast";
 import { previewLinkedInCsv } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
+import { connectionToReviewPerson } from "@/lib/imports/review-people";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
 import {
   BusyHint,
   ImportFilePicker,
   ImportWarningBanner,
-  readCsvOrZipConnections,
+  readLinkedInArchive,
 } from "@/components/imports/import-utils";
 
 const LARGE_FILE_WARNING_BYTES = 15 * 1024 * 1024;
-import {
-  startImportJob,
-  useImportJob,
-} from "@/lib/import-job-runner";
+import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { UserFacingError, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -102,12 +100,15 @@ export function LinkedInConnectionsImport() {
         onFile={(file) => {
           if (file.size > LARGE_FILE_WARNING_BYTES) {
             toast.message(
-              `This is a large file (${(file.size / (1024 * 1024)).toFixed(1)}MB) — the import may take a while`
+              `This is a large file (${(file.size / (1024 * 1024)).toFixed(1)}MB) — the import may take a while`,
             );
           }
           start(async () => {
             try {
-              const { text, fileName: name } = await readCsvOrZipConnections(file);
+              const { text, fileName: name } = await readLinkedInArchive(
+                file,
+                "connections",
+              );
               setFileName(name);
               setCsvText(text);
               const res = await previewLinkedInCsv(text);
@@ -121,9 +122,7 @@ export function LinkedInConnectionsImport() {
               setPeople([]);
               setSelected(new Set());
               setWarnings([]);
-              toast.error(
-                friendlyError(err, TOAST_COPY.previewFailed),
-              );
+              toast.error(friendlyError(err, TOAST_COPY.previewFailed));
             }
           });
         }}
@@ -144,9 +143,7 @@ export function LinkedInConnectionsImport() {
                 toast.success(`Loaded ${res.totalRows} people`);
               } catch (err) {
                 setWarnings([]);
-                toast.error(
-                  friendlyError(err, TOAST_COPY.previewFailed),
-                );
+                toast.error(friendlyError(err, TOAST_COPY.previewFailed));
               }
             })
           }
@@ -190,13 +187,7 @@ export function LinkedInConnectionsImport() {
 
       {people.length > 0 && (
         <ImportPeopleReview
-          people={people.map((p) => ({
-            id: p.id,
-            name: p.fullName,
-            subtitle: [p.position, p.company].filter(Boolean).join(" · "),
-            isRepeat: p.isRepeat,
-            repeatReason: p.duplicate?.reason,
-          }))}
+          people={people.map(connectionToReviewPerson)}
           selectedIds={selected}
           onSelectedIdsChange={setSelected}
           onRemove={(id) => {

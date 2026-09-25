@@ -216,6 +216,15 @@ run(async () => {
   const stranger = await loadCoverageSources("nobody-at-all");
   check("an unconnected user has no coverage", !stranger.mailConnected && !stranger.calendarConnected);
 
+  // --- Apple rows are claimed through the same provider-agnostic claim SQL -----------------
+  await db.execute(sql`DELETE FROM apple_connections WHERE user_id = 'claim-apple-user'`);
+  await db.execute(sql`
+    INSERT INTO apple_connections (user_id, email_address, app_password_encrypted, status, next_sync_at)
+    VALUES ('claim-apple-user', 'claim-apple-user@icloud.example', 'enc', 'active', ${past})
+  `);
+  const claimed = await claimDueConnections("apple", 10);
+  check("apple rows are claimable like the other two", claimed.some((c) => c.provider === "apple"));
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

@@ -18,7 +18,7 @@ import { openEngines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import { and, desc, eq, gte } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, noteBatches } from "@/db/schema";
+import { contacts, noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { runCaptureParse } from "@/lib/capture-parse";
 import {
   claimCaptureJob,
@@ -37,7 +37,7 @@ import {
   saveTimeMergeTarget,
   setAsidePeople,
 } from "@/lib/capture/review-reducer";
-import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types";
+import type { CaptureJobResult, CaptureParseResult, CaptureDecisions, CaptureSavedSummary } from "@/lib/capture/types";
 
 import { resolveAvatarNow } from "@/lib/avatar-backfill";
 import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
@@ -240,13 +240,28 @@ function summarizeExistingBatch(batch: NonNullable<Awaited<ReturnType<typeof get
   };
 }
 
+/** What `buildSaveInput` needs from a job row, generalized to any caller holding a parse result. */
+export type ParseSaveContext = {
+  userId: string;
+  result: CaptureParseResult;
+  decisions: CaptureDecisions | null;
+  sourceText: string;
+  sourceHash: string | null;
+  entryPoint: SaveNoteBatchInput["entryPoint"];
+  seedContactId: string | null;
+  inputSources: CaptureSourceKind[];
+  meetingSessionId: string | null;
+};
+
 /**
- * Decisions → what `saveNoteBatch` writes. Follow-up days and whether to remind come from
- * closeness and relevance here, never from the card.
+ * Decisions → what `saveNoteBatch` writes, for any caller holding a parse result.
+ * `buildSaveInput` is the capture-job wrapper; the Drive import calls this directly.
+ * Follow-up days and whether to remind come from closeness and relevance here, never from
+ * the card.
  */
-export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchInput> {
-  const result = row.result!;
-  const decisions = row.decisions ?? {};
+export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNoteBatchInput> {
+  const result = ctx.result;
+  const decisions = ctx.decisions ?? {};
   const accepted = acceptedPeople(result.items, decisions);
 
   // (b) Re-run duplicate detection for anyone still marked "create": a previous attempt
@@ -256,7 +271,7 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
   if (needsCheck.length) {
     const db = await getDb();
     const existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, row.userId),
+      where: eq(contacts.userId, ctx.userId),
       columns: { id: true, fullName: true, email: true, linkedinUrl: true, xHandle: true, company: true, title: true },
     });
     index = buildDuplicateIndex(existing);
@@ -310,7 +325,7 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
     );
   if (nameFolds.length) {
     const vetoes = await nameMergeVetoes(
-      await openEngines(row.userId),
+      await openEngines(ctx.userId),
       nameFolds.map(({ p }) =>
         [
           personCard({ fullName: p.parsed.name, company: p.parsed.company, title: p.parsed.role, email: p.parsed.email }),
@@ -391,8 +406,8 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
     });
 
   let meeting: SaveNoteBatchInput["meeting"] = null;
-  if (row.meetingSessionId) {
-    const session = await getMeetingSession(row.userId, row.meetingSessionId);
+  if (ctx.meetingSessionId) {
+    const session = await getMeetingSession(ctx.userId, ctx.meetingSessionId);
     if (!session) throw new Error("That meeting no longer exists");
     const summary = toNoteBatchMeeting(session);
     const extras = session.digest ? meetingExtrasFromDigest(session.digest) : [];
@@ -406,12 +421,12 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
   }
 
   return {
-    sourceText: row.sourceText!,
-    sourceHash: row.sourceHash ?? hashSourceNote(row.sourceText!),
+    sourceText: ctx.sourceText,
+    sourceHash: ctx.sourceHash ?? hashSourceNote(ctx.sourceText),
     anchorIso: result.anchorIso,
     anchorBasis: result.anchorBasis,
-    entryPoint: row.entryPoint,
-    seedContactId: row.seedContactId,
+    entryPoint: ctx.entryPoint,
+    seedContactId: ctx.seedContactId,
     participants,
     commitments,
     mentions: result.mentions.map((m) => ({
@@ -424,9 +439,30 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
     })),
     skipped: result.suggestionsSkipped,
     // For the history's icons: what the notes arrived as. Typed text carries no label.
-    inputSources: captureSourceKinds([...row.sources, ...(row.photoIds.length ? ["photos"] : []), ...(row.sourceKind === "voice" ? ["voice"] : [])]),
+    inputSources: ctx.inputSources,
     meeting,
   };
+}
+
+export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchInput> {
+  return saveInputFromParse({
+    userId: row.userId,
+    // `CaptureJobResult` is `CaptureParseResult` minus the corpus (stored separately on the
+    // row as `sourceText`/`sourceHash`); put the corpus back so the shared shape is whole.
+    result: { ...row.result!, sourceText: row.sourceText!, sourceHash: row.sourceHash ?? hashSourceNote(row.sourceText!) },
+    decisions: row.decisions ?? null,
+    sourceText: row.sourceText!,
+    sourceHash: row.sourceHash ?? null,
+    entryPoint: row.entryPoint,
+    seedContactId: row.seedContactId,
+    // For the history's icons: what the notes arrived as. Typed text carries no label.
+    inputSources: captureSourceKinds([
+      ...row.sources,
+      ...(row.photoIds.length ? ["photos"] : []),
+      ...(row.sourceKind === "voice" ? ["voice"] : []),
+    ]),
+    meetingSessionId: row.meetingSessionId,
+  });
 }
 
 function savedSummary(row: CaptureJobRow, out: SaveNoteBatchOutput): CaptureSavedSummary {

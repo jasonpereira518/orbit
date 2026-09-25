@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
 import { ContactRelatedReachOut } from "@/components/contacts/contact-related-reach-out";
@@ -55,7 +55,7 @@ export function ContactRelatedPeople({
                     detail: person.reasonLabel,
                   }}
                 >
-                  <Link
+                  <IntentLink
                     href={`/contacts/${person.id}`}
                     className="flex min-w-0 flex-1 items-center gap-3 transition-opacity hover:opacity-80"
                   >
@@ -80,7 +80,7 @@ export function ContactRelatedPeople({
                         {person.reasonLabel}
                       </p>
                     </div>
-                  </Link>
+                  </IntentLink>
                 </ContactAvatarPreview>
                 <ContactRelatedReachOut
                   contactId={person.id}

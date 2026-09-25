@@ -21,6 +21,7 @@ import {
 import { listPendingAgentSends } from "@/lib/agent-sends";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 async function AgentDraftsSection() {
   const drafts = await listPendingAgentSends(await requireUserId());
@@ -52,6 +53,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      <RenderStamp />
       <DashboardHeader />
 
       {/* Streams in on its own and renders nothing unless a LinkedIn export is outstanding. */}
@@ -124,9 +126,10 @@ export default async function DashboardPage() {
           share this row, which put THREE children in a two-column grid and left a
           visible empty cell beside the third; hiding Reminders left the same hole
           on the other side. It owns the row below instead, where its own column
-          count can adapt. */}
+          count can adapt. Stretched, like every other two-card row here: the two cards
+          end on one line, and the shorter one's footer drops to meet it. */}
       {show("dashboard.reminders") && (
-        <div className="grid items-start gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2">
           <Suspense
             fallback={
               <>

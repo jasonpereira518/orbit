@@ -9,6 +9,7 @@ import {
 } from "@/components/graph/constellation-loading";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 /**
  * The heading paints from the layout immediately; the full-network scan streams in behind
@@ -18,6 +19,7 @@ import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 export default function GraphPage() {
   return (
     <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
+      <RenderStamp />
       {/*
         The scope toggle is here, in the header, rather than over the canvas: the canvas is
         where the stars are, so anything sitting on it is either covering the network or

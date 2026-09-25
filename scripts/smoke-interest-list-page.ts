@@ -1,6 +1,6 @@
 /**
- * Renders /interest's page function in its three states and checks what crosses the
- * client boundary.
+ * Renders the waitlist page function in its three states and checks what crosses the
+ * client boundary — and that the page names no product and leads nowhere.
  *
  * WHY THIS EXISTS. The page is dynamic and decides form / invited / ticket from the URL on
  * the server. The client hero only ever sees its `initial` prop, so that prop IS the
@@ -67,6 +67,21 @@ function textOf(node: unknown, out: string[] = []): string[] {
   return out;
 }
 
+/** Every `href` prop anywhere in a rendered tree, FAQ answers included. */
+function hrefsOf(node: unknown, out: string[] = []): string[] {
+  if (node == null || typeof node !== "object") return out;
+  if (Array.isArray(node)) {
+    for (const child of node) hrefsOf(child, out);
+    return out;
+  }
+  const bag = (node as { props?: Record<string, unknown> }).props ?? (node as Record<string, unknown>);
+  if (typeof bag.href === "string") out.push(bag.href);
+  for (const value of Object.values(bag)) {
+    if (value && typeof value === "object") hrefsOf(value, out);
+  }
+  return out;
+}
+
 async function cleanup() {
   const db = await getDb();
   await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
@@ -96,8 +111,21 @@ async function main() {
   // The headline and the card live inside the client hero, which this walk cannot enter —
   // it sees the hero's props (asserted above) and the server-rendered sections below it.
   const formText = textOf(form).join(" ");
-  check("the waitlist FAQ answer is rewritten", formText.includes("no queue"));
-  check("the detour section is gone", !formText.includes("There's nothing to"));
+  check("the FAQ keeps the product under wraps", formText.includes("under wraps"));
+  check("the front wave is explained", formText.includes("How do I get into the front wave?"));
+  check("the page never names the product", !/orbit/i.test(formText), formText.match(/.{0,40}orbit.{0,40}/i)?.[0]);
+  check(
+    "nothing says it is live, free or open for sign-up",
+    !/\b(live|sign up|sign-up|start free|free for)\b/i.test(formText),
+    formText.match(/.{0,40}\b(live|sign up|sign-up|start free|free for)\b.{0,40}/i)?.[0]
+  );
+  const hrefs = hrefsOf(form);
+  check(
+    "it links only to itself and its privacy notice",
+    hrefs.length > 0 && hrefs.every((h) => h === "#interest-join" || h === "/interest/privacy"),
+    hrefs.join(", ")
+  );
+  check("the hero gets the waitlist page URL, not the app's", String(findProp(form, "pageUrl")).endsWith("/interest"));
 
   // --- invited
   const invited = await Page(sp({ ref: TOKEN }));
@@ -110,10 +138,19 @@ async function main() {
 
   // --- ticket
   const ticket = await Page(sp({ me: TOKEN }));
-  const ticketInitial = findProp(ticket, "initial") as { kind: string; ticket: { number: number; planet: string; shareToken: string } };
+  const ticketInitial = findProp(ticket, "initial") as {
+    kind: string;
+    ticket: { number: number; position: number; referrals: number; planet: string; shareToken: string };
+  };
   check("a me token renders the ticket", ticketInitial?.kind === "ticket", JSON.stringify(ticketInitial));
   check("the ticket is the row's", ticketInitial.ticket.planet === "saturn" && ticketInitial.ticket.shareToken === TOKEN);
-  check("the ticket has a number", ticketInitial.ticket.number >= 1);
+  check("the ticket has a join number and a place in line", ticketInitial.ticket.number >= 1 && ticketInitial.ticket.position >= 1);
+  check("the ticket counts referrals", ticketInitial.ticket.referrals === 0);
+  const leftDb = await getDb();
+  await leftDb.update(interestListSignups).set({ unsubscribedAt: new Date() }).where(like(interestListSignups.email, `${PREFIX}%`));
+  const left = findProp(await Page(sp({ me: TOKEN })), "initial") as { kind: string };
+  check("someone who left gets the form back, not a pass", left.kind === "form");
+  await leftDb.update(interestListSignups).set({ unsubscribedAt: null }).where(like(interestListSignups.email, `${PREFIX}%`));
   const both = findProp(await Page(sp({ me: TOKEN, ref: "whatever" })), "initial") as { kind: string };
   check("me wins over ref", both.kind === "ticket");
   const bogus = findProp(await Page(sp({ me: "nope" })), "initial") as { kind: string };
@@ -134,14 +171,23 @@ async function main() {
   const meta = await mod.generateMetadata(sp({ me: TOKEN }));
   const og = meta.openGraph as { images?: unknown } | undefined;
   check("ticket metadata carries the image", JSON.stringify(og?.images ?? "").includes(`ticket-image?token=${TOKEN}`), JSON.stringify(og));
-  check("ticket metadata titles the passenger", String(meta.title).startsWith("Passenger"));
+  check("ticket metadata keeps the one title", meta.title === "Early access — the future of networking", String(meta.title));
+  check("no metadata names the product", !/orbit/i.test(JSON.stringify(meta)), JSON.stringify(meta));
+  check("the page swaps out the product's icon", JSON.stringify(meta.icons ?? "").includes("/waitlist/icon.png"));
   const refMeta = await mod.generateMetadata(sp({ ref: TOKEN }));
   check("ref metadata carries the image too", JSON.stringify(refMeta.openGraph ?? "").includes("ticket-image"));
   const plain = await mod.generateMetadata(sp({}));
-  check("plain metadata is the default", String(plain.title).startsWith("Interest list"));
+  check("plain metadata is the default", plain.title === "Early access — the future of networking");
+  check("plain metadata still previews with the generic card", JSON.stringify(plain.openGraph ?? "").includes("ticket-image"));
+
+  // --- the privacy notice
+  const privacy = await (await import("../src/app/(site)/interest/privacy/page")).default();
+  const privacyText = textOf(privacy).join(" ");
+  check("the notice never names the product", !/orbit/i.test(privacyText));
+  check("the notice links only back to the waitlist", hrefsOf(privacy).every((h) => h === "/interest"), hrefsOf(privacy).join(", "));
 
   await cleanup();
-  console.log("\ninterest page: all checks passed");
+  console.log("\nwaitlist page: all checks passed");
   process.exit(0);
 }
 

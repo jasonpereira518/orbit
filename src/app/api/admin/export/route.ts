@@ -120,13 +120,16 @@ async function buildDataset(
     const signups = await loadInterestListAll(
       isInterestListFilter(interestFilter) ? interestFilter : "all"
     );
+    // In line order: the first rows are the first invites.
     const rows = signups.map((r) => ({
+      position: r.position ?? "",
       email: r.email,
+      front_wave: r.frontWave,
+      referrals: r.referrals,
       signed_up_at: iso(r.createdAt),
-      status: r.unsubscribedAt ? "unsubscribed" : r.converted ? "converted" : "active",
+      status: r.unsubscribedAt ? "left" : r.converted ? "converted" : "waiting",
       unsubscribed_at: iso(r.unsubscribedAt),
       converted: r.converted,
-      follow_up_sent_at: iso(r.followUpSentAt),
       source: sourceLabel(r),
       referrer: r.referrer ?? "",
       utm_source: r.utmSource ?? "",

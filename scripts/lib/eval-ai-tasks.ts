@@ -46,6 +46,8 @@ import {
   transcribeAudioWithAI,
   transcribeImagePages,
 } from "../../src/lib/ai";
+import { deepgramConfigured, transcribeFile as transcribeDeepgramFile } from "../../src/lib/deepgram";
+import { loadNetworkVocabulary } from "../../src/lib/transcription-vocabulary";
 import { prepareChatContext } from "../../src/lib/chat-context";
 import { maybeGather } from "../../src/lib/chat-gather";
 import { runEmbeddingBackfill } from "../../src/lib/embedding-backfill";
@@ -1162,41 +1164,134 @@ function speak(script: string): Buffer | null {
   }
 }
 
+/**
+ * Scores Deepgram directly against the same audio, independent of whatever engine this run's
+ * chosen AI provider would resolve to.
+ *
+ * Deepgram is not an `AiProvider` the way Gemini/OpenAI/Anthropic are — it is Orbit's own
+ * hosted key (`src/lib/deepgram.ts`), not something a synthetic user's BYOK settings select —
+ * so it does not fit the harness's per-`--provider` run and is instead always measured
+ * alongside whichever provider the run is scoring, the same way production always tries
+ * Deepgram first (`transcribeAudioWithAI`). Called with the real `transcribeFile`, not
+ * through that gate, so it is scored even on a run whose chosen provider has quota left and
+ * would otherwise never let the fallback chain reach Whisper or Gemini to compare against.
+ */
+async function scoreDeepgram(
+  c: TranscribeEvalFixture["cases"][number],
+  audio: Buffer,
+  vocabulary: readonly string[],
+  names: ReturnType<typeof tally>,
+  wers: number[],
+  log: RunOpts["log"],
+): Promise<void> {
+  try {
+    const result = await transcribeDeepgramFile({ bytes: audio, mimeType: "audio/wav" }, { keyterms: vocabulary });
+    const wer = wordErrorRate(c.script, result.text);
+    wers.push(wer);
+    let missed = false;
+    for (const name of c.names) {
+      const ok = mentions(result.text, name);
+      count(names, ok);
+      missed ||= !ok;
+    }
+    log(`  ${missed ? "MISS" : "ok  "} transcribe/${c.id} (deepgram) — WER ${(wer * 100).toFixed(1)}%`);
+  } catch (err) {
+    for (let i = 0; i < c.names.length; i++) count(names, false);
+    log(`  FAIL transcribe/${c.id} (deepgram) — ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 export async function runTranscribeTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
   const cases = fixture<TranscribeEvalFixture>("ai-transcribe-eval.json").cases.slice(0, limit);
+
+  // Keyterm boosting — the whole point of the metric below — only fires when the names are
+  // already in the user's network (`loadNetworkVocabulary` reads `contacts`). Seed them here,
+  // cleared first so a `--runs 2+` invocation does not pile up duplicate rows across runs.
+  const db = await getDb();
+  await db.delete(contacts).where(eq(contacts.userId, userId));
+  for (const c of cases) {
+    for (const name of c.names) {
+      await db.insert(contacts).values({ userId, fullName: name });
+    }
+  }
+  const vocabulary = await loadNetworkVocabulary(userId);
+
   const names = tally();
   const wers: number[] = [];
   const misses: string[] = [];
   const latenciesMs: number[] = [];
 
-  for (const c of cases) {
-    const audio = speak(c.script);
-    if (!audio) {
-      log(`  skip transcribe/${c.id} — macOS \`say\` is not available here`);
-      continue;
-    }
-    try {
-      const result = await timed(latenciesMs, () =>
-        transcribeAudioWithAI(userId, { mimeType: "audio/wav", base64: audio.toString("base64"), filename: "memo.wav" })
-      );
-      const wer = wordErrorRate(c.script, result.text);
-      wers.push(wer);
-      let missed = false;
-      for (const name of c.names) {
-        const ok = mentions(result.text, name);
-        count(names, ok);
-        missed ||= !ok;
-      }
-      if (missed) misses.push(c.id);
-      log(`  ${missed ? "MISS" : "ok  "} transcribe/${c.id} (${result.engine}) — WER ${(wer * 100).toFixed(1)}%`);
-    } catch (err) {
-      misses.push(c.id);
-      for (let i = 0; i < c.names.length; i++) count(names, false);
-      log(`  FAIL transcribe/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
-    }
+  const deepgramAvailable = deepgramConfigured();
+  const deepgramNames = tally();
+  const deepgramWers: number[] = [];
+  if (!deepgramAvailable) {
+    log("  skip deepgram — DEEPGRAM_API_KEY not set for this run (ORBIT_EVAL_DEEPGRAM_KEY or --keys-from)");
   }
 
-  return { cases: cases.length, misses, latenciesMs, metrics: { nameRecall: rate(names), wer: mean(wers) } };
+  // `transcribeAudioWithAI` tries Deepgram FIRST in production (`deepgramEnabled()`), so with
+  // a real `DEEPGRAM_API_KEY` set for this process, the "existing engine" call below would
+  // silently resolve to Deepgram too — never reaching Whisper or Gemini, and making the
+  // `--provider` this run is meant to score unmeasurable. The kill switch that exists for
+  // exactly this purpose in production (revert every surface to Whisper/Gemini) forces that
+  // call down the provider chain instead; `scoreDeepgram` below calls Deepgram directly via
+  // `transcribeFile`, which does not consult this switch, so it is unaffected.
+  const previousOrbitDeepgram = process.env.ORBIT_DEEPGRAM;
+  process.env.ORBIT_DEEPGRAM = "off";
+  try {
+    for (const c of cases) {
+      const audio = speak(c.script);
+      if (!audio) {
+        log(`  skip transcribe/${c.id} — macOS \`say\` is not available here`);
+        continue;
+      }
+      try {
+        const result = await timed(latenciesMs, () =>
+          transcribeAudioWithAI(userId, { mimeType: "audio/wav", base64: audio.toString("base64"), filename: "memo.wav" })
+        );
+        const wer = wordErrorRate(c.script, result.text);
+        wers.push(wer);
+        let missed = false;
+        for (const name of c.names) {
+          const ok = mentions(result.text, name);
+          count(names, ok);
+          missed ||= !ok;
+        }
+        if (missed) misses.push(c.id);
+        log(`  ${missed ? "MISS" : "ok  "} transcribe/${c.id} (${result.engine}) — WER ${(wer * 100).toFixed(1)}%`);
+      } catch (err) {
+        misses.push(c.id);
+        for (let i = 0; i < c.names.length; i++) count(names, false);
+        log(`  FAIL transcribe/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      if (deepgramAvailable) {
+        await scoreDeepgram(c, audio, vocabulary, deepgramNames, deepgramWers, log);
+      }
+    }
+  } finally {
+    if (previousOrbitDeepgram === undefined) delete process.env.ORBIT_DEEPGRAM;
+    else process.env.ORBIT_DEEPGRAM = previousOrbitDeepgram;
+  }
+
+  // Clears its own seeded contacts before AND after, the same as `runResearchTask` does for
+  // its network: `transcribe` runs before `chat`/`research` in `TASK_NAMES`, and neither of
+  // those clears `contacts` before seeding its own, so a stray Kwabena Mensah left behind by
+  // this task would sit in the network for every task that runs after it in the same `--task
+  // all` invocation.
+  await db.delete(contacts).where(eq(contacts.userId, userId));
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      nameRecall: rate(names),
+      wer: mean(wers),
+      ...(deepgramAvailable
+        ? { deepgramNameRecall: rate(deepgramNames), deepgramWer: mean(deepgramWers) }
+        : {}),
+    },
+  };
 }
 
 /* --------------------------------------------------------------------------- chat ----- */

@@ -25,6 +25,8 @@ import { tourRailVisible } from "@/lib/tour/tour-state";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
+import { isHeldByStealth } from "@/lib/site-access";
+import { stealthWaitlistUrl } from "@/lib/waitlist-host";
 
 /**
  * No route in this group can be statically prerendered: every one of them resolves a
@@ -84,6 +86,11 @@ export default async function AppLayout({
   // Server Action POSTs that never re-run this layout. This is only the friendly surface:
   // without it a suspended user would hit an error boundary instead of an explanation.
   if (settings.suspendedAt) redirect("/suspended");
+
+  // Stealth's second layer: an account made during stealth without an invitation (a Google
+  // sign-in on /sign-in creates one) waits on the waitlist like everyone else. The real gate
+  // is `requireUserId()`; this is the friendly surface, as for suspension above.
+  if (clerkOn && (await isHeldByStealth(userId, settings))) redirect(stealthWaitlistUrl());
 
   // First-run gate. This HAS to happen here, above <AppShell>, not in the (main) layout
   // below it: by the time a nested layout redirects, this layout has already rendered and

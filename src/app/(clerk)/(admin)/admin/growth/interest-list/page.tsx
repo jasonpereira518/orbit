@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Download, Eye, MailCheck, MailX, Megaphone, UserCheck, Users } from "lucide-react";
+import { Download, Eye, MailCheck, MailX, Megaphone, Rocket, UserCheck, Users } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -25,16 +25,23 @@ import {
   loadInterestList,
   sourceLabel,
   type InterestListFilter,
+  type InterestListSort,
 } from "@/lib/admin-interest-list";
 
-export const metadata = { title: "Admin · Interest list" };
+export const metadata = { title: "Admin · Waitlist" };
 
 const FILTERS: Array<{ value: InterestListFilter; label: string }> = [
   { value: "all", label: "All" },
-  { value: "active", label: "Active" },
+  { value: "active", label: "Waiting" },
+  { value: "front-wave", label: "Front wave" },
   { value: "converted", label: "Converted" },
-  { value: "unsubscribed", label: "Unsubscribed" },
+  { value: "unsubscribed", label: "Left" },
 ];
+
+/** Who gets in first is the question for the waiting views; who just joined, for the rest. */
+function defaultSort(filter: InterestListFilter): InterestListSort {
+  return filter === "active" || filter === "front-wave" ? "position" : "newest";
+}
 
 /** Absolute date, spelled out. The relative label rides alongside it, not instead of it. */
 function absolute(date: Date) {
@@ -49,7 +56,8 @@ function absolute(date: Date) {
 }
 
 /**
- * Everyone who filled in the landing page's interest-list form, and when.
+ * Everyone on the early-access waitlist: when they joined, where they stand in line, and
+ * who brought whom. The line is the order invites go out in.
  *
  * A page rather than a bigger panel on `/admin/growth`: that panel answers "is anyone
  * joining", which is a number, and this answers "who", which is a roster. Kept as a child
@@ -62,12 +70,14 @@ function absolute(date: Date) {
 export default async function AdminInterestListPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string; page?: string; q?: string }>;
+  searchParams: Promise<{ filter?: string; page?: string; q?: string; sort?: string }>;
 }) {
   const params = await searchParams;
   const filter: InterestListFilter = isInterestListFilter(params.filter)
     ? params.filter
     : "all";
+  const sort: InterestListSort =
+    params.sort === "position" || params.sort === "newest" ? params.sort : defaultSort(filter);
   const q = (params.q ?? "").trim();
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
 
@@ -77,6 +87,7 @@ export default async function AdminInterestListPage({
       page: Number.isFinite(requestedPage) ? requestedPage : 1,
       filter,
       q,
+      sort,
     }),
     interestListTrend("week", 12),
     interestListSources(),
@@ -86,6 +97,7 @@ export default async function AdminInterestListPage({
     const sp = new URLSearchParams();
     if (filter !== "all") sp.set("filter", filter);
     if (q) sp.set("q", q);
+    if (sort !== defaultSort(filter)) sp.set("sort", sort);
     for (const [k, v] of Object.entries(over)) sp.set(k, String(v));
     const s = sp.toString();
     return `/admin/growth/interest-list${s ? `?${s}` : ""}`;
@@ -98,17 +110,19 @@ export default async function AdminInterestListPage({
     createdAtLabel: absolute(row.createdAt),
     source: sourceLabel(row),
     status: row.unsubscribedAt ? "unsubscribed" : row.converted ? "converted" : "active",
-    followUpSentAtIso: row.followUpSentAt ? row.followUpSentAt.toISOString() : null,
+    position: row.position,
+    referrals: row.referrals,
+    frontWave: row.frontWave,
     planet: row.welcomePlanet,
   }));
 
   return (
     <>
       <AdminPageHeader
-        title="Interest list"
+        title="Waitlist"
         subtitle={
           <>
-            Everyone who filled in the landing page form, newest first.{" "}
+            Everyone waiting for early access. The front wave goes first, then join order.{" "}
             <Link
               href="/admin/growth"
               className="underline underline-offset-2 hover:text-foreground"
@@ -146,14 +160,20 @@ export default async function AdminInterestListPage({
         }
       />
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <MetricTile label="Signups" value={summary.total} icon={Users} />
         <MetricTile
-          label="Active"
+          label="Waiting"
           value={summary.active}
-          hint="Subscribed, no account yet — the mailable audience"
+          hint="On the list, no account yet — the line invites go out from"
           icon={MailCheck}
           tone="accent"
+        />
+        <MetricTile
+          label="Front wave"
+          value={summary.frontWave}
+          hint="Brought in enough friends to go first"
+          icon={Rocket}
         />
         <MetricTile
           label="Converted"
@@ -162,9 +182,9 @@ export default async function AdminInterestListPage({
           icon={UserCheck}
         />
         <MetricTile
-          label="Unsubscribed"
+          label="Left"
           value={summary.unsubscribed}
-          hint={`${summary.followUpsSent} day-3 follow-ups sent`}
+          hint="Left the waitlist, or bounced"
           icon={MailX}
           tone={summary.unsubscribed > 0 ? "danger" : "muted"}
         />
@@ -217,6 +237,7 @@ export default async function AdminInterestListPage({
                 as the server-rendered pager. */}
             <form method="GET" action="/admin/growth/interest-list" className="flex gap-1.5">
               {filter !== "all" && <input type="hidden" name="filter" value={filter} />}
+              {sort !== defaultSort(filter) && <input type="hidden" name="sort" value={sort} />}
               <input
                 type="search"
                 name="q"
@@ -253,6 +274,32 @@ export default async function AdminInterestListPage({
                     )}
                   >
                     {option.label}
+                  </Link>
+                );
+              })}
+            </nav>
+
+            <nav className="flex items-center gap-1" aria-label="Sort">
+              {(["position", "newest"] as const).map((value) => {
+                const active = value === sort;
+                const sp = new URLSearchParams();
+                if (filter !== "all") sp.set("filter", filter);
+                if (q) sp.set("q", q);
+                if (value !== defaultSort(filter)) sp.set("sort", value);
+                const s = sp.toString();
+                return (
+                  <Link
+                    key={value}
+                    href={`/admin/growth/interest-list${s ? `?${s}` : ""}`}
+                    aria-current={active ? "true" : undefined}
+                    className={cn(
+                      "rounded-lg px-2.5 py-1 text-xs transition-colors duration-fast",
+                      active
+                        ? "bg-accent/15 text-accent-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {value === "position" ? "In line" : "Newest"}
                   </Link>
                 );
               })}

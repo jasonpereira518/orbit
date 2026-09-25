@@ -3,6 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
 import { counterpartsOf } from "@/lib/calendar-classify";
+import { expandIcsEvents, seriesUidOf } from "@/lib/recurrence";
 import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
@@ -144,7 +145,10 @@ export async function applyNetworkingEvents(
     // one contact by the next sync, silently and permanently. Name+company and name+title
     // still fold; a name on its own now becomes a review suggestion instead.
     // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
-    reminders: createFollowUps ? postMeetingReminder : undefined,
+    //
+    // `reminders` is set below, once `networkEvents` exists: `seriesFollowUpEligibility` needs
+    // the whole batch to pick each series' one eligible occurrence, not just the single event a
+    // per-event callback sees.
   });
   // The decision model reads every event the rules would keep before any becomes a contact
   // (decisions/calendar.ts), so the context — which carries the account's engines — opens
@@ -166,6 +170,10 @@ export async function applyNetworkingEvents(
     });
   }
 
+  if (createFollowUps) {
+    ctx.options.reminders = makePostMeetingReminder(seriesFollowUpEligibility(networkEvents));
+  }
+
   const ingested = await ingestEvents(ctx, networkEvents);
   await finalizeIngest(ctx);
 
@@ -180,41 +188,90 @@ export async function applyNetworkingEvents(
 }
 
 /**
+ * Which occurrence of each series is allowed to PRODUCE a post-meeting follow-up in THIS batch:
+ * the `externalIdBase` of its most recent PAST occurrence (ties broken by whichever is seen
+ * last), subject to `postMeetingReminder`'s own 21-day rule. This governs which occurrence is
+ * even considered within one sync; `makePostMeetingReminder`'s series-keyed description is what
+ * additionally makes the series get at most one follow-up EVER, across every sync that follows —
+ * see that function's own comment.
+ *
+ * `isOccurrenceUid` alone (skip every synthesized occurrence, keep only the series' bare-uid
+ * master) is not sufficient: the ICS expansion window is 90 days back, so a series whose
+ * DTSTART is more than 90 days old never EMITS its master occurrence at all — every occurrence
+ * this function sees for that series carries a suffixed, "occurrence" uid, and the old
+ * `isOccurrenceUid` check suppressed every one of them. That satisfies "at most one per series"
+ * only in the degenerate, zero-follow-ups sense.
+ *
+ * A non-recurring event is its own series of one (`seriesUidOf` returns its uid unchanged), so
+ * it is trivially always the "most recent" — and only — member of its series, which is what
+ * keeps this behaving exactly as before for the non-recurring case.
+ */
+function seriesFollowUpEligibility(events: NetworkEvent[]): Set<string> {
+  const now = Date.now();
+  const bestPerSeries = new Map<string, { externalIdBase: string; timestamp: number }>();
+  for (const event of events) {
+    const timestamp = event.timestamp.getTime();
+    if (timestamp > now) continue; // only a PAST occurrence can anchor a follow-up
+    const uid = event.externalIdBase.replace(/^cal:/, "");
+    const seriesUid = seriesUidOf(uid);
+    const current = bestPerSeries.get(seriesUid);
+    if (!current || timestamp >= current.timestamp) {
+      bestPerSeries.set(seriesUid, { externalIdBase: event.externalIdBase, timestamp });
+    }
+  }
+  return new Set([...bestPerSeries.values()].map((v) => v.externalIdBase));
+}
+
+/**
  * A nudge two days after a meeting that has already happened.
  *
- * The description embeds the event uid on purpose: ingest dedupes reminders on
- * `(contactId, description)`, so this is what makes a re-sync of the same calendar reproduce
- * a byte-identical candidate that gets filtered out rather than inserted again.
+ * The description embeds the SERIES uid, not the occurrence uid, and that is what makes this
+ * one follow-up per series EVER, not just within one sync batch. Ingest dedupes reminders on
+ * `(contactId, description)` against every row already in the table, so a byte-identical
+ * description is what lets a later sync's candidate be filtered out rather than inserted again.
+ * An ICS subscription resyncs every 30 minutes, and `seriesFollowUpEligibility` picks a new
+ * "most recent past occurrence" each time one advances — so keying the description on the
+ * OCCURRENCE uid (the previous shape of this function) meant every sync where that eligible
+ * occurrence changed minted a byte-DIFFERENT description, and nothing ever pruned the old one:
+ * a daily standup accrued a new live reminder every day (up to ~21 at once), a weekly 1:1 one a
+ * week forever — the exact pile the eligibility set exists to prevent, just accrued across
+ * syncs instead of within one. Keying on `seriesUidOf(uid)` instead makes the SAME series
+ * produce the SAME description on every sync, so only the first ever gets past the dedupe check,
+ * regardless of which occurrence within the series happens to be eligible when it runs.
  */
-function postMeetingReminder(
-  event: NetworkEvent,
-  contactId: string,
-  userId: string
-): ReminderInsert[] {
-  const now = Date.now();
-  const eventAt = event.timestamp.getTime();
-  // Only for meetings that have happened, and only recently enough to still be worth a nudge.
-  if (eventAt > now) return [];
-  if ((now - eventAt) / 86400000 > 21) return [];
+function makePostMeetingReminder(eligible: Set<string>) {
+  return function postMeetingReminder(
+    event: NetworkEvent,
+    contactId: string,
+    userId: string
+  ): ReminderInsert[] {
+    if (!eligible.has(event.externalIdBase)) return [];
 
-  const due = new Date(eventAt + 2 * 86400000);
-  if (due.getTime() < now) due.setTime(now + 2 * 86400000);
+    // `externalIdBase` is `cal:<uid>`.
+    const uid = event.externalIdBase.replace(/^cal:/, "");
+    const now = Date.now();
+    const eventAt = event.timestamp.getTime();
+    // Only for meetings that have happened, and only recently enough to still be worth a nudge.
+    if (eventAt > now) return [];
+    if ((now - eventAt) / 86400000 > 21) return [];
 
-  // `externalIdBase` is `cal:<uid>`; the uid is what the old writer put in the description.
-  const uid = event.externalIdBase.replace(/^cal:/, "");
-  return [
-    {
-      userId,
-      contactId,
-      title: `Follow up after ${event.summary || "meeting"}`,
-      description: `You met with them. Event ${uid}`,
-      dueDate: due,
-      status: "pending",
-      reminderType: "post_meeting",
-      actionKind: "follow_up",
-      createdBy: "calendar_sync",
-    },
-  ];
+    const due = new Date(eventAt + 2 * 86400000);
+    if (due.getTime() < now) due.setTime(now + 2 * 86400000);
+
+    return [
+      {
+        userId,
+        contactId,
+        title: `Follow up after ${event.summary || "meeting"}`,
+        description: `You met with them. Event ${seriesUidOf(uid)}`,
+        dueDate: due,
+        status: "pending",
+        reminderType: "post_meeting",
+        actionKind: "follow_up",
+        createdBy: "calendar_sync",
+      },
+    ];
+  };
 }
 
 export async function syncCalendarSubscription(
@@ -233,7 +290,19 @@ export async function syncCalendarSubscription(
 
   try {
     const ics = await fetchIcs(sub.icsUrl);
-    const events = parseIcsEvents(ics);
+    const parsed = parseIcsEvents(ics);
+    // Same window `applyNetworkingEvents` filters to below (SYNC_WINDOW_PAST_MS /
+    // SYNC_WINDOW_FUTURE_MS) — expansion must not manufacture occurrences that filter would
+    // have dropped anyway, and must not miss ones just inside it.
+    const now = Date.now();
+    const window = {
+      from: new Date(now - SYNC_WINDOW_PAST_MS),
+      to: new Date(now + SYNC_WINDOW_FUTURE_MS),
+    };
+    // Groups by uid first, so a RECURRENCE-ID override VEVENT replaces the occurrence it
+    // overrides in place rather than surfacing as a second, independent event — see
+    // `expandIcsEvents`'s own comment.
+    const events = expandIcsEvents(parsed, window);
     const stats = await applyNetworkingEvents(userId, events, {
       selfEmails: sub.selfEmail ? [sub.selfEmail] : [],
       createFollowUps: true,

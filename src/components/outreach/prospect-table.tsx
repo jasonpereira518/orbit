@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { ExternalLink, UserPlus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -251,12 +251,12 @@ export function ProspectTable({
                     <div>{prospect.phone || "—"}</div>
                     <div className="mt-2">
                       {prospect.contactId ? (
-                        <Link
+                        <IntentLink
                           href={`/contacts/${prospect.contactId}`}
                           className="text-primary underline-offset-2 hover:underline"
                         >
                           View contact
-                        </Link>
+                        </IntentLink>
                       ) : (
                         <Button
                           size="xs"
