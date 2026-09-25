@@ -203,6 +203,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
   "smoke-waitlist-host": "pure",
+  "smoke-site-invite-email": "pure",
   "smoke-speech-limits": "pure",
   "smoke-speech-usage-tag": "pure",
   "smoke-stripe-ordering": "pure",

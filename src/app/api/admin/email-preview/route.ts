@@ -6,6 +6,7 @@ import {
   buildInterestListWelcomeEmail,
 } from "@/lib/interest-list-email";
 import { buildBroadcastEmail, loadBroadcast } from "@/lib/broadcasts";
+import { buildSiteInviteEmail } from "@/lib/site-invite-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,7 +27,7 @@ export const runtime = "nodejs";
  * it to the list.
  */
 
-const TEMPLATES = ["welcome", "front-wave", "broadcast"] as const;
+const TEMPLATES = ["welcome", "front-wave", "broadcast", "site-invite"] as const;
 type Template = (typeof TEMPLATES)[number];
 
 function isTemplate(value: string | null): value is Template {
@@ -58,7 +59,20 @@ export async function GET(request: NextRequest) {
 
   let message: { subject: string; html: string; text: string };
 
-  if (template === "broadcast") {
+  if (template === "site-invite") {
+    // `&kind=existing-account` for the sign-in variant; `&name=` to preview the greeting.
+    const existing = url.searchParams.get("kind") === "existing-account";
+    message = buildSiteInviteEmail({
+      email: "maya@example.com",
+      url: existing
+        ? "https://example.invalid/sign-in"
+        : "https://example.invalid/sign-up?__clerk_ticket=preview",
+      kind: existing ? "existing-account" : "invite",
+      planet: url.searchParams.get("planet") ? planet : "earth",
+      firstName: url.searchParams.get("name") ?? "Maya",
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+  } else if (template === "broadcast") {
     // A real draft when one is named, so the preview shows what would actually go out.
     const id = url.searchParams.get("id");
     const draft = id ? await loadBroadcast(id) : null;
