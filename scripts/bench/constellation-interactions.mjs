@@ -73,7 +73,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { launch } from "../dev/cdp.mjs";
 
-export const METHOD = "constellation-interactions/2";
+/**
+ * /3: the driver reads the zoom from the viewport's inline transform instead of
+ * `getComputedStyle`, which forced a style recalculation of the whole chart inside every pinch
+ * frame (~200ms per 3s pinch at 2,500 stars) — a cost a real trackpad never adds. Numbers from
+ * /2 and /3 are not comparable; compare builds within one method.
+ */
+export const METHOD = "constellation-interactions/3";
 
 const argv = process.argv.slice(2);
 const flag = (name) => {
@@ -144,7 +150,9 @@ const KIT = `
 window.__ix = (() => {
   const pane = () => document.querySelector(".react-flow__pane");
   const centre = () => { const r = pane().getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
-  const zoomNow = () => { const v = document.querySelector(".react-flow__viewport"); const m = v && getComputedStyle(v).transform.match(/matrix\\(([^,]+)/); return m ? Number(m[1]) : 1; };
+  // React Flow writes the camera as the viewport's inline \`translate(…) scale(k)\`; reading that
+  // string forces no style recalculation, where getComputedStyle recalculated the whole chart.
+  const zoomNow = () => { const v = document.querySelector(".react-flow__viewport"); const m = v && /scale\\(([^)]+)\\)/.exec(v.style.transform); if (m) return Number(m[1]); const c = v && getComputedStyle(v).transform.match(/matrix\\(([^,]+)/); return c ? Number(c[1]) : 1; };
   const wheel = (deltaY) => { const c = centre(); pane().dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, view: window, clientX: c.x, clientY: c.y, deltaY, deltaMode: 0 })); };
   // React Flow: scale *= 2^(-deltaY * 0.002) for a pixel-mode wheel event (no ctrl).
   const wheelTo = (k) => { const cur = zoomNow(); if (Math.abs(Math.log2(k / cur)) > 1e-4) wheel(-Math.log2(k / cur) / 0.002); };
