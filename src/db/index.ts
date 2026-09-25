@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   updated_at timestamptz NOT NULL DEFAULT now(),
   inbound_log_token text,
   inbound_log_token_created_at timestamptz,
-  inbound_log_last_received_at timestamptz
+  inbound_log_last_received_at timestamptz,
+  stealth_cleared_at timestamptz
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
@@ -1192,6 +1193,14 @@ CREATE TABLE IF NOT EXISTS constellation_settings (
   updated_by text,
   CONSTRAINT constellation_settings_single_row CHECK (id = 1)
 );
+CREATE TABLE IF NOT EXISTS site_settings (
+  id integer PRIMARY KEY DEFAULT 1,
+  stealth_enabled boolean,
+  stealth_since timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text,
+  CONSTRAINT site_settings_single_row CHECK (id = 1)
+);
 CREATE TABLE IF NOT EXISTS startup_expenses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   category text NOT NULL,
@@ -1984,7 +1993,12 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // branches declared it before either merged. Rescanned every remote ref, every local branch
 // and every worktree's working file on Sep 23 2026 immediately before committing: 98 is the
 // highest claimed anywhere, so 99 is free.
-export const SCHEMA_VERSION = 99;
+//
+// 102 = site_settings (stealth as an admin-console switch rather than a build-time env var)
+// and user_settings.stealth_cleared_at. NOT 100 or 101: the waitlist-referral branch claims
+// 101 and skipped 100 for a sibling. Rescanned every remote ref, every local branch and every
+// worktree's working file on Sep 24 2026: 101 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 102;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2748,6 +2762,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "inbound_log_token", "text");
   await ensureColumn(client, "user_settings", "inbound_log_token_created_at", "timestamptz");
   await ensureColumn(client, "user_settings", "inbound_log_last_received_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "stealth_cleared_at", "timestamptz");
   await ensureColumn(
     client,
     "user_settings",
@@ -3609,6 +3624,11 @@ const alters = [
   `CREATE TABLE IF NOT EXISTS calendar_sources (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, connection_id uuid NOT NULL, calendar_id text NOT NULL, display_name text, color text, read_only integer NOT NULL DEFAULT 0, enabled integer NOT NULL DEFAULT 1, sync_cursor jsonb, last_synced_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id)`,
+  // Schema v102: stealth as a runtime switch. `site_settings` is the admin console's one-row
+  // table for it; `user_settings.stealth_cleared_at` records that an account was found to be
+  // allowed in, so the Clerk lookup behind that answer runs once per account.
+  `CREATE TABLE IF NOT EXISTS site_settings (id integer PRIMARY KEY DEFAULT 1, stealth_enabled boolean, stealth_since timestamptz, updated_at timestamptz NOT NULL DEFAULT now(), updated_by text, CONSTRAINT site_settings_single_row CHECK (id = 1))`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stealth_cleared_at timestamptz`,
 ];
 
 /**

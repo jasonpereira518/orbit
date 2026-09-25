@@ -4,12 +4,8 @@ import { PUBLIC_ROUTES } from "@/lib/public-routes";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { API_SIGNED_OUT_BODY, API_SIGNED_OUT_STATUS, isApiPath } from "@/lib/api-signed-out";
 import { isLocalhost } from "@/lib/demo-account";
-import {
-  STEALTH_CLOSED_PAGES,
-  STEALTH_HIDDEN_API,
-  isStealth,
-  isWaitlistHostHeader,
-} from "@/lib/waitlist-host";
+import { STEALTH_ROBOTS, isWaitlistHostHeader, stealthGate } from "@/lib/waitlist-host";
+import { readStealthForProxy } from "@/lib/site-mode-proxy";
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_MAX_AGE_S,
@@ -21,12 +17,6 @@ import {
 // The list lives in `@/lib/public-routes` so a smoke test can assert it against the
 // filesystem — a marketing page missing from it 404s for exactly the people it is for.
 const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
-
-// Stealth mode takes the marketing pages out of the public list, so a signed-out visitor to
-// any of them meets the same sign-in redirect as the rest of the app. See waitlist-host.ts.
-const stealth = isStealth();
-const closedInStealth: ReadonlySet<string> = new Set(STEALTH_CLOSED_PAGES);
-const hiddenApiInStealth: ReadonlySet<string> = new Set(STEALTH_HIDDEN_API);
 
 const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -53,13 +43,14 @@ const extensionOrigins = (process.env.EXTENSION_ORIGIN ?? "")
 const authorizedParties =
   extensionOrigins.length > 0 ? [...extensionOrigins, getAppBaseUrl()] : [];
 
-function withPathname(req: Request) {
+function withPathname(req: Request, options: { noindex?: boolean } = {}) {
   const requestHeaders = new Headers(req.headers);
   const url = new URL(req.url);
   requestHeaders.set("x-pathname", url.pathname);
   const res = NextResponse.next({
     request: { headers: requestHeaders },
   });
+  if (options.noindex) res.headers.set("X-Robots-Tag", STEALTH_ROBOTS);
   return withFirstTouch(req, url, res);
 }
 
@@ -110,25 +101,49 @@ function withFirstTouch(req: Request, url: URL, res: NextResponse) {
 }
 
 /**
- * Stealth's session-independent rules for the app host. The closed marketing pages are
- * handled where the session is read; `noindex` and the `/sign-up` and `/interest`
- * redirects are config-level (`next.config.ts`), since they must also cover static files.
+ * Stealth on the app host. A runtime switch (the admin console's, else `SITE_STEALTH`), read
+ * per request from a short per-instance cache — see `src/lib/site-mode-proxy.ts`. The rules
+ * themselves are `stealthGate` in `src/lib/waitlist-host.ts`; this only applies its answer.
+ *
+ * `signedIn` is a thunk so the session is read only when the answer depends on it: stealth
+ * off, API calls and the always-open paths never pay for `auth()`.
  */
-function stealthResponse(req: Request, pathname: string): NextResponse | null {
-  if (!stealth) return null;
-  if (hiddenApiInStealth.has(pathname)) return new NextResponse(null, { status: 404 });
-  // `/` is not redirected: the landing page stays open in stealth (see STEALTH_CLOSED_PAGES).
-  return null;
+async function applyStealth(
+  req: Request,
+  signedIn: () => Promise<boolean>
+): Promise<{ response: NextResponse | null; stealth: boolean }> {
+  const stealth = await readStealthForProxy();
+  if (!stealth) return { response: null, stealth };
+  const url = new URL(req.url);
+  const isApi = isApiPath(url.pathname);
+  // Signed-out first: every rule that ignores the session answers the same either way, so
+  // only a would-be redirect is worth confirming against the session.
+  let gate = stealthGate({ pathname: url.pathname, search: url.search, signedIn: false, isApi });
+  if (gate.kind === "redirect" && (await signedIn())) {
+    gate = stealthGate({ pathname: url.pathname, search: url.search, signedIn: true, isApi });
+  }
+  if (gate.kind === "not-found") return { response: new NextResponse(null, { status: 404 }), stealth };
+  if (gate.kind === "redirect") {
+    const response = NextResponse.redirect(new URL(gate.to, req.url), 307);
+    response.headers.set("X-Robots-Tag", STEALTH_ROBOTS);
+    return { response, stealth };
+  }
+  return { response: null, stealth };
 }
 
 const appProxy = configured
   ? clerkMiddleware(
       async (auth, req) => {
         const { pathname } = new URL(req.url);
-        const shortCircuit = stealthResponse(req, pathname);
-        if (shortCircuit) return shortCircuit;
-        const closed = stealth && closedInStealth.has(pathname);
-        if (closed || !isPublicRoute(req)) {
+        const { response, stealth } = await applyStealth(req, async () => {
+          try {
+            return Boolean((await auth()).userId);
+          } catch {
+            return false;
+          }
+        });
+        if (response) return response;
+        if (!isPublicRoute(req)) {
           if (isApiPath(pathname)) {
             // API callers get JSON, never a redirect: a followed 307 hands them the sign-in
             // page as a 200 they cannot tell from success. `auth.protect()` is skipped here
@@ -143,11 +158,11 @@ const appProxy = configured
             await auth.protect();
           }
         }
-        return withPathname(req);
+        return withPathname(req, { noindex: stealth });
       },
       authorizedParties.length > 0 ? { authorizedParties } : undefined
     )
-  : function middleware(req: Request) {
+  : async function middleware(req: Request) {
       if (process.env.NODE_ENV === "production") {
         return new NextResponse("Authentication is not configured", {
           status: 503,
@@ -163,15 +178,16 @@ const appProxy = configured
       // `/api/admin` is listed separately rather than caught by the same prefix: the export
       // handler lives under /api and would otherwise fall through this branch entirely.
       const { pathname } = new URL(req.url);
-      const shortCircuit = stealthResponse(req, pathname);
-      if (shortCircuit) return shortCircuit;
+      // Without Clerk every visitor is the demo account, so stealth treats them as signed in.
+      const { response, stealth } = await applyStealth(req, async () => true);
+      if (response) return response;
       if (
         !isLocalhost() &&
         (pathname.startsWith("/admin") || pathname.startsWith("/api/admin"))
       ) {
         return new NextResponse(null, { status: 404 });
       }
-      return withPathname(req);
+      return withPathname(req, { noindex: stealth });
     };
 
 /**
