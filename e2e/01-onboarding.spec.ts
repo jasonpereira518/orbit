@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { untilHydrated } from "./helpers";
+import { skipConnectIfShown, untilHydrated } from "./helpers";
 
 /**
  * Quick setup, end to end, on an empty account. The e2e account runs on the Gemini stub key
@@ -24,7 +24,9 @@ test("an empty account goes through quick setup and lands on the empty dashboard
   await expect(page.getByRole("heading", { name: "Start your LinkedIn export" })).toBeVisible();
   await page.getByRole("button", { name: "I don't use LinkedIn" }).click();
 
-  await expect(page.getByRole("heading", { name: "Add your first people" })).toBeVisible();
+  const people = page.getByRole("heading", { name: "Add your first people" });
+  await skipConnectIfShown(page, people);
+  await expect(people).toBeVisible();
   await page.getByRole("button", { name: "I'll add people later" }).click();
 
   await expect(page.getByRole("heading", { name: "Here’s what Orbit can do" })).toBeVisible();

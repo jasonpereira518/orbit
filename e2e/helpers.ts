@@ -69,3 +69,14 @@ export async function createContact(page: Page, fullName: string): Promise<void>
   );
   await expect(page.getByRole("heading", { level: 1, name: fullName })).toBeVisible();
 }
+
+/**
+ * The connect step appears only where a Google or Microsoft OAuth client is configured (a
+ * worktree with the keys in .env.local, never CI). Skip it when it shows, so the specs pass
+ * either way; the step after it is the caller's to wait for.
+ */
+export async function skipConnectIfShown(page: Page, next: Locator) {
+  const connect = page.getByRole("heading", { name: "Bring in the people you email" });
+  await expect(connect.or(next)).toBeVisible({ timeout: 30_000 });
+  if (await connect.isVisible()) await page.getByRole("button", { name: /Skip for now/ }).click();
+}

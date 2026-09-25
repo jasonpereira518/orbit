@@ -13,6 +13,7 @@ import { placeRail } from "../src/lib/tour/rail-placement";
 import { TOUR_ANCHORS, type TourAnchorId } from "../src/lib/tour/tour-anchors";
 import { TOUR_EVENTS } from "../src/lib/tour/tour-events";
 import {
+  CURSOR_CLICK_ALLOWED,
   TOUR_STOPS,
   TOUR_STOP_IDS_LIST,
   isContactDetailPath,
@@ -86,6 +87,11 @@ function main() {
   check("without a key: the URL fallback, no extraction, no chat ask", noKey.some((s) => s.id === "capture.linkedin") && !noKey.some((s) => s.id === "capture.extract") && !noKey.some((s) => s.id === "chat.ask") && noKey.some((s) => s.id === "chat.preview"));
   const hiddenChat = resolveTourStops({ hasApiKey: true, hidden: new Set(["page.chat"]) });
   check("a hidden surface drops its stops", !hiddenChat.some((s) => s.route === "/chat"));
+  for (const stop of TOUR_STOPS) {
+    if (stop.cursor !== "click") continue;
+    check(`${stop.id} may be clicked by the guide cursor (it saves nothing)`, CURSOR_CLICK_ALLOWED.includes(stop.id), stop.id);
+    check(`${stop.id} has a control for the cursor to click`, stop.anchor != null);
+  }
   for (const stop of TOUR_STOPS) {
     if (!stop.requiresDone) continue;
     const at = TOUR_STOPS.findIndex((s) => s.id === stop.requiresDone);

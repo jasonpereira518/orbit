@@ -148,7 +148,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
       "LinkedIn, Google and Outlook, contact files and calendars all feed one orbit. Upload a file and review everyone before they land.",
     bullets: [
       { label: "LinkedIn connections and messages, ZIP and all" },
-      { label: "Google and Outlook contacts", entitlement: "canUseSync" },
+      { label: "Google and Outlook contacts, free on every plan" },
       { label: "vCard and CSV from any address book" },
       { label: "Calendar sync for your meetings", entitlement: "canUseSync" },
     ],

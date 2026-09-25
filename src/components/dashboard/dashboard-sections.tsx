@@ -108,8 +108,7 @@ export async function SetupChecklistSection() {
   const settings = await ensureUserSettings(userId);
   if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
 
-  const [entitlements, gmail, outlook, usage, linkedinImported, examples] = await Promise.all([
-    getEntitlements(userId),
+  const [gmail, outlook, usage, linkedinImported, examples] = await Promise.all([
     getGmailConnectionStatus(),
     getOutlookConnectionStatus(),
     contactUsageForUser(userId),
@@ -137,22 +136,13 @@ export async function SetupChecklistSection() {
   const anyConfigured = gmail.configured || outlook.configured;
   const connected = gmail.connected || outlook.connected;
   if (anyConfigured && !connected) {
-    items.push(
-      entitlements.canUseSync
-        ? {
-            id: "connect",
-            label: "Connect Google or Microsoft",
-            detail: "Bring in the people you already email.",
-            href: "/imports",
-          }
-        : {
-            id: "connect",
-            label: "Connect Google or Microsoft",
-            detail: "Included with Orbit Pro.",
-            href: "/upgrade",
-            tag: "pro",
-          },
-    );
+    // Free on every plan: the sign-in asks only for contacts.
+    items.push({
+      id: "connect",
+      label: "Connect Google or Microsoft",
+      detail: "Bring in the people you already email.",
+      href: "/imports",
+    });
   }
   if (usage.used === 0) {
     items.push({

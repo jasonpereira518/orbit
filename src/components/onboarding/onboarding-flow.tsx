@@ -59,7 +59,6 @@ export type OnboardingFlowProps = {
   hidden: string[];
   /** Page keys behind the coming-soon screen for this viewer. */
   comingSoon: string[];
-  canUseSync: boolean;
   connect: Record<ConnectProvider, ConnectAccount>;
   planFlags: PlanFlags;
 };
@@ -94,7 +93,6 @@ export function OnboardingFlow({
   linkedinImported,
   hidden,
   comingSoon,
-  canUseSync,
   connect,
   planFlags,
 }: OnboardingFlowProps) {
@@ -375,7 +373,6 @@ export function OnboardingFlow({
 
             {step === "connect" && (
               <ConnectStep
-                canUseSync={canUseSync}
                 initial={connect}
                 onContinue={() => advance("connect")}
                 onBack={() => retreat("connect")}

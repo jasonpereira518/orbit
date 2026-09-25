@@ -48,7 +48,6 @@ export default async function OnboardingPage() {
       linkedinImported={linkedinImported}
       hidden={[...visibility.hidden]}
       comingSoon={[...visibility.comingSoon]}
-      canUseSync={entitlements.canUseSync}
       connect={{
         google: connectAccountFromGmail(gmail),
         microsoft: connectAccountFromOutlook(outlook),

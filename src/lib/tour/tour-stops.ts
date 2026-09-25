@@ -21,6 +21,16 @@ export type TourPredicateId =
   | "capture.extracted"
   | "capture.saved";
 
+/**
+ * What the guide cursor does at a stop. `click` really clicks the anchor and is only for
+ * harmless steps (navigating, opening a panel, focusing a field) — the smoke keeps an
+ * allowlist; anything that saves or spends the AI key is at most a `demo-click`.
+ */
+export type TourCursorMode = "point" | "demo-click" | "click";
+
+/** The stops where the cursor may press the control for real. Checked by the smoke. */
+export const CURSOR_CLICK_ALLOWED: readonly string[] = ["contacts.search", "contacts.open", "contact.log"];
+
 export type TourStop = {
   id: TourStopId;
   /** Exact path, or a pattern like "/contacts/:id" the tour never pushes itself. */
@@ -52,6 +62,8 @@ export type TourStop = {
   surfaceKey?: string;
   /** Move keyboard focus into the anchor on arrival (search box, textarea). */
   focusAnchor?: boolean;
+  /** The guide cursor's gesture here; "point" when omitted. */
+  cursor?: TourCursorMode;
   /** Side effect to run just before navigating to the stop's route. */
   onEnter?: "prefill-capture-note";
   seconds: number;
@@ -114,6 +126,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "contacts.search",
+    cursor: "click",
     route: "/contacts",
     anchor: "contacts.search",
     title: "Find anyone in a keystroke",
@@ -128,6 +141,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "contacts.open",
+    cursor: "click",
     route: "/contacts",
     anchor: "contacts.row",
     title: "Open a person",
@@ -142,6 +156,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "contact.log",
+    cursor: "click",
     route: "/contacts/:id",
     anchor: "contact.log-interaction",
     title: "Log what happened",
@@ -156,6 +171,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "capture.extract",
+    cursor: "demo-click",
     route: "/capture",
     anchor: "capture.notes",
     title: "Capture from messy notes",
@@ -173,6 +189,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "capture.keep",
+    cursor: "demo-click",
     route: "/capture",
     anchor: "capture.keep",
     title: "Review, then keep",
@@ -202,6 +219,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "reminders.done",
+    cursor: "demo-click",
     route: "/reminders",
     anchor: "reminders.row-done",
     chipAnchor: "reminders.rail-today",
@@ -217,6 +235,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "chat.ask",
+    cursor: "demo-click",
     route: "/chat",
     anchor: "chat.composer",
     title: "Ask your network",

@@ -6,6 +6,7 @@ import { useReducedMotionConfig } from "motion/react";
 import { exitTour, finishTour, saveTourStop } from "@/actions/tour";
 import { CoachRail } from "@/components/tour/coach-rail";
 import { TourFinishCard } from "@/components/tour/tour-finish-card";
+import { TourCursor, type CursorPoint } from "@/components/tour/tour-cursor";
 import { TourSpotlight } from "@/components/tour/tour-spotlight";
 import { handOffToCapture } from "@/lib/capture-handoff";
 import { useCaptureJob } from "@/lib/capture/job-store";
@@ -89,6 +90,8 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
   // null = follow the placement (collapse when the card would sit on the anchor's centre);
   // a click on the pill or the chevron overrides it until the next stop.
   const [collapsedChoice, setCollapsedChoice] = useState<boolean | null>(null);
+  // Bumped on every stop entry, so the guide cursor's one real click is per visit.
+  const [entry, setEntry] = useState(0);
 
   const onRoute = stopMatchesPath(stop, pathname);
   const isFinish = stop.id === "finish";
@@ -141,6 +144,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
       setDone(false);
       setOffRoute(false);
       setCollapsedChoice(null);
+      setEntry((n) => n + 1);
       void saveTourStop(next)
         .then((res) => {
           if (!res.ok) console.error(`Tour stop "${next}" was rejected by the server.`);
@@ -428,13 +432,55 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
     });
   };
 
-  if (closed) return null;
+  // ---- the guide cursor ---------------------------------------------------------------
+  // Off the stop's page it points at the way there — the nav link for that page, in the
+  // sidebar or the phone tab bar, whichever is showing — and only demonstrates the click.
+  const [navLink, setNavLink] = useState<CursorPoint | null>(null);
+  const navRoute = stop.route.includes(":") ? "/contacts" : stop.route;
+  useEffect(() => {
+    if (!offRoute || isFinish) return;
+    const t = window.setTimeout(() => {
+      const link = [...document.querySelectorAll<HTMLElement>(`a[href="${navRoute}"]`)].find(
+        (el) => el.closest("[data-app-sidebar], nav") && el.checkVisibility?.() !== false && el.getBoundingClientRect().width > 0,
+      );
+      const r = link?.getBoundingClientRect();
+      setNavLink(r ? { x: r.left + Math.min(r.width / 2, 40), y: r.top + r.height / 2 } : null);
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [isFinish, navRoute, offRoute, pathname]);
 
   const spotlightVisible = onRoute && !dialogUp && !isFinish && anchor.status === "found";
+  const onStopTarget: CursorPoint | null =
+    spotlightVisible && anchor.rect
+      ? {
+          x: anchor.rect.left + Math.min(anchor.rect.width / 2, 56),
+          y: anchor.rect.top + Math.min(anchor.rect.height / 2, 28),
+        }
+      : null;
+  const cursorOff = closed || isFinish || dialogUp;
+  const cursorTarget = cursorOff ? null : offRoute ? navLink : onStopTarget;
+  const stopDone = done || alreadyDone;
+  const cursorMode = offRoute ? "demo-click" : stopDone ? "point" : (stop.cursor ?? "point");
+  const cursorClick = useCallback(() => {
+    const el = anchor.el;
+    if (!el?.isConnected) return;
+    if (el.matches("input, textarea, [contenteditable]")) el.focus();
+    else el.click();
+  }, [anchor.el]);
+
+  if (closed) return null;
 
   return (
     <>
       <TourSpotlight rect={anchor.rect} chip={stop.chip} visible={spotlightVisible} />
+      <TourCursor
+        target={cursorTarget}
+        mode={cursorMode}
+        stopKey={`${stop.id}:${entry}`}
+        origin={{ x: cardLeft + 48, y: typeof window === "undefined" ? 600 : window.innerHeight - 260 }}
+        reduced={Boolean(reduced)}
+        onClick={cursorMode === "click" ? cursorClick : undefined}
+      />
       <CoachRail
         ref={desktopRef}
         phoneRef={phoneRef}
@@ -446,6 +492,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
         index={index}
         total={total}
         done={done || alreadyDone || !stop.doneWhen}
+        cursorWillClick={stop.cursor === "click" && !stopDone && !offRoute}
         missing={missing}
         offRoute={
           offRoute && !isFinish

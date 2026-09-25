@@ -21,13 +21,14 @@ export type CoachRailProps = {
   done: boolean;
   /** The stop's control is not on this screen; copy stands in. */
   missing: boolean;
-  /** The person wandered off the stop's page: offer the way back rather than fight them. */
   /**
-   * Off the stop's page. `message` replaces "This stop lives on …" when there is nowhere
+   * The person wandered off the stop's page: offer the way back rather than fight them. `message` replaces "This stop lives on …" when there is nowhere
    * specific to send them; `canGo` hides the button when it would go where they already are.
    */
   offRoute: { page: string; message?: string; canGo: boolean } | null;
   pending: boolean;
+  /** The guide cursor is about to do this stop's click itself (a harmless step). */
+  cursorWillClick?: boolean;
   onBack: (() => void) | null;
   onNext: () => void;
   onGoThere: () => void;
@@ -189,6 +190,7 @@ function RailBody({
   missing,
   offRoute,
   pending,
+  cursorWillClick,
   onBack,
   onNext,
   onGoThere,
@@ -271,6 +273,11 @@ function RailBody({
                 <p className="text-sm text-foreground">
                   <span className="font-medium text-primary">Try this → </span>
                   {stop.tryThis}
+                </p>
+              )}
+              {cursorWillClick && (
+                <p className="text-xs text-muted-foreground">
+                  Orbit will do this one for you, or do it yourself.
                 </p>
               )}
               {/* Under the instruction, not instead of it: the person still needs to know

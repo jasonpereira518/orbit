@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import Link from "next/link";
-import { ArrowRight, Check, ChevronDown, Lock, RefreshCw } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, RefreshCw } from "lucide-react";
 import { getGmailConnectionStatus, startGmailOAuth } from "@/actions/gmail";
 import { saveOnboardingStep } from "@/actions/onboarding";
 import { getOutlookConnectionStatus, startOutlookOAuth } from "@/actions/outlook";
@@ -10,11 +9,11 @@ import { GoogleContactsImport } from "@/components/imports/google-contacts-impor
 import { OutlookContactsImport } from "@/components/imports/outlook-contacts-import";
 import {
   BackButton,
-  ProTag,
   Stagger,
   StaggerItem,
   StepHeading,
 } from "@/components/onboarding/onboarding-ui";
+import { GoogleMark, MicrosoftMark } from "@/components/onboarding/provider-logo";
 import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE } from "@/lib/connection-status";
 import { friendlyError } from "@/lib/errors";
@@ -39,55 +38,57 @@ const PROVIDERS: Array<{ id: ConnectProvider; label: string; short: string }> = 
   { id: "microsoft", label: "Microsoft", short: "Outlook and Microsoft 365" },
 ];
 
-function readReturn(): OAuthReturn | null {
+function readReturn(): (OAuthReturn & { provider: ConnectProvider }) | null {
   if (typeof window === "undefined") return null;
   const search = window.location.search;
-  return (
-    readOAuthReturn(search, {
-      param: "google",
-      provider: "Google",
-      connectedText: "Google connected",
-      reasons: { missing_scope: googleMissingScope("contacts") },
-    }) ??
-    readOAuthReturn(search, {
-      param: "outlook",
-      provider: "Microsoft",
-      connectedText: "Microsoft connected",
-      reasons: { missing_scope: microsoftMissingScope("contacts") },
-    })
-  );
+  const google = readOAuthReturn(search, {
+    param: "google",
+    provider: "Google",
+    connectedText: "Google connected. Choose who to bring in below.",
+    reasons: { missing_scope: googleMissingScope("contacts") },
+  });
+  if (google) return { ...google, provider: "google" };
+  const microsoft = readOAuthReturn(search, {
+    param: "outlook",
+    provider: "Microsoft",
+    connectedText: "Microsoft connected. Choose who to bring in below.",
+    reasons: { missing_scope: microsoftMissingScope("contacts") },
+  });
+  return microsoft ? { ...microsoft, provider: "microsoft" } : null;
 }
 
-/** `?preview=connect-locked` shows the free-plan row on a laptop, where every account is a demo. */
-function previewLocked(): boolean {
-  if (process.env.NODE_ENV === "production" || typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("preview") === "connect-locked";
-}
+const HOW_IT_WORKS = [
+  "Pick your account on the Google or Microsoft screen",
+  "Allow contacts. Orbit can’t read or send your mail",
+  "Come back here and choose who to add",
+];
 
 /**
- * Connect Google or Microsoft so contacts (and, on request, calendar) can come in. Each row
- * reads live state: connected, connectable, or locked behind a plan — so when sync becomes
- * free for everyone this step lights up with no change here. Connecting leaves the origin,
+ * Connect Google or Microsoft and bring contacts in, free on every plan (the sign-in asks only
+ * for contacts; calendar, sending and the inbox scan are separate, paid purposes). Each row
+ * reads live state: connected or connectable. After the sign-in returns here, that provider's
+ * picker opens on its own. Connecting leaves the origin,
  * hence the awaited step save before the redirect; the query the callback returns with is
  * read once and stripped on the first gesture, never in a mount effect, because a
  * `replaceState` on mount is a router restore that drops any action queued alongside it.
  */
 export function ConnectStep({
-  canUseSync,
   initial,
   onContinue,
   onBack,
 }: {
-  canUseSync: boolean;
   initial: Record<ConnectProvider, ConnectAccount>;
   onContinue: () => void;
   onBack: () => void;
 }) {
   const [accounts, setAccounts] = useState(initial);
   const [pending, start] = useTransition();
-  const [importing, setImporting] = useState<ConnectProvider | null>(null);
-  const [oauth] = useState<OAuthReturn | null>(readReturn);
-  const [locked] = useState(() => !canUseSync || previewLocked());
+  const [oauth] = useState<(OAuthReturn & { provider: ConnectProvider }) | null>(readReturn);
+  // Coming back from a successful sign-in opens that provider's picker straight away: the
+  // point of connecting here is to bring people in, not to see a green tick.
+  const [importing, setImporting] = useState<ConnectProvider | null>(() =>
+    oauth?.tone === "success" ? oauth.provider : null,
+  );
 
   // Re-read both statuses on mount: the page's props are fresh, but this also covers an
   // account connected in another tab before this step was reached.
@@ -141,32 +142,51 @@ export function ConnectStep({
 
   const rows = PROVIDERS.filter((p) => accounts[p.id].configured);
   const anyConnected = rows.some((p) => accounts[p.id].connected);
+  const retryProvider = oauth && oauth.tone !== "success" && accounts[oauth.provider].configured ? oauth.provider : null;
 
   return (
-    <Stagger className="mx-auto max-w-2xl space-y-6">
+    <Stagger className="mx-auto max-w-2xl space-y-5">
       <div className="space-y-4">
         <StaggerItem>
           <BackButton onClick={onBack} disabled={pending} />
         </StaggerItem>
-        <StepHeading eyebrow="Your contacts" title="Connect your contacts">
-          Bring in the people you already email. Orbit reads only the contact details you choose
-          to import.
+        <StepHeading eyebrow="Your contacts" title="Bring in the people you email">
+          Connect Google or Outlook and pick who to add. It&apos;s free, and you choose every
+          person before anything is imported.
         </StepHeading>
       </div>
 
+      {!anyConnected && (
+        <Stagger as="ol" className="grid gap-2 sm:grid-cols-3">
+          {HOW_IT_WORKS.map((line, i) => (
+            <StaggerItem as="li" key={line} className="flex gap-2.5 rounded-xl border border-border/60 bg-card/60 p-3 text-sm">
+              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+                {i + 1}
+              </span>
+              <span className="text-foreground">{line}</span>
+            </StaggerItem>
+          ))}
+        </Stagger>
+      )}
+
       {oauth && (
         <StaggerItem>
-          <p
+          <div
             role="status"
             className={cn(
-              "rounded-xl border px-3 py-2 text-sm",
+              "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm",
               oauth.tone === "success" && "border-primary/30 bg-primary/5 text-foreground",
               oauth.tone === "message" && "border-border/70 bg-muted/30 text-muted-foreground",
               oauth.tone === "error" && "border-destructive/30 bg-destructive/5 text-destructive",
             )}
           >
-            {oauth.text}
-          </p>
+            <span>{oauth.text}</span>
+            {retryProvider && (
+              <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => connect(retryProvider)}>
+                Try again
+              </Button>
+            )}
+          </div>
         </StaggerItem>
       )}
 
@@ -174,69 +194,46 @@ export function ConnectStep({
         {rows.map((p) => {
           const account = accounts[p.id];
           const needsReauth = account.connected && account.health === "needs_reauth";
+          const Mark = p.id === "google" ? GoogleMark : MicrosoftMark;
           return (
-            <StaggerItem
-              as="li"
-              key={p.id}
-              className={cn(
-                "rounded-2xl border border-border/70 bg-card p-4 sm:p-5",
-                locked && !account.connected && "bg-card/50",
-              )}
-            >
+            <StaggerItem as="li" key={p.id} className="rounded-2xl border border-border/70 bg-card p-4">
               <div className="flex flex-wrap items-center gap-3">
                 <span
-                  className={cn(
-                    "flex size-10 shrink-0 items-center justify-center rounded-xl",
-                    account.connected ? "bg-primary text-primary-foreground" : "bg-accent text-primary",
-                    locked && !account.connected && "bg-muted text-muted-foreground",
-                  )}
+                  className="relative flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-white"
                   aria-hidden
                 >
-                  {account.connected ? (
-                    <Check className="size-5" strokeWidth={3} />
-                  ) : locked ? (
-                    <Lock className="size-4" />
-                  ) : (
-                    <ArrowRight className="size-5" />
+                  <Mark className="size-5" />
+                  {account.connected && (
+                    <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                      <Check className="size-2.5" strokeWidth={3.5} />
+                    </span>
                   )}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-2 font-medium text-ink">
-                    {p.label}
-                    {locked && !account.connected && <ProTag />}
-                  </p>
+                  <p className="font-medium text-ink">{p.label}</p>
                   <p className="truncate text-sm text-muted-foreground">
                     {account.connected
                       ? needsReauth
                         ? SESSION_EXPIRED_LINE
                         : `Connected as ${account.email ?? "your account"}`
-                      : locked
-                        ? "Included with Orbit Pro"
-                        : p.short}
+                      : p.short}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {account.connected && !needsReauth ? (
                     <Button
                       type="button"
-                      variant="outline"
+                      variant={importing === p.id ? "ghost" : "default"}
                       size="sm"
                       aria-expanded={importing === p.id}
                       onClick={() => setImporting((cur) => (cur === p.id ? null : p.id))}
                     >
-                      Import contacts now
+                      {importing === p.id ? "Hide" : "Choose who to add"}
                       <ChevronDown
                         className={cn("size-4 transition-transform", importing === p.id && "rotate-180")}
                         aria-hidden
                       />
                     </Button>
-                  ) : locked && !account.connected ? (
-                    <Link
-                      href="/upgrade"
-                      className="text-sm font-medium text-primary underline-offset-4 hover:underline"
-                    >
-                      See plans
-                    </Link>
                   ) : (
                     <Button type="button" size="sm" disabled={pending} onClick={() => connect(p.id)}>
                       {needsReauth ? (
@@ -252,10 +249,9 @@ export function ConnectStep({
                 </div>
               </div>
               {importing === p.id && account.connected && (
-                <div className="mt-4 border-t border-border/60 pt-4">
-                  <p className="mb-3 text-sm text-muted-foreground">
-                    Connected. Import your {p.label} contacts now, or later from Imports.
-                  </p>
+                // Scrolls inside the card, so the step still fits one screen however many
+                // people the account has.
+                <div className="mt-4 max-h-[min(22rem,45dvh)] overflow-y-auto border-t border-border/60 pt-4">
                   {p.id === "google" ? (
                     <GoogleContactsImport returnTo={RETURN_TO} />
                   ) : (
@@ -269,13 +265,9 @@ export function ConnectStep({
       </Stagger>
 
       <StaggerItem className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
-        {locked && !anyConnected ? (
-          <p className="text-xs text-muted-foreground">
-            Sync unlocks on Orbit Pro. Everything else in Orbit works on the free plan.
-          </p>
-        ) : (
-          <span />
-        )}
+        <p className="text-xs text-muted-foreground">
+          {anyConnected ? "You can bring in more any time from Imports." : "Orbit never sends email from your account."}
+        </p>
         <Button type="button" size="lg" className="h-10 px-4" disabled={pending} onClick={onContinue}>
           {anyConnected ? "Continue" : "Skip for now"}
           <ArrowRight className="size-4" aria-hidden />

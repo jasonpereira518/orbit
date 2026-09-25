@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 const TOUR_SETS_UP = [
   "Your AI key, checked as you save it",
   "Your LinkedIn export, started now so it’s ready tomorrow",
-  "Google or Microsoft contacts, when your plan includes sync",
+  "Your Google or Outlook contacts, brought in with one click",
   "Every page, with six example people already in place",
 ];
 

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ensureOnboarded, untilHydrated } from "./helpers";
+import { ensureOnboarded, skipConnectIfShown, untilHydrated } from "./helpers";
 
 /**
  * The guided tour over the real pages. Started from Settings → Help so it works whatever
@@ -38,8 +38,9 @@ test("the guided tour walks the real pages with example people, then removes the
     },
     () => expect(page.getByRole("heading", { name: "Start your LinkedIn export" })).toBeVisible({ timeout: 5_000 })
   );
-  // The stub key skips the AI key step and no Google client skips connect: straight to launch.
+  // The stub key skips the AI key step; connect shows only where an OAuth client is set up.
   await page.getByRole("button", { name: "I don't use LinkedIn" }).click();
+  await skipConnectIfShown(page, page.getByRole("heading", { name: "Setting the stage" }));
   await expect(page).toHaveURL(/\/dashboard$/, { timeout: 60_000 });
 
   // Stop 1: the dashboard, with the example people in place.

@@ -51,6 +51,17 @@ export async function requireSyncUser() {
   return userId;
 }
 
+/**
+ * Starting a Google or Microsoft sign-in. Connecting to bring in contacts is free on every
+ * plan (onboarding walks everyone through it); the other purposes — calendar sync, sending,
+ * reading the inbox — are what the sync entitlement pays for.
+ */
+export async function requireConnectUser(purpose: string) {
+  const userId = await requireUserId();
+  if (purpose !== "contacts") await requireEntitlement(userId, "sync");
+  return userId;
+}
+
 /** Auth plus "this surface is switched on", for pages with no plan gate of their own. */
 export async function requireUserForSurface(surfaceKey: string) {
   const userId = await requireUserId();

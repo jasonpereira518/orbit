@@ -8,7 +8,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections, imports, userSettings } from "@/db/schema";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireConnectUser, requireSyncUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
 import {
@@ -107,7 +107,7 @@ export async function startGmailOAuth(input: {
   returnTo?: string;
 }): Promise<{ url: string }> {
   if (!isGooglePurpose(input.purpose)) throw new Error("Unknown Google connection purpose");
-  const userId = await requireSyncUser();
+  const userId = await requireConnectUser(input.purpose);
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError
