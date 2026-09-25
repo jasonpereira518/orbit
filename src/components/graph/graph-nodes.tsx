@@ -464,6 +464,25 @@ export type NebulaWashData = {
 const NEBULA_WASH_MAX_BACKING_PX = 2048;
 
 /**
+ * Draw now — or, while the chart is still hidden, in a task of its own.
+ *
+ * The canvases below draw in layout effects so a visible canvas never paints a frame empty. But
+ * on the chart's first mount the whole stage is at opacity 0 until the camera has its real
+ * framing (`viewportReady` in graph-canvas-flow.tsx), so nobody can see a blank canvas yet — and
+ * at 10,000 contacts these two first draws were ~30ms of the one long task that mounts the chart.
+ * Hidden, they wait a task; visible, nothing changes. Returns the effect's cleanup.
+ */
+function drawNowUnlessHidden(canvas: HTMLCanvasElement, draw: () => void) {
+  const stage = canvas.closest<HTMLElement>(".constellation-stage");
+  if (stage?.style.opacity === "0") {
+    const timer = window.setTimeout(draw, 0);
+    return () => window.clearTimeout(timer);
+  }
+  draw();
+  return undefined;
+}
+
+/**
  * Every cluster's wash, as one canvas: the soft coloured clouds the constellations sit in.
  *
  * This used to be one absolutely-positioned box per cluster, each four cluster radii across —
@@ -497,51 +516,53 @@ function NebulaWashNodeComponent({ data }: NodeProps & { data: NebulaWashData })
     if (!canvas || !ctx) return;
     // Never skip the first draw: an empty canvas is a sky with no clusters in it.
     if (moving && drawnOnce.current) return;
-    drawnOnce.current = true;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const scale = Math.min(
-      Math.max(zoom, 0.01) * dpr,
-      NEBULA_WASH_MAX_BACKING_PX / Math.max(data.width, data.height)
-    );
-    const w = Math.max(1, Math.ceil(data.width * scale));
-    const h = Math.max(1, Math.ceil(data.height * scale));
-    // Resizing reallocates and clears the backing store; do it only when the size changed.
-    if (canvas.width !== w) canvas.width = w;
-    if (canvas.height !== h) canvas.height = h;
-    ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
-    ctx.clearRect(data.minX, data.minY, data.width, data.height);
+    return drawNowUnlessHidden(canvas, () => {
+      drawnOnce.current = true;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const scale = Math.min(
+        Math.max(zoom, 0.01) * dpr,
+        NEBULA_WASH_MAX_BACKING_PX / Math.max(data.width, data.height)
+      );
+      const w = Math.max(1, Math.ceil(data.width * scale));
+      const h = Math.max(1, Math.ceil(data.height * scale));
+      // Resizing reallocates and clears the backing store; do it only when the size changed.
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
+      ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
+      ctx.clearRect(data.minX, data.minY, data.width, data.height);
 
-    for (const cluster of data.clusters) {
-      // The cluster's dim is applied to its five lobes together, as the element's `opacity`
-      // applied it to the five backgrounds together. Instant rather than the 200ms fade the
-      // boxes had: a canvas redraws, it does not transition. The stars above made the same
-      // trade for the same reason.
-      ctx.globalAlpha = cluster.opacity;
-      for (const lobe of nebulaLobes(cluster.seed, cluster.radius)) {
-        // Under half a backing pixel there is nothing to draw, and a zero-radius gradient throws.
-        if (lobe.rx * scale < 0.5 || lobe.ry * scale < 0.5) continue;
-        const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, lobe.rx);
-        fill.addColorStop(0, withAlpha(cluster.color, lobe.alpha));
-        fill.addColorStop(NEBULA_LOBE_MID, withAlpha(cluster.color, lobe.alpha * 0.45));
-        // The cluster's own colour at zero alpha, not `transparent`: that keyword is
-        // transparent BLACK, so a fade to it drags the hue toward black on the way out
-        // instead of simply thinning. The dashboard preview builds the same stops.
-        fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(cluster.color, 0));
-        fill.addColorStop(1, withAlpha(cluster.color, 0));
-        ctx.save();
-        // An ellipse rx by ry, as `radial-gradient(ellipse rx ry at …)` drew it: a circle of
-        // radius rx, squashed vertically. The gradient is built in this squashed space, so it
-        // stretches with the shape exactly as the CSS one did.
-        ctx.translate(cluster.x + lobe.x, cluster.y + lobe.y);
-        ctx.scale(1, lobe.ry / lobe.rx);
-        ctx.fillStyle = fill;
-        ctx.beginPath();
-        ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+      for (const cluster of data.clusters) {
+        // The cluster's dim is applied to its five lobes together, as the element's `opacity`
+        // applied it to the five backgrounds together. Instant rather than the 200ms fade the
+        // boxes had: a canvas redraws, it does not transition. The stars above made the same
+        // trade for the same reason.
+        ctx.globalAlpha = cluster.opacity;
+        for (const lobe of nebulaLobes(cluster.seed, cluster.radius)) {
+          // Under half a backing pixel there is nothing to draw, and a zero-radius gradient throws.
+          if (lobe.rx * scale < 0.5 || lobe.ry * scale < 0.5) continue;
+          const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, lobe.rx);
+          fill.addColorStop(0, withAlpha(cluster.color, lobe.alpha));
+          fill.addColorStop(NEBULA_LOBE_MID, withAlpha(cluster.color, lobe.alpha * 0.45));
+          // The cluster's own colour at zero alpha, not `transparent`: that keyword is
+          // transparent BLACK, so a fade to it drags the hue toward black on the way out
+          // instead of simply thinning. The dashboard preview builds the same stops.
+          fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(cluster.color, 0));
+          fill.addColorStop(1, withAlpha(cluster.color, 0));
+          ctx.save();
+          // An ellipse rx by ry, as `radial-gradient(ellipse rx ry at …)` drew it: a circle of
+          // radius rx, squashed vertically. The gradient is built in this squashed space, so it
+          // stretches with the shape exactly as the CSS one did.
+          ctx.translate(cluster.x + lobe.x, cluster.y + lobe.y);
+          ctx.scale(1, lobe.ry / lobe.rx);
+          ctx.fillStyle = fill;
+          ctx.beginPath();
+          ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
       }
-    }
-    ctx.globalAlpha = 1;
+      ctx.globalAlpha = 1;
+    });
   }, [data, zoom, moving]);
 
   return (
@@ -798,42 +819,44 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
     if (!canvas || !ctx) return;
     // Never skip the first draw: the canvas can appear mid-gesture, and an empty one is a hole.
     if (moving && drawnOnce.current) return;
-    drawnOnce.current = true;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const scale = Math.min(
-      Math.max(zoom, 0.01) * dpr,
-      STAR_DUST_MAX_BACKING_PX / Math.max(data.width, data.height)
-    );
-    const w = Math.max(1, Math.ceil(data.width * scale));
-    const h = Math.max(1, Math.ceil(data.height * scale));
-    // Resizing reallocates and clears the backing store; do it only when the size changed.
-    if (canvas.width !== w) canvas.width = w;
-    if (canvas.height !== h) canvas.height = h;
-    ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
-    ctx.clearRect(data.minX, data.minY, data.width, data.height);
-    // At least a pixel and a half on screen, or a dim dot vanishes into the backing store.
-    const minRadius = 0.75 / Math.max(zoom, 0.01);
-    // One path and one fill per colour and strength rather than per dot: a sky has a handful of
-    // those and thousands of dots, and a search redraws all of them on each keystroke.
-    const batches = new Map<string, StarDustPoint[]>();
-    for (const p of data.points) {
-      const key = `${p.color}|${p.alpha.toFixed(2)}`;
-      const batch = batches.get(key);
-      if (batch) batch.push(p);
-      else batches.set(key, [p]);
-    }
-    for (const batch of batches.values()) {
-      ctx.globalAlpha = batch[0].alpha;
-      ctx.fillStyle = batch[0].color;
-      ctx.beginPath();
-      for (const p of batch) {
-        const r = Math.max(minRadius, (p.disc * starZoomRelief(p.disc, zoom)) / 2);
-        ctx.moveTo(p.x + r, p.y);
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    return drawNowUnlessHidden(canvas, () => {
+      drawnOnce.current = true;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const scale = Math.min(
+        Math.max(zoom, 0.01) * dpr,
+        STAR_DUST_MAX_BACKING_PX / Math.max(data.width, data.height)
+      );
+      const w = Math.max(1, Math.ceil(data.width * scale));
+      const h = Math.max(1, Math.ceil(data.height * scale));
+      // Resizing reallocates and clears the backing store; do it only when the size changed.
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
+      ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
+      ctx.clearRect(data.minX, data.minY, data.width, data.height);
+      // At least a pixel and a half on screen, or a dim dot vanishes into the backing store.
+      const minRadius = 0.75 / Math.max(zoom, 0.01);
+      // One path and one fill per colour and strength rather than per dot: a sky has a handful of
+      // those and thousands of dots, and a search redraws all of them on each keystroke.
+      const batches = new Map<string, StarDustPoint[]>();
+      for (const p of data.points) {
+        const key = `${p.color}|${p.alpha.toFixed(2)}`;
+        const batch = batches.get(key);
+        if (batch) batch.push(p);
+        else batches.set(key, [p]);
       }
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
+      for (const batch of batches.values()) {
+        ctx.globalAlpha = batch[0].alpha;
+        ctx.fillStyle = batch[0].color;
+        ctx.beginPath();
+        for (const p of batch) {
+          const r = Math.max(minRadius, (p.disc * starZoomRelief(p.disc, zoom)) / 2);
+          ctx.moveTo(p.x + r, p.y);
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        }
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    });
   }, [data, zoom, moving]);
 
   return (

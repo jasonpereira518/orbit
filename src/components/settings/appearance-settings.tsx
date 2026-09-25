@@ -42,8 +42,8 @@ export function AppearanceSettings({
   // different button than the server markup does — a hydration mismatch on the
   // Button className. Stay on the server-known value until hydration finishes.
   const active: ThemePreference = hydrated
-    ? (theme as ThemePreference | undefined) || initialTheme || "system"
-    : initialTheme || "system";
+    ? (theme as ThemePreference | undefined) || initialTheme || "light"
+    : initialTheme || "light";
 
   function select(next: ThemePreference) {
     setTheme(next);
