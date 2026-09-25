@@ -195,6 +195,8 @@ type ThreadMessage = UserMessage | AssistantMessage;
 
 /** One version of the last turn — see `getChatThread`'s `versions` and `@/lib/chat-versions`. */
 type VersionRow = { version: number; userMessageId: string; assistantMessageId: string };
+/** One shared empty list, so a non-last AssistantBubble's `versions` prop keeps its identity. */
+const EMPTY_VERSIONS: VersionRow[] = [];
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -1141,6 +1143,51 @@ export function ChatPanel() {
 
   const headerTitle = threadTitle?.trim() || "New chat";
 
+  // Bubble handlers that never change identity, so the `memo` on UserBubble/AssistantBubble
+  // holds while streaming (a setMessages per frame) and composer keystrokes re-render the
+  // panel. Each takes the message id and reads the latest committed render's state and
+  // functions through a ref — the same values the old per-render closures captured.
+  const bubbleLive = useRef({ messages, threadId, versionSlot, lastUserQuery, sendQuestion, sendVersioned, loadThread });
+  useLayoutEffect(() => {
+    bubbleLive.current = { messages, threadId, versionSlot, lastUserQuery, sendQuestion, sendVersioned, loadThread };
+  });
+  const bubbleHandlers = useMemo(
+    () => ({
+      startEdit: (id: string) => setEditingUserId(id),
+      cancelEdit: () => setEditingUserId(null),
+      submitEdit: (userMessageId: string, text: string) => {
+        const { messages: current, sendVersioned: send } = bubbleLive.current;
+        const i = current.findIndex((m) => m.id === userMessageId);
+        if (i < 0) return;
+        const nextAssistant = current[i + 1];
+        if (nextAssistant?.role === "assistant") send(nextAssistant.id, text);
+      },
+      regenerate: (assistantMessageId: string) => bubbleLive.current.sendVersioned(assistantMessageId),
+      askAgain: () => bubbleLive.current.sendQuestion(bubbleLive.current.lastUserQuery),
+      followUp: (q: string) => bubbleLive.current.sendQuestion(q),
+      actionSettled: (messageId: string, actionId: string, next: StoredProposedAction) =>
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId && m.role === "assistant"
+              ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
+              : m
+          )
+        ),
+      switchVersion: async (version: number) => {
+        const { threadId: tid, versionSlot: slot, loadThread: load } = bubbleLive.current;
+        if (!tid || !slot) return;
+        try {
+          await switchChatVersion(tid, slot, version);
+          await load(tid);
+        } catch (err) {
+          toast.error(friendlyError(err, "Couldn’t switch versions — try again?"));
+        }
+      },
+    }),
+    []
+  );
+  const selectThread = useCallback((id: string) => void loadThread(id), [loadThread]);
+
   return (
     <ChatThreadProvider value={threadId}>
       {/*
@@ -1167,7 +1214,7 @@ export function ChatPanel() {
           threads={threads}
           activeId={threadId}
           busy={busy}
-          onSelect={(id) => void loadThread(id)}
+          onSelect={selectThread}
           onNew={startNewChat}
           onDelete={removeThread}
         />
@@ -1318,45 +1365,20 @@ export function ChatPanel() {
                         msg={msg}
                         editable={isLastUser && !busy}
                         editing={editingUserId === msg.id}
-                        onStartEdit={() => setEditingUserId(msg.id)}
-                        onCancelEdit={() => setEditingUserId(null)}
-                        onSubmitEdit={(text) => {
-                          const nextAssistant = messages[i + 1];
-                          if (nextAssistant?.role === "assistant") sendVersioned(nextAssistant.id, text);
-                        }}
+                        onStartEdit={bubbleHandlers.startEdit}
+                        onCancelEdit={bubbleHandlers.cancelEdit}
+                        onSubmitEdit={bubbleHandlers.submitEdit}
                       />
                     ) : (
                       <AssistantBubble
                         key={msg.id}
                         msg={msg}
-                        onRetry={
-                          isLastAssistant ? () => sendVersioned(msg.id) : () => sendQuestion(lastUserQuery)
-                        }
+                        onRetry={isLastAssistant ? bubbleHandlers.regenerate : bubbleHandlers.askAgain}
                         retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
-                        onFollowUp={(q) => sendQuestion(q)}
-                        onActionSettled={(actionId, next) =>
-                          setMessages((prev) =>
-                            prev.map((m) =>
-                              m.id === msg.id && m.role === "assistant"
-                                ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
-                                : m
-                            )
-                          )
-                        }
-                        versions={isLastAssistant ? versions : []}
-                        onSwitchVersion={
-                          isLastAssistant
-                            ? async (version) => {
-                                if (!threadId || !versionSlot) return;
-                                try {
-                                  await switchChatVersion(threadId, versionSlot, version);
-                                  await loadThread(threadId);
-                                } catch (err) {
-                                  toast.error(friendlyError(err, "Couldn’t switch versions — try again?"));
-                                }
-                              }
-                            : undefined
-                        }
+                        onFollowUp={bubbleHandlers.followUp}
+                        onActionSettled={bubbleHandlers.actionSettled}
+                        versions={isLastAssistant ? versions : EMPTY_VERSIONS}
+                        onSwitchVersion={isLastAssistant ? bubbleHandlers.switchVersion : undefined}
                       />
                     );
                   })}
@@ -1647,9 +1669,10 @@ const UserBubble = memo(function UserBubble({
   /** Only the very last user turn can be edited — versions exist for the last turn only. */
   editable?: boolean;
   editing?: boolean;
-  onStartEdit?: () => void;
+  /** Called with this bubble's message id — a stable handler shared by every bubble. */
+  onStartEdit?: (id: string) => void;
   onCancelEdit?: () => void;
-  onSubmitEdit?: (text: string) => void;
+  onSubmitEdit?: (id: string, text: string) => void;
 }) {
   const [text, setText] = useState(msg.content);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
@@ -1666,7 +1689,7 @@ const UserBubble = memo(function UserBubble({
   function submit() {
     const trimmed = text.trim();
     if (!trimmed) return;
-    onSubmitEdit?.(trimmed);
+    onSubmitEdit?.(msg.id, trimmed);
   }
 
   if (editing) {
@@ -1719,7 +1742,7 @@ const UserBubble = memo(function UserBubble({
       {editable && (
         <button
           type="button"
-          onClick={onStartEdit}
+          onClick={() => onStartEdit?.(msg.id)}
           aria-label="Edit this question"
           title="Edit"
           className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
@@ -1744,10 +1767,11 @@ const AssistantBubble = memo(function AssistantBubble({
   onSwitchVersion,
 }: {
   msg: AssistantMessage;
-  onRetry?: () => void;
+  /** Called with this bubble's message id — the handlers are stable and shared by every bubble. */
+  onRetry?: (id: string) => void;
   retryLabel?: string;
   onFollowUp?: (question: string) => void;
-  onActionSettled?: (actionId: string, next: StoredProposedAction) => void;
+  onActionSettled?: (messageId: string, actionId: string, next: StoredProposedAction) => void;
   /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
   versions?: VersionRow[];
   onSwitchVersion?: (version: number) => void;
@@ -1846,7 +1870,7 @@ const AssistantBubble = memo(function AssistantBubble({
                 messageId={msg.id}
                 action={action}
                 contactName={"contactId" in action.args && action.args.contactId ? nameById.get(action.args.contactId) : null}
-                onSettled={(next) => onActionSettled?.(action.id, next)}
+                onSettled={(next) => onActionSettled?.(msg.id, action.id, next)}
               />
             ))}
           </div>
@@ -1858,7 +1882,7 @@ const AssistantBubble = memo(function AssistantBubble({
               answer={msg.answer}
               persisted={Boolean(msg.persisted)}
               initialFeedback={msg.feedback ?? null}
-              onRetry={onRetry}
+              onRetry={onRetry && (() => onRetry(msg.id))}
               retryLabel={retryLabel}
             />
             {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}

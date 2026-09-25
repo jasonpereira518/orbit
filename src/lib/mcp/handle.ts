@@ -26,7 +26,7 @@ import {
   touchApiKeyLastUsed,
 } from "@/lib/api/auth";
 import { deferTelemetry } from "@/lib/api/http";
-import { getEntitlements } from "@/lib/entitlements";
+import type { Entitlements } from "@/lib/entitlements";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { buildOrbitMcpServer } from "@/lib/mcp/server";
 import { resourceMetadataUrl, verifyOAuthCaller } from "@/lib/mcp/oauth";
@@ -64,6 +64,7 @@ type McpCaller = {
   /** Null for an OAuth caller: there is no `api_keys` row to stamp. */
   keyId: string | null;
   scopes: ApiKeyScope[];
+  entitlements: Entitlements;
 };
 
 export async function handleMcpRequest(
@@ -81,8 +82,8 @@ export async function handleMcpRequest(
     // from an older connector.
     const oauth = opts.token ? null : await verifyOAuthCaller();
     if (oauth) {
-      await assertAccountUsable(oauth.userId, { surface: "mcp" });
-      caller = { userId: oauth.userId, keyId: null, scopes: oauth.scopes };
+      const entitlements = await assertAccountUsable(oauth.userId, { surface: "mcp" });
+      caller = { userId: oauth.userId, keyId: null, scopes: oauth.scopes, entitlements };
     } else {
       // "read" here: individual write tools are gated inside the server by the key's scopes,
       // so a read-only key connects successfully and simply sees fewer tools.
@@ -91,7 +92,12 @@ export async function handleMcpRequest(
         token: opts.token,
         surface: "mcp",
       });
-      caller = { userId: key.userId, keyId: key.keyId, scopes: key.scopes };
+      caller = {
+        userId: key.userId,
+        keyId: key.keyId,
+        scopes: key.scopes,
+        entitlements: key.entitlements,
+      };
     }
   } catch (err) {
     if (err instanceof ApiAuthError) {
@@ -108,9 +114,9 @@ export async function handleMcpRequest(
     return jsonRpcError(-32603, "Authentication failed.", 500);
   }
 
-  // `getEntitlements` is request-cached, so this is the same read the auth check above
-  // already paid for.
-  const entitlements = await getEntitlements(caller.userId);
+  // Resolved by the auth check from the settings row it already read. (`getEntitlements`
+  // here would read it again: `cache()` does not deduplicate outside a React render.)
+  const { entitlements } = caller;
   try {
     await consumeBucket(
       "mcp",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { motion } from "motion/react";
 import { PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,7 +45,7 @@ export type ChatHistoryRailProps<T extends ThreadLike> = {
   className?: string;
 };
 
-export function ChatHistoryRail<T extends ThreadLike>({
+function ChatHistoryRailImpl<T extends ThreadLike>({
   threads,
   activeId,
   busy,
@@ -209,3 +209,10 @@ export function ChatHistoryRail<T extends ThreadLike>({
     </motion.div>
   );
 }
+
+/**
+ * Memoised so composer keystrokes and streamed frames in the chat panel skip the rail: every
+ * prop it gets is state or a stable callback. The cast keeps the generic signature, which
+ * `memo` would otherwise erase.
+ */
+export const ChatHistoryRail = memo(ChatHistoryRailImpl) as typeof ChatHistoryRailImpl;

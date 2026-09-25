@@ -59,8 +59,10 @@ export function ContactAvatarPreview({
   children: ReactNode;
   className?: string;
 }) {
+  // Only ever true from a timer started by a client pointer event, so the portal below never
+  // renders on the server or before hydration — no separate `mounted` flag (and no extra
+  // render per avatar on mount) needed.
   const [visible, setVisible] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const openTimer = useRef<number | null>(null);
   // Cursor-following position lives in refs and is written straight to the
   // card's transform — a React render per pointermove is wasted work.
@@ -69,7 +71,6 @@ export function ContactAvatarPreview({
   const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setMounted(true);
     return () => {
       if (openTimer.current) window.clearTimeout(openTimer.current);
       if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
@@ -128,8 +129,7 @@ export function ContactAvatarPreview({
       >
         {children}
       </span>
-      {mounted &&
-        visible &&
+      {visible &&
         createPortal(
           <div
             // Callback ref runs at commit (before paint): position the card

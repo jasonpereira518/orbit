@@ -10,7 +10,6 @@
  * No `@/db`: the lookup is injectable, so `scripts/smoke-outreach-sender.ts` runs pure.
  */
 import { createHash } from "node:crypto";
-import { Resend } from "resend";
 import { UserFacingError } from "@/lib/errors";
 
 export const NO_VERIFIED_DOMAIN_MESSAGE =
@@ -26,6 +25,7 @@ export type ListResendDomains = (apiKey: string) => Promise<ResendDomain[]>;
 
 /** Resend SDK 6.x: `domains.list()` → `{ data: { data: Domain[] } | null, error }`. */
 export const listResendDomainsWithSdk: ListResendDomains = async (apiKey) => {
+  const { Resend } = await import("resend");
   const { data, error } = await new Resend(apiKey).domains.list();
   if (error || !data) throw new Error(`Resend domains lookup: ${error?.message ?? "no data"}`);
   return data.data.map((d) => ({ name: d.name, status: d.status }));
@@ -37,6 +37,7 @@ export const listResendDomainsWithSdk: ListResendDomains = async (apiKey) => {
  * every other in-memory cache here — a cold instance simply looks up once.
  */
 const senderDomains = new Map<string, { domain: string; expiresAt: number }>();
+const SENDER_CACHE_SWEEP_ABOVE = 1000;
 
 function cacheKey(userId: string, apiKey: string) {
   return `${userId}:${createHash("sha256").update(apiKey).digest("hex").slice(0, 16)}`;
@@ -74,6 +75,11 @@ export async function outreachFromAddress(input: {
     const verified = domains.find((d) => d.status === "verified");
     if (!verified) throw new UserFacingError(NO_VERIFIED_DOMAIN_MESSAGE);
     cached = { domain: verified.name, expiresAt: now + SENDER_CACHE_TTL_MS };
+    // Expired entries read as absent above, so dropping them changes no answer; without
+    // this, a long-lived instance keeps one per user and key it ever served.
+    if (senderDomains.size >= SENDER_CACHE_SWEEP_ABOVE) {
+      for (const [k, entry] of senderDomains) if (entry.expiresAt <= now) senderDomains.delete(k);
+    }
     senderDomains.set(key, cached);
   }
 

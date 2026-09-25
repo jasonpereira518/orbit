@@ -334,12 +334,14 @@ export async function emitDueFollowupEvents(
   if (users.length === 0) return { users: 0, events: 0 };
 
   const day = now.toISOString().slice(0, 10);
-  const { getDashboardData } = await import("@/lib/reminders");
+  // The dashboard's due list without the rest of the dashboard: this runs every ten minutes
+  // for every subscribed account.
+  const { loadDueFollowUps } = await import("@/lib/due-follow-ups");
   let events = 0;
   for (const { user_id: userId } of users) {
     try {
-      const data = await getDashboardData(userId);
-      for (const contact of data.dueFollowUps.slice(0, 25)) {
+      const due = await loadDueFollowUps(userId);
+      for (const contact of due.slice(0, 25)) {
         const queued = await enqueueWebhookEvent(
           userId,
           "followup.due",

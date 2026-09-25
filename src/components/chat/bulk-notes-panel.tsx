@@ -46,7 +46,7 @@ import {
   useScanDropZone,
 } from "@/components/scan/scan-controls";
 import { finishBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
-import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
+import { releaseScanPage, type ScanPage } from "@/lib/scan-page";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import {
   pickLockedParticipant,

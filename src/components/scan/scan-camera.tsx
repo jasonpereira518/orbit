@@ -105,6 +105,23 @@ export function ScanCamera({
     });
   }, []);
 
+  /**
+   * Escape and the backdrop close the dialog without going through Cancel, so the pages
+   * still on screen are released on unmount too — except any already handed to `onDone`,
+   * which the caller now owns. The mirror is written in an effect, not during render.
+   */
+  const pagesRef = useRef<ScanPage[]>([]);
+  const handedOffRef = useRef(new Set<ScanPage>());
+  useEffect(() => {
+    pagesRef.current = pages;
+  }, [pages]);
+  useEffect(() => {
+    const handedOff = handedOffRef.current;
+    return () => {
+      for (const page of pagesRef.current) if (!handedOff.has(page)) releaseScanPage(page);
+    };
+  }, []);
+
   const shoot = useCallback(async () => {
     if (!videoRef.current || busy) return;
     if (pages.length >= MAX_SCAN_PAGES) {
@@ -257,7 +274,10 @@ export function ScanCamera({
           size="sm"
           disabled={!pages.length}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
-          onClick={() => onDone(pages)}
+          onClick={() => {
+            for (const page of pages) handedOffRef.current.add(page);
+            onDone(pages);
+          }}
         >
           {/* The count in the label, so the action is concrete rather than a bare verb. */}
           {pages.length <= 1

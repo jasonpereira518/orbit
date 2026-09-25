@@ -1,4 +1,4 @@
-import { del, put } from "@vercel/blob";
+import { del, put } from "@/lib/blob-lazy";
 
 /**
  * The only code that talks to Vercel Blob about contact photos.
