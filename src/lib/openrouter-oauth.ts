@@ -38,12 +38,16 @@ export type OpenRouterOAuthState = {
 };
 
 /**
- * `userId:encrypt(verifier):encodeURIComponent(safeReturnPath(returnTo))`, the same shape
- * `src/actions/gmail.ts` builds its OAuth state in. There the middle field is a bare
- * `crypto.randomUUID()`, so a plain `split(":")` is enough; here it is an *encrypted*
- * verifier — the actual PKCE secret, worth protecting at rest even inside an httpOnly
- * cookie — and `encrypt()`'s own output is `iv:tag:data`, so `decodeState` below has to
- * peel the first and last fields off rather than split naively.
+ * `encrypt(JSON.stringify({ userId, verifier, returnTo }))` — the whole payload under one
+ * AEAD, not just the verifier. An earlier version encrypted only the verifier and left
+ * `userId` and `returnTo` as cleartext fields alongside it; that meant
+ * `decoded.userId === sessionUserId` in the callback route was only as strong as "nobody
+ * can write a cookie on this origin", because GCM never covered the id — an attacker who
+ * can write a cookie here (Orbit also serves a separate `WAITLIST_HOST`, so sibling-
+ * subdomain cookie-tossing is not purely theoretical) could swap in a victim's id and the
+ * verifier would still decrypt cleanly. Encrypting the whole object makes any tampering —
+ * to the id, the return path, or the verifier — fail the same way: `decrypt()` throws, and
+ * `decodeState` reports it as `null`, same as gmail.ts's own state check treats a mismatch.
  */
 export function encodeState(input: {
   userId: string;
@@ -51,38 +55,40 @@ export function encodeState(input: {
   returnTo?: string | null;
 }): string {
   const safeReturn = safeReturnPath(input.returnTo ?? null) ?? "";
-  return `${input.userId}:${encrypt(input.verifier)}:${encodeURIComponent(safeReturn)}`;
+  return encrypt(JSON.stringify({ userId: input.userId, verifier: input.verifier, returnTo: safeReturn }));
 }
 
 /**
  * Null on anything malformed, tampered with, or encrypted under a different key — never
- * throws. A stale or forged cookie must send the person back to the AI page with a
- * friendly reason, not a 500.
+ * throws, and never returns a partial result. A stale, forged, or truncated cookie must
+ * send the person back to the AI page with a friendly reason, not a 500 and not a decode
+ * that trusts half of a tampered payload.
  */
 export function decodeState(raw: string): OpenRouterOAuthState | null {
   if (typeof raw !== "string" || raw.length === 0) return null;
-  const parts = raw.split(":");
-  // userId + encrypt()'s 3 colon-joined fields (iv, tag, data) + the encoded return path.
-  if (parts.length !== 5) return null;
-  const userId = parts[0];
-  const encodedReturnTo = parts[4];
-  const encryptedVerifier = `${parts[1]}:${parts[2]}:${parts[3]}`;
-  if (!userId) return null;
 
-  let verifier: string;
+  let json: string;
   try {
-    verifier = decrypt(encryptedVerifier);
-  } catch {
-    return null;
-  }
-  if (!verifier) return null;
-
-  let decodedReturnTo: string;
-  try {
-    decodedReturnTo = decodeURIComponent(encodedReturnTo);
+    json = decrypt(raw);
   } catch {
     return null;
   }
 
-  return { userId, verifier, returnTo: safeReturnPath(decodedReturnTo) };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const { userId, verifier, returnTo } = parsed as Record<string, unknown>;
+  if (typeof userId !== "string" || !userId) return null;
+  if (typeof verifier !== "string" || !verifier) return null;
+
+  return {
+    userId,
+    verifier,
+    returnTo: safeReturnPath(typeof returnTo === "string" ? returnTo : null),
+  };
 }

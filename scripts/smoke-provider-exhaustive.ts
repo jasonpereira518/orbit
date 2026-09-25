@@ -229,18 +229,22 @@ const ALLOWLIST: Record<string, string> = {
   "src/actions/settings.ts:111": "the \"openai\" arm of the same ternary — see line 109.",
   "src/actions/settings.ts:113": "the \"anthropic\" arm of the same ternary — see line 109; " +
     "this is the comparison that was added, moving openrouter off the anthropic default.",
-  "src/actions/settings.ts:246": "one of four INDEPENDENT `provider === X && encrypted` " +
+  "src/lib/ai-settings-write.ts:97": "one of four INDEPENDENT `provider === X && encrypted` " +
     "ternaries, one per key column of nextKeyState — each keys off its own literal with no " +
     "shared fallthrough default, so no cascade needs an openrouter arm; openrouterApiKeyEncrypted " +
-    "has its own `provider === \"openrouter\"` line right below the three narrowed ones.",
-  "src/actions/settings.ts:250": "same independent-ternary shape as line 246 — see that entry.",
-  "src/actions/settings.ts:254": "same independent-ternary shape as line 246 — see that entry.",
-  "src/actions/settings.ts:339": "clearApiKey's `patch` ternary — the final `else` arm is " +
+    "has its own `provider === \"openrouter\"` line right below the three narrowed ones. " +
+    "(applyAiKeyChange, moved here from src/actions/settings.ts by Task 5's fix round 1 — " +
+    "that file is \"use server\", which made the function a directly-POST-able Server " +
+    "Action despite taking a caller-supplied userId.)",
+  "src/lib/ai-settings-write.ts:101": "same independent-ternary shape as line 97 — see that entry.",
+  "src/lib/ai-settings-write.ts:105": "same independent-ternary shape as line 97 — see that entry.",
+  "src/actions/settings.ts:223": "clearApiKey's `patch` ternary — the final `else` arm is " +
     "the literal `{ openrouterApiKeyEncrypted: null }`, so the three narrowed comparisons " +
-    "plus that default are exhaustive over AiProvider. (Line shifted by Task 5's " +
-    "`applyAiKeyChange` extraction — was line 314.)",
-  "src/actions/settings.ts:341": "same ternary as line 339 — see that entry.",
-  "src/actions/settings.ts:343": "same ternary as line 339 — see that entry.",
+    "plus that default are exhaustive over AiProvider. (Line shifted again by Task 5's fix " +
+    "round 1, which moved applyAiKeyChange and its helpers out of this file entirely — " +
+    "was line 339, originally line 314.)",
+  "src/actions/settings.ts:225": "same ternary as line 223 — see that entry.",
+  "src/actions/settings.ts:227": "same ternary as line 223 — see that entry.",
 };
 
 function checkExhaustiveness() {

@@ -30,5 +30,11 @@ check("state round-trips the return path", round?.returnTo === "/settings?integr
 check("a malformed state decodes to null rather than throwing", decodeState("nonsense") === null);
 check("an off-site returnTo is refused", decodeState(encodeState({ userId: "u", verifier: "v", returnTo: "https://evil.example" }))?.returnTo !== "https://evil.example");
 
+// The whole payload — including userId — sits under one AEAD now, not just the verifier.
+// Flipping one hex character of the ciphertext must fail the auth tag and decode to null,
+// not silently hand back a state with someone else's id.
+const tamperedLastChar = state.slice(0, -1) + (state.endsWith("0") ? "1" : "0");
+check("a tampered payload decodes to null, not a partial result", decodeState(tamperedLastChar) === null);
+
 console.log(failures === 0 ? "\nall ok" : `\n${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);

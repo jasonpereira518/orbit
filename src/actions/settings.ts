@@ -34,12 +34,12 @@ import {
 } from "@/lib/ai";
 import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-check";
 import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
+import { demoAccountReason } from "@/lib/demo-account";
 import {
-  chooseEmbeddingKey,
-  managedEligibility,
-  type ManagedEligibility,
-} from "@/lib/managed-ai-policy";
-import { demoAccountReason, isDemoAccount } from "@/lib/demo-account";
+  applyAiKeyChange,
+  embeddingBackendFor,
+  managedEligibilityFor,
+} from "@/lib/ai-settings-write";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -173,122 +173,6 @@ export async function saveThemePreference(theme: ThemePreference) {
       target: userSettings.userId,
       set: { theme, updatedAt: new Date() },
     });
-}
-
-/**
- * Which embedding backend a given key state would land on — the same policy function the
- * gate runs (`chooseEmbeddingKey`), so a provider switch that moves search onto a different
- * embedding space (including onto or off Orbit's managed key) is detected and the stale
- * vectors cleared.
- */
-function embeddingBackendFor(
-  provider: AiProvider,
-  settings: {
-    geminiApiKeyEncrypted: string | null;
-    openaiApiKeyEncrypted: string | null;
-    anthropicApiKeyEncrypted: string | null;
-    openrouterApiKeyEncrypted: string | null;
-  } | null,
-  eligibility: ManagedEligibility
-) {
-  const choice = chooseEmbeddingKey({
-    eligibility,
-    selectedProvider: provider,
-    selectedModel: "",
-    personal: {
-      gemini: Boolean(settings?.geminiApiKeyEncrypted),
-      openai: Boolean(settings?.openaiApiKeyEncrypted),
-      anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
-      openrouter: Boolean(settings?.openrouterApiKeyEncrypted),
-    },
-    managed: managedKeysConfigured(),
-  });
-  return choice.ok ? choice.provider : null;
-}
-
-async function managedEligibilityFor(userId: string): Promise<ManagedEligibility> {
-  const { plan } = await getEntitlements(userId);
-  return managedEligibility(plan, isDemoAccount(userId));
-}
-
-/**
- * The write `saveAiSettings` performs once a key has been checked (or there is none to
- * check) — resolve the model, compare the embedding backend before and after, write the
- * row, and clear `contact_embeddings` when the backend changed. Extracted so the OpenRouter
- * OAuth callback (`src/app/api/openrouter/callback/route.ts`) can share it: that callback
- * stores a key and selects a provider, which is exactly the write the embedding guard
- * exists for, and a callback that wrote the row directly would bypass the only thing
- * keeping vector state coherent. `saveAiSettings`'s own behaviour is unchanged — same
- * order, same deletes, same return shape.
- */
-export async function applyAiKeyChange(input: {
-  userId: string;
-  provider: AiProvider;
-  model?: string;
-  /** Already encrypted (`encrypt()` from `@/lib/crypto`), or null to leave the stored key alone. */
-  encryptedKey: string | null;
-}): Promise<{ embeddingReset: boolean }> {
-  const { userId, provider, model, encryptedKey } = input;
-  const db = await getDb();
-  const existing = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
-
-  const aiModel = resolveAiModel(provider, model);
-
-  const eligibility = await managedEligibilityFor(userId);
-  const previousBackend = existing
-    ? embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing, eligibility)
-    : null;
-
-  const nextKeyState = {
-    geminiApiKeyEncrypted:
-      provider === "gemini" && encryptedKey
-        ? encryptedKey
-        : (existing?.geminiApiKeyEncrypted ?? null),
-    openaiApiKeyEncrypted:
-      provider === "openai" && encryptedKey
-        ? encryptedKey
-        : (existing?.openaiApiKeyEncrypted ?? null),
-    anthropicApiKeyEncrypted:
-      provider === "anthropic" && encryptedKey
-        ? encryptedKey
-        : (existing?.anthropicApiKeyEncrypted ?? null),
-    openrouterApiKeyEncrypted:
-      provider === "openrouter" && encryptedKey
-        ? encryptedKey
-        : (existing?.openrouterApiKeyEncrypted ?? null),
-  };
-
-  if (existing) {
-    await db
-      .update(userSettings)
-      .set({
-        aiProvider: provider,
-        aiModel,
-        // They have now seen the model they are on and chosen: the notice is spent.
-        aiModelMigratedFrom: null,
-        ...nextKeyState,
-        updatedAt: new Date(),
-      })
-      .where(eq(userSettings.userId, userId));
-  } else {
-    await db.insert(userSettings).values({
-      userId,
-      aiProvider: provider,
-      aiModel,
-      ...nextKeyState,
-    });
-  }
-
-  const nextBackend = embeddingBackendFor(provider, nextKeyState, eligibility);
-  const embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
-  if (embeddingReset) {
-    // Different embedding spaces can't be compared — clear stale vectors.
-    await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
-  }
-
-  return { embeddingReset };
 }
 
 export async function saveAiSettings(input: {

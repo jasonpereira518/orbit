@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { requireUserId, UnauthorizedError } from "@/lib/auth";
 import { checkAiKey, keyCheckOutcome } from "@/lib/ai-key-check";
 import { encrypt } from "@/lib/crypto";
 import { DEFAULT_MODELS } from "@/lib/ai-providers";
-import { applyAiKeyChange } from "@/actions/settings";
+import { applyAiKeyChange } from "@/lib/ai-settings-write";
 import { OPENROUTER_STATE_COOKIE, decodeState } from "@/lib/openrouter-oauth";
 
 /** Where the connect flow lands when there is no `returnTo` to trust. */
@@ -87,7 +88,11 @@ export async function GET(request: Request) {
     encryptedKey: encrypt(key),
   });
 
-  // 8. Done.
+  // 8. Done. Match saveAiSettings's own revalidation — the 302 makes the landing page
+  // (/settings) render fresh regardless, but /chat would otherwise keep whatever the
+  // router already cached.
+  revalidatePath("/settings");
+  revalidatePath("/chat");
   returnUrl.searchParams.set("openrouter", "connected");
   return NextResponse.redirect(returnUrl);
 }
