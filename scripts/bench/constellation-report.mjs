@@ -17,8 +17,10 @@ const files = process.argv
   .filter((a, i, all) => !a.startsWith("--") && all[i - 1] !== "--min-control");
 const merged = {};
 const labels = [];
+let suite = null;
 for (const f of files) {
   const data = JSON.parse(readFileSync(f, "utf8"));
+  suite ??= data.suite ?? null;
   for (const l of data.labels) {
     merged[l] = data.results[l];
     labels.push(l);
@@ -69,8 +71,11 @@ const range = (runs, pick) => {
   return v.length ? `${Math.min(...v)}–${Math.max(...v)}` : "—";
 };
 
-/** A `--suite frame` run: gestures scored against the 120Hz frame budget. */
-const isFrameSuite = Object.values(B.get(sizes[0])?.gestures ?? {}).some((g) => g && "over8" in g);
+/**
+ * A `--suite frame` run: gestures scored against the 120Hz frame budget. Read from the file,
+ * not the gestures: since method /2 every gesture records frame costs, open-suite ones too.
+ */
+const isFrameSuite = suite === "frame";
 
 if (isFrameSuite) {
   const FRAME_GESTURES = [
