@@ -18,7 +18,7 @@
  * remote URL is kept as-is. A missing Blob token must never fail an enrichment: the cover is
  * a nicety, and the alternative is a local checkout where pasting an event link always errors.
  */
-import { put } from "@vercel/blob";
+import { put } from "@/lib/blob-lazy";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { assertDeliverable } from "@/lib/net-guard";
 

@@ -23,6 +23,9 @@ import {
   type EdgeTypes,
   type NodeMouseHandler,
   type OnNodesChange,
+  type NodeOrigin,
+  type DefaultEdgeOptions,
+  type ProOptions,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -205,6 +208,16 @@ const edgeTypes: EdgeTypes = {
   labeled: LabeledEdge,
   straight: LabeledEdge,
 };
+
+// Module constants rather than inline literals, so <ReactFlow> sees the same props each render.
+const NODE_ORIGIN: NodeOrigin = [0.5, 0.5];
+const PRO_OPTIONS: ProOptions = { hideAttribution: true };
+const DEFAULT_EDGE_OPTIONS: DefaultEdgeOptions = {
+  type: "straight",
+  selectable: false,
+  focusable: false,
+};
+const NO_EDGES: Edge[] = [];
 
 /**
  * The zoomed-out summary view.
@@ -1804,17 +1817,21 @@ function GraphCanvasInner({
     });
   }, []);
 
+  // ReactFlow calls these with (event, viewport); both are ignored, as before.
+  const onMoveStart = useCallback(() => setMoving(true), [setMoving]);
+  const onMoveEnd = useCallback(() => setMoving(false), [setMoving]);
+
   const isEmpty = filteredContacts.length === 0;
 
   return (
     <>
       <ReactFlow
         nodes={nodes}
-        edges={isEmpty ? [] : edges}
+        edges={isEmpty ? NO_EDGES : edges}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        nodeOrigin={[0.5, 0.5]}
+        nodeOrigin={NODE_ORIGIN}
         minZoom={SKY_MIN_ZOOM}
         maxZoom={SKY_MAX_ZOOM}
         onlyRenderVisibleElements
@@ -1845,16 +1862,12 @@ function GraphCanvasInner({
         onPaneMouseMove={onClusterPointerMove}
         onNodeMouseLeave={onNodeMouseLeave}
         onPaneClick={onPaneClick}
-        proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{
-          type: "straight",
-          selectable: false,
-          focusable: false,
-        }}
+        proOptions={PRO_OPTIONS}
+        defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
         nodesDraggable={false}
         ref={stageRef}
-        onMoveStart={() => setMoving(true)}
-        onMoveEnd={() => setMoving(false)}
+        onMoveStart={onMoveStart}
+        onMoveEnd={onMoveEnd}
         className="constellation-stage"
       >
         <DefaultViewFitter

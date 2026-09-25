@@ -12,6 +12,8 @@ import { runDriveImportJob, stageDriveImport } from "@/lib/drive-import-processo
 import { removeDriveFlag } from "@/lib/drive-flags";
 import { driveReadinessReason } from "@/lib/drive-picker-token";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { recordDemoDriveImport } from "@/lib/demo-workspace-actions";
 
 /**
  * Whether Orbit's stored Google grant can read the files someone is about to pick.
@@ -29,6 +31,7 @@ export async function checkDriveReadiness(): Promise<
   | { ok: false; reason: "needs_consent" | "not_connected" | "needs_reconnect" | "error"; error?: string }
 > {
   const userId = await requireSyncUser();
+  if (await isDemoWorkspace(userId)) return { ok: true };
   const db = await getDb();
   const conn = await db.query.gmailConnections.findFirst({
     where: eq(gmailConnections.userId, userId),
@@ -66,6 +69,7 @@ export async function startDriveImport(
   // `asActionResult` would just rethrow it anyway — no point wrapping it.
   const userId = await requireSyncUser();
   return asActionResult(async () => {
+    if (await isDemoWorkspace(userId)) return recordDemoDriveImport(userId, files);
     const staged = await stageDriveImport(userId, files);
     after(() => runDriveImportJob(staged.importId).catch(() => {}));
     return staged;

@@ -152,6 +152,19 @@ async function loadCandidates(userId: string, probe: PageProbe) {
   return db.query.contacts.findMany({
     where: and(eq(contacts.userId, userId), or(...clauses)),
     limit: CANDIDATE_LIMIT,
+    // What the matcher compares (`DuplicateSubject`) plus `location` for the page diff.
+    // This runs on every profile the extension opens, and the whole row carried each
+    // candidate's notes and stored avatar (base64, up to ~120 KB) for up to 50 rows.
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      xHandle: true,
+      company: true,
+      title: true,
+      location: true,
+    },
   });
 }
 
@@ -511,17 +524,14 @@ export async function buildStarterContext(
   if (contactId) {
     const bundle = await buildSnapshot(userId, contactId, goals);
     if (bundle) {
-      const db = await getDb();
-      const row = await db.query.contacts.findFirst({
-        where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-        columns: { title: true, company: true, location: true },
-      });
+      // The snapshot already read this contact's row; reading it again for three of its
+      // columns was a second round trip for the same values.
       return {
         ...bundle.starterContext,
         mode: "warm",
         page,
         networkOverlap: { companies: [], schools: [] },
-        changes: row ? diffPageAgainstContact(probe, row) : [],
+        changes: diffPageAgainstContact(probe, bundle.snapshot),
       };
     }
   }

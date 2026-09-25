@@ -11,6 +11,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import type { SequenceStep } from "@/lib/outreach-types";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function OutreachCampaignPage({
   params,
@@ -45,6 +46,7 @@ export default async function OutreachCampaignPage({
 
   return (
     <div className="space-y-6">
+      <RenderStamp />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link

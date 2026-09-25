@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
@@ -134,7 +135,7 @@ export function NoteBatchResultView({
             {result.participants.map((p) => (
               <li key={p.contactId} className="flex items-center justify-between gap-2 text-sm">
                 <span>
-                  <Link href={`/contacts/${p.contactId}`} className="text-primary underline">{p.name}</Link>
+                  <IntentLink href={`/contacts/${p.contactId}`} className="text-primary underline">{p.name}</IntentLink>
                   {p.created && <Badge variant="secondary" className="ml-2 text-[10px]">New</Badge>}
                   {p.duplicate && <Badge variant="secondary" className="ml-2 text-[10px]">Already logged</Badge>}
                 </span>
@@ -153,7 +154,7 @@ export function NoteBatchResultView({
           <CardContent className="space-y-2 text-sm">
             {result.mentions.map((m) => (
               <p key={`${m.interactionId}-${m.contactId}`}>
-                &ldquo;{m.text}&rdquo; → <Link href={`/contacts/${m.contactId}`} className="text-primary underline">{name(m.contactId)}</Link>
+                &ldquo;{m.text}&rdquo; → <IntentLink href={`/contacts/${m.contactId}`} className="text-primary underline">{name(m.contactId)}</IntentLink>
                 <span className="text-muted-foreground"> · {Math.round(m.confidence * 100)}%</span>
               </p>
             ))}

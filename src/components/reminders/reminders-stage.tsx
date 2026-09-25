@@ -184,6 +184,13 @@ export function RemindersStage({
   const [busy, setBusy] = useState(false);
 
   const rowRefs = useRef(new Map<string, HTMLLIElement>());
+  // Stable, so `ReminderRow`'s memo holds; each row wraps it in its own stable ref callback.
+  // Same effect on `rowRefs` as the old inline callback: set on attach, deleted on detach
+  // (including unmount).
+  const registerRow = useCallback((id: string, el: HTMLLIElement | null) => {
+    if (el) rowRefs.current.set(id, el);
+    else rowRefs.current.delete(id);
+  }, []);
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
@@ -782,10 +789,7 @@ export function RemindersStage({
                             snoozeOpen={snoozeFor === item.id}
                             moreOpen={moreFor === item.id}
                             handlers={handlers}
-                            rowRef={(el) => {
-                              if (el) rowRefs.current.set(item.id, el);
-                              else rowRefs.current.delete(item.id);
-                            }}
+                            registerRow={registerRow}
                           />
                         ))}
                       </ul>

@@ -157,10 +157,14 @@ export function LiveRecentSignupsPanel({ totalUsers }: { totalUsers: number }) {
                 <span className="min-w-0 flex-1 truncate">
                   {row.email ?? row.userId}
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
+                {/* Fixed-width columns, so age, plan, counts and the alert line up down
+                    the list instead of each row sizing them to its own content. */}
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                   <RelativeTime date={row.signupAt} />
                 </span>
-                <PlanBadge plan={row.plan} source={row.planSource} />
+                <span className="flex w-40 shrink-0 justify-start">
+                  <PlanBadge plan={row.plan} source={row.planSource} />
+                </span>
                 <span
                   className={cn(
                     "w-20 shrink-0 text-right text-xs tabular-nums",
@@ -169,12 +173,16 @@ export function LiveRecentSignupsPanel({ totalUsers }: { totalUsers: number }) {
                 >
                   {row.counts.contacts} · {row.counts.interactions}
                 </span>
-                {!row.hasProviderKey && (
-                  <CircleAlert
-                    className="size-3.5 shrink-0 text-destructive"
-                    aria-label="No AI key configured"
-                  />
-                )}
+                {/* The slot is reserved in every row, so rows without the alert keep the
+                    counts column in place. */}
+                <span className="flex size-3.5 shrink-0">
+                  {!row.hasProviderKey && (
+                    <CircleAlert
+                      className="size-3.5 text-destructive"
+                      aria-label="No AI key configured"
+                    />
+                  )}
+                </span>
               </Link>
             </li>
           ))}

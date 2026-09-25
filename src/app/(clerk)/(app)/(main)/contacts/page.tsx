@@ -12,6 +12,7 @@ import { ContactsList } from "@/components/contacts/contacts-list";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 const SORTS: ContactSort[] = ["name", "closeness", "recent", "relevance"];
 
@@ -98,6 +99,7 @@ export default async function ContactsPage({
         </>
       }
     >
+      <RenderStamp />
       <div className="space-y-6">
         <ContactQuotaNotice
           used={planOverview.usage.used}

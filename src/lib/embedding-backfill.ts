@@ -24,7 +24,13 @@ import { createEmbeddingsBatch } from "@/lib/ai";
 import { embedWithBisect, planEmbeddingBatches } from "@/lib/embedding-batches";
 import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
 import { internalFetch } from "@/lib/internal-auth";
-import { buildContactEmbeddingContent, computeContentHash, persistEmbeddingVectors } from "@/lib/search";
+import {
+  buildContactEmbeddingContent,
+  computeContentHash,
+  CONTACT_EMBEDDING_COLUMNS,
+  CONTACT_EMBEDDING_WITH,
+  persistEmbeddingVectors,
+} from "@/lib/search";
 import { backfillMemoryChunks, pendingMemorySourceCount } from "@/lib/memory-backfill";
 import { resolveAiAccess } from "@/lib/ai-access";
 import { reportError } from "@/lib/report-error";
@@ -141,11 +147,9 @@ export async function runEmbeddingBackfill(
       where: and(eq(contacts.userId, userId), isNotNull(contacts.embeddingStaleAt)),
       orderBy: [asc(contacts.embeddingStaleAt)],
       limit: CLAIM_SIZE,
-      with: {
-        contactTags: { with: { tag: true } },
-        profile: true,
-        experiences: true,
-      },
+      // Only what the embedding text is built from (plus id) — see CONTACT_EMBEDDING_COLUMNS.
+      columns: CONTACT_EMBEDDING_COLUMNS,
+      with: CONTACT_EMBEDDING_WITH,
     });
     if (stale.length === 0) break;
 

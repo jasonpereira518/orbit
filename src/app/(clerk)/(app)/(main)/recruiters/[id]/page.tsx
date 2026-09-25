@@ -10,6 +10,7 @@ import { RecruiterLinkEditor } from "@/components/recruiters/recruiter-link-edit
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 function formatAvg(avgRating: number) {
   if (!avgRating) return "—";
@@ -38,6 +39,7 @@ export default async function RecruiterDetailPage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <RenderStamp />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link

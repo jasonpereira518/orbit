@@ -9,6 +9,7 @@ import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-ca
 import { buttonVariants } from "@/components/ui/button";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function OutreachPage() {
   // Before the paywall on purpose: coming-soon is a stronger fact than "buy a plan to
@@ -52,6 +53,7 @@ export default async function OutreachPage() {
 
   return (
     <div className="space-y-6">
+      <RenderStamp />
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">

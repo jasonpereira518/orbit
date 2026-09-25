@@ -63,15 +63,10 @@ export class ContactsFileError extends Error {
 }
 
 /**
- * The largest file the browser will even read.
- *
- * Deliberately far above `MAX_CONTACTS_FILE_CHARS`, because the raw file is not what gets
- * uploaded: an iCloud or Android export embeds every contact photo as base64, and a few hundred
- * photos is tens of megabytes of pixels around a few hundred kilobytes of names.
- * `compactContactsFileText` strips those in the browser before anything is sent, so this only
- * has to stop someone feeding `file.text()` something absurd.
+ * The largest file the browser will even read. Lives in the dependency-free `import-constants`
+ * so the /imports page can read it without this module (and papaparse) in its first load.
  */
-export const MAX_CONTACTS_FILE_BYTES = 50 * 1024 * 1024;
+export { MAX_CONTACTS_FILE_BYTES } from "@/lib/imports/import-constants";
 
 /**
  * The most text the server actions will parse — measured after `compactContactsFileText`.

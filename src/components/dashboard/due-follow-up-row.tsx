@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
@@ -62,7 +62,7 @@ export function DueFollowUpRow({
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start justify-between gap-3">
-        <Link href={`/contacts/${id}`} className="min-w-0 hover:underline">
+        <IntentLink href={`/contacts/${id}`} className="min-w-0 hover:underline">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium text-ink">{fullName}</p>
             {tier && <ClosenessTierBadge tier={tier} />}
@@ -92,7 +92,7 @@ export function DueFollowUpRow({
               ))}
             </p>
           )}
-        </Link>
+        </IntentLink>
       </div>
       <EasyFollowUp
         contactId={id}

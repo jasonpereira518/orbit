@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -50,6 +51,7 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import { LIST_INTENT_DELAY_MS, useIntentPrefetchHandlers } from "@/lib/intent-prefetch";
 import {
   markImportPersonSeen,
   useImportPeopleSeen,
@@ -319,16 +321,7 @@ export function ContactsList({
   // calls + a join per row) on every render, including ones triggered by unrelated
   // sibling state (a dialog opening, a popover, the alphabet scrubber dragging).
   const rowMeta = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        overdue: boolean;
-        scheduledLabel: string | null;
-        overdueText: string | null;
-        lastTouch: string | null;
-        details: string;
-      }
-    >();
+    const map = new Map<string, ContactRowMeta>();
     for (const c of contacts) {
       const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
       const lastTouch = lastTouchLabel(c.lastInteractionAt);
@@ -380,9 +373,9 @@ export function ContactsList({
 
   const confirmContact = contacts.find((c) => c.id === confirmId);
 
-  function requestDelete(id: string) {
-    setConfirmId(id);
-  }
+  // Stable, so `ContactRow`'s memo holds across unrelated list state (the scrubber's letter,
+  // the delete dialog, the draft sheet, a page loading).
+  const openContactPage = useCallback((id: string) => router.push(`/contacts/${id}`), [router]);
 
   function confirmDelete() {
     if (!confirmId) return;
@@ -455,191 +448,20 @@ export function ContactsList({
                 </div>
               )}
               <ul className="divide-y divide-border/60">
-                {section.contacts.map((c) => {
-                  const exiting = exitingId === c.id;
-                  const { overdue, scheduledLabel, overdueText, lastTouch, details } =
-                    rowMeta.get(c.id)!;
-
-                  const marked = c.fromImport && !importSeen.has(c.id);
-                  function seeMarked() {
-                    if (marked) markImportPersonSeen(importKey, c.id);
-                  }
-
-                  function openContact() {
-                    if (exiting) return;
-                    seeMarked();
-                    router.push(`/contacts/${c.id}`);
-                  }
-
-                  function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openContact();
-                    }
-                  }
-
-                  return (
-                    <li
-                      key={c.id}
-                      role="link"
-                      tabIndex={0}
-                      onClick={openContact}
-                      onKeyDown={onRowKeyDown}
-                      // Hover or keyboard focus counts as having seen them: the mark fades.
-                      onMouseEnter={seeMarked}
-                      onFocus={seeMarked}
-                      data-new-from-import={marked ? "" : undefined}
-                      className={cn(
-                        // content-visibility skips layout/paint for offscreen
-                        // rows — the browser remembers real heights after
-                        // first render (`auto` keyword), 74px is the estimate.
-                        "contact-row grid cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
-                        "transition-[grid-template-rows,opacity] duration-slow ease-house",
-                        "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
-                        exiting
-                          ? "grid-rows-[0fr] opacity-0"
-                          : "grid-rows-[1fr] opacity-100"
-                      )}
-                    >
-                      <div className="overflow-hidden">
-                        <div
-                          className={cn(
-                            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
-                            // New from the import the list was opened from: a light yellow
-                            // that fades out once the row is hovered, focused or opened.
-                            marked && "bg-amber-100/45 dark:bg-amber-300/10",
-                            exiting && "-translate-x-8"
-                          )}
-                        >
-                          <ContactAvatarPreview contact={c}>
-                            <ContactAvatar
-                              contactId={c.id}
-                              firstName={c.firstName}
-                              fullName={c.fullName}
-                              profileImageUrl={c.profileImageUrl}
-                              size="lg"
-                              // Rows you are actually looking at fill in first, instead of
-                              // waiting for the background backfill to reach them in id
-                              // order. `loading="lazy"` on the underlying <img> means only
-                              // near-viewport rows ever issue a request, and the route
-                              // caches its misses so scrolling back does not re-ask.
-                              resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
-                            />
-                          </ContactAvatarPreview>
-
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate font-medium text-ink">
-                              {c.preferredName || c.fullName}
-                            </p>
-                            <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                              <p className="min-w-0 truncate text-sm">
-                                <CompanyRoleLine
-                                  title={c.title}
-                                  company={c.company}
-                                />
-                              </p>
-                              {c.closenessTier && (
-                                <>
-                                  {/* On a phone the word badge ("INNER ORBIT") took ~90px
-                                      of a 375px row and cut the role to "VP Engin…". The
-                                      colour is the part that scans at a glance, and the
-                                      percentage chip on the right already carries the
-                                      number, so below sm the tier is just its dot. */}
-                                  <ClosenessTierBadge
-                                    tier={c.closenessTier}
-                                    dotOnly
-                                    className="sm:hidden"
-                                  />
-                                  <ClosenessTierBadge
-                                    tier={c.closenessTier}
-                                    className="hidden shrink-0 sm:inline-flex"
-                                  />
-                                </>
-                              )}
-                            </div>
-                            {details && (
-                              <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
-                                {overdueText ? (
-                                  <>
-                                    {detailLine(c.school, c.location) && (
-                                      <>
-                                        {detailLine(c.school, c.location)}
-                                        <span className="mx-1.5">·</span>
-                                      </>
-                                    )}
-                                    <span className="font-medium text-amber-700 dark:text-amber-300">
-                                      {overdueText}
-                                    </span>
-                                    {lastTouch && (
-                                      <>
-                                        <span className="mx-1.5">·</span>
-                                        {lastTouch}
-                                      </>
-                                    )}
-                                  </>
-                                ) : (
-                                  details
-                                )}
-                              </p>
-                            )}
-                            {c.matchReason && (
-                              // Only set for the "non-obvious" hits — a past role, or a
-                              // semantic match with no literal keyword overlap — so this
-                              // line is rare, not a fixture of every search result.
-                              <p className="mt-0.5 truncate text-[11px] font-medium text-primary/70">
-                                {c.matchReason}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-4">
-                            <ClosenessChip
-                              closeness={c.closeness}
-                              relationshipScore={c.relationshipScore}
-                              closenessTier={c.closenessTier}
-                            />
-
-                            {c.linkedinUrl ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label={`Open ${c.fullName} on LinkedIn`}
-                                className="tap-target relative shrink-0 text-muted-foreground"
-                                onClick={(e: MouseEvent<HTMLButtonElement>) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  window.open(
-                                    buildLinkedInUrl(c.linkedinUrl!),
-                                    "_blank",
-                                    "noopener,noreferrer"
-                                  );
-                                }}
-                              >
-                                <LinkedInIcon className="size-4" />
-                              </Button>
-                            ) : null}
-
-                            <FollowUpRowButton
-                              contactId={c.id}
-                              contactName={c.preferredName || c.fullName}
-                              nextFollowUpAt={c.nextFollowUpAt}
-                              overdue={overdue}
-                              scheduledLabel={scheduledLabel}
-                              onOpenDraft={setDraftContact}
-                            />
-
-                            <DeleteRowButton
-                              name={c.fullName}
-                              disabled={pending || exiting}
-                              onClick={() => requestDelete(c.id)}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
+                {section.contacts.map((c) => (
+                  <ContactRow
+                    key={c.id}
+                    c={c}
+                    meta={rowMeta.get(c.id)!}
+                    exiting={exitingId === c.id}
+                    marked={Boolean(c.fromImport && !importSeen.has(c.id))}
+                    importKey={importKey}
+                    deleteDisabled={pending || exitingId === c.id}
+                    onOpen={openContactPage}
+                    onOpenDraft={setDraftContact}
+                    onRequestDelete={setConfirmId}
+                  />
+                ))}
               </ul>
             </li>
           ))}
@@ -737,6 +559,233 @@ export function ContactsList({
     </TooltipProvider>
   );
 }
+
+type ContactRowMeta = {
+  overdue: boolean;
+  scheduledLabel: string | null;
+  overdueText: string | null;
+  lastTouch: string | null;
+  details: string;
+};
+
+/**
+ * One contact row. Memoized with only per-row values and stable callbacks as props, so a
+ * change that belongs to the list (the scrubber's active letter, the delete dialog, the draft
+ * sheet, a page loading) no longer re-renders every row.
+ */
+const ContactRow = memo(function ContactRow({
+  c,
+  meta,
+  exiting,
+  marked,
+  importKey,
+  deleteDisabled,
+  onOpen,
+  onOpenDraft,
+  onRequestDelete,
+}: {
+  c: ContactListItem;
+  meta: ContactRowMeta;
+  exiting: boolean;
+  /** New from the import the list was opened from, and not yet seen. */
+  marked: boolean;
+  importKey: string;
+  deleteDisabled: boolean;
+  onOpen: (id: string) => void;
+  onOpenDraft: (contact: { id: string; name: string }) => void;
+  onRequestDelete: (id: string) => void;
+}) {
+  const { overdue, scheduledLabel, overdueText, lastTouch, details } = meta;
+
+  function seeMarked() {
+    if (marked) markImportPersonSeen(importKey, c.id);
+  }
+
+  function openContact() {
+    if (exiting) return;
+    seeMarked();
+    onOpen(c.id);
+  }
+
+  // Rows are not <Link>s, so nothing prefetched the profile: every open started cold, behind
+  // a skeleton React holds for ≥300 ms. Resting on a row (or focusing it) fetches the whole
+  // profile, so the click usually renders straight from the router cache.
+  const intent = useIntentPrefetchHandlers(`/contacts/${c.id}`, LIST_INTENT_DELAY_MS);
+
+  function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openContact();
+    }
+  }
+
+  return (
+    <li
+      role="link"
+      tabIndex={0}
+      onClick={openContact}
+      onKeyDown={onRowKeyDown}
+      // Hover or keyboard focus counts as having seen them: the mark fades.
+      onMouseEnter={seeMarked}
+      onPointerEnter={intent.onPointerEnter}
+      onPointerLeave={intent.onPointerLeave}
+      onTouchStart={intent.onTouchStart}
+      onFocus={() => {
+        seeMarked();
+        intent.onFocus();
+      }}
+      data-new-from-import={marked ? "" : undefined}
+      className={cn(
+        // content-visibility skips layout/paint for offscreen
+        // rows — the browser remembers real heights after
+        // first render (`auto` keyword), 74px is the estimate.
+        "contact-row grid cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
+        "transition-[grid-template-rows,opacity] duration-slow ease-house",
+        "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
+        exiting
+          ? "grid-rows-[0fr] opacity-0"
+          : "grid-rows-[1fr] opacity-100"
+      )}
+    >
+      <div className="overflow-hidden">
+        <div
+          className={cn(
+            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
+            // New from the import the list was opened from: a light yellow
+            // that fades out once the row is hovered, focused or opened.
+            marked && "bg-amber-100/45 dark:bg-amber-300/10",
+            exiting && "-translate-x-8"
+          )}
+        >
+          <ContactAvatarPreview contact={c}>
+            <ContactAvatar
+              contactId={c.id}
+              firstName={c.firstName}
+              fullName={c.fullName}
+              profileImageUrl={c.profileImageUrl}
+              size="lg"
+              // Rows you are actually looking at fill in first, instead of
+              // waiting for the background backfill to reach them in id
+              // order. `loading="lazy"` on the underlying <img> means only
+              // near-viewport rows ever issue a request, and the route
+              // caches its misses so scrolling back does not re-ask.
+              resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
+            />
+          </ContactAvatarPreview>
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-medium text-ink">
+              {c.preferredName || c.fullName}
+            </p>
+            <div className="mt-0.5 flex min-w-0 items-center gap-2">
+              <p className="min-w-0 truncate text-sm">
+                <CompanyRoleLine
+                  title={c.title}
+                  company={c.company}
+                />
+              </p>
+              {c.closenessTier && (
+                <>
+                  {/* On a phone the word badge ("INNER ORBIT") took ~90px
+                      of a 375px row and cut the role to "VP Engin…". The
+                      colour is the part that scans at a glance, and the
+                      percentage chip on the right already carries the
+                      number, so below sm the tier is just its dot. */}
+                  <ClosenessTierBadge
+                    tier={c.closenessTier}
+                    dotOnly
+                    className="sm:hidden"
+                  />
+                  <ClosenessTierBadge
+                    tier={c.closenessTier}
+                    className="hidden shrink-0 sm:inline-flex"
+                  />
+                </>
+              )}
+            </div>
+            {details && (
+              <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
+                {overdueText ? (
+                  <>
+                    {detailLine(c.school, c.location) && (
+                      <>
+                        {detailLine(c.school, c.location)}
+                        <span className="mx-1.5">·</span>
+                      </>
+                    )}
+                    <span className="font-medium text-amber-700 dark:text-amber-300">
+                      {overdueText}
+                    </span>
+                    {lastTouch && (
+                      <>
+                        <span className="mx-1.5">·</span>
+                        {lastTouch}
+                      </>
+                    )}
+                  </>
+                ) : (
+                  details
+                )}
+              </p>
+            )}
+            {c.matchReason && (
+              // Only set for the "non-obvious" hits — a past role, or a
+              // semantic match with no literal keyword overlap — so this
+              // line is rare, not a fixture of every search result.
+              <p className="mt-0.5 truncate text-[11px] font-medium text-primary/70">
+                {c.matchReason}
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-4">
+            <ClosenessChip
+              closeness={c.closeness}
+              relationshipScore={c.relationshipScore}
+              closenessTier={c.closenessTier}
+            />
+
+            {c.linkedinUrl ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Open ${c.fullName} on LinkedIn`}
+                className="tap-target relative shrink-0 text-muted-foreground"
+                onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.open(
+                    buildLinkedInUrl(c.linkedinUrl!),
+                    "_blank",
+                    "noopener,noreferrer"
+                  );
+                }}
+              >
+                <LinkedInIcon className="size-4" />
+              </Button>
+            ) : null}
+
+            <FollowUpRowButton
+              contactId={c.id}
+              contactName={c.preferredName || c.fullName}
+              nextFollowUpAt={c.nextFollowUpAt}
+              overdue={overdue}
+              scheduledLabel={scheduledLabel}
+              onOpenDraft={onOpenDraft}
+            />
+
+            <DeleteRowButton
+              name={c.fullName}
+              disabled={deleteDisabled}
+              onClick={() => onRequestDelete(c.id)}
+            />
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+});
 
 function nearestSectionEl(letter: string, available: Set<string>) {
   const idx = ALPHABET.indexOf(letter as (typeof ALPHABET)[number]);

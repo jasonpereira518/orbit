@@ -17,6 +17,14 @@ import {
  * ever be someone they know, never a stranger with the same name.
  */
 
+/**
+ * Only what the indexes below read: the first email, the first non-default photo, and the
+ * name fields the fetchers' "has a name" filter keeps people by. Organizations and phone
+ * numbers were fetched for every contact and thrown away.
+ */
+const GOOGLE_PHOTO_INDEX_FIELDS = "names,emailAddresses,photos";
+const OUTLOOK_CONTACT_INDEX_SELECT = "displayName,givenName,surname,emailAddresses";
+
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -35,7 +43,7 @@ export async function buildGooglePhotoIndex(userId: string): Promise<Map<string,
 
   try {
     const accessToken = await getGoogleAccessToken(userId);
-    const people = await fetchGooglePeopleContacts(accessToken);
+    const people = await fetchGooglePeopleContacts(accessToken, GOOGLE_PHOTO_INDEX_FIELDS);
     const index = new Map<string, string>();
     for (const person of people) {
       const email = person.email?.trim();
@@ -61,7 +69,7 @@ export async function buildOutlookContactIndex(userId: string): Promise<Map<stri
 
   try {
     const accessToken = await getOutlookAccessToken(userId);
-    const contacts = await fetchOutlookContacts(accessToken);
+    const contacts = await fetchOutlookContacts(accessToken, OUTLOOK_CONTACT_INDEX_SELECT);
     const index = new Map<string, string>();
     for (const contact of contacts) {
       const email = contact.email?.trim();

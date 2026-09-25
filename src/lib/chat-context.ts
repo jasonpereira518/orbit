@@ -667,9 +667,31 @@ export async function prepareChatContext(
     .map((m) => ({ role: m.role as ChatTurn["role"], content: m.content }));
 
   if (focusContactId) {
+    // Exactly the fields the RankedContact entry below is built from — not the whole row
+    // (inline avatar, enrichment blobs) and whole tag rows, to read these.
     const focused = await db.query.contacts.findFirst({
       where: and(eq(contacts.id, focusContactId), eq(contacts.userId, userId)),
-      with: { contactTags: { with: { tag: true } } },
+      columns: {
+        id: true,
+        fullName: true,
+        preferredName: true,
+        company: true,
+        school: true,
+        title: true,
+        location: true,
+        email: true,
+        industry: true,
+        notes: true,
+        aiSummary: true,
+        keyFacts: true,
+        opportunities: true,
+        relationshipScore: true,
+        priorityLevel: true,
+        closenessTier: true,
+      },
+      with: {
+        contactTags: { columns: { tagId: true }, with: { tag: { columns: { name: true } } } },
+      },
     });
     if (focused) {
       const focusEntry: RankedContact = {
@@ -716,6 +738,14 @@ export async function prepareChatContext(
     focusContactId
       ? db.query.interactions.findMany({
           where: and(eq(interactions.userId, userId), eq(interactions.contactId, focusContactId)),
+          // What the timeline lines below read.
+          columns: {
+            id: true,
+            interactionDate: true,
+            interactionType: true,
+            aiSummary: true,
+            rawNotes: true,
+          },
           orderBy: [desc(interactions.interactionDate)],
           limit: 16,
         })

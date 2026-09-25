@@ -42,6 +42,7 @@ import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function ContactDetailPage({
   params,
@@ -251,6 +252,7 @@ export default async function ContactDetailPage({
 
   return (
     <div className="space-y-6 pb-8">
+      <RenderStamp />
       <div className="reveal-mount">
         <ContactProfileHero
           contactId={contact.id}

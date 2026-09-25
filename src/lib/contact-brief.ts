@@ -234,9 +234,28 @@ export async function generateAndStoreContactBrief(
   options?: { force?: boolean; engines?: Engines }
 ): Promise<{ summary: string | null; standing: string | null; nextStep?: string | null } | null> {
   const db = await getDb();
+  // Projected to exactly what the prompt, the deterministic fallback and the stored brief
+  // read. Unprojected, the contact brought its inline avatar and every enrichment column,
+  // and the tag join its whole tag rows, to a function that reads names and a few fields.
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    with: { contactTags: { with: { tag: true } } },
+    columns: {
+      fullName: true,
+      preferredName: true,
+      title: true,
+      company: true,
+      location: true,
+      industry: true,
+      metContext: true,
+      dateMet: true,
+      howMet: true,
+      notes: true,
+      keyFacts: true,
+      aiSummary: true,
+    },
+    with: {
+      contactTags: { columns: { tagId: true }, with: { tag: { columns: { name: true } } } },
+    },
   });
   if (!contact) return null;
 
@@ -245,6 +264,13 @@ export async function generateAndStoreContactBrief(
       eq(interactions.userId, userId),
       eq(interactions.contactId, contactId)
     ),
+    columns: {
+      id: true,
+      interactionDate: true,
+      interactionType: true,
+      aiSummary: true,
+      rawNotes: true,
+    },
     orderBy: [desc(interactions.interactionDate)],
     limit: 20,
   });

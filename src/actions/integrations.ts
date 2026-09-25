@@ -10,6 +10,8 @@ import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { listCalendarSubscriptions } from "@/actions/calendar";
 import { listEventConnections } from "@/lib/events/connections";
 import { requireUserId } from "@/lib/auth";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { withDemoIntegrationStatuses } from "@/lib/demo-workspace-connections";
 import { CONNECTOR_STATUS_LOOKUP_IDS, type ConnectorStatusId } from "@/lib/connectors/status";
 import type { IntegrationTabId } from "@/components/settings/sections";
 
@@ -187,5 +189,6 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
     if (!(id in statuses)) statuses[id] = { state: "off", detail: "Not connected" };
   }
 
-  return statuses;
+  const demo = await isDemoWorkspace(await requireUserId()).catch(() => false);
+  return demo ? withDemoIntegrationStatuses(statuses) : statuses;
 }

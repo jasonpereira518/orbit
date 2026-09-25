@@ -14,7 +14,7 @@
  * whole lifecycle against PGlite. Every function takes the user id and scopes by it.
  */
 import { randomUUID } from "node:crypto";
-import { del, put } from "@vercel/blob";
+import { del, put } from "@/lib/blob-lazy";
 import { and, asc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { capturePhotos } from "@/db/schema";

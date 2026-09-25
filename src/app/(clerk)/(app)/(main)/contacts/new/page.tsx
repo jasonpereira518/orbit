@@ -3,6 +3,7 @@ import { ContactForm } from "@/components/contacts/contact-form";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { LockedFeature } from "@/components/locked-feature";
 import { getPlanOverview } from "@/actions/settings";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function NewContactPage() {
   const { usage } = await getPlanOverview();
@@ -15,6 +16,7 @@ export default async function NewContactPage() {
   if (atLimit) {
     return (
       <div className="mx-auto max-w-2xl">
+        <RenderStamp />
         <LockedFeature
           title={`You've reached ${usage.limit} contacts`}
           description="Every contact you already have stays right where it is — fully visible and editable. Upgrading lifts the limit so you can keep adding people."
@@ -30,6 +32,7 @@ export default async function NewContactPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      <RenderStamp />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Add contact

@@ -341,6 +341,8 @@ export async function runLinkedInTimelineBackfill(
           eq(interactions.contactId, contactId),
           eq(interactions.interactionType, "linkedin_message")
         ),
+        // The three fields the thread is rebuilt from below.
+        columns: { rawNotes: true, direction: true, interactionDate: true },
         orderBy: [asc(interactions.interactionDate)],
         limit: MESSAGE_LIMIT,
       });
@@ -434,6 +436,8 @@ export async function runLinkedInTimelineBackfill(
           eq(interactions.contactId, q.contactId),
           eq(interactions.interactionType, "linkedin_message")
         ),
+        // The three fields the thread is rebuilt from below.
+        columns: { rawNotes: true, direction: true, interactionDate: true },
         orderBy: [asc(interactions.interactionDate)],
         limit: MESSAGE_LIMIT,
       });

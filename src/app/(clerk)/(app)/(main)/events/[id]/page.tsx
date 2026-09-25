@@ -17,6 +17,7 @@ import {
   getRosterHistory,
   matchRosterToNetwork,
 } from "@/actions/events";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 async function WhoToTalkTo({ eventId }: { eventId: string }) {
   const data = await getWhoToTalkTo(eventId);
@@ -115,6 +116,7 @@ export default async function EventDetailPage({
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 pb-8">
+      <RenderStamp />
       {/* A static destination rather than `router.back()`: an event page is a deep link
           people reach from a fresh tab or a search result, where going back leaves the app. */}
       <Link
