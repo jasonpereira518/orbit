@@ -8,6 +8,7 @@ import {
   setUserIdentity,
 } from "@/lib/user-settings";
 import { termsAcceptanceFromClerk } from "@/lib/legal";
+import { grantSiteInvitePlan } from "@/lib/site-invites";
 import { recordBillingEvent } from "@/lib/billing-events";
 import { shouldRecordThrottled } from "@/lib/error-events";
 import {
@@ -102,6 +103,9 @@ export async function POST(req: NextRequest) {
           if (acceptance) {
             await recordTermsAcceptance(userId, acceptance, { onlyIfUnset: true });
           }
+          // Clerk copies an invitation's public metadata onto the account it creates, so an
+          // admin-invited sign-up arrives here already carrying the marker: comp it now.
+          await grantSiteInvitePlan(userId, evt.data.public_metadata as Record<string, unknown>);
         }
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {

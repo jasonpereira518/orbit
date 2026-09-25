@@ -10,15 +10,24 @@
  * stealth, now held) cannot take an invitation — Clerk refuses one for an existing user — so
  * the marker goes straight onto that user and they are handed the sign-in link instead.
  *
+ * AN INVITATION IS FULL ACCESS, not just a way past stealth: the account it lands on is comped
+ * to Orbit (`grantSiteInvitePlan`). The existing-account path comps on the spot; a new account
+ * is comped when it first appears — from the `user.created` webhook, with the onboarding page
+ * as the backstop for a webhook that never lands (`claimSiteInviteGrant`).
+ *
  * No auth here; the server actions in `src/actions/admin.ts` are the gate.
  */
 import { clerkClient } from "@clerk/nextjs/server";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { recordAdminAction } from "@/lib/admin-operations";
-import { markStealthCleared, SITE_INVITE_METADATA_KEY } from "@/lib/site-access";
+import { hasSiteInvite, markStealthCleared, SITE_INVITE_METADATA_KEY } from "@/lib/site-access";
+import { ensureUserSettings, setCompedPlan } from "@/lib/user-settings";
 
 const INVITE_EXPIRES_DAYS = 30;
+/** The plan an invitation comps. `orbit`, not `lifetime`: only `orbit` reaches every gate. */
+const INVITE_PLAN = "orbit" as const;
+const INVITE_COMP_NOTE = "Invited by an admin";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type SiteInviteResult =
@@ -70,6 +79,7 @@ export async function inviteToSite(input: {
   if (user) {
     await clerk.users.updateUserMetadata(user.id, { publicMetadata: marker });
     await markStealthCleared(user.id);
+    await grantSiteInvitePlan(user.id, marker, input.adminUserId);
     await recordAdminAction({
       adminUserId: input.adminUserId,
       action: "site.invite.existing_account",
@@ -129,4 +139,43 @@ export async function revokeSiteInvite(input: { adminUserId: string; invitationI
     detail: { email: revoked.emailAddress },
   });
   return { email: revoked.emailAddress };
+}
+
+/**
+ * Comp an invited account to Orbit. A no-op without the invitation marker, and for an
+ * account that already carries any comp, so an admin's hand-set Lifetime is never downgraded.
+ *
+ * Only `user.created`, the existing-account invite and the onboarding backstop call this —
+ * never `user.updated` — so a comp an admin later revokes from the console stays revoked
+ * (the onboarding backstop only runs before onboarding is finished).
+ */
+export async function grantSiteInvitePlan(
+  userId: string,
+  publicMetadata: Record<string, unknown> | null | undefined,
+  adminUserId?: string | null
+): Promise<boolean> {
+  if (!hasSiteInvite(publicMetadata)) return false;
+  const settings = await ensureUserSettings(userId);
+  if (settings.compedPlan) return false;
+  const invite = publicMetadata?.[SITE_INVITE_METADATA_KEY] as { by?: unknown } | undefined;
+  const by = adminUserId ?? (typeof invite?.by === "string" ? invite.by : null);
+  await setCompedPlan(userId, INVITE_PLAN, { note: INVITE_COMP_NOTE, adminUserId: by });
+  return true;
+}
+
+/**
+ * The backstop for a missed `user.created` webhook: ask Clerk whether this account was
+ * invited and comp it if so. One Clerk call, so callers gate it to accounts that plausibly
+ * need it (no comp yet, still onboarding). Fails quietly — a Clerk hiccup must not break
+ * the page it runs on; the next visit tries again.
+ */
+export async function claimSiteInviteGrant(userId: string): Promise<boolean> {
+  if (!isClerkConfigured() || userId === "demo-user") return false;
+  try {
+    const user = await (await clerkClient()).users.getUser(userId);
+    return await grantSiteInvitePlan(userId, user.publicMetadata as Record<string, unknown>);
+  } catch (err) {
+    console.error("[site-invites] invite grant check failed", err);
+    return false;
+  }
 }

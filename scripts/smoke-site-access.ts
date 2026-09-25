@@ -1,7 +1,7 @@
 /**
  * Stealth as an admin-console switch (src/lib/site-access.ts): the env default, the switch
  * taking over from it, when `stealth_since` moves, the audit trail, and the rule that decides
- * which accounts stealth holds.
+ * which accounts stealth holds, and the Orbit comp an invitation grants.
  *
  * `site_settings` is GLOBAL state, so this snapshots the row and restores it in a `finally`,
  * the same discipline `smoke-constellation-admin.ts` uses. Every read passes `fresh: true`:
@@ -22,10 +22,14 @@ import {
   setStealth,
   stealthAdmits,
 } from "../src/lib/site-access";
+import { grantSiteInvitePlan } from "../src/lib/site-invites";
+import { setCompedPlan } from "../src/lib/user-settings";
 import { run } from "./smoke/_env";
 
 const ADMIN = "smoke-site-access-admin";
 const EARLY_USER = "smoke-site-access-early";
+const INVITED_USER = "smoke-site-access-invited";
+const LIFETIME_USER = "smoke-site-access-lifetime";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -106,7 +110,24 @@ run(async () => {
       "nobody is held while the site is public",
       !(await isHeldByStealth("smoke-site-access-unknown-2", { createdAt: new Date(), stealthClearedAt: null }))
     );
+
+    console.log("\nAn invitation is full access…");
+    const marker = { siteInvite: { by: ADMIN, at: new Date().toISOString() } };
+    const compOf = async (userId: string) =>
+      (await db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) }))?.compedPlan ?? null;
+    check("no marker, no comp", !(await grantSiteInvitePlan(INVITED_USER, { other: true })));
+    check("…and the account stays free", (await compOf(INVITED_USER)) === null);
+    check("the marker comps the account", await grantSiteInvitePlan(INVITED_USER, marker));
+    check("…to Orbit", (await compOf(INVITED_USER)) === "orbit");
+    const invited = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, INVITED_USER) });
+    check("…crediting the inviting admin", invited?.compedBy === ADMIN, invited?.compedBy ?? "null");
+    check("granting again is a no-op", !(await grantSiteInvitePlan(INVITED_USER, marker)));
+    await setCompedPlan(LIFETIME_USER, "lifetime", { note: "smoke" });
+    check("an existing comp is left alone", !(await grantSiteInvitePlan(LIFETIME_USER, marker)));
+    check("…so Lifetime is never downgraded", (await compOf(LIFETIME_USER)) === "lifetime");
   } finally {
+    await db.delete(userSettings).where(eq(userSettings.userId, INVITED_USER));
+    await db.delete(userSettings).where(eq(userSettings.userId, LIFETIME_USER));
     await db.delete(siteSettings).where(eq(siteSettings.id, 1));
     if (before) await db.insert(siteSettings).values(before);
     await db.delete(userSettings).where(eq(userSettings.userId, EARLY_USER));
@@ -115,5 +136,5 @@ run(async () => {
     else process.env.SITE_STEALTH = envBefore;
   }
 
-  console.log("\nStealth's switch and hold rule behave.");
+  console.log("\nStealth's switch, hold rule and invite comp behave.");
 });
