@@ -111,6 +111,11 @@ export type HealthInput = {
    */
   hasAiKey: boolean;
   onboardingCompletedAt: Date | null;
+  /**
+   * The guided tour's coach rail is on screen. The tour's own Capture and Chat stops explain
+   * the key, so the bell stays quiet until the tour is over or exited.
+   */
+  tourActive?: boolean;
 
   /** null = no connection at all, or OAuth is unconfigured on this deployment. */
   gmail: ConnectionFacts | null;
@@ -222,10 +227,11 @@ export function evaluateAccountHealth(
   const nowMs = now.getTime();
 
   // --- AI key -------------------------------------------------------------------------
-  // Gated on completed onboarding. A brand-new account has no key by definition, and the
-  // setup wizard already asks for one; without this gate anyone who abandons onboarding is
-  // met by a red dot before they have done anything at all.
-  if (!input.hasAiKey && input.onboardingCompletedAt !== null) {
+  // Gated on completed onboarding, and on the guided tour not being on screen. A brand-new
+  // account has no key by definition, and setup already asks for one; without this gate
+  // anyone who abandons onboarding is met by a red dot before they have done anything at
+  // all — and someone who skipped the key would see it during the very tour that explains it.
+  if (!input.hasAiKey && input.onboardingCompletedAt !== null && !input.tourActive) {
     findings.push({
       code: "ai.no_key",
       severity: "error",

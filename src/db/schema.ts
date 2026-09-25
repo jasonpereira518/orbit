@@ -126,6 +126,34 @@ export const userSettings = pgTable("user_settings", {
   wizardOfferedAt: timestamp("wizard_offered_at", { withTimezone: true }),
   wizardStep: text("wizard_step"),
   wizardCompletedAt: timestamp("wizard_completed_at", { withTimezone: true }),
+  /**
+   * Which first-run path the person chose on /onboarding: "tour" or "quick". Read by the
+   * admin funnel only; nothing gates on it.
+   */
+  onboardingPath: text("onboarding_path").$type<"tour" | "quick">(),
+  /**
+   * In-app guided tour state. `tourStartedAt` is stamped by the stage → app handoff, in the
+   * same UPDATE as `onboardingCompletedAt`, so the first-run gate never sees a half state.
+   * `tourStop` is the current stop id (null before the handoff and after the finish);
+   * `tourExitedAt` hides the coach rail while keeping the tour resumable; `tourCompletedAt`
+   * ends it. Pure predicates over these live in `src/lib/tour/tour-state.ts`.
+   */
+  tourStartedAt: timestamp("tour_started_at", { withTimezone: true }),
+  tourStop: text("tour_stop"),
+  tourExitedAt: timestamp("tour_exited_at", { withTimezone: true }),
+  tourCompletedAt: timestamp("tour_completed_at", { withTimezone: true }),
+  /**
+   * When the user said they asked LinkedIn for their data archive — set by "I've requested
+   * it" in onboarding, never by merely opening LinkedIn's page. Write-once: re-requesting
+   * does not move it. Only changes the reminder's copy; eligibility does not depend on it.
+   */
+  linkedinExportRequestedAt: timestamp("linkedin_export_requested_at", { withTimezone: true }),
+  /**
+   * When the full-screen "Is your LinkedIn export ready?" reminder was claimed for display.
+   * Write-once, set by an atomic claim, which is what makes it one showing per account
+   * across tabs and devices. See `src/lib/linkedin-export.ts`.
+   */
+  linkedinReminderShownAt: timestamp("linkedin_reminder_shown_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   ycModeEnabled: boolean("yc_mode_enabled").default(false),
   /**

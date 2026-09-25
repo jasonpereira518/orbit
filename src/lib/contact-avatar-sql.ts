@@ -52,6 +52,8 @@ export const contactsListSelection = {
     OR (${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> '')
   )`,
   relationshipScore: contacts.relationshipScore,
+  /** Only read for the "Example" chip on the guided tour’s seeded people. */
+  source: contacts.source,
   closeness: contacts.closeness,
   closenessTier: contacts.closenessTier,
   priorityLevel: contacts.priorityLevel,

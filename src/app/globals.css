@@ -123,6 +123,7 @@
      icon glyph. */
   --success: #047857; /* emerald-700 — 5.0:1 on #ffffff */
   --warning: #b45309; /* amber-700   — 4.8:1 on #ffffff */
+  --tour-scrim: color-mix(in oklab, var(--background) 55%, transparent); /* guided tour dim */
   --info: #1d4ed8; /* blue-700    — 7.0:1 on #ffffff */
   /* The toast icon chip is its accent at a wash. Light surfaces need less of it
      than dark ones, where the accent is pale and 12% vanishes into #212c42. */
@@ -251,6 +252,7 @@
      go pale — the same 300-weights the app already pairs with the light 700s. */
   --success: #6ee7b7; /* emerald-300 — 8.9:1 on #212c42 */
   --warning: #fcd34d; /* amber-300   — 10.3:1 on #212c42 */
+  --tour-scrim: rgb(2 6 23 / 0.6); /* guided tour dim */
   --info: #93c5fd; /* blue-300    — 8.1:1 on #212c42 */
   --toast-chip-strength: 18%;
   --border: #333f5a;
@@ -1431,6 +1433,48 @@
 }
 .coming-soon-marquee {
   animation: coming-soon-marquee 28s linear infinite;
+}
+
+/* ── Onboarding (/onboarding) and the LinkedIn reminder ──
+ * A soft ring that breathes out from a highlighted spot on a LinkedIn screenshot. The
+ * static ring beside it carries the meaning; this only draws the eye, so the global
+ * reduced-motion clamp leaving it at rest (invisible) loses nothing. Opacity and
+ * transform only. */
+@keyframes onboarding-target-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.onboarding-target-ping {
+  opacity: 0;
+  animation: onboarding-target-ping 1.8s var(--ease-house) infinite;
+}
+
+/* ── Guided tour (coach rail + spotlight) ──
+ * The ring around the highlighted control breathes once every two seconds. The ring
+ * itself carries the meaning; this only draws the eye, so under reduced motion the
+ * animation is simply absent (the rule below), not slowed. Opacity and transform only. */
+@keyframes tour-ring-pulse {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tour-ring-pulse {
+    animation: tour-ring-pulse 2s var(--ease-house) infinite;
+  }
 }
 
 /* ── Interest list (/interest) ──

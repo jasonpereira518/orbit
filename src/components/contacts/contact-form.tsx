@@ -48,6 +48,7 @@ export function ContactForm({
   className,
   onSuccess,
   redirectOnSuccess = true,
+  compact = false,
 }: {
   initial?: Partial<ContactInput> & { tags?: string[] };
   contactId?: string;
@@ -55,6 +56,11 @@ export function ContactForm({
   onSuccess?: (contact: { id: string }) => void;
   /** Set to false when embedding the form somewhere that manages its own navigation (e.g. the setup wizard). */
   redirectOnSuccess?: boolean;
+  /**
+   * Just who they are and how you met, in three rows: onboarding's "add someone by hand"
+   * has to fit one screen. Everything else is on the profile afterwards.
+   */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -257,202 +263,257 @@ export function ContactForm({
         });
       }}
     >
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Full name" required>
-          <Input
-            required
-            value={form.fullName}
-            onChange={(e) => set("fullName", e.target.value)}
-            placeholder="Jason Pereira"
-          />
-        </Field>
-        <Field label="Preferred name">
-          <Input
-            value={form.preferredName}
-            onChange={(e) => set("preferredName", e.target.value)}
-            placeholder="Jason"
-          />
-        </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field
-          label="LinkedIn URL"
-          hint={
-            lookingUp
-              ? "Looking up profile…"
-              : "Paste a profile URL to autofill role"
-          }
-        >
-          <Input
-            type="url"
-            value={form.linkedinUrl}
-            onChange={(e) => {
-              lastLookupUrl.current = "";
-              set("linkedinUrl", e.target.value);
-            }}
-            onBlur={(e) => {
-              void autofillFromLinkedIn(e.target.value);
-            }}
-            placeholder="https://linkedin.com/in/..."
-            disabled={lookingUp}
-          />
-        </Field>
-        <Field label="Website">
-          <Input
-            type="url"
-            value={form.website}
-            onChange={(e) => set("website", e.target.value)}
-            placeholder="https://jasonpereira.live"
-          />
-        </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Company">
-          <Input
-            value={form.company}
-            onChange={(e) => set("company", e.target.value)}
-            placeholder="Amazon Web Services (AWS)"
-          />
-        </Field>
-        <Field label="Role" hint="Autofills from LinkedIn when available">
-          <Input
-            value={form.title}
-            onChange={(e) => set("title", e.target.value)}
-            placeholder="Solutions Architect intern"
-          />
-        </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Location">
-          <SuggestInput
-            value={form.location}
-            onChange={(v) => set("location", v)}
-            onSelect={selectLocation}
-            suggestions={suggestions.locations}
-            placeholder="New York, NY"
-          />
-        </Field>
-        <Field label="School">
-          <SuggestInput
-            value={form.school}
-            onChange={(v) => set("school", v)}
-            onSelect={selectSchool}
-            suggestions={suggestions.schools}
-            placeholder="Columbia University"
-          />
-        </Field>
-      </div>
-      <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-        <div>
-          <p className="text-sm font-medium text-ink">How you met</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Context, when it happened, and any details you want to remember.
-          </p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Context">
-            <select
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              value={form.metContext}
-              onChange={(e) =>
-                set("metContext", e.target.value as MetContext | "")
-              }
-            >
-              <option value="">Select…</option>
-              {MET_CONTEXTS.map((value) => (
-                <option key={value} value={value}>
-                  {MET_CONTEXT_LABELS[value]}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Date met">
+      {compact ? (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Full name" required>
+              <Input
+                required
+                value={form.fullName}
+                onChange={(e) => set("fullName", e.target.value)}
+                placeholder="Jason Pereira"
+              />
+            </Field>
+            <Field label="LinkedIn URL" hint={lookingUp ? "Looking up profile…" : "Paste a profile URL to autofill role"}>
+              <Input
+                type="url"
+                value={form.linkedinUrl}
+                onChange={(e) => {
+                  lastLookupUrl.current = "";
+                  set("linkedinUrl", e.target.value);
+                }}
+                onBlur={(e) => {
+                  void autofillFromLinkedIn(e.target.value);
+                }}
+                placeholder="https://linkedin.com/in/..."
+                disabled={lookingUp}
+              />
+            </Field>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Company">
+              <Input
+                value={form.company}
+                onChange={(e) => set("company", e.target.value)}
+                placeholder="Amazon Web Services (AWS)"
+              />
+            </Field>
+            <Field label="Role">
+              <Input
+                value={form.title}
+                onChange={(e) => set("title", e.target.value)}
+                placeholder="Solutions Architect intern"
+              />
+            </Field>
+          </div>
+          <Field label="How you met">
             <Input
-              type="date"
-              value={form.dateMet}
-              onChange={(e) => set("dateMet", e.target.value)}
+              value={form.howMet}
+              onChange={(e) => set("howMet", e.target.value)}
+              placeholder="Google NYC event, introduced by Alex…"
+            />
+          </Field>
+        </>
+      ) : (
+        <>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Full name" required>
+            <Input
+              required
+              value={form.fullName}
+              onChange={(e) => set("fullName", e.target.value)}
+              placeholder="Jason Pereira"
+            />
+          </Field>
+          <Field label="Preferred name">
+            <Input
+              value={form.preferredName}
+              onChange={(e) => set("preferredName", e.target.value)}
+              placeholder="Jason"
             />
           </Field>
         </div>
-        <Field label="Details">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="LinkedIn URL"
+            hint={
+              lookingUp
+                ? "Looking up profile…"
+                : "Paste a profile URL to autofill role"
+            }
+          >
+            <Input
+              type="url"
+              value={form.linkedinUrl}
+              onChange={(e) => {
+                lastLookupUrl.current = "";
+                set("linkedinUrl", e.target.value);
+              }}
+              onBlur={(e) => {
+                void autofillFromLinkedIn(e.target.value);
+              }}
+              placeholder="https://linkedin.com/in/..."
+              disabled={lookingUp}
+            />
+          </Field>
+          <Field label="Website">
+            <Input
+              type="url"
+              value={form.website}
+              onChange={(e) => set("website", e.target.value)}
+              placeholder="https://jasonpereira.live"
+            />
+          </Field>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Company">
+            <Input
+              value={form.company}
+              onChange={(e) => set("company", e.target.value)}
+              placeholder="Amazon Web Services (AWS)"
+            />
+          </Field>
+          <Field label="Role" hint="Autofills from LinkedIn when available">
+            <Input
+              value={form.title}
+              onChange={(e) => set("title", e.target.value)}
+              placeholder="Solutions Architect intern"
+            />
+          </Field>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Location">
+            <SuggestInput
+              value={form.location}
+              onChange={(v) => set("location", v)}
+              onSelect={selectLocation}
+              suggestions={suggestions.locations}
+              placeholder="New York, NY"
+            />
+          </Field>
+          <Field label="School">
+            <SuggestInput
+              value={form.school}
+              onChange={(v) => set("school", v)}
+              onSelect={selectSchool}
+              suggestions={suggestions.schools}
+              placeholder="Columbia University"
+            />
+          </Field>
+        </div>
+        <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+          <div>
+            <p className="text-sm font-medium text-ink">How you met</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Context, when it happened, and any details you want to remember.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Context">
+              <select
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                value={form.metContext}
+                onChange={(e) =>
+                  set("metContext", e.target.value as MetContext | "")
+                }
+              >
+                <option value="">Select…</option>
+                {MET_CONTEXTS.map((value) => (
+                  <option key={value} value={value}>
+                    {MET_CONTEXT_LABELS[value]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Date met">
+              <Input
+                type="date"
+                value={form.dateMet}
+                onChange={(e) => set("dateMet", e.target.value)}
+              />
+            </Field>
+          </div>
+          <Field label="Details">
+            <Textarea
+              rows={2}
+              value={form.howMet}
+              onChange={(e) => set("howMet", e.target.value)}
+              placeholder="Google NYC event, introduced by Alex, coffee chat about internships…"
+            />
+          </Field>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Email">
+            <Input
+              type="email"
+              value={form.email}
+              onChange={(e) => set("email", e.target.value)}
+              placeholder="jason@orbit.com"
+            />
+          </Field>
+          <Field label="Phone">
+            <Input
+              type="tel"
+              value={form.phone}
+              onChange={(e) => set("phone", e.target.value)}
+              placeholder="+1 555 123 4567"
+            />
+          </Field>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Strength (1–5)">
+            <Input
+              type="number"
+              min={1}
+              max={5}
+              value={form.relationshipScore}
+              onChange={(e) => {
+                setStrengthRated(true);
+                set("relationshipScore", Number(e.target.value));
+              }}
+            />
+          </Field>
+          <Field label="Priority (0–3)">
+            <Input
+              type="number"
+              min={0}
+              max={3}
+              value={form.priorityLevel}
+              onChange={(e) => set("priorityLevel", Number(e.target.value))}
+            />
+          </Field>
+        </div>
+        <Field label="Industry">
+          <Input
+            value={form.industry}
+            onChange={(e) => set("industry", e.target.value)}
+            placeholder="Cloud computing, venture capital…"
+          />
+        </Field>
+        <Field label="Shared interests (one per line)">
           <Textarea
-            rows={2}
-            value={form.howMet}
-            onChange={(e) => set("howMet", e.target.value)}
-            placeholder="Google NYC event, introduced by Alex, coffee chat about internships…"
+            rows={3}
+            value={form.sharedInterests}
+            onChange={(e) => set("sharedInterests", e.target.value)}
+            placeholder={"AI agents\nClimbing\nStartups"}
           />
         </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Email">
+        <Field label="Tags (comma-separated)">
           <Input
-            type="email"
-            value={form.email}
-            onChange={(e) => set("email", e.target.value)}
-            placeholder="jason@orbit.com"
+            value={form.tagNames}
+            onChange={(e) => set("tagNames", e.target.value)}
+            placeholder="AI, OpenAI, internship"
           />
         </Field>
-        <Field label="Phone">
-          <Input
-            type="tel"
-            value={form.phone}
-            onChange={(e) => set("phone", e.target.value)}
-            placeholder="+1 555 123 4567"
+        <Field label="Notes">
+          <Textarea
+            rows={4}
+            value={form.notes}
+            onChange={(e) => set("notes", e.target.value)}
           />
         </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Strength (1–5)">
-          <Input
-            type="number"
-            min={1}
-            max={5}
-            value={form.relationshipScore}
-            onChange={(e) => {
-              setStrengthRated(true);
-              set("relationshipScore", Number(e.target.value));
-            }}
-          />
-        </Field>
-        <Field label="Priority (0–3)">
-          <Input
-            type="number"
-            min={0}
-            max={3}
-            value={form.priorityLevel}
-            onChange={(e) => set("priorityLevel", Number(e.target.value))}
-          />
-        </Field>
-      </div>
-      <Field label="Industry">
-        <Input
-          value={form.industry}
-          onChange={(e) => set("industry", e.target.value)}
-          placeholder="Cloud computing, venture capital…"
-        />
-      </Field>
-      <Field label="Shared interests (one per line)">
-        <Textarea
-          rows={3}
-          value={form.sharedInterests}
-          onChange={(e) => set("sharedInterests", e.target.value)}
-          placeholder={"AI agents\nClimbing\nStartups"}
-        />
-      </Field>
-      <Field label="Tags (comma-separated)">
-        <Input
-          value={form.tagNames}
-          onChange={(e) => set("tagNames", e.target.value)}
-          placeholder="AI, OpenAI, internship"
-        />
-      </Field>
-      <Field label="Notes">
-        <Textarea
-          rows={4}
-          value={form.notes}
-          onChange={(e) => set("notes", e.target.value)}
-        />
-      </Field>
+        </>
+      )}
       <Button
         type="submit"
         disabled={pending || lookingUp}

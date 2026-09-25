@@ -5,9 +5,11 @@ import { AgentDraftsCard } from "@/components/dashboard/agent-drafts-card";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
+  LinkedInExportNudgeSection,
   OutreachPerformanceSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
+  SetupChecklistSection,
   StatsSection,
   SuggestedOutreachSection,
   TailSection,
@@ -54,11 +56,22 @@ export default async function DashboardPage() {
       <RenderStamp />
       <DashboardHeader />
 
+      {/* Streams in on its own and renders nothing unless a LinkedIn export is outstanding. */}
+      <Suspense fallback={null}>
+        <LinkedInExportNudgeSection />
+      </Suspense>
+
       {/* Above every other card, and outside the surface-visibility switches: a message
           waiting to go out is the only thing on this page that needs a decision rather
           than attention, and it expires. It renders nothing when there is none. */}
       <Suspense fallback={null}>
         <AgentDraftsSection />
+      </Suspense>
+
+      {/* What onboarding left open. Nothing while the guided tour is running, nothing once
+          every item is done or the person dismissed it on this device. */}
+      <Suspense fallback={null}>
+        <SetupChecklistSection />
       </Suspense>
 
       {show("dashboard.stats") && (

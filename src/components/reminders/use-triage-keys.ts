@@ -1,28 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { overlayOpen } from "@/lib/overlay-open";
 import { triageCommandFor, type TriageCommand } from "@/lib/triage-keys";
-
-/**
- * Something else owns the keyboard: a dialog, sheet, popover or menu is open.
- *
- * Presence alone isn't openness: Base UI's Select keeps its (hidden) listbox mounted, so
- * the detail pane's two Selects used to count as "open" and swallow every shortcut the
- * moment the pane appeared. Only a rendered element counts.
- */
-function overlayOpen() {
-  const candidates = document.querySelectorAll<HTMLElement>(
-    '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'
-  );
-  for (const el of candidates) {
-    const shown =
-      typeof el.checkVisibility === "function"
-        ? el.checkVisibility()
-        : el.getClientRects().length > 0;
-    if (shown) return true;
-  }
-  return false;
-}
 
 /**
  * The reminders queue's shortcuts. The decision (which key, and when to stay out of the

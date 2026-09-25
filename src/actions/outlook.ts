@@ -12,7 +12,7 @@ import { outlookConnections, imports } from "@/db/schema";
 import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { requireUserId } from "@/lib/auth";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireConnectUser, requireSyncUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
@@ -111,7 +111,7 @@ export async function startOutlookOAuth(input: {
   returnTo?: string;
 }): Promise<{ url: string }> {
   if (!isMicrosoftPurpose(input.purpose)) throw new Error("Unknown Microsoft connection purpose");
-  const userId = await requireSyncUser();
+  const userId = await requireConnectUser(input.purpose);
   const summary = getOutlookOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError ? ` (${summary.redirectUriError})` : "";

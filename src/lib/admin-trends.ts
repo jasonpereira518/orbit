@@ -1,4 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
+import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
 import { internalAccountSql } from "@/lib/analytics-internal";
@@ -572,7 +573,7 @@ export async function workflowStagesTrend(
                               AND x.note_batch_id IS NULL AND x.external_id IS NULL)
                  OR EXISTS (SELECT 1 FROM chat_messages m WHERE m.user_id = s.user_id AND m.role = 'user')
                  THEN 4
-               WHEN EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id) THEN 3
+               WHEN EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE}) THEN 3
                WHEN s.onboarding_completed_at IS NOT NULL
                  OR EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id) THEN 2
                ELSE 1
@@ -725,7 +726,7 @@ export async function activationTrend(
       SELECT s.user_id,
              date_trunc(${grain}, s.created_at) AS bucket_start,
              s.onboarding_completed_at,
-             (SELECT count(*) FROM contacts c WHERE c.user_id = s.user_id) AS contact_count,
+             (SELECT count(*) FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE}) AS contact_count,
              (SELECT count(*) FROM imports i WHERE i.user_id = s.user_id) AS import_count
       FROM user_settings s
     )

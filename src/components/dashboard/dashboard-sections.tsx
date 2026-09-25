@@ -1,3 +1,4 @@
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
@@ -10,6 +11,7 @@ import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-pr
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
+import { LinkedInExportNudge } from "@/components/dashboard/linkedin-export-nudge";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
@@ -21,6 +23,16 @@ import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { getLinkedInNudgeVisible, hasLinkedInImport } from "@/lib/linkedin-reminder";
+import { ensureUserSettings } from "@/lib/user-settings";
+import { getGmailConnectionStatus } from "@/actions/gmail";
+import { getOutlookConnectionStatus } from "@/actions/outlook";
+import { SetupChecklistCard, type SetupChecklistItem } from "@/components/dashboard/setup-checklist-card";
+import { integrationHref } from "@/components/settings/sections";
+import { aiReadyFromSettings } from "@/lib/ai-access";
+import { contactUsageForUser } from "@/lib/contact-writes";
+import { countTourExamples } from "@/lib/onboarding-examples/status";
+import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
@@ -75,6 +87,99 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
 const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
 
+/**
+ * The dashboard card that follows the full-screen LinkedIn reminder. Renders nothing for
+ * almost everyone: the settings row alone rules it out unless the reminder has been shown or
+ * the export requested, the account is under 30 days old, and no LinkedIn import exists yet.
+ */
+export async function LinkedInExportNudgeSection() {
+  const userId = await requireUserId();
+  const settings = await ensureUserSettings(userId);
+  if (!(await getLinkedInNudgeVisible(userId, settings))) return null;
+  return <LinkedInExportNudge email={settings.email ?? null} />;
+}
+
+/**
+ * "Finish setting up": what onboarding left open, with live status. Renders nothing while
+ * the guided tour's rail is up (the tour is the checklist then), and nothing once every
+ * item is done. The card itself handles per-device dismissal.
+ */
+export async function SetupChecklistSection() {
+  const userId = await requireUserId();
+  const settings = await ensureUserSettings(userId);
+  if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
+
+  const [gmail, outlook, usage, linkedinImported, examples] = await Promise.all([
+    getGmailConnectionStatus(),
+    getOutlookConnectionStatus(),
+    contactUsageForUser(userId),
+    hasLinkedInImport(userId),
+    countTourExamples(userId),
+  ]);
+
+  const items: SetupChecklistItem[] = [];
+  if (!aiReadyFromSettings(userId, settings)) {
+    items.push({
+      id: "ai-key",
+      label: "Add your AI key",
+      detail: "Capture from notes, Chat and profile briefs run on it.",
+      href: integrationHref("ai"),
+    });
+  }
+  if (settings.linkedinExportRequestedAt && !linkedinImported) {
+    items.push({
+      id: "linkedin",
+      label: "Upload your LinkedIn export when it arrives",
+      detail: "LinkedIn emails a ZIP, usually within a day.",
+      href: "/imports#import-panel-connections",
+    });
+  }
+  const anyConfigured = gmail.configured || outlook.configured;
+  const connected = gmail.connected || outlook.connected;
+  if (anyConfigured && !connected) {
+    // Free on every plan: the sign-in asks only for contacts.
+    items.push({
+      id: "connect",
+      label: "Connect Google or Microsoft",
+      detail: "Bring in the people you already email.",
+      href: "/imports",
+    });
+  }
+  if (usage.used === 0) {
+    items.push({
+      id: "people",
+      label: "Add your first people",
+      detail: "From notes, by hand, or the LinkedIn ZIP.",
+      href: "/capture",
+    });
+  }
+  if (tourResumable(settings)) {
+    items.push({
+      id: "resume-tour",
+      label: "Resume the guided tour",
+      detail: "Pick up where you left off; the example people come back for it.",
+      action: "resume-tour",
+    });
+  } else if (!settings.tourStartedAt) {
+    items.push({
+      id: "tour",
+      label: "Take the guided tour",
+      detail: "Three minutes across every page, with a few example people in place.",
+      action: "start-tour",
+    });
+  }
+  if (examples > 0) {
+    items.push({
+      id: "examples",
+      label: "Remove the example people",
+      detail: examples === 1 ? "One is still in your orbit from the tour." : `${examples} are still in your orbit from the tour.`,
+      action: "remove-examples",
+    });
+  }
+  if (items.length === 0) return null;
+  return <SetupChecklistCard items={items} />;
+}
+
 export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
   const { data } = await bundle;
   const isEmptyNetwork = data.stats.totalContacts === 0;
@@ -123,6 +228,7 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
         // today" — the cards are four short numbers and fit side by side fine.
         className="reveal-mount grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4"
         style={revealDelay(40)}
+        {...tourAnchor("dashboard.stats")}
       >
         <StatCard
           label="Contacts"

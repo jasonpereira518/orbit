@@ -1,5 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
+import { tourRailVisible } from "@/lib/tour/tour-state";
 import {
   appleConnections,
   calendarSubscriptions,
@@ -310,7 +312,8 @@ export async function loadAccountHealthInput(
       contactCount: needContacts
         ? sql<number>`(
             SELECT count(*)::int FROM ${contacts}
-            WHERE ${contacts.userId} = ${userId})`
+            WHERE ${contacts.userId} = ${userId}
+              AND ${notTourExample(contacts.source)})`
         : sql<number>`0`,
     })
     .from(userSettings)
@@ -323,6 +326,7 @@ export async function loadAccountHealthInput(
     // The gate's own policy, presence-only: a Lifetime account on Orbit's key is not missing one.
     hasAiKey: aiReadyFromSettings(userId, settings),
     onboardingCompletedAt: toDate(settings.onboardingCompletedAt),
+    tourActive: tourRailVisible(settings),
 
     gmail: connectionFacts(
       getGmailOAuthConfigSummary().configured,

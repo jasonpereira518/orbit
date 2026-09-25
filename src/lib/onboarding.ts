@@ -1,18 +1,25 @@
 import { cache } from "react";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { after } from "next/server";
 import { getDb } from "@/db";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
 import { contacts, imports, userSettings } from "@/db/schema";
 import { ensureUserSettings } from "@/lib/user-settings";
 
-async function persistOnboardingComplete(userId: string) {
+/**
+ * Stamps the first-run gate flag. `clearStep` is false only for the backfill below: a
+ * replay from Settings clears the flag but keeps `onboarding_step`, and `/onboarding` keeps
+ * rendering while that step is set — so the backfill firing mid-replay (the account has
+ * contacts) must not wipe the step and bounce the person to the dashboard.
+ */
+async function persistOnboardingComplete(userId: string, opts: { clearStep?: boolean } = {}) {
   const db = await getDb();
   await ensureUserSettings(userId);
   const updated = await db
     .update(userSettings)
     .set({
       onboardingCompletedAt: new Date(),
-      onboardingStep: null,
+      ...(opts.clearStep === false ? {} : { onboardingStep: null }),
       updatedAt: new Date(),
     })
     .where(eq(userSettings.userId, userId))
@@ -43,8 +50,10 @@ export const needsOnboarding = cache(async (userId: string) => {
 
   const db = await getDb();
   const [existingContact, existingImport] = await Promise.all([
+    // The tour's example people are not the person's own data, so they never count as
+    // "has a network" here (they only exist after the handoff anyway, which stamps the flag).
     db.query.contacts.findFirst({
-      where: eq(contacts.userId, userId),
+      where: and(eq(contacts.userId, userId), notTourExample(contacts.source)),
       columns: { id: true },
     }),
     db.query.imports.findFirst({
@@ -56,7 +65,7 @@ export const needsOnboarding = cache(async (userId: string) => {
   if (existingContact || existingImport) {
     // Don't block navigation on the backfill write.
     after(() => {
-      void persistOnboardingComplete(userId).catch(() => {});
+      void persistOnboardingComplete(userId, { clearStep: false }).catch(() => {});
     });
     return false;
   }

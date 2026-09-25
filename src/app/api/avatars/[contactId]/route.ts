@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   downloadAndPersistAvatar,
@@ -97,10 +98,17 @@ export async function GET(_req: Request, { params }: Params) {
       profileImageUrl: true,
       linkedinUrl: true,
       email: true,
+      source: true,
     },
   });
 
   if (!contact) {
+    return miss(404);
+  }
+  // The guided tour's example people are fictional: their example.com addresses and
+  // orbit-example-* slugs must never spend third-party photo quota (six at once tripped the
+  // resolve bucket on the first Contacts stop). The list falls back to its illustration.
+  if (isTourExampleSource(contact.source)) {
     return miss(404);
   }
 

@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { OnboardingPageSkeleton } from "@/components/loading/page-skeletons";
+import type { OnboardingFlowProps } from "@/components/onboarding/onboarding-flow";
 
 const OnboardingFlow = dynamic(
   () =>
@@ -11,13 +12,9 @@ const OnboardingFlow = dynamic(
   {
     ssr: false,
     loading: () => <OnboardingPageSkeleton />,
-  }
+  },
 );
 
-export function OnboardingFlowLazy({
-  initialStepId = null,
-}: {
-  initialStepId?: string | null;
-}) {
-  return <OnboardingFlow initialStepId={initialStepId} />;
+export function OnboardingFlowLazy(props: OnboardingFlowProps) {
+  return <OnboardingFlow {...props} />;
 }

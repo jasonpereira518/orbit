@@ -12,9 +12,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-
-export const LINKEDIN_DATA_URL =
-  "https://www.linkedin.com/mypreferences/d/download-my-data";
+import {
+  LINKEDIN_ARCHIVE_EMAIL_SUBJECT,
+  LINKEDIN_ARCHIVE_LINK_HOURS,
+  LINKEDIN_DATA_URL,
+} from "@/lib/linkedin-export";
 
 type GuideVariant = "connections" | "messages";
 
@@ -38,14 +40,19 @@ const SHARED_EXPORT_STEPS: GuideStep[] = [
   {
     title: "Request your archive",
     body: "Select Download larger data archive (includes connections and more), then click Request archive. LinkedIn usually emails you within about 24 hours.",
-    imageSrc: "/guides/linkedin/export-3.png",
+    imageSrc: "/guides/linkedin/request-archive.png",
   },
   {
     title: "Download from email",
-    body: "When LinkedIn emails “Your full LinkedIn data archive is ready,” use the download link. Archives can arrive in multiple parts and expire after 72 hours.",
-    imageSrc: "/guides/linkedin/export-4.png",
+    body: `When LinkedIn emails “${LINKEDIN_ARCHIVE_EMAIL_SUBJECT}” use the download link. Archives can arrive in multiple parts and expire after ${LINKEDIN_ARCHIVE_LINK_HOURS} hours.`,
+    imageSrc: "/guides/linkedin/archive-email.png",
   },
 ];
+
+const CONNECTIONS_FINAL: GuideStep = {
+  title: "Upload Connections here",
+  body: "Upload the ZIP as it arrived — or Connections.csv from inside it — on this page. Orbit finds the file inside the ZIP.",
+};
 
 const MESSAGES_FINAL: GuideStep = {
   title: "Upload Messages here",
@@ -75,7 +82,7 @@ export function LinkedInExportGuide({ variant }: { variant: GuideVariant }) {
   const [open, setOpen] = useState(false);
   const steps =
     variant === "connections"
-      ? SHARED_EXPORT_STEPS
+      ? [...SHARED_EXPORT_STEPS, CONNECTIONS_FINAL]
       : [...SHARED_EXPORT_STEPS, MESSAGES_FINAL];
   const title =
     variant === "connections"

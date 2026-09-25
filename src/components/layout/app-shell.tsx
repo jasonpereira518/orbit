@@ -19,6 +19,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
+import { LinkedInReminderWatcher } from "@/components/linkedin-reminder/linkedin-reminder-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
@@ -35,6 +36,12 @@ import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import type { Plan } from "@/lib/plan-limits";
 import type { ThemePreference } from "@/lib/theme";
+
+// The guided tour's coach rail: only accounts mid-tour ever load it.
+const TourRuntime = dynamic(
+  () => import("@/components/tour/tour-runtime").then((m) => ({ default: m.TourRuntime })),
+  { ssr: false },
+);
 
 const FloatingAskBar = dynamic(
   () =>
@@ -54,6 +61,8 @@ export function AppShell({
   hiddenForUsers,
   viewingAsUser,
   previewingUnreleased,
+  linkedinReminder,
+  tour,
 }: {
   children: React.ReactNode;
   clerkOn: boolean;
@@ -67,6 +76,13 @@ export function AppShell({
   viewingAsUser: boolean;
   /** True when an admin has opted into seeing real pages behind a coming-soon screen. */
   previewingUnreleased: boolean;
+  /** The full-screen LinkedIn export reminder — see `LinkedInReminderWatcher`. */
+  linkedinReminder: { due: boolean; requested: boolean; email: string | null };
+  /**
+   * The guided tour, when its coach rail should be on screen. A hydration seed only: the
+   * runtime owns the live stop and writes it back fire-and-forget.
+   */
+  tour: { active: boolean; stop: string | null; hasApiKey: boolean; linkedinRequested: boolean };
 }) {
   const pathname = usePathname();
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
@@ -98,6 +114,9 @@ export function AppShell({
     // A floating bar over a viewport-locked queue would sit on its last rows and on the
     // detail pane. ⌘K still asks from there (the palette falls back to /chat).
     !isReminders &&
+    // The bar IS chat, and it owns bottom-centre: during the guided tour it would both
+    // satisfy the Chat stop from any page and sit where the coach rail needs the room.
+    !tour.active &&
     !hiddenSet.has("page.chat");
   // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
   // the page has no bar, and nowhere on /chat itself (its composer is already right there)
@@ -150,11 +169,16 @@ export function AppShell({
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
+          {/* The export reminder waits until the tour is over: two full-screen guides at
+              once would be one too many. */}
+          <LinkedInReminderWatcher {...linkedinReminder} due={linkedinReminder.due && !tour.active} />
+          {tour.active && <TourRuntime seed={tour} hidden={hiddenSet} />}
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
           <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
           <div
+            data-app-sidebar
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"
             style={{ viewTransitionName: "app-sidebar" }}
           >

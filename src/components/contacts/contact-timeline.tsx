@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -555,6 +556,7 @@ export function ContactTimeline({
               onPointerEnter={preloadLogInteractionSheet}
               onFocus={preloadLogInteractionSheet}
               onClick={() => setLogOpen(true)}
+              {...tourAnchor("contact.log-interaction")}
             >
               <Plus className="size-3.5" />
               Log interaction

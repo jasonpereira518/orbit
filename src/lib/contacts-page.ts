@@ -53,6 +53,8 @@ export type ContactListRow = {
   priorityLevel: number;
   nextFollowUpAt: Date | null;
   lastInteractionAt: Date | null;
+  /** `contacts.source`; the list only reads it for the guided tour's "Example" chip. */
+  source: string | null;
   tags: string[];
   /** Why this contact matched an active search, only when that isn't obvious from the row
    *  itself (e.g. a past role, not their current company field). Null outside a search, and

@@ -6,24 +6,34 @@ export const AI_PROVIDERS: Array<{
   label: string;
   keyPlaceholder: string;
   envVar: string;
+  /** Where a person creates a key — onboarding and Settings link straight to it. */
+  keyPageUrl: string;
+  /** The link's text: names the console, since "Get a key" reads as Orbit selling one. */
+  keyPageLabel: string;
 }> = [
   {
     id: "gemini",
     label: "Google Gemini",
     keyPlaceholder: "AIza...",
     envVar: "GEMINI_API_KEY",
+    keyPageUrl: "https://aistudio.google.com/app/apikey",
+    keyPageLabel: "Create a key in Google AI Studio",
   },
   {
     id: "openai",
     label: "OpenAI",
     keyPlaceholder: "sk-...",
     envVar: "OPENAI_API_KEY",
+    keyPageUrl: "https://platform.openai.com/api-keys",
+    keyPageLabel: "Create a key on OpenAI’s platform",
   },
   {
     id: "anthropic",
     label: "Anthropic",
     keyPlaceholder: "sk-ant-...",
     envVar: "ANTHROPIC_API_KEY",
+    keyPageUrl: "https://console.anthropic.com/settings/keys",
+    keyPageLabel: "Create a key in the Anthropic console",
   },
 ];
 

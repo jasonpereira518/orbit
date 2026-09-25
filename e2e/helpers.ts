@@ -23,12 +23,29 @@ export async function fillUntilEnabled(input: Locator, value: string, button: Lo
   );
 }
 
-/** Past the onboarding gate: a new account is redirected from /dashboard to /onboarding. */
+/**
+ * Past the onboarding gate: a new account is redirected from /dashboard to /onboarding.
+ * "Skip setup" only appears once a path is chosen, and choosing needs the consent box that
+ * an account without Clerk has never ticked — so tick, pick quick setup, then skip.
+ */
 export async function ensureOnboarded(page: Page): Promise<void> {
   await page.goto("/dashboard");
   if (new URL(page.url()).pathname.startsWith("/onboarding")) {
+    // The stage resumes wherever the account left off (specs share one e2e database), so
+    // this has to work from any step: past the welcome, "Skip setup" is in the header; on
+    // the welcome, pick a path first, and a later pass of the loop finds the Skip button.
+    const skip = page.getByRole("button", { name: "Skip setup" });
+    const consent = page.getByRole("checkbox", { name: /Terms of Service/ });
+    const quick = page.getByRole("button", { name: "Set up quickly" });
     await untilHydrated(
-      () => page.getByRole("button", { name: "Skip tour" }).click(),
+      async () => {
+        if (await skip.isVisible()) {
+          await skip.click();
+          return;
+        }
+        if (await consent.isVisible()) await consent.check();
+        if (await quick.isVisible()) await quick.click();
+      },
       () => expect(page).toHaveURL(/\/dashboard$/, { timeout: 5_000 })
     );
   }
@@ -51,4 +68,15 @@ export async function createContact(page: Page, fullName: string): Promise<void>
       })
   );
   await expect(page.getByRole("heading", { level: 1, name: fullName })).toBeVisible();
+}
+
+/**
+ * The connect step appears only where a Google or Microsoft OAuth client is configured (a
+ * worktree with the keys in .env.local, never CI). Skip it when it shows, so the specs pass
+ * either way; the step after it is the caller's to wait for.
+ */
+export async function skipConnectIfShown(page: Page, next: Locator) {
+  const connect = page.getByRole("heading", { name: "Bring in the people you email" });
+  await expect(connect.or(next)).toBeVisible({ timeout: 30_000 });
+  if (await connect.isVisible()) await page.getByRole("button", { name: /Skip for now/ }).click();
 }

@@ -165,6 +165,7 @@ export async function listContactsPage(
       priorityLevel: row.priorityLevel,
       nextFollowUpAt: row.nextFollowUpAt,
       lastInteractionAt: row.lastInteractionAt,
+      source: row.source ?? null,
       tags: tagsByContact.get(row.id) ?? [],
       matchReason: matchReasons.get(row.id) ?? null,
       fromImport: addedHere.has(row.id),

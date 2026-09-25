@@ -1,5 +1,7 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Building2, ChevronDown, X } from "lucide-react";
@@ -141,6 +143,7 @@ export function ContactsFilters({
           onQChange={(value) => {
             setQ(value);
             scheduleSearch(value);
+            if (value.trim()) emitTourEvent("contacts.searched");
           }}
           onClearQ={() => {
             setQ("");
@@ -222,6 +225,7 @@ function SearchPill({
         value={q}
         aria-label="Search contacts"
         autoComplete="off"
+        {...tourAnchor("contacts.search")}
         className={cn(
           "h-full min-w-0 flex-1 bg-transparent text-sm outline-none",
           "placeholder:text-muted-foreground"

@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useSyncExternalStore } from "react";
 import { Loader2, Stars, Users } from "lucide-react";
 import {
@@ -87,6 +88,7 @@ export function ConstellationScopeToggle({ className }: { className?: string }) 
               aria-busy={state.loading}
               role="switch"
               aria-checked={showingAll}
+              {...tourAnchor("graph.show-all")}
               aria-label={label}
               className={cn(
                 "relative inline-flex shrink-0 items-center justify-between rounded-full border p-0.5",

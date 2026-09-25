@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -50,6 +51,8 @@ import {
   closenessTierChipClass,
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
+import { ExampleTag } from "@/components/onboarding/example-tag";
+import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { cn } from "@/lib/utils";
 import { LIST_INTENT_DELAY_MS, useIntentPrefetchHandlers } from "@/lib/intent-prefetch";
 import {
@@ -79,6 +82,8 @@ export type ContactListItem = {
   relationshipScore: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
+  /** `contacts.source`; only read for the guided tour's "Example" chip. */
+  source?: string | null;
   priorityLevel: number;
   nextFollowUpAt?: string | Date | null;
   lastInteractionAt?: string | Date | null;
@@ -623,6 +628,7 @@ const ContactRow = memo(function ContactRow({
     <li
       role="link"
       tabIndex={0}
+      {...tourAnchor("contacts.row")}
       onClick={openContact}
       onKeyDown={onRowKeyDown}
       // Hover or keyboard focus counts as having seen them: the mark fades.
@@ -676,6 +682,9 @@ const ContactRow = memo(function ContactRow({
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium text-ink">
               {c.preferredName || c.fullName}
+              {isTourExampleSource(c.source) && (
+                <ExampleTag className="ml-1.5 align-[2px]" />
+              )}
             </p>
             <div className="mt-0.5 flex min-w-0 items-center gap-2">
               <p className="min-w-0 truncate text-sm">

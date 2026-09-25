@@ -114,6 +114,8 @@ export type ProductSnapshot = {
   artifacts: ArtifactRow[];
   onboardingParking: FunnelParking[];
   wizardParking: FunnelParking[];
+  /** In-app guided tour stops people closed the tab on. */
+  tourParking: FunnelParking[];
   wizardCompleted: number;
   waitlist: WaitlistSummary | null;
   dataQuality: DataQualityRow[];
@@ -159,15 +161,15 @@ export async function getArtifacts(): Promise<ArtifactRow[]> {
  * Where incomplete accounts are parked RIGHT NOW.
  *
  * Deliberately not a second copy of `buildFunnel` — the Overview owns the cumulative
- * funnel. This answers a different question, and comes with a caveat the UI must print:
- * the tour auto-advances on a 7-second timer, so `onboarding_step` records where the tab
- * was closed, not what the person engaged with. `wizard_step` is validated on write and
- * does reflect a real choice.
+ * funnel. This answers a different question: which setup step, or which in-app tour stop,
+ * people closed the tab on. Every step is self-paced and validated on write, so each one
+ * reflects a real choice. `wizard_step` rows are legacy (the old setup wizard); nothing
+ * writes them any more.
  */
 export async function getFunnelParking() {
   const db = await getDb();
 
-  const [onboarding, wizard, completed] = await Promise.all([
+  const [onboarding, wizard, tour, completed] = await Promise.all([
     db
       .select({ step: userSettings.onboardingStep, n: countInt })
       .from(userSettings)
@@ -186,6 +188,17 @@ export async function getFunnelParking() {
       )
       .groupBy(userSettings.wizardStep),
     db
+      .select({ step: userSettings.tourStop, n: countInt })
+      .from(userSettings)
+      .where(
+        and(
+          isNotNull(userSettings.tourStartedAt),
+          isNull(userSettings.tourCompletedAt),
+          isNotNull(userSettings.tourStop)
+        )
+      )
+      .groupBy(userSettings.tourStop),
+    db
       .select({ n: countInt })
       .from(userSettings)
       .where(isNotNull(userSettings.wizardCompletedAt)),
@@ -200,6 +213,7 @@ export async function getFunnelParking() {
   return {
     onboardingParking: clean(onboarding),
     wizardParking: clean(wizard),
+    tourParking: clean(tour),
     wizardCompleted: completed[0]?.n ?? 0,
   };
 }

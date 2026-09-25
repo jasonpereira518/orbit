@@ -342,6 +342,11 @@ export async function resetOnboarding(adminUserId: string, input: {
   if (input.scope === "onboarding" || input.scope === "both") {
     values.onboardingCompletedAt = null;
     values.onboardingStep = null;
+    values.onboardingPath = null;
+    values.tourStartedAt = null;
+    values.tourStop = null;
+    values.tourExitedAt = null;
+    values.tourCompletedAt = null;
   }
   if (input.scope === "wizard" || input.scope === "both") {
     values.wizardCompletedAt = null;
