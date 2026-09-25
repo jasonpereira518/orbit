@@ -44,6 +44,33 @@ node scripts/bench/constellation-report.mjs ab.json
 - Per gesture: average FPS, minimum FPS (1000 ÷ longest frame), long tasks (> 50ms).
 - `--ab` interleaves the two builds, alternating which goes first; medians of `--reps`.
 
+### Frames against a 120Hz budget — `--suite frame`
+
+A 60fps average hides what a ProMotion display shows: at 120Hz a frame has 8.3ms, and one that
+takes 20ms drops two. `--suite frame` scores each frame's main-thread cost (from its rAF to a
+message posted from it, which runs after style, layout and paint) against that budget, with the
+input real hardware sends:
+
+- `summary-cross`: zoom 0.09 ↔ 0.25, across the summary view's enter/exit and the cluster-name
+  threshold; `pinch-trackpad`: ctrl-wheel, 2 small events a frame, 0.05 → 1 → 0.05;
+  `wheel-notch`: ±100 ticks every 180ms, then every 90ms, at zoom 0.3.
+- `hover-sweep` (a star a frame at 0.5), `hover-drift`, `search-type` ("stri", 120ms a key, with
+  the camera flight), `cluster-click` (the flight in, with its star-mount batches).
+- Reports frames over 8.3ms, p95 and worst frame, Long Animation Frames, and React commits per
+  input event.
+
+```bash
+node scripts/bench/constellation-interactions.mjs 100,500,1000,2500 --reps 5 --suite frame \
+  --ab before=…,after=… --out frame.json
+node scripts/bench/constellation-report.mjs frame.json
+```
+
+Headless Chrome stays at 60Hz on purpose: it keeps input rates realistic, and the cost per frame
+is what the budget needs. `--uncapped` lifts the cap, for diagnosis only (it inflates event rates).
+
+Run long benchmarks under `caffeinate -dimsu`: headless Chrome on macOS paces rAF from the
+display, so when the display sleeps an in-page rAF loop never finishes.
+
 `--ablate` strips one visual layer at a time (`nolabels`, `nonebula`, `nodust`, `noanim`,
 `notwinkle`, `novpwill`, …) to price it. It is a diagnostic, not a
 measurement of the product: it answers "which part of the sky costs the frames".
@@ -131,6 +158,98 @@ The structural numbers, from `constellation-browser.mjs` on the same two builds:
 | 10,000 | 196 → 34 | 2,067 → 559 | 25.9 → 21.5 |
 
 `--ablate nonebula` now hides the canvas (`.constellation-nebula-wash`) rather than the boxes.
+
+### Frame rate: zoom, hover, search and clicks against 120Hz (September 25, 2026)
+
+`--suite frame --ab`, 5 repetitions per build and size, PR #296's head (1654afba) against this
+branch, on AC power; no repetition dropped (control ≥ 55fps). What changed, in the order the
+baseline's traces ranked the cost:
+
+- **One composited layer per star.** The two sky canvases were GPU layers under every star, so
+  Chrome had to give each star its own layer above them (307 mid-zoom at 1,000 contacts; "Layerize"
+  was ~580ms of every 3s summary zoom). The washes and dust are now drawn in a worker
+  (`sky-bitmap.worker.ts`, `OffscreenCanvas` → PNG) and shown as `<img>`, which paints into its
+  parent layer; the edges' `will-change` while moving went for the same reason (97 → 17 layers).
+- **Every star re-rendered every 0.05 of zoom.** Each star now selects the size relief it draws and
+  whether labels show (`graph-nodes.tsx`), so it re-renders only when those change.
+- **Two full commits per star-mount batch.** Measured sizes go to a map rather than state, the
+  summary view builds only the nodes it draws, and the per-transform setters only set on change.
+- **More than one zoom per frame.** Wheel events after the first in a frame are summed into one
+  (d3's wheel zoom is exponential in delta, so the final zoom is identical).
+- Smaller: the invisible `<Background>` dot grid is gone; the end of movement is debounced 120ms
+  (mouse notches no longer promote and demote every tick); no-op canvas redraws are skipped;
+  hovering no longer redraws the washes.
+
+| Gesture | Contacts | Frames over 8.3ms: before | after | Change | p95 frame ms: before | after | Worst frame ms: before | after | Long frames (LoAF): before | after | Commits/event: before | after |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Zoom across the summary view (0.09 ↔ 0.25) | 100 | 7 (3.9%) | 1 (0.6%) | -85.7% | 8.2 | 6.8 | 15.5 | 13.6 | 0 | 0 | — | — |
+| Zoom across the summary view (0.09 ↔ 0.25) | 500 | 112 (67.9%) | 54 (30.5%) | -51.8% | 26.5 | 13.8 | 50.3 | 35.7 | 0 | 0 | — | — |
+| Zoom across the summary view (0.09 ↔ 0.25) | 1,000 | 86 (49.4%) | 34 (19.2%) | -60.5% | 19.5 | 10.9 | 45.4 | 35.2 | 0 | 0 | — | — |
+| Zoom across the summary view (0.09 ↔ 0.25) | 2,500 | 117 (74.1%) | 56 (31.6%) | -52.1% | 30.8 | 15.6 | 55.2 | 37.5 | 0 | 0 | — | — |
+| Trackpad pinch (0.05 → 1 → 0.05) | 100 | 5 (2.8%) | 0 (0.0%) | -100.0% | 7.7 | 3.3 | 10.0 | 6.0 | 0 | 0 | 1.40 | 0.96 |
+| Trackpad pinch (0.05 → 1 → 0.05) | 500 | 56 (34.6%) | 20 (11.7%) | -64.3% | 30.7 | 10.0 | 51.2 | 37.6 | 0 | 0 | 1.47 | 1.16 |
+| Trackpad pinch (0.05 → 1 → 0.05) | 1,000 | 44 (26.0%) | 12 (7.0%) | -72.7% | 23.6 | 15.0 | 45.8 | 35.4 | 0 | 0 | 1.21 | 0.97 |
+| Trackpad pinch (0.05 → 1 → 0.05) | 2,500 | 62 (39.0%) | 23 (13.4%) | -62.9% | 34.0 | 16.0 | 53.3 | 34.3 | 0 | 1 | 1.45 | 1.14 |
+| Mouse-wheel notches | 100 | 19 (10.6%) | 18 (10.0%) | -5.3% | 12.3 | 12.7 | 22.5 | 19.8 | 0 | 0 | 4.08 | 2.75 |
+| Mouse-wheel notches | 500 | 26 (14.4%) | 21 (11.7%) | -19.2% | 14.8 | 14.5 | 25.8 | 26.0 | 0 | 0 | 5.08 | 2.75 |
+| Mouse-wheel notches | 1,000 | 10 (5.6%) | 11 (6.1%) | +10.0% | 8.4 | 9.2 | 13.3 | 16.4 | 0 | 0 | 3.75 | 2.25 |
+| Mouse-wheel notches | 2,500 | 26 (14.4%) | 21 (11.7%) | -19.2% | 16.4 | 15.4 | 29.4 | 28.5 | 0 | 0 | 4.88 | 2.75 |
+| Hover star to star | 100 | 0 (0.0%) | 0 (0.0%) | 0% | 1.8 | 2.0 | 2.4 | 3.7 | 0 | 0 | 1.97 | 1.95 |
+| Hover star to star | 500 | 0 (0.0%) | 0 (0.0%) | 0% | 2.1 | 2.0 | 3.0 | 4.2 | 0 | 0 | 1.95 | 1.97 |
+| Hover star to star | 1,000 | 0 (0.0%) | 0 (0.0%) | 0% | 1.2 | 2.5 | 2.8 | 3.1 | 0 | 0 | 1.97 | 1.97 |
+| Hover star to star | 2,500 | 0 (0.0%) | 0 (0.0%) | 0% | 1.4 | 1.9 | 4.8 | 3.2 | 0 | 0 | 1.96 | 1.95 |
+| Pointer drifting over the sky | 100 | 0 (0.0%) | 0 (0.0%) | 0% | 3.9 | 3.8 | 5.4 | 5.3 | 0 | 0 | 0.04 | 0.03 |
+| Pointer drifting over the sky | 500 | 0 (0.0%) | 0 (0.0%) | 0% | 1.9 | 1.8 | 6.6 | 5.0 | 0 | 0 | 0.08 | 0.06 |
+| Pointer drifting over the sky | 1,000 | 0 (0.0%) | 0 (0.0%) | 0% | 1.5 | 1.5 | 2.1 | 2.0 | 0 | 0 | 0.00 | 0.00 |
+| Pointer drifting over the sky | 2,500 | 0 (0.0%) | 0 (0.0%) | 0% | 1.9 | 2.0 | 7.6 | 3.4 | 0 | 0 | 0.07 | 0.07 |
+| Typing a search + camera flight | 100 | 7 (4.7%) | 4 (2.7%) | -42.9% | 8.2 | 6.1 | 40.0 | 36.5 | 0 | 0 | 18.50 | 14.00 |
+| Typing a search + camera flight | 500 | 4 (2.7%) | 4 (2.7%) | 0.0% | 3.6 | 2.7 | 29.1 | 24.4 | 0 | 0 | 10.25 | 6.00 |
+| Typing a search + camera flight | 1,000 | 4 (2.7%) | 1 (0.7%) | -75.0% | 3.4 | 2.6 | 17.3 | 15.2 | 0 | 0 | 9.75 | 5.25 |
+| Typing a search + camera flight | 2,500 | 4 (2.7%) | 3 (2.0%) | -25.0% | 3.3 | 2.4 | 23.2 | 17.0 | 0 | 0 | 9.50 | 5.50 |
+| Clicking a cluster (flight in) | 100 | 4 (4.4%) | 1 (1.1%) | -75.0% | 8.0 | 5.3 | 18.0 | 17.0 | 0 | 0 | 56.00 | 41.00 |
+| Clicking a cluster (flight in) | 500 | 8 (8.9%) | 7 (7.8%) | -12.5% | 9.0 | 8.9 | 13.3 | 11.3 | 0 | 0 | 78.00 | 86.00 |
+| Clicking a cluster (flight in) | 1,000 | 6 (6.7%) | 5 (5.6%) | -16.7% | 8.4 | 7.6 | 14.9 | 10.7 | 0 | 0 | 76.00 | 78.00 |
+| Clicking a cluster (flight in) | 2,500 | 8 (8.9%) | 8 (8.9%) | 0.0% | 11.5 | 9.9 | 19.1 | 13.4 | 0 | 0 | 79.00 | 83.00 |
+
+Frame cost = main-thread time from a frame's rAF to after its paint; over 8.33ms drops a frame at 120Hz. Medians over the repetitions kept (before/after) — 100: 5/5, 500: 5/5, 1,000: 5/5, 2,500: 5/5. Dropped for a control frame rate under 55fps: none.
+
+- Zoom is where the frames were, and where they came back: summary zoom and pinch lose 52–73% of
+  their over-budget frames at 500–2,500, with p95 roughly halved.
+- **Not fixed:** 12–30% of zoom frames are still over 8.3ms. What remains is React Flow's
+  per-node store selectors and React commits, which grow with the mounted stars.
+- **Slightly worse:** mouse-wheel notches at 1,000 (10 → 11 frames, p95 8.4 → 9.2ms), inside the
+  noise of the other sizes, which improved. Commits per notch fell from ~4–5 to 2.75.
+- Hover, search and cluster clicks were already mostly within budget and stay there. The plan's
+  hover/search rework (CSS dimming, isolating `NetworkGraph` re-renders, batching summary hits)
+  was not built: the measurements gave it nothing to win.
+
+The open suite on the same two builds, to check nothing else paid for it (zoom out and both pans
+were 60.0 avg / 59.5 min fps with 0 long tasks on both builds at every size):
+
+| Scenario | Contacts | Metric | before | after | Change |
+|---|---:|---|---:|---:|---:|
+| Open | 1,000 | Time to interactive (ms) | 314 | 298 | -5.1% |
+| Open | 1,000 | Data fetch start → interactive (ms) | 172 | 159 | -7.6% |
+| Open | 1,000 | Long tasks until interactive | 0 | 0 | 0% |
+| Open | 2,500 | Time to interactive (ms) | 332 | 329 | -0.9% |
+| Open | 2,500 | Data fetch start → interactive (ms) | 197 | 187 | -5.1% |
+| Open | 2,500 | Long tasks until interactive | 0 | 0 | 0% |
+| Open | 10,000 | Time to interactive (ms) | 418 | 432 | +3.3% |
+| Open | 10,000 | Data fetch start → interactive (ms) | 284 | 292 | +2.8% |
+| Open | 10,000 | Long tasks until interactive | 0 | 0 | 0% |
+| Zoom in (0.05 → 2.4, 3s) | 1,000 | Avg FPS | 60.0 | 60.0 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 1,000 | Min FPS | 59.5 | 59.5 | 0.0% |
+| Zoom in (0.05 → 2.4, 3s) | 1,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom in (0.05 → 2.4, 3s) | 2,500 | Avg FPS | 59.0 | 60.0 | +1.7% |
+| Zoom in (0.05 → 2.4, 3s) | 2,500 | Min FPS | 29.9 | 59.5 | +99.0% |
+| Zoom in (0.05 → 2.4, 3s) | 2,500 | Long tasks (>50ms) | 0 | 0 | 0% |
+| Zoom in (0.05 → 2.4, 3s) | 10,000 | Avg FPS | 59.3 | 60.0 | +1.2% |
+| Zoom in (0.05 → 2.4, 3s) | 10,000 | Min FPS | 30.0 | 59.5 | +98.3% |
+| Zoom in (0.05 → 2.4, 3s) | 10,000 | Long tasks (>50ms) | 0 | 0 | 0% |
+
+At 10,000 contacts, open is +14ms (+8ms from the data fetch): paint is 9ms faster, but a frame of
+work now lands after the first paint ("settle" 2 → 16ms), where the sky's first images are made.
+The zoom-in minimum of 30fps at 2,500 and 10,000 is gone.
 
 ### Final: the open pass and its fixes, before → after (September 25, 2026)
 
