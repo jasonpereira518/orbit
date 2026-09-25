@@ -9,9 +9,11 @@ import {
   anthropicClient,
   geminiClient,
   getAiAccessStatus,
-  openaiClient,
+  isOpenAiShaped,
+  openAiShapedClient,
   resolveAiAccess,
   runOnGrant,
+  withOpenRouterRouting,
   type AiGrant,
 } from "@/lib/ai-access";
 import {
@@ -312,7 +314,6 @@ const DETAIL_BATCH_SIZE = 6;
 const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 
 const GEMINI_EMBEDDING_MODEL = EMBEDDING_MODELS.gemini;
-const OPENAI_EMBEDDING_MODEL = EMBEDDING_MODELS.openai;
 
 export { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "@/lib/ai-models";
 
@@ -568,9 +569,9 @@ export async function completeJson(
           return normalizeJsonResponse(content);
         }
 
-        if (provider === "openai") {
-          const client = openaiClient(grant);
-          const response = await client.chat.completions.create({
+        if (isOpenAiShaped(provider)) {
+          const client = openAiShapedClient(grant);
+          const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
             response_format: { type: "json_object" },
@@ -579,7 +580,7 @@ export async function completeJson(
               { role: "user", content: userText },
             ],
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
-          }, { signal: callSignal() });
+          }), { signal: callSignal() });
           report(tokensFromOpenAi(response));
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
@@ -705,8 +706,8 @@ async function completeMultimodalJsonInner(
       return normalizeJsonResponse(content);
     }
 
-    if (provider === "openai") {
-      const client = openaiClient(grant);
+    if (isOpenAiShaped(provider)) {
+      const client = openAiShapedClient(grant);
       const content: OpenAI.Chat.ChatCompletionContentPart[] = [
         ...textParts.map((p): OpenAI.Chat.ChatCompletionContentPart => ({
           type: "text",
@@ -729,7 +730,7 @@ async function completeMultimodalJsonInner(
           };
         }),
       ];
-      const response = await client.chat.completions.create({
+      const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
         model,
         ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
         response_format: { type: "json_object" },
@@ -737,7 +738,7 @@ async function completeMultimodalJsonInner(
           { role: "system", content: system },
           { role: "user", content },
         ],
-      }, { signal: aiSignal() });
+      }), { signal: aiSignal() });
       report(tokensFromOpenAi(response));
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
@@ -875,8 +876,8 @@ export async function transcribeAudioWithAI(
     );
   }
 
-  if (grant.provider === "openai") {
-    const client = openaiClient(grant);
+  if (isOpenAiShaped(grant.provider)) {
+    const client = openAiShapedClient(grant);
     const bytes = Buffer.from(input.base64, "base64");
     const file = new File(
       [bytes],
@@ -887,7 +888,7 @@ export async function transcribeAudioWithAI(
       {
         userId,
         operation,
-        provider: "openai",
+        provider: grant.provider,
         model: "whisper-1",
         kind: "transcription",
         keyOwner: grant.keyOwner,
@@ -902,13 +903,13 @@ export async function transcribeAudioWithAI(
         );
         const prompt = [names, context].filter(Boolean).join(" ");
         const result = await client.audio.transcriptions.create(
-          {
+          withOpenRouterRouting(grant.provider, {
             file,
             model: "whisper-1",
             // Whisper's decoding prior. Omitted rather than sent empty: a blank prompt is
             // not the same request as no prompt.
             ...(prompt ? { prompt } : {}),
-          },
+          }),
           // Longer than a completion's deadline: a six-minute voice note is a legitimate
           // upload, and it has to be transcribed, not just answered.
           { signal: aiSignal(TRANSCRIBE_TIMEOUT_MS) },
@@ -1588,8 +1589,7 @@ export async function createEmbedding(userId: string, text: string) {
   const grant = await (await resolveAiAccess(userId)).embedding("search.embed");
   const { provider: backend, keyOwner } = grant;
   const input = text.slice(0, 8000);
-  const model =
-    backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
+  const model = EMBEDDING_MODELS[backend];
 
   return runOnGrant(grant, withUsage(
     {
@@ -1602,15 +1602,15 @@ export async function createEmbedding(userId: string, text: string) {
     },
     (report) =>
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
-        if (backend === "openai") {
-          const client = openaiClient(grant);
+        if (isOpenAiShaped(backend)) {
+          const client = openAiShapedClient(grant);
           // maxRetries 0: `withRateLimitBackoff` around this call already retries a rate
           // limit, and the SDK's own two retries stacked under it made one throttled batch
           // up to twelve requests.
-          const res = await client.embeddings.create({
-            model: OPENAI_EMBEDDING_MODEL,
+          const res = await client.embeddings.create(withOpenRouterRouting(backend, {
+            model,
             input,
-          }, { signal: aiSignal(), maxRetries: 0 });
+          }), { signal: aiSignal(), maxRetries: 0 });
           report(tokensFromOpenAi(res));
           const values = res.data[0]?.embedding;
           if (!values?.length) throw new Error("Empty embedding response");
@@ -1641,8 +1641,7 @@ export async function createEmbeddingsBatch(
   const grant = await (await resolveAiAccess(userId)).embedding("search.embed.batch");
   const { provider: backend, keyOwner } = grant;
   const inputs = texts.map((text) => text.slice(0, 8000));
-  const model =
-    backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
+  const model = EMBEDDING_MODELS[backend];
 
   return runOnGrant(grant, withUsage(
     {
@@ -1655,13 +1654,13 @@ export async function createEmbeddingsBatch(
     },
     (report) =>
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
-        if (backend === "openai") {
-          const client = openaiClient(grant);
+        if (isOpenAiShaped(backend)) {
+          const client = openAiShapedClient(grant);
           // maxRetries 0 for the same reason as `createEmbedding`: the backoff wrapper owns retries.
-          const res = await client.embeddings.create({
-            model: OPENAI_EMBEDDING_MODEL,
+          const res = await client.embeddings.create(withOpenRouterRouting(backend, {
+            model,
             input: inputs,
-          }, { signal: aiSignal(), maxRetries: 0 });
+          }), { signal: aiSignal(), maxRetries: 0 });
           report(tokensFromOpenAi(res));
           const values = res.data
             .slice()
@@ -2050,10 +2049,10 @@ async function streamText(
           last = chunk;
         }
         if (last) report(tokensFromGemini(last));
-      } else if (provider === "openai") {
-        const client = openaiClient(grant);
+      } else if (isOpenAiShaped(provider)) {
+        const client = openAiShapedClient(grant);
         const stream = await client.chat.completions.create(
-          {
+          withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
             stream: true,
@@ -2062,7 +2061,7 @@ async function streamText(
               { role: "system", content: input.system },
               { role: "user", content: input.user },
             ],
-          },
+          }),
           { signal }
         );
         let usage: unknown = null;

@@ -44,6 +44,7 @@ import { billingEvents, errorEvents, rateLimitBuckets, usageEvents, userSettings
 import { encrypt } from "../src/lib/crypto";
 import { priceFor } from "../src/lib/ai-pricing";
 import type { AiOperationId } from "../src/lib/ai-operations";
+import { DEFAULT_MODELS } from "../src/lib/ai-providers";
 import {
   AiAccessError,
   aiReadyFromSettings,
@@ -101,7 +102,7 @@ async function refusal(p: Promise<unknown>): Promise<AiAccessError | null> {
 
 /* ------------------------------------------------------------------ fetch stub ------- */
 
-type Sent = { url: string; key: string | null };
+type Sent = { url: string; key: string | null; headers: Record<string, string>; body: string | null };
 const sent: Sent[] = [];
 let respondWith: "ok" | "key_refused" = "ok";
 
@@ -114,7 +115,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     headers.get("x-api-key") ??
     headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
     null;
-  sent.push({ url, key });
+  sent.push({
+    url,
+    key,
+    headers: Object.fromEntries(headers.entries()),
+    body: typeof init?.body === "string" ? init.body : null,
+  });
   if (respondWith === "key_refused") {
     return new Response(
       JSON.stringify({ error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }),
@@ -128,6 +134,15 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     return Response.json({
       candidates: [{ content: { role: "model", parts: [{ text: '{"ok":true,"text":"hello there"}' }] }, finishReason: "STOP" }],
       usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 100 },
+    });
+  }
+  if (/^https:\/\/openrouter\.ai\/api\/v1\/embeddings/.test(url)) {
+    return Response.json({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+  }
+  if (/^https:\/\/openrouter\.ai\/api\/v1\/chat\/completions/.test(url)) {
+    return Response.json({
+      choices: [{ message: { role: "assistant", content: '{"ok":true,"text":"hello there"}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1000, completion_tokens: 100 },
     });
   }
   return realFetch(input, init);
@@ -177,7 +192,10 @@ function sourceGuard() {
   const construct = /new\s+(GoogleGenAI|OpenAI|Anthropic)\s*\(/;
   const transportImport = /^\s*import\s+(?!type\b)[^;]*?from\s+["'](?:@\/lib|\.\.?(?:\/[\w.-]+)*)\/typesafe-api["']|import\(\s*["'][^"']*typesafe-api["']\s*\)/m;
   const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|TYPESAFE_API_KEY|OPENROUTER_API_KEY)\b/;
-  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|openrouter\.ai/;
+  // OpenRouter's own bare host, unlike the other three, is also where a person's browser
+  // legitimately links out to top up credits (errors.ts's quota copy) — so this only
+  // catches the API path, the shape an actual request would use.
+  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|openrouter\.ai\/api/;
 
   const offenders: string[] = [];
   for (const file of [...walk("src"), ...walk("scripts")]) {
@@ -201,6 +219,8 @@ function sourceGuard() {
   check("…but not a type-only one", !transportImport.test(`import type { SystemOneRequest } from "@/lib/typesafe-api";`));
   check("the env rule catches TYPESAFE_API_KEY", envKey.test("process.env.TYPESAFE_API_KEY"));
   check("the host rule catches TypeSafe's host", providerHost.test("https://api.typesafe.ai/v1/systemone"));
+  check("…and OpenRouter's API path", providerHost.test("https://openrouter.ai/api/v1/chat/completions"));
+  check("…but not a plain link to OpenRouter's credits page", !providerHost.test("https://openrouter.ai/credits"));
   const ai = readFileSync("src/lib/ai.ts", "utf8");
   check("ai.ts imports the SDKs for types only", !valueImport.test(ai) && /import type OpenAI/.test(ai));
   check("every ai.ts provider path starts at resolveAiAccess", (ai.match(/resolveAiAccess\(/g) ?? []).length >= 6);
@@ -362,6 +382,7 @@ function purePolicy() {
 
 const USER_KEY = "user-gemini-key";
 const MANAGED = "managed-gemini-key";
+const USER_OPENROUTER_KEY = "user-openrouter-key";
 const U = {
   lifetimeOwn: "smoke-aia-lifetime-own",
   lifetimeNone: "smoke-aia-lifetime-none",
@@ -376,6 +397,7 @@ const U = {
   capped: "smoke-aia-capped",
   pending: "smoke-aia-pending",
   asyncPayer: "smoke-aia-async",
+  openrouterOnly: "smoke-aia-openrouter-only",
 };
 
 async function account(userId: string, cols: Partial<typeof userSettings.$inferInsert>) {
@@ -414,6 +436,11 @@ async function realGate() {
   await account(U.freeNone, {});
   await account(U.proNone, { subscriptionPlan: "orbit", subscriptionStatus: "active" });
   await account(U.compNone, { compedPlan: "lifetime" });
+  await account(U.openrouterOnly, {
+    aiProvider: "openrouter",
+    aiModel: DEFAULT_MODELS.openrouter,
+    openrouterApiKeyEncrypted: encrypt(USER_OPENROUTER_KEY),
+  });
 
   console.log("\nThe matrix, through the real SDK calls (completions)");
   let r = await lastSent(() => json(U.lifetimeOwn));
@@ -457,6 +484,33 @@ async function realGate() {
   const pages = await transcribeImagePages(U.freeNone, [{ mimeType: "image/jpeg", base64: "AAAA" }]);
   check("photo OCR with no key reports the key message per page, sends nothing",
     pages[0]?.ok === false && isMissingAiApiKeyError(pages[0]?.error), pages[0]?.error);
+
+  console.log("\nOpenRouter shares the OpenAI-shaped path and never lets a provider keep the data");
+  r = await lastSent(() => json(U.openrouterOnly));
+  const captured = r.req;
+  check("openrouter completions go to openrouter.ai", (captured?.url ?? "").startsWith("https://openrouter.ai/api/v1/"), captured?.url);
+  check("openrouter completions carry the user’s key", captured?.headers.authorization === `Bearer ${USER_OPENROUTER_KEY}`, captured?.headers.authorization);
+  check("openrouter completions identify Orbit", captured?.headers["x-title"] === "Orbit", captured?.headers["x-title"]);
+  check("openrouter completions carry a referer", Boolean(captured?.headers["http-referer"]), captured?.headers["http-referer"]);
+  check(
+    "openrouter completions refuse data collection",
+    JSON.parse(captured?.body ?? "{}").provider?.data_collection === "deny",
+    captured?.body
+  );
+
+  r = await lastSent(() => createEmbedding(U.openrouterOnly, "a contact"));
+  const capturedEmbed = r.req;
+  check("openrouter embeddings go to openrouter.ai", (capturedEmbed?.url ?? "").startsWith("https://openrouter.ai/api/v1/"), capturedEmbed?.url);
+  check(
+    "openrouter embeddings refuse data collection",
+    JSON.parse(capturedEmbed?.body ?? "{}").provider?.data_collection === "deny",
+    capturedEmbed?.body
+  );
+  check(
+    "openrouter embeddings use the 1536-dim model",
+    JSON.parse(capturedEmbed?.body ?? "{}").model === "openai/text-embedding-3-small",
+    capturedEmbed?.body
+  );
 
   console.log("\nWhat the UI is told");
   const status = async (u: string) => {
@@ -641,6 +695,11 @@ async function byokOnly() {
     await account(U.proNone, { subscriptionPlan: "orbit", subscriptionStatus: "active" });
     await account(U.freeNone, {});
     await account(U.freeOwn, ownKey());
+    await account(U.openrouterOnly, {
+      aiProvider: "openrouter",
+      aiModel: DEFAULT_MODELS.openrouter,
+      openrouterApiKeyEncrypted: encrypt(USER_OPENROUTER_KEY),
+    });
 
     console.log("\nManaged AI is off: every plan is bring-your-own-key");
     check("no managed key counts as configured, whatever the environment holds",
@@ -672,6 +731,33 @@ async function byokOnly() {
     const owners = await db.select({ o: usageEvents.keyOwner }).from(usageEvents).where(inArray(usageEvents.userId, Object.values(U)));
     check("no usage row names Orbit as the payer", owners.length > 0 && owners.every((x) => x.o === "user"), owners.map((x) => x.o).join(","));
     check("neither Orbit's nor the developer's key ever went on the wire", sent.every((x) => x.key !== MANAGED && x.key !== DEV_KEY));
+
+    console.log("\nOpenRouter shares the OpenAI-shaped path and never lets a provider keep the data");
+    let orResult = await lastSent(() => json(U.openrouterOnly));
+    const captured = orResult.req;
+    check("openrouter completions go to openrouter.ai", (captured?.url ?? "").startsWith("https://openrouter.ai/api/v1/"), captured?.url);
+    check("openrouter completions carry the user’s key", captured?.headers.authorization === `Bearer ${USER_OPENROUTER_KEY}`, captured?.headers.authorization);
+    check("openrouter completions identify Orbit", captured?.headers["x-title"] === "Orbit", captured?.headers["x-title"]);
+    check("openrouter completions carry a referer", Boolean(captured?.headers["http-referer"]), captured?.headers["http-referer"]);
+    check(
+      "openrouter completions refuse data collection",
+      JSON.parse(captured?.body ?? "{}").provider?.data_collection === "deny",
+      captured?.body
+    );
+
+    orResult = await lastSent(() => createEmbedding(U.openrouterOnly, "a contact"));
+    const capturedEmbed = orResult.req;
+    check("openrouter embeddings go to openrouter.ai", (capturedEmbed?.url ?? "").startsWith("https://openrouter.ai/api/v1/"), capturedEmbed?.url);
+    check(
+      "openrouter embeddings refuse data collection",
+      JSON.parse(capturedEmbed?.body ?? "{}").provider?.data_collection === "deny",
+      capturedEmbed?.body
+    );
+    check(
+      "openrouter embeddings use the 1536-dim model",
+      JSON.parse(capturedEmbed?.body ?? "{}").model === "openai/text-embedding-3-small",
+      capturedEmbed?.body
+    );
 
     console.log("\nA just-paid Lifetime checkout does not ask Stripe for AI");
     await account(U.pending, { lifetimeCheckoutSessionId: "cs_test_paid", lifetimeCheckoutStartedAt: new Date() });

@@ -155,10 +155,14 @@ const UNREACHABLE_OPENROUTER =
   "through withOpenRouterRouting.";
 
 const ALLOWLIST: Record<string, string> = {
-  "src/lib/ai-access.ts:587": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts:625": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
+  "src/lib/ai-access.ts:279": "isOpenAiShaped's own body: `provider === \"openai\" || " +
+    "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
+    "which this checker does not flag; together the two are exhaustive for what this " +
+    "predicate means to answer.",
   "src/lib/ai-providers.ts:127": "one statement, `value === \"openai\" || value === " +
     "\"anthropic\" || value === \"gemini\" || value === \"openrouter\"` — the fourth arm is " +
     "the literal \"openrouter\" itself, which this checker does not flag because it isn't " +
@@ -175,22 +179,18 @@ const ALLOWLIST: Record<string, string> = {
     "checks \"anthropic\" and \"openrouter\" explicitly (this commit added the openrouter " +
     "arm and its query column), defaulting to gemini — exhaustive over AiProvider.",
   "src/lib/admin-metrics.ts:330": "the \"anthropic\" arm of the same ternary — see line 328.",
-  "src/lib/ai.ts:552": UNREACHABLE_OPENROUTER + " (completeJson's gemini arm; the implicit " +
-    "Anthropic fallback below the openai arm is what's unreachable for openrouter.)",
-  "src/lib/ai.ts:571": UNREACHABLE_OPENROUTER + " (completeJson's openai arm.)",
-  "src/lib/ai.ts:680": UNREACHABLE_OPENROUTER + " (completeMultimodalJsonInner's gemini arm.)",
-  "src/lib/ai.ts:708": UNREACHABLE_OPENROUTER + " (completeMultimodalJsonInner's openai arm.)",
-  "src/lib/ai.ts:878": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
-    "\"gemini\" — Anthropic has no speech-to-text and OpenRouter transcription isn't wired " +
-    "up; the two are exhaustive for every grant transcribeAudioWithAI can receive today.",
-  "src/lib/ai.ts:1592": UNREACHABLE_OPENROUTER + " (createEmbedding's model-selection line; " +
-    "the implicit Gemini fallback is what's unreachable for openrouter.)",
-  "src/lib/ai.ts:1605": UNREACHABLE_OPENROUTER + " (createEmbedding's openai branch.)",
-  "src/lib/ai.ts:1645": UNREACHABLE_OPENROUTER + " (createEmbeddingsBatch's model-selection line.)",
-  "src/lib/ai.ts:1658": UNREACHABLE_OPENROUTER + " (createEmbeddingsBatch's openai branch.)",
-  "src/lib/ai.ts:2034": UNREACHABLE_OPENROUTER + " (streamText's gemini arm.)",
-  "src/lib/ai.ts:2053": UNREACHABLE_OPENROUTER + " (streamText's openai arm; the implicit " +
-    "Anthropic fallback further down is what's unreachable for openrouter.)",
+  // Task 3 widened every one of these OLD openai-literal arms to `isOpenAiShaped(...)`,
+  // which already admits openrouter (see check 2's real per-call assertions on ai.ts:574,
+  // 733, 905, 1610, 1660 and 2054) — so only the gemini arm of each cascade is still a bare
+  // literal comparison left for check 1 to find, and each one's implicit fallback (openai
+  // or openrouter now both routed away from it, leaving only anthropic reachable below) is
+  // exhaustive without an explicit openrouter arm of its own.
+  "src/lib/ai.ts:553": UNREACHABLE_OPENROUTER + " (completeJson's gemini arm; openai and " +
+    "openrouter both now take the isOpenAiShaped branch above the implicit Anthropic " +
+    "fallback, which is what's unreachable for openrouter.)",
+  "src/lib/ai.ts:681": UNREACHABLE_OPENROUTER + " (completeMultimodalJsonInner's gemini arm; " +
+    "see ai.ts:553.)",
+  "src/lib/ai.ts:2033": UNREACHABLE_OPENROUTER + " (streamText's gemini arm; see ai.ts:553.)",
   "src/lib/errors.ts:36": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
   "src/lib/errors.ts:38": "same function as line 36 — see that entry.",

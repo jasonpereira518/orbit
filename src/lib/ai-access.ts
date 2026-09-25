@@ -4,6 +4,7 @@ import OpenAI from "openai";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan } from "@/lib/entitlements";
@@ -256,6 +257,43 @@ export function openaiClient(grant: AiGrant<AiProvider>): OpenAI {
 
 export function anthropicClient(grant: AiGrant<AiProvider>): Anthropic {
   return new Anthropic({ apiKey: keyFor(grant, "anthropic") });
+}
+
+/**
+ * OpenRouter is the OpenAI SDK pointed somewhere else. `keyFor` keeps the invariant that a
+ * grant minted for one provider cannot build another's client.
+ */
+export function openrouterClient(grant: AiGrant<AiProvider>): OpenAI {
+  return new OpenAI({
+    apiKey: keyFor(grant, "openrouter"),
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": getAppBaseUrl(),
+      "X-Title": "Orbit",
+    },
+  });
+}
+
+/** Providers that speak the OpenAI wire format, so `ai.ts` can share one code path. */
+export function isOpenAiShaped(provider: AiProvider): boolean {
+  return provider === "openai" || provider === "openrouter";
+}
+
+export function openAiShapedClient(grant: AiGrant<AiProvider>): OpenAI {
+  return grant.provider === "openrouter" ? openrouterClient(grant) : openaiClient(grant);
+}
+
+/**
+ * Orbit's payloads are private relationship notes, so every OpenRouter request constrains
+ * the upstream pool to providers that do not retain or train on what is sent.
+ *
+ * A helper rather than a spread at each call site on purpose: a privacy guarantee that
+ * depends on remembering to spread is one forgotten spread away from being off, and
+ * `smoke-provider-exhaustive` asserts no OpenRouter `.create(` bypasses this.
+ */
+export function withOpenRouterRouting<T extends object>(provider: AiProvider, params: T): T {
+  if (provider !== "openrouter") return params;
+  return { ...params, provider: { data_collection: "deny" } } as T;
 }
 
 /**
