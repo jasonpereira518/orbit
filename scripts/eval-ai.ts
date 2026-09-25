@@ -7,6 +7,11 @@
  *   ORBIT_EVAL_ANTHROPIC_KEY=… ORBIT_EVAL_OPENAI_KEY=… npx tsx scripts/eval-ai.ts \
  *     --provider anthropic --model claude-sonnet-5 --runs 2 \
  *     --compare docs/ai-evals/2026-09-19-anthropic-claude-sonnet-4-5.json
+ *   ORBIT_EVAL_OPENROUTER_KEY=… npx tsx scripts/eval-ai.ts --provider openrouter --runs 2 \
+ *     --compare docs/ai-evals/2026-09-19-gemini-baseline.json
+ *
+ * The OpenRouter default model is google/gemini-3.8-flash — the SAME model as the Gemini
+ * baseline. Same model, different route, so a divergence is the proxy's, not the model's.
  *
  * A candidate is a JSON file passed with `--config`, applied to the registry and the tier
  * maps before anything runs:
@@ -17,20 +22,20 @@
  *     "fastModels": { "gemini": "gemini-3.5-flash-lite" },
  *     "visionModels": { "gemini": "gemini-3.8-flash" } }
  *
- * Flags: --provider gemini|openai|anthropic (default gemini) · --model <id> (default: the
- * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,research,digest
+ * Flags: --provider gemini|openai|anthropic|openrouter (default gemini) · --model <id>
+ * (default: the provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,research,digest
  * (default all) · --runs N (default 1; use 2+ for a gate decision — models are not
  * deterministic) · --limit N (cases per task, for a quick look) · --label <name> ·
  * --out <file> (default docs/ai-evals/<date>-<label>.json) · --compare <baseline.json>
  * (exits 1 when a threshold in scripts/eval-fixtures/ai-eval-thresholds.json is broken).
  *
- * KEYS. Only `ORBIT_EVAL_{GEMINI,OPENAI,ANTHROPIC}_KEY` are used, stored as the
+ * KEYS. Only `ORBIT_EVAL_{GEMINI,OPENAI,ANTHROPIC,OPENROUTER}_KEY` are used, stored as the
  * synthetic user's OWN keys — the same bring-your-own-key path a person's pasted key takes
  * through the AI gate, so every model is reachable (Orbit's managed keys would pin the model
  * to the managed allowlist). The ordinary `GEMINI_API_KEY`-style names are deliberately
  * ignored and stripped: a developer's `.env.local` key must never be spent by just running a
  * script. To spend them on purpose, name the file: `--keys-from ../../.env.local` reads its
- * `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` as the eval
+ * `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` as the eval
  * keys (an `ORBIT_EVAL_*` variable still wins). A full run costs roughly a dollar or two per
  * provider.
  *
@@ -182,8 +187,6 @@ function evalKeys(keysFrom?: string) {
     gemini: read("ORBIT_EVAL_GEMINI_KEY", "GEMINI_API_KEY"),
     openai: read("ORBIT_EVAL_OPENAI_KEY", "OPENAI_API_KEY"),
     anthropic: read("ORBIT_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"),
-    // No adapter calls OpenRouter yet (a later task adds it); kept here only so `keys[provider]`
-    // type-checks for every AiProvider.
     openrouter: read("ORBIT_EVAL_OPENROUTER_KEY", "OPENROUTER_API_KEY"),
     typesafe: read("ORBIT_EVAL_TYPESAFE_KEY", "TYPESAFE_API_KEY"),
   };
@@ -197,10 +200,7 @@ async function setUpUser(args: Args, keys: ReturnType<typeof evalKeys>) {
     geminiApiKeyEncrypted: keys.gemini ? encrypt(keys.gemini) : null,
     openaiApiKeyEncrypted: keys.openai ? encrypt(keys.openai) : null,
     anthropicApiKeyEncrypted: keys.anthropic ? encrypt(keys.anthropic) : null,
-    // Task 8 wires OpenRouter into the eval properly; until then `keys.openrouter` is read
-    // and discarded, so a run against it fails clearly (key_required) rather than silently
-    // dropping the key someone thought they'd set.
-    openrouterApiKeyEncrypted: null,
+    openrouterApiKeyEncrypted: keys.openrouter ? encrypt(keys.openrouter) : null,
     // Only on a `--decisions jev` run: a baseline must measure the path without Jev.
     typesafeApiKeyEncrypted: args.decisions === "jev" && keys.typesafe ? encrypt(keys.typesafe) : null,
   };
