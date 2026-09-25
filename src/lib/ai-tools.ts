@@ -29,9 +29,11 @@ import {
   geminiClient,
   isOpenAiShaped,
   openAiShapedClient,
+  reportedCostMicros,
   resolveAiAccess,
   runOnGrant,
   withOpenRouterRouting,
+  type OpenAiUsageWithCost,
 } from "@/lib/ai-access";
 import { geminiThinking, translatingProviderErrors } from "@/lib/ai";
 import { modelForOperation } from "@/lib/ai-models";
@@ -194,7 +196,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
             }),
             { signal }
           );
-          report(tokensFromOpenAi(r));
+          report({ ...tokensFromOpenAi(r), reportedCostMicros: reportedCostMicros(r as OpenAiUsageWithCost) });
           return r;
         });
         const message = response.choices[0]?.message;

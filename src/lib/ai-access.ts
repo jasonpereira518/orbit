@@ -284,6 +284,23 @@ export function openAiShapedClient(grant: AiGrant<AiProvider>): OpenAI {
 }
 
 /**
+ * OpenRouter puts a `cost` field (USD, not micros) on the `usage` object of every response,
+ * with no extra request parameter needed — direct OpenAI's `usage` never carries it. The
+ * OpenAI SDK's own `usage` type has no such field, so this narrow shape exists to read it
+ * without an `as any`.
+ */
+export type OpenAiUsageWithCost = { usage?: { cost?: number } };
+
+/**
+ * USD × 1e6, or `null` when the response carried no `usage.cost` — always true for direct
+ * OpenAI, never true for OpenRouter.
+ */
+export function reportedCostMicros(response: OpenAiUsageWithCost): number | null {
+  const cost = response.usage?.cost;
+  return typeof cost === "number" ? Math.round(cost * 1_000_000) : null;
+}
+
+/**
  * Orbit's payloads are private relationship notes, so every OpenRouter request constrains
  * the upstream pool to providers that do not retain or train on what is sent.
  *

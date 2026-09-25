@@ -12,10 +12,12 @@ import {
   isOpenAiShaped,
   openaiClient,
   openAiShapedClient,
+  reportedCostMicros,
   resolveAiAccess,
   runOnGrant,
   withOpenRouterRouting,
   type AiGrant,
+  type OpenAiUsageWithCost,
 } from "@/lib/ai-access";
 import {
   loadNetworkVocabulary,
@@ -582,7 +584,7 @@ export async function completeJson(
             ],
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
           }), { signal: callSignal() });
-          report(tokensFromOpenAi(response));
+          report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
@@ -740,7 +742,7 @@ async function completeMultimodalJsonInner(
           { role: "user", content },
         ],
       }), { signal: aiSignal() });
-      report(tokensFromOpenAi(response));
+      report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
       return normalizeJsonResponse(out);
@@ -1618,7 +1620,7 @@ export async function createEmbedding(userId: string, text: string) {
             model,
             input,
           }), { signal: aiSignal(), maxRetries: 0 });
-          report(tokensFromOpenAi(res));
+          report({ ...tokensFromOpenAi(res), reportedCostMicros: reportedCostMicros(res as OpenAiUsageWithCost) });
           const values = res.data[0]?.embedding;
           if (!values?.length) throw new Error("Empty embedding response");
           return values;
@@ -1668,7 +1670,7 @@ export async function createEmbeddingsBatch(
             model,
             input: inputs,
           }), { signal: aiSignal(), maxRetries: 0 });
-          report(tokensFromOpenAi(res));
+          report({ ...tokensFromOpenAi(res), reportedCostMicros: reportedCostMicros(res as OpenAiUsageWithCost) });
           const values = res.data
             .slice()
             .sort((a, b) => a.index - b.index)
@@ -2076,7 +2078,12 @@ async function streamText(
           emit(chunk.choices[0]?.delta?.content);
           if (chunk.usage) usage = chunk.usage;
         }
-        if (usage) report(tokensFromOpenAi({ usage }));
+        if (usage) {
+          report({
+            ...tokensFromOpenAi({ usage }),
+            reportedCostMicros: reportedCostMicros({ usage } as OpenAiUsageWithCost),
+          });
+        }
       } else {
         const client = anthropicClient(grant);
         const stream = client.messages.stream(

@@ -725,6 +725,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   output_tokens integer,
   cached_input_tokens integer,
   estimated_cost_micros integer,
+  cost_source text NOT NULL DEFAULT 'estimated',
   key_owner text NOT NULL DEFAULT 'user',
   success integer NOT NULL DEFAULT 1,
   error_kind text,
@@ -1766,7 +1767,16 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // flow. Rescanned every local and remote ref on Sep 25 2026: 86 is still this branch's own
 // number, and 87 through 103 have all been claimed elsewhere at one point or another; 104 is
 // the next free integer and is still free.
-export const SCHEMA_VERSION = 104;
+//
+// 105 (this branch, integrations-dialog P3, task 4) = usage_events.cost_source — a second,
+// separate DDL change on this same branch, given its own version rather than folded into
+// 104: `smoke-schema-ddl.ts`'s lock file already recorded 104's fingerprint, and changing
+// the DDL again at that version would either fail the guard or force rewriting the lock to
+// match a diff, which is exactly what the guard exists to catch. Rescanned every local
+// worktree and every remote branch on Sep 25 2026 (git refs plus each worktree's own
+// uncommitted src/db/index.ts): the highest SCHEMA_VERSION found anywhere is 104, so 105 is
+// the next free integer and is still free.
+export const SCHEMA_VERSION = 105;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3320,6 +3330,11 @@ const alters = [
   // connect. OpenRouter is never a managed provider (Orbit holds no key for it), so this
   // column only ever holds a key the account saved itself.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openrouter_api_key_encrypted text`,
+  // Schema v105: usage_events.cost_source — distinguishes a provider-reported cost
+  // (OpenRouter's `usage.cost`) from Orbit's own `ai-pricing.ts` estimate, since
+  // `ai-pricing.ts` has no OpenRouter slugs at all and blending the two figures in one
+  // column with no source would make that gap invisible.
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cost_source text NOT NULL DEFAULT 'estimated'`,
 ];
 
 /**

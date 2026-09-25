@@ -2485,6 +2485,14 @@ export const usageEvents = pgTable(
      */
     estimatedCostMicros: integer("estimated_cost_micros"),
     /**
+     * Whether `estimated_cost_micros` is Orbit's own estimate from `ai-pricing.ts` or a
+     * figure the provider reported. OpenRouter returns `usage.cost` on every response;
+     * `ai-pricing.ts` has no OpenRouter slugs at all and is known to run about 5× low for
+     * the ones it does have, so blending the two in one column without a source would make
+     * that error invisible.
+     */
+    costSource: text("cost_source").$type<"estimated" | "reported">().default("estimated").notNull(),
+    /**
      * Whose key paid for it. "orbit" = one of Orbit's managed keys, which the AI gate issues
      * only to Lifetime and demo accounts; every row of it counts against the account's
      * monthly managed allowance.
