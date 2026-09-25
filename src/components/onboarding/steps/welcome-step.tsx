@@ -36,7 +36,7 @@ export function WelcomeStep({
 
   return (
     <Stagger className="mx-auto flex max-w-3xl flex-col items-center text-center">
-      <StaggerItem className="relative mb-6 flex size-28 items-center justify-center">
+      <StaggerItem className="relative mb-3 flex size-16 items-center justify-center">
         {/* The mark sits inside its own orbit: a ring with one moon, turning slowly. Linear,
             because an orbit that eases reads as a wobble; the global reduced-motion clamp
             stops it. */}
@@ -47,8 +47,8 @@ export function WelcomeStep({
         >
           <span className="absolute -top-1 left-1/2 size-2 -translate-x-1/2 rounded-full bg-primary shadow-[0_0_12px_2px] shadow-primary/40" />
         </span>
-        <span aria-hidden className="absolute inset-4 rounded-full border border-dashed border-primary/10" />
-        <OrbitLogo size="xl" priority />
+        <span aria-hidden className="absolute inset-3 rounded-full border border-dashed border-primary/10" />
+        <OrbitLogo size="lg" priority />
       </StaggerItem>
 
       <StaggerItem>
@@ -57,15 +57,15 @@ export function WelcomeStep({
         </h1>
       </StaggerItem>
       <StaggerItem>
-        <p className="mt-3 max-w-md text-base text-muted-foreground text-pretty">
+        <p className="mt-2 max-w-md text-base text-muted-foreground text-pretty">
           Orbit remembers the people you meet and tells you when to reach back out. Choose how
           you’d like to start.
         </p>
       </StaggerItem>
 
       {needsTerms && (
-        <StaggerItem className="mt-6 w-full max-w-md">
-          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border/70 bg-card/70 p-3 text-left text-sm text-muted-foreground">
+        <StaggerItem className="mt-4 w-full max-w-lg">
+          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border/70 bg-card/70 px-3 py-2.5 text-left text-sm text-muted-foreground">
             <Checkbox
               checked={agreed}
               onCheckedChange={(checked) => setAgreed(checked === true)}
@@ -87,7 +87,7 @@ export function WelcomeStep({
         </StaggerItem>
       )}
 
-      <Stagger as="ul" className="mt-8 grid w-full gap-3 text-left sm:grid-cols-[1.15fr_1fr]">
+      <Stagger as="ul" className="mt-6 grid w-full gap-3 text-left sm:grid-cols-[1.15fr_1fr]">
         <StaggerItem as="li">
           <PathCard
             primary
@@ -149,7 +149,7 @@ function PathCard({
   return (
     <div
       className={cn(
-        "flex h-full flex-col gap-4 rounded-3xl border p-5 sm:p-6",
+        "flex h-full flex-col gap-3 rounded-3xl border p-5",
         primary
           ? "border-primary/40 bg-card shadow-[0_18px_50px_-30px] shadow-primary/40"
           : "border-border/70 bg-card/60",
@@ -171,7 +171,7 @@ function PathCard({
         type="button"
         size="lg"
         variant={primary ? "default" : "outline"}
-        className="h-11 w-full text-[15px]"
+        className="h-10 w-full text-[15px]"
         disabled={disabled}
         onClick={onClick}
       >

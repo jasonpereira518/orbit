@@ -24,29 +24,27 @@ export function ImportStep({ onContinue }: { onContinue: (started: boolean) => v
   }
 
   return (
-    <div className="space-y-4">
-      <p className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
-        Upload the ZIP LinkedIn emailed you as it arrived. Orbit finds Connections.csv and
-        messages.csv inside it, so there&apos;s no need to unzip anything.
-      </p>
-      <LinkedInConnectionsImport />
-
-      <div className="flex items-center gap-2 px-1 pt-2">
-        <Badge variant="secondary" className="shrink-0">
-          Recommended
-        </Badge>
-        <p className="text-sm text-muted-foreground">
-          Connections tell Orbit who you know. Messages tell it who you
-          actually talk to — upload them too and Orbit can tell your closest
-          contacts apart from day one.
-        </p>
+    // Side by side from lg, so the step fits one screen; each card grows on its own once a
+    // file is picked. The way on sits under the shorter Connections card rather than below
+    // both, which would add a row under the taller Messages column.
+    <div className="grid items-start gap-4 lg:grid-cols-2">
+      <div className="space-y-4">
+        <LinkedInConnectionsImport />
+        <div className="flex justify-end">
+          <Button type="button" size="lg" className="h-10 px-4" onClick={() => onContinue(started)}>
+            {started ? "Continue" : "Skip for now"}
+          </Button>
+        </div>
       </div>
-      <LinkedInMessagesImport />
-
-      <div className="flex justify-end border-t border-border/60 pt-4">
-        <Button type="button" size="lg" className="h-10 px-4" onClick={() => onContinue(started)}>
-          {started ? "Continue" : "Skip for now"}
-        </Button>
+      <div className="space-y-2">
+        <LinkedInMessagesImport />
+        <p className="flex items-start gap-2 px-1 text-xs text-muted-foreground">
+          <Badge variant="secondary" className="shrink-0">
+            Recommended
+          </Badge>
+          Connections tell Orbit who you know. Messages tell it who you actually talk to, so
+          your closest contacts stand out from day one.
+        </p>
       </div>
     </div>
   );

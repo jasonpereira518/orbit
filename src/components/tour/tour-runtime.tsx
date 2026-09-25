@@ -169,7 +169,10 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
 
   // On a new stop, navigate to its page once and prefetch the one after it. The profile stop
   // goes back to the profile they last opened; the first time, their own click gets there.
-  const navigatedFor = useRef<TourStopId | null>(null);
+  // On load the tour moves you to the stop's page only from the dashboard, where it lands
+  // (the handoff, Resume). A reload anywhere else is a detour the person chose — Settings,
+  // say — so it stays put and the rail offers "Take me there" instead.
+  const navigatedFor = useRef<TourStopId | null>(pathname === "/dashboard" ? null : stopId);
   // When the tour last pushed, so the off-route card does not appear over its own
   // navigation while the next page is still loading.
   const pushedAt = useRef(0);

@@ -53,7 +53,10 @@ export async function startInAppTour() {
   // After the flag, never before: a failure here leaves the person past the gate with an
   // empty orbit and a retry button, not stuck on the stage.
   await seedTourExamples(userId);
-  revalidateToured();
+  // No revalidatePath here, on purpose. The launch step leaves with a full page load, so
+  // there is no client cache to refresh; and a revalidating action re-renders the page it
+  // was posted to, which is /onboarding, which now redirects to the dashboard. That redirect
+  // cut the launch animation off the moment the seed finished.
   return { ok: true as const, redirectTo: "/dashboard" as const };
 }
 

@@ -40,25 +40,25 @@ type Shot = {
 };
 
 export const LINKEDIN_SHOTS = {
-  /** LinkedIn's "Download my data" card: the archive radio and Request archive. */
+  /** LinkedIn's "Download my data" card: the archive radio and Request archive (2x capture). */
   request: {
-    src: "/guides/linkedin/export-3.png",
-    width: 1024,
-    height: 543,
+    src: "/guides/linkedin/request-archive.png",
+    width: 1486,
+    height: 1006,
     alt: "LinkedIn's Download my data page with “Download larger data archive” selected and the Request archive button",
-    crop: { x: 414, y: 50, w: 564, h: 376 },
+    crop: { x: 40, y: 120, w: 1406, h: 700 },
     targets: [
-      { x: 437, y: 150, w: 28, h: 28, shape: "circle", label: "1" },
-      { x: 428, y: 286, w: 148, h: 52, shape: "pill", label: "2", annotated: true },
+      { x: 88, y: 289, w: 48, h: 48, shape: "circle", label: "1" },
+      { x: 90, y: 655, w: 311, h: 75, shape: "pill", label: "2" },
     ],
   },
-  /** The email that says the archive is ready — subject and sender only. */
+  /** The email that says the archive is ready: subject and sender only (2x capture). */
   email: {
-    src: "/guides/linkedin/export-4.png",
-    width: 1024,
-    height: 543,
+    src: "/guides/linkedin/archive-email.png",
+    width: 1208,
+    height: 402,
     alt: "The email from LinkedIn titled “Your full LinkedIn data archive is ready!”",
-    crop: { x: 50, y: 45, w: 630, h: 150 },
+    crop: { x: 20, y: 20, w: 1100, h: 200 },
     targets: [],
   },
 } satisfies Record<string, Shot>;
@@ -89,9 +89,8 @@ export function LinkedInScreenshot({
         height={shot.height}
         alt={shot.alt}
         priority={priority}
-        // Served as-is. The crop scales the source up (a 564px-wide card fills a ~540px
-        // frame at 1024px wide), so a resized variant picked for the frame's width came out
-        // soft; the PNGs are small enough that the original is the right file.
+        // Served as-is: these are 2x captures, and a resized variant picked for the frame's
+        // width came out soft. The PNGs are small enough that the original is the right file.
         unoptimized
         draggable={false}
         className="pointer-events-none absolute max-w-none select-none"

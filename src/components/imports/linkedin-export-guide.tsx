@@ -40,12 +40,12 @@ const SHARED_EXPORT_STEPS: GuideStep[] = [
   {
     title: "Request your archive",
     body: "Select Download larger data archive (includes connections and more), then click Request archive. LinkedIn usually emails you within about 24 hours.",
-    imageSrc: "/guides/linkedin/export-3.png",
+    imageSrc: "/guides/linkedin/request-archive.png",
   },
   {
     title: "Download from email",
     body: `When LinkedIn emails “${LINKEDIN_ARCHIVE_EMAIL_SUBJECT}” use the download link. Archives can arrive in multiple parts and expire after ${LINKEDIN_ARCHIVE_LINK_HOURS} hours.`,
-    imageSrc: "/guides/linkedin/export-4.png",
+    imageSrc: "/guides/linkedin/archive-email.png",
   },
 ];
 

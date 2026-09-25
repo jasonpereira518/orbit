@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { resetOnboarding } from "@/actions/onboarding";
 import { resumeTour } from "@/actions/tour";
 import { Button } from "@/components/ui/button";
@@ -19,15 +18,15 @@ export function HelpSettings({
   /** An in-app tour was exited part-way: offer to pick it up before offering to start over. */
   tourResumable?: boolean;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   const go = (run: () => Promise<{ redirectTo: string }>) =>
     start(async () => {
       try {
         const res = await run();
-        router.replace(res.redirectTo);
-        router.refresh();
+        // A full load: the action revalidates, and its response landing after a client
+        // navigation can snap the router back here (and the tour rail mounts or unmounts).
+        window.location.assign(res.redirectTo);
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t open that — try again?"));
       }

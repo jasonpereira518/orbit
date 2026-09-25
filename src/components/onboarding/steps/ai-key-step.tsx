@@ -13,13 +13,13 @@ import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 import { integrationHref } from "@/components/settings/sections";
 import { useLifetimeIncludesAi } from "@/components/lifetime-ai-offer";
+import { PROVIDER_BRAND, ProviderLogo } from "@/components/onboarding/provider-logo";
 
 /**
  * Onboarding's "add your AI key" step. AI is bring-your-own-key on every plan, and Capture
  * and Chat are the first things a new user tries, so without a key here the tour's Capture
  * stop would open on a notice instead of an extraction. Deliberately skippable: imports,
- * contacts and reminders need no key at all, and the consequences of skipping are said out
- * loud under the button rather than discovered later.
+ * contacts and reminders need no key at all.
  *
  * The key is checked with the provider as it saves (`saveAiSettings` → `checkAiKey`): a
  * rejected or malformed key comes back as `{ok:false}` and is toasted; a check that timed
@@ -67,22 +67,31 @@ export function AiKeyStep({ onSaved, onSkip }: { onSaved: () => void; onSkip: ()
       </p>
 
       <div className="grid gap-2 sm:grid-cols-3">
-        {AI_PROVIDERS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setProvider(p.id)}
-            aria-pressed={provider === p.id}
-            className={cn(
-              "rounded-xl border px-3 py-2.5 text-left text-sm transition-colors",
-              provider === p.id
-                ? "border-primary bg-primary/5 text-foreground"
-                : "border-border/70 text-muted-foreground hover:border-border hover:text-foreground",
-            )}
-          >
-            {p.label}
-          </button>
-        ))}
+        {AI_PROVIDERS.map((p) => {
+          const selected = provider === p.id;
+          const { brand, brandDark } = PROVIDER_BRAND[p.id];
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setProvider(p.id)}
+              aria-pressed={selected}
+              style={{ "--brand": brand, "--brand-dark": brandDark } as React.CSSProperties}
+              className={cn(
+                // Each provider in its own colour; selection is the same colour's border
+                // and a faint wash of it, so the three still read as one control.
+                "flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition-[border-color,background-color,opacity]",
+                "text-[var(--brand)] dark:text-[var(--brand-dark)]",
+                selected
+                  ? "border-[var(--brand)] bg-[color-mix(in_oklab,var(--brand)_8%,transparent)] dark:border-[var(--brand-dark)] dark:bg-[color-mix(in_oklab,var(--brand-dark)_12%,transparent)]"
+                  : "border-border/70 opacity-75 hover:border-border hover:opacity-100",
+              )}
+            >
+              <ProviderLogo provider={p.id} />
+              {p.label}
+            </button>
+          );
+        })}
       </div>
 
       <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-sm">
@@ -97,12 +106,6 @@ export function AiKeyStep({ onSaved, onSkip }: { onSaved: () => void; onSkip: ()
         </a>
         {provider === "gemini" && (
           <p className="text-muted-foreground">Google’s free tier covers a normal week of use.</p>
-        )}
-        {provider === "anthropic" && (
-          <p className="text-warning">
-            Anthropic keys can’t transcribe voice notes or power semantic search. Chat still works
-            with keyword search. Add a Gemini or OpenAI key later for those.
-          </p>
         )}
       </div>
 
@@ -127,7 +130,7 @@ export function AiKeyStep({ onSaved, onSkip }: { onSaved: () => void; onSkip: ()
         </p>
       </div>
 
-      <div className="space-y-3">
+      <div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" onClick={save} disabled={pending || !apiKey.trim()}>
             {pending ? "Saving…" : "Save and continue"}
@@ -142,10 +145,6 @@ export function AiKeyStep({ onSaved, onSkip }: { onSaved: () => void; onSkip: ()
             More options in Settings
           </Link>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Without a key, Capture from notes, Chat and profile briefs stay off until you add one in
-          Settings. Imports, contacts and reminders work either way.
-        </p>
       </div>
     </div>
   );

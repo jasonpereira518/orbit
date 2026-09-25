@@ -71,8 +71,8 @@ export function SetupChecklistCard({ items }: { items: SetupChecklistItem[] }) {
           return;
         }
         const res = action === "resume-tour" ? await resumeTour() : await restartTour();
-        router.push(res.redirectTo);
-        router.refresh();
+        // A full load, so the rail mounts with the resumed stop (see help-settings.tsx).
+        window.location.assign(res.redirectTo);
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t do that — try again?"));
       }

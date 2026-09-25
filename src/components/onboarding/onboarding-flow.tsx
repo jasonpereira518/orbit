@@ -29,6 +29,7 @@ import { ManualStep } from "@/components/onboarding/steps/manual-step";
 import { PeopleStep } from "@/components/onboarding/steps/people-step";
 import { TriageStep } from "@/components/onboarding/steps/triage-step";
 import { WelcomeStep } from "@/components/onboarding/steps/welcome-step";
+import { cn } from "@/lib/utils";
 import { useImportJob } from "@/lib/import-job-runner";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { connectConfigured, type ConnectAccount, type ConnectProvider } from "@/lib/onboarding-connect";
@@ -276,8 +277,13 @@ export function OnboardingFlow({
         className="pointer-events-none absolute top-[-30vmax] left-1/2 size-[80vmax] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--primary)_5%,transparent)_0%,transparent_60%)]"
       />
 
-      <header className="relative z-10 mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
-        <OrbitLogo size="sm" className="justify-self-start" />
+      <header className="relative z-10 mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8 sm:pt-5">
+        <div className="flex items-center gap-2 justify-self-start">
+          <OrbitLogo size="sm" />
+          <span className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-ink">
+            Orbit
+          </span>
+        </div>
         <div className="min-w-0">
           {path && stage && <OnboardingProgress stages={stages} stage={stage} />}
         </div>
@@ -301,7 +307,9 @@ export function OnboardingFlow({
           the stage itself until the person reaches the app. */}
       <StageJobLine />
 
-      <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 pt-8 pb-16 sm:px-8 sm:pt-12">
+      {/* Every step is sized to fit one laptop screen: the column centres it in whatever
+          height is left under the header, and only a genuinely short window scrolls. */}
+      <main className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-4 pt-4 pb-5 sm:px-8 sm:pt-5 sm:pb-6">
         <AnimatePresence mode="popLayout" initial={false} custom={slide}>
           <motion.div
             key={step}
@@ -337,6 +345,7 @@ export function OnboardingFlow({
               <BranchStep
                 eyebrow="Your people"
                 title="Upload your LinkedIn export"
+                wide
                 onBack={() => backTo(importFrom === "linkedin" ? "linkedin" : "people")}
               >
                 <ImportStep
@@ -473,7 +482,7 @@ function StageJobLine() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-[calc(100dvh-12rem)] items-center justify-center">{children}</div>
+    <div className="flex items-center justify-center">{children}</div>
   );
 }
 
@@ -482,16 +491,19 @@ function BranchStep({
   title,
   description,
   onBack,
+  wide,
   children,
 }: {
   eyebrow: string;
   title: string;
   description?: string;
   onBack?: () => void;
+  /** Two columns of content (the import step's two upload cards). */
+  wide?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <Stagger className="mx-auto max-w-2xl space-y-6">
+    <Stagger className={cn("mx-auto", wide ? "max-w-5xl space-y-4" : "max-w-2xl space-y-6")}>
       <div className="space-y-4">
         {onBack && (
           <StaggerItem>

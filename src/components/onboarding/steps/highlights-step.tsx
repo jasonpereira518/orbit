@@ -127,8 +127,8 @@ export function HighlightsStep({
   }
 
   return (
-    <Stagger className="space-y-8">
-      <div className="space-y-4">
+    <Stagger className="space-y-5">
+      <div className="space-y-3">
         <StaggerItem>
           <BackButton onClick={onBack} />
         </StaggerItem>
@@ -175,7 +175,7 @@ export function HighlightsStep({
                 aria-roledescription="slide"
                 aria-label={`${index + 1} of ${chapters.length}: ${chapter.title}`}
               >
-                <div className="h-[19rem] border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent p-4 sm:p-5 md:h-[22rem] md:border-r md:border-b-0">
+                <div className="h-[19rem] border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent p-4 sm:p-5 md:h-[19rem] md:border-r md:border-b-0">
                   <chapter.Preview />
                 </div>
                 <ChapterCopy chapter={chapter} planFlags={planFlags} comingSoon={comingSoon} facts={facts} />
@@ -183,7 +183,7 @@ export function HighlightsStep({
             </AnimatePresence>
           </section>
 
-          <div className="mt-5 flex items-center justify-between gap-3">
+          <div className="mt-4 flex items-center justify-between gap-3">
             <Button
               type="button"
               variant="outline"
@@ -356,7 +356,7 @@ function ChapterCopy({
   return (
     // The min-height keeps the card from resizing between chapters on a phone, where the
     // copy stacks under the preview and differs in length chapter to chapter.
-    <Stagger className="flex min-h-[17rem] flex-col gap-4 p-5 sm:p-6 md:min-h-0">
+    <Stagger className="flex min-h-[17rem] flex-col gap-3 p-5 md:min-h-0">
       <StaggerItem className="flex flex-wrap items-center gap-2">
         <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-primary">
           <Icon className="size-4.5" aria-hidden />
