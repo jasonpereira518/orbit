@@ -39,7 +39,11 @@ export async function GET(request: Request) {
   // 2. Read and delete the state cookie.
   const jar = await cookies();
   const raw = jar.get(OPENROUTER_STATE_COOKIE)?.value ?? null;
-  jar.delete(OPENROUTER_STATE_COOKIE);
+  // `path` is part of a cookie's identity on delete: `startOpenRouterConnect` sets this one
+  // with `path: "/"`, and a delete without one targets the request URI's directory instead,
+  // leaving the real cookie alive for its full 600s. PKCE still refuses a replay, but here
+  // the cookie is the only binding between this callback and who started the connect.
+  jar.delete({ name: OPENROUTER_STATE_COOKIE, path: "/" });
   const decoded = raw ? decodeState(raw) : null;
   if (!decoded) return errorRedirect(aiPage, "expired");
 

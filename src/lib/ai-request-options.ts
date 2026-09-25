@@ -9,7 +9,22 @@
  * `maxOutputTokens`, so a tight cap truncates the answer instead of the thought.
  */
 
+import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
+
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
+
+/**
+ * The model id without an OpenRouter `vendor/` prefix.
+ *
+ * Every family rule below is anchored (`/^gpt-5/`, `/^o\d/`), and an OpenRouter preset is a
+ * slug — `openai/gpt-5.4-mini`, `anthropic/claude-sonnet-5`. Matching the raw string means
+ * the slug form answers the opposite of the bare form for the same model, which is exactly
+ * the 400 these rules exist to prevent.
+ */
+function bareModelId(model: string): string {
+  const slash = model.indexOf("/");
+  return slash === -1 ? model : model.slice(slash + 1);
+}
 
 const LEVEL_ORDER: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high"];
 
@@ -60,7 +75,7 @@ export function geminiThinkingConfig(
  * `max_completion_tokens` and `reasoning_effort` instead.
  */
 export function isOpenAiReasoningModel(model: string): boolean {
-  return /^(gpt-5|o\d)/.test(model);
+  return /^(gpt-5|o\d)/.test(bareModelId(model));
 }
 
 /**
@@ -74,15 +89,24 @@ export function openaiCompletionOptions(
   opts: { temperature: number; maxOutputTokens: number; thinking?: ThinkingLevel }
 ):
   | { temperature: number; max_tokens: number }
+  | { max_tokens: number }
   | { max_completion_tokens: number; reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" } {
+  const id = bareModelId(model);
   if (!isOpenAiReasoningModel(model)) {
+    // An OpenRouter route is OpenAI-SHAPED, but the model behind it need not be OpenAI's.
+    // Claude 4.7 and later return a 400 for a sampling parameter whichever door the call
+    // came through, so an `anthropic/…` slug gets the length cap alone. Omitting
+    // temperature is accepted by every Anthropic model, so an unrecognised id falls safe.
+    if (id.startsWith("claude-") && !anthropicAcceptsTemperature(id)) {
+      return { max_tokens: opts.maxOutputTokens };
+    }
     return { temperature: opts.temperature, max_tokens: opts.maxOutputTokens };
   }
   if (!opts.thinking) return { max_completion_tokens: opts.maxOutputTokens };
   let effort: "none" | "minimal" | "low" | "medium" | "high" = opts.thinking;
   if (opts.thinking === "minimal") {
-    if (/^gpt-5\.\d/.test(model)) effort = "none";
-    else if (/^o\d/.test(model)) effort = "low";
+    if (/^gpt-5\.\d/.test(id)) effort = "none";
+    else if (/^o\d/.test(id)) effort = "low";
   }
   return { max_completion_tokens: opts.maxOutputTokens, reasoning_effort: effort };
 }

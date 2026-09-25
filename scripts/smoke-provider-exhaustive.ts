@@ -3,7 +3,8 @@
  * to include `"openrouter"` (schema 104) is a runtime fact the type checker never enforces
  * against a plain string comparison.
  *
- * Check 1 — exhaustiveness. Walks every file under `src/lib` and `src/actions` with the
+ * Check 1 — exhaustiveness. Walks every file under `src/lib`, `src/actions`, `src/app` and
+ * `src/components` with the
  * TypeScript compiler and finds every `BinaryExpression` whose operator is `===`/`!==` and
  * whose right side is the string literal `"gemini"`, `"openai"` or `"anthropic"`. A cascading
  * `if`/ternary built from exactly these three, with no `openrouter` arm, silently folds an
@@ -15,13 +16,23 @@
  * site that genuinely needs one gets the arm instead of an allowlist entry — that is the
  * point of this check.
  *
- * Known blind spot: this check only sees TypeScript `BinaryExpression`s. `HAS_PROVIDER_KEY_SQL`
- * in `src/lib/admin-roster.ts` re-implements the same per-provider key-presence rule as a raw
- * SQL `CASE` string — `WHEN 'openai' THEN … WHEN 'anthropic' THEN …` — which this compiler-API
- * walk cannot parse and will never flag. It had exactly this bug (missing an `'openrouter'`
- * `WHEN`) until this fix round added it by hand; nothing here would catch a regression there,
- * which is why `scripts/smoke-admin-roster.ts` separately asserts that roster's SQL-derived
- * `hasProviderKey` agrees with `admin-metrics.ts`'s TS-derived one, row for row.
+ * Known blind spot: this check only sees TypeScript `BinaryExpression`s. TWO files
+ * re-implement the same per-provider key-presence rule as a raw SQL `CASE` string —
+ * `WHEN 'openai' THEN … WHEN 'anthropic' THEN …` — which this compiler-API walk cannot parse
+ * and will never flag:
+ *   - `HAS_PROVIDER_KEY_SQL` in `src/lib/admin-roster.ts`. It had exactly this bug (missing
+ *     an `'openrouter'` `WHEN`) until fix round 1 added it by hand; nothing here would catch
+ *     a regression, which is why `scripts/smoke-admin-roster.ts` separately asserts that
+ *     roster's SQL-derived `hasProviderKey` agrees with `admin-metrics.ts`'s TS-derived one,
+ *     row for row.
+ *   - `accountsMissingProviderKey` in `src/lib/admin-health.ts` (feeding `/admin/health`).
+ *     Same shape, same bug, found in the whole-branch review and fixed in the final round:
+ *     every OpenRouter account fell to the `ELSE gemini_api_key_encrypted IS NOT NULL` arm,
+ *     so a healthy OpenRouter account was reported as missing its key and a broken one
+ *     holding a stale Gemini key was reported as fine. `scripts/smoke-admin-health.ts`
+ *     carries the mirror assertion for it, the same way smoke-admin-roster.ts does.
+ * A third file re-implementing this rule in SQL needs its own paired assertion; this walk
+ * will not tell you about it.
  *
  * Check 2 — the routing-helper bypass. Task 3 adds `withOpenRouterRouting` and a comment in
  * `src/lib/ai.ts` claiming this smoke "asserts no OpenRouter `.create(` bypasses this". This
@@ -144,15 +155,19 @@ function findComparisons(file: string, sf: ts.SourceFile): ComparisonSite[] {
  * `openrouter` arm. Re-seed by running this script, reading each `FAIL` line, and adding an
  * entry — or, if the site genuinely needs the fourth arm, adding the arm instead.
  */
-const UNREACHABLE_OPENROUTER =
-  "no personal OpenRouter key can be SAVED yet for any real account — ai-key-check.ts's " +
-  "probe fails closed — and Orbit holds no managed OpenRouter key either " +
-  "(MANAGED_PROVIDER_ORDER excludes it, facts.managed.openrouter is hardcoded false), so " +
-  "facts.personal.openrouter and facts.managed.openrouter are always false for every real " +
-  "account today. chooseEmbeddingKey CAN return \"openrouter\" given fabricated facts " +
-  "(smoke-ai-access.ts proves that on purpose), but never will for a real one — so this " +
-  "fallback is unreachable in practice until a later task gives it a real branch, routed " +
-  "through withOpenRouterRouting.";
+/**
+ * NOT an "openrouter never happens" argument any more. It used to open with "no personal
+ * OpenRouter key can be SAVED yet — ai-key-check.ts's probe fails closed", which Task 5
+ * falsified the moment it replaced that stub with a real probe and wired the OAuth callback
+ * to `applyAiKeyChange`. The conclusion survives on the other half of each entry's own
+ * parenthetical, which is what this now says: openrouter is admitted by an
+ * `isOpenAiShaped(...)` branch ABOVE this arm, so control never reaches here carrying it.
+ */
+const OPENROUTER_ROUTED_AWAY =
+  "openrouter never reaches this arm: an isOpenAiShaped(...) branch above it admits both " +
+  "openai and openrouter and returns, so the only providers left to fall through here are " +
+  "the ones named in this cascade. The per-call assertions in check 2 below are what keep " +
+  "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
   "src/lib/ai-access.ts:642": "the branch is keyed on the completion provider being " +
@@ -163,20 +178,20 @@ const ALLOWLIST: Record<string, string> = {
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
-  "src/lib/ai-providers.ts:127": "one statement, `value === \"openai\" || value === " +
+  "src/lib/ai-providers.ts:165": "one statement, `value === \"openai\" || value === " +
     "\"anthropic\" || value === \"gemini\" || value === \"openrouter\"` — the fourth arm is " +
     "the literal \"openrouter\" itself, which this checker does not flag because it isn't " +
     "one of the three narrowed literals; together the four are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:136": "modelBelongsToProvider has a fourth `if (provider === " +
+  "src/lib/ai-providers.ts:174": "modelBelongsToProvider has a fourth `if (provider === " +
     "\"openrouter\") return model.includes(\"/\")` right after this one; the four checks " +
     "together are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:137": "same function as line 136 — see that entry.",
-  "src/lib/ai-providers.ts:140": "same function as line 136 — see that entry.",
+  "src/lib/ai-providers.ts:175": "same function as line 174 — see that entry.",
+  "src/lib/ai-providers.ts:178": "same function as line 174 — see that entry.",
   // Fix round 1: the old openai-literal arm here fell through to the Gemini branch for an
   // openrouter grant, throwing `No gemini grant` — fails closed, but breaks every chat
   // tool call for an OpenRouter user. Widened to isOpenAiShaped, same shape as ai.ts, so
   // only the anthropic arm's own literal is left for check 1 to find.
-  "src/lib/ai-tools.ts:124": UNREACHABLE_OPENROUTER + " (createToolDriver's anthropic arm; " +
+  "src/lib/ai-tools.ts:124": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
     "openai and openrouter both now take the isOpenAiShaped branch below, leaving only " +
     "Gemini as this arm's fallthrough.)",
   "src/lib/admin-metrics.ts:328": "the \"openai\" arm of the four-way ternary that now also " +
@@ -191,10 +206,10 @@ const ALLOWLIST: Record<string, string> = {
   // comparison left for check 1 to find, and each one's implicit fallback (openai or
   // openrouter now both routed away from it, leaving only anthropic reachable below) is
   // exhaustive without an explicit openrouter arm of its own.
-  "src/lib/ai.ts:556": UNREACHABLE_OPENROUTER + " (completeJson's gemini arm; openai and " +
+  "src/lib/ai.ts:556": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
     "openrouter both now take the isOpenAiShaped branch above the implicit Anthropic " +
     "fallback, which is what's unreachable for openrouter.)",
-  "src/lib/ai.ts:684": UNREACHABLE_OPENROUTER + " (completeMultimodalJsonInner's gemini arm; " +
+  "src/lib/ai.ts:684": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
     "see ai.ts:556.)",
   // Fix round 1 reverted transcribeAudioWithAI's isOpenAiShaped widening: the SDK encodes
   // this call's params as multipart form data, where withOpenRouterRouting's nested
@@ -206,7 +221,7 @@ const ALLOWLIST: Record<string, string> = {
     "\"gemini\" — Anthropic has no speech-to-text and OpenRouter transcription is " +
     "deliberately not wired up (multipart body, no valid model slug); the two are " +
     "exhaustive for every grant transcribeAudioWithAI can receive today.",
-  "src/lib/ai.ts:2042": UNREACHABLE_OPENROUTER + " (streamText's gemini arm; see ai.ts:556.)",
+  "src/lib/ai.ts:2042": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:556.)",
   "src/lib/errors.ts:36": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
   "src/lib/errors.ts:38": "same function as line 36 — see that entry.",
@@ -245,11 +260,28 @@ const ALLOWLIST: Record<string, string> = {
     "was line 339, originally line 314.)",
   "src/actions/settings.ts:225": "same ternary as line 223 — see that entry.",
   "src/actions/settings.ts:227": "same ternary as line 223 — see that entry.",
+  // Surfaced by this fix round widening the walk to src/app and src/components — which is
+  // where finding 1's shipped-OpenRouter-picker bug was hiding.
+  "src/components/settings/ai-settings.tsx:172": "the standalone \"Anthropic has no " +
+    "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
+    "cascade and has no fallthrough default: every other provider, openrouter included, " +
+    "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +
+    "embedding route (openai/text-embedding-3-small).",
 };
 
 function checkExhaustiveness() {
-  console.log("every gemini/openai/anthropic comparison under src/lib and src/actions is reviewed");
-  const files = [...walkDir("src/lib"), ...walkDir("src/actions")];
+  console.log(
+    "every gemini/openai/anthropic comparison under src/lib, src/actions, src/app and src/components is reviewed"
+  );
+  // src/app and src/components are NOT decoration: the OAuth callback lives in src/app, and
+  // the provider cascade in src/components/settings/ai-settings.tsx sat outside both walks
+  // while it shipped a selectable OpenRouter option to Settings and to onboarding.
+  const files = [
+    ...walkDir("src/lib"),
+    ...walkDir("src/actions"),
+    ...walkDir("src/app"),
+    ...walkDir("src/components"),
+  ];
   const sites: ComparisonSite[] = [];
   for (const file of files) {
     sites.push(...findComparisons(file, parse(file)));
@@ -320,12 +352,68 @@ function admitsOpenRouter(node: ts.Node): boolean {
   return found;
 }
 
-/** Every statement-bearing block reachable only when the guarding condition is true. */
+/** `!<expr>` at the top level of a condition — the early-return guard's shape. */
+function negatedOperand(expr: ts.Expression): ts.Expression | null {
+  const e = ts.isParenthesizedExpression(expr) ? expr.expression : expr;
+  if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.ExclamationToken) {
+    return e.operand;
+  }
+  return null;
+}
+
+/** Does this branch always leave — so everything after the `if` is the other path? */
+function alwaysExits(stmt: ts.Statement): boolean {
+  const last = ts.isBlock(stmt) ? stmt.statements[stmt.statements.length - 1] : stmt;
+  return (
+    !!last &&
+    (ts.isReturnStatement(last) ||
+      ts.isThrowStatement(last) ||
+      ts.isBreakStatement(last) ||
+      ts.isContinueStatement(last))
+  );
+}
+
+/** The statement list a statement belongs to, if it sits directly in one. */
+function siblingStatements(node: ts.Statement): ts.NodeArray<ts.Statement> | null {
+  const parent = node.parent;
+  if (!parent) return null;
+  if (ts.isBlock(parent) || ts.isSourceFile(parent) || ts.isCaseClause(parent) || ts.isDefaultClause(parent)) {
+    return parent.statements;
+  }
+  return null;
+}
+
+/**
+ * Every statement-bearing block reachable only when the guarding condition is true.
+ *
+ * Two shapes, plus a `case "openrouter":` clause:
+ *   1. `if (isOpenAiShaped(p)) { … }` — the then-branch is the admitting one.
+ *   2. `if (!isOpenAiShaped(p)) return;` followed by unguarded code — the NEGATED early
+ *      return, where the admitting block is everything AFTER the `if`. This was a deferred
+ *      gap: pushing only `node.thenStatement` made an unwrapped `.create(` below such a
+ *      guard completely invisible to check 2. The then-branch of a negated guard is the
+ *      path that EXCLUDES openrouter, so it is deliberately not pushed.
+ * The bare-ternary shape (`isOpenAiShaped(p) ? client.create(…) : …`) stays deferred: it
+ * carries no statement block, and nothing in this codebase writes a `.create(` that way.
+ */
 function openRouterAdmittingBlocks(sf: ts.SourceFile): ts.Node[] {
   const blocks: ts.Node[] = [];
   const visit = (node: ts.Node) => {
-    if (ts.isIfStatement(node) && admitsOpenRouter(node.expression)) {
-      blocks.push(node.thenStatement);
+    if (ts.isIfStatement(node)) {
+      const negated = negatedOperand(node.expression);
+      if (negated && admitsOpenRouter(negated)) {
+        // Shape 2. Only when the guard actually leaves — otherwise control rejoins and the
+        // statements below are not exclusive to the admitting path.
+        if (!node.elseStatement && alwaysExits(node.thenStatement)) {
+          const siblings = siblingStatements(node);
+          if (siblings) {
+            const idx = siblings.indexOf(node);
+            if (idx >= 0) for (const stmt of siblings.slice(idx + 1)) blocks.push(stmt);
+          }
+        }
+      } else if (admitsOpenRouter(node.expression)) {
+        blocks.push(node.thenStatement);
+      }
     }
     if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression) && node.expression.text === "openrouter") {
       for (const stmt of node.statements) blocks.push(stmt);
@@ -406,21 +494,67 @@ function selfTestMechanism() {
     "…and goes quiet once that same branch wraps its params in withOpenRouterRouting",
     !violates(wrapped)
   );
+
+  // The negated early-return shape, previously invisible: same call, same absence of
+  // routing, written as a guard clause instead of a positive branch.
+  const guardStub = (createArg: string) =>
+    ts.createSourceFile(
+      "self-test-guard.ts",
+      `function f(grant: { provider: string }) {
+        if (!isOpenAiShaped(grant.provider)) return null;
+        const client = openAiShapedClient(grant);
+        return client.chat.completions.create(${createArg});
+      }`,
+      ts.ScriptTarget.Latest,
+      true
+    );
+  check(
+    "the mechanism fires on a NEGATED early-return guard with no withOpenRouterRouting",
+    violates(guardStub("{ model: params.model }"))
+  );
+  check(
+    "…and goes quiet once that guarded call wraps its params in withOpenRouterRouting",
+    !violates(guardStub("withOpenRouterRouting({ model: params.model })"))
+  );
+  // The then-branch of a negated guard is the path openrouter is excluded FROM; flagging a
+  // `.create(` there would be a false positive that invites a bogus allowlist entry.
+  const excludedBranch = ts.createSourceFile(
+    "self-test-excluded.ts",
+    `function f(grant: { provider: string }) {
+      if (!isOpenAiShaped(grant.provider)) {
+        return anthropicClient(grant).messages.create({ model: params.model });
+      }
+      return null;
+    }`,
+    ts.ScriptTarget.Latest,
+    true
+  );
+  check(
+    "…and does NOT fire on the excluded branch of that same guard",
+    !violates(excludedBranch)
+  );
 }
 
 /**
- * Every file under `src/lib` that can build an OpenRouter client — anything referencing
- * `openAiShapedClient` or `openrouterClient` (the only two ways to get one; see
- * `ai-access.ts`). Discovered rather than a fixed list, so a new file that starts building
- * one is covered automatically instead of depending on someone remembering to add it here.
+ * Every file under `src/lib`, `src/actions`, `src/app` and `src/components` that can build an
+ * OpenRouter client — anything referencing `openAiShapedClient` or `openrouterClient` (the
+ * only two ways to get one; see `ai-access.ts`). Discovered rather than a fixed list, so a
+ * new file that starts building one is covered automatically instead of depending on someone
+ * remembering to add it here.
  * Fix round 2: `checkRoutingBypass` used to hardcode `src/lib/ai.ts` only, so the exact
  * same bug in `ai-tools.ts` (fix round 1) landed with no per-call check at all — the guard
  * wasn't failing, it was never looking.
+ * Final round: the comment above claimed a new file "is covered automatically" while the
+ * walk read `src/lib` alone — so a route handler or server action building one was exactly
+ * the file it would miss. Now it walks the same four roots check 1 does.
  */
 function filesBuildingOpenRouterClients(): string[] {
-  return walkDir("src/lib").filter((file) =>
-    /\bopenAiShapedClient\b|\bopenrouterClient\b/.test(readFileSync(file, "utf8"))
-  );
+  return [
+    ...walkDir("src/lib"),
+    ...walkDir("src/actions"),
+    ...walkDir("src/app"),
+    ...walkDir("src/components"),
+  ].filter((file) => /\bopenAiShapedClient\b|\bopenrouterClient\b/.test(readFileSync(file, "utf8")));
 }
 
 function checkRoutingBypass() {

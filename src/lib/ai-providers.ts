@@ -6,6 +6,15 @@ export const AI_PROVIDERS: Array<{
   label: string;
   keyPlaceholder: string;
   envVar: string;
+  /**
+   * Whether a person may PICK this provider in the UI. Defaults to true; only OpenRouter
+   * sets it false. `AI_PROVIDERS` is not just a data table — the Settings provider `<Select>`
+   * and the onboarding provider tiles both render straight off it, so an entry added here is
+   * an option shipped to every account. OpenRouter's plumbing is built (types, key column,
+   * probe, routing, OAuth) but deliberately has no user-facing surface, so every list a
+   * person chooses from renders from `SELECTABLE_AI_PROVIDERS` instead.
+   */
+  selectable?: boolean;
 }> = [
   {
     id: "gemini",
@@ -30,8 +39,23 @@ export const AI_PROVIDERS: Array<{
     label: "OpenRouter",
     keyPlaceholder: "sk-or-v1-...",
     envVar: "OPENROUTER_API_KEY",
+    selectable: false,
   },
 ];
+
+/**
+ * The providers a person may choose, in display order — the ONLY list a user-facing
+ * provider picker may render. Exactly gemini/openai/anthropic today, pinned by
+ * `scripts/smoke-ai-providers.ts` so a UI pass cannot put OpenRouter back by accident.
+ * Lookups by id (labels, placeholders) still use `AI_PROVIDERS`: an account already on a
+ * non-selectable provider must still get its real name in status copy.
+ */
+export const SELECTABLE_AI_PROVIDERS = AI_PROVIDERS.filter((p) => p.selectable !== false);
+
+/** Whether a provider id may appear in a user-facing picker or provider list. */
+export function isSelectableAiProvider(id: AiProvider): boolean {
+  return SELECTABLE_AI_PROVIDERS.some((p) => p.id === id);
+}
 
 export const PROVIDER_MODELS: Record<
   AiProvider,
@@ -117,9 +141,23 @@ const ANTHROPIC_TEMPERATURE_FAMILIES = [
   "claude-opus-4-6",
 ];
 
+/**
+ * The family id inside a model string, whether it arrived bare or as an OpenRouter
+ * `vendor/model` slug. Two normalisations, both load-bearing for the slug form:
+ * `anthropic/claude-sonnet-5` has to lose its vendor prefix to match at all, and OpenRouter
+ * writes the version with a dot (`claude-haiku-4.5`) where Orbit writes a dash
+ * (`claude-haiku-4-5`). Orbit's own ids never contain a dot, so the replace is a no-op on
+ * them. An id this fails to recognise falls safe — temperature is simply omitted.
+ */
+function anthropicFamilyId(model: string): string {
+  const slash = model.indexOf("/");
+  return (slash === -1 ? model : model.slice(slash + 1)).replace(/\./g, "-");
+}
+
 export function anthropicAcceptsTemperature(model: string): boolean {
+  const id = anthropicFamilyId(model);
   return ANTHROPIC_TEMPERATURE_FAMILIES.some(
-    (family) => model === family || model.startsWith(`${family}-`)
+    (family) => id === family || id.startsWith(`${family}-`)
   );
 }
 
