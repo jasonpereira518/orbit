@@ -97,7 +97,25 @@ for (const [key, name] of SCENARIOS) {
   }
 }
 
-const stages = ["boot", "data", "renderer", "layout", "paint", "settle"];
+/**
+ * "code + layout" rather than separate renderer and layout columns: once the layout was
+ * precomputed ahead of the renderer (sky-layout.ts), `layout-computed` can land BEFORE
+ * `renderer-loaded`, and the old difference went negative. Measured from data-received to
+ * whichever came last, it means the same thing on both builds; `paint` starts there too.
+ */
+function stagesOf(open) {
+  const s = open.stages;
+  if (!s) return {};
+  const codeAndLayout = Math.max(s.renderer, s.renderer + s.layout);
+  return {
+    boot: s.boot,
+    data: s.data,
+    "code + layout": codeAndLayout,
+    paint: s.paint + (s.renderer + s.layout) - codeAndLayout,
+    settle: s.settle,
+  };
+}
+const stages = ["boot", "data", "code + layout", "paint", "settle"];
 const st = [];
 st.push(`| Contacts | TTI ${before} (range) | TTI ${after} (range) | ${stages.map((s) => `${s} ms`).join(" | ")} |`);
 st.push(`|---:|---:|---:|${stages.map(() => "---:").join("|")}|`);
@@ -105,7 +123,7 @@ for (const n of sizes) {
   const b = B.get(n), a = A.get(n);
   st.push(
     `| ${fmt(n)} | ${fmt(b.open.tti)} (${range(b.runs, (r) => r.open.tti)}) | ${fmt(a.open.tti)} (${range(a.runs, (r) => r.open.tti)}) | ` +
-      stages.map((s) => `${fmt(b.open.stages[s])} → ${fmt(a.open.stages[s])}`).join(" | ") +
+      stages.map((s) => `${fmt(medianOf(b.runs.map((r) => stagesOf(r.open)[s])))} → ${fmt(medianOf(a.runs.map((r) => stagesOf(r.open)[s])))}`).join(" | ") +
       " |"
   );
 }
