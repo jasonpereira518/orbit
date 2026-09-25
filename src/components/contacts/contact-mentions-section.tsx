@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { format } from "date-fns";
 import {
   Card,
@@ -36,12 +36,12 @@ export function ContactMentionsSection({
               {mentionedIn.map((r) => (
                 <li key={`${r.interactionId}-${r.otherContactId}`}>
                   {formatDate(r.interactionDate)} · in your notes about{" "}
-                  <Link
+                  <IntentLink
                     href={`/contacts/${r.otherContactId}`}
                     className="font-medium text-ink underline-offset-2 hover:underline"
                   >
                     {r.otherContactName}
-                  </Link>{" "}
+                  </IntentLink>{" "}
                   — {r.line}
                 </li>
               ))}
@@ -56,12 +56,12 @@ export function ContactMentionsSection({
             <ul className="space-y-1.5 text-sm">
               {mentions.map((r) => (
                 <li key={`${r.interactionId}-${r.otherContactId}`}>
-                  <Link
+                  <IntentLink
                     href={`/contacts/${r.otherContactId}`}
                     className="font-medium text-ink underline-offset-2 hover:underline"
                   >
                     {r.otherContactName}
-                  </Link>{" "}
+                  </IntentLink>{" "}
                   · &quot;{r.mentionText}&quot; · {formatDate(r.interactionDate)}
                 </li>
               ))}

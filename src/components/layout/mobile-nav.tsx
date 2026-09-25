@@ -1,8 +1,11 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { usePathname, useRouter } from "next/navigation";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMotionValue } from "motion/react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { MessageSquarePlus, Sparkles } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
@@ -23,9 +26,18 @@ import {
 import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { usePrefersReducedTransparency } from "@/lib/use-prefers-reduced-transparency";
 import { FEEDBACK_SURFACE_KEY, isHrefComingSoon, isHrefHidden } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { MobileCaptureButton } from "@/components/layout/mobile-capture-button";
+import {
+  TAB_CONTENT_CLASS,
+  TAB_OVAL_CLASS,
+  TAB_ROW_CLASS,
+  tabContentStyle,
+  tabItemClass,
+  type TabFaceItem,
+} from "@/components/layout/tab-row-face";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 
@@ -34,6 +46,10 @@ import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-ev
 const DRAG_THRESHOLD_PX = 8;
 
 type DraggableEntry = { type: "more" } | { type: "link"; href: string };
+
+// Decorative, and the glass package is ~100KB: keep it out of the chunk every app page
+// loads. The plain CSS pill shows until the lens reports it is drawn.
+const NavLens = dynamic(() => import("@/components/layout/nav-lens"), { ssr: false });
 
 export function MobileNav({
   clerkOn,
@@ -70,6 +86,8 @@ export function MobileNav({
    * tick later. It also follows the setting if it changes, which motion's hook does not.
    */
   const reducedMotion = usePrefersReducedMotion();
+  // The glass lens is pure translucency; with reduced transparency the flat pill stays.
+  const reducedTransparency = usePrefersReducedTransparency();
 
   /**
    * Both lists, filtered, BEFORE anything derives an index from them.
@@ -130,6 +148,19 @@ export function MobileNav({
     );
   }, [bottomNav]);
 
+  // The same bar, walked in the same order, as the glass lens's visual copy.
+  const faceItems = useMemo<TabFaceItem[]>(
+    () =>
+      bottomNav.map((item) =>
+        "id" in item
+          ? { kind: "tab", key: "more", label: item.label, icon: item.icon }
+          : item.href === "/capture"
+            ? { kind: "capture", key: item.href, label: item.label, icon: item.icon }
+            : { kind: "tab", key: item.href, label: item.label, icon: item.icon }
+      ),
+    [bottomNav]
+  );
+
   /**
    * The tab the user just tapped, until the route actually changes.
    *
@@ -177,6 +208,10 @@ export function MobileNav({
   const itemRefs = useRef<Array<HTMLElement | null>>([]);
   const itemCentersRef = useRef<number[]>([]);
   const dragStartXRef = useRef<number | null>(null);
+  // The finger's x during a drag, in px from the row's left edge. A motion value, not
+  // state: the glass lens follows it every frame without re-rendering the bar.
+  const dragX = useMotionValue(0);
+  const listLeftRef = useRef(0);
   const draggedPastThresholdRef = useRef(false);
   const suppressNextClickRef = useRef(false);
   // Mirrors `dragIndex` state but updates synchronously and is read on
@@ -204,6 +239,11 @@ export function MobileNav({
   const [ovals, setOvals] = useState<
     Array<{ x: number; y: number; w: number; h: number }>
   >([]);
+  const [listSize, setListSize] = useState<{ w: number; h: number } | null>(null);
+  // True once the glass lens has drawn; until then (and whenever it can't) the CSS pill
+  // below is the highlight.
+  const [lensReady, setLensReady] = useState(false);
+  const handleLensReady = useCallback((ready: boolean) => setLensReady(ready), []);
   // Transitions switch on only after the first placement, so the pill appears in place
   // rather than sliding in from the corner of the bar.
   const [pillReady, setPillReady] = useState(false);
@@ -214,6 +254,7 @@ export function MobileNav({
     // A ResizeObserver reports once on observe, so this also takes the first measurement.
     const observer = new ResizeObserver(() => {
       const base = list.getBoundingClientRect();
+      setListSize({ w: base.width, h: base.height });
       setOvals(
         ovalRefs.current.slice(0, draggableEntries.length).map((el) => {
           const r = el?.getBoundingClientRect();
@@ -238,6 +279,14 @@ export function MobileNav({
     setLastPillIndex(highlightIndex);
   }
   const pillBox = ovals[highlightIndex >= 0 ? highlightIndex : lastPillIndex];
+  // How far a dragged lens may travel: from the first tab's centre to the last's.
+  const dragBounds = useMemo(() => {
+    const first = ovals[0];
+    const last = ovals[ovals.length - 1];
+    return first && last
+      ? { min: first.x + first.w / 2, max: last.x + last.w / 2 }
+      : { min: 0, max: 0 };
+  }, [ovals]);
 
   function closestEntryIndexForX(clientX: number) {
     let bestIndex = 0;
@@ -255,6 +304,7 @@ export function MobileNav({
   function handlePointerDown(e: ReactPointerEvent<HTMLUListElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     dragStartXRef.current = e.clientX;
+    listLeftRef.current = e.currentTarget.getBoundingClientRect().left;
     draggedPastThresholdRef.current = false;
     dragIndexRef.current = null;
     itemCentersRef.current = itemRefs.current.map((el) => {
@@ -279,6 +329,7 @@ export function MobileNav({
     }
     if (draggedPastThresholdRef.current) {
       e.preventDefault();
+      dragX.set(e.clientX - listLeftRef.current);
       const idx = closestEntryIndexForX(e.clientX);
       dragIndexRef.current = idx;
       setDragIndex(idx);
@@ -334,7 +385,7 @@ export function MobileNav({
   return (
     <>
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(0.875rem+env(safe-area-inset-bottom))] md:hidden"
         aria-label="Main navigation"
       >
         {/* Scrim behind the now-transparent pill — grounds it against
@@ -370,7 +421,7 @@ export function MobileNav({
           <ul
             ref={listRef}
             style={{ viewTransitionName: "app-mobile-nav" }}
-            className="relative z-10 flex touch-none items-stretch justify-around gap-0.5 px-1.5 pt-0.5 pb-1"
+            className={cn("relative z-10 touch-none", TAB_ROW_CLASS)}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -392,7 +443,7 @@ export function MobileNav({
                       width: pillBox.w,
                       height: pillBox.h,
                       transform: `translate3d(${pillBox.x}px, ${pillBox.y}px, 0)`,
-                      opacity: highlightIndex >= 0 ? 1 : 0,
+                      opacity: highlightIndex >= 0 && !lensReady ? 1 : 0,
                     }
                   : { opacity: 0 }
               }
@@ -419,27 +470,17 @@ export function MobileNav({
                         moreOpenedByKeyboard.current = e.detail === 0;
                         setMoreOpen(true);
                       }}
-                      className={cn(
-                        "flex w-full items-center justify-center py-0.5 text-[10.5px] font-medium transition-colors",
-                        displayActive
-                          ? "text-primary dark:text-white"
-                          : "text-muted-foreground hover:text-foreground dark:text-white/75"
-                      )}
+                      className={tabItemClass(displayActive)}
                     >
                       <span
                         ref={(el) => {
                           ovalRefs.current[myIndex] = el;
                         }}
-                        className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5"
+                        className={TAB_OVAL_CLASS}
                       >
                         <span
-                          className="relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-150 ease-out"
-                          style={{
-                            transform:
-                              myIndex === pressedItemIndex
-                                ? "scale(1.15)"
-                                : undefined,
-                          }}
+                          className={TAB_CONTENT_CLASS}
+                          style={tabContentStyle(myIndex === pressedItemIndex)}
                         >
                           <Icon className="size-[18px]" aria-hidden />
                           <span>{item.label}</span>
@@ -471,8 +512,9 @@ export function MobileNav({
 
               return (
                 <li key={navItem.href} className="flex-1">
-                  <Link
+                  <IntentLink
                     href={navItem.href}
+                    // Touch-start upgrades it to a full prefetch ~100 ms before the tap's click.
                     prefetch={fullPrefetch(navItem, isNavActive(pathname, navItem.href))}
                     ref={(el) => {
                       itemRefs.current[myIndex] = el;
@@ -491,38 +533,49 @@ export function MobileNav({
                       markPending(navItem.href);
                     }}
                     draggable={false}
-                    className={cn(
-                      "flex w-full items-center justify-center py-0.5 text-[10.5px] font-medium transition-colors",
-                      displayActive
-                        ? "text-primary dark:text-white"
-                        : "text-muted-foreground hover:text-foreground dark:text-white/75"
-                    )}
+                    className={tabItemClass(displayActive)}
                   >
                     <span
                       ref={(el) => {
                         ovalRefs.current[myIndex] = el;
                       }}
-                      className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5"
+                      className={TAB_OVAL_CLASS}
                     >
                       <NavPendingDot className="top-0.5 right-1.5" />
                       <span
-                        className="relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-150 ease-out"
-                        style={{
-                          transform:
-                            myIndex === pressedItemIndex
-                              ? "scale(1.15)"
-                              : undefined,
-                        }}
+                        className={TAB_CONTENT_CLASS}
+                        style={tabContentStyle(myIndex === pressedItemIndex)}
                       >
                         <Icon className="size-[18px]" aria-hidden />
                         <span>{navItem.label}</span>
                       </span>
                     </span>
-                  </Link>
+                  </IntentLink>
                 </li>
               );
             })}
           </ul>
+
+          {/* Beside the list, never inside it: the lens can't take the list's
+            view-transition name or wrap the Capture circle (see tab-row-face.tsx). */}
+          {!reducedTransparency && pillBox && listSize && listSize.w > 0 && (
+            <NavLens
+              pillBox={pillBox}
+              listSize={listSize}
+              visible={highlightIndex >= 0}
+              reducedMotion={reducedMotion}
+              items={faceItems}
+              entryIndex={navEntryIndex}
+              highlightIndex={highlightIndex}
+              pressedIndex={pressedItemIndex}
+              pendingIndex={pendingEntryIndex}
+              lifted={pressedItemIndex !== null && pressedItemIndex === highlightIndex}
+              dragging={isDragging}
+              dragX={dragX}
+              dragBounds={dragBounds}
+              onReady={handleLensReady}
+            />
+          )}
         </div>
       </nav>
 

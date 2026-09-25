@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useLayoutEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -13,6 +13,12 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { useCameraMoving } from "@/components/graph/camera-motion";
+import { renderSkyBitmap } from "@/components/graph/sky-bitmap-client";
+import {
+  drawSkyBitmap,
+  skyBitmapSize,
+  type SkyBitmapJob,
+} from "@/lib/graph/sky-bitmap-draw";
 import { cn } from "@/lib/utils";
 import {
   RING_LABELS,
@@ -21,11 +27,6 @@ import {
   type OrbitRingsData,
 } from "@/lib/graph-layout";
 import { withAlpha } from "@/lib/school-color";
-import {
-  NEBULA_LOBE_EDGE,
-  NEBULA_LOBE_MID,
-  nebulaLobes,
-} from "@/lib/graph/nebula-lobes";
 import {
   STAR_HIT_PAD,
   starVisual,
@@ -198,9 +199,6 @@ function ContactNodeComponent({
   data,
   selected,
 }: NodeProps & { data: GraphNodeData }) {
-  // Rounded so a pan/zoom gesture does not re-render every star on every frame — the
-  // same trick ClusterLabelNodeComponent uses.
-  const zoom = useStore((s) => Math.round(s.transform[2] * 20) / 20);
   const {
     isComet,
     dimmedScatter,
@@ -213,6 +211,24 @@ function ContactNodeComponent({
     core,
     subtitle,
   } = starVisual(data, Boolean(selected));
+  /**
+   * What this star draws differently as the camera zooms: its relief, and whether its name is
+   * mounted. Selected as those two values rather than as the zoom, so a star re-renders only when
+   * one of them changes. Selecting the (rounded) zoom re-rendered every mounted star every 0.05 of
+   * zoom across the whole range — ~450 stars, dozens of times a gesture — though relief only
+   * varies between about 0.3 and 1 and the label threshold is one crossing. Same rounding, so
+   * the same values at the same zooms as before.
+   */
+  const reliefDisc = isComet ? size + 2 : starDisc;
+  // One selector, not two: React Flow runs every drawn star's selectors on every camera update.
+  // Relief is never below 1, so the sign can carry whether the label threshold is reached.
+  const zoomView = useStore((s) => {
+    const k = Math.round(s.transform[2] * 20) / 20;
+    const relief = starZoomRelief(reliefDisc, k);
+    return k >= LABEL_HIDE_BELOW_ZOOM ? relief : -relief;
+  });
+  const zoomRelief = Math.abs(zoomView);
+  const labelZoomReached = zoomView > 0;
   const bright = selected || Boolean(data.spotlight);
   /**
    * Unmounted rather than hidden: an invisible label still costs its DOM, style and raster.
@@ -224,7 +240,7 @@ function ContactNodeComponent({
    */
   const showLabel =
     Boolean(data.labelPinned) ||
-    (!data.labelHidden && (Boolean(data.spotlight) || zoom >= LABEL_HIDE_BELOW_ZOOM));
+    (!data.labelHidden && (Boolean(data.spotlight) || labelZoomReached));
   /**
    * Handles only where a figure line ends. React Flow needs them to anchor an edge and
    * measures every one on mount; a scatter star has no edges, so its pair was two DOM
@@ -235,7 +251,7 @@ function ContactNodeComponent({
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
     const disc = size + 2;
-    const cometRelief = starZoomRelief(disc, zoom);
+    const cometRelief = zoomRelief;
     return (
       <div
         className={cn(
@@ -313,12 +329,11 @@ function ContactNodeComponent({
   const halo = Math.round(disc + reach * 6);
   const haloCore = Math.round((disc / halo) * 100);
   /**
-   * Applied as a transform on the disc only, so the node's measured box, the label
-   * positions and the non-overlap proof in `scripts/smoke-graph-layout.ts` are all
-   * untouched. See `zoomRelief` in `@/lib/graph/star-style` for the reasoning.
-   */
-  const zoomRelief = starZoomRelief(disc, zoom);
-  /**
+   * `zoomRelief` (selected above) is applied as a transform on the disc only, so the node's
+   * measured box, the label positions and the non-overlap proof in
+   * `scripts/smoke-graph-layout.ts` are all untouched. See `zoomRelief` in
+   * `@/lib/graph/star-style` for the reasoning.
+   *
    * The name is sized in px and placed under the enlarged disc, rather than riding a scaled
    * wrapper. `transform: scale()` magnifies the glyphs the browser already drew — inside the
    * chart's composited viewport that is what made names look soft as you zoomed — where a
@@ -464,6 +479,129 @@ export type NebulaWashData = {
 const NEBULA_WASH_MAX_BACKING_PX = 2048;
 
 /**
+ * Draw now — or, while the chart is still hidden, in a task of its own.
+ *
+ * The canvases below draw in layout effects so a visible canvas never paints a frame empty. But
+ * on the chart's first mount the whole stage is at opacity 0 until the camera has its real
+ * framing (`viewportReady` in graph-canvas-flow.tsx), so nobody can see a blank canvas yet — and
+ * at 10,000 contacts these two first draws were ~30ms of the one long task that mounts the chart.
+ * Hidden, they wait a task; visible, nothing changes. Returns the effect's cleanup.
+ */
+/**
+ * A sky canvas, shown as an `<img>` of its pixels once it has some.
+ *
+ * A 2D canvas is a GPU layer of its own, and these two sit beneath every star, label and line
+ * in the viewport and span the whole sky. Chrome then has to give everything painted above them
+ * a layer of its own too — it cannot merge scattered stars — so 294 stars on screen meant 307
+ * layers, and re-laying out that many layers ("Layerize") was the single largest cost of a zoom
+ * frame. An image is painted into the viewport's own layer like any other content, so it needs
+ * no layer and forces none: with the canvases shown as images the chart holds a dozen or so
+ * layers however many stars are up.
+ *
+ * The images are drawn and encoded in a worker (`sky-bitmap.worker.ts`): copying a GPU canvas's
+ * pixels out is a synchronous read-back on the main thread, which made a search keystroke a
+ * 70–80ms task. The page draws on its canvas only until the first image arrives — so the first
+ * frame is never empty, which matters when the dust appears mid-zoom — and after that only asks
+ * the worker, swapping each new image in once it is decoded so the old one stays up meanwhile.
+ * Without a worker (or `OffscreenCanvas`) the canvas simply stays, as it always was.
+ */
+function useSkyBitmap() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [imageShown, setImageShown] = useState(false);
+  const shown = useRef(false);
+  const latest = useRef(0);
+  const url = useRef<string | null>(null);
+
+  useEffect(
+    () => () => {
+      latest.current += 1;
+      if (url.current) URL.revokeObjectURL(url.current);
+    },
+    []
+  );
+
+  // Once the image shows, the canvas is neither shown nor drawn again: release its backing store.
+  // In an effect, after the commit that hides it, so it never shows a cleared frame.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (imageShown && canvas) {
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+  }, [imageShown]);
+
+  /** Show `job`: on the canvas now while no image is up, and as an image once one is drawn. */
+  const render = useCallback((job: SkyBitmapJob) => {
+    const mine = ++latest.current;
+    const drawOnCanvas = () => {
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (!canvas || !ctx) return;
+      const { width, height } = skyBitmapSize(job);
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      drawSkyBitmap(ctx, job);
+    };
+    if (!shown.current) drawOnCanvas();
+    void renderSkyBitmap(job).then((blob) => {
+      if (mine !== latest.current) return;
+      if (!blob) {
+        // No worker here (or it failed): the canvas it is, as before there was one.
+        if (shown.current) {
+          shown.current = false;
+          setImageShown(false);
+          drawOnCanvas();
+        }
+        return;
+      }
+      const next = URL.createObjectURL(blob);
+      const decoded = new Image();
+      decoded.src = next;
+      decoded.decode().then(
+        () => {
+          const img = imgRef.current;
+          if (mine !== latest.current || !img) {
+            URL.revokeObjectURL(next);
+            return;
+          }
+          img.src = next;
+          if (url.current) URL.revokeObjectURL(url.current);
+          url.current = next;
+          shown.current = true;
+          setImageShown(true);
+        },
+        () => URL.revokeObjectURL(next)
+      );
+    });
+  }, []);
+
+  return { canvasRef, imgRef, imageShown, render };
+}
+
+/**
+ * What a canvas below last drew. The canvases redraw when the camera stops (they hold still
+ * while it moves), but a pan changes neither the data nor the zoom step they are drawn at — the
+ * canvas rides the viewport transform like the rest of the sky — so redrawing then repainted
+ * the same pixels: the whole wash, every cluster's five gradients, at the end of every pan.
+ */
+type DrawnCanvas = { data: unknown; zoom: number; dpr: number };
+
+function alreadyDrawn(last: DrawnCanvas | null, data: unknown, zoom: number, dpr: number) {
+  return last !== null && last.data === data && last.zoom === zoom && last.dpr === dpr;
+}
+
+function drawNowUnlessHidden(canvas: HTMLCanvasElement, draw: () => void) {
+  const stage = canvas.closest<HTMLElement>(".constellation-stage");
+  if (stage?.style.opacity === "0") {
+    const timer = window.setTimeout(draw, 0);
+    return () => window.clearTimeout(timer);
+  }
+  draw();
+  return undefined;
+}
+
+/**
  * Every cluster's wash, as one canvas: the soft coloured clouds the constellations sit in.
  *
  * This used to be one absolutely-positioned box per cluster, each four cluster radii across —
@@ -480,7 +618,7 @@ const NEBULA_WASH_MAX_BACKING_PX = 2048;
  * preview paints — so the sky is the same sky it was, minus 485 layers.
  */
 function NebulaWashNodeComponent({ data }: NodeProps & { data: NebulaWashData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { canvasRef, imgRef, imageShown, render } = useSkyBitmap();
   // Quarter-octave steps, as the dust uses: a camera flight crosses a few of these, not one
   // per frame.
   const zoom = useStore((s) =>
@@ -488,72 +626,52 @@ function NebulaWashNodeComponent({ data }: NodeProps & { data: NebulaWashData })
   );
   const moving = useCameraMoving();
   const drawnOnce = useRef(false);
+  const drawn = useRef<DrawnCanvas | null>(null);
 
   // A layout effect, so the clouds are there on the frame the canvas first appears rather than
   // one frame later — the same reason the dust draws in one.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
+    if (!canvas) return;
     // Never skip the first draw: an empty canvas is a sky with no clusters in it.
     if (moving && drawnOnce.current) return;
-    drawnOnce.current = true;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const scale = Math.min(
-      Math.max(zoom, 0.01) * dpr,
-      NEBULA_WASH_MAX_BACKING_PX / Math.max(data.width, data.height)
-    );
-    const w = Math.max(1, Math.ceil(data.width * scale));
-    const h = Math.max(1, Math.ceil(data.height * scale));
-    // Resizing reallocates and clears the backing store; do it only when the size changed.
-    if (canvas.width !== w) canvas.width = w;
-    if (canvas.height !== h) canvas.height = h;
-    ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
-    ctx.clearRect(data.minX, data.minY, data.width, data.height);
-
-    for (const cluster of data.clusters) {
-      // The cluster's dim is applied to its five lobes together, as the element's `opacity`
-      // applied it to the five backgrounds together. Instant rather than the 200ms fade the
-      // boxes had: a canvas redraws, it does not transition. The stars above made the same
-      // trade for the same reason.
-      ctx.globalAlpha = cluster.opacity;
-      for (const lobe of nebulaLobes(cluster.seed, cluster.radius)) {
-        // Under half a backing pixel there is nothing to draw, and a zero-radius gradient throws.
-        if (lobe.rx * scale < 0.5 || lobe.ry * scale < 0.5) continue;
-        const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, lobe.rx);
-        fill.addColorStop(0, withAlpha(cluster.color, lobe.alpha));
-        fill.addColorStop(NEBULA_LOBE_MID, withAlpha(cluster.color, lobe.alpha * 0.45));
-        // The cluster's own colour at zero alpha, not `transparent`: that keyword is
-        // transparent BLACK, so a fade to it drags the hue toward black on the way out
-        // instead of simply thinning. The dashboard preview builds the same stops.
-        fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(cluster.color, 0));
-        fill.addColorStop(1, withAlpha(cluster.color, 0));
-        ctx.save();
-        // An ellipse rx by ry, as `radial-gradient(ellipse rx ry at …)` drew it: a circle of
-        // radius rx, squashed vertically. The gradient is built in this squashed space, so it
-        // stretches with the shape exactly as the CSS one did.
-        ctx.translate(cluster.x + lobe.x, cluster.y + lobe.y);
-        ctx.scale(1, lobe.ry / lobe.rx);
-        ctx.fillStyle = fill;
-        ctx.beginPath();
-        ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-    }
-    ctx.globalAlpha = 1;
-  }, [data, zoom, moving]);
+    if (alreadyDrawn(drawn.current, data, zoom, dpr)) return;
+    return drawNowUnlessHidden(canvas, () => {
+      drawnOnce.current = true;
+      drawn.current = { data, zoom, dpr };
+      render({ kind: "wash", data, zoom, dpr, maxBackingPx: NEBULA_WASH_MAX_BACKING_PX });
+    });
+  }, [data, zoom, moving, canvasRef, render]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      // Pointer-transparent, so a click on the haze reaches the pane, which names the cluster
-      // under it by hit-testing the cluster circles (see `clusterAt` in graph-canvas-flow.tsx).
-      // The cluster's own name node keeps the keyboard and screen-reader route to "Zoom to X".
-      aria-hidden
-      className="constellation-nebula-wash pointer-events-none block"
-      style={{ width: data.width, height: data.height }}
-    />
+    // Pointer-transparent, so a click on the haze reaches the pane, which names the cluster
+    // under it by hit-testing the cluster circles (see `clusterAt` in graph-canvas-flow.tsx).
+    // The cluster's own name node keeps the keyboard and screen-reader route to "Zoom to X".
+    // Canvas until its first image is ready, then the image — see `useSkyBitmap`.
+    <>
+      <canvas
+        ref={canvasRef}
+        aria-hidden
+        className={cn(
+          "constellation-nebula-wash pointer-events-none",
+          imageShown ? "hidden" : "block"
+        )}
+        style={{ width: data.width, height: data.height }}
+      />
+      {/* eslint-disable-next-line @next/next/no-img-element -- a local bitmap, not an asset */}
+      <img
+        ref={imgRef}
+        alt=""
+        aria-hidden
+        draggable={false}
+        className={cn(
+          "constellation-nebula-wash pointer-events-none select-none",
+          imageShown ? "block" : "hidden"
+        )}
+        style={{ width: data.width, height: data.height, maxWidth: "none" }}
+      />
+    </>
   );
 }
 
@@ -773,7 +891,7 @@ const STAR_DUST_MAX_BACKING_PX = 2048;
  * switch between views reads as the stars simply losing their names.
  */
 function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { canvasRef, imgRef, imageShown, render } = useSkyBitmap();
   // Quarter-octave steps: a camera flight crosses a few of these, not one per frame. Redrawing
   // at every 0.01 of zoom repainted thousands of dots on most frames of a search's flight in.
   const zoom = useStore((s) =>
@@ -788,61 +906,50 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
    */
   const moving = useCameraMoving();
   const drawnOnce = useRef(false);
+  const drawn = useRef<DrawnCanvas | null>(null);
 
   // A layout effect, so the dots are drawn before the frame that shows the canvas is painted.
   // As an ordinary effect the canvas painted empty first — a blank frame each time the summary
   // began, and at every zoom step on the way, where the redraw clears it.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
+    if (!canvas) return;
     // Never skip the first draw: the canvas can appear mid-gesture, and an empty one is a hole.
     if (moving && drawnOnce.current) return;
-    drawnOnce.current = true;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const scale = Math.min(
-      Math.max(zoom, 0.01) * dpr,
-      STAR_DUST_MAX_BACKING_PX / Math.max(data.width, data.height)
-    );
-    const w = Math.max(1, Math.ceil(data.width * scale));
-    const h = Math.max(1, Math.ceil(data.height * scale));
-    // Resizing reallocates and clears the backing store; do it only when the size changed.
-    if (canvas.width !== w) canvas.width = w;
-    if (canvas.height !== h) canvas.height = h;
-    ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
-    ctx.clearRect(data.minX, data.minY, data.width, data.height);
-    // At least a pixel and a half on screen, or a dim dot vanishes into the backing store.
-    const minRadius = 0.75 / Math.max(zoom, 0.01);
-    // One path and one fill per colour and strength rather than per dot: a sky has a handful of
-    // those and thousands of dots, and a search redraws all of them on each keystroke.
-    const batches = new Map<string, StarDustPoint[]>();
-    for (const p of data.points) {
-      const key = `${p.color}|${p.alpha.toFixed(2)}`;
-      const batch = batches.get(key);
-      if (batch) batch.push(p);
-      else batches.set(key, [p]);
-    }
-    for (const batch of batches.values()) {
-      ctx.globalAlpha = batch[0].alpha;
-      ctx.fillStyle = batch[0].color;
-      ctx.beginPath();
-      for (const p of batch) {
-        const r = Math.max(minRadius, (p.disc * starZoomRelief(p.disc, zoom)) / 2);
-        ctx.moveTo(p.x + r, p.y);
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-      }
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-  }, [data, zoom, moving]);
+    if (alreadyDrawn(drawn.current, data, zoom, dpr)) return;
+    return drawNowUnlessHidden(canvas, () => {
+      drawnOnce.current = true;
+      drawn.current = { data, zoom, dpr };
+      render({ kind: "dust", data, zoom, dpr, maxBackingPx: STAR_DUST_MAX_BACKING_PX });
+    });
+  }, [data, zoom, moving, canvasRef, render]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      aria-hidden
-      className="constellation-star-dust pointer-events-none block"
-      style={{ width: data.width, height: data.height }}
-    />
+    // Canvas until its first image is ready, then the image — see `useSkyBitmap`.
+    <>
+      <canvas
+        ref={canvasRef}
+        aria-hidden
+        className={cn(
+          "constellation-star-dust pointer-events-none",
+          imageShown ? "hidden" : "block"
+        )}
+        style={{ width: data.width, height: data.height }}
+      />
+      {/* eslint-disable-next-line @next/next/no-img-element -- a local bitmap, not an asset */}
+      <img
+        ref={imgRef}
+        alt=""
+        aria-hidden
+        draggable={false}
+        className={cn(
+          "constellation-star-dust pointer-events-none select-none",
+          imageShown ? "block" : "hidden"
+        )}
+        style={{ width: data.width, height: data.height, maxWidth: "none" }}
+      />
+    </>
   );
 }
 

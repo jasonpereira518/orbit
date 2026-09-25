@@ -51,7 +51,7 @@ const TOC: readonly TocItem[] = [
   { id: "contact", label: "Questions" },
 ];
 
-/** Every service that receives personal data, verified against the code on 2026-09-15. */
+/** Every service that receives personal data, verified against the code on 2026-09-23. */
 const PROCESSORS = [
   { name: "Clerk", badge: "Required", body: "Sign-in, sessions and account lifecycle. Holds your sign-in identity and records when you accepted these terms." },
   { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos and feedback screenshots. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed." },
@@ -62,6 +62,7 @@ const PROCESSORS = [
   { name: "unavatar.io", badge: "Automatic", body: "Looks up a public profile photo for contacts with a LinkedIn URL. Receives the LinkedIn username only." },
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
+  { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro and Orbit Lifetime payments. Card details go to Stripe directly; Orbit stores a customer reference." },
   { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider and key you choose in Settings." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
@@ -293,7 +294,9 @@ export default function PrivacyPage() {
           <p>
             Orbit relies on the processors and integrations below. &ldquo;Required&rdquo; ones handle
             every account; &ldquo;Automatic&rdquo; ones run without a setting (photo lookups for
-            contacts); &ldquo;Optional&rdquo; ones stay dormant until you use the feature.
+            contacts); &ldquo;Always&rdquo; runs whenever you use a voice feature, on Orbit&rsquo;s
+            own key rather than one you supply; &ldquo;Optional&rdquo; ones stay dormant until you
+            use the feature.
           </p>
           <DocCardGrid columns={2}>
             {PROCESSORS.map((processor) => (
@@ -321,11 +324,16 @@ export default function PrivacyPage() {
         <DocSection id="ai" index={7} title="AI processing">
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
-            meeting audio, photos of pages you scan, recruiter emails when you run the scan — is sent
-            to the provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On every plan,
-            every call runs on an API key you supply, so the request lands on your own account with
-            that provider and is governed by the retention settings you have agreed with them. Orbit
-            never runs AI on its own provider accounts.
+            photos of pages you scan, recruiter emails when you run the scan — is sent to the
+            provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On every plan, every
+            call runs on an API key you supply, so the request lands on your own account with that
+            provider and is governed by the retention settings you have agreed with them. Orbit never
+            runs AI on its own provider accounts.
+          </p>
+          <p>
+            Voice notes, the chat microphone and meetings are transcribed by Deepgram instead, on
+            Orbit&rsquo;s own key on every plan — see Deepgram under Who else touches your data. If
+            Deepgram is unavailable, transcription falls back to the AI provider and key above.
           </p>
           <p>
             If you also add a TypeSafe key, the yes-or-no and ranking steps run on Jev,

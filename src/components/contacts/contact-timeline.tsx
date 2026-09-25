@@ -22,8 +22,14 @@ import {
   monthLabel,
   monthShort,
 } from "@/components/contacts/timeline-date-scrubber";
-import { InteractionDetailSheetLazy } from "@/components/contacts/interaction-detail-sheet-lazy";
-import { LogInteractionSheetLazy } from "@/components/contacts/log-interaction-sheet-lazy";
+import {
+  InteractionDetailSheetLazy,
+  preloadInteractionDetailSheet,
+} from "@/components/contacts/interaction-detail-sheet-lazy";
+import {
+  LogInteractionSheetLazy,
+  preloadLogInteractionSheet,
+} from "@/components/contacts/log-interaction-sheet-lazy";
 import {
   INTERACTION_FLIGHT_EVENT,
   type InteractionFlightDetail,
@@ -114,6 +120,17 @@ export function ContactTimeline({
   const [, start] = useTransition();
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Warm the detail sheet's code once the profile has settled, so the first open is instant
+  // even for a keyboard user who never hovers a row. Bandwidth only; nothing runs.
+  useEffect(() => {
+    const w = window as Window & { requestIdleCallback?: (cb: () => void) => number; cancelIdleCallback?: (id: number) => void };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(preloadInteractionDetailSheet);
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(preloadInteractionDetailSheet, 2000);
+    return () => window.clearTimeout(t);
+  }, []);
   const [logOpen, setLogOpen] = useState(false);
   const [filter, setFilter] = useState<FilterValue>("all");
   const [expanded, setExpanded] = useState(false);
@@ -535,6 +552,8 @@ export function ContactTimeline({
               size="sm"
               variant="outline"
               className="h-8 gap-1.5"
+              onPointerEnter={preloadLogInteractionSheet}
+              onFocus={preloadLogInteractionSheet}
               onClick={() => setLogOpen(true)}
             >
               <Plus className="size-3.5" />
@@ -560,6 +579,8 @@ export function ContactTimeline({
               size="sm"
               variant="outline"
               className="gap-1.5"
+              onPointerEnter={preloadLogInteractionSheet}
+              onFocus={preloadLogInteractionSheet}
               onClick={() => setLogOpen(true)}
             >
               <Plus className="size-3.5" />
@@ -698,7 +719,11 @@ export function ContactTimeline({
                                     else rowRefs.current.delete(i.id);
                                   }}
                                   tabIndex={rovingId === i.id ? 0 : -1}
-                                  onFocus={() => setFocusId(i.id)}
+                                  onFocus={() => {
+                                    setFocusId(i.id);
+                                    preloadInteractionDetailSheet();
+                                  }}
+                                  onPointerEnter={preloadInteractionDetailSheet}
                                   onClick={() => setSelectedId(i.id)}
                                   aria-expanded={selected}
                                   className={cn(
@@ -809,6 +834,7 @@ export function ContactTimeline({
 
       <InteractionDetailSheetLazy
         interactionId={openId}
+        preview={openId ? (visible.find((x) => x.id === openId) ?? null) : null}
         canReorder={{
           // Reordering writes the whole day at once, so it is only offered on the unfiltered
           // list — under a filter the sibling being swapped with is often not on screen, and

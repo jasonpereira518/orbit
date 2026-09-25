@@ -24,6 +24,7 @@ import { IntegrationsDialog, tabForImportJob } from "@/components/settings/integ
 import { useImportJob } from "@/lib/import-job-runner";
 import type { IntegrationStatuses } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
+import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -45,6 +46,7 @@ export function IntegrationsSettings({
   inboxVisible,
   initialSettings,
   canUseRecruiters,
+  speechAllowances,
 }: {
   /** Visible pages, in order — hidden surfaces already filtered out by the page. */
   tabs: IntegrationTabId[];
@@ -52,6 +54,7 @@ export function IntegrationsSettings({
   inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  speechAllowances: SpeechAllowances;
 }) {
   const searchParams = useSearchParams();
   const job = useImportJob();
@@ -276,6 +279,7 @@ export function IntegrationsSettings({
         inboxVisible={inboxVisible}
         initialSettings={initialSettings}
         canUseRecruiters={canUseRecruiters}
+        speechAllowances={speechAllowances}
       />
     </SettingsSection>
   );

@@ -1,5 +1,7 @@
 import { SignUp } from "@clerk/nextjs";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { isClerkConfigured, redirectIfAuthenticated } from "@/lib/auth";
+import { InviteSignedInNotice } from "@/components/auth/invite-signed-in-notice";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { OrbitLogo } from "@/components/orbit-logo";
 
@@ -14,8 +16,21 @@ const SIGN_UP_REDIRECT_WHITELIST = new Set(["/pricing"]);
 export default async function SignUpPage({
   searchParams,
 }: {
-  searchParams: Promise<{ redirect_url?: string }>;
+  searchParams: Promise<{ redirect_url?: string; __clerk_ticket?: string }>;
 }) {
+  const params = await searchParams;
+
+  // An admin's invitation link (`?__clerk_ticket=`) opened while signed in: offer to sign
+  // out and accept it, rather than `redirectIfAuthenticated` carrying the visitor into the
+  // account they already have and quietly wasting the invitation.
+  if (params.__clerk_ticket && isClerkConfigured()) {
+    const { userId } = await auth().catch(() => ({ userId: null }));
+    if (userId) {
+      const user = await currentUser().catch(() => null);
+      return <InviteSignedInNotice email={user?.primaryEmailAddress?.emailAddress ?? null} />;
+    }
+  }
+
   // Demo mode never reaches the branch below: `redirectIfAuthenticated` treats it as
   // already signed in and sends the visitor straight into the app. What's left here is
   // the genuine misconfiguration case — Clerk missing outside of demo mode.
@@ -35,7 +50,7 @@ export default async function SignUpPage({
     );
   }
 
-  const { redirect_url: requested } = await searchParams;
+  const { redirect_url: requested } = params;
   const redirectUrl =
     requested && SIGN_UP_REDIRECT_WHITELIST.has(requested)
       ? requested

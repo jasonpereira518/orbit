@@ -182,7 +182,7 @@ function useWheelSwipeDismiss() {
 
 const Toaster = ({ ...props }: ToasterProps) => {
   // `forcedTheme` first: /admin forces light, and `theme` is still the stored preference.
-  const { theme = "system", forcedTheme } = useTheme();
+  const { theme = "light", forcedTheme } = useTheme();
   useDismissOnBodyClick();
   useWheelSwipeDismiss();
 

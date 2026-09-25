@@ -105,17 +105,24 @@ export function CalendarSubscribePanel({
                 setSubs((prev) => [res.subscription as Sub, ...prev]);
                 setUrl("");
                 if (res.syncError) {
-                  toast.error("Calendar saved, but its first sync didn’t finish — use Sync to try again");
+                  toast.error(
+                    "Calendar saved, but its first sync didn’t finish — use Sync to try again",
+                  );
                 } else if (res.stats) {
                   toast.success(
                     `Synced: ${res.stats.scanned} events scanned · ${res.stats.matched} networking · ${res.stats.contactsCreated} contacts · ${res.stats.created} new meetings`,
                   );
                 } else {
-                  toast.success("Calendar connected — events will sync automatically");
+                  toast.success(
+                    "Calendar connected — events will sync automatically",
+                  );
                 }
               } catch (err) {
                 toast.error(
-                  friendlyError(err, "Couldn’t subscribe to that calendar — try again?"),
+                  friendlyError(
+                    err,
+                    "Couldn’t subscribe to that calendar — try again?",
+                  ),
                 );
               }
             })
@@ -198,7 +205,10 @@ export function CalendarSubscribePanel({
                           );
                         } catch (err) {
                           toast.error(
-                            friendlyError(err, "That sync didn’t finish — try again?"),
+                            friendlyError(
+                              err,
+                              "That sync didn’t finish — try again?",
+                            ),
                           );
                         }
                       })

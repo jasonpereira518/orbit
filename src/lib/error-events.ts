@@ -44,6 +44,14 @@ export const ERROR_SOURCES = {
    */
   eventPageFetch: "event.page_fetch",
   oauthEventbriteCallback: "oauth.eventbrite.callback",
+  /**
+   * A CalDAV request to iCloud (`src/lib/caldav/client.ts`) exhausted its retries. Kept
+   * apart from `eventPageFetch` deliberately — the two share `guardedFetchText`'s retry
+   * ladder but not a failure domain, and folding CalDAV retry exhaustion into event-page
+   * fetch failures would make either signal harder to read. A 401 is NOT logged here — see
+   * `eventProviderSync`'s reasoning just below: that flags `needs_reauth` instead.
+   */
+  caldavSync: "caldav.sync",
   /** A Luma or Eventbrite sync that exhausted its retries. Auth failures are NOT logged here
    *  — those flag the connection `needs_reauth`, which the user can see and act on. */
   eventProviderSync: "event.provider_sync",

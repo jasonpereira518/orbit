@@ -32,7 +32,7 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { apiKeys } from "@/db/schema";
 import { bearerFrom, hashApiKey, looksLikeApiKey, type ApiKeyScope } from "@/lib/api/keys";
-import { getEntitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings, type Entitlements } from "@/lib/entitlements";
 import { ensureUserSettings } from "@/lib/user-settings";
 
 export type ApiCaller = {
@@ -40,6 +40,8 @@ export type ApiCaller = {
   keyId: string;
   prefix: string;
   scopes: ApiKeyScope[];
+  /** Resolved from the settings row the suspension check read, so callers need not re-read it. */
+  entitlements: Entitlements;
 };
 
 export type ApiAuthFailure =
@@ -107,9 +109,9 @@ export async function requireApiCaller(
     );
   }
 
-  await assertAccountUsable(row.userId, { surface: opts.surface });
+  const entitlements = await assertAccountUsable(row.userId, { surface: opts.surface });
 
-  return { userId: row.userId, keyId: row.id, prefix: row.prefix, scopes };
+  return { userId: row.userId, keyId: row.id, prefix: row.prefix, scopes, entitlements };
 }
 
 /**
@@ -118,17 +120,21 @@ export async function requireApiCaller(
  * Separate from the key lookup above because the MCP server also reaches here with a Clerk
  * OAuth token, which has no `api_keys` row — and a suspended account must be refused on both
  * paths or the check is decorative.
+ *
+ * Returns the caller's entitlements, resolved from the same settings row. `getEntitlements`
+ * would read that row again: `cache()` does not deduplicate in a route handler, so every
+ * MCP message paid for the same `user_settings` read three times, one after another.
  */
 export async function assertAccountUsable(
   userId: string,
   opts: { surface?: "api" | "mcp" } = {}
-): Promise<void> {
+): Promise<Entitlements> {
   const settings = await ensureUserSettings(userId);
   if (settings.suspendedAt) {
     throw new ApiAuthError("suspended", "This Orbit account is suspended.");
   }
 
-  const entitlements = await getEntitlements(userId);
+  const entitlements = entitlementsFromSettings(userId, settings);
   // The MCP server is free on every plan; the REST API and webhooks are not. Two flags
   // rather than one so that making the connector free cannot quietly open the paid surfaces
   // beside it — see `canUseMcp` in `entitlements.ts`.
@@ -139,6 +145,7 @@ export async function assertAccountUsable(
       "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime."
     );
   }
+  return entitlements;
 }
 
 /**

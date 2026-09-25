@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { buildHybridGraphLayout } from "@/lib/graph-layout";
+import { filterSkyContacts, skyLayoutFor } from "@/lib/graph/sky-layout";
 import type { GraphChartProps } from "@/components/graph/graph-chart-types";
 
 /**
@@ -21,47 +21,34 @@ export function useGraphLayout(props: GraphChartProps) {
     return () => clearTimeout(t);
   }, [props.keyword]);
 
-  const filteredContacts = useMemo(() => {
-    const kw = debouncedKeyword.trim().toLowerCase();
-    return props.data.contacts.filter((c) => {
-      // No `substantive` check here: the server already shipped only what this scope draws,
-      // so filtering again would be redundant — and would silently hide pinned-in contacts
-      // in the "show all" view.
-      if (props.company !== "all" && c.company !== props.company) return false;
-      if (props.school !== "all" && (c.school || "") !== props.school) {
-        return false;
-      }
-      const orbit = c.orbitScore ?? c.relationshipScore ?? 1;
-      if (orbit < Number(props.minScore)) return false;
-      if (kw) {
-        const hay = [
-          c.fullName,
-          c.preferredName,
-          c.company,
-          c.school,
-          c.title,
-          c.aiSummary,
-          ...(c.tags || []),
-          ...(c.keyFacts || []),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(kw)) return false;
-      }
-      return true;
-    });
-  }, [
-    props.data.contacts,
-    props.company,
-    props.school,
-    debouncedKeyword,
-    props.minScore,
-  ]);
+  const filters = useMemo(
+    () => ({
+      company: props.company,
+      school: props.school,
+      minScore: props.minScore,
+      keyword: debouncedKeyword,
+    }),
+    [props.company, props.school, props.minScore, debouncedKeyword]
+  );
 
-  const layout = useMemo(() => {
-    return buildHybridGraphLayout(filteredContacts, props.data.summary.userName);
-  }, [filteredContacts, props.data.summary.userName]);
+  const filteredContacts = useMemo(
+    () => filterSkyContacts(props.data.contacts, filters),
+    [props.data.contacts, filters]
+  );
+
+  // On opening, the layout was already computed in slices before this renderer mounted
+  // (`precomputeSkyLayout`); computing it here instead made it and the first render one long
+  // task. A filter change still lays out here, synchronously, as it always has.
+  const layout = useMemo(
+    () =>
+      skyLayoutFor(
+        props.data.contacts,
+        filteredContacts,
+        filters,
+        props.data.summary.userName
+      ),
+    [props.data.contacts, filteredContacts, filters, props.data.summary.userName]
+  );
 
   /**
    * Changes exactly when the set of people in the sky does. Both renderers re-frame the

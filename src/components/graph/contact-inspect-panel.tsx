@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { format, formatDistanceToNow } from "date-fns";
@@ -653,7 +654,7 @@ function ContactPanelBody({
           }}
         />
         <div className="flex w-full items-stretch gap-2">
-          <Link
+          <IntentLink
             href={`/contacts/${id}`}
             className={cn(
               buttonVariants(),
@@ -661,7 +662,7 @@ function ContactPanelBody({
             )}
           >
             Open full profile
-          </Link>
+          </IntentLink>
           {/*
             Straight to LinkedIn, the logo alone: their saved profile when there is one, and a
             LinkedIn search for their name and company when there is not.

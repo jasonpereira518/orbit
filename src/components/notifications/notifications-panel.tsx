@@ -127,6 +127,9 @@ export function NotificationsPanelButton({
   // point of keeping them; a failure nobody saw should say so on the bell.
   // They stop counting once the panel has been opened, but stay in the list.
   const badgeCount = dueCount + activeJobCount + unreadKeptCount;
+  const [lastCount, setLastCount] = useState(badgeCount);
+  if (badgeCount > 0 && badgeCount !== lastCount) setLastCount(badgeCount);
+  const shownCount = badgeCount > 0 ? badgeCount : lastCount;
   const dueItems = useMemo(
     () => data?.items.filter((i) => i.urgency === "due") ?? [],
     [data]
@@ -262,11 +265,18 @@ export function NotificationsPanelButton({
         }}
       >
         <Bell className="h-4 w-4" />
-        {badgeCount > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
-            {badgeCount > 99 ? "99+" : badgeCount}
+        {/* Always mounted so the count can pop OUT as well as in (`.t-badge` in
+            globals.css). `shownCount` holds the last non-zero value through the exit, or
+            the number would blank to nothing while the badge is still shrinking. */}
+        <span
+          aria-hidden
+          className="t-badge absolute -right-1 -top-1"
+          data-open={badgeCount > 0}
+        >
+          <span className="t-badge-dot flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+            {shownCount > 99 ? "99+" : shownCount}
           </span>
-        )}
+        </span>
         {/* Opposite corner from the count on purpose: alerts never add to the badge, and a
             dot sharing a corner with a two-digit number would collide with it. */}
         {data?.alertDot && (

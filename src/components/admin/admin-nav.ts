@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  DoorOpen,
   Flame,
   Gauge,
   Globe,
@@ -42,6 +43,8 @@ export const ADMIN_NAV: AdminNavItem[] = [
   // "Signed up", and this is the only place the console can see what happened before that.
   { href: "/admin/analytics", label: "Traffic", icon: Globe },
   { href: "/admin/growth", label: "Growth", icon: TrendingUp },
+  // Stealth on/off and the invitations that get new people past it.
+  { href: "/admin/access", label: "Access", icon: DoorOpen },
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
   // alone reads as revenue-only.
   { href: "/admin/billing", label: "Money", icon: Wallet },

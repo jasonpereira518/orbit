@@ -40,6 +40,23 @@ export function calendarPauseLine(syncError: string | null, provider: "Google" |
 }
 
 /**
+ * One line for the connector catalog, which truncates — so the short forms. The account
+ * pages describe a connection per feature (`integration-status.ts`); this says only whether
+ * Orbit can reach it at all, which is all a catalog row has room for.
+ */
+export function connectionSummary(c: {
+  configured: boolean;
+  connected: boolean;
+  status: ConnectionHealth | null;
+}): { state: "on" | "partial" | "off"; detail: string } {
+  if (!c.configured) return { state: "off", detail: "Unavailable" };
+  if (c.status === "needs_reauth") return { state: "partial", detail: SESSION_EXPIRED_LINE };
+  if (c.status === "disarmed") return { state: "partial", detail: CALENDAR_PAUSED_SHORT };
+  if (c.connected) return { state: "on", detail: "Connected" };
+  return { state: "off", detail: "Not connected" };
+}
+
+/**
  * The other reason meetings aren't arriving: the person switched them off themselves
  * (`pauseSync`), which is a choice and not a fault. `calendarPauseLine` says "reconnect" —
  * right for `disarmed`, wrong here, where a consent screen would fix nothing — so this names

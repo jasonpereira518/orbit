@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { AnimatePresence, motion } from "motion/react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { SPRING_SOFT } from "@/lib/motion";
@@ -120,7 +120,7 @@ export function ChatOrbit({
                             mid-answer — the person clicked to peek at someone, not to lose
                             the thread they were waiting on.
                           */}
-                          <Link
+                          <IntentLink
                             href={`/contacts/${person.id}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -138,7 +138,7 @@ export function ChatOrbit({
                               size="sm"
                               className="size-full"
                             />
-                          </Link>
+                          </IntentLink>
                         </motion.div>
                       </div>
                     </div>

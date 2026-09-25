@@ -38,8 +38,10 @@ function code(file: string): string {
 const PAGES = [
   "src/components/landing/landing-scenes.tsx",
   "src/app/(clerk)/(marketing)/pricing/page.tsx",
-  "src/app/(site)/interest/page.tsx",
 ];
+
+/** The waitlist leads nowhere (lib/waitlist-host.ts), so it must NOT carry the site footer. */
+const WAITLIST_PAGE = "src/app/(site)/interest/page.tsx";
 
 function main() {
   console.log("Footer renders:");
@@ -68,6 +70,9 @@ function main() {
     check(`${page} renders <MarketingFooter`, src.includes("<MarketingFooter"));
     check(`${page} has no inline <footer>`, !/<footer\b/.test(src));
   }
+
+  const waitlist = code(WAITLIST_PAGE);
+  check("the waitlist page does not render the site footer", !waitlist.includes("MarketingFooter"));
 
   console.log("\nLanding wordmark:");
   const mark = renderToStaticMarkup(React.createElement(FooterWordmark));

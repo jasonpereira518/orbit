@@ -28,11 +28,16 @@ async function persistOnboardingComplete(userId: string) {
  * existing network data. Returning users (or anyone who already added people /
  * imports) are treated as done and never forced through again.
  *
+ * It is also shown only ONCE: the tour records its step the moment it mounts, so
+ * someone who opened it and wandered off without finishing or skipping is not
+ * redirected back on their next visit. `/onboarding` itself still resumes them if
+ * they go there (or replay it from Settings).
+ *
  * Cached per request so the main layout gate doesn't repeat work.
  */
 export const needsOnboarding = cache(async (userId: string) => {
   const settings = await ensureUserSettings(userId);
-  if (settings.onboardingCompletedAt) {
+  if (settings.onboardingCompletedAt || settings.onboardingStep) {
     return false;
   }
 

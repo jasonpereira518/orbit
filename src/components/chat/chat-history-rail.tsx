@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { motion } from "motion/react";
 import { PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { groupThreadsByDay, type ThreadLike } from "@/lib/chat-history-groups";
 import { EASE_HOUSE } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * The conversation list beside the chat, grouped Today / Yesterday / Earlier.
@@ -31,6 +32,11 @@ export const RAIL_CLOSED_WIDTH = 48;
 
 export type ChatHistoryRailProps<T extends ThreadLike> = {
   threads: readonly T[];
+  /**
+   * The list has not been read yet. An empty `threads` then means "unknown", so the rail shows
+   * placeholder rows instead of claiming there are no conversations.
+   */
+  loading?: boolean;
   activeId: string | null;
   /** Locked while an answer is streaming — switching threads mid-answer would orphan it. */
   busy: boolean;
@@ -40,13 +46,20 @@ export type ChatHistoryRailProps<T extends ThreadLike> = {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  /** The pointer came to rest on a row — a hint to start loading that thread. */
+  onIntent?: (id: string) => void;
+  /** The pointer left a row. */
+  onIntentEnd?: () => void;
+  /** Focus or touch reached a row: load it now. */
+  onIntentNow?: (id: string) => void;
   /** The toggle points at the panel it collapses with `aria-controls`. */
   id?: string;
   className?: string;
 };
 
-export function ChatHistoryRail<T extends ThreadLike>({
+function ChatHistoryRailImpl<T extends ThreadLike>({
   threads,
+  loading = false,
   activeId,
   busy,
   open,
@@ -54,6 +67,9 @@ export function ChatHistoryRail<T extends ThreadLike>({
   onSelect,
   onNew,
   onDelete,
+  onIntent,
+  onIntentEnd,
+  onIntentNow,
   id,
   className,
 }: ChatHistoryRailProps<T>) {
@@ -112,7 +128,9 @@ export function ChatHistoryRail<T extends ThreadLike>({
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-            {groups.length === 0 ? (
+            {groups.length === 0 && loading ? (
+              <ChatHistoryRailSkeleton />
+            ) : groups.length === 0 ? (
               <p className="px-2 py-3 text-xs text-muted-foreground">
                 Your conversations will collect here.
               </p>
@@ -131,6 +149,10 @@ export function ChatHistoryRail<T extends ThreadLike>({
                           <button
                             type="button"
                             onClick={() => onSelect(thread.id)}
+                            onPointerEnter={onIntent ? () => onIntent(thread.id) : undefined}
+                            onPointerLeave={onIntentEnd}
+                            onFocus={onIntentNow ? () => onIntentNow(thread.id) : undefined}
+                            onTouchStart={onIntentNow ? () => onIntentNow(thread.id) : undefined}
                             disabled={busy && !active}
                             aria-current={active ? "true" : undefined}
                             className={cn(
@@ -209,3 +231,35 @@ export function ChatHistoryRail<T extends ThreadLike>({
     </motion.div>
   );
 }
+
+/** Placeholder widths, so the rows read as titles of different lengths rather than a grid. */
+const SKELETON_ROW_WIDTHS = ["w-4/5", "w-3/5", "w-11/12", "w-2/3", "w-1/2", "w-3/4"];
+
+/**
+ * The list before it has been read: one day heading and a column of rows, each the height of
+ * a one-line thread row (`py-1.5` around a `text-sm leading-snug` line), so the real list
+ * lands without shifting what is below the fold.
+ */
+function ChatHistoryRailSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading chat history">
+      <div className="flex h-[20.5px] items-center px-2 pb-1">
+        <Skeleton className="h-2 w-10 rounded-sm" />
+      </div>
+      <ul className="space-y-0.5">
+        {SKELETON_ROW_WIDTHS.map((width) => (
+          <li key={width} className="flex h-[31.25px] items-center px-2">
+            <Skeleton className={cn("h-3 rounded-sm", width)} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Memoised so composer keystrokes and streamed frames in the chat panel skip the rail: every
+ * prop it gets is state or a stable callback. The cast keeps the generic signature, which
+ * `memo` would otherwise erase.
+ */
+export const ChatHistoryRail = memo(ChatHistoryRailImpl) as typeof ChatHistoryRailImpl;

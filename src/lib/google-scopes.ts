@@ -16,11 +16,14 @@ export const GOOGLE_SCOPES = {
   gmailRead: "https://www.googleapis.com/auth/gmail.readonly",
   gmailSend: "https://www.googleapis.com/auth/gmail.send",
   calendar: "https://www.googleapis.com/auth/calendar.readonly",
+  // Only files the person picks in the Google Picker. Non-sensitive; the restricted
+  // drive.readonly would need a CASA assessment, which is why whole-Drive search is later.
+  drive: "https://www.googleapis.com/auth/drive.file",
 } as const;
 
 export type GoogleScope = (typeof GOOGLE_SCOPES)[keyof typeof GOOGLE_SCOPES];
 
-export const GOOGLE_PURPOSES = ["contacts", "recruiter_scan", "send", "calendar", "event_mail"] as const;
+export const GOOGLE_PURPOSES = ["contacts", "recruiter_scan", "send", "calendar", "event_mail", "drive"] as const;
 export type GooglePurpose = (typeof GOOGLE_PURPOSES)[number];
 
 const IDENTITY_SCOPES: readonly GoogleScope[] = [GOOGLE_SCOPES.openid, GOOGLE_SCOPES.email];
@@ -31,6 +34,7 @@ const PURPOSE_SCOPE: Record<GooglePurpose, GoogleScope> = {
   send: GOOGLE_SCOPES.gmailSend,
   calendar: GOOGLE_SCOPES.calendar,
   event_mail: GOOGLE_SCOPES.gmailRead,
+  drive: GOOGLE_SCOPES.drive,
 };
 
 export function isGooglePurpose(value: unknown): value is GooglePurpose {
@@ -120,6 +124,8 @@ export function missingScopeMessage(purpose: GooglePurpose | null | undefined): 
       return "Google didn’t grant calendar access — reconnect and allow it";
     case "send":
       return "Google didn’t grant permission to send — reconnect and allow it";
+    case "drive":
+      return "Google didn’t grant Drive access — reconnect and allow it";
     default:
       return "Google didn’t grant mail access — reconnect and allow it";
   }

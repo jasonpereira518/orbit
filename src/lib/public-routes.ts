@@ -14,6 +14,8 @@ export const PUBLIC_ROUTES = [
   // The standalone interest-list page. Its form posts to a server action, which is not
   // matched here — actions POST to the page's own URL, so a public page covers them.
   "/interest",
+  // The waitlist's own privacy notice (served at /privacy on the waitlist domain).
+  "/interest/privacy",
   "/privacy",
   // How to connect an assistant. A setup guide whose whole audience is people deciding
   // whether to sign up, so it must be readable signed out.
@@ -52,9 +54,11 @@ export const PUBLIC_ROUTES = [
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
+  "/api/ops/speech-usage",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
   "/api/webhooks/outbound/drain",
+  "/api/connectors/outbox/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key
   // (`src/lib/api/auth.ts`), which Clerk knows nothing about. Exempted from
   // auth.protect() only so an unauthenticated call gets a JSON 401 a client can act on

@@ -136,15 +136,17 @@ export function paintSpace(
  * Without this, a dark-mode dashboard would wash out to a bright blue day sky
  * the instant you pressed the button, which reads as a bug rather than as a
  * launch. Same six altitude bands, same terminal colour; only the lit half of
- * the ramp changes.
+ * the ramp changes. The low bands carry the app chrome's blue graphite
+ * (globals.css `.dark`) and cool toward navy as they climb, so the ascent
+ * starts from the dashboard's own ground and ends in the starfield's space.
  */
 export const ATMOSPHERE_NIGHT = [
   DEEP_SPACE, // vacuum
   "#060b1c", // edge of space
-  "#0d1b34", // high stratosphere
-  "#152740", // deep night blue
-  "#1b2c44", // low haze, lit from below
-  "#1e2a38", // ground
+  "#11141c", // high stratosphere
+  "#1f2124", // deep night graphite
+  "#232629", // low haze, lit from below
+  "#26282c", // ground
 ] as const;
 
 /** #rrggbb -> [r, g, b]. Every colour in this module is plain hex so the ramp

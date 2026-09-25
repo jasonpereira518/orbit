@@ -65,17 +65,38 @@ export type Entitlements = {
    * which really are paid, do not silently become free with it.
    */
   canUseMcp: boolean;
+  /**
+   * Meeting recording and transcription. Orbit pays a per-minute transcription bill for
+   * every meeting, so unlike the rest of Capture (notes, voice, scans — all free), this is
+   * paid on both tiers. `loadMeetingTranscript` and `discardMeetingSession` stay ungated so
+   * a downgraded account can still read and delete meetings it already recorded — only
+   * starting, resuming, ending and analyzing a NEW recording cost money.
+   */
+  canUseMeetings: boolean;
 };
 
-/** Feature keys that `requireEntitlement` can gate on. */
-export type FeatureKey =
-  | "outreach"
-  | "hostedSending"
-  | "hostedEnrichment"
-  | "recruiters"
-  | "sync"
-  | "extension"
-  | "api";
+/**
+ * Feature keys that `requireEntitlement` can gate on.
+ *
+ * A runtime array with the type derived from it, rather than a bare type: a cross-module
+ * guard ("every connector manifest names an entitlement this layer knows",
+ * `scripts/smoke-connector-registry.ts`) needs a list it can actually read at runtime, and a
+ * hand-copied second copy of these strings is exactly the drift such a guard is supposed to
+ * catch. `FEATURE_DENIAL` and `FEATURE_FLAG` below are `Record<FeatureKey, …>`, so adding a
+ * key here without wiring it up is a type error.
+ */
+export const FEATURE_KEYS = [
+  "outreach",
+  "hostedSending",
+  "hostedEnrichment",
+  "recruiters",
+  "sync",
+  "extension",
+  "api",
+  "meetings",
+] as const;
+
+export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
@@ -161,6 +182,7 @@ export function entitlementsForPlan(
     canUseExtension: paid,
     canUseApi: paid,
     canUseMcp: true,
+    canUseMeetings: paid,
   };
 }
 
@@ -182,24 +204,34 @@ function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements 
  * background code resolve identically. Same rationale as the mirrored `email` column.
  */
 export const getEntitlements = cache(
-  async (userId: string): Promise<Entitlements> => {
-    const row = await ensureUserSettings(userId);
-    const { plan, source } = resolvePlan(row);
-    // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
-    // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
-    // from a free account, and the pricing surfaces should still tell the truth about
-    // what was bought. Only the gates are lifted.
-    if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
-    // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
-    // even while a Pro subscription is still winding down. Buying Lifetime cancels Pro on
-    // the spot (`endProForLifetime`), so the two are never meant to overlap; the resolver
-    // no longer unions a lingering subscription's enrichment back in.
-    const hostedEnrichment = plan === "orbit";
-    return entitlementsForPlan(plan, source, { hostedEnrichment });
-  }
+  async (userId: string): Promise<Entitlements> =>
+    entitlementsFromSettings(userId, await ensureUserSettings(userId))
 );
 
-const FEATURE_DENIAL: Record<FeatureKey, string> = {
+/**
+ * `getEntitlements` for a caller that already holds the account's `user_settings` row.
+ *
+ * `cache()` only deduplicates inside a React render. In a route handler or a Server Action
+ * it is a pass-through, so a path that has just read the row (an API key check, say) and
+ * then calls `getEntitlements` reads it again. Resolving from the row in hand is the same
+ * computation on the same data, one round trip cheaper.
+ */
+export function entitlementsFromSettings(userId: string, row: BillingColumns): Entitlements {
+  const { plan, source } = resolvePlan(row);
+  // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
+  // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
+  // from a free account, and the pricing surfaces should still tell the truth about
+  // what was bought. Only the gates are lifted.
+  if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
+  // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
+  // even while a Pro subscription is still winding down. Buying Lifetime cancels Pro on
+  // the spot (`endProForLifetime`), so the two are never meant to overlap; the resolver
+  // no longer unions a lingering subscription's enrichment back in.
+  const hostedEnrichment = plan === "orbit";
+  return entitlementsForPlan(plan, source, { hostedEnrichment });
+}
+
+export const FEATURE_DENIAL: Record<FeatureKey, string> = {
   outreach: "Outreach is available on Orbit Pro and Orbit Lifetime.",
   hostedSending:
     "Sending email and SMS on Orbit's credits is available on Orbit Pro and Orbit Lifetime.",
@@ -209,6 +241,7 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
   sync: "Calendar subscriptions and event sources are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
+  meetings: "Meeting transcription is available on Orbit Pro and Orbit Lifetime.",
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
@@ -219,6 +252,7 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   sync: "canUseSync",
   extension: "canUseExtension",
   api: "canUseApi",
+  meetings: "canUseMeetings",
 };
 
 /**

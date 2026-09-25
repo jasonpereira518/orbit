@@ -28,6 +28,7 @@ import {
 } from "@/lib/recruiter-message-types";
 import { pooledIdsForViewer, resolveRecruiterPii } from "@/lib/recruiters";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { actionFailure } from "@/lib/action-failure";
 
 /** Spacing between sends in a batch, so an approved batch trickles rather than bursts. */
@@ -279,6 +280,29 @@ export async function sendRecruiterDrafts(
       throw new Error(
         `You can send ${remaining} more today (limit ${DAILY_RECRUITER_SEND_LIMIT}). Deselect ${unique.length - remaining}.`
       );
+    }
+
+    // The demo workspace has no Gmail grant to send with (`demo-workspace-connections.ts`),
+    // and its recruiters are `.example` addresses: record the drafts as sent, deliver nothing.
+    if (await isDemoWorkspace(userId)) {
+      const marked = await db
+        .update(recruiterMessages)
+        .set({ status: "sent", sentAt: new Date(), errorMessage: null, updatedAt: new Date() })
+        .where(
+          and(
+            eq(recruiterMessages.userId, userId),
+            eq(recruiterMessages.status, "draft"),
+            inArray(recruiterMessages.id, unique)
+          )
+        )
+        .returning(); // bare: a field selector breaks over the Db union
+      revalidatePath("/recruiters/compose");
+      revalidatePath("/recruiters");
+      return {
+        sent: marked.length,
+        failed: [],
+        quotaRemaining: Math.max(0, DAILY_RECRUITER_SEND_LIMIT - used - marked.length),
+      };
     }
 
     // Resolve the sending identity once, not per message: every email in a batch must

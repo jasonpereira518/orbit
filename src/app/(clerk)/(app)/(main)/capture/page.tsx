@@ -7,7 +7,9 @@ import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
 import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
 import type { CaptureMode } from "@/components/capture/capture-tabs";
 import { requireUserId } from "@/lib/auth";
+import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 // Page-level, because it governs the server actions called from this page: summarizing an
 // hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
@@ -54,6 +56,7 @@ export default async function CapturePage({
   const settings = await settingsPromise;
   const userId = await userIdPromise;
   const { usage } = await planPromise;
+  const { canUseMeetings } = await getEntitlements(userId);
   const resumableMeeting = await resumablePromise;
   const job = await jobPromise;
   const jobs = await jobsPromise;
@@ -69,6 +72,7 @@ export default async function CapturePage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <RenderStamp />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Capture</h1>
         <p className="mt-1 text-muted-foreground">
@@ -86,6 +90,8 @@ export default async function CapturePage({
         hasApiKey={settings.hasApiKey}
         aiReason={settings.ai.reason}
         canTranscribe={canTranscribe}
+        canUseMeetings={canUseMeetings}
+        meetingsDeniedMessage={FEATURE_DENIAL.meetings}
         resumableMeeting={resumableMeeting}
         ignoredCount={ignoredCount}
         quota={{ used: usage.used, limit: usage.limit }}

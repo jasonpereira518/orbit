@@ -471,19 +471,23 @@ type PeopleApiPerson = {
   photos?: Array<{ url?: string; default?: boolean }>;
 };
 
-/** One-shot fetch of all Google Contacts (People API), paging until exhausted. */
+/**
+ * One-shot fetch of all Google Contacts (People API), paging until exhausted.
+ *
+ * `personFields` narrows the read for a caller that uses only some of the fields; fields
+ * not requested come back as their empty defaults. The name fields decide which people are
+ * kept, so every mask must include `names`.
+ */
 export async function fetchGooglePeopleContacts(
-  accessToken: string
+  accessToken: string,
+  personFields = "names,emailAddresses,organizations,photos,phoneNumbers"
 ): Promise<GooglePeopleContact[]> {
   const people: GooglePeopleContact[] = [];
   let pageToken: string | undefined;
 
   do {
     const url = new URL("https://people.googleapis.com/v1/people/me/connections");
-    url.searchParams.set(
-      "personFields",
-      "names,emailAddresses,organizations,photos,phoneNumbers"
-    );
+    url.searchParams.set("personFields", personFields);
     url.searchParams.set("pageSize", "200");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 

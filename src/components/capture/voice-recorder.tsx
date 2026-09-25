@@ -240,7 +240,7 @@ export function VoiceRecorder({
         aria-live="polite"
         className={cn(
           "min-h-5 text-center text-sm tabular-nums",
-          nearCap ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+          nearCap ? "text-amber-600 dark:text-warning" : "text-muted-foreground",
         )}
       >
         {state === "requesting" && "Waiting for microphone…"}

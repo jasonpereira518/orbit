@@ -31,6 +31,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useMotionValue, type MotionValue } from "motion/react";
 import { createDownsampler, encodeWav16, rmsLevel, TARGET_SAMPLE_RATE } from "@/lib/voice-recording";
 import { MAX_MEETING_MS, MeetingChunker, type MeetingChunk } from "@/lib/meeting-chunking";
+import { LoudnessTimeline } from "@/lib/speaker-map";
 
 const WORKLET_URL = "/orbit-pcm-worklet.js";
 const WORKLET_NAME = "orbit-pcm-recorder";
@@ -76,6 +77,12 @@ export type MeetingRecorderStart = {
 
 export type UseMeetingRecorderOptions = {
   onChunk: (chunk: RecordedMeetingChunk) => void;
+  /**
+   * Every 16 kHz frame as it arrives, ahead of the chunker — for a live transcription
+   * socket, which must not wait a minute for a chunk. The array is the chunker's own input
+   * and is not retained here, so a listener that keeps it must copy it.
+   */
+  onFrame?: (pcm: Int16Array) => void;
   onStarted?: (info: { surface: MeetingSurface; micActive: boolean }) => void;
   onEnd?: (reason: MeetingRecorderEndReason, elapsedMs: number) => void;
   onError?: (code: MeetingRecorderErrorCode) => void;
@@ -90,6 +97,8 @@ export type MeetingRecorderHandle = {
   callLevel: MotionValue<number>;
   /** 0..1 — the user's microphone. Stays 0 when the mic is off. */
   micLevel: MotionValue<number>;
+  /** Raw per-source loudness over time, for mapping Deepgram's speakers to "you". */
+  loudness: LoudnessTimeline;
   /** This recorder's audio so far, from the sample count. */
   elapsedMs: number;
   surface: MeetingSurface;
@@ -147,6 +156,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
   const [micActive, setMicActive] = useState(false);
   const callLevel = useMotionValue(0);
   const micLevel = useMotionValue(0);
+  const loudnessRef = useRef(new LoudnessTimeline());
 
   const ctxRef = useRef<AudioContext | null>(null);
   const displayRef = useRef<MediaStream | null>(null);
@@ -250,6 +260,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
       setElapsedMs(0);
       setSurface(null);
       setState("requesting");
+      loudnessRef.current = new LoudnessTimeline();
 
       // INSIDE THE CLICK, before any await — see `use-voice-recorder.ts`. The share picker
       // can sit open for a while, and a context built after it is liable to come back
@@ -380,15 +391,22 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
 
           if (++frames % METER_EVERY_FRAMES === 0) {
             callAnalyser.getFloatTimeDomainData(meterBuf);
-            smooth(callLevel, rmsLevel(meterBuf));
+            const callRms = rmsLevel(meterBuf);
+            smooth(callLevel, callRms);
+            let micRms = 0;
             if (micAnalyser) {
               micAnalyser.getFloatTimeDomainData(meterBuf);
-              smooth(micLevel, rmsLevel(meterBuf));
+              micRms = rmsLevel(meterBuf);
+              smooth(micLevel, micRms);
             }
+            // Raw values, not the smoothed motion values above — smoothing is for the eye,
+            // and would blur exactly the loudness contrast the speaker map depends on.
+            loudnessRef.current.push({ atMs: chunker.elapsedMs, mic: micRms, call: callRms });
           }
 
           const resampled = downsample(frame);
           if (resampled.length === 0) return;
+          cb.current.onFrame?.(resampled);
           // Chunk boundaries come from here — the audio clock — never from a timer. This
           // tab spends the meeting in the background, where timers are throttled.
           for (const chunk of chunker.push(resampled)) cb.current.onChunk(withWav(chunk));
@@ -457,6 +475,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
     error,
     callLevel,
     micLevel,
+    loudness: loudnessRef.current,
     elapsedMs,
     surface,
     micActive,

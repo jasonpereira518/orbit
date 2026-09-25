@@ -18,7 +18,7 @@ import {
   LIFETIME_STANDARD_PRICE,
 } from "@/lib/plan-limits";
 import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
-import { isStripeConfigured } from "@/lib/stripe";
+import { isStripeConfigured } from "@/lib/stripe-config";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 

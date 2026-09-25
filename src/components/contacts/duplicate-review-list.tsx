@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -183,12 +183,12 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
               Not the same person
             </Button>
           ) : null}
-          <Link
+          <IntentLink
             href={`/contacts/${drop.id}`}
             className="ml-auto text-xs text-muted-foreground underline-offset-4 hover:underline"
           >
             Review {drop.fullName}
-          </Link>
+          </IntentLink>
         </div>
       </CardContent>
     </Card>
@@ -265,12 +265,12 @@ export function DuplicateReviewList({
                   <p className="truncate text-sm">
                     <span className="text-muted-foreground">{merge.loserName ?? "A contact"}</span>
                     <ArrowRight className="mx-1.5 inline h-3 w-3" aria-hidden />
-                    <Link
+                    <IntentLink
                       href={`/contacts/${merge.winnerId}`}
                       className="font-medium underline-offset-4 hover:underline"
                     >
                       {merge.winnerName ?? "contact"}
-                    </Link>
+                    </IntentLink>
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {merge.reason ? `${merge.reason} · ` : ""}
