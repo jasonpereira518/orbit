@@ -760,7 +760,7 @@ export function RemindersStage({
                           id={`bucket-${group.bucket}`}
                           className={cn(
                             "sticky top-0 z-10 flex items-center gap-2 border-b border-border/50 bg-card/95 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide backdrop-blur-sm sm:px-4",
-                            group.bucket === "overdue" ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"
+                            group.bucket === "overdue" ? "text-amber-700 dark:text-warning" : "text-muted-foreground"
                           )}
                         >
                           {DUE_BUCKET_LABELS[group.bucket]}

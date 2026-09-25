@@ -75,7 +75,7 @@ export function DueFollowUpRow({
                     <span
                       className={cn(
                         "mx-1.5",
-                        due?.overdue && i === 1 && "text-amber-700 dark:text-amber-300 font-medium"
+                        due?.overdue && i === 1 && "text-amber-700 dark:text-warning font-medium"
                       )}
                     >
                       ·
@@ -83,7 +83,7 @@ export function DueFollowUpRow({
                   )}
                   <span
                     className={cn(
-                      due?.overdue && i === 1 && "font-medium text-amber-700 dark:text-amber-300"
+                      due?.overdue && i === 1 && "font-medium text-amber-700 dark:text-warning"
                     )}
                   >
                     {part}

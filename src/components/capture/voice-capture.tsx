@@ -64,7 +64,7 @@ export function VoiceCapture({
     <div id={panelId} role="tabpanel" aria-labelledby={tabId} className="space-y-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6">
       {!ingest.hasApiKey && <MissingKeyNotice reason={ingest.aiReason} />}
       {!canTranscribe && ingest.hasApiKey && (
-        <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
+        <div className="rounded-xl border border-warning-border bg-warning-surface px-3 py-3 text-sm">
           <p className="font-medium text-foreground">Add a key that can transcribe audio</p>
           <p className="mt-1 text-muted-foreground">Voice notes transcribe with OpenAI or Gemini — Anthropic can’t hear audio.</p>
         </div>

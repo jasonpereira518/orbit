@@ -740,7 +740,7 @@ export function MeetingCapturePanel({
               different number than the one the live path had already spoken for.
             */}
             {analysis.missingSeqs.length > 0 && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
+              <p className="text-xs text-amber-700 dark:text-warning">
                 {analysis.missingSeqs.length} part{analysis.missingSeqs.length === 1 ? "" : "s"} of the
                 transcript didn’t reach Orbit — anything said then may be missing from the summary.
               </p>
@@ -856,7 +856,7 @@ export function MeetingCapturePanel({
                   <span
                     className={cn(
                       "font-mono text-sm tabular-nums",
-                      nearCap ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                      nearCap ? "text-amber-600 dark:text-warning" : "text-muted-foreground"
                     )}
                   >
                     {formatElapsed(elapsed)}
@@ -900,7 +900,7 @@ export function MeetingCapturePanel({
               </p>
             )}
             {quotaWarnMinutes !== null && (
-              <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs text-foreground dark:border-amber-900/50 dark:bg-amber-950/30">
+              <p className="rounded-xl border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground">
                 About {quotaWarnMinutes} minute{quotaWarnMinutes === 1 ? "" : "s"} of meeting
                 transcription left this month — it comes back on {quotaResetLabel}.
               </p>
@@ -912,7 +912,7 @@ export function MeetingCapturePanel({
               </p>
             )}
             {heardNothing && (
-              <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs text-foreground dark:border-amber-900/50 dark:bg-amber-950/30">
+              <p className="rounded-xl border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground">
                 Orbit hasn&apos;t heard anything yet. If the call is in progress, the shared tab or screen
                 may not be the one playing it — stop and share the right one.
               </p>
@@ -1020,7 +1020,7 @@ export function MeetingCapturePanel({
             // The gate's verdict first: no key, allowance spent, payment still clearing.
             <AiKeyNotice feature="meeting" reason={aiReason} />
           ) : (
-            <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
+            <div className="rounded-xl border border-warning-border bg-warning-surface px-3 py-3 text-sm">
               <p className="font-medium text-foreground">Add a key that can transcribe audio</p>
               <p className="mt-1 text-muted-foreground">
                 Meeting capture transcribes with OpenAI or Gemini — Anthropic can&apos;t hear
