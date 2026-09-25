@@ -835,11 +835,18 @@ git commit -m "Say which account AI runs on, what it costs, and what still embed
 The file's doc block lists the keys and the `--provider` values. Update both, and add the comparison this gate rests on:
 
 ```
- *   ORBIT_EVAL_OPENROUTER_KEY=… npx tsx scripts/eval-ai.ts --provider openrouter --runs 2 \
- *     --compare docs/ai-evals/2026-09-19-gemini-baseline.json
+ *   ORBIT_EVAL_OPENROUTER_KEY=… npx tsx scripts/eval-ai.ts --provider openrouter \
+ *     --model google/gemini-3.5-flash --task capture --runs 2 \
+ *     --compare docs/ai-evals/2026-09-19-gemini-baseline/capture.json
  *
- * The OpenRouter default model is google/gemini-3.8-flash — the SAME model as the Gemini
- * baseline. Same model, different route, so a divergence is the proxy's, not the model's.
+ * `--compare` reads one baseline EvalReport file and gates only the tasks that file has.
+ * `docs/ai-evals/2026-09-19-gemini-baseline/` holds one such file per task — repeat with
+ * matching `--task`/`--compare` pairs to gate the rest.
+ *
+ * That baseline ran at gemini-3.5-flash, not the current DEFAULT_MODELS.openrouter
+ * (google/gemini-3.8-flash, 3.5's successor — no 3.8 baseline exists yet). `--model
+ * google/gemini-3.5-flash` pins the run to the baseline's model, so a divergence is the
+ * proxy's to explain, not a different model's.
 ```
 
 - [ ] **Step 3: Verify it wires up without spending anything**
@@ -886,11 +893,19 @@ Walk: AI page with no key shows `TurnOnAi` → Connect OpenRouter → consent �
 Write a report at `.superpowers/sdd/<this plan's slug>/task-9-report.md` containing: what passed, what could not be checked, and the exact eval command for Jason:
 
 ```bash
-ORBIT_EVAL_OPENROUTER_KEY=… npx tsx scripts/eval-ai.ts --provider openrouter --runs 2 \
-  --compare docs/ai-evals/2026-09-19-gemini-baseline.json
+ORBIT_EVAL_OPENROUTER_KEY=… npx tsx scripts/eval-ai.ts --provider openrouter \
+  --model google/gemini-3.5-flash --task capture --runs 2 \
+  --compare docs/ai-evals/2026-09-19-gemini-baseline/capture.json
 ```
 
-with the pass condition: no threshold in `scripts/eval-fixtures/ai-eval-thresholds.json` broken (the script exits 1 if one is). Name the three areas a proxied route most often breaks — structured JSON output, vision on scanned notes, chat tool calls.
+repeated per task with the matching file from `docs/ai-evals/2026-09-19-gemini-baseline/`
+(`--compare` reads a single baseline file and gates only the task(s) it holds). `--model
+google/gemini-3.5-flash` pins the run to the model that baseline actually used —
+`DEFAULT_MODELS.openrouter` is `google/gemini-3.8-flash`, 3.5's successor, and no 3.8
+baseline exists yet — so the comparison is same-model, different-route, with the pass
+condition: no threshold in `scripts/eval-fixtures/ai-eval-thresholds.json` broken (the script
+exits 1 if one is). Name the three areas a proxied route most often breaks — structured JSON
+output, vision on scanned notes, chat tool calls.
 
 - [ ] **Step 5: Push and update PR #299**
 

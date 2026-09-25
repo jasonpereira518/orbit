@@ -286,13 +286,16 @@ verification; the figure is hidden when not reported rather than shown as zero.
 - `recordUsage` prefers a reported cost over the estimate and stamps `cost_source`.
 - The provider-comparison AST guard from section 1.
 
-**The eval gate.** `--provider openrouter` with `ORBIT_EVAL_OPENROUTER_KEY`, defaulting to
-`google/gemini-3.8-flash` — the same model as the existing `docs/ai-evals/2026-09-19-gemini-baseline`
-run. Same model, different route, so `--compare` against that baseline attributes any
-divergence to the proxy rather than to the model. Structured JSON, vision on scanned notes
-and chat tool calls are where a proxied route tends to differ, and that comparison is where
-it would show. The exact command and pass condition go in the plan; the PR stays
-do-not-merge until Jason has run it.
+**The eval gate.** `--provider openrouter` with `ORBIT_EVAL_OPENROUTER_KEY`, pinned with
+`--model google/gemini-3.5-flash` — the model the existing baseline actually ran at
+(`docs/ai-evals/2026-09-19-gemini-baseline/`, one JSON per task). `DEFAULT_MODELS.openrouter`
+is `google/gemini-3.8-flash`, 3.5's successor; no 3.8 baseline exists yet, so the gate pins
+3.5 to compare like with like rather than attributing a cross-model difference to the proxy.
+Same model, different route, so `--compare` against the matching per-task baseline file
+attributes any divergence to the proxy rather than to the model. Structured JSON, vision on
+scanned notes and chat tool calls are where a proxied route tends to differ, and that
+comparison is where it would show. The exact command and pass condition go in the plan; the
+PR stays do-not-merge until Jason has run it.
 
 **In-app, in demo.** Unlike P2, the whole connect round trip works locally: no client
 registration, `callback_url` passed per request. Connect, cancel, reconnect, disconnect and

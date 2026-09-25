@@ -7,11 +7,19 @@
  *   ORBIT_EVAL_ANTHROPIC_KEY=… ORBIT_EVAL_OPENAI_KEY=… npx tsx scripts/eval-ai.ts \
  *     --provider anthropic --model claude-sonnet-5 --runs 2 \
  *     --compare docs/ai-evals/2026-09-19-anthropic-claude-sonnet-4-5.json
- *   ORBIT_EVAL_OPENROUTER_KEY=… npx tsx scripts/eval-ai.ts --provider openrouter --runs 2 \
- *     --compare docs/ai-evals/2026-09-19-gemini-baseline.json
+ *   ORBIT_EVAL_OPENROUTER_KEY=… npx tsx scripts/eval-ai.ts --provider openrouter \
+ *     --model google/gemini-3.5-flash --task capture --runs 2 \
+ *     --compare docs/ai-evals/2026-09-19-gemini-baseline/capture.json
  *
- * The OpenRouter default model is google/gemini-3.8-flash — the SAME model as the Gemini
- * baseline. Same model, different route, so a divergence is the proxy's, not the model's.
+ * `--compare` reads one baseline `EvalReport` file and gates only the tasks that file has.
+ * `docs/ai-evals/2026-09-19-gemini-baseline/` holds one such file per task (capture.json,
+ * chat.json, digest.json, extension.json, ocr.json, recruiter.json, transcribe.json) — repeat
+ * the command above with matching `--task`/`--compare` pairs to gate the rest.
+ *
+ * That baseline ran at `gemini-3.5-flash`, not the current `DEFAULT_MODELS.openrouter`
+ * (`google/gemini-3.8-flash`, 3.5's successor — no 3.8 baseline exists yet). `--model
+ * google/gemini-3.5-flash` pins the OpenRouter run to the same model the baseline used, so a
+ * divergence is the proxy's to explain, not a different model's.
  *
  * A candidate is a JSON file passed with `--config`, applied to the registry and the tier
  * maps before anything runs:
