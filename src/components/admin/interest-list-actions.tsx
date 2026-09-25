@@ -44,8 +44,14 @@ function InviteButton({ email }: { email: string }) {
           try {
             const res = await inviteToSiteAction({ email, notify: true });
             if (res.kind === "error") toast.error(res.message);
+            else if (!res.emailed)
+              toast.warning(
+                res.kind === "existing-account"
+                  ? "They’re let in, but the email didn’t send — share the sign-in link from Access"
+                  : "Invitation created, but the email didn’t send — copy the link from Access"
+              );
             else if (res.kind === "existing-account") toast.success("They already have an account — it’s let in now");
-            else toast.success(`Invitation sent to ${email}`);
+            else toast.success(`Boarding pass sent to ${email}`);
           } catch (err) {
             toast.error(friendlyError(err, "Couldn’t send that invitation — try again?"));
           }

@@ -125,10 +125,23 @@ export function StealthSwitch({
  * Invite one address. The result stays on screen with the link, because the link is the
  * deliverable when "email it" is off, and worth having either way.
  */
+function inviteResultMessage(result: SiteInviteResult, asked: boolean) {
+  const bounced = asked && !result.emailed ? " The email didn’t send, so copy the link below." : "";
+  if (result.kind === "existing-account") {
+    return result.emailed
+      ? `${result.email} already has an account. It’s now let in, and their pass is on its way.`
+      : `${result.email} already has an account. It’s now let in — send them the sign-in link.${bounced}`;
+  }
+  return result.emailed
+    ? `Boarding pass emailed to ${result.email}. The link is here too.`
+    : `Invitation created for ${result.email}.${bounced || " Send them this link — it works once and expires in 30 days."}`;
+}
+
 export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [email, setEmail] = useState("");
+  const [firstName, setFirstName] = useState("");
   const [notify, setNotify] = useState(true);
   const [result, setResult] = useState<SiteInviteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -140,13 +153,14 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
     setResult(null);
     start(async () => {
       try {
-        const res = await inviteToSiteAction({ email, notify });
+        const res = await inviteToSiteAction({ email, notify, firstName });
         if (res.kind === "error") {
           setError(res.message);
           return;
         }
         setResult(res);
         setEmail("");
+        setFirstName("");
         router.refresh();
       } catch (err) {
         setError(friendlyError(err, "Couldn’t create that invitation — try again?"));
@@ -175,6 +189,15 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
           disabled={pending}
           className="h-8 w-64 max-w-full text-sm"
         />
+        <Input
+          value={firstName}
+          onChange={(e) => setFirstName(e.target.value)}
+          placeholder="First name (optional)"
+          aria-label="Their first name, for the email greeting"
+          maxLength={60}
+          disabled={pending || !notify}
+          className="h-8 w-44 max-w-full text-sm"
+        />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <input
             type="checkbox"
@@ -200,11 +223,7 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
       {result && (
         <div className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3" role="status">
           <p className="text-xs text-muted-foreground">
-            {result.kind === "existing-account"
-              ? `${result.email} already has an account. It’s now let in — send them the sign-in link.`
-              : result.emailed
-                ? `Invitation emailed to ${result.email}. The link is here too.`
-                : `Invitation created for ${result.email}. Send them this link — it works once and expires in 30 days.`}
+            {inviteResultMessage(result, notify)}
           </p>
           {result.url ? (
             <div className="flex gap-2">
