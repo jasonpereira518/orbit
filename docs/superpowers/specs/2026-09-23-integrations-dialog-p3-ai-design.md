@@ -42,14 +42,33 @@ change the design.
    the flow, which makes P3 fully exercisable in local demo mode — unlike P2, where demo
    could only ever render the unconfigured branch.
 
-A fifth thing was found in Orbit's own code and is the reason section 2 below exists:
-`src/lib/pgvector.ts` pads or truncates every vector to 1536 dimensions, and **nothing
-records which backend produced a row**. Gemini's 3072-dimension vectors are sliced; OpenAI's
-are native. The two spaces are not comparable, so any account that changes embedding
-backend silently degrades its own search — no error, just worse results. That is
-pre-existing. What P3 would otherwise change is that `chooseEmbeddingKey` puts the selected
-provider first, which would make "Connect OpenRouter" a one-click way to trigger it for
-every existing Gemini user.
+A fifth thing was found in Orbit's own code and is the reason section 2 below exists.
+`src/lib/pgvector.ts` pads or truncates every vector to 1536 dimensions, and nothing records
+which backend produced a row. Gemini's 3072-dimension vectors are sliced; OpenAI's are
+native, and the two spaces are not comparable.
+
+**Correction, 2026-09-25 — an earlier draft of this spec said a backend change silently
+degrades search. For contacts that is not true, and the truth is more useful.**
+`saveAiSettings` and `clearApiKey` already compute the embedding backend before and after a
+write through `embeddingBackendFor` (which calls the very `chooseEmbeddingKey` this phase
+changes), and on a change they **delete every `contact_embeddings` row** and return
+`embeddingReset`, which `ai-settings.tsx` already surfaces. Contacts are handled.
+
+Two things follow, and both sharpen decision 1 rather than weaken it:
+
+- A backend change is not silent — it is a **full vector wipe and re-index**, paid for in
+  the user's own API spend and in degraded search until the backfill catches up. That is a
+  real cost to hand someone for pressing one button.
+- `memory_chunks`, which holds the passage vectors the chat RAG path retrieves against, is
+  **not** cleared on a backend change — its deletes are per-source re-chunking and full
+  account purge only. So a backend change today leaves passages stranded in the old space,
+  compared against query vectors from the new one. **This is a pre-existing bug, not one
+  P3 introduces, and it is out of scope here** — it is recorded so it can be fixed on its
+  own.
+
+What P3 would otherwise change is that `chooseEmbeddingKey` puts the selected provider
+first, which would make "Connect OpenRouter" a one-click way to trigger both of the above
+for every existing Gemini user.
 
 ## Decisions
 
@@ -112,9 +131,18 @@ embedding order entirely, because it has no embeddings API at all. OpenRouter do
 so it stays in the order — just never ahead of a key whose vectors are already in the
 database.
 
+Because `embeddingBackendFor` calls `chooseEmbeddingKey`, this single change also makes the
+connect path safe automatically: `nextBackend` stays `gemini`, so no reset fires and no
+vectors are wiped. Nothing in `settings.ts` needs a special case.
+
 Consequence, which the UI must state rather than hide: a person with a Gemini key who
 connects OpenRouter runs completions on OpenRouter and embeddings on Gemini. Clearing that
-Gemini key later moves their vector space. See section 4.
+Gemini key later *does* move their vector space — and that path already wipes and rebuilds
+the contact index, so the warning is concrete rather than hypothetical. See section 4.
+
+**The OAuth callback must route its write through the same before/after comparison.** It
+stores a key and selects a provider, which is exactly what `saveAiSettings` does; a callback
+that writes the row directly would bypass the one guard that keeps vector state coherent.
 
 **Explicitly out of scope:** recording which backend wrote each row and re-embedding on
 change. That fixes the pre-existing hazard properly, and it needs a column, a backfill job
