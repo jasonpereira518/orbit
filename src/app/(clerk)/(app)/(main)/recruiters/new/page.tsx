@@ -5,6 +5,7 @@ import { getEntitlements } from "@/lib/entitlements";
 import { RecruitersLocked } from "@/components/locked-feature";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function NewRecruiterPage() {
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
@@ -12,6 +13,7 @@ export default async function NewRecruiterPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      <RenderStamp />
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">

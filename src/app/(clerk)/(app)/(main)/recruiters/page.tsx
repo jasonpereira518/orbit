@@ -20,6 +20,7 @@ import { OutlookImportPanel } from "@/components/recruiters/outlook-import-panel
 import { RecruiterSharingToggle } from "@/components/recruiters/sharing-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function RecruitersPage({
   searchParams,
@@ -91,6 +92,7 @@ export default async function RecruitersPage({
         </>
       }
     >
+      <RenderStamp />
       <div className="space-y-6">
         <RecruiterSharingToggle enabled={sharing} />
         <GmailImportPanel connection={gmail} initialScan={scan} />

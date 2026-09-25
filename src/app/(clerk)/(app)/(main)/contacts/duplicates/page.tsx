@@ -8,6 +8,7 @@ import { mergeConfidentDuplicates } from "@/lib/duplicate-sweep";
 import { openEngines } from "@/lib/decisions/engine";
 import { DuplicateReviewList } from "@/components/contacts/duplicate-review-list";
 import { DuplicatesListSkeleton } from "@/components/loading/page-skeletons";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export const metadata: Metadata = {
   title: "Duplicates",
@@ -34,6 +35,7 @@ export default async function DuplicatesPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
+      <RenderStamp />
       <div className="space-y-2">
         <Link
           href="/contacts"

@@ -267,6 +267,11 @@ export function ChatPanel({
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [question, setQuestion] = useState(initialQuestionFromUrl);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
+  /** The list on screen, readable from async work (a thread revalidation checks it is untouched). */
+  const messagesRef = useRef(messages);
+  useLayoutEffect(() => {
+    messagesRef.current = messages;
+  });
   const [contextOpen, setContextOpen] = useState(false);
   const [contextSaving, setContextSaving] = useState(false);
   /**
@@ -651,6 +656,59 @@ export function ChatPanel({
   const loadSeqRef = useRef(0);
 
   /**
+   * Put a loaded thread on screen and return the message list it set. `opening` is the first
+   * paint of a thread (composer cleared, edit closed, pinned to the bottom); a revalidation
+   * swaps the rows in place and leaves all of that as the person has it.
+   */
+  const applyThread = useCallback((loaded: LoadedThread, { opening }: { opening: boolean }) => {
+    const { thread, messages: rows, sent, versions: loadedVersions, versionSlot: loadedSlot } = loaded;
+    setThreadId(thread.id);
+    setThreadTitle(thread.title);
+    setContextNotes(thread.contextNote ?? "");
+    setVersions(loadedVersions);
+    setVersionSlot(loadedSlot);
+    if (opening) {
+      setEditingUserId(null);
+      stickToBottomRef.current = true;
+    }
+    const next: ThreadMessage[] = rows.map((row) =>
+      row.role === "user"
+        ? {
+            id: row.id,
+            role: "user" as const,
+            content: row.content,
+            mentionNames: row.attachedContacts?.length
+              ? row.attachedContacts.map((c) => c.name)
+              : undefined,
+          }
+        : {
+            id: row.id,
+            role: "assistant" as const,
+            answer: row.content,
+            recommendations: row.recommendations || [],
+            // Answers written before this column existed have none, and simply show no
+            // summary rather than a fabricated one.
+            steps: row.activity ?? undefined,
+            evidence: row.evidence ?? undefined,
+            proposedActions: row.proposedActions ?? undefined,
+            feedback: row.feedback ?? null,
+            // It came out of the database, so by definition there is a row to rate.
+            persisted: true,
+            sentTo: sent[row.id],
+          }
+    );
+    messagesRef.current = next;
+    setMessages(next);
+    const lastUser = [...rows].reverse().find((row) => row.role === "user");
+    setLastUserQuery(lastUser?.content ?? "");
+    if (opening) {
+      clearComposer();
+      requestAnimationFrame(() => scrollToBottom(false));
+    }
+    return next;
+  }, [clearComposer, scrollToBottom, setContextNotes]);
+
+  /**
    * Open a saved thread. `prefetched: true` — only from a history click — lets it use a read
    * that started on hover; every other caller (a reload after a version switch or a stream,
    * the `?thread=` return) always reads fresh.
@@ -659,13 +717,15 @@ export function ChatPanel({
     const seq = ++loadSeqRef.current;
     const taken = opts?.prefetched ? threadPrefetch.take(id) : null;
     const ready = taken && "value" in taken && taken.value.thread.id === id ? taken.value : null;
+    // A prefetch older than THREAD_PREFETCH_FRESH_MS shows at once, then is re-read below.
+    const revalidate = ready && taken && "fresh" in taken && !taken.fresh;
     // An already-landed prefetch swaps straight in: no spinner frame in between.
     if (!ready) setLoadingThread(true);
     try {
       let loaded: LoadedThread;
       if (ready) {
         loaded = ready;
-      } else if (taken && "promise" in taken) {
+      } else if (taken && "promise" in taken && taken.promise) {
         // Still in flight: wait for it, but a failure — or a result for any other thread —
         // falls back to the ordinary read.
         const early = await taken.promise.catch(() => null);
@@ -674,46 +734,21 @@ export function ChatPanel({
         loaded = await getChatThread(id);
       }
       if (seq !== loadSeqRef.current) return;
-      const { thread, messages: rows, sent, versions: loadedVersions, versionSlot: loadedSlot } = loaded;
-      setThreadId(thread.id);
-      setThreadTitle(thread.title);
-      setContextNotes(thread.contextNote ?? "");
-      setVersions(loadedVersions);
-      setVersionSlot(loadedSlot);
-      setEditingUserId(null);
-      stickToBottomRef.current = true;
-      setMessages(
-        rows.map((row) =>
-          row.role === "user"
-            ? {
-                id: row.id,
-                role: "user" as const,
-                content: row.content,
-                mentionNames: row.attachedContacts?.length
-                  ? row.attachedContacts.map((c) => c.name)
-                  : undefined,
-              }
-            : {
-                id: row.id,
-                role: "assistant" as const,
-                answer: row.content,
-                recommendations: row.recommendations || [],
-                // Answers written before this column existed have none, and simply show no
-                // summary rather than a fabricated one.
-                steps: row.activity ?? undefined,
-                evidence: row.evidence ?? undefined,
-                proposedActions: row.proposedActions ?? undefined,
-                feedback: row.feedback ?? null,
-                // It came out of the database, so by definition there is a row to rate.
-                persisted: true,
-                sentTo: sent[row.id],
-              }
-        )
-      );
-      const lastUser = [...rows].reverse().find((row) => row.role === "user");
-      setLastUserQuery(lastUser?.content ?? "");
-      clearComposer();
-      requestAnimationFrame(() => scrollToBottom(false));
+      const shown = applyThread(loaded, { opening: true });
+      if (revalidate) {
+        const pending = ("promise" in taken && taken.promise) || getChatThread(id);
+        void pending.then(
+          (current) => {
+            // Only onto the same untouched thread: another load, a send or an edit since the
+            // stale copy went up wins over this read, and an unchanged thread is left as is.
+            if (seq !== loadSeqRef.current || current.thread.id !== id) return;
+            if (messagesRef.current !== shown) return;
+            if (JSON.stringify(current) === JSON.stringify(loaded)) return;
+            applyThread(current, { opening: false });
+          },
+          () => {}
+        );
+      }
     } catch (err) {
       if (seq === loadSeqRef.current) {
         toast.error(friendlyError(err, "Couldn’t load that chat — try again?"));
@@ -722,7 +757,7 @@ export function ChatPanel({
       // An overtaken load leaves the spinner to the one that overtook it.
       if (seq === loadSeqRef.current) setLoadingThread(false);
     }
-  }, [clearComposer, scrollToBottom, setContextNotes, threadPrefetch]);
+  }, [applyThread, threadPrefetch]);
 
   const saveContext = useCallback(async () => {
     setContextSaving(true);

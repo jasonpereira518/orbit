@@ -23,6 +23,9 @@ export type AppNavItem = {
    * on screen. A click then renders from the client cache with no skeleton, which is the
    * only way past React's 300ms Suspense reveal hold on a first visit.
    *
+   * Applied by the phone nav only, where a tap gives no hover to prefetch on. The desktop
+   * sidebar full-prefetches every link on hover/focus instead (see app-sidebar.tsx).
+   *
    * It costs a full server render of the destination on every page that shows the link, so
    * it is reserved for pages that are both visited daily and bounded in cost — Dashboard,
    * Contacts (paginated) and Reminders — and never for a heavy one (Constellation returns

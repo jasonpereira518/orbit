@@ -19,6 +19,7 @@ import {
 import { listPendingAgentSends } from "@/lib/agent-sends";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 async function AgentDraftsSection() {
   const drafts = await listPendingAgentSends(await requireUserId());
@@ -50,6 +51,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      <RenderStamp />
       <DashboardHeader />
 
       {/* Above every other card, and outside the surface-visibility switches: a message

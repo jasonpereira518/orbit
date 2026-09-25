@@ -11,7 +11,6 @@ import {
   APP_NAV_CORE,
   APP_NAV_EXTRAS,
   APP_NAV_SETTINGS,
-  fullPrefetch,
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
@@ -45,15 +44,18 @@ function SidebarNavLink({
   // Shown to operators too, who still reach the real page: the tag is how they know what
   // everyone else gets. "Hidden" outranks it, because a hidden page is not even announced.
   const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href);
-  // Hover or focus upgrades the rest to a full prefetch too, so the click that follows
-  // lands without a skeleton (see `@/lib/intent-prefetch`). Not for the page already open.
+  // Hover or focus upgrades a link to a full prefetch, so the click that follows lands
+  // without a skeleton (see `@/lib/intent-prefetch`). Not for the page already open. The
+  // daily routes (`prefetchFull`) are NOT prefetched in full ahead of that here, unlike the
+  // phone nav: a pointer always hovers before it clicks, so the intent prefetch is ready by
+  // the click and fresh, where one taken at page load is usually old enough by then that
+  // the page has to refresh itself on arrival (`FreshOnArrival`).
   const NavLink = active ? Link : IntentLink;
   // /capture's form is a lazy client chunk the route prefetch does not include.
   const warm = item.href === "/capture" && !active ? preloadCaptureFlow : undefined;
   return (
     <NavLink
       href={item.href}
-      prefetch={fullPrefetch(item, active)}
       onPointerEnter={warm}
       onFocus={warm}
       title={

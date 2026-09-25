@@ -26,6 +26,7 @@ import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { speechAllowance } from "@/lib/speech-quota";
 import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 /**
  * Anchor for a card that stands alone. Ids and grouping live in `sections.ts`.
@@ -135,6 +136,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-10">
+      <RenderStamp />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Settings

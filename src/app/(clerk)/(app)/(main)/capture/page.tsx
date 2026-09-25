@@ -9,6 +9,7 @@ import type { CaptureMode } from "@/components/capture/capture-tabs";
 import { requireUserId } from "@/lib/auth";
 import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 // Page-level, because it governs the server actions called from this page: summarizing an
 // hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
@@ -71,6 +72,7 @@ export default async function CapturePage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <RenderStamp />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Capture</h1>
         <p className="mt-1 text-muted-foreground">
