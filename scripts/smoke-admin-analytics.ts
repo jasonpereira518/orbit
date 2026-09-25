@@ -883,6 +883,9 @@ async function main() {
     JSON.stringify(capturesOut)
   );
 
+  // outreachByChannel counts every user's messages, and the database is shared with the other
+  // smokes (a seeded demo workspace sends some), so check what these rows add, not the totals.
+  const outreachBefore = await outreachByChannel("30d");
   const [campaign] = await db
     .insert(outreachCampaigns)
     .values({ userId: "eng_user", name: "Smoke campaign" })
@@ -901,12 +904,13 @@ async function main() {
     { prospectId: prospects[0].id, channel: "sms", status: "draft" },
   ]);
   const outreachOut = await outreachByChannel("30d");
+  const added = (channel: string) =>
+    (outreachOut.find((r) => r.channel === channel)?.count ?? 0) -
+    (outreachBefore.find((r) => r.channel === channel)?.count ?? 0);
   check(
     "counts only sent messages, by channel",
-    outreachOut.find((r) => r.channel === "email")?.count === 1 &&
-      outreachOut.find((r) => r.channel === "linkedin")?.count === 1 &&
-      !outreachOut.some((r) => r.channel === "sms"),
-    JSON.stringify(outreachOut)
+    added("email") === 1 && added("linkedin") === 1 && added("sms") === 0,
+    JSON.stringify({ before: outreachBefore, after: outreachOut })
   );
 
   const [thread] = await db
