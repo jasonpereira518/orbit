@@ -34,6 +34,8 @@ type Tier = "pure" | "pglite" | "manual";
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
+  "smoke-chat-thread-prefetch": "pure",
+  "smoke-render-stamp-pages": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-oauth-return": "pure",
   "smoke-report-error": "pure",
@@ -334,6 +336,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-mcp-server": "pglite",
   "smoke-behavior-golden": "pglite",
   "smoke-due-follow-ups-parity": "pglite",
+  "smoke-avatar-backfill-route": "pglite",
   "smoke-chat-lookup-tools": "pglite",
   "smoke-tool-registry": "pglite",
   "smoke-memory-search": "pglite",

@@ -33,6 +33,7 @@ import {
 import { searchContactsForPicker } from "@/actions/contacts";
 import { saveThemePreference } from "@/actions/settings";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { useFullPrefetch } from "@/lib/intent-prefetch";
 import { APP_NAV } from "@/components/layout/app-nav";
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -63,6 +64,8 @@ type Row = {
   hint?: ReactNode;
   icon: ReactNode;
   run: () => void;
+  /** A route worth fetching in full while this row is highlighted — a person's profile. */
+  prefetchHref?: string;
 };
 
 const RECENT_CONTACTS = 5;
@@ -362,6 +365,7 @@ export function CommandPaletteDialog({
             />
           ),
           run: () => go(`/contacts/${p.id}`),
+          prefetchHref: `/contacts/${p.id}`,
         }))
       );
     }
@@ -386,6 +390,16 @@ export function CommandPaletteDialog({
   }, [query, people, hidden, askMode, pathname, isDark, contactsVisible, captureVisible]);
 
   const active = rows[Math.min(activeIndex, Math.max(rows.length - 1, 0))];
+
+  // Fetch the highlighted person's whole profile while they stay highlighted, so Enter lands
+  // with no skeleton. Debounced: arrowing through the list should not render every profile.
+  const prefetchFull = useFullPrefetch();
+  const activePrefetch = active?.prefetchHref;
+  useEffect(() => {
+    if (!open || !activePrefetch) return;
+    const t = window.setTimeout(() => prefetchFull(activePrefetch), 100);
+    return () => window.clearTimeout(t);
+  }, [open, activePrefetch, prefetchFull]);
 
   // Keep the highlighted row on screen as the arrow keys walk past the fold.
   useEffect(() => {

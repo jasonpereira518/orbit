@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { backfillContactAvatars } from "@/actions/contacts";
+import type { AvatarBackfillResult } from "@/actions/contacts";
 import {
   dismissBackgroundJob,
   finishBackgroundJob,
@@ -41,6 +41,25 @@ function sleep(ms: number, signal: AbortSignal) {
     }, ms);
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/**
+ * One batch, through a route handler rather than the Server Action: actions run one at a time
+ * per tab, and a batch's external lookups used to hold every other action on the page for
+ * about a second. See `src/app/api/contacts/avatar-backfill/route.ts`.
+ */
+async function requestBackfillBatch(
+  skipIds: string[],
+  signal: AbortSignal
+): Promise<AvatarBackfillResult> {
+  const res = await fetch("/api/contacts/avatar-backfill", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ skipIds }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`Avatar backfill failed (${res.status})`);
+  return (await res.json()) as AvatarBackfillResult;
 }
 
 function notifyAvatarsUpdated(contactIds: string[]) {
@@ -94,9 +113,7 @@ export function AvatarBackfill() {
 
       while (!controller.signal.aborted) {
         try {
-          const result = await backfillContactAvatars({
-            skipIds: Array.from(unresolved),
-          });
+          const result = await requestBackfillBatch(Array.from(unresolved), controller.signal);
           if (controller.signal.aborted) return;
 
           if (!jobStarted) {
@@ -185,6 +202,8 @@ export function AvatarBackfill() {
 
           await sleep(BATCH_PAUSE_MS, controller.signal);
         } catch (err) {
+          // Unmounting aborts the in-flight fetch; that is not a failed batch.
+          if (controller.signal.aborted) return;
           idlePasses += 1;
           if (idlePasses >= MAX_IDLE_PASSES) {
             if (jobStarted) {

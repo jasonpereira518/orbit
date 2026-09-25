@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { ChatPanelSkeleton } from "@/components/loading/page-skeletons";
+import type { ThreadSummary } from "@/components/chat/chat-panel";
 
 const ChatPanel = dynamic(
   () =>
@@ -18,6 +19,11 @@ const ChatPanel = dynamic(
   }
 );
 
-export function ChatPanelLazy() {
-  return <ChatPanel />;
+export function ChatPanelLazy({
+  initialThreads = null,
+}: {
+  /** The history list read by the page; see `ChatPanel`. */
+  initialThreads?: ThreadSummary[] | null;
+}) {
+  return <ChatPanel initialThreads={initialThreads} />;
 }

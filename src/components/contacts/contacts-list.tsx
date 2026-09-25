@@ -51,6 +51,7 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import { LIST_INTENT_DELAY_MS, useIntentPrefetchHandlers } from "@/lib/intent-prefetch";
 import {
   markImportPersonSeen,
   useImportPeopleSeen,
@@ -606,6 +607,11 @@ const ContactRow = memo(function ContactRow({
     onOpen(c.id);
   }
 
+  // Rows are not <Link>s, so nothing prefetched the profile: every open started cold, behind
+  // a skeleton React holds for ≥300 ms. Resting on a row (or focusing it) fetches the whole
+  // profile, so the click usually renders straight from the router cache.
+  const intent = useIntentPrefetchHandlers(`/contacts/${c.id}`, LIST_INTENT_DELAY_MS);
+
   function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -621,7 +627,13 @@ const ContactRow = memo(function ContactRow({
       onKeyDown={onRowKeyDown}
       // Hover or keyboard focus counts as having seen them: the mark fades.
       onMouseEnter={seeMarked}
-      onFocus={seeMarked}
+      onPointerEnter={intent.onPointerEnter}
+      onPointerLeave={intent.onPointerLeave}
+      onTouchStart={intent.onTouchStart}
+      onFocus={() => {
+        seeMarked();
+        intent.onFocus();
+      }}
       data-new-from-import={marked ? "" : undefined}
       className={cn(
         // content-visibility skips layout/paint for offscreen

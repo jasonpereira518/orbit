@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { History, X } from "lucide-react";
@@ -1658,13 +1658,13 @@ function PersonReviewCard({
                 />
                 <span>
                   Update{" "}
-                  <Link
+                  <IntentLink
                     href={`/contacts/${d.id}`}
                     className="text-primary underline"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {d.fullName}
-                  </Link>
+                  </IntentLink>
                   {d.company ? ` (${d.company})` : ""}
                 </span>
               </label>
