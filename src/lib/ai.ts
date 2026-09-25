@@ -10,6 +10,7 @@ import {
   geminiClient,
   getAiAccessStatus,
   isOpenAiShaped,
+  openaiClient,
   openAiShapedClient,
   resolveAiAccess,
   runOnGrant,
@@ -876,8 +877,14 @@ export async function transcribeAudioWithAI(
     );
   }
 
-  if (isOpenAiShaped(grant.provider)) {
-    const client = openAiShapedClient(grant);
+  // Deliberately openai-only, not isOpenAiShaped: `withOpenRouterRouting` would need to
+  // wrap this params object for OpenRouter, but the SDK encodes transcription params as
+  // multipart form data, where a nested `provider: { data_collection: "deny" }` serialises
+  // as the string "[object Object]" rather than a real field — and "whisper-1" is not a
+  // valid OpenRouter model slug regardless. OpenRouter transcription is deliberately not
+  // wired up; `access.transcription()` never grants it, so this stays openai/gemini only.
+  if (grant.provider === "openai") {
+    const client = openaiClient(grant);
     const bytes = Buffer.from(input.base64, "base64");
     const file = new File(
       [bytes],
@@ -888,7 +895,7 @@ export async function transcribeAudioWithAI(
       {
         userId,
         operation,
-        provider: grant.provider,
+        provider: "openai",
         model: "whisper-1",
         kind: "transcription",
         keyOwner: grant.keyOwner,
@@ -903,13 +910,13 @@ export async function transcribeAudioWithAI(
         );
         const prompt = [names, context].filter(Boolean).join(" ");
         const result = await client.audio.transcriptions.create(
-          withOpenRouterRouting(grant.provider, {
+          {
             file,
             model: "whisper-1",
             // Whisper's decoding prior. Omitted rather than sent empty: a blank prompt is
             // not the same request as no prompt.
             ...(prompt ? { prompt } : {}),
-          }),
+          },
           // Longer than a completion's deadline: a six-minute voice note is a legitimate
           // upload, and it has to be transcribed, not just answered.
           { signal: aiSignal(TRANSCRIBE_TIMEOUT_MS) },

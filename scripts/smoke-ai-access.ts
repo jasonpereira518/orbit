@@ -193,9 +193,13 @@ function sourceGuard() {
   const transportImport = /^\s*import\s+(?!type\b)[^;]*?from\s+["'](?:@\/lib|\.\.?(?:\/[\w.-]+)*)\/typesafe-api["']|import\(\s*["'][^"']*typesafe-api["']\s*\)/m;
   const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|TYPESAFE_API_KEY|OPENROUTER_API_KEY)\b/;
   // OpenRouter's own bare host, unlike the other three, is also where a person's browser
-  // legitimately links out to top up credits (errors.ts's quota copy) — so this only
-  // catches the API path, the shape an actual request would use.
-  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|openrouter\.ai\/api/;
+  // legitimately links out — the credits page (errors.ts's quota copy, verified by curl to
+  // be /settings/credits — /credits itself 308s there) and the authorize URL (Task 5).
+  // Excluding only those two paths, rather than requiring "/api", keeps the bare-host
+  // literal itself tripping the guard everywhere else — including a split host/path form
+  // (`const H = "https://openrouter.ai"; fetch(\`${H}/api/v1/...\`)`) that a "must contain
+  // /api" pattern would miss, since the literal alone carries no path.
+  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|openrouter\.ai(?!\/(settings\/credits|auth)\b)/;
 
   const offenders: string[] = [];
   for (const file of [...walk("src"), ...walk("scripts")]) {
@@ -220,7 +224,12 @@ function sourceGuard() {
   check("the env rule catches TYPESAFE_API_KEY", envKey.test("process.env.TYPESAFE_API_KEY"));
   check("the host rule catches TypeSafe's host", providerHost.test("https://api.typesafe.ai/v1/systemone"));
   check("…and OpenRouter's API path", providerHost.test("https://openrouter.ai/api/v1/chat/completions"));
-  check("…but not a plain link to OpenRouter's credits page", !providerHost.test("https://openrouter.ai/credits"));
+  check(
+    "…and a split host/path form of the same call",
+    providerHost.test('const H = "https://openrouter.ai"; fetch(`${H}/api/v1/chat/completions`)')
+  );
+  check("…but not a plain link to OpenRouter's credits page", !providerHost.test("https://openrouter.ai/settings/credits"));
+  check("…nor the OAuth authorize URL (Task 5)", !providerHost.test("https://openrouter.ai/auth"));
   const ai = readFileSync("src/lib/ai.ts", "utf8");
   check("ai.ts imports the SDKs for types only", !valueImport.test(ai) && /import type OpenAI/.test(ai));
   check("every ai.ts provider path starts at resolveAiAccess", (ai.match(/resolveAiAccess\(/g) ?? []).length >= 6);

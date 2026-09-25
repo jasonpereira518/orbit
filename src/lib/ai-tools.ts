@@ -27,9 +27,11 @@ import type { Content, FunctionDeclaration } from "@google/genai";
 import {
   anthropicClient,
   geminiClient,
-  openaiClient,
+  isOpenAiShaped,
+  openAiShapedClient,
   resolveAiAccess,
   runOnGrant,
+  withOpenRouterRouting,
 } from "@/lib/ai-access";
 import { geminiThinking, translatingProviderErrors } from "@/lib/ai";
 import { modelForOperation } from "@/lib/ai-models";
@@ -166,8 +168,8 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     };
   }
 
-  if (provider === "openai") {
-    const client = openaiClient(grant);
+  if (isOpenAiShaped(provider)) {
+    const client = openAiShapedClient(grant);
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = input.tools.map((t) => ({
       type: "function",
       function: { name: t.name, description: t.description, parameters: toolParameters(t.inputSchema) },
@@ -180,7 +182,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
       async step(signal) {
         const response = await metered(signal, async (report) => {
           const r = await client.chat.completions.create(
-            {
+            withOpenRouterRouting(provider, {
               model,
               ...openaiCompletionOptions(model, {
                 temperature,
@@ -189,7 +191,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
               }),
               tools,
               messages,
-            },
+            }),
             { signal }
           );
           report(tokensFromOpenAi(r));

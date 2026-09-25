@@ -182,7 +182,7 @@ const AI_FAILURE_COPY = {
   // `classifyAiError` keys on.
   quota: (p: string) =>
     p === "OpenRouter"
-      ? "OpenRouter says your account is out of credit — add more at https://openrouter.ai/credits, then try again"
+      ? "OpenRouter says your account is out of credit — add more at https://openrouter.ai/settings/credits, then try again"
       : `${p} says your account is out of credit — top up with them, then try again`,
   timeout: (p: string) => `${p} timed out — try again, or ask something shorter`,
   model_unavailable: (p: string) =>
@@ -247,8 +247,14 @@ const QUOTA_EXHAUSTED =
 /**
  * OpenRouter answers 402 for an exhausted balance, worded nothing like the other three
  * providers' quota errors — none of them says "402" or "payment required".
+ *
+ * The bare `\b402\b` this started as also matched a completely unrelated "402" — e.g.
+ * `max_tokens: 402 is too large`, a parameter-validation error whose only fault is that
+ * 402 happens to be a token count — and told the person their OpenRouter credit ran out.
+ * The `(?!\s+(?:is|was)\b)` excludes that shape: a real status-code 402 is never
+ * immediately followed by "is"/"was" the way a quoted numeric value is.
  */
-const OPENROUTER_PAYMENT_REQUIRED = /\b402\b|insufficient (credits|balance)|payment required/i;
+const OPENROUTER_PAYMENT_REQUIRED = /\b402\b(?!\s+(?:is|was)\b)|insufficient (credits|balance)|payment required/i;
 
 export function isQuotaExhaustion(text: string): boolean {
   if (QUOTA_DAILY.test(text) && /quota|resource.?exhausted|429/i.test(text)) return true;
@@ -263,9 +269,9 @@ export function aiProviderErrorMessage(err: unknown, provider: string): string {
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) {
     return AI_FAILURE_COPY.auth(provider);
   }
-  // Before auth and rate limit: an empty balance can arrive as a 429 (OpenAI), a 400
-  // (Anthropic) or a 402 (OpenRouter), and either earlier branch would send the person to
-  // the wrong fix.
+  // After auth, but before rate limit: an empty balance can arrive as a 429 (OpenAI), a
+  // 400 (Anthropic) or a 402 (OpenRouter), and the rate-limit branch below would send the
+  // person to the wrong fix.
   if (OPENROUTER_PAYMENT_REQUIRED.test(base) || isQuotaExhaustion(base)) {
     return AI_FAILURE_COPY.quota(provider);
   }
