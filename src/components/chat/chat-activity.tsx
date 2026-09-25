@@ -86,7 +86,11 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
               exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -3 }}
               transition={{ duration: DUR.fast, ease: EASE_HOUSE }}
             >
-              {label}
+              {/* Shimmer on the stage name only — the detail beside it is a fact, not
+                  the "still working" signal. `data-text` must mirror the label. */}
+              <span className="t-shimmer max-w-full truncate align-bottom" data-text={label}>
+                {label}
+              </span>
               {current?.detail ? (
                 <span className="text-muted-foreground/70"> · {current.detail}</span>
               ) : null}
