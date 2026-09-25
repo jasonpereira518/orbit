@@ -34,7 +34,7 @@ import { seedDemoWorkspace } from "../src/lib/demo-data/seed";
 import { DEMO_WORKSPACE_EMAILS, isDemoWorkspaceEmail } from "../src/lib/demo-workspace";
 import { markStealthCleared } from "../src/lib/site-access";
 import { purgeUserData } from "../src/lib/user-data";
-import { findUsersByEmail } from "../src/lib/user-settings";
+import { findUsersByEmail, setUserEmail } from "../src/lib/user-settings";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(`--${name}`);
@@ -67,11 +67,19 @@ if (REMOTE && !flag("confirm")) {
 }
 
 async function main() {
-  const matches = await findUsersByEmail(EMAIL!);
+  let matches = await findUsersByEmail(EMAIL!);
+  if (matches.length === 0) {
+    // `user_settings.email` is mirrored by the Clerk webhook and can be empty on an account
+    // that exists. With the Clerk key, ask Clerk for the id and backfill the mirror.
+    const recovered = await recoverFromClerk(EMAIL!);
+    if (recovered) matches = await findUsersByEmail(EMAIL!);
+  }
   if (matches.length === 0) {
     console.error(
       `No account with the email ${EMAIL} in this database.\n` +
-        "Sign up with it on the site first (while stealth is on, invite it from /admin/access), then re-run."
+        "Sign up with it on the site first (while stealth is on, invite it from /admin/access), then re-run.\n" +
+        "If you already have: pass the Clerk secret key of the same environment (CLERK_SECRET_KEY=sk_live_…)\n" +
+        "so the account can be found through Clerk, and check DATABASE_URL is that environment's database."
     );
     process.exit(1);
   }
@@ -117,6 +125,34 @@ async function main() {
 
   // PGlite and the Neon driver both keep the event loop alive — exit explicitly.
   process.exit(0);
+}
+
+/**
+ * Finds the Clerk user behind `email` and, when this database has an account for it, fills in
+ * its missing email mirror. Returns whether the mirror was written.
+ */
+async function recoverFromClerk(email: string): Promise<boolean> {
+  const secretKey = process.env.CLERK_SECRET_KEY?.trim();
+  if (!secretKey) return false;
+  const { createClerkClient } = await import("@clerk/backend");
+  const { data } = await createClerkClient({ secretKey }).users.getUserList({ emailAddress: [email] });
+  const user = data[0];
+  if (!user) {
+    console.error(`Clerk (${secretKey.slice(0, 8)}…) has no user with ${email} either.`);
+    return false;
+  }
+  const db = await getDb();
+  const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, user.id), columns: { userId: true } });
+  if (!row) {
+    console.error(
+      `Clerk has ${email} as ${user.id}, but this database has no account for that id — ` +
+        "DATABASE_URL is probably a different environment's database, or the account has never opened the app."
+    );
+    return false;
+  }
+  await setUserEmail(user.id, email);
+  console.log(`Found ${email} through Clerk (${user.id}) and filled in its missing email.`);
+  return true;
 }
 
 main().catch((e) => {
