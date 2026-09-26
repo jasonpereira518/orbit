@@ -4,11 +4,17 @@ import { useState, useSyncExternalStore } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { SettingsSection } from "@/components/settings/settings-section";
+import { ChatGptMark, ClaudeMark } from "@/components/settings/provider-marks";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { cn } from "@/lib/utils";
 
 type Assistant = "claude" | "chatgpt";
+
+const MARKS: Record<Assistant, (props: { className?: string }) => React.ReactElement> = {
+  claude: ClaudeMark,
+  chatgpt: ChatGptMark,
+};
 
 const ASSISTANTS: Record<
   Assistant,
@@ -53,6 +59,7 @@ export function AssistantsSettings() {
   // No subscription — the origin never changes — and null on the server, which has no window.
   const url = useSyncExternalStore(subscribeNever, getConnectorUrl, () => null);
   const chosen = ASSISTANTS[assistant];
+  const Mark = MARKS[assistant];
 
   async function copyLink() {
     if (!url) return;
@@ -93,6 +100,11 @@ export function AssistantsSettings() {
           </button>
         ))}
       </div>
+
+      <h4 className="flex items-center gap-2 text-sm font-medium text-ink">
+        <Mark className="size-4" />
+        {chosen.label}
+      </h4>
 
       <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
         {chosen.steps.map((step) => (
