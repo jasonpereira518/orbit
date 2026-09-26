@@ -10,6 +10,7 @@ import { SKIP_GATE_TUNING } from "@/lib/decisions/catalog";
 import { mapPool } from "@/lib/decisions/jev";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { reportUnlessQuiet } from "@/lib/report-error";
+import { fenceUntrusted } from "@/lib/ai-security";
 
 const threadEnrichSchema = z.object({
   summary: z.string(),
@@ -43,7 +44,7 @@ Rules:
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`;
 
 function enrichUserPrompt(contactName: string, transcript: string) {
-  return `Contact: ${contactName}\n\nLinkedIn messages (oldest → newest):\n${transcript}`;
+  return `Contact: ${contactName}\n\nLinkedIn messages (oldest → newest):\n${fenceUntrusted("MESSAGES", transcript)}`;
 }
 
 async function summarizeThread(userId: string, contactName: string, transcript: string) {

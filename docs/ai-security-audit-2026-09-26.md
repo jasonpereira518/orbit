@@ -60,6 +60,12 @@ Severity reflects impact if the model is fully compromised, which is the assumpt
 | 12 | Low | Chat and research system prompts have no anti-extraction or precedence rules | Fixed | `smoke-ai-guardrails` |
 | 13 | Low | No audit trail or alerting for suspicious AI behaviour | Fixed | `smoke-ops-alerts`, `-db` |
 | 14 | Low | AI-written outreach can be bulk-sent with an injected link | Fixed | `smoke-ai-guardrails` |
+| 15 | Med | Drive import accepted every parsed person and merge target with no reviewer | Fixed | `smoke-drive-import` |
+| 16 | Low-Med | The output guard ran only after the answer had streamed | Fixed | `smoke-ai-guardrails` |
+| 17 | Low-Med | MCP OAuth tokens got read+write whatever their scopes | Fixed in code; enforcement needs Clerk | `smoke-ai-guardrails` |
+| 18 | Low-Med | Extraction prompts' untrusted content was not fenced | Fixed | `smoke-ai-guardrails` + prompt suites |
+| 19 | Low | Recruiter rows written before #2 are not cleaned | Fixed (backfill script) | `smoke-ai-guardrails-db` |
+| 20 | Low | Transcription continuation context went into the prompt raw | Fixed | `smoke-dictation` |
 
 ### 1. MCP JSON-RPC batch bypasses the rate limit (High)
 
@@ -76,7 +82,7 @@ Severity reflects impact if the model is fully compromised, which is the assumpt
 - **Fix:**
   - Every field is passed through `cleanSingleLine` before it touches the shared row. That removes invisible and bidi characters, HTML and executable links, folds the value onto one line, and caps it at 120/120/60 characters, with at most 10 specialties.
   - The block is now nonce-fenced (`RECRUITERS_<nonce>`).
-- **Residual:** rows written before this branch are not rewritten. Fencing covers how they render. See Open item 7.
+- **Rows written before this branch:** cleaned by the backfill script in #19.
 
 ### 3. Unfenced blocks in the chat prompt (Medium)
 
@@ -119,7 +125,7 @@ Severity reflects impact if the model is fully compromised, which is the assumpt
   - Fence markers are stripped.
   - An answer that quotes a line of its system prompt is replaced with a refusal.
   - Findings record an `output_scrubbed` event.
-- **Limit:** the chat route streams deltas before the guard runs. The guard governs what is persisted and replayed, not the first view. See Open item 2.
+- **Live stream:** the stream is now scrubbed as it goes (#16). The system-prompt echo check still needs the whole answer, so it applies to the stored copy.
 
 ### 8. Tool enforcement lived only at the callers (Medium)
 
@@ -180,18 +186,64 @@ Severity reflects impact if the model is fully compromised, which is the assumpt
 
 ---
 
-## Open: recommended next
+### 15. Drive import accepted everything unattended (Medium)
 
-| # | Sev | Item | Recommended fix |
+- **Risk.** A Drive import has no review step. `acceptEveryone` accepted every person the model parsed, including anyone an instruction in the doc ("also add…") got it to invent. It also merged into whatever `suggestedMergeId` held, and that could be the decision engine's own sub-threshold pick, despite the code comment promising otherwise. A doc shared by someone else could therefore add people to the network or write into existing contacts.
+- **Fix:** `acceptUnattended` (`src/lib/drive-import-processor.ts`) makes the decisions a reviewer would have made:
+  - A person is accepted only if the doc actually names them (`nameGroundedInDoc`: at least one word of the name appears in the text).
+  - At most 30 people per doc are accepted.
+  - A merge happens only when the rule-based duplicate match itself reaches `DUPLICATE_MERGE_CONFIDENCE`. A model-picked target is created as a new contact, and the duplicate review flags the pair.
+  - Tags are cleaned to one line and capped at 5.
+  - Instruction-shaped docs record an `injection_signal` event.
+- **Tests:** mutation-tested. Accepting ungrounded names, or merging the model's pick, turns `smoke-drive-import` red.
+
+### 16. Streaming leak window (Low-Medium)
+
+- **Fix:** `createStreamRedactor` scrubs the live stream in `/api/chat`, not just the stored copy.
+  - Every pattern it removes is a run of non-whitespace, so text is emitted only up to the last whitespace. A token is complete by the time it can be seen.
+  - An unfinished PEM block, or a `<<<` opener, is held raw until it is complete. An earlier draft leaked a PEM body because a partial block was redacted early, and the test caught it.
+- **Tests:** they feed secrets one character per delta and assert no prefix of the key is ever emitted.
+- **Limit:** a system-prompt echo can still only be caught once the whole answer exists. The stored copy is replaced.
+
+### 17. MCP OAuth ignored token scopes (Low-Medium)
+
+- **Fix:** `oauthGrantFor` (`src/lib/mcp/oauth.ts`) maps the grant from the token's own scopes:
+  - `orbit:write` or `orbit:mcp` → read and write.
+  - `orbit:read` → read only.
+  - No Orbit scope → refused when `MCP_OAUTH_REQUIRE_SCOPES=1`, otherwise the legacy read+write grant.
+- The protected-resource metadata now publishes `scopes_supported: ["orbit:read", "orbit:write"]`.
+- **To finish, in order:**
+  1. Define `orbit:read` and `orbit:write` in the Clerk instance (OAuth applications → Scopes).
+  2. Confirm that new connections carry them.
+  3. Set `MCP_OAUTH_REQUIRE_SCOPES=1`.
+- Setting the flag before step 1 would disconnect every OAuth assistant.
+
+### 18. Extraction prompts' content fenced (Low-Medium)
+
+- **Fix:** `fenceUntrusted(label, text)` wraps the untrusted part of seven pipelines: capture parse (all four calls), contact brief, recruiter scan (Gmail and Outlook), DM enrichment, meeting digest, date extraction and the LinkedIn timeline.
+- **Why the nonce is a hash of the fenced text, not random:**
+  - Briefs skip regeneration on an unchanged input hash, capture's detail batches share a cached prefix, and the batch APIs dedupe identical requests. A random nonce would turn all of those into misses.
+  - A hash is stable for the same text, and no text can contain its own hash, so the closer still can't be forged.
+- The brief's `inputHash` stays on the unfenced input, so deploying this did not make every brief on file look stale.
+
+### 19. Recruiter backfill (Low)
+
+- `scripts/backfill-recruiter-clean.ts [--dry]` brings pre-#2 rows in line through `recruiterCleanPatch`. It uses the same `cleanRecruiterFields` the write path uses, so there is one definition of clean.
+- It is idempotent, never blanks a name, logs ids and lengths rather than the text, and refuses to run without a real `DATABASE_URL`.
+- **Run it once in production:** `--dry` first.
+
+### 20. Transcription context (Low)
+
+- The previous chunk's tail is now line-sanitized, stripped of quotes (so it can't close the quoted string early), and capped at 300 characters. The model is also told not to follow it.
+
+## Remaining
+
+| # | Sev | Item | Recommended next step |
 |---|---|---|---|
-| 1 | Low-Med | **MCP OAuth ignores token scopes.** Carried over from the platform audit. | Define an `orbit:mcp` scope in Clerk and map read/write from it. Needs a dashboard change. |
-| 2 | Low-Med | **Streaming leak window.** The output guard runs after the answer has streamed, so a secret or a link is visible for that one view. | Run the secret patterns over the splitter's buffered output with a one-token look-behind, or hold back streaming for an answer that contains `sk-`, `AIza` and similar prefixes. |
-| 3 | Med | **Drive import auto-accepts** model output (contacts, merges, reminders) with no review (`drive-import-processor.ts`, `acceptEveryone`). A shared doc someone else wrote can populate the network. | Route Drive items through the capture review queue, or auto-accept only items whose names appear verbatim in the doc and never auto-merge. |
-| 4 | Low-Med | **The extraction prompts' user content isn't nonce-fenced**, only covered by the global rule (#11). | Add a shared `fenceUntrusted(label, text)` helper to `ai-security.ts`, and adopt it per prompt, starting with contact brief and recruiter scan: their outputs persist and reach chat. Each adoption regenerates that prompt's goldens. |
-| 5 | Low | **The `aiSummary` second hop.** A brief or enrichment steered by one email persists and is re-read by chat. It is fenced in chat and zod-bounded at write. | Store a provenance flag on model-written summaries, and down-weight or mark them in the chat prompt. |
-| 6 | Low | **Transcription context.** The previous chunk's tail goes into Gemini's prompt raw (`ai.ts`, `transcribeAudioWithAI`). | Line-sanitize it, and cap it (it is already short). |
-| 7 | Low | **Recruiter rows from before this branch** aren't cleaned retroactively. | A one-off script that runs `cleanSingleLine` over `recruiters.full_name`, `firm` and `specialty`. |
-| 8 | Info | **The injection tripwire is regex-based.** | Review `ai.security` events weekly for false negatives and positives. Consider an offline classifier on sampled writes. Never make it blocking. |
+| 1 | Low | **Scope enforcement for MCP OAuth** is implemented but off until Clerk publishes `orbit:read`/`orbit:write` (see #17). | A dashboard change, then set `MCP_OAUTH_REQUIRE_SCOPES=1`. |
+| 2 | Low | **The `aiSummary` second hop.** A brief or enrichment steered by one email persists and is re-read by chat. It is now fenced at write time (#18) and in chat, and zod-bounded. | Store a provenance flag on model-written summaries and mark them in the chat prompt. This needs a schema change, so it was left out of this branch. |
+| 3 | Info | **The injection tripwire is regex-based.** | Review `ai.security` events weekly for false negatives and positives. Consider an offline classifier on sampled writes. Never make it blocking. |
+| 4 | Info | **Run the recruiter backfill** (#19) once against production. | `npx tsx scripts/backfill-recruiter-clean.ts --dry`, then without `--dry`. |
 
 ## Already done well (unchanged, verified)
 

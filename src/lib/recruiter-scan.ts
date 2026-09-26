@@ -3,6 +3,7 @@ import { parseAiJson } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import type { Decider } from "@/lib/decisions/jev";
 import { rulesOutRecruiter } from "@/lib/decisions/recruiter";
+import { fenceUntrusted } from "@/lib/ai-security";
 
 /**
  * Classification + summarization for one candidate sender found by the Gmail scan.
@@ -100,7 +101,7 @@ export function buildRecruiterUserPrompt(input: {
   return `Sender: ${input.senderName} <${input.senderEmail}>
 Firm guessed from the email domain: ${input.firmGuess || "unknown"}
 
-${renderMessages(input.messages)}`;
+${fenceUntrusted("EMAILS", renderMessages(input.messages))}`;
 }
 
 /** The model's answer as a verdict. Throws when it is not the shape it promised. */
