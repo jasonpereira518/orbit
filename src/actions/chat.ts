@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   chatMessages,
@@ -37,19 +37,76 @@ import { actionFailure } from "@/lib/action-failure";
 
 
 
-export async function listChatThreads() {
+/** How many threads the history list reads at a time. */
+const CHAT_THREAD_PAGE = 100;
+
+export type ChatThreadRow = {
+  id: string;
+  title: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/**
+ * One page of the history list, newest first. `nextCursor` is null on the last page;
+ * otherwise it is passed back as `before` to read the next (older) page.
+ */
+export type ChatThreadPage = {
+  threads: ChatThreadRow[];
+  nextCursor: string | null;
+};
+
+const THREAD_CURSOR_RE =
+  /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2}){0,2})?)\|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
+/**
+ * The history list: titled threads only, newest first, a page at a time.
+ *
+ * Untitled threads never reach the list. A thread row is created the moment a question is
+ * sent but only gets a title once an answer lands, so an untitled one is a chat that never
+ * produced anything — the rail already hid them (see `ChatHistoryRail`), after they had been
+ * read and shipped. The one exception the rail made, the thread you are in, is a thread the
+ * panel itself created or opened, so it is already in the panel's own list and stays there.
+ *
+ * Keyset-paged on `(updated_at, id)`: the cursor carries `updated_at` as Postgres's own text
+ * so it round-trips at full (microsecond) precision — a JavaScript Date would truncate it and
+ * skip threads updated in the same millisecond. One row past the page says whether there is
+ * another.
+ */
+export async function listChatThreads(before?: string | null): Promise<ChatThreadPage> {
   const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
-  return db.query.chatThreads.findMany({
-    where: eq(chatThreads.userId, userId),
-    orderBy: [desc(chatThreads.updatedAt)],
-    columns: {
-      id: true,
-      title: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+  let olderThan: SQL | undefined;
+  if (before) {
+    const match = THREAD_CURSOR_RE.exec(before);
+    if (!match) throw new Error("Invalid history cursor");
+    olderThan = sql`(${chatThreads.updatedAt}, ${chatThreads.id}) < (${match[1]}::timestamptz, ${match[2]}::uuid)`;
+  }
+  const rows = await db
+    .select({
+      id: chatThreads.id,
+      title: chatThreads.title,
+      createdAt: chatThreads.createdAt,
+      updatedAt: chatThreads.updatedAt,
+      cursorAt: sql<string>`${chatThreads.updatedAt}::text`,
+    })
+    .from(chatThreads)
+    .where(
+      and(
+        eq(chatThreads.userId, userId),
+        isNotNull(chatThreads.title),
+        sql`btrim(${chatThreads.title}) <> ''`,
+        olderThan
+      )
+    )
+    .orderBy(desc(chatThreads.updatedAt), desc(chatThreads.id))
+    .limit(CHAT_THREAD_PAGE + 1);
+  const page = rows.slice(0, CHAT_THREAD_PAGE);
+  const last = page[page.length - 1];
+  return {
+    threads: page.map(({ cursorAt: _cursorAt, ...thread }) => thread),
+    nextCursor: rows.length > CHAT_THREAD_PAGE && last ? `${last.cursorAt}|${last.id}` : null,
+  };
 }
 
 export async function getChatThread(threadId: string) {
@@ -83,6 +140,13 @@ export async function getChatThread(threadId: string) {
   // claims an interaction row keyed `chat-send:<messageId>:<contactId>`, so that row IS the
   // record, and a reloaded card cannot offer to send again what the timeline says was sent.
   // Read alongside the versions — both depend only on the messages above.
+  //
+  // Only THIS thread's claims: the message id is the key's second `:` field, so the read is
+  // bounded by the thread's own answers rather than by an arbitrary cut. It used to take the
+  // first 500 of the account's claims in no particular order, which for a heavy sender could
+  // leave out the very claims this thread needed and offer a sent draft again.
+  // `interactions_user_chat_send_idx` (partial, `source = 'chat_send'`) narrows to the
+  // account's claims; the key predicate filters those. The regex below still decides.
   const messageIds = new Set(messages.filter((m) => m.role === "assistant").map((m) => m.id));
   const [versions, claims] = await Promise.all([
     lastAssistant?.slot ? loadVersions(db, userId, threadId, lastAssistant.slot) : [],
@@ -90,8 +154,13 @@ export async function getChatThread(threadId: string) {
       ? db
           .select({ externalId: interactions.externalId, at: interactions.interactionDate })
           .from(interactions)
-          .where(and(eq(interactions.userId, userId), eq(interactions.source, "chat_send")))
-          .limit(500)
+          .where(
+            and(
+              eq(interactions.userId, userId),
+              eq(interactions.source, "chat_send"),
+              inArray(sql`split_part(${interactions.externalId}, ':', 2)`, [...messageIds])
+            )
+          )
       : [],
   ]);
   const sent: Record<string, Record<string, string>> = {};

@@ -406,6 +406,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-profile-reads": "pglite",
   "smoke-batched-writes": "pglite",
   "smoke-grouped-sweep-writes": "pglite",
+  "smoke-bounded-reads": "pglite",
   "smoke-schema-upgrade": "pglite",
   "smoke-connector-connections": "pglite",
   "smoke-speech-quota": "pglite",

@@ -114,7 +114,6 @@ export default async function OutreachPage() {
                 tone: campaign.tone,
                 defaultChannel: campaign.defaultChannel,
                 status: campaign.status,
-                prospects: campaign.prospects,
                 updatedAt: campaign.updatedAt,
                 metrics: campaign.metrics,
               }}

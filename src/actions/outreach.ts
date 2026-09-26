@@ -27,6 +27,7 @@ import {
   computeChannelBreakdown,
   computeStepBreakdown,
 } from "@/lib/outreach-metrics";
+import { campaignMetricAggregates, metricsFromAggregates } from "@/lib/outreach-metrics-sql";
 import {
   generateOutreachDraft,
   generateOutreachDraftsBatch,
@@ -84,20 +85,32 @@ function enrichmentSummary(enrichment: unknown): string | null {
   return parts.length ? parts.join("; ").slice(0, 500) : null;
 }
 
-async function priorNotesForContact(contactId: string | null) {
+/**
+ * One interaction's contribution to a prior-notes string: the summary, else the raw notes.
+ *
+ * Cut to 500 characters in SQL because the joined string is cut to 500 afterwards, so no
+ * part can contribute more than that — and `raw_notes` on an imported email can be many KB.
+ * `left()` counts code points and `.slice()` UTF-16 units; a 500-code-point prefix is at
+ * least 500 units long, so the final `.slice(0, 500)` is unchanged. `nullif(…, '')` is the
+ * `||` fallback: an empty summary falls through to the raw notes, as it did in JavaScript.
+ */
+const priorNoteSql = sql<string | null>`left(coalesce(nullif(${interactions.aiSummary}, ''), ${interactions.rawNotes}), 500)`;
+
+function joinPriorNotes(notes: (string | null)[]) {
+  return notes.filter(Boolean).join(" | ").slice(0, 500);
+}
+
+async function priorNotesForContact(userId: string, contactId: string | null) {
   if (!contactId) return null;
   const db = await getDb();
-  const rows = await db.query.interactions.findMany({
-    where: eq(interactions.contactId, contactId),
-    orderBy: [desc(interactions.interactionDate)],
-    limit: 3,
-  });
+  const rows = await db
+    .select({ note: priorNoteSql })
+    .from(interactions)
+    .where(and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)))
+    .orderBy(desc(interactions.interactionDate))
+    .limit(3);
   if (!rows.length) return null;
-  return rows
-    .map((row) => row.aiSummary || row.rawNotes)
-    .filter(Boolean)
-    .join(" | ")
-    .slice(0, 500);
+  return joinPriorNotes(rows.map((row) => row.note));
 }
 
 /**
@@ -105,64 +118,69 @@ async function priorNotesForContact(contactId: string | null) {
  * list — one `interactions` query instead of one per prospect. Returns a map whose
  * values match `priorNotesForContact`'s per-contact string shape exactly (a contact
  * with no interaction rows simply has no entry, so callers fall back with `?? null`).
+ *
+ * The three newest per contact are chosen in SQL (`row_number()` over each contact, newest
+ * first — the order the single-contact read uses), so only those rows, and only the one
+ * column the string is built from, come back. It used to read every interaction of every
+ * prospect's contact, whole rows, and keep three each in JavaScript. Scoped to the caller's
+ * account like the single-contact read.
  */
-async function priorNotesForContacts(contactIds: string[]) {
+async function priorNotesForContacts(userId: string, contactIds: string[]) {
   const byContact = new Map<string, string>();
   if (!contactIds.length) return byContact;
   const db = await getDb();
-  const rows = await db.query.interactions.findMany({
-    where: inArray(interactions.contactId, contactIds),
-    orderBy: [desc(interactions.interactionDate)],
-  });
-  const grouped = new Map<string, typeof rows>();
+  const ranked = db
+    .select({
+      contactId: interactions.contactId,
+      note: priorNoteSql.as("note"),
+      rn: sql<number>`row_number() over (
+        partition by ${interactions.contactId}
+        order by ${interactions.interactionDate} desc
+      )`.as("rn"),
+    })
+    .from(interactions)
+    .where(and(eq(interactions.userId, userId), inArray(interactions.contactId, contactIds)))
+    .as("ranked");
+  const rows = await db
+    .select({ contactId: ranked.contactId, note: ranked.note })
+    .from(ranked)
+    .where(sql`${ranked.rn} <= 3`)
+    .orderBy(ranked.contactId, ranked.rn);
+  const grouped = new Map<string, (string | null)[]>();
   for (const row of rows) {
     const list = grouped.get(row.contactId) ?? [];
-    if (list.length < 3) list.push(row);
+    list.push(row.note);
     grouped.set(row.contactId, list);
   }
-  for (const [contactId, list] of grouped) {
-    byContact.set(
-      contactId,
-      list
-        .map((row) => row.aiSummary || row.rawNotes)
-        .filter(Boolean)
-        .join(" | ")
-        .slice(0, 500)
-    );
+  for (const [contactId, notes] of grouped) {
+    byContact.set(contactId, joinPriorNotes(notes));
   }
   return byContact;
 }
 
+/**
+ * Every campaign row, with its metrics counted in SQL (`campaignMetricAggregates`) — one row
+ * a campaign. The list only ever used the prospect/message tree it used to load to count it:
+ * the card shows `metrics.prospectCount` for the prospects it used to `.length`.
+ */
 export async function listCampaigns() {
   const userId = await requireUserId();
   const db = await getDb();
-  const campaigns = await db.query.outreachCampaigns.findMany({
-    where: eq(outreachCampaigns.userId, userId),
-    orderBy: [desc(outreachCampaigns.updatedAt)],
-    with: {
-      prospects: {
-        columns: { id: true, status: true },
-        with: {
-          messages: {
-            columns: {
-              id: true,
-              status: true,
-              outcome: true,
-              stepIndex: true,
-              channel: true,
-              sentAt: true,
-              scheduledFor: true,
-              repliedAt: true,
-            },
-          },
-        },
-      },
-    },
-  });
+  const rows = await db
+    .select({
+      campaign: outreachCampaigns,
+      counts: campaignMetricAggregates(new Date()),
+    })
+    .from(outreachCampaigns)
+    .leftJoin(outreachProspects, eq(outreachProspects.campaignId, outreachCampaigns.id))
+    .leftJoin(outreachMessages, eq(outreachMessages.prospectId, outreachProspects.id))
+    .where(eq(outreachCampaigns.userId, userId))
+    .groupBy(outreachCampaigns.id)
+    .orderBy(desc(outreachCampaigns.updatedAt), desc(outreachCampaigns.id));
 
-  return campaigns.map((campaign) => ({
+  return rows.map(({ campaign, counts }) => ({
     ...campaign,
-    metrics: computeCampaignMetrics(campaign.prospects),
+    metrics: metricsFromAggregates(counts),
   }));
 }
 
@@ -200,40 +218,26 @@ export async function getOutreachPerformanceSummary() {
   const userId = await requireUserId();
   const db = await getDb();
 
-  // Slim projection — metrics only, no full message bodies / prospect trees.
-  const campaigns = await db.query.outreachCampaigns.findMany({
-    where: eq(outreachCampaigns.userId, userId),
-    columns: {
-      id: true,
-      name: true,
-      status: true,
-      defaultChannel: true,
-      updatedAt: true,
-    },
-    with: {
-      prospects: {
-        columns: { id: true, status: true },
-        with: {
-          messages: {
-            columns: {
-              id: true,
-              status: true,
-              outcome: true,
-              stepIndex: true,
-              channel: true,
-              sentAt: true,
-              scheduledFor: true,
-              repliedAt: true,
-            },
-          },
-        },
-      },
-    },
-  });
+  // One row of counts a campaign, aggregated in SQL — it used to load every prospect and
+  // message of every campaign to count them here. Same order as the outreach list.
+  const campaigns = await db
+    .select({
+      id: outreachCampaigns.id,
+      name: outreachCampaigns.name,
+      status: outreachCampaigns.status,
+      defaultChannel: outreachCampaigns.defaultChannel,
+      counts: campaignMetricAggregates(new Date()),
+    })
+    .from(outreachCampaigns)
+    .leftJoin(outreachProspects, eq(outreachProspects.campaignId, outreachCampaigns.id))
+    .leftJoin(outreachMessages, eq(outreachMessages.prospectId, outreachProspects.id))
+    .where(eq(outreachCampaigns.userId, userId))
+    .groupBy(outreachCampaigns.id)
+    .orderBy(desc(outreachCampaigns.updatedAt), desc(outreachCampaigns.id));
 
-  const withMetrics = campaigns.map((campaign) => ({
+  const withMetrics = campaigns.map(({ counts, ...campaign }) => ({
     ...campaign,
-    metrics: computeCampaignMetrics(campaign.prospects),
+    metrics: metricsFromAggregates(counts),
   }));
 
   const ranked = [...withMetrics]
@@ -694,6 +698,7 @@ export async function generateOutreachDrafts(input: {
   }
 
   const priorNotesByContact = await priorNotesForContacts(
+    userId,
     targetProspects
       .map((p) => p.contactId)
       .filter((id): id is string => Boolean(id))
@@ -790,7 +795,7 @@ export async function regenerateOutreachDraft(input: {
       company: prospect.company,
       location: prospect.location,
       enrichmentSummary: enrichmentSummary(prospect.enrichment),
-      priorNotes: await priorNotesForContact(prospect.contactId),
+      priorNotes: await priorNotesForContact(userId, prospect.contactId),
     },
     stepIndex,
     previousBody: previous?.body,
@@ -1116,7 +1121,7 @@ export async function generateDueFollowUps(campaignId: string) {
           .from(outreachMessages)
           .where(inArray(outreachMessages.id, parentIds))
       : [],
-    priorNotesForContacts([
+    priorNotesForContacts(userId, [
       ...new Set(
         dueForCampaign
           .map((m) => m.prospect.contactId)
