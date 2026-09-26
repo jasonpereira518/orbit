@@ -665,6 +665,29 @@ async function loadRecentContacts(userId: string) {
   });
 }
 
+/**
+ * The dashboard's pending reminders: everything pending except a GENERATED reminder whose
+ * contact is already due for a follow-up (the follow-up card shows that person; listing the
+ * reminder too would name them twice). The same rule the dashboard used to apply in JS over
+ * every pending row, so the list and the count now come from SQL, bounded.
+ */
+function dashboardReminderFilter(userId: string, now: Date) {
+  return and(
+    eq(reminders.userId, userId),
+    eq(reminders.status, "pending"),
+    sql`not (
+      ${reminders.reminderType} = 'generated'
+      and ${reminders.contactId} is not null
+      and exists (
+        select 1 from contacts c
+         where c.id = ${reminders.contactId}
+           and c.user_id = ${userId}
+           and c.next_follow_up_at <= ${now}
+      )
+    )`
+  );
+}
+
 export async function getDashboardData(
   userId: string,
   // userName may be a promise so the Clerk profile fetch can run concurrently
@@ -732,9 +755,11 @@ export async function getDashboardData(
     })
   );
 
+  const now = new Date();
   const [
     scannedRows,
     pendingReminders,
+    pendingReminderCount,
     suggestions,
     goals,
     closenessCohort,
@@ -744,13 +769,18 @@ export async function getDashboardData(
     goalAlignedIds,
   ] = await Promise.all([
     contactRowsPromise,
+    // The card's twenty, and the stat's count, straight from SQL. Every pending reminder used
+    // to be read and filtered here, and generated follow-up reminders grow with the network.
     db.query.reminders.findMany({
-      where: and(
-        eq(reminders.userId, userId),
-        eq(reminders.status, "pending")
-      ),
+      where: dashboardReminderFilter(userId, now),
       orderBy: (r, { asc }) => [asc(r.dueDate)],
+      limit: REMINDER_CAP,
     }),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(reminders)
+      .where(dashboardReminderFilter(userId, now))
+      .then((rows) => rows[0]?.n ?? 0),
     db.query.aiSuggestions.findMany({
       where: and(
         eq(aiSuggestions.userId, userId),
@@ -857,7 +887,6 @@ export async function getDashboardData(
       : previewVisibleContacts
   ).map((c) => c.id);
 
-  const now = new Date();
   const dueFollowUpIds = new Set(
     lightContacts
       .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
@@ -875,11 +904,9 @@ export async function getDashboardData(
   // that the contacts hydrated are exactly the contacts rendered. Filtering afterwards
   // would hydrate the first twenty pending reminders and then render a different twenty,
   // leaving the card unable to name its own subjects.
-  const filteredReminders = pendingReminders.filter((r) => {
-    if (r.reminderType !== "generated") return true;
-    if (!r.contactId) return true;
-    return !dueFollowUpIds.has(r.contactId);
-  });
+  // Already filtered and capped in SQL (`dashboardReminderFilter`): a generated reminder
+  // whose contact is due for a follow-up is left to the follow-up card.
+  const filteredReminders = pendingReminders;
 
   // Belt and braces against a cross-instance rebuild race writing the same suggestion
   // twice (see refreshOutreachSuggestions): one row per contact and type, whatever the
@@ -907,7 +934,7 @@ export async function getDashboardData(
   // Bounded: at most REMINDER_CAP + SUGGESTION_CAP contacts, and exactly the ones the two
   // cards will name through `contactMeta`.
   const referencedIds = [
-    ...filteredReminders.slice(0, REMINDER_CAP).map((r) => r.contactId),
+    ...filteredReminders.map((r) => r.contactId),
     ...filteredSuggestions.slice(0, SUGGESTION_CAP).map((s) => s.relatedContactIds?.[0]),
   ].filter((id): id is string => Boolean(id));
 
@@ -1107,12 +1134,12 @@ export async function getDashboardData(
       // the card answer different questions and the card only ever showed twelve.
       dueFollowUps: counts.dueFollowUpCount,
       strongConnections: strongTies,
-      pendingReminders: filteredReminders.length,
+      pendingReminders: pendingReminderCount,
       topCompany: null as { name: string; count: number } | null,
     },
     recentContacts,
     dueFollowUps,
-    reminders: filteredReminders.slice(0, REMINDER_CAP),
+    reminders: filteredReminders,
     suggestions: filteredSuggestions.slice(0, SUGGESTION_CAP),
     totalSuggestions: filteredSuggestions.length,
     goals,
