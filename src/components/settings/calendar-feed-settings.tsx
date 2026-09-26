@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/components/settings/settings-section";
+import { Disclosure } from "@/components/settings/disclosure";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
@@ -150,41 +151,51 @@ export function CalendarFeedSettings() {
         <div className="space-y-4">
           {status.url ? (
             <div className="space-y-2">
-              <p className="text-sm font-medium">Copy this link now — Orbit won’t show it again.</p>
-              <Input
-                readOnly
-                value={revealed ? status.url : maskUrl(status.url)}
-                onFocus={(e) => e.currentTarget.select()}
-                className="font-mono text-xs"
-                aria-label="Calendar feed URL"
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => setRevealed((v) => !v)}>
-                  {revealed ? "Hide" : "Reveal"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(status.url!);
-                    toast.success(TOAST_COPY.copied);
-                  }}
+              <p className="text-sm text-muted-foreground">
+                These open your calendar app’s add-calendar screen — finish subscribing there.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={status.webcalUrl!}
+                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
                 >
-                  Copy link
-                </Button>
-                <a href={status.webcalUrl!} className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent">
-                  Add to Apple Calendar
+                  Open in Apple Calendar
                 </a>
-                <a href={status.googleAddUrl!} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent">
-                  Add to Google Calendar
+                <a
+                  href={status.googleAddUrl!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
+                >
+                  Open in Google Calendar
                 </a>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Outlook:{" "}
+                <a
+                  href={status.outlookOfficeAddUrl!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  work
+                </a>{" "}
+                ·{" "}
+                <a
+                  href={status.outlookLiveAddUrl!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  personal
+                </a>
+              </p>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Your calendar feed is on. Orbit keeps only a fingerprint of its link, so it can’t
-              show the link again. To add it to another device, regenerate it below — the old
-              link stops working.
+              Your reminders are already in your calendar. Orbit keeps only a fingerprint of
+              the link, so it can’t show it again — regenerating below replaces the current
+              link, and the existing subscription stops updating.
             </p>
           )}
 
@@ -218,43 +229,76 @@ export function CalendarFeedSettings() {
             <li>Only reminders with a due date appear in your calendar.</li>
           </ul>
 
-          <div className="flex flex-wrap gap-2">
-            {confirmingRegen ? (
-              <>
+          <Disclosure label="Advanced">
+            {status.url && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Copy this link now — Orbit won’t show it again.</p>
+                <Input
+                  readOnly
+                  value={revealed ? status.url : maskUrl(status.url)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="font-mono text-xs"
+                  aria-label="Calendar feed URL"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setRevealed((v) => !v)}>
+                    {revealed ? "Hide" : "Reveal"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(status.url!);
+                      toast.success(TOAST_COPY.copied);
+                    }}
+                  >
+                    Copy link
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              {confirmingRegen ? (
+                <>
+                  <Button
+                    ref={regenFocus.confirmRef("regen")}
+                    size="sm"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() =>
+                      run("New link created", regenerateCalendarFeedToken)
+                    }
+                  >
+                    Yes, replace the link
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setConfirmingRegen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <p role="status" className="w-full text-xs text-muted-foreground">
+                    Your old link stops working immediately. You&apos;ll need to
+                    re-subscribe on every device.
+                  </p>
+                </>
+              ) : (
                 <Button
-                  ref={regenFocus.confirmRef("regen")}
+                  ref={regenFocus.triggerRef("regen")}
                   size="sm"
                   variant="outline"
                   disabled={pending}
-                  onClick={() =>
-                    run("New link created", regenerateCalendarFeedToken)
-                  }
+                  onClick={() => setConfirmingRegen(true)}
                 >
-                  Yes, replace the link
+                  Regenerate link
                 </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setConfirmingRegen(false)}
-                >
-                  Cancel
-                </Button>
-                <p role="status" className="w-full text-xs text-muted-foreground">
-                  Your old link stops working immediately. You&apos;ll need to
-                  re-subscribe on every device.
-                </p>
-              </>
-            ) : (
-              <Button
-                ref={regenFocus.triggerRef("regen")}
-                size="sm"
-                variant="outline"
-                disabled={pending}
-                onClick={() => setConfirmingRegen(true)}
-              >
-                Regenerate link
-              </Button>
-            )}
+              )}
+            </div>
+          </Disclosure>
+
+          <div>
             <Button
               size="sm"
               variant="ghost"
