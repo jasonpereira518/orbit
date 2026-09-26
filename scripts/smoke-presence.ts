@@ -121,6 +121,12 @@ async function main() {
     "a heartbeat does not touch updated_at",
     rebeaten.updatedAt.getTime() === beforeUpdatedAt
   );
+  // Every open tab beats on its own clock. A second beat inside the dedupe gap must write
+  // nothing, or four tabs mean four row versions of the wide settings row per beat window.
+  check(
+    "a second beat inside the dedupe gap writes nothing",
+    rebeaten.lastActiveAt?.getTime() === beaten.lastActiveAt?.getTime()
+  );
 
   /* -------------------------------------------------- the request-path writer stands down */
 

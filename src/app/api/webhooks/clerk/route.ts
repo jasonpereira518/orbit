@@ -1,6 +1,7 @@
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
-import type { NextRequest } from "next/server";
+import { after, type NextRequest } from "next/server";
 import { purgeUserData } from "@/lib/user-data";
+import { reportError } from "@/lib/report-error";
 import {
   ensureUserSettings,
   recordTermsAcceptance,
@@ -118,7 +119,23 @@ export async function POST(req: NextRequest) {
         // `keepSettings: false` deletes the settings row too — email, name, avatar, every
         // encrypted provider key and the Stripe customer id. The Settings "Delete data" path
         // keeps that row on purpose (its person is still signed in); this one must not.
-        await purgeUserData(userId, { keepSettings: false });
+        //
+        // Acknowledged first, purged after the response. A large account's purge can outlast
+        // the webhook sender's timeout, which then retried it while the first was still
+        // running. `purgeUserData` records its run before deleting anything, so an invocation
+        // that dies mid-purge is finished by `resumeStrandedPurges` (hourly), and a delete
+        // event that never arrives at all is caught by the orphaned-account sweep.
+        const purge = () =>
+          purgeUserData(userId, { keepSettings: false })
+            .then(() => undefined)
+            .catch((err) => reportError(err, { where: "webhook.clerk.user-deleted.purge", userId }));
+        // `after()` throws outside a request scope (a script calling this handler directly),
+        // and there the purge simply runs inline: there is no sender waiting on the reply.
+        try {
+          after(purge);
+        } catch {
+          await purge();
+        }
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };

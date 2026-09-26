@@ -30,10 +30,12 @@ import { PRESENCE_WINDOW_MS } from "@/lib/presence-window";
 /**
  * Record a beat.
  *
- * Unconditional, with no staleness check — unlike `touchLastActive`, which reads the row
- * anyway and so gets its throttle for free. Here a SELECT-then-maybe-UPDATE would cost more
- * than the UPDATE it is trying to avoid, and the client's interval is already the rate
- * limit. `user_id` is uniquely indexed, so this is a single-row primary-key write.
+ * One statement, no SELECT first: the staleness check is IN the UPDATE's WHERE, so a beat
+ * that finds the stamp already fresh matches no row and writes nothing. That matters
+ * because every open tab beats on its own 45s clock: someone with four tabs open wrote the
+ * wide `user_settings` row four times a beat window, each a new row version touching the
+ * `last_active_at` index. Now it is at most once per `HEARTBEAT_DEDUPE_MS`, which is still
+ * well inside `PRESENCE_WINDOW_MS`, so "active now" reads exactly as before.
  *
  * Deliberately does not touch `updated_at`: presence is not a settings change.
  */
@@ -42,8 +44,19 @@ export async function recordHeartbeat(userId: string): Promise<void> {
   await db
     .update(userSettings)
     .set({ lastActiveAt: new Date() })
-    .where(sql`${userSettings.userId} = ${userId}`);
+    .where(
+      sql`${userSettings.userId} = ${userId}
+          AND (${userSettings.lastActiveAt} IS NULL
+               OR ${userSettings.lastActiveAt} < now() - make_interval(secs => ${HEARTBEAT_DEDUPE_MS / 1000}))`
+    );
 }
+
+/**
+ * The shortest gap between two presence writes for one user. Less than one heartbeat, so a
+ * single tab still writes every beat, and less than half the presence window, so a live user
+ * can never read as gone.
+ */
+export const HEARTBEAT_DEDUPE_MS = 40 * 1000;
 
 /**
  * The set of user ids currently live.

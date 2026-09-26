@@ -1672,6 +1672,16 @@ export const imports = pgTable("imports", {
    * marked failed with a message rather than retried forever (see src/lib/import-stall.ts).
    */
   stallResumes: integer("stall_resumes").default(0).notNull(),
+  /**
+   * The runner currently working this job, and until when (v116). Taken by
+   * `runImportJobById` before any processor runs and released when it returns, so two
+   * invocations (a continuation and a manual retry, or a slow continuation and the stall
+   * backstop) can never claim the same rows at once. The row claim alone let them, and a
+   * row with no email or LinkedIn URL was then imported twice. Expires on its own, so a
+   * runner that died does not hold the job.
+   */
+  runnerToken: text("runner_token"),
+  runnerLeaseUntil: timestamp("runner_lease_until", { withTimezone: true }),
   stats: jsonb("stats").$type<ImportStats>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -3313,6 +3323,17 @@ export const rateLimitBuckets = pgTable("rate_limit_buckets", {
   bucket: text("bucket").primaryKey(),
   windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),
   count: integer("count").default(0).notNull(),
+});
+
+/**
+ * Who is running a keyed background job, and until when (v116). One row per key, e.g.
+ * `embedding-backfill:<userId>`. See `src/lib/job-lease.ts`: a lease is taken only when the
+ * row is absent or expired, so a job that died frees its key on its own.
+ */
+export const jobLeases = pgTable("job_leases", {
+  key: text("key").primaryKey(),
+  holder: text("holder").notNull(),
+  until: timestamp("until", { withTimezone: true }).notNull(),
 });
 
 /**

@@ -956,6 +956,11 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS job_leases (
+  key text PRIMARY KEY,
+  holder text NOT NULL,
+  until timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS job_feed_sources (
   id text PRIMARY KEY,
   label text NOT NULL,
@@ -2055,7 +2060,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // stamped 113 would have skipped this DDL. NOT 114: claude/integrations-ui-pass and
 // claude/settings-popup-redesign-0ed30d both claim it. Rescanned every remote ref, local
 // branch and worktree on Sep 26 2026: 114 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 115;
+//
+// 116 = scalability phase 5: imports.runner_token/runner_lease_until (one runner per import),
+// the job_leases table (one embedding backfill chain per user), and the age indexes the
+// retention sweep reads (gate_events, outbound deliveries by status, rate_limit_buckets).
+// Stacked on 115. Rescanned every remote ref, local branch and worktree on Sep 26 2026: 115
+// (this stack) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 116;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2530,6 +2541,20 @@ export const SCALE_DDL: string[] = [
      BEFORE INSERT OR UPDATE OF raw_notes, ai_summary, interaction_date, interaction_type, contact_id
      ON interactions FOR EACH ROW EXECUTE FUNCTION interactions_mark_memory_dirty()`,
   `CREATE INDEX IF NOT EXISTS interactions_memory_dirty_idx ON interactions(user_id) WHERE memory_dirty`,
+
+  // --- v116: one runner per import ------------------------------------------------------
+  //
+  // The runner holding an import, and until when. See imports.runnerToken in schema.ts.
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS runner_token text`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS runner_lease_until timestamptz`,
+
+  // --- v116: retention -------------------------------------------------------------------
+  //
+  // The hourly retention sweep (src/lib/retention.ts) finds each table's old rows by age.
+  // These three had no index on that age, so every batch would have scanned the table.
+  `CREATE INDEX IF NOT EXISTS gate_events_created_idx ON gate_events(created_at)`,
+  `CREATE INDEX IF NOT EXISTS outbound_deliveries_status_created_idx ON outbound_webhook_deliveries(status, created_at)`,
+  `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_idx ON rate_limit_buckets(window_started_at)`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */

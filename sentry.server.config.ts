@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { scrubSentryEvent } from "./src/lib/sentry-scrub";
+import { sampleServerTrace } from "./src/lib/sentry-sampling";
 
 /**
  * Server-side Sentry. Loaded from `src/instrumentation.ts` on the Node runtime.
@@ -14,8 +15,9 @@ Sentry.init({
   enabled: Boolean(process.env.SENTRY_DSN),
   environment: process.env.VERCEL_ENV ?? "development",
   release: process.env.VERCEL_GIT_COMMIT_SHA,
-  // Errors are the point; a light trace sample keeps the free tier's quota for them.
-  tracesSampleRate: 0.1,
+  // Errors are the point; a light trace sample keeps the free tier's quota for them. The
+  // always-on beats (presence, page-view beacons) are never traced: src/lib/sentry-sampling.ts.
+  tracesSampler: sampleServerTrace,
   sendDefaultPii: false,
   // Calendar, scan and MCP URLs carry their credential in the path (src/lib/sentry-scrub.ts).
   beforeSend: scrubSentryEvent,

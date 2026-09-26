@@ -62,6 +62,11 @@ run(async () => {
   for (let u = 0; unavatarCalls < pool; u++) await attempt(`budget-pool-${u}`);
   const late = await attempt("budget-latecomer");
   check(`the whole app stops at ${pool} a day`, unavatarCalls === pool && late.deferred, `${unavatarCalls} calls`);
+  // Known spent: the next user is refused from memory, without touching the one shared
+  // bucket row or spending their own daily slice.
+  const another = await attempt("budget-after-spent");
+  const ownBucket = await db.select().from(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "avatarSource.user:unavatar:budget-after-spent"));
+  check("once the app-wide Unavatar allowance is spent, a new user is refused without spending their own", another.deferred && ownBucket.length === 0, `${ownBucket.length} bucket rows`);
 
   const unbudgeted = await fetchLinkedInPhotoUrl("c-null", URL_, null);
   check("a null user (tests, scripts) is not budgeted", unbudgeted !== null);

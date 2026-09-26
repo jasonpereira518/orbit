@@ -2,7 +2,7 @@ import { recordBackfillFailure } from "@/lib/backfill-failures";
 import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { isInternalRequest } from "@/lib/internal-auth";
-import { kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { kickEmbeddingBackfill, runEmbeddingBackfillExclusive } from "@/lib/embedding-backfill";
 import { reportError } from "@/lib/report-error";
 
 export const maxDuration = 300;
@@ -27,7 +27,11 @@ export async function POST(request: Request) {
     // worth and then sits until the *daily* cron happens to notice, which is up to 24 hours
     // of a user's contacts being missing from semantic search.
     try {
-      const { embedded, passages, indexed, remaining } = await runEmbeddingBackfill(userId);
+      // Exclusive: another chain already working this user means this kick is redundant.
+      // That chain continues itself, so there is nothing to hand on.
+      const result = await runEmbeddingBackfillExclusive(userId);
+      if (!result) return;
+      const { embedded, passages, indexed, remaining } = result;
       // Gated on `embedded > 0`, not on `remaining > 0` alone. Every way this function can
       // return with work outstanding involves having done some — the provider-failure path
       // throws rather than returning, and both phases either make progress or exhaust their
