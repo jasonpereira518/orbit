@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
-import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
 import { dismissNoteReminder, undoNoteBatch } from "@/actions/note-batches";
@@ -55,7 +54,6 @@ export function NoteBatchResultView({
   reminderDetails: Record<string, NoteBatchReminderDetail>;
   contactNames: Record<string, string>;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [local, setLocal] = useState(reminderStatus);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -85,7 +83,6 @@ export function NoteBatchResultView({
           )
         );
         toast.success(`Undone: ${out.remindersDismissed} reminders dismissed`);
-        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.undoFailed));
       }
@@ -98,7 +95,6 @@ export function NoteBatchResultView({
       try {
         await deleteContact(contactId);
         toast.success("Contact deleted");
-        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.deleteFailed));
       }

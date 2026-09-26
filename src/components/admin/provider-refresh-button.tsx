@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { refreshProvidersAction } from "@/actions/admin";
 import { toast } from "@/lib/toast";
@@ -9,7 +8,6 @@ import { friendlyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
 export function ProviderRefreshButton() {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   return (
     <button
@@ -19,7 +17,6 @@ export function ProviderRefreshButton() {
         try {
           await refreshProvidersAction();
           toast.success("Provider checks refreshed");
-          router.refresh();
         } catch (error) {
           toast.error(friendlyError(error, "The provider checks couldn’t run — try again?"));
         }

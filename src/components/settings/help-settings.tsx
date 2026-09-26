@@ -28,7 +28,6 @@ export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) 
             startTour(async () => {
               const res = await resetOnboarding();
               router.replace(res.redirectTo);
-              router.refresh();
             })
           }
         >
@@ -42,7 +41,6 @@ export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) 
             startWizard(async () => {
               const res = await resetWizard();
               router.replace(res.redirectTo);
-              router.refresh();
             })
           }
         >

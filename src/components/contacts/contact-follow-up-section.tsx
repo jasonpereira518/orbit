@@ -218,7 +218,6 @@ export function ContactFollowUpSection({
           notes: draft.trim() || undefined,
         });
         toast.success("Follow-up marked sent");
-        router.refresh();
       } catch (err) {
         toast.error(
           friendlyError(err, "Couldn’t mark that follow-up sent — try again?")
@@ -287,7 +286,6 @@ export function ContactFollowUpSection({
                       startSchedule(async () => {
                         await clearContactFollowUp(contactId);
                         toast.success("Reminder cleared");
-                        router.refresh();
                       })
                   : undefined
               }
@@ -303,7 +301,6 @@ export function ContactFollowUpSection({
                   startSchedule(async () => {
                     await clearContactFollowUp(contactId);
                     toast.success("Reminder cleared");
-                    router.refresh();
                   })
                 }
               >

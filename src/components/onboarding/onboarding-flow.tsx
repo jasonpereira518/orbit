@@ -69,7 +69,6 @@ export function OnboardingFlow({
     start(async () => {
       const res = await skipOnboarding();
       router.replace(res.redirectTo);
-      router.refresh();
     });
   }, [router]);
 
@@ -82,7 +81,6 @@ export function OnboardingFlow({
     start(async () => {
       await completeOnboarding("/onboarding/wizard");
       router.push("/onboarding/wizard");
-      router.refresh();
     });
   }, [router]);
 

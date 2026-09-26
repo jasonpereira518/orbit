@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Globe2, Lock } from "lucide-react";
 import { setRecruiterSharing } from "@/actions/recruiters";
 import { toast } from "@/lib/toast";
@@ -24,7 +23,6 @@ import { friendlyError } from "@/lib/errors";
  * (`logRecruiter`, the Gmail scan).
  */
 export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
-  const router = useRouter();
   const [on, setOn] = useState(enabled);
   const [pending, start] = useTransition();
 
@@ -39,7 +37,6 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
             ? "Your recruiters are in the shared pool"
             : "Your recruiters are private again"
         );
-        router.refresh();
       } catch (err) {
         setOn(previous);
         toast.error(

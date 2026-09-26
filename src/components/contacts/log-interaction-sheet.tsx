@@ -252,7 +252,6 @@ export function LogInteractionSheet({
 
         onOpenChange(false);
         reset();
-        router.refresh();
 
         const batchId = out.batchId;
         toast.success(

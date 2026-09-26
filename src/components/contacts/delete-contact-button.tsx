@@ -41,7 +41,6 @@ export function DeleteContactButton({
             name ? `${name} deleted` : "Contact deleted"
           );
           router.push("/contacts");
-          router.refresh();
         } catch {
           setLeaving(false);
           toast.error("Couldn’t delete that contact — try again?");

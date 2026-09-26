@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Handshake, Orbit, RefreshCw } from "lucide-react";
@@ -42,7 +41,6 @@ export function ContactProfileOverview({
   frequencyLabel: string;
   howMetSummary: string | null;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   const recencyLabel = lastTouchAt
@@ -66,7 +64,6 @@ export function ContactProfileOverview({
                   try {
                     await regenerateContactSummary(contactId);
                     toast.success("Summary updated");
-                    router.refresh();
                   } catch (err) {
                     toast.error(
                       friendlyError(err, TOAST_COPY.summaryFailed)

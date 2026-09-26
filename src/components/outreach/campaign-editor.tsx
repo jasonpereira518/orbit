@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useTransition, type ReactElement, type ReactNode } from "react";
 import { Pencil } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
 import { updateCampaign } from "@/actions/outreach";
 import { Button } from "@/components/ui/button";
@@ -49,7 +48,6 @@ export function CampaignEditor({
   campaign: CampaignEditorInitial;
   trigger?: ReactNode;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
 
@@ -85,7 +83,6 @@ export function CampaignEditor({
         });
         toast.success("Campaign updated");
         setOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }

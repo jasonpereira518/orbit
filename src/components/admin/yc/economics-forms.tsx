@@ -1,14 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { addAcquisitionSpendAction, setEstimatedChurnAction } from "@/actions/admin-yc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export function LogAcquisitionSpendForm() {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [channel, setChannel] = useState("");
   const [amountUsd, setAmountUsd] = useState("");
@@ -27,7 +25,6 @@ export function LogAcquisitionSpendForm() {
       });
       setChannel("");
       setAmountUsd("");
-      router.refresh();
     });
   }
 
@@ -62,7 +59,6 @@ export function LogAcquisitionSpendForm() {
 }
 
 export function EstimatedChurnForm({ currentPct }: { currentPct: number | null }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [pct, setPct] = useState(currentPct?.toString() ?? "");
 
@@ -71,7 +67,6 @@ export function EstimatedChurnForm({ currentPct }: { currentPct: number | null }
     if (!Number.isFinite(value) || value < 0) return;
     start(async () => {
       await setEstimatedChurnAction({ monthlyChurnPct: value });
-      router.refresh();
     });
   }
 

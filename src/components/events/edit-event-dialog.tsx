@@ -124,7 +124,6 @@ export function EditEventDialog({
         });
         toast.success("Saved");
         onClose();
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t save those changes — try again?"));
       }
@@ -137,7 +136,6 @@ export function EditEventDialog({
         await deleteEvent(event.id);
         toast.success("Event deleted — the people you connected are still in your contacts");
         router.push("/events");
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t delete that event — try again?"));
       }

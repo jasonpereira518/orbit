@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { HardHat, X } from "lucide-react";
 import { setPreviewUnreleasedAction } from "@/actions/admin";
 
@@ -15,7 +14,6 @@ import { setPreviewUnreleasedAction } from "@/actions/admin";
  * they are in this mode should not mistake an unfinished page for a shipped one.
  */
 export function PreviewUnreleasedBanner() {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   return (
@@ -33,7 +31,6 @@ export function PreviewUnreleasedBanner() {
         onClick={() =>
           start(async () => {
             await setPreviewUnreleasedAction({ on: false });
-            router.refresh();
           })
         }
         className="flex shrink-0 items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning transition-colors hover:bg-warning/25 disabled:opacity-60"

@@ -201,7 +201,6 @@ export function EasyFollowUp({
                       } closed`
                     : "Follow-up cleared"
                 );
-                router.refresh();
               });
             }}
           >

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { toast } from "@/lib/toast";
 import { setActionItemStatus } from "@/actions/action-items";
@@ -18,7 +17,6 @@ export type OpenActionItem = {
 };
 
 export function ContactNextSteps({ items }: { items: OpenActionItem[] }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
@@ -29,7 +27,6 @@ export function ContactNextSteps({ items }: { items: OpenActionItem[] }) {
     start(async () => {
       try {
         await setActionItemStatus(id, "done");
-        router.refresh();
       } catch (err) {
         setHiddenIds((prev) => {
           const next = new Set(prev);

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import {
   addFundraisingInvestorAction,
   addNonDilutiveFundingAction,
@@ -63,7 +62,6 @@ function FieldSelect({
 }
 
 export function CreateRoundForm() {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [targetUsd, setTargetUsd] = useState("");
@@ -75,7 +73,6 @@ export function CreateRoundForm() {
       await createFundraisingRoundAction({ name: name.trim(), targetUsd: target });
       setName("");
       setTargetUsd("");
-      router.refresh();
     });
   }
 
@@ -110,7 +107,6 @@ export function CreateRoundForm() {
 }
 
 export function AddInvestorForm({ roundId }: { roundId: string }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [amountUsd, setAmountUsd] = useState("");
@@ -134,7 +130,6 @@ export function AddInvestorForm({ roundId }: { roundId: string }) {
       setAmountUsd("");
       setCommittedAt(todayValue());
       setReceivedAt("");
-      router.refresh();
     });
   }
 
@@ -196,7 +191,6 @@ export function RoundStatusButton({
   roundId: string;
   status: "open" | "closed";
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const next = status === "open" ? "closed" : "open";
 
@@ -209,7 +203,6 @@ export function RoundStatusButton({
       onClick={() =>
         start(async () => {
           await setFundraisingRoundStatusAction({ roundId, status: next });
-          router.refresh();
         })
       }
     >
@@ -226,7 +219,6 @@ export function MarkReceivedButton({
   investorId: string;
   received: boolean;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   return (
@@ -240,7 +232,6 @@ export function MarkReceivedButton({
             investorId,
             receivedAt: received ? null : new Date().toISOString(),
           });
-          router.refresh();
         })
       }
     >
@@ -250,7 +241,6 @@ export function MarkReceivedButton({
 }
 
 export function DeleteInvestorButton({ investorId }: { investorId: string }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   return (
@@ -261,7 +251,6 @@ export function DeleteInvestorButton({ investorId }: { investorId: string }) {
       onClick={() =>
         start(async () => {
           await deleteFundraisingInvestorAction({ investorId });
-          router.refresh();
         })
       }
     >
@@ -285,7 +274,6 @@ const FORM_OPTIONS = [
 ] as const;
 
 export function AddNonDilutiveForm() {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [source, setSource] = useState("");
   const [kind, setKind] = useState<string>("grant");
@@ -324,7 +312,6 @@ export function AddNonDilutiveForm() {
       setAwardedAt(todayValue());
       setReceivedAt("");
       setExpiresAt("");
-      router.refresh();
     });
   }
 
@@ -426,7 +413,6 @@ export function RepaymentForm({
   repaidUsd: number;
   amountUsd: number;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [value, setValue] = useState(String(repaidUsd));
 
@@ -435,7 +421,6 @@ export function RepaymentForm({
     if (!Number.isFinite(repaid) || repaid < 0 || repaid > amountUsd) return;
     start(async () => {
       await recordLoanRepaymentAction({ id, repaidUsd: repaid });
-      router.refresh();
     });
   }
 
@@ -456,7 +441,6 @@ export function RepaymentForm({
 }
 
 export function DeleteNonDilutiveButton({ id }: { id: string }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   return (
@@ -467,7 +451,6 @@ export function DeleteNonDilutiveButton({ id }: { id: string }) {
       onClick={() =>
         start(async () => {
           await deleteNonDilutiveFundingAction({ id });
-          router.refresh();
         })
       }
     >

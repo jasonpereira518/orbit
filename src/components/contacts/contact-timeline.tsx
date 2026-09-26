@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { CircleDashed, FileText, Plus, Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -120,7 +120,6 @@ export function ContactTimeline({
   /** The AI gate's reason when `hasApiKey` is false. */
   aiReason?: AiAccessDenial | null;
 }) {
-  const router = useRouter();
   useRefreshOnVisible();
   const listRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -481,7 +480,6 @@ export function ContactTimeline({
           dayKey(list[index].interactionDate),
           ordered
         );
-        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t reorder that — try again?"));
       }

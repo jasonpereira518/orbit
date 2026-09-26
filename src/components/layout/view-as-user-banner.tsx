@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Eye, X } from "lucide-react";
 import { setViewAsUserAction } from "@/actions/admin";
 
@@ -17,7 +16,6 @@ import { setViewAsUserAction } from "@/actions/admin";
  * changed, so every server component above needs to re-run against the new visibility.
  */
 export function ViewAsUserBanner({ hiddenCount }: { hiddenCount: number }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   return (
@@ -38,7 +36,6 @@ export function ViewAsUserBanner({ hiddenCount }: { hiddenCount: number }) {
         onClick={() =>
           start(async () => {
             await setViewAsUserAction({ on: false });
-            router.refresh();
           })
         }
         className="flex shrink-0 items-center gap-1 rounded-full bg-primary-foreground/15 px-2 py-0.5 font-medium transition-colors hover:bg-primary-foreground/25 disabled:opacity-60"

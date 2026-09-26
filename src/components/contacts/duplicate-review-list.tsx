@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import { IntentLink } from "@/components/ui/intent-link";
-import { useRouter } from "next/navigation";
 import { ArrowRight, Check, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -96,7 +95,6 @@ function decisionHint(decision: DuplicatePair["decision"]): string | null {
 }
 
 function PairCard({ pair }: { pair: DuplicatePair }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   // Which side survives. Defaults to the older contact, matching how every automatic merge
   // picks a winner, but the user can flip it — the fuller record is often the newer one.
@@ -116,7 +114,6 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
         toast.success(`Merged into ${keep.fullName}`, {
           description: "The other record is hidden — you can undo this below",
         });
-        router.refresh();
       } catch (err) {
         // The description used to carry `err.message`, which production turns into the
         // Server Components digest. See `friendlyError`.
@@ -133,7 +130,6 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
         await dismissDuplicatePair(pair.keep.id, pair.merge.id);
         setDone("dismissed");
         toast.success("Dismissed", { description: "This pair won’t be suggested again" });
-        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t dismiss that pair — try again?"));
       }
@@ -202,7 +198,6 @@ export function DuplicateReviewList({
   proposed: DuplicatePair[];
   recentMerges: RecentMerge[];
 }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   const onUndo = (mergeId: string) =>
@@ -210,7 +205,6 @@ export function DuplicateReviewList({
       try {
         await undoMerge(mergeId);
         toast.success("Merge undone", { description: "The contact and its history are back" });
-        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.undoFailed));
       }

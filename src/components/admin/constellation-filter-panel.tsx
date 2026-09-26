@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Sparkles, Stars } from "lucide-react";
 import { setConstellationConfigAction } from "@/actions/admin";
 import { Button } from "@/components/ui/button";
@@ -23,7 +22,6 @@ import { cn } from "@/lib/utils";
  * on every keystroke would fire a global write (and an audit row) for each digit typed.
  */
 export function ConstellationFilterPanel({ config }: { config: ConstellationConfig }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null);
   const [inbound, setInbound] = useState(String(config.thresholds.minInbound));
@@ -43,7 +41,6 @@ export function ConstellationFilterPanel({ config }: { config: ConstellationConf
     start(async () => {
       try {
         await setConstellationConfigAction({ enabled: next });
-        router.refresh();
       } catch (err) {
         setOptimisticEnabled(null);
         setError(err instanceof Error ? err.message : "Could not save that.");
@@ -65,7 +62,6 @@ export function ConstellationFilterPanel({ config }: { config: ConstellationConf
         setInbound(String(next.thresholds.minInbound));
         setOutbound(String(next.thresholds.minOutbound));
         setSaved(true);
-        router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not save that.");
       }

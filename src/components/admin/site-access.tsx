@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Copy, EyeOff, Globe, MailPlus, Send, XCircle } from "lucide-react";
 import {
   inviteToSiteAction,
@@ -138,7 +137,6 @@ function inviteResultMessage(result: SiteInviteResult, asked: boolean) {
 }
 
 export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -161,7 +159,6 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
         setResult(res);
         setEmail("");
         setFirstName("");
-        router.refresh();
       } catch (err) {
         setError(friendlyError(err, "Couldn’t create that invitation — try again?"));
       }

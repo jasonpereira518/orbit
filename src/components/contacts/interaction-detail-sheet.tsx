@@ -221,7 +221,6 @@ export function InteractionDetailSheet({
     start(async () => {
       try {
         await setActionItemStatus(id, "done");
-        router.refresh();
       } catch (err) {
         setChecked((prev) => {
           const next = new Set(prev);

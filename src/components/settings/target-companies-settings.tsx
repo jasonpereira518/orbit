@@ -11,7 +11,6 @@
  * fair with thirty booths, "three of these are on your list" is the whole answer.
  */
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,7 +50,6 @@ export function TargetCompaniesSettings({
   initialCompanies: TargetCompanyRow[];
   initialSchools: string[];
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [priority, setPriority] = useState<TargetPriority>(2);
@@ -67,7 +65,6 @@ export function TargetCompaniesSettings({
       }
       setName("");
       toast.success(`${name.trim()} added`);
-      router.refresh();
     });
   }
 
@@ -76,7 +73,6 @@ export function TargetCompaniesSettings({
       try {
         await deleteTargetCompany(id);
         toast.success(`${label} removed`);
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t remove that — try again?"));
       }
@@ -89,7 +85,6 @@ export function TargetCompaniesSettings({
       try {
         await saveSchools([...initialSchools, school]);
         setSchool("");
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t save that — try again?"));
       }
@@ -99,7 +94,6 @@ export function TargetCompaniesSettings({
   function removeSchool(value: string) {
     start(async () => {
       await saveSchools(initialSchools.filter((item) => item !== value));
-      router.refresh();
     });
   }
 

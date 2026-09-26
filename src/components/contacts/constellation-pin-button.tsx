@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Check, Loader2, Plus, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { setConstellationPin } from "@/actions/contacts";
@@ -34,7 +33,6 @@ export function ConstellationPinButton({
   /** Whether the automatic rule admits them — what `null` currently resolves to. */
   substantive: boolean;
 }) {
-  const router = useRouter();
   const [current, setCurrent] = useState<Pin>(pin);
   const [pending, start] = useTransition();
 
@@ -46,7 +44,6 @@ export function ConstellationPinButton({
     start(async () => {
       try {
         await setConstellationPin(contactId, next);
-        router.refresh();
       } catch (err) {
         setCurrent(previous);
         toast.error(friendlyError(err, "Couldn’t change that — try again?"));

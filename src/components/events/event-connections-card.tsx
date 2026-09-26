@@ -19,7 +19,6 @@
  * ticket per user.
  */
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { CalendarPlus, ChevronDown, Loader2, Mail, Plug, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,7 +91,6 @@ export function EventConnectionsCard({
   googleMailGranted: boolean;
   googleCalendarGranted: boolean;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [apiKey, setApiKey] = useState("");
   const [showLumaField, setShowLumaField] = useState(false);
@@ -158,7 +156,6 @@ export function EventConnectionsCard({
           ? "Scanning confirmation emails — events will appear over the next few syncs"
           : "Stopped scanning your email"
       );
-      router.refresh();
     });
   }
 
@@ -206,7 +203,6 @@ export function EventConnectionsCard({
           ? `${FEED_HELP[provider].name} connected — ${result.found} event${result.found === 1 ? "" : "s"} found`
           : `${FEED_HELP[provider].name} connected — new events will appear once you’re confirmed`
       );
-      router.refresh();
     });
   }
 
@@ -220,7 +216,6 @@ export function EventConnectionsCard({
       setApiKey("");
       setShowLumaField(false);
       toast.success("Luma connected — events you host will sync automatically");
-      router.refresh();
     });
   }
 
@@ -239,7 +234,6 @@ export function EventConnectionsCard({
     start(async () => {
       await disconnectEventProvider(provider);
       toast.success("Disconnected");
-      router.refresh();
     });
   }
 
