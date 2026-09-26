@@ -429,7 +429,12 @@ export function allowanceFrom(usage: ManagedUsage, now = new Date()): ManagedAll
 /* -------------------------------------------------------------------- the gate ------- */
 
 /**
- * One account's AI access, resolved once per AI call.
+ * One account's AI access: the settings read, plan and keys, resolved once per AI call — or
+ * once per request, when a request that makes several calls opens it once and passes it
+ * down (`/api/chat`; see `forUser`). Only the account READ is shared that way: the managed
+ * allowance is checked in `grant()`, so every `completion()` / `embedding()` on a shared
+ * access still sums this month's usage afresh, including what earlier calls in the same
+ * request spent.
  *
  * Built by `resolveAiAccess`. Decrypts only what exists and holds the plaintext privately;
  * callers only ever see grants.
@@ -450,7 +455,10 @@ export class AiAccess {
   ) {}
 
   static async open(userId: string, opts: AiAccessOptions = {}): Promise<AiAccess> {
-    let row = await loadAccount(userId);
+    if (opts.row && opts.row.userId !== userId) {
+      throw new Error("AiAccess.open was handed another account's settings row");
+    }
+    let row = opts.row !== undefined ? (opts.row ?? undefined) : await loadAccount(userId);
     let plan = resolvePlan(row).plan;
     let upgradePending = false;
 
@@ -509,6 +517,16 @@ export class AiAccess {
         : null;
 
     return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed, decisionKey);
+  }
+
+  /**
+   * This access, for a call made on behalf of `userId` — the idiom every `access?` parameter
+   * uses: `access?.forUser(userId) ?? (await resolveAiAccess(userId))`. An access opened for
+   * another account is a programming error, never something to bill: it throws.
+   */
+  forUser(userId: string): AiAccess {
+    if (this.userId !== userId) throw new Error("AiAccess was opened for another account");
+    return this;
   }
 
   get selectedProvider(): AiProvider {
@@ -649,6 +667,14 @@ export type AiAccessOptions = {
    * test passes a stand-in so the "just paid" states can be exercised without it.
    */
   retrieveSession?: SessionRetriever;
+  /**
+   * The account's whole `user_settings` row, when the caller already holds it — the one
+   * `requireAuthenticatedUser()` returns is the same full-row read. Skips the gate's own
+   * read; `null` means "no row". Only pass a row read in the same request: the plan is
+   * resolved from it. The re-read after a just-granted Lifetime checkout still happens, so
+   * that write is always what the grants are built from.
+   */
+  row?: AccountRow | null;
 };
 
 /** The one entry point. Every AI call in `ai.ts` starts here. */

@@ -12,6 +12,7 @@ import {
   openaiClient,
   resolveAiAccess,
   runOnGrant,
+  type AiAccess,
   type AiGrant,
 } from "@/lib/ai-access";
 import {
@@ -366,12 +367,15 @@ export async function userCanUseAi(userId: string): Promise<boolean> {
 /**
  * Which embedding API semantic search would use. Throws `AiAccessError` when none — an
  * Anthropic-only account with no OpenAI/Gemini key and no Lifetime, for instance.
+ *
+ * `access`: the account already resolved for this request (see `AiAccess.forUser`), so asking
+ * costs no second `user_settings` read.
  */
-export async function resolveEmbeddingBackend(userId: string): Promise<{
+export async function resolveEmbeddingBackend(userId: string, access?: AiAccess): Promise<{
   backend: EmbeddingBackend;
 }> {
-  const access = await resolveAiAccess(userId);
-  return { backend: access.requireEmbeddingBackend() };
+  const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  return { backend: resolved.requireEmbeddingBackend() };
 }
 
 function extractJsonText(raw: string) {
@@ -532,10 +536,17 @@ export async function completeJson(
      * caller had moved on. With a signal, the request itself is aborted.
      */
     signal?: AbortSignal;
+    /**
+     * The account already resolved for this request (see `AiAccess.forUser`): skips the
+     * `user_settings` read. The grant — and with it the managed-allowance check — is still
+     * minted for this call alone.
+     */
+    access?: AiAccess;
   },
 ): Promise<string> {
   const { operation } = input;
-  const grant = await (await resolveAiAccess(userId)).completion(operation);
+  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  const grant = await access.completion(operation);
   const { provider, keyOwner } = grant;
   const model = modelForOperation(operation, grant);
   const temperature = input.temperature ?? 0.2;
@@ -633,6 +644,16 @@ export async function completeJson(
     },
     { cancelSignal: input.signal },
   ));
+}
+
+/**
+ * `completeJson` with the account already resolved for this request, for the helpers that
+ * take an injectable `completeFn` (`understandQuery`, the rerank, `generateChatTitle`).
+ * With no access it IS `completeJson`, so a caller can pass the result unconditionally.
+ */
+export function completeJsonOn(access: AiAccess | undefined): typeof completeJson {
+  if (!access) return completeJson;
+  return (userId, input) => completeJson(userId, { ...input, access: input.access ?? access });
 }
 
 /** Multimodal JSON completion for vision OCR / image+text prompts. */
@@ -1661,8 +1682,10 @@ export async function parseMultiPersonNotesWithAI(
   return single;
 }
 
-export async function createEmbedding(userId: string, text: string) {
-  const grant = await (await resolveAiAccess(userId)).embedding("search.embed");
+/** `access`: as for `completeJson` — shares the account read, never the grant. */
+export async function createEmbedding(userId: string, text: string, access?: AiAccess) {
+  const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  const grant = await resolved.embedding("search.embed");
   const { provider: backend, keyOwner } = grant;
   const input = text.slice(0, 8000);
   const model =
@@ -2087,10 +2110,13 @@ async function streamText(
     maxOutputTokens?: number;
     operation: AiOperationId;
     signal?: AbortSignal;
+    /** As for `completeJson` — shares the account read, never the grant. */
+    access?: AiAccess;
   },
   onDelta: (delta: string) => void
 ): Promise<string> {
-  const grant = await (await resolveAiAccess(userId)).completion(input.operation);
+  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  const grant = await access.completion(input.operation);
   const { provider, keyOwner } = grant;
   const model = modelForOperation(input.operation, grant);
   const temperature = input.temperature ?? 0.3;
@@ -2229,6 +2255,8 @@ export async function chatWithNetworkStream(
     evidence?: string | null;
     notePassages?: Parameters<typeof chatWithNetwork>[12];
     writingPreferences?: string | null;
+    /** The account already resolved for this request (see `AiAccess.forUser`). */
+    access?: AiAccess;
   } = {}
 ): Promise<SplitResult & { evidence: Record<string, EvidenceSource> }> {
   const prompt = buildChatPrompt({
@@ -2255,6 +2283,7 @@ export async function chatWithNetworkStream(
       user: prompt.user,
       system: `${prompt.systemCore}${CHAT_STREAM_TAIL}`,
       signal: options.signal,
+      access: options.access,
     },
     (delta) => {
       const out = splitter.push(delta);

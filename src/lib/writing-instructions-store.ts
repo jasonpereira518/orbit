@@ -17,6 +17,17 @@ export async function loadWritingInstructions(userId: string): Promise<string | 
     where: eq(userSettings.userId, userId),
     columns: { writingInstructions: true },
   });
+  return writingInstructionsFromRow(row);
+}
+
+/**
+ * The same answer from a `user_settings` row the caller already read IN THIS REQUEST — the
+ * one `/api/chat` resolved its AI access from — so the notes cost no second read. Only for a
+ * row read after any save this request made (see above for why a stale row is wrong here).
+ */
+export function writingInstructionsFromRow(
+  row: { writingInstructions?: string | null } | null | undefined
+): string | null {
   return sanitizeWritingInstructions(row?.writingInstructions);
 }
 

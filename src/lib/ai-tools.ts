@@ -30,6 +30,7 @@ import {
   openaiClient,
   resolveAiAccess,
   runOnGrant,
+  type AiAccess,
 } from "@/lib/ai-access";
 import { geminiThinking, translatingProviderErrors } from "@/lib/ai";
 import { modelForOperation } from "@/lib/ai-models";
@@ -92,10 +93,16 @@ type DriverInput = {
   tools: ModelTool[];
   temperature?: number;
   maxOutputTokens?: number;
+  /**
+   * The account already resolved for this request (`/api/chat`'s one settings read). The
+   * grant, and its managed-allowance check, is still minted here for this driver alone.
+   */
+  access?: AiAccess;
 };
 
 export async function createToolDriver(input: DriverInput): Promise<ToolDriver> {
-  const grant = await (await resolveAiAccess(input.userId)).completion(input.operation);
+  const access = input.access?.forUser(input.userId) ?? (await resolveAiAccess(input.userId));
+  const grant = await access.completion(input.operation);
   const { provider, keyOwner } = grant;
   const model = modelForOperation(input.operation, grant);
   const temperature = input.temperature ?? 0.1;

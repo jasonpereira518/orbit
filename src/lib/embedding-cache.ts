@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createEmbedding, resolveEmbeddingBackend } from "@/lib/ai";
+import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 
 /**
  * In-memory LRU for query embeddings. Fluid Compute reuses function instances
@@ -36,9 +37,9 @@ export function normalizeQuery(q: string): string {
  * determines the model (OPENAI_EMBEDDING_MODEL / GEMINI_EMBEDDING_MODEL are
  * constants), so the backend string alone suffices as the scope.
  */
-export async function defaultResolveScope(userId: string): Promise<string> {
+export async function defaultResolveScope(userId: string, access?: AiAccess): Promise<string> {
   try {
-    const { backend } = await resolveEmbeddingBackend(userId);
+    const { backend } = await resolveEmbeddingBackend(userId, access);
     return backend;
   } catch {
     return "unresolved";
@@ -51,13 +52,28 @@ function cacheKey(userId: string, scope: string, query: string): string {
     .digest("hex");
 }
 
+/**
+ * The query's embedding, from the cache when this account asked the same thing recently.
+ *
+ * The scope and the embedding both need the account's AI access — they used to open it
+ * separately, two serial `user_settings` reads on every search. It is opened once here (or
+ * taken from `options.access`, when the request already resolved it) and handed to both.
+ * The embedding's grant, and so its managed-allowance check, is still minted per call.
+ * If that shared open fails, both halves open their own as they always did, so a failure
+ * degrades exactly as before ("unresolved" scope, then the embedding's own error).
+ */
 export async function getQueryEmbedding(
   userId: string,
   query: string,
-  embed: (userId: string, text: string) => Promise<number[]> = createEmbedding,
-  resolveScope: (userId: string) => Promise<string> = defaultResolveScope
+  embed: (userId: string, text: string, access?: AiAccess) => Promise<number[]> = createEmbedding,
+  resolveScope: (userId: string, access?: AiAccess) => Promise<string> = defaultResolveScope,
+  options: { access?: AiAccess } = {}
 ): Promise<number[]> {
-  const scope = await resolveScope(userId);
+  // Only the real gate-backed halves need an access; injected stand-ins get none opened.
+  const needsAccess = embed === createEmbedding || resolveScope === defaultResolveScope;
+  const access =
+    options.access ?? (needsAccess ? await resolveAiAccess(userId).catch(() => undefined) : undefined);
+  const scope = await resolveScope(userId, access);
   const key = cacheKey(userId, scope, query);
   const store = cache();
   const now = nowFn();
@@ -71,7 +87,7 @@ export async function getQueryEmbedding(
   }
   if (hit) store.delete(key);
 
-  const value = await embed(userId, query);
+  const value = await embed(userId, query, access);
   if (store.size >= MAX_ENTRIES) {
     const oldest = store.keys().next().value;
     if (oldest !== undefined) store.delete(oldest);

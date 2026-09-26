@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { chatMessages, type ChatRecommendation } from "@/db/schema";
 import { discardCountAfter, NotLastTurnError, resolveVersionTarget, truncateAfter } from "@/lib/chat-versions";
 import { getDb } from "@/db";
-import { chatWithNetworkStream } from "@/lib/ai";
+import { chatWithNetworkStream, completeJsonOn } from "@/lib/ai";
+import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
+import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
 import { persistAssistantTurn } from "@/lib/chat-persist";
@@ -14,10 +16,10 @@ import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
-import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { reportedFailure } from "@/lib/report-error";
+import { requireVisibleSurface } from "@/lib/surface-visibility";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -41,8 +43,13 @@ export async function POST(request: Request) {
   // already spent part of `maxDuration` by the time it runs.
   const requestStartedAt = Date.now();
   let userId: string;
+  let settings: AuthenticatedUser["settings"];
   try {
-    userId = await requireUserForSurface("page.chat");
+    // `requireUserForSurface("page.chat")`, unrolled to keep the `user_settings` row the auth
+    // gate reads: `cache()` is a pass-through in a route handler, so the AI gate below would
+    // otherwise read the same row again. Same checks, same errors, same order.
+    ({ userId, settings } = await requireAuthenticatedUser());
+    await requireVisibleSurface(userId, "page.chat");
   } catch (err) {
     const status = isPaywallError(err) ? 403 : 401;
     return NextResponse.json({ error: friendlyError(err, "Sign in to chat") }, { status });
@@ -126,6 +133,15 @@ export async function POST(request: Request) {
       const send = (event: ChatStreamEvent) => controller.enqueue(encoder.encode(formatSse(event)));
       const steps = createStepEmitter((step) => send({ type: "step", step }));
       try {
+        // The account's AI access, resolved ONCE for the whole question from the row the
+        // auth gate already read — the decider, query embedding, parse, rerank, writing
+        // notes, research, answer and title all used to re-read `user_settings` for it.
+        // Only the read is shared: every model call still mints its own grant, which is
+        // where the managed allowance is checked. Undefined if the open fails, and then
+        // each call resolves its own, exactly as before.
+        const access: AiAccess | undefined = await resolveAiAccess(userId, { row: settings }).catch(
+          () => undefined
+        );
         // Retrieval runs INSIDE the stream so it can narrate itself. It used to be awaited
         // before the response existed, which meant the several seconds of query
         // understanding, hybrid search and reranking had no channel to report on and the
@@ -144,6 +160,7 @@ export async function POST(request: Request) {
               : versionTarget.priorUserRow.attachedContacts.map((p) => p.id),
           steps,
           excludeSlot: versionTarget?.slot ?? null,
+          access,
         });
         let persistedUserMessageId: string | null = null;
         if (threadId) {
@@ -172,7 +189,7 @@ export async function POST(request: Request) {
         // model does, and the title is normally waiting by the time it lands. Only for a
         // thread with no title yet: a later turn must never rename the conversation.
         const titlePromise =
-          threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q) : null;
+          threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q, completeJsonOn(ctx.access)) : null;
 
         // One retrieval answers most questions; the ones whose shape says it cannot — what
         // was discussed and when, a path to someone, a follow-up that refers back — get a
@@ -205,6 +222,7 @@ export async function POST(request: Request) {
                 evidence,
                 notePassages,
                 writingPreferences: ctx.writingInstructions,
+                access: ctx.access,
               }
             ),
           { userId }
