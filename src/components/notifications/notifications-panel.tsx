@@ -392,6 +392,14 @@ function Section({
  * the right. The old cards stacked an icon disc, a body paragraph and a button row.
  */
 const ROW = "flex items-center gap-3 rounded-lg border border-border/30 bg-popover px-3.5 py-3";
+/** Soft disc behind each row's leading icon. */
+function IconDisc({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground/[0.06]">
+      {children}
+    </span>
+  );
+}
 const ICON_BTN = "size-7 shrink-0 text-muted-foreground";
 
 /**
@@ -414,11 +422,13 @@ function KeptRow({
 
   return (
     <div className={ROW}>
-      {entry.tone === "error" ? (
-        <XCircle className="h-4 w-4 shrink-0 text-destructive" />
-      ) : (
-        <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
-      )}
+      <IconDisc>
+        {entry.tone === "error" ? (
+          <XCircle className="h-4 w-4 text-destructive" />
+        ) : (
+          <Clock className="h-4 w-4 text-muted-foreground" />
+        )}
+      </IconDisc>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-ink" title={entry.title}>
           {entry.title}
@@ -460,15 +470,17 @@ function JobRow({ job }: { job: BackgroundJob }) {
 
   return (
     <div className={ROW}>
+      <IconDisc>
       {running ? (
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+        <Loader2 className="h-4 w-4 animate-spin text-primary" />
       ) : job.status === "completed" ? (
-        <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
+        <CheckCircle2 className="h-4 w-4 text-primary" />
       ) : job.status === "failed" ? (
-        <XCircle className="h-4 w-4 shrink-0 text-destructive" />
+        <XCircle className="h-4 w-4 text-destructive" />
       ) : (
-        <XCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <XCircle className="h-4 w-4 text-muted-foreground" />
       )}
+      </IconDisc>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-ink">
           {running
@@ -547,7 +559,9 @@ function NotificationRow({
 
   return (
     <div className={cn(ROW, "border-primary/15 bg-popover")}>
-      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <IconDisc>
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </IconDisc>
       <Link
         href={item.url}
         onClick={onNavigate}
