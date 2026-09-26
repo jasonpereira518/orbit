@@ -46,6 +46,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { mergeRefreshedFirstPage } from "@/lib/paged-list";
 import {
   closenessPercentChipClass,
   closenessTierChipClass,
@@ -207,11 +208,23 @@ export function ContactsList({
   //
   // Compared by identity, not by joining every row into a signature string — that string
   // was rebuilt on every render over the entire network.
+  //
+  // The same list re-sent (a refresh, not a filter change) keeps the pages already scrolled
+  // in, behind the fresh first page: see `mergeRefreshedFirstPage`. A refresh used to put
+  // someone deep in the list back at the top every time they returned to the tab.
+  const listKey = JSON.stringify(filters);
   const [syncedFrom, setSyncedFrom] = useState(initialItems);
+  const [syncedKey, setSyncedKey] = useState(listKey);
   if (syncedFrom !== initialItems) {
+    const sameList = syncedKey === listKey && contacts.length > syncedFrom.length;
     setSyncedFrom(initialItems);
-    setContacts(initialItems);
-    setCursor(initialCursor);
+    setSyncedKey(listKey);
+    if (sameList) {
+      setContacts(mergeRefreshedFirstPage(contacts, syncedFrom.length, initialItems));
+    } else {
+      setContacts(initialItems);
+      setCursor(initialCursor);
+    }
     setLoadError(false);
     setExitingId(null);
   }
@@ -398,7 +411,6 @@ export function ContactsList({
         try {
           await deleteContact(id);
           toast.success(`${name} deleted`);
-          router.refresh();
         } catch {
           toast.error("Couldn’t delete that contact — try again?");
           setContacts(restore);
