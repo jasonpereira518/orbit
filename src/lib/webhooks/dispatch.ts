@@ -400,30 +400,57 @@ export async function drainDueDeliveries(
   const stats: DrainStats = { attempted: 0, delivered: 0, failed: 0 };
   const db = await getDb();
 
+  // CLAIM the due rows in the same statement that reads them. A plain SELECT let two drains
+  // that overlapped (a slow scheduled one and the next, or a manual run) deliver the same
+  // event twice. FOR UPDATE SKIP LOCKED gives each drain its own rows, and pushing
+  // next_attempt_at forward is the lease: until it passes, no other drain selects them.
+  // attemptDelivery rewrites next_attempt_at either way, so the lease never outlives the
+  // attempt; a claimed row this run never reached is simply picked up after the lease.
+  const leaseUntil = new Date(now.getTime() + DRAIN_CLAIM_LEASE_MS);
   const due = rowsOf<DueRow>(
     await db.execute(sql`
-      SELECT d.id, d.endpoint_id, d.payload, d.attempts, e.url, e.secret_encrypted
-        FROM outbound_webhook_deliveries d
-        JOIN webhook_endpoints e ON e.id = d.endpoint_id
-       WHERE d.status = 'pending'
-         AND d.next_attempt_at IS NOT NULL
-         AND d.next_attempt_at <= ${now}
-         AND e.status = 'active'
-       ORDER BY d.next_attempt_at
-       LIMIT ${opts.max}
+      UPDATE outbound_webhook_deliveries AS d
+         SET next_attempt_at = ${leaseUntil}
+        FROM webhook_endpoints e
+       WHERE e.id = d.endpoint_id
+         AND d.id IN (
+           SELECT d2.id
+             FROM outbound_webhook_deliveries d2
+             JOIN webhook_endpoints e2 ON e2.id = d2.endpoint_id
+            WHERE d2.status = 'pending'
+              AND d2.next_attempt_at IS NOT NULL
+              AND d2.next_attempt_at <= ${now}
+              AND e2.status = 'active'
+            ORDER BY d2.next_attempt_at
+            LIMIT ${opts.max}
+            FOR UPDATE OF d2 SKIP LOCKED
+         )
+      RETURNING d.id, d.endpoint_id, d.payload, d.attempts, e.url, e.secret_encrypted
     `)
   );
 
-  for (const row of due) {
-    if (Date.now() >= deadline) break;
-    stats.attempted++;
-    // One endpoint's failure must never stop the queue.
-    const ok = await attemptDelivery(row, now).catch(() => false);
-    if (ok) stats.delivered++;
-    else stats.failed++;
-  }
+  // A few at a time rather than one by one: each attempt can wait out its 5s timeout on a
+  // slow endpoint, and serially that capped a drain at a handful of deliveries per run.
+  let next = 0;
+  const lane = async () => {
+    while (next < due.length) {
+      const row = due[next++]!;
+      if (Date.now() >= deadline) return;
+      stats.attempted++;
+      // One endpoint's failure must never stop the queue.
+      const ok = await attemptDelivery(row, now).catch(() => false);
+      if (ok) stats.delivered++;
+      else stats.failed++;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(DRAIN_CONCURRENCY, due.length) }, lane));
   return stats;
 }
+
+/** Deliveries in flight at once within one drain. */
+const DRAIN_CONCURRENCY = 4;
+/** How long a claimed delivery is hidden from other drains while this one attempts it. */
+const DRAIN_CLAIM_LEASE_MS = 2 * 60 * 1000;
 
 /** Purge idempotency records past their useful life. Called from the same sweep. */
 export async function purgeExpiredIdempotencyKeys(olderThan: Date): Promise<void> {
