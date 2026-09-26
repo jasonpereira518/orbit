@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
+import { playDing, setDingMuted, useDingMuted } from "@/lib/ding";
 import { SettingsRow } from "@/components/settings/settings-section";
 import {
   DESKTOP_PREFERENCE_EVENT,
@@ -122,6 +123,7 @@ export function NotificationSettings({
   }
 
   return (
+    <>
     <SettingsRow
       id="settings-notifications"
       title="Desktop notifications"
@@ -217,6 +219,42 @@ export function NotificationSettings({
             </Button>
           </>
         ) : null}
+      </div>
+    </SettingsRow>
+    <CompletionSoundRow />
+    </>
+  );
+}
+
+/** The ding when a notification is checked off. Per device; on unless muted. */
+function CompletionSoundRow() {
+  const muted = useDingMuted();
+
+  return (
+    <SettingsRow
+      title="Completion sound"
+      description="A soft ding when you check off a notification. This setting applies to this browser only."
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            const next = !muted;
+            setDingMuted(next);
+            if (!next) playDing();
+          }}
+        >
+          {muted ? "Unmute" : "Mute"}
+        </Button>
+        {!muted && (
+          <Button type="button" variant="ghost" onClick={() => playDing()}>
+            Play sample
+          </Button>
+        )}
+        <span className="text-sm text-muted-foreground" role="status">
+          {muted ? "Muted" : "On"}
+        </span>
       </div>
     </SettingsRow>
   );

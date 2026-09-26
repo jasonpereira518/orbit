@@ -8,10 +8,54 @@
  * a page may open.
  */
 
+import { useSyncExternalStore } from "react";
+
 let ctx: AudioContext | null = null;
+
+const MUTED_KEY = "orbit:ding-muted:v1";
+
+/** Per-device, like the sound itself: the choice lives in this browser only. */
+export function isDingMuted() {
+  try {
+    return localStorage.getItem(MUTED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const listeners = new Set<() => void>();
+
+export function setDingMuted(muted: boolean) {
+  try {
+    if (muted) localStorage.setItem(MUTED_KEY, "1");
+    else localStorage.removeItem(MUTED_KEY);
+  } catch {
+    // Storage blocked: the choice just won't outlive the tab.
+  }
+  for (const l of listeners) l();
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  // Another tab changing the setting.
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === MUTED_KEY) listener();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+/** Reactive read of the mute setting; `false` on the server so hydration agrees. */
+export function useDingMuted() {
+  return useSyncExternalStore(subscribe, isDingMuted, () => false);
+}
 
 export function playDing() {
   try {
+    if (isDingMuted()) return;
     if (typeof AudioContext === "undefined") return;
     ctx ??= new AudioContext();
     if (ctx.state === "suspended") void ctx.resume().catch(() => {});
