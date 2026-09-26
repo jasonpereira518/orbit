@@ -28,6 +28,11 @@ export type GraphScopeState = {
   shown: number;
   /** How many contacts exist in total. */
   total: number;
+  /**
+   * When the everyone view is capped (`GRAPH_CONTACT_CAP`), how many it draws: the closest.
+   * Null when it draws everyone, or in the engaged view.
+   */
+  cappedAt?: number | null;
 };
 
 const IDLE: GraphScopeState = {
@@ -62,7 +67,8 @@ export function publishGraphScope(patch: Partial<GraphScopeState>) {
     next.scope === state.scope &&
     next.loading === state.loading &&
     next.shown === state.shown &&
-    next.total === state.total
+    next.total === state.total &&
+    (next.cappedAt ?? null) === (state.cappedAt ?? null)
   ) {
     return;
   }

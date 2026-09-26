@@ -1773,6 +1773,9 @@ export type GooglePhotoMatchResult = {
  * The remote Google URL is what gets stored; the avatar backfill caches it durably on
  * its next tick, the same as any other remote photo.
  */
+/** Contacts per batched photo UPDATE: two bind parameters each, far under the cap. */
+const PHOTO_MATCH_CHUNK = 500;
+
 export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
   const userId = await requireUserId();
   if (await isDemoWorkspace(userId)) {
@@ -1831,21 +1834,28 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
       ),
     );
 
-  let matched = 0;
+  const updates: Array<{ id: string; photo: string }> = [];
   for (const row of needPhoto) {
     const photo = photoByEmail.get(row.email!.trim().toLowerCase());
-    if (!photo) continue;
-    await db
-      .update(contacts)
-      .set({
-        profileImageUrl: photo,
-        // A photo found here clears any cooldown the backfill set, so it caches promptly.
-        profileImageCheckedAt: null,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(contacts.id, row.id), eq(contacts.userId, userId)));
-    matched += 1;
+    if (photo) updates.push({ id: row.id, photo });
   }
+  // One UPDATE ... FROM (VALUES ...) per chunk, not one statement per contact: on neon-http
+  // each statement is its own HTTPS round trip, so a few thousand matches were a few
+  // thousand sequential requests inside one server action.
+  const now = new Date();
+  for (let i = 0; i < updates.length; i += PHOTO_MATCH_CHUNK) {
+    const chunk = updates.slice(i, i + PHOTO_MATCH_CHUNK);
+    await db.execute(sql`
+      UPDATE contacts AS c
+         SET profile_image_url = v.photo,
+             -- A photo found here clears any cooldown the backfill set, so it caches promptly.
+             profile_image_checked_at = NULL,
+             updated_at = ${now}
+        FROM (VALUES ${sql.join(chunk.map((u) => sql`(${u.id}::uuid, ${u.photo}::text)`), sql`, `)}) AS v(id, photo)
+       WHERE c.id = v.id AND c.user_id = ${userId}
+    `);
+  }
+  const matched = updates.length;
 
   if (matched > 0) {
     revalidatePath("/contacts");

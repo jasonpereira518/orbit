@@ -244,11 +244,25 @@ async function main() {
   const graphCount = stopQueryCount();
   const graphScans = contactScans(capturedQueries());
   console.log(`  statements: ${graphCount}`);
-  // 9, not 8: the constellation filter reads its singleton `constellation_settings` row.
-  // That is the ONLY statement the feature adds — its per-contact eligibility tallies ride
-  // on the `group by contact_id` the closeness cohort already issues, so they cost nothing.
+  // 10: the constellation filter reads its singleton `constellation_settings` row (9), and
+  // the panel text (summary, key facts, how you met, contact details) is read in a second,
+  // id-scoped statement for only the stars that ship (10). That one is a trade, not a leak:
+  // the network scan no longer carries that text for everyone, and the cohort read is the
+  // slim one, so the far larger per-contact breakdown jsonb is no longer de-TOASTed either.
   // If this number moves again, something started scanning `interactions` a second time.
-  check("graph issues ≤ 9 statements", graphCount <= 9, `got ${graphCount}`);
+  check("graph issues ≤ 10 statements", graphCount <= 10, `got ${graphCount}`);
+  const graphNetworkScan = graphScans.find((s) => /"contact_tags"/i.test(s)) ?? graphScans[0] ?? "";
+  check(
+    "the network scan leaves the panel text to the shipped stars",
+    ["ai_summary", "key_facts", "how_met", "met_context", "shared_interests", "phone"].every((col) => !selectsBare(graphNetworkScan, col)),
+    graphNetworkScan.slice(0, 300)
+  );
+  check(
+    "the graph reads the slim cohort, never whole closeness breakdowns",
+    // The full read selects the whole column ("closeness_breakdown as breakdown"); the slim
+    // one only extracts four keys from it inside jsonb_build_object.
+    !capturedQueries().some((q) => /select\s+id,\s*closeness_breakdown\s+as\s+breakdown/i.test(q)),
+  );
   check("graph contacts scan does not pull notes", graphScans.every((s) => !selectsBare(s, "notes")));
   check(
     "graph contacts scan does not pull profile_image_url as a bare column",
@@ -284,7 +298,7 @@ async function main() {
   });
   const graphAllCount = stopQueryCount();
   console.log(`  statements: ${graphAllCount}`);
-  check("show-all issues ≤ 9 statements", graphAllCount <= 9, `got ${graphAllCount}`);
+  check("show-all issues ≤ 10 statements", graphAllCount <= 10, `got ${graphAllCount}`);
   check(
     "show-all carries the whole network",
     graphAll.contacts.length === N + SPECIAL_ROWS,

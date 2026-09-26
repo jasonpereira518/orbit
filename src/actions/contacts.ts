@@ -38,6 +38,7 @@ import {
 } from "@/lib/contact-writes";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { scheduleEmbeddingRebuild } from "@/lib/contact-writes";
+import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import {
   selectTriageCandidates,
   type TriageCandidate,
@@ -407,9 +408,12 @@ export async function getContact(id: string) {
         // "does this have notes at all"; the detail sheet still loads the full row lazily
         // through `getInteractionDetail`.
         //
-        // Columns are restricted, not rows: `contacts/[id]/page.tsx` derives
-        // `hasLoggedInteraction` from `interactions.length > 0`, which a LIMIT would survive
-        // but a WHERE would not.
+        // Rows are capped too: the newest CONTACT_TIMELINE_INITIAL. A contact carrying an
+        // imported LinkedIn thread has thousands, and every profile view shipped all of them
+        // to render forty. What the page used to derive from the whole list (has any real
+        // touch, the latest one, the 90-day frequency) and the timeline's filter counts come
+        // from `timelineStats` below, in SQL. The rest loads on demand (`listContactTimeline`).
+        limit: CONTACT_TIMELINE_INITIAL,
         columns: {
           id: true,
           interactionType: true,
@@ -446,7 +450,86 @@ export async function getContact(id: string) {
   return {
     ...contact,
     tags: contact.contactTags.map((ct) => ct.tag.name),
+    timeline: await timelineStats(db, userId, contact.id),
   };
+}
+
+/** Interactions a profile ships up front, newest first. The timeline renders forty. */
+const CONTACT_TIMELINE_INITIAL = 200;
+
+/** The trailing window `formatInteractionFrequency` describes. */
+const TIMELINE_FREQUENCY_WINDOW_DAYS = 90;
+
+/**
+ * What the profile needs from a contact's WHOLE history, in one grouped read: how many rows
+ * there are (so the timeline knows whether it has them all), how many of each type (its
+ * filter chips), and the real-touch facts the page shows. "Real" is `isLoggedTouch`: anything
+ * but an AI-derived timeline event.
+ */
+async function timelineStats(db: Awaited<ReturnType<typeof getDb>>, userId: string, contactId: string) {
+  const since = new Date(Date.now() - TIMELINE_FREQUENCY_WINDOW_DAYS * 86_400_000);
+  const logged = sql`${interactions.source} is distinct from ${AI_DERIVED_SOURCE}`;
+  const rows = await db
+    .select({
+      interactionType: interactions.interactionType,
+      n: sql<number>`count(*)::int`,
+      logged: sql<number>`(count(*) filter (where ${logged}))::int`,
+      recentLogged: sql<number>`(count(*) filter (where ${logged} and ${interactions.interactionDate} >= ${since}))::int`,
+      latestLogged: sql<string | Date | null>`max(${interactions.interactionDate}) filter (where ${logged})`,
+    })
+    .from(interactions)
+    .where(and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)))
+    .groupBy(interactions.interactionType);
+
+  let total = 0;
+  let loggedCount = 0;
+  let recentLoggedCount = 0;
+  let latestLoggedAt: Date | null = null;
+  const typeCounts: Record<string, number> = {};
+  for (const r of rows) {
+    total += r.n;
+    loggedCount += r.logged;
+    recentLoggedCount += r.recentLogged;
+    typeCounts[r.interactionType] = r.n;
+    const latest = r.latestLogged ? new Date(r.latestLogged) : null;
+    if (latest && (!latestLoggedAt || latest > latestLoggedAt)) latestLoggedAt = latest;
+  }
+  return { total, typeCounts, hasLoggedInteraction: loggedCount > 0, latestLoggedAt, recentLoggedCount };
+}
+
+/**
+ * A contact's whole timeline, for when the profile's first CONTACT_TIMELINE_INITIAL are not
+ * enough: "show older", a filter reaching past them, or a deep link to an older row. Same
+ * columns and order as `getContact`'s window.
+ */
+export async function listContactTimeline(contactId: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  return db
+    .select({
+      id: interactions.id,
+      interactionType: interactions.interactionType,
+      interactionDate: interactions.interactionDate,
+      sameDayOrder: interactions.sameDayOrder,
+      noteBatchId: interactions.noteBatchId,
+      aiSummary: interactions.aiSummary,
+      source: interactions.source,
+      notesPreview: sql<string | null>`left(${interactions.rawNotes}, 600)`,
+    })
+    .from(interactions)
+    .where(and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)))
+    .orderBy(desc(interactions.interactionDate), asc(interactions.sameDayOrder));
+}
+
+/** Just enough of a contact to name it: for pages that link to one, not show it. */
+export async function getContactLabel(id: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const row = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
+    columns: { id: true, fullName: true, preferredName: true },
+  });
+  return row ?? null;
 }
 
 /**

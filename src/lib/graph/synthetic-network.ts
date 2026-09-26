@@ -185,6 +185,7 @@ export function buildSyntheticGraphPayload(
         shown: count,
         engaged: count,
         available: count,
+        capped: false,
       },
       userName: options.userName ?? "You",
       userImageUrl: null,

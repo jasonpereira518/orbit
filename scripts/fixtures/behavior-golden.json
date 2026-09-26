@@ -3240,7 +3240,8 @@
         "scope": "engaged",
         "shown": 25,
         "engaged": 25,
-        "available": 25
+        "available": 25,
+        "capped": false
       },
       "userName": "You",
       "userImageUrl": null,
@@ -5204,7 +5205,20 @@
     "tags": [
       "AI",
       "Warm intro"
-    ]
+    ],
+    "timeline": {
+      "total": 6,
+      "typeCounts": {
+        "call": 1,
+        "email": 1,
+        "event": 1,
+        "intro": 1,
+        "linkedin_message": 2
+      },
+      "hasLoggedInteraction": true,
+      "latestLoggedAt": "<ts>",
+      "recentLoggedCount": 6
+    }
   },
   "action: listRelatedContacts": [
     {
@@ -10649,7 +10663,8 @@
         "scope": "engaged",
         "shown": 26,
         "engaged": 26,
-        "available": 27
+        "available": 27,
+        "capped": false
       },
       "userName": "You",
       "userImageUrl": null,

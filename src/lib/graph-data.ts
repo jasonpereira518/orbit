@@ -1,9 +1,9 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, userGoals, userSettings } from "@/db/schema";
 import type { UserProfile } from "@/lib/auth";
 import { closenessTier } from "@/lib/closeness";
-import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
 import { isCometContact, pickClusterComets } from "@/lib/comet";
 import {
   buildConstellationClusters,
@@ -52,6 +52,91 @@ export type UserSocialLinks = {
  */
 export type GraphScope = "engaged" | "all";
 
+/** Most stars one payload carries, closest first. See `loadGraphData`. */
+export const GRAPH_CONTACT_CAP = 5_000;
+
+/** The text a star's panel shows, read only for the stars that ship. */
+const DETAIL_COLUMNS = {
+  id: true,
+  aiSummary: true,
+  keyFacts: true,
+  howMet: true,
+  metContext: true,
+  dateMet: true,
+  sharedInterests: true,
+  email: true,
+  phone: true,
+  linkedinUrl: true,
+  website: true,
+} as const;
+
+type ContactDetails = {
+  aiSummary: string | null;
+  keyFacts: string[] | null;
+  howMet: string | null;
+  metContext: string | null;
+  dateMet: Date | null;
+  sharedInterests: string[] | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  website: string | null;
+};
+
+const EMPTY_DETAILS: ContactDetails = {
+  aiSummary: null,
+  keyFacts: null,
+  howMet: null,
+  metContext: null,
+  dateMet: null,
+  sharedInterests: null,
+  email: null,
+  phone: null,
+  linkedinUrl: null,
+  website: null,
+};
+
+/** Ids per `IN (...)` when reading details; well under the bind-parameter cap. */
+const DETAIL_ID_CHUNK = 2_000;
+
+/**
+ * Fill in the panel text for the contacts that ship. `everyone` skips the id list when the
+ * whole network ships anyway (show all, or a network with no filter to apply).
+ */
+async function attachDetails(
+  userId: string,
+  shipped: Array<{ id: string } & ContactDetails>,
+  everyone: boolean
+): Promise<void> {
+  if (!shipped.length) return;
+  const db = await getDb();
+  const ids = shipped.map((c) => c.id);
+  const chunks = everyone ? [null] : Array.from({ length: Math.ceil(ids.length / DETAIL_ID_CHUNK) }, (_, i) => ids.slice(i * DETAIL_ID_CHUNK, (i + 1) * DETAIL_ID_CHUNK));
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      db.query.contacts.findMany({
+        where: chunk ? and(eq(contacts.userId, userId), inArray(contacts.id, chunk)) : eq(contacts.userId, userId),
+        columns: DETAIL_COLUMNS,
+      })
+    )
+  );
+  const byId = new Map(results.flat().map((d) => [d.id, d]));
+  for (const c of shipped) {
+    const d = byId.get(c.id);
+    if (!d) continue;
+    c.aiSummary = d.aiSummary;
+    c.keyFacts = d.keyFacts;
+    c.howMet = d.howMet;
+    c.metContext = d.metContext;
+    c.dateMet = d.dateMet;
+    c.sharedInterests = d.sharedInterests;
+    c.email = d.email;
+    c.phone = d.phone;
+    c.linkedinUrl = d.linkedinUrl;
+    c.website = d.website;
+  }
+}
+
 export async function loadGraphData(
   userId: string,
   options: {
@@ -61,10 +146,11 @@ export async function loadGraphData(
 ) {
   const db = await getDb();
 
-  // Promise.resolve pins a single execution: a drizzle query builder is a lazy
-  // thenable that re-runs on every await, so handing the bare builder to the
-  // cohort would quietly issue the same scan twice.
-  const contactRowsPromise = Promise.resolve(
+  // The network scan reads only what deciding and drawing need, for everyone. The wide text
+  // a star's panel shows (summary, key facts, how you met, contact details) is read below for
+  // the stars actually shipped, not for the whole network. At 3,000 contacts that text was
+  // most of what this scan moved, for people the default view never draws.
+  const [rows, goals, settings, closenessCohort, constellationConfig] = await Promise.all([
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
       columns: {
@@ -76,42 +162,20 @@ export async function loadGraphData(
         title: true,
         relationshipScore: true,
         statedCloseness: true,
-        // Constellation eligibility inputs. `priorityLevel` and `constellationPin` are the
-        // only additions; the rest were already here.
+        // Constellation eligibility inputs.
         priorityLevel: true,
         constellationPin: true,
         lastInteractionAt: true,
-        firstInteractionAt: true,
         nextFollowUpAt: true,
-        aiSummary: true,
-        keyFacts: true,
-        howMet: true,
-        metContext: true,
-        dateMet: true,
-        // Omit notes (heavy) from graph payload
-        notes: false,
-        sharedInterests: true,
-        email: true,
-        phone: true,
-        linkedinUrl: true,
-        website: true,
-        // Never the column itself — base64 up to 120 KB per row. See contact-avatar-sql.ts.
-        profileImageUrl: false,
-        createdAt: true,
-        industry: true,
       },
       extras: {
         avatarUrl: clientAvatarUrlSql.as("avatar_url"),
-        // Computed, never the column: `notes` is multi-KB per row and deliberately excluded
-        // above, and `smoke-page-budgets` asserts it never appears bare in this scan.
+        // Computed, never the column: `notes` is multi-KB per row, and `smoke-page-budgets`
+        // asserts it never appears bare in this scan.
         hasNotes: contactHasNotesSql.as("has_notes"),
       },
       with: { contactTags: { with: { tag: true } } },
-    })
-  );
-
-  const [rows, goals, settings, closenessCohort, constellationConfig] = await Promise.all([
-    contactRowsPromise,
+    }),
     db.query.userGoals.findMany({
       where: eq(userGoals.userId, userId),
       orderBy: [desc(userGoals.createdAt)],
@@ -119,10 +183,11 @@ export async function loadGraphData(
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),
     }),
-    // Donates the scan above rather than repeating it.
-    getClosenessCohort(userId, contactRowsPromise),
-    // The one statement this feature adds. A one-row select on a singleton table, and the
-    // reason `smoke-page-budgets` allows the graph 9 statements rather than 8.
+    // Slim: the chart uses four numbers per person, not every scoring factor. The full read
+    // de-TOASTed each contact's whole breakdown to hand over those four. Nothing is donated:
+    // the stored path never reads contacts, and the rare rebuild does its own wide scan.
+    getClosenessCohortSlim(userId),
+    // A one-row select on a singleton table.
     getConstellationConfig(),
   ]);
 
@@ -145,17 +210,19 @@ export async function loadGraphData(
       hasLoggedInteraction: closenessCohort.interactedIds.has(c.id),
       nextFollowUpAt: c.nextFollowUpAt,
       tags,
-      aiSummary: c.aiSummary,
-      keyFacts: c.keyFacts,
-      howMet: c.howMet,
-      metContext: c.metContext,
-      dateMet: c.dateMet,
+      // The panel text is filled in below, for the contacts that ship. Same keys, same order
+      // as before, so the payload's shape does not change.
+      aiSummary: EMPTY_DETAILS.aiSummary,
+      keyFacts: EMPTY_DETAILS.keyFacts,
+      howMet: EMPTY_DETAILS.howMet,
+      metContext: EMPTY_DETAILS.metContext,
+      dateMet: EMPTY_DETAILS.dateMet,
       notes: null as string | null,
-      sharedInterests: c.sharedInterests,
-      email: c.email,
-      phone: c.phone,
-      linkedinUrl: c.linkedinUrl,
-      website: c.website,
+      sharedInterests: EMPTY_DETAILS.sharedInterests,
+      email: EMPTY_DETAILS.email,
+      phone: EMPTY_DETAILS.phone,
+      linkedinUrl: EMPTY_DETAILS.linkedinUrl,
+      website: EMPTY_DETAILS.website,
       profileImageUrl: c.avatarUrl,
       dormant,
       substantive: constellationEligibility(
@@ -191,9 +258,14 @@ export async function loadGraphData(
    */
   const eligibleCount = graphContacts.filter((c) => c.substantive).length;
   const filterActive = constellationConfig.enabled && options.scope !== "all";
-  const visibleContacts = filterActive
-    ? graphContacts.filter((c) => c.substantive)
-    : graphContacts;
+  const candidates = filterActive ? graphContacts.filter((c) => c.substantive) : graphContacts;
+  // "Show all" is capped, closest first. Past a few thousand stars the chart draws a dot
+  // field, and at 50,000 contacts the uncapped payload was tens of megabytes for it.
+  const capped = candidates.length > GRAPH_CONTACT_CAP;
+  const visibleContacts = capped
+    ? [...candidates].sort((a, b) => b.closeness - a.closeness || a.id.localeCompare(b.id)).slice(0, GRAPH_CONTACT_CAP)
+    : candidates;
+  await attachDetails(userId, visibleContacts, visibleContacts.length === rows.length);
 
   const { clusters: built } = buildConstellationClusters(visibleContacts);
   const clusters: GraphCluster[] = toNamedGraphClusters(built);
@@ -268,6 +340,8 @@ export async function loadGraphData(
         shown: visibleContacts.length,
         engaged: eligibleCount,
         available: graphContacts.length,
+        /** True when more matched than `GRAPH_CONTACT_CAP`; the closest are shown. */
+        capped,
       },
       userName: profile?.name || "You",
       userImageUrl: profile?.imageUrl || null,

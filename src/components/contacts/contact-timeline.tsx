@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { CircleDashed, FileText, Plus, Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { reorderSameDayInteractions } from "@/actions/contacts";
+import { listContactTimeline, reorderSameDayInteractions } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -73,10 +73,11 @@ const STAGGER_STEP_MS = 30;
 /**
  * Rows rendered before "show older" appears.
  *
- * This bounds the RENDER, not the query. Every interaction is already on the client, so
- * expanding is instant and — more importantly — a deep link can always reach its target.
- * Windowing the query instead would have quietly broken `formatInteractionFrequency`, which
- * counts rows in a 90-day window from the same array.
+ * The page ships the newest few hundred rows, not the whole history (`getContact`), with the
+ * true total and per-type counts beside them. Rendering is bounded here; anything that needs
+ * rows past what shipped (show older, a filter, a deep link to an old row) loads the rest
+ * once, through `listContactTimeline`. The 90-day frequency is counted in SQL now, so it no
+ * longer depends on every row being on the client.
  */
 const WINDOW_SIZE = 40;
 
@@ -103,10 +104,16 @@ export function ContactTimeline({
   openActionItems,
   hasApiKey,
   aiReason = null,
+  totalCount,
+  typeCounts,
 }: {
   contactId: string;
   contactName: string;
   interactions: TimelineInteraction[];
+  /** Rows in the whole history. More than `interactions.length` means only a window shipped. */
+  totalCount?: number;
+  /** Rows per interaction type across the whole history, for the filter chips. */
+  typeCounts?: Record<string, number>;
   /** Open items for this contact, from the same query the brief card's next steps use. */
   openActionItems: { id: string; interactionId: string }[];
   hasApiKey: boolean;
@@ -143,14 +150,38 @@ export function ContactTimeline({
   >(null);
   const reducedMotion = useReducedMotion();
 
+  // The whole history, once something needed rows past the shipped window. Replaced (not
+  // cleared) when the page refreshes, so an expanded timeline never collapses under someone.
+  const [fullRows, setFullRows] = useState<TimelineInteraction[] | null>(null);
+  const loadingFull = useRef(false);
+  const shippedAll = totalCount == null || interactions.length >= totalCount;
+  const haveAll = shippedAll || fullRows !== null;
+  const loadFull = useCallback(() => {
+    if (haveAll || loadingFull.current) return;
+    loadingFull.current = true;
+    listContactTimeline(contactId)
+      .then((rows) => setFullRows(rows))
+      .catch(() => toast.error("Couldn’t load the older history — try again?"))
+      .finally(() => {
+        loadingFull.current = false;
+      });
+  }, [contactId, haveAll]);
+  const fullRowsLoaded = fullRows !== null;
+  useEffect(() => {
+    // A refresh re-sent the window; re-read the whole history so it stays current.
+    if (!fullRowsLoaded) return;
+    listContactTimeline(contactId).then(setFullRows).catch(() => {});
+  }, [interactions, contactId, fullRowsLoaded]);
+  const source = fullRows ?? interactions;
+
   const sorted = useMemo(() => {
-    return [...interactions].sort((a, b) => {
+    return [...source].sort((a, b) => {
       const da = new Date(a.interactionDate).getTime();
       const db = new Date(b.interactionDate).getTime();
       if (db !== da) return db - da;
       return (a.sameDayOrder ?? 0) - (b.sameDayOrder ?? 0);
     });
-  }, [interactions]);
+  }, [source]);
 
   /** interactionId → count of still-open action items, grouped from data the page already has. */
   const openByInteraction = useMemo(() => {
@@ -164,12 +195,20 @@ export function ContactTimeline({
   /** Counts come from the whole history, so the chips never offer an empty filter. */
   const familyCounts = useMemo(() => {
     const map = new Map<InteractionFamilyValue, number>();
+    if (!haveAll && typeCounts) {
+      // Only a window is here; the server counted the whole history.
+      for (const [type, n] of Object.entries(typeCounts)) {
+        const f = interactionTypeFamily(type);
+        map.set(f, (map.get(f) ?? 0) + n);
+      }
+      return map;
+    }
     for (const i of sorted) {
       const f = interactionTypeFamily(i.interactionType);
       map.set(f, (map.get(f) ?? 0) + 1);
     }
     return map;
-  }, [sorted]);
+  }, [sorted, haveAll, typeCounts]);
 
   const filtered = useMemo(
     () =>
@@ -183,7 +222,15 @@ export function ContactTimeline({
     () => (expanded ? filtered : filtered.slice(0, WINDOW_SIZE)),
     [filtered, expanded]
   );
-  const hiddenCount = filtered.length - visible.length;
+  const hiddenCount =
+    (haveAll ? filtered.length : filter === "all" ? (totalCount ?? filtered.length) : (familyCounts.get(filter) ?? filtered.length)) -
+    visible.length;
+
+  // Rows past the shipped window are wanted: showing older, or filtering (a type's rows may
+  // all be older than the window).
+  useEffect(() => {
+    if (expanded || filter !== "all") loadFull();
+  }, [expanded, filter, loadFull]);
 
   const monthGroups = useMemo(() => {
     const groups: Array<{
@@ -264,7 +311,18 @@ export function ContactTimeline({
   useEffect(() => {
     function onReveal(event: Event) {
       const id = (event as CustomEvent<RevealInteractionDetail>).detail?.interactionId;
-      if (!id || !sorted.some((i) => i.id === id)) return;
+      if (!id) return;
+      if (!sorted.some((i) => i.id === id)) {
+        // Older than the window that shipped: load the rest. `pendingReveal` waits for the
+        // row to render, so it scrolls there once the history lands.
+        if (!haveAll) {
+          setFilter("all");
+          setExpanded(true);
+          setPendingReveal(id);
+          loadFull();
+        }
+        return;
+      }
       // Already rendered: the caller's own smooth scroll has it, and starting a second one
       // here only makes the two fight. This path exists for the rows it CANNOT reach.
       if (document.getElementById(`interaction-${id}`)) return;
@@ -274,7 +332,7 @@ export function ContactTimeline({
     }
     window.addEventListener(REVEAL_INTERACTION_EVENT, onReveal);
     return () => window.removeEventListener(REVEAL_INTERACTION_EVENT, onReveal);
-  }, [sorted]);
+  }, [sorted, haveAll, loadFull]);
 
   /**
    * A `?interaction=<id>` link — a chat citation's "Open in profile", today — reveals the same
@@ -285,12 +343,18 @@ export function ContactTimeline({
   const dest = useSearchParams().get("interaction");
   const revealedFromUrl = useRef(false);
   useEffect(() => {
-    if (!dest || revealedFromUrl.current || !sorted.some((i) => i.id === dest)) return;
+    if (!dest || revealedFromUrl.current) return;
+    if (!sorted.some((i) => i.id === dest)) {
+      // Maybe older than the shipped window. Load the rest; this effect runs again when
+      // `sorted` grows, and a link to a row that does not exist simply does nothing.
+      if (!haveAll) loadFull();
+      return;
+    }
     revealedFromUrl.current = true;
     setFilter("all");
     setExpanded(true);
     setPendingReveal(dest);
-  }, [dest, sorted]);
+  }, [dest, sorted, haveAll, loadFull]);
 
   /**
    * A just-logged interaction flies from the button that saved it onto its node on the spine.
@@ -513,7 +577,7 @@ export function ContactTimeline({
     {
       value: "all",
       label: "All",
-      count: sorted.length,
+      count: haveAll ? sorted.length : (totalCount ?? sorted.length),
       active: "border-ink/25 bg-muted text-ink",
       dot: "bg-muted-foreground",
     },

@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
@@ -52,6 +52,10 @@ const CONSTELLATION_REFRESH_BUDGET_MS = 20_000;
 export async function refreshConstellationBatch(input?: {
   offset?: number;
   limit?: number;
+  /** The last id the previous tick attempted; the next tick starts after it. */
+  after?: string | null;
+  /** The total the first tick reported, handed back so later ticks need not count again. */
+  total?: number;
 }) {
   const userId = await requireUserForSurface("page.graph");
   const db = await getDb();
@@ -61,14 +65,25 @@ export async function refreshConstellationBatch(input?: {
   const limit = Math.min(20, Math.max(1, input?.limit ?? 4));
   const deadline = deadlineAfter(CONSTELLATION_REFRESH_BUDGET_MS);
 
-  const rows = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: { id: true },
-  });
-  const total = rows.length;
-  const slice = rows.slice(offset, offset + limit);
+  // A keyset page of ids, in id order. Every tick used to read ALL the user's ids to take a
+  // handful, unordered, by offset: quadratic over a refresh, and at 50,000 contacts about
+  // 12,500 ticks of 50,000 ids each. The order also makes the walk stable, which offsets
+  // into an unordered read never were.
+  const after = typeof input?.after === "string" && input.after ? input.after : null;
+  const [slice, total] = await Promise.all([
+    db.query.contacts.findMany({
+      where: after ? and(eq(contacts.userId, userId), gt(contacts.id, after)) : eq(contacts.userId, userId),
+      columns: { id: true },
+      orderBy: [asc(contacts.id)],
+      limit,
+    }),
+    Number.isInteger(input?.total) && (input?.total ?? -1) >= 0
+      ? Promise.resolve(input!.total!)
+      : db.$count(contacts, eq(contacts.userId, userId)),
+  ]);
 
   let processed = offset;
+  let cursor = after;
   let failed = 0;
   let firstError: unknown = null;
   let firstFailedId: string | null = null;
@@ -85,6 +100,7 @@ export async function refreshConstellationBatch(input?: {
       }
     }
     processed += 1;
+    cursor = row.id;
   }
 
   // One row per batch, never per contact — per-item error rows are how a diagnostic
@@ -104,7 +120,10 @@ export async function refreshConstellationBatch(input?: {
     });
   }
 
-  const done = processed >= total;
+  // Done when the walk ran off the end: a short page, fully attempted. `processed >= total`
+  // too, for a count that was right; a contact added mid-refresh just extends the walk.
+  const attemptedAll = cursor === (slice.at(-1)?.id ?? after);
+  const done = (slice.length < limit && attemptedAll) || processed >= total;
   const graph = done
     ? await traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), { userId })
     : null;
@@ -114,5 +133,6 @@ export async function refreshConstellationBatch(input?: {
     processed,
     done,
     graph,
+    cursor,
   };
 }

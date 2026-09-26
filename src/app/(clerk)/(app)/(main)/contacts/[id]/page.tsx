@@ -19,7 +19,7 @@ import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import { Reveal } from "@/components/motion/reveal";
 import { Skeleton } from "@/components/ui/skeleton";
-import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
+import { computeCloseness, interactionFrequencyLabel } from "@/lib/closeness";
 import { getContactCloseness } from "@/lib/closeness-cohort";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
@@ -38,7 +38,6 @@ import { listJobMatchesForContact } from "@/lib/jobs/contact-matches";
 import { getContactProfile } from "@/lib/contact-profile";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
-import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -167,11 +166,11 @@ export default async function ContactDetailPage({
         relationshipScore: contact.relationshipScore,
         statedCloseness: contact.statedCloseness,
         lastInteractionAt: contact.lastInteractionAt,
-        // `getContact` loads this contact's interaction rows unfiltered, so
-        // skipping AI-derived rows gives the same has-ever-interacted fact the
-        // cohort builder derives from the interactions table — not the
-        // `lastInteractionAt` stamp, which every create path writes.
-        hasLoggedInteraction: contact.interactions.some(isLoggedTouch),
+        // Counted over the contact's WHOLE history in SQL (`getContact`'s `timeline`),
+        // skipping AI-derived rows: the same has-ever-interacted fact the cohort builder
+        // derives from the interactions table — not the `lastInteractionAt` stamp, which
+        // every create path writes. The shipped rows are only the newest window.
+        hasLoggedInteraction: contact.timeline.hasLoggedInteraction,
         firstInteractionAt: contact.firstInteractionAt,
         dateMet: contact.dateMet,
         createdAt: contact.createdAt,
@@ -198,18 +197,14 @@ export default async function ContactDetailPage({
   });
 
   const displayName = contact.preferredName || contact.fullName;
-  const latestInteraction = latestLoggedTouch(contact.interactions);
-  const lastTouchAt =
-    latestInteraction?.interactionDate || contact.lastInteractionAt;
+  const lastTouchAt = contact.timeline.latestLoggedAt || contact.lastInteractionAt;
   // Same distinction the closeness model already makes: `lastInteractionAt` is stamped on
   // every create/import, so only an actual interactions row proves a touch happened.
   // AI-derived timeline events restate messages that are rows of their own, so they are
   // not touches here either.
-  const hasLoggedInteraction = contact.interactions.some(isLoggedTouch);
+  const hasLoggedInteraction = contact.timeline.hasLoggedInteraction;
 
-  const frequencyLabel = formatInteractionFrequency(
-    contact.interactions.filter(isLoggedTouch).map((i) => i.interactionDate)
-  );
+  const frequencyLabel = interactionFrequencyLabel(contact.timeline.recentLoggedCount);
 
   // Awaited once here rather than inline: both the brief card's next-steps list and the
   // timeline's per-interaction "N open" chips read the same rows.
@@ -387,6 +382,8 @@ export default async function ContactDetailPage({
             id: item.id,
             interactionId: item.interactionId,
           }))}
+          totalCount={contact.timeline.total}
+          typeCounts={contact.timeline.typeCounts}
         />
       </Suspense>
 
@@ -468,6 +465,8 @@ async function StreamedTimeline({
   openActionItems: React.ComponentProps<
     typeof ContactTimeline
   >["openActionItems"];
+  totalCount: number;
+  typeCounts: Record<string, number>;
 }) {
   const { hasApiKey, ai } = await settings;
   return (

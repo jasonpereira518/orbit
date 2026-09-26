@@ -180,6 +180,11 @@ export async function persistClosenessScores(
       FROM (VALUES ${sql.join(tuples, sql`, `)})
         AS v(id, raw, closeness, tier, orbit_score, evidence, prior, breakdown)
       WHERE c.id = v.id AND c.user_id = ${userId}
+        -- Only rows whose score actually moved. A recalibration re-scores the whole network,
+        -- and most scores come out the same; rewriting those anyway wrote a new version of
+        -- every contact row and touched every index on the table (closeness is indexed, so
+        -- none of it could be a HOT update). The breakdown carries every stored field.
+        AND (c.closeness_breakdown IS DISTINCT FROM v.breakdown OR c.closeness_computed_at IS NULL)
     `);
   }
 }
