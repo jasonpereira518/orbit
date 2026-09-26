@@ -6,7 +6,8 @@ import { clearDecisionKey, getSettings, saveDecisionKey } from "@/actions/settin
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
+import { SettingsSection } from "@/components/settings/settings-section";
+import { Disclosure } from "@/components/settings/disclosure";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -41,13 +42,13 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
   return (
     <SettingsSection
       title="Decision model (optional)"
-      description="Add a TypeSafe key and Orbit hands its yes-or-no and ranking steps to Jev, TypeSafe’s decision model: spotting recruiters during a mail scan, choosing which contacts a chat answer draws on, telling two people apart before merging them, working out which calendar events were real meetings, and skipping the bigger model on notes and messages that have nothing in them. It answers in a fraction of a second, costs far less than a chat model, and runs on your own TypeSafe account. Keys are encrypted at rest and only used for your account."
+      description="Jev is TypeSafe’s decision model — it handles small yes-or-no and ranking steps Orbit would otherwise do on your chat model. It’s optional, and nothing changes until you add a key below."
     >
       <p className="text-sm text-muted-foreground" role="status">
         Status: {status}
       </p>
 
-      <SettingsRow title="What Jev reads">
+      <Disclosure label="What Jev reads">
         <p className="text-sm text-muted-foreground">
           The same material the step itself works from, and nothing more. During a recruiter scan,
           each sender’s name, address, subject lines and message text. When chat answers, your
@@ -59,7 +60,7 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
           slower steps, a yes-or-no on whether there is anything there at all: a note with no
           dates in it, a LinkedIn thread that is only “thanks for connecting”.
         </p>
-      </SettingsRow>
+      </Disclosure>
 
       <div className="space-y-1.5">
         <Label htmlFor="typesafe-key">TypeSafe API key</Label>
