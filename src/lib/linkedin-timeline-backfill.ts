@@ -287,7 +287,12 @@ export async function runLinkedInTimelineBackfill(
   let eventsCreated = 0;
   let capped = false;
 
-  // Opt-in (audit A6): the work costs the user's own AI key, so it never starts unasked.
+  // On by default (schema v108) — the owner decided deriving timeline events should just
+  // happen, so there is no user-facing control any more. This read is now an operator kill
+  // switch: flipping `timeline_backfill_enabled` to 0 directly in the database, for one
+  // account, is the only way to stop the spend. It used to gate an opt-in (audit A6); do
+  // not read the check below as "waiting for permission" — permission was already given by
+  // the default.
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
     columns: { timelineBackfillEnabled: true },

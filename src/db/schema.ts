@@ -387,12 +387,20 @@ export const userSettings = pgTable("user_settings", {
   termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
   termsVersion: text("terms_version"),
   /**
-   * Opt-in to deriving LinkedIn timeline events with the user's own AI key. Integer, not
-   * boolean, per house convention. Defaults to 0: the backfill costs one model call per
-   * qualifying conversation and used to run unasked (audit A6). The runner, the cron sweep
-   * and the import card all read it — see src/lib/linkedin-timeline-backfill.ts.
+   * Whether LinkedIn timeline events are derived with the user's own AI key. Integer, not
+   * boolean, per house convention. Defaults to 1 (schema v108): this used to be an opt-in
+   * (audit A6) with a UI checkbox, but the owner decided deriving events should just happen
+   * — the checkbox is gone and every account is on by default. Turning it on DOES spend the
+   * user's own AI budget, one call per qualifying conversation, capped at
+   * RATE_LIMITS.timelineBackfillDaily per day; that is a deliberate, informed choice, not an
+   * oversight, so do not "fix" this back to defaulting off. There is deliberately no UI
+   * left to flip it — the column survives only as an operator kill switch (set it to 0
+   * directly in the database to stop the spend for one account) and cannot distinguish
+   * "never touched" from "an account that explicitly declined it under the old opt-in", so
+   * there is no way to honour a past decline. The runner, the cron sweep and the import
+   * card all read it — see src/lib/linkedin-timeline-backfill.ts.
    */
-  timelineBackfillEnabled: integer("timeline_backfill_enabled").default(0).notNull(),
+  timelineBackfillEnabled: integer("timeline_backfill_enabled").default(1).notNull(),
   /**
    * Operator suspension. Enforced in `requireUserId()` (`src/lib/auth.ts`) rather than in a
    * layout: actions are reachable by direct POST, so the gate has to sit at the one function

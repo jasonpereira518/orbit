@@ -257,9 +257,8 @@ export default function TermsPage() {
             supply, and that provider bills you directly.
           </p>
           <p>
-            Some AI work runs in the background: search indexing, and — only if
-            you turn it on — deriving timeline events from imported LinkedIn
-            conversations, which shows an estimated cost before you do and is
+            Some AI work runs in the background: search indexing, and deriving
+            timeline events from imported LinkedIn conversations, which is
             capped at {TIMELINE_DAILY_CONTACT_CAP} conversations a day. Settings
             shows the last 30 days of AI usage and its estimated cost; the bill
             itself comes from your provider.

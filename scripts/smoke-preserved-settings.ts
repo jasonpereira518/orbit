@@ -1,7 +1,8 @@
 /**
  * Launch Phase 1 adds three user_settings columns that are account state, not content:
  * the recorded Terms acceptance (terms_accepted_at, terms_version) and the LinkedIn
- * timeline opt-in (timeline_backfill_enabled). A Settings data wipe (purgeUserData with
+ * timeline switch (timeline_backfill_enabled — an operator kill switch since schema v108,
+ * on by default with no user-facing control). A Settings data wipe (purgeUserData with
  * keepSettings left at its default) must keep them; deleting the account must not.
  *
  * Run: npx tsx scripts/smoke-preserved-settings.ts
@@ -36,7 +37,7 @@ run(async () => {
 
   await db.insert(userSettings).values({ userId: FRESH });
   const fresh = await settingsFor(FRESH);
-  check("a fresh row is opted out of the timeline backfill", fresh?.timelineBackfillEnabled === 0, JSON.stringify(fresh?.timelineBackfillEnabled));
+  check("a fresh row defaults the timeline backfill on", fresh?.timelineBackfillEnabled === 1, JSON.stringify(fresh?.timelineBackfillEnabled));
   check("a fresh row has accepted nothing", fresh?.termsAcceptedAt === null && fresh?.termsVersion === null);
 
   const acceptedAt = new Date("2026-09-15T12:00:00.000Z");

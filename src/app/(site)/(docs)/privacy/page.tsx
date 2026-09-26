@@ -354,10 +354,10 @@ export default function PrivacyPage() {
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
             the people you talked with most. Deriving timeline events from imported LinkedIn
-            conversations is off until you turn it on, shows an estimated cost first, skips threads
-            with a single message, and processes at most {TIMELINE_DAILY_CONTACT_CAP} conversations
-            a day. Settings → Integrations → AI provider shows every call from the last 30 days and
-            its estimated cost.
+            conversations happens automatically, on your own AI key, skips threads with a single
+            message, and processes at most {TIMELINE_DAILY_CONTACT_CAP} conversations a day.
+            Settings → Integrations → AI provider shows every call from the last 30 days and its
+            estimated cost.
           </p>
           <p>
             <strong>

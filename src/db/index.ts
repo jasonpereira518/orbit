@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
   terms_version text,
-  timeline_backfill_enabled integer NOT NULL DEFAULT 0,
+  timeline_backfill_enabled integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
@@ -2043,7 +2043,16 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62. Scanned
 // every remote ref, every local branch and every worktree's working src/db/index.ts on
 // Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
-export const SCHEMA_VERSION = 107;
+//
+// 108 (this branch, integrations dialog Task 9) = user_settings.timeline_backfill_enabled's
+// default flips from 0 to 1, and every existing row is flipped on with it (the `alters`
+// entry above). The column's own DDL type does not change, but the DEFAULT clause in the
+// CREATE TABLE template is part of what `schemaFingerprint()` hashes, so this is a real DDL
+// change and needs its own version, not just a data migration riding on 107's number.
+// Rescanned every local ref, every remote ref, and every sibling worktree's working
+// src/db/index.ts (including uncommitted changes) on Sep 26 2026: 107 (this branch) is the
+// highest claimed anywhere, so 108 is the next free integer and is still free.
+export const SCHEMA_VERSION = 108;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2829,7 +2838,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "user_settings", "terms_accepted_at", "timestamptz");
   await ensureColumn(client, "user_settings", "terms_version", "text");
-  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(
     client,
     "user_recruiter_links",
@@ -3689,6 +3698,17 @@ const alters = [
   // `ai-pricing.ts` has no OpenRouter slugs at all and blending the two figures in one
   // column with no source would make that gap invisible.
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cost_source text NOT NULL DEFAULT 'estimated'`,
+  // Schema v108: user_settings.timeline_backfill_enabled defaults to 1 instead of 0.
+  // Deriving LinkedIn timeline events used to be opt-in (audit A6, a checkbox on the import
+  // card); the owner decided it should just happen, so the checkbox is gone
+  // (src/components/imports/timeline-backfill-toggle.tsx deleted) and the column is now an
+  // operator-only kill switch with no UI. `ALTER COLUMN ... SET DEFAULT` only changes what
+  // new rows get; the `UPDATE` below flips every existing account on, same as v73's
+  // ai_model migration above. This DOES start spending each account's own AI budget (one
+  // model call per qualifying conversation, capped at RATE_LIMITS.timelineBackfillDaily a
+  // day) without asking — that is the point, not a bug to revert.
+  `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_enabled SET DEFAULT 1`,
+  `UPDATE user_settings SET timeline_backfill_enabled = 1 WHERE timeline_backfill_enabled = 0`,
 ];
 
 /**
