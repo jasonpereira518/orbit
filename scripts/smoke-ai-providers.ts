@@ -11,10 +11,13 @@ import {
   isSelectableAiProvider,
   DEFAULT_MODELS,
   PROVIDER_MODELS,
+  LEGACY_MODEL_MAP,
   resolveAiProvider,
+  tieredModels,
   type AiProvider,
 } from "../src/lib/ai-providers";
 import { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "../src/lib/ai-models";
+import { priceFor } from "../src/lib/ai-pricing";
 
 let failures = 0;
 function check(name: string, ok: boolean) {
@@ -86,6 +89,78 @@ check(
 check(
   "openrouter embeds with the 1536-dim OpenAI model, so nothing is truncated",
   EMBEDDING_MODELS.openrouter === "openai/text-embedding-3-small"
+);
+
+// Not every provider gets three tiers: a provider gets a `best` only when there is a model
+// worth putting there (round 1 review — Gemini's 3.5 Flash costs 2x 3.8 Flash for measurably
+// worse results per docs/ai-evals/2026-09-19-gemini-*, so Gemini stops at `balanced`). At
+// most one of each tier, and cheapest + balanced are mandatory; the AI page renders however
+// many tiers a provider declares.
+for (const p of SELECTABLE_AI_PROVIDERS) {
+  const tiers = PROVIDER_MODELS[p.id].filter((m) => m.tier);
+  const tierValues = tiers.map((m) => m.tier);
+  check(`${p.id} tags at most one of each tier`, new Set(tierValues).size === tierValues.length);
+  check(
+    `${p.id} tags at least cheapest and balanced`,
+    tierValues.includes("cheapest") && tierValues.includes("balanced")
+  );
+  const balanced = PROVIDER_MODELS[p.id].find((m) => m.tier === "balanced");
+  check(
+    `${p.id}'s default is its balanced tier`,
+    balanced !== undefined && DEFAULT_MODELS[p.id] === balanced.value
+  );
+}
+check(
+  "no tier points at a Gemini 2.5 model — Google 404s those for keys issued since",
+  !PROVIDER_MODELS.gemini.some((m) => m.tier && m.value.startsWith("gemini-2.5"))
+);
+check(
+  "Gemini has no `best` tier — 3.5 Flash is not it (worse AND pricier than 3.8 per the recorded evals)",
+  !PROVIDER_MODELS.gemini.some((m) => m.tier === "best")
+);
+// Exact, per provider: the loop above only asks for cheapest + balanced, so without this
+// OpenAI's `best` was pinned by nothing — dropping `tier: "best"` from gpt-4.1 would quietly
+// take a tier off the card and every other check here would still pass.
+check(
+  "tieredModels returns declared tiers in cheapest, balanced, best order",
+  tieredModels("gemini").map((m) => m.tier).join(",") === "cheapest,balanced" &&
+    tieredModels("openai").map((m) => m.tier).join(",") === "cheapest,balanced,best" &&
+    tieredModels("anthropic").map((m) => m.tier).join(",") === "cheapest,balanced,best"
+);
+
+// The one check that ties a tier LABEL to a FACT rather than trusting the tag: a provider's
+// declared tiers must get strictly (well, non-strictly) more expensive as they go up, on both
+// input and output price. Every other check here passes happily on an inverted ladder — this
+// is the one round 1 asked for after finding Gemini's `best` was priced above `balanced` while
+// scoring worse.
+for (const p of SELECTABLE_AI_PROVIDERS) {
+  const tiers = tieredModels(p.id);
+  for (let i = 1; i < tiers.length; i++) {
+    const prev = priceFor(tiers[i - 1].value);
+    const curr = priceFor(tiers[i].value);
+    check(
+      `${p.id}: ${tiers[i - 1].tier} → ${tiers[i].tier} does not get cheaper (input)`,
+      prev !== null && curr !== null && curr.input >= prev.input
+    );
+    check(
+      `${p.id}: ${tiers[i - 1].tier} → ${tiers[i].tier} does not get cheaper (output)`,
+      prev !== null && curr !== null && curr.output >= prev.output
+    );
+  }
+}
+
+// A preset dropped from PROVIDER_MODELS (because it 404s, or was never valid) must not
+// become unreachable to an account still stored on it — LEGACY_MODEL_MAP is how those
+// accounts land somewhere that works. And a map target has to actually be one of today's
+// live presets, or the migration just trades one broken id for another.
+for (const deadId of ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "claude-opus-4"]) {
+  check(`${deadId} (removed from PROVIDER_MODELS) has a LEGACY_MODEL_MAP entry`, deadId in LEGACY_MODEL_MAP);
+}
+check(
+  "every LEGACY_MODEL_MAP target is a live preset somewhere in PROVIDER_MODELS",
+  Object.values(LEGACY_MODEL_MAP).every((target) =>
+    Object.values(PROVIDER_MODELS).some((list) => list.some((m) => m.value === target))
+  )
 );
 
 console.log(failures === 0 ? "\nall ok" : `\n${failures} failed`);

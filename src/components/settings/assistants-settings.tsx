@@ -4,11 +4,17 @@ import { useState, useSyncExternalStore } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { SettingsSection } from "@/components/settings/settings-section";
+import { ChatGptMark, ClaudeMark } from "@/components/settings/provider-marks";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { cn } from "@/lib/utils";
 
 type Assistant = "claude" | "chatgpt";
+
+const MARKS: Record<Assistant, (props: { className?: string }) => React.ReactElement> = {
+  claude: ClaudeMark,
+  chatgpt: ChatGptMark,
+};
 
 const ASSISTANTS: Record<
   Assistant,
@@ -16,7 +22,7 @@ const ASSISTANTS: Record<
 > = {
   claude: {
     label: "Claude",
-    settingsHref: "https://claude.ai/settings/connectors",
+    settingsHref: "https://claude.ai/new#customize/connectors/yours",
     settingsLabel: "Open Claude",
     steps: [
       "Copy your Orbit link.",
@@ -26,7 +32,7 @@ const ASSISTANTS: Record<
   },
   chatgpt: {
     label: "ChatGPT",
-    settingsHref: "https://chatgpt.com/#settings",
+    settingsHref: "https://chatgpt.com/plugins",
     settingsLabel: "Open ChatGPT",
     steps: [
       "Copy your Orbit link.",
@@ -75,23 +81,27 @@ export function AssistantsSettings() {
         aria-label="Which assistant do you use?"
         className="inline-flex rounded-lg border border-border/70 p-0.5"
       >
-        {ASSISTANT_IDS.map((id) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={assistant === id}
-            onClick={() => setAssistant(id)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium outline-none transition-colors duration-fast ease-house",
-              "focus-visible:ring-2 focus-visible:ring-ring/70",
-              assistant === id
-                ? "bg-card text-ink shadow-sm ring-1 ring-border/70"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            I use {ASSISTANTS[id].label}
-          </button>
-        ))}
+        {ASSISTANT_IDS.map((id) => {
+          const Mark = MARKS[id];
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={assistant === id}
+              onClick={() => setAssistant(id)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium outline-none transition-colors duration-fast ease-house",
+                "focus-visible:ring-2 focus-visible:ring-ring/70",
+                assistant === id
+                  ? "bg-card text-ink shadow-sm ring-1 ring-border/70"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Mark className="size-4" />
+              I use {ASSISTANTS[id].label}
+            </button>
+          );
+        })}
       </div>
 
       <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">

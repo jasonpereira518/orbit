@@ -13,6 +13,8 @@ export type CalendarFeedStatus = {
   url: string | null;
   webcalUrl: string | null;
   googleAddUrl: string | null;
+  outlookLiveAddUrl: string | null;
+  outlookOfficeAddUrl: string | null;
   createdAt: Date | null;
   lastFetchedAt: Date | null;
 };
@@ -25,14 +27,32 @@ type FeedRow = {
 
 function toStatus(row: FeedRow, freshToken: string | null): CalendarFeedStatus {
   if (!row.calendarFeedToken) {
-    return { enabled: false, url: null, webcalUrl: null, googleAddUrl: null, createdAt: null, lastFetchedAt: null };
+    return {
+      enabled: false,
+      url: null,
+      webcalUrl: null,
+      googleAddUrl: null,
+      outlookLiveAddUrl: null,
+      outlookOfficeAddUrl: null,
+      createdAt: null,
+      lastFetchedAt: null,
+    };
   }
   const webcalUrl = freshToken ? buildCalendarFeedWebcalUrl(freshToken) : null;
+  const encoded = webcalUrl ? encodeURIComponent(webcalUrl) : null;
   return {
     enabled: true,
     url: freshToken ? buildCalendarFeedUrl(freshToken) : null,
     webcalUrl,
     googleAddUrl: webcalUrl ? `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcalUrl)}` : null,
+    // Two hosts, because Microsoft has two and nothing here says which this person uses.
+    // Guessing wrong fails silently, so both are offered rather than one picked.
+    outlookLiveAddUrl: encoded
+      ? `https://outlook.live.com/calendar/0/addfromweb?url=${encoded}&name=Orbit%20reminders`
+      : null,
+    outlookOfficeAddUrl: encoded
+      ? `https://outlook.office.com/calendar/0/addfromweb?url=${encoded}&name=Orbit%20reminders`
+      : null,
     createdAt: row.calendarFeedTokenCreatedAt,
     lastFetchedAt: row.calendarFeedLastFetchedAt,
   };

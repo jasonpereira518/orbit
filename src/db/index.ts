@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
   terms_version text,
-  timeline_backfill_enabled integer NOT NULL DEFAULT 0,
+  timeline_backfill_enabled integer NOT NULL DEFAULT 1,
+  timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
@@ -2024,6 +2025,35 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 //
 // 107 = merging P2b (which carries main at 103 — apple_connections/calendar_sources at 99,
 // site_settings at 102, page_views.is_internal at 103) into this branch (104, 105). No DDL
+// of its own. NOT the silent-skip hazard recorded at 87, 96, 97 and 99 above: those entries
+// predate `schemaFingerprint()`, and `isSchemaCurrent` now compares fingerprints at an EQUAL
+// version, so a database stamped 105 by this branch would disagree with a merged-105 build
+// and re-sweep on its own. The reasons to bump are narrower, and all three hold:
+//
+//   - `smoke-schema-ddl.ts` refuses 105 outright. The lock holds 105 with a different
+//     fingerprint, which takes its `lock.version === schemaVersion` branch — the one whose
+//     remedy text says to bump first and only then `--update`. Keeping 105 would mean
+//     re-recording the lock at an un-bumped version, which is the exact move that guard
+//     exists to prevent.
+//   - The runtime fingerprint is a narrower net than the version integer, and deliberately
+//     so: `schemaFingerprint()` hashes DDL, SCALE_DDL and `alters`, but NOT `migratePglite`'s
+//     `ensureColumn` calls or `migratePgvector` (see the comment above it). It is not a
+//     general substitute for a bump.
+//   - This file's convention, set at 87, 96 and 99, is never to reuse a number another
+//     branch shipped.
+//
+// NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62. Scanned
+// every remote ref, every local branch and every worktree's working src/db/index.ts on
+// Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
+//
+// 108 (this branch, integrations dialog Task 9) = user_settings.timeline_backfill_enabled's
+// default flips from 0 to 1, and every existing row is flipped on with it (the `alters`
+// entry above). The column's own DDL type does not change, but the DEFAULT clause in the
+// CREATE TABLE template is part of what `schemaFingerprint()` hashes, so this is a real DDL
+// change and needs its own version, not just a data migration riding on 107's number.
+// Rescanned every local ref, every remote ref, and every sibling worktree's working
+// src/db/index.ts (including uncommitted changes) on Sep 26 2026: 107 (this branch) is the
+// highest claimed anywhere, so 108 is the next free integer and is still free.
 // of its own. Keeping 105 was the plan and is wrong for the reason recorded at 87, 96, 97
 // and 99 above: this branch's preview databases are stamped 105 WITHOUT main's 99/102/103
 // columns, and main's are stamped 103 without 104/105, and `isSchemaCurrent` returns true
@@ -2047,7 +2077,17 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // NOT 110, 111 or 112, all of which are claimed elsewhere. Scanned every local and remote ref
 // and every worktree's working src/db/index.ts on Sep 26 2026: 112 is the highest claimed
 // anywhere, so 113 is the next free integer.
-export const SCHEMA_VERSION = 113;
+//
+// 114 = merging the P3 branch at 113 (which carries main's 109 waitlist_demo_enabled plus
+// 104/105) into this branch at 108 (timeline_backfill_enabled defaulting on, and its
+// timeline_backfill_forced_on marker). No DDL of its own. Same reasoning as 107 and 113
+// above: databases stamped 108 would never get waitlist_demo_enabled, databases stamped 113
+// would never get the timeline marker, and `isSchemaCurrent` returns true for any recorded
+// version at or above the running one, so the losing half would be skipped in silence. Both
+// sides' `alters` are kept; only the version is new. Scanned every local and remote ref and
+// every worktree's working src/db/index.ts on Sep 26 2026: 113 is the highest claimed
+// anywhere, so 114 is the next free integer.
+export const SCHEMA_VERSION = 114;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2833,7 +2873,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "user_settings", "terms_accepted_at", "timestamptz");
   await ensureColumn(client, "user_settings", "terms_version", "text");
-  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "timeline_backfill_forced_on", "integer NOT NULL DEFAULT 1");
   await ensureColumn(
     client,
     "user_recruiter_links",
@@ -3693,6 +3734,30 @@ const alters = [
   // `ai-pricing.ts` has no OpenRouter slugs at all and blending the two figures in one
   // column with no source would make that gap invisible.
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cost_source text NOT NULL DEFAULT 'estimated'`,
+  // Schema v108: user_settings.timeline_backfill_enabled defaults to 1 instead of 0.
+  // Deriving LinkedIn timeline events used to be opt-in (audit A6, a checkbox on the import
+  // card); the owner decided it should just happen, so the checkbox is gone
+  // (src/components/imports/timeline-backfill-toggle.tsx deleted) and the column is now an
+  // operator-only kill switch with no UI. This DOES start spending each account's own AI
+  // budget (one model call per qualifying conversation, capped at
+  // RATE_LIMITS.timelineBackfillDaily a day) without asking — that is the point, not a bug
+  // to revert.
+  //
+  // `alters` runs in FULL on every sweep — every future SCHEMA_VERSION bump or fingerprint
+  // change re-runs this same list — so a bare `UPDATE ... WHERE timeline_backfill_enabled =
+  // 0` would silently re-flip an operator's deliberate kill switch back to 1 the next time
+  // anyone bumps the schema, resuming that account's AI spend behind their back. That is
+  // exactly the failure v73's `ai_model` migration above guards against with
+  // `ai_model_migrated_from IS NULL`, so this follows the same marker-column shape:
+  // `timeline_backfill_forced_on` records "this row has already been force-flipped once"
+  // and is born DEFAULT 1 for every row created from here on, so the one-shot UPDATE below
+  // can never match a fresh row either. Re-running this block is then a genuine no-op: the
+  // ADD COLUMN no-ops (column exists), the UPDATE matches nothing (every row is marked),
+  // and the SET DEFAULT no-ops (already 1).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timeline_backfill_forced_on integer NOT NULL DEFAULT 0`,
+  `UPDATE user_settings SET timeline_backfill_enabled = 1, timeline_backfill_forced_on = 1 WHERE timeline_backfill_forced_on = 0`,
+  `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_forced_on SET DEFAULT 1`,
+  `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_enabled SET DEFAULT 1`,
   // Schema v109: `site_settings.waitlist_demo_enabled`. Null (never set) reads as on, so no
   // backfill: the demo stays up until an admin takes it down from the waitlist admin page.
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS waitlist_demo_enabled boolean`,

@@ -179,7 +179,11 @@ export async function pendingTimelineContactCount(userId: string): Promise<numbe
 
 /**
  * Pending contacts whose thread would cost a model call — what the import card's estimate
- * multiplies. Same predicate as the claim, plus the extractor's own skip rule.
+ * multiplied. Same predicate as the claim, plus the extractor's own skip rule.
+ *
+ * No production reader since `getTimelineBackfillStatus` was deleted (the backfill is
+ * automatic now); kept, like the estimate itself, for smoke-linkedin-timeline-backfill.ts.
+ * See the note in src/lib/timeline-cost.ts.
  */
 export async function pendingTimelineAiContactCount(userId: string): Promise<number> {
   const db = await getDb();
@@ -287,7 +291,12 @@ export async function runLinkedInTimelineBackfill(
   let eventsCreated = 0;
   let capped = false;
 
-  // Opt-in (audit A6): the work costs the user's own AI key, so it never starts unasked.
+  // On by default (schema v108) — the owner decided deriving timeline events should just
+  // happen, so there is no user-facing control any more. This read is now an operator kill
+  // switch: flipping `timeline_backfill_enabled` to 0 directly in the database, for one
+  // account, is the only way to stop the spend. It used to gate an opt-in (audit A6); do
+  // not read the check below as "waiting for permission" — permission was already given by
+  // the default.
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
     columns: { timelineBackfillEnabled: true },
@@ -368,7 +377,7 @@ export async function runLinkedInTimelineBackfill(
       }));
 
       // A thread that needs the model is queued for a batch instead of asked one at a time:
-      // half price, and nobody is waiting on an opt-in backfill. Threads that need no model
+      // half price, and nobody is waiting on this backfill interactively. Threads that need no model
       // (a lone reach-out) are finished here and now.
       const prepared = prepareTimelineExtraction(contactId, asMessages);
       if (prepared.prompt) {

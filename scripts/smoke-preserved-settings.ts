@@ -1,7 +1,8 @@
 /**
  * Launch Phase 1 adds three user_settings columns that are account state, not content:
  * the recorded Terms acceptance (terms_accepted_at, terms_version) and the LinkedIn
- * timeline opt-in (timeline_backfill_enabled). A Settings data wipe (purgeUserData with
+ * timeline switch (timeline_backfill_enabled — an operator kill switch since schema v108,
+ * on by default with no user-facing control). A Settings data wipe (purgeUserData with
  * keepSettings left at its default) must keep them; deleting the account must not.
  *
  * Run: npx tsx scripts/smoke-preserved-settings.ts
@@ -36,22 +37,27 @@ run(async () => {
 
   await db.insert(userSettings).values({ userId: FRESH });
   const fresh = await settingsFor(FRESH);
-  check("a fresh row is opted out of the timeline backfill", fresh?.timelineBackfillEnabled === 0, JSON.stringify(fresh?.timelineBackfillEnabled));
+  check("a fresh row defaults the timeline backfill on", fresh?.timelineBackfillEnabled === 1, JSON.stringify(fresh?.timelineBackfillEnabled));
   check("a fresh row has accepted nothing", fresh?.termsAcceptedAt === null && fresh?.termsVersion === null);
 
   const acceptedAt = new Date("2026-09-15T12:00:00.000Z");
+  // 0, not 1: the column now DEFAULTs to 1, so seeding and asserting 1 here would pass
+  // whether or not the wipe actually preserved the value — it would pass even if
+  // `purgeUserSettings` dropped the column and fell back to its default. Seeding an
+  // operator's kill switch (0), which disagrees with the default, is what makes this check
+  // still able to catch a silent reset.
   await db.insert(userSettings).values({
     userId: USER,
     termsAcceptedAt: acceptedAt,
     termsVersion: "2026-09-15",
-    timelineBackfillEnabled: 1,
+    timelineBackfillEnabled: 0,
   });
 
   await purgeUserData(USER);
   const wiped = await settingsFor(USER);
   check("a Settings data wipe keeps the recorded terms acceptance", wiped?.termsAcceptedAt?.toISOString() === acceptedAt.toISOString(), String(wiped?.termsAcceptedAt));
   check("…and the terms version", wiped?.termsVersion === "2026-09-15", String(wiped?.termsVersion));
-  check("…and the timeline opt-in", wiped?.timelineBackfillEnabled === 1, String(wiped?.timelineBackfillEnabled));
+  check("…and an operator's kill switch", wiped?.timelineBackfillEnabled === 0, String(wiped?.timelineBackfillEnabled));
 
   await purgeUserData(USER, { keepSettings: false });
   check("deleting the account removes the row and everything on it", (await settingsFor(USER)) === undefined);
