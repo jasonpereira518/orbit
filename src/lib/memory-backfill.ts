@@ -32,28 +32,58 @@ import {
  * at again, and an edit left its original passages quotable forever. Rows written before
  * v88 have a NULL `source_hash`, never match, and are re-chunked once.
  *
- * With a `userId`, the tenant is bound as a LITERAL inside the subquery as well as outside
- * it, and that is not decoration. A NOT EXISTS correlated only on `m.user_id = i.user_id`
- * reads as scoped, but once the table is ANALYZEd Postgres may rewrite it into a hashed
- * subplan evaluated once with no user predicate, scanning every tenant's chunks — the same
- * trap `experienceExists` in `@/lib/hybrid-search` documents. Without a `userId` (the
- * cross-user cron query) correlation is all there is, and that query runs once a day.
+ * The tenant is bound as a LITERAL inside the subquery as well as outside it, and that is
+ * not decoration. A NOT EXISTS correlated only on `m.user_id = i.user_id` reads as scoped,
+ * but once the table is ANALYZEd Postgres may rewrite it into a hashed subplan evaluated
+ * once with no user predicate, scanning every tenant's chunks — the same trap
+ * `experienceExists` in `@/lib/hybrid-search` documents. There is no cross-user form any
+ * more: the cron finds users by `memory_dirty` instead (see `usersWithPendingMemoryWork`).
  */
-function staleInteractions(userId?: string) {
-  const outer = userId ? sql`and i.user_id = ${userId}` : sql``;
-  const inner = userId ? sql`m.user_id = ${userId}` : sql`m.user_id = i.user_id`;
+function staleInteractions(userId: string) {
+  // Only rows marked `memory_dirty` (v112) can be stale: a trigger sets it on every insert
+  // and on every update to a column the source hash reads. Without it this anti-join hashed
+  // the user's entire history on every pass, which for a heavy account is every one of
+  // hundreds of thousands of notes, each time an import kicked the backfill.
   return sql`
     from interactions i
-    where (coalesce(i.raw_notes, '') <> '' or coalesce(i.ai_summary, '') <> '')
-      ${outer}
-      and not exists (
-        select 1 from memory_chunks m
-         where ${inner}
-           and m.source_kind = 'interaction'
-           and m.source_id = i.id
-           and m.source_hash = ${memorySourceHashSql("i")}
-      )
+    where i.user_id = ${userId}
+      and i.memory_dirty
+      and (coalesce(i.raw_notes, '') <> '' or coalesce(i.ai_summary, '') <> '')
+      and not exists (${matchingPassages(userId)})
   `;
+}
+
+/** Passages of `i` that are current: the correlated half of `staleInteractions`. */
+function matchingPassages(userId: string) {
+  return sql`
+    select 1 from memory_chunks m
+     where m.user_id = ${userId}
+       and m.source_kind = 'interaction'
+       and m.source_id = i.id
+       and m.source_hash = ${memorySourceHashSql("i")}
+  `;
+}
+
+/**
+ * Clear `memory_dirty` on the user's rows that turn out not to need anything: no text to
+ * index, or passages that already match. Rows still stale keep the flag for the next pass.
+ *
+ * Evaluated row by row in one statement, so a note edited while the pass ran is either seen
+ * as stale here (and kept) or re-marked by the trigger after (and kept). This UPDATE touches
+ * no column the trigger watches, so it cannot re-dirty what it clears.
+ */
+async function clearSettledMemoryFlags(userId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`
+    update interactions i
+       set memory_dirty = false
+     where i.user_id = ${userId}
+       and i.memory_dirty
+       and (
+         (coalesce(i.raw_notes, '') = '' and coalesce(i.ai_summary, '') = '')
+         or exists (${matchingPassages(userId)})
+       )
+  `);
 }
 
 /** Interactions per pass. Each one is a delete-then-insert, so this is the real write cost. */
@@ -161,10 +191,10 @@ export async function reindexInteractionPassages(
 /**
  * Index interactions whose passages are missing or out of date.
  *
- * The claim is a NOT EXISTS against `memory_chunks`, not a flag on `interactions`: a flag
- * would need its own column, its own migration and its own reconciliation when a chunk row
- * is deleted, and the anti-join is exact by construction. It is indexed on the
- * `memory_chunks` side by the unique `(user_id, source_kind, source_id, chunk_index)`.
+ * The claim is still a NOT EXISTS against `memory_chunks`, which is exact by construction;
+ * `memory_dirty` only narrows which rows it has to look at. The one thing the flag cannot
+ * see is chunk rows deleted out from under an unchanged note, so whatever does that in bulk
+ * re-marks the notes (see the AI-data purge in `src/lib/user-data.ts`).
  */
 export async function backfillMemoryChunks(
   userId: string,
@@ -206,6 +236,10 @@ export async function backfillMemoryChunks(
     }
   }
 
+  await clearSettledMemoryFlags(userId).catch((err) => {
+    // Never fatal: a flag left set costs one more check next pass, nothing else.
+    console.warn("[memory-backfill] could not clear settled flags", userId, err);
+  });
   return { scanned, indexed, chunks, remaining: await pendingMemorySourceCount(userId) };
 }
 
@@ -225,9 +259,8 @@ export async function pendingMemorySourceCount(userId: string): Promise<number> 
  * only pending work was passages — every existing account, on the day this ships — would
  * never have been swept unless it happened to import something. Two sources, both bounded:
  * chunks awaiting an embedding (served by the partial pending index, cheap), and
- * interactions whose passages are missing or stale (an anti-join over interactions; this one scans, and
- * once history is indexed it scans to find nothing, which at Orbit's size is a fraction of a
- * second a day and is the price of not needing a flag column to keep in sync).
+ * interactions marked `memory_dirty` (served by its partial index, also cheap). This used to
+ * be an anti-join hashing every user's notes every hour.
  */
 export async function usersWithPendingMemoryWork(
   limit: number,
@@ -235,7 +268,10 @@ export async function usersWithPendingMemoryWork(
 ): Promise<string[]> {
   const db = await getDb();
   const [unindexed, unembedded] = await Promise.all([
-    db.execute(sql`select distinct i.user_id ${staleInteractions()} limit ${limit}`),
+    // Served by the partial interactions_memory_dirty_idx: the users with any note that may
+    // need re-indexing, without reading anyone's notes. The per-user pass then checks the
+    // hash. This used to be the full anti-join over every user's interactions, every hour.
+    db.execute(sql`select distinct i.user_id from interactions i where i.memory_dirty limit ${limit}`),
     // Over-fetched, because some of these will be filtered out below.
     db.execute(sql`
       select distinct m.user_id from memory_chunks m

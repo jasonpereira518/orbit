@@ -2047,7 +2047,15 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // NOT 110, 111 or 112, all of which are claimed elsewhere. Scanned every local and remote ref
 // and every worktree's working src/db/index.ts on Sep 26 2026: 112 is the highest claimed
 // anywhere, so 113 is the next free integer.
-export const SCHEMA_VERSION = 113;
+//
+// 115 = scalability phase 2: foreign-key and support indexes, interactions.memory_dirty and
+// its trigger, the pgvector backlog index and hnsw.iterative_scan; and the sweep no longer
+// rewrites contacts.search_tsv or rebuilds contacts_name_trgm on every bump. Built as 112,
+// then renumbered after merging main (113): 112 sat below main, so every database main had
+// stamped 113 would have skipped this DDL. NOT 114: claude/integrations-ui-pass and
+// claude/settings-popup-redesign-0ed30d both claim it. Rescanned every remote ref, local
+// branch and worktree on Sep 26 2026: 114 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 115;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2060,29 +2068,67 @@ export const LINKEDIN_SLUG_EXPRESSION =
 /** The rewrite SCALE_DDL performs when that expression changes. Matched by exact text. */
 export const DROP_LINKEDIN_SLUG_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS linkedin_slug";
 
-/** Postgres re-renders stored expressions (casts, upper-case keywords, parentheses). */
+/**
+ * Postgres re-renders stored expressions (casts, upper-case keywords, parentheses). Every
+ * cast is stripped, not just `::text`: a tsvector expression comes back with
+ * `'simple'::regconfig` and `'A'::"char"` that the declared text never wrote.
+ */
 export function normalizeGeneratedExpression(expr: string): string {
-  return expr.toLowerCase().replace(/::text/g, "").replace(/[\s()]/g, "");
+  return expr.toLowerCase().replace(/::(?:"[^"]*"|[a-z_]+)/g, "").replace(/[\s()]/g, "");
+}
+
+/**
+ * The generated expression behind `contacts.search_tsv`, the same text as the SCALE_DDL ADD
+ * below (whitespace aside). `scripts/smoke-scale-sweep-guards.ts` asserts the two match.
+ */
+export const CONTACTS_SEARCH_TSV_EXPRESSION = `
+  setweight(to_tsvector('simple', coalesce(full_name, '') || ' ' || coalesce(preferred_name, '')), 'A') ||
+  setweight(to_tsvector('simple', coalesce(company, '') || ' ' || coalesce(school, '') || ' ' || coalesce(title, '')), 'B') ||
+  setweight(to_tsvector('simple', coalesce(email, '') || ' ' || coalesce(location, '') || ' ' || coalesce(how_met, '') || ' ' || coalesce(met_context, '') || ' ' || coalesce(industry, '') || ' ' || coalesce(opportunities::text, '')), 'C') ||
+  setweight(to_tsvector('simple', coalesce(ai_summary, '') || ' ' || coalesce(notes, '')), 'D')`;
+
+/** The contacts rewrite SCALE_DDL performs when that expression changes. Matched by exact text. */
+export const DROP_CONTACTS_SEARCH_TSV_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS search_tsv";
+
+/** Whether a stored generated expression differs from the declared one. */
+export function generatedExpressionDiffers(stored: string | null, declared: string): boolean {
+  if (stored === null) return false; // no column yet: the ADD creates it
+  return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(declared);
 }
 
 /** Whether the stored linkedin_slug expression differs from LINKEDIN_SLUG_EXPRESSION. */
 export function linkedinSlugNeedsRewrite(stored: string | null): boolean {
-  if (stored === null) return false; // no column yet: the ADD creates it
-  return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(LINKEDIN_SLUG_EXPRESSION);
+  return generatedExpressionDiffers(stored, LINKEDIN_SLUG_EXPRESSION);
 }
 
-/** The stored expression, null when there is no such column, undefined when unreadable. */
-async function storedLinkedinSlugExpression(run: StatementRunner): Promise<string | null | undefined> {
+/**
+ * A contacts generated column's stored expression: null when there is no such column,
+ * undefined when unreadable. `column` is one of this file's constants, never input.
+ */
+async function storedContactsExpression(
+  run: StatementRunner,
+  column: "linkedin_slug" | "search_tsv"
+): Promise<string | null | undefined> {
   try {
     const result = await run(
       `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
          FROM pg_attribute a
          JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
         WHERE a.attrelid = to_regclass(\'public.contacts\')
-          AND a.attname = \'linkedin_slug\'
+          AND a.attname = \'${column}\'
           AND NOT a.attisdropped`
     );
     return rowsOf<{ expr: string | null }>(result)[0]?.expr ?? null;
+  } catch {
+    return undefined;
+  }
+}
+
+/** An index's definition, null when there is no such index, undefined when unreadable. */
+async function storedIndexDefinition(run: StatementRunner, name: string): Promise<string | null | undefined> {
+  try {
+    const result = await run(`SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = '${name}'`);
+    return rowsOf<{ indexdef: string }>(result)[0]?.indexdef ?? null;
   } catch {
     return undefined;
   }
@@ -2336,19 +2382,10 @@ export const SCALE_DDL: string[] = [
   // created_at, target_user_id, and action respectively.
   `CREATE INDEX IF NOT EXISTS admin_audit_log_admin_target_idx ON admin_audit_log(admin_user_id, target_user_id, created_at)`,
 
-  // Legacy action items → rows. Idempotent through the unique (user_id, item_hash) index —
-  // which is why this lives here rather than in `ADMIN_V2_STATEMENTS`: this runs via
-  // `applyScaleSchema`, AFTER `applySchema` has created every index, so the ON CONFLICT
-  // target the INSERT depends on is guaranteed to exist. `ADMIN_V2_STATEMENTS` is spread
-  // into the `alters` pass, which runs BEFORE indexes — an insert placed there would fail
-  // on any database (fresh or upgrading) that does not already have this index.
-  // The hash formula MUST equal actionItemHash() in src/lib/action-items.ts.
-  `INSERT INTO action_items (user_id, contact_id, interaction_id, text, position, item_hash)
-   SELECT i.user_id, i.contact_id, i.id, a.value, a.ordinality - 1,
-          encode(sha256(convert_to(i.id::text || '|' || lower(btrim(a.value)), 'UTF8')), 'hex')
-   FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
-   WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
-   ON CONFLICT (user_id, item_hash) DO NOTHING`,
+  // The legacy action-items backfill (interactions.action_items into action_items rows) used
+  // to live here and re-read every user's interactions on every version bump. Every live
+  // database has run it; every write path now syncs rows itself (syncActionItems). It is a
+  // one-off script now: scripts/backfill-action-items.ts.
 
   // --- LinkedIn profiles -----------------------------------------------------------
   //
@@ -2424,6 +2461,75 @@ export const SCALE_DDL: string[] = [
   // Here rather than only in the CREATE TABLE above, which never adds a column to a
   // note_batches table that already exists.
   `ALTER TABLE note_batches ADD COLUMN IF NOT EXISTS input_sources jsonb NOT NULL DEFAULT '[]'`,
+
+  // --- v112: foreign keys that had no index leading with them ---------------------------
+  //
+  // Postgres checks a foreign key on every delete of the parent row with a bare
+  // WHERE fk = $1, with no user_id. An index that leads with user_id cannot serve that, so
+  // deleting one contact, interaction or reminder scanned each of these tables across every
+  // user. Contact deletes, merges and account purges multiply it. One index per FK column,
+  // leading with that column.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_contact_idx ON memory_chunks(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS action_items_interaction_idx ON action_items(interaction_id)`,
+  `CREATE INDEX IF NOT EXISTS action_items_reminder_idx ON action_items(reminder_id)`,
+  `CREATE INDEX IF NOT EXISTS action_items_contact_idx ON action_items(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_experiences_contact_fk_idx ON contact_experiences(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_opportunities_contact_fk_idx ON contact_opportunities(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_opportunities_source_interaction_idx ON contact_opportunities(source_interaction_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_profiles_contact_fk_idx ON contact_profiles(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_contact_a_idx ON duplicate_suggestions(contact_a_id)`,
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_contact_b_idx ON duplicate_suggestions(contact_b_id)`,
+  `CREATE INDEX IF NOT EXISTS event_companies_company_idx ON event_companies(company_id)`,
+  `CREATE INDEX IF NOT EXISTS target_companies_company_idx ON target_companies(company_id)`,
+  `CREATE INDEX IF NOT EXISTS interaction_mentions_contact_fk_idx ON interaction_mentions(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS job_posting_matches_posting_idx ON job_posting_matches(posting_id)`,
+  `CREATE INDEX IF NOT EXISTS job_posting_matches_contact_idx ON job_posting_matches(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS outreach_prospects_contact_idx ON outreach_prospects(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS reminders_contact_fk_idx ON reminders(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS reminders_list_fk_idx ON reminders(list_id)`,
+  `CREATE INDEX IF NOT EXISTS reminders_source_interaction_idx ON reminders(source_interaction_id)`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_contact_idx ON suggested_reminders(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_reminder_idx ON suggested_reminders(reminder_id)`,
+  `CREATE INDEX IF NOT EXISTS user_recruiter_links_contact_idx ON user_recruiter_links(contact_id)`,
+  // Deleting a contact also rewrites chat messages that attached it (contact-delete.ts uses
+  // attached_contacts @> ...), which had no index at all.
+  `CREATE INDEX IF NOT EXISTS chat_messages_attached_contacts_gin ON chat_messages USING gin(attached_contacts)`,
+
+  // --- v112: indexes for reads that grow with the network -------------------------------
+  //
+  // countUnscoredContacts, on the dashboard: a partial index the size of the work left.
+  `CREATE INDEX IF NOT EXISTS contacts_unscored_idx ON contacts(user_id) WHERE closeness_computed_at IS NULL`,
+  // A chat thread reads its messages in order; only (thread_id) existed.
+  `CREATE INDEX IF NOT EXISTS chat_messages_thread_created_idx ON chat_messages(thread_id, created_at)`,
+  // The admin chat-feedback page reads only rated messages, across all users.
+  `CREATE INDEX IF NOT EXISTS chat_messages_feedback_idx ON chat_messages(created_at DESC) WHERE feedback IS NOT NULL`,
+  // A chat thread's "already sent" markers: only the user's chat_send claims, a sliver of
+  // their interactions (getChatThread).
+  `CREATE INDEX IF NOT EXISTS interactions_chat_send_idx ON interactions(user_id) WHERE source = 'chat_send'`,
+  // Pruning expired idempotency keys filters on created_at alone.
+  `CREATE INDEX IF NOT EXISTS api_idempotency_created_idx ON api_idempotency_keys(created_at)`,
+  // Keyset pages for the data export (primary key > last), per user, on tables that had no
+  // user_id index at all.
+  `CREATE INDEX IF NOT EXISTS page_views_user_id_idx ON page_views(user_id, id) WHERE user_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS import_job_rows_user_id_idx ON import_job_rows(user_id, id)`,
+  `CREATE INDEX IF NOT EXISTS contact_briefs_user_id_idx ON contact_briefs(user_id, contact_id)`,
+
+  // --- v112: which notes need re-indexing into passages ---------------------------------
+  //
+  // The hourly memory backstop found users with unindexed notes by an anti-join over EVERY
+  // user's interactions, hashing each note's text, every hour; the per-user pass did the
+  // same over one user's whole history. memory_dirty marks the rows that can have changed.
+  // A trigger sets it, rather than each write path, so no writer can forget: any insert,
+  // and any update to a column the passage source hash reads. The backfill clears it once a
+  // row's passages match. Existing rows start dirty and are each checked once.
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS memory_dirty boolean NOT NULL DEFAULT true`,
+  `CREATE OR REPLACE FUNCTION interactions_mark_memory_dirty() RETURNS trigger
+     LANGUAGE plpgsql AS $$ BEGIN NEW.memory_dirty := true; RETURN NEW; END $$`,
+  `DROP TRIGGER IF EXISTS interactions_memory_dirty ON interactions`,
+  `CREATE TRIGGER interactions_memory_dirty
+     BEFORE INSERT OR UPDATE OF raw_notes, ai_summary, interaction_date, interaction_type, contact_id
+     ON interactions FOR EACH ROW EXECUTE FUNCTION interactions_mark_memory_dirty()`,
+  `CREATE INDEX IF NOT EXISTS interactions_memory_dirty_idx ON interactions(user_id) WHERE memory_dirty`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -2474,9 +2580,15 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   // The linkedin_slug DROP rewrites every contacts row under an exclusive lock, so it runs
   // only when the stored expression is not the declared one (or cannot be read — then the
   // old unconditional behaviour is the safe default).
-  const stored = await storedLinkedinSlugExpression(run);
+  const stored = await storedContactsExpression(run, "linkedin_slug");
   const rewriteSlug = stored === undefined || linkedinSlugNeedsRewrite(stored);
-  const statements = rewriteSlug ? SCALE_DDL : SCALE_DDL.filter((s) => s !== DROP_LINKEDIN_SLUG_STATEMENT);
+  // `search_tsv` the same way, and for the same reason. It was dropped and re-added on EVERY
+  // version bump, which rewrote every user's contacts and rebuilt its GIN index each deploy.
+  const storedTsv = await storedContactsExpression(run, "search_tsv");
+  const rewriteTsv = storedTsv === undefined || generatedExpressionDiffers(storedTsv, CONTACTS_SEARCH_TSV_EXPRESSION);
+  const statements = SCALE_DDL.filter(
+    (s) => (rewriteSlug || s !== DROP_LINKEDIN_SLUG_STATEMENT) && (rewriteTsv || s !== DROP_CONTACTS_SEARCH_TSV_STATEMENT)
+  );
   await runStatements(run, statements, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
@@ -2489,8 +2601,12 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
     // The predicates in searchCondition and the hybrid search arms compare
     // lower(column), so the index must be on the identical expression or the
     // planner ignores it. The old contacts_name_trgm on the raw columns was
-    // never usable; drop it on the way through.
-    await run(`DROP INDEX IF EXISTS contacts_name_trgm`);
+    // never usable; drop it on the way through. Only THAT one: dropping unconditionally
+    // rebuilt a GIN over every user's contacts on each version bump.
+    const trgm = await storedIndexDefinition(run, "contacts_name_trgm");
+    if (trgm === undefined || (trgm !== null && !/lower\(/i.test(trgm))) {
+      await run(`DROP INDEX IF EXISTS contacts_name_trgm`);
+    }
     await run(
       `CREATE INDEX IF NOT EXISTS contacts_name_trgm
        ON contacts USING gin(lower(full_name) gin_trgm_ops, lower(coalesce(company, '')) gin_trgm_ops)`
@@ -2505,6 +2621,9 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   // work around that. Drop the existing duplicates before claiming the constraint, or the
   // CREATE fails and the workaround has to stay forever.
   try {
+    // Once the unique index exists there can be no duplicates to delete, so the self-join
+    // over every user's contact_tags runs only on a database that has never had it.
+    if (await storedIndexDefinition(run, "contact_tags_pair_uidx")) return;
     await run(
       `DELETE FROM contact_tags a
        USING contact_tags b
@@ -3217,7 +3336,27 @@ async function migratePgvector(run: StatementRunner) {
       `CREATE INDEX IF NOT EXISTS memory_chunks_vector_hnsw_idx
        ON memory_chunks USING hnsw (embedding_vector vector_cosine_ops)`
     );
+    // The hourly jsonb-to-vector copy (backfillEmbeddingVectors) claims exactly these rows.
+    // Partial, so it is the size of the backlog rather than of the table (v112).
+    await run(
+      `CREATE INDEX IF NOT EXISTS embeddings_vector_pending_idx
+       ON contact_embeddings(id) WHERE embedding_vector IS NULL AND embedding IS NOT NULL`
+    );
     globalForDb.orbitPgvector = true;
+    // Recall across users (v112). Both HNSW indexes hold every user's vectors, and every
+    // search filters user_id AFTER the index scan. With a plain scan pgvector returns at most
+    // ef_search (40) candidates and then filters, so as users are added a user's own
+    // neighbours become a vanishing share and results shrink toward nothing. Iterative scan
+    // (pgvector 0.8+) keeps scanning until the filter is satisfied. Set on the database, so
+    // every new connection gets it. Best effort: an older pgvector, or a role that cannot
+    // ALTER DATABASE, keeps today's behaviour rather than failing the migration.
+    await run(
+      `DO $$ BEGIN
+         EXECUTE format('ALTER DATABASE %I SET hnsw.iterative_scan = relaxed_order', current_database());
+       EXCEPTION WHEN OTHERS THEN
+         RAISE NOTICE 'hnsw.iterative_scan not set: %', SQLERRM;
+       END $$`
+    ).catch(() => undefined);
   } catch {
     globalForDb.orbitPgvector = false;
   }
