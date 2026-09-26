@@ -12,6 +12,7 @@ import {
   DEFAULT_MODELS,
   PROVIDER_MODELS,
   resolveAiProvider,
+  tieredModels,
   type AiProvider,
 } from "../src/lib/ai-providers";
 import { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "../src/lib/ai-models";
@@ -86,6 +87,28 @@ check(
 check(
   "openrouter embeds with the 1536-dim OpenAI model, so nothing is truncated",
   EMBEDDING_MODELS.openrouter === "openai/text-embedding-3-small"
+);
+
+for (const p of SELECTABLE_AI_PROVIDERS) {
+  const tiers = PROVIDER_MODELS[p.id].filter((m) => m.tier);
+  check(`${p.id} tags exactly three models`, tiers.length === 3);
+  check(
+    `${p.id} tags one of each tier`,
+    new Set(tiers.map((m) => m.tier)).size === 3
+  );
+  const balanced = PROVIDER_MODELS[p.id].find((m) => m.tier === "balanced");
+  check(
+    `${p.id}'s default is its balanced tier`,
+    balanced !== undefined && DEFAULT_MODELS[p.id] === balanced.value
+  );
+}
+check(
+  "no tier points at a Gemini 2.5 model — Google 404s those for keys issued since",
+  !PROVIDER_MODELS.gemini.some((m) => m.tier && m.value.startsWith("gemini-2.5"))
+);
+check(
+  "tieredModels returns cheapest, balanced, best in that order",
+  tieredModels("gemini").map((m) => m.tier).join(",") === "cheapest,balanced,best"
 );
 
 console.log(failures === 0 ? "\nall ok" : `\n${failures} failed`);
