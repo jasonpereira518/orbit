@@ -14,6 +14,7 @@ import {
   listEventsByTab,
   listHiddenEvents,
 } from "@/actions/events";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 async function ConnectionsSection() {
   const { connections, eventbriteConfigured, googleConnected, googleMailGranted, googleCalendarGranted } =
@@ -124,6 +125,7 @@ export default async function EventsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      <RenderStamp />
       <div className="flex flex-wrap items-start justify-between gap-2">
         <EventsHeader />
         <AddEventDialog />

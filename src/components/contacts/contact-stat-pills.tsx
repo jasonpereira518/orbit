@@ -3,7 +3,7 @@ import { ConstellationPinButton } from "@/components/contacts/constellation-pin-
 import { TeamShareButton } from "@/components/contacts/team-share-button";
 import { Badge } from "@/components/ui/badge";
 import {
-  closenessTierChipClass,
+  closenessPercentChipClass,
   type ClosenessBreakdown,
 } from "@/lib/closeness";
 import { cn } from "@/lib/utils";
@@ -55,7 +55,7 @@ export function ContactStatPills({
         variant="secondary"
         className={cn(
           "rounded-full px-3 py-1 text-xs font-medium",
-          closenessTierChipClass(closeness.tier)
+          closenessPercentChipClass(closeness.closeness)
         )}
       >
         Closeness {pct}%

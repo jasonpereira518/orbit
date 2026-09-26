@@ -1,0 +1,90 @@
+"use server";
+
+import { after } from "next/server";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { gmailConnections } from "@/db/schema";
+import { requireUserId } from "@/lib/auth";
+import { requireSyncUser } from "@/lib/plan-guards";
+import { getValidAccessToken } from "@/lib/gmail";
+import { asActionResult, friendlyError, ReauthRequiredError, type ActionResult } from "@/lib/errors";
+import { runDriveImportJob, stageDriveImport } from "@/lib/drive-import-processor";
+import { removeDriveFlag } from "@/lib/drive-flags";
+import { driveReadinessReason } from "@/lib/drive-picker-token";
+import type { PickedDriveFile } from "@/lib/imports/drive-triage";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { recordDemoDriveImport } from "@/lib/demo-workspace-actions";
+
+/**
+ * Whether Orbit's stored Google grant can read the files someone is about to pick.
+ *
+ * Never returns a token. The Picker runs on its own `drive.file`-only token that Google
+ * Identity Services mints in the browser (`src/lib/imports/google-picker.ts`); the stored
+ * grant — which also carries whatever Gmail/Calendar scopes the person connected — stays on
+ * the server, where the import uses it to export the picked files. This check exists so the
+ * browser knows, before it opens anything, whether to send the person through Google's
+ * consent first. Returned as data, never thrown: a thrown message is replaced by a digest in
+ * production.
+ */
+export async function checkDriveReadiness(): Promise<
+  | { ok: true }
+  | { ok: false; reason: "needs_consent" | "not_connected" | "needs_reconnect" | "error"; error?: string }
+> {
+  const userId = await requireSyncUser();
+  if (await isDemoWorkspace(userId)) return { ok: true };
+  const db = await getDb();
+  const conn = await db.query.gmailConnections.findFirst({
+    where: eq(gmailConnections.userId, userId),
+    columns: { scopes: true, status: true },
+  });
+  const reason = driveReadinessReason(conn);
+  if (reason) return { ok: false, reason };
+  try {
+    // Proves the stored grant still refreshes; the token itself is discarded here.
+    await getValidAccessToken(userId);
+    return { ok: true };
+  } catch (err) {
+    // The refresh token itself was rejected mid-flight (revoked, or Google now wants fresh
+    // consent) even though the row still read `active` a moment ago — same fix as a lapsed
+    // row: send the person to reconnect rather than a transient-sounding "try again".
+    if (err instanceof ReauthRequiredError) return { ok: false, reason: "needs_reconnect" };
+    return { ok: false, reason: "error", error: friendlyError(err, "Couldn’t reach Google — try again in a moment") };
+  }
+}
+
+/**
+ * Stage the picked files and start reading them in the background.
+ *
+ * `stageDriveImport` raises `UserFacingError` ("Pick up to 25 files at a time", "Pick a
+ * Google Doc or Slides deck to import"), and a message thrown across the "use server"
+ * boundary is replaced by an opaque digest in production. So — unlike the plain-`Error`
+ * `start*` imports in `src/actions/imports.ts` — this follows the `asActionResult` sibling
+ * group (`account.ts`, `gmail.ts`, `outlook.ts`, …), which returns a `UserFacingError`'s
+ * message as data instead of throwing it. Task 8 unwraps the `ActionResult` client-side.
+ */
+export async function startDriveImport(
+  files: PickedDriveFile[],
+): Promise<ActionResult<{ importId: string; totalRows: number }>> {
+  // Outside the wrap: a denied entitlement throws `PaywallError`, not `UserFacingError`, so
+  // `asActionResult` would just rethrow it anyway — no point wrapping it.
+  const userId = await requireSyncUser();
+  return asActionResult(async () => {
+    if (await isDemoWorkspace(userId)) return recordDemoDriveImport(userId, files);
+    const staged = await stageDriveImport(userId, files);
+    after(() => runDriveImportJob(staged.importId).catch(() => {}));
+    return staged;
+  });
+}
+
+/**
+ * Drop a flagged commitment from an import's "Worth a look" list.
+ *
+ * `requireUserId`, not `requireSyncUser`: this only touches an import the caller already
+ * owns (`removeDriveFlag` re-checks that), so it doesn't need the paid `sync` entitlement
+ * re-verified — dismissing a flag on a past import shouldn't lock out someone who has since
+ * moved off the plan that let them run it.
+ */
+export async function dismissDriveFlag(importId: string, flagId: string): Promise<void> {
+  const userId = await requireUserId();
+  await removeDriveFlag(userId, importId, flagId);
+}

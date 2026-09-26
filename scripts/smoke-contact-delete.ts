@@ -53,7 +53,8 @@ async function main() {
     check("the contact is gone", (await n(sql`SELECT count(*)::int AS n FROM contacts WHERE id = ${c.id}::uuid`)) === 0);
     check("their interactions went with it", (await n(sql`SELECT count(*)::int AS n FROM interactions WHERE contact_id = ${c.id}::uuid`)) === 0);
     check("their roster row is deleted, the other stays", (await n(sql`SELECT count(*)::int AS n FROM event_attendees WHERE user_id = ${USER}`)) === 1);
-    check("their prospect and its messages are deleted, the other stays", (await n(sql`SELECT count(*)::int AS n FROM outreach_prospects WHERE campaign_id = ${campaign.id}::uuid`)) === 1 && (await n(sql`SELECT count(*)::int AS n FROM outreach_messages`)) === 0);
+    // Only this prospect's messages: the table is shared with every other smoke on the database.
+    check("their prospect and its messages are deleted, the other stays", (await n(sql`SELECT count(*)::int AS n FROM outreach_prospects WHERE campaign_id = ${campaign.id}::uuid`)) === 1 && (await n(sql`SELECT count(*)::int AS n FROM outreach_messages WHERE prospect_id = ${pc.id}::uuid`)) === 0);
     check("pending suggestions about them are deleted", (await n(sql`SELECT count(*)::int AS n FROM suggested_reminders WHERE user_id = ${USER}`)) === 0);
     check("merge snapshots of them are deleted", (await n(sql`SELECT count(*)::int AS n FROM contact_merges WHERE user_id = ${USER}`)) === 0);
     check("the note batch survives, unlinked", (await n(sql`SELECT count(*)::int AS n FROM note_batches WHERE user_id = ${USER} AND seed_contact_id IS NULL`)) === 1);

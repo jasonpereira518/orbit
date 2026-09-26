@@ -79,7 +79,8 @@ run(async () => {
   const list = code("src/components/contacts/contacts-list.tsx");
   check("an empty, filtered Work view says the filters hide them", list.includes("No work contacts match these filters. Clear search to see all of them."));
   check("an empty, unfiltered Work view points at HubSpot", list.includes("No work contacts yet. Connect HubSpot on the"));
-  const action = code("src/actions/contacts.ts");
+  // The list query moved out of the action into `contacts-page-query.ts` on main.
+  const action = code("src/lib/contacts-page-query.ts");
   check("the list query re-checks the release before filtering", action.includes("workContactsCondition(") && action.includes('isSurfaceReleased(userId, "page.leads")'));
 
   for (const u of [USER, OTHER]) {

@@ -135,7 +135,7 @@ function ReminderRow({
                 className={cn("w-full justify-start font-normal", item.yearInferred && "ring-1 ring-amber-500/50")}
               />
               {item.yearInferred && (
-                <p className="text-xs text-amber-700 dark:text-amber-300">
+                <p className="text-xs text-amber-700 dark:text-warning">
                   Year not stated — assumed {item.dueDateIso.slice(0, 4)}
                 </p>
               )}

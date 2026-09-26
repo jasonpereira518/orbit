@@ -1,7 +1,6 @@
 import { outreachFromAddress } from "@/lib/outreach-sender";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { Resend } from "resend";
 import { getDb } from "@/db";
 import {
   outreachCampaigns,
@@ -12,24 +11,34 @@ import {
 import { countAgentSendsToday } from "@/lib/agent-sends";
 import { decryptOrNull } from "@/lib/crypto";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
-import { getEntitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { isPlaceholderAddress, PLACEHOLDER_ADDRESS_SEND_MESSAGE } from "@/lib/outreach-quality";
 import { outreachEmailPayload } from "@/lib/outreach-email";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
-export async function getOutreachSendConfig(userId: string) {
-  const db = await getDb();
-  const settings = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
+export async function getOutreachSendConfig(
+  userId: string,
+  // Optional: a caller already holding the account's `user_settings` row (from
+  // `requireAuthenticatedUser()`, say) passes it and skips the read. Omitted, it is read here.
+  loadedSettings?: typeof userSettings.$inferSelect
+) {
+  const settings =
+    loadedSettings ??
+    (await (await getDb()).query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+    }));
 
   // Orbit's own Resend/Twilio credits are metered, but not open-endedly: every user is
   // capped at DAILY_SEND_LIMIT sends a day regardless of plan, so both paid tiers can
   // reach them — including Lifetime, whose single payment funds a bounded obligation
   // rather than an unbounded one. `hosted` gates the env fallback, never the personal
   // key: a user who supplies their own Resend or Twilio credentials uses it on any plan.
-  const { canUseHostedSending: hosted } = await getEntitlements(userId);
+  //
+  // Resolved from the row just read rather than `getEntitlements`, which would read it again
+  // (in a Server Action or route handler `cache()` does not deduplicate). The same resolver on
+  // the same row; a missing row resolves as `getEntitlements` would for a brand-new account.
+  const { canUseHostedSending: hosted } = entitlementsFromSettings(userId, settings ?? {});
   const envKey = (value: string | undefined) => (hosted ? value || null : null);
 
   const ownResendKey = decryptOrNull(settings?.resendApiKeyEncrypted);
@@ -144,6 +153,9 @@ export async function sendOutreachMessage(input: {
       hostedFrom: config.fromEmail,
     });
 
+    // Imported here for the same reason as Twilio below: this module sits under every page
+    // that can reach an outreach action, and only an actual email send needs the SDK.
+    const { Resend } = await import("resend");
     const resend = new Resend(config.resendApiKey);
     const result = await resend.emails.send(
       outreachEmailPayload({

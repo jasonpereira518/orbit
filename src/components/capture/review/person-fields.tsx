@@ -44,7 +44,7 @@ export function PersonFields({
   return (
     <div className={cn("space-y-3", !compact && "space-y-4")}>
       {guessed && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">Fields marked * were guessed — worth a glance.</p>
+        <p className="text-xs text-amber-700 dark:text-warning">Fields marked * were guessed — worth a glance.</p>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id={`${idPrefix}-name`} label="Name" low={lowConfidence.has("name")}>
@@ -119,7 +119,7 @@ function Field({
 }) {
   return (
     <div className={cn("space-y-1", className)}>
-      <Label htmlFor={id} className={cn("text-xs", low && "text-amber-700 dark:text-amber-400")}>
+      <Label htmlFor={id} className={cn("text-xs", low && "text-amber-700 dark:text-warning")}>
         {label}
         {low ? " *" : ""}
         {hint && <span className="ml-1 font-normal text-muted-foreground">· {hint}</span>}

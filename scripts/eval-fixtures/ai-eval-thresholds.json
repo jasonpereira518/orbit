@@ -63,7 +63,9 @@
   },
   "transcribe": {
     "nameRecall": { "maxDrop": 0.05 },
-    "wer": { "maxRise": 0.03 }
+    "wer": { "maxRise": 0.03 },
+    "deepgramNameRecall": { "maxDrop": 0.05 },
+    "deepgramWer": { "maxRise": 0.03 }
   },
   "chat": {
     "mentionRecall": { "maxDrop": 0.03 },

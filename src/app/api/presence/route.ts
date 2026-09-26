@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { requireUserId } from "@/lib/auth";
 import { recordHeartbeat } from "@/lib/presence";
 
@@ -10,7 +10,7 @@ export const runtime = "nodejs";
  *
  * A route handler rather than a server action because a beat should be the cheapest
  * possible request: no serialisation protocol, no revalidation, no response body. It
- * returns 204 and writes one row.
+ * returns 204 and writes one row (after the response — see below).
  *
  * It gates itself with `requireUserId()`, like every other route handler — `(app)/layout.tsx`
  * does not run for these. That also means a suspended account's beats are rejected, so a
@@ -24,7 +24,10 @@ export const runtime = "nodejs";
 export async function POST() {
   try {
     const userId = await requireUserId();
-    await recordHeartbeat(userId);
+    // The write itself runs after the 204 is sent: its outcome never changed the response
+    // (always 204, failures swallowed), so there is nothing for the tab to wait on. The
+    // auth gate above stays in the request, so a rejected beat still writes nothing.
+    after(() => recordHeartbeat(userId).catch(() => {}));
   } catch {
     // Unauthenticated, suspended, or a transient database blip — all equally not worth
     // reporting to the person browsing their contacts.

@@ -34,5 +34,13 @@ check("anything else gets the generic copy", failed?.tone === "error" && failed.
 check("no param, no toast", readOAuthReturn("?tab=hosts&reason=x", OPTS) === null);
 check("an unknown value is ignored", readOAuthReturn("?eventbrite=maybe", OPTS) === null);
 
+const partial = readOAuthReturn("?google=connected&purpose=contacts&switched=1", {
+  param: "google",
+  provider: "Google",
+  connectedText: "Google connected",
+});
+check("a connect with a switched account is still a success", partial?.tone === "success");
+check("the switch survives the cleanup for the page to read", partial?.nextSearch.includes("switched=1") === true);
+
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

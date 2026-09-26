@@ -15,6 +15,7 @@ import {
 } from "@/lib/suggested-reminder-utils";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
 import { getInboxListId, findReminderListForUser } from "@/lib/reminder-lists";
+import { assertReminderContactOwned } from "@/lib/reminder-writes";
 import {
   inferReminderActionKind,
   isReminderActionKind,
@@ -128,6 +129,7 @@ export async function confirmSuggestedReminder(
     : row.dueDate;
   const contactId =
     patch?.contactId !== undefined ? patch.contactId : row.contactId;
+  if (patch?.contactId !== undefined) await assertReminderContactOwned(userId, patch.contactId);
 
   let listId = patch?.listId || (await getInboxListId(userId));
   if (patch?.listId) {

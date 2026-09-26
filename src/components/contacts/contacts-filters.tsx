@@ -41,6 +41,7 @@ export function ContactsFilters({
   initialMinScore,
   initialFollowUp,
   view,
+  importId,
   children,
 }: {
   initialQ: string;
@@ -48,6 +49,13 @@ export function ContactsFilters({
   initialMinScore: string;
   initialFollowUp?: string;
   view?: "work";
+  /**
+   * The active `/contacts?importId=…` scope, if any. Not a control this component offers —
+   * only the page's banner sets or clears it — but every filter change here rebuilds the URL
+   * from scratch, so it has to be carried through or searching/picking a company/changing
+   * closeness while viewing one import's people would silently drop back to everyone.
+   */
+  importId?: string;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -76,6 +84,7 @@ export function ContactsFilters({
     if (ms && ms !== "any") params.set("minScore", ms);
     if (fu === "due") params.set("followUp", "due");
     if (view === "work") params.set("view", "work");
+    if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
     router.replace(href);

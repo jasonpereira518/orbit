@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
 import { Bell, Sparkles, Users } from "lucide-react";
 import type { getOutreachPerformanceSummary } from "@/actions/outreach";
@@ -256,7 +257,7 @@ export async function RemindersAndFollowUpsSection({
   const { data } = await bundle;
   return (
     <>
-      <div className="reveal-mount min-w-0" style={revealDelay(0)}>
+      <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(0)}>
         <RemindersDashboardCard
           items={data.reminders.map((r) => ({
             id: r.id,
@@ -275,7 +276,10 @@ export async function RemindersAndFollowUpsSection({
       </div>
 
       <div className="reveal-mount min-w-0" style={revealDelay(40)}>
-        <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
+        <Card
+          id="due-follow-ups"
+          className="h-full border-border/70 shadow-none scroll-mt-8"
+        >
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle as="h2" className="text-base">Due follow-ups</CardTitle>
             {data.dueFollowUps.length > 0 && (
@@ -363,7 +367,7 @@ export async function RecentlyUpdatedSection({
             {data.recentContacts.map((c) => {
               const tier = tierForContact(data, c.id);
               return (
-                <Link
+                <IntentLink
                   key={c.id}
                   href={`/contacts/${c.id}`}
                   className={cn(
@@ -384,7 +388,7 @@ export async function RecentlyUpdatedSection({
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
                   </span>
-                </Link>
+                </IntentLink>
               );
             })}
             </div>

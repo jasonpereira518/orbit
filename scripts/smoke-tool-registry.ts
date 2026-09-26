@@ -44,9 +44,11 @@ function check(label: string, ok: boolean, detail?: string) {
 }
 
 /**
- * The 16 tools the MCP server shipped with. Spelled out rather than derived, so a tool that
- * silently stops being registered — or silently starts — fails here instead of in somebody's
- * assistant.
+ * Every tool the MCP surface offers. Spelled out rather than derived, so a tool that silently
+ * stops being registered — or silently starts — fails here instead of in somebody's
+ * assistant. It was the 16 the server shipped with; `get_timeline`, `get_goals` and
+ * `find_path_to` joined them. `search_notes` and `list_open_commitments` are deliberately NOT
+ * here: both return free text taken from notes, across many contacts.
  */
 const EXPECTED_MCP_TOOLS = [
   "search_contacts",
@@ -65,6 +67,9 @@ const EXPECTED_MCP_TOOLS = [
   "snooze_reminder",
   "schedule_follow_up",
   "create_contact",
+  "get_timeline",
+  "get_goals",
+  "find_path_to",
 ].sort();
 
 /** Every string anywhere in a payload, however deeply nested. */
@@ -86,7 +91,7 @@ async function main() {
 
   const mcpNames = toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).map((t) => t.name).sort();
   check(
-    "the MCP surface registers exactly the 16 tools it shipped with",
+    `the MCP surface registers exactly the ${EXPECTED_MCP_TOOLS.length} tools it should`,
     JSON.stringify(mcpNames) === JSON.stringify(EXPECTED_MCP_TOOLS),
     `got ${mcpNames.length}: ${mcpNames.join(", ")}`
   );
@@ -106,7 +111,16 @@ async function main() {
     chatTools.every((t) => t.scope === "read"),
     chatTools.filter((t) => t.scope !== "read").map((t) => t.name).join(", ")
   );
-  check("chat gets the six shared read tools plus search_notes", chatTools.length === 7, String(chatTools.length));
+  check(
+    "chat gets every shared read tool plus its own two",
+    chatTools.length === 11,
+    chatTools.map((t) => t.name).join(", ")
+  );
+  check(
+    "list_open_commitments is chat-only too — action items are note text, fanned out across contacts",
+    chatTools.some((t) => t.name === "list_open_commitments") &&
+      !toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).some((t) => t.name === "list_open_commitments")
+  );
   check(
     "search_notes is chat-only — free-text fan-out over notes is what MCP must never offer",
     chatTools.some((t) => t.name === "search_notes") &&
@@ -162,6 +176,9 @@ async function main() {
     due_followups: { limit: 10 },
     list_reminders: { view: "today", limit: 20 },
     get_network_overview: {},
+    get_timeline: { contactId: contact.id, limit: 20 },
+    get_goals: {},
+    find_path_to: { target: "Acme", limit: 8 },
   };
 
   for (const tool of readTools) {
@@ -186,6 +203,26 @@ async function main() {
     deepStrings(chatSearch).some((s) => s.includes(NOTE_MARKER)),
     JSON.stringify(chatSearch).slice(0, 200)
   );
+  // The same asymmetry for the timeline, stated both ways. Without the chat half, "MCP does
+  // not leak" above would pass just as happily on an empty result.
+  const timelineTool = ORBIT_TOOLS.find((t) => t.name === "get_timeline") as OrbitTool;
+  const timelineArgs = { contactId: contact.id, limit: 20 };
+  const chatTimeline = await runTool(timelineTool, USER, timelineArgs, { surface: "chat" });
+  check(
+    "get_timeline carries the note in chat — so withholding it over MCP is a real difference",
+    deepStrings(chatTimeline).some((str) => str.includes(NOTE_MARKER)),
+    JSON.stringify(chatTimeline).slice(0, 200)
+  );
+  const mcpTimeline = (await runTool(timelineTool, USER, timelineArgs, { surface: "mcp" })) as {
+    total?: number;
+    entries?: unknown[];
+  };
+  check(
+    "and MCP still gets the dates it needs to say when and how often",
+    mcpTimeline.total === 1 && mcpTimeline.entries?.length === 1,
+    JSON.stringify(mcpTimeline).slice(0, 200)
+  );
+
   const mcpSearch = await runTool(searchTool, USER, { query: "Ada", limit: 10 }, { surface: "mcp" });
   check(
     "one tool, two answers — the MCP allowlist is what makes the difference",

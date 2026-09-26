@@ -13,6 +13,12 @@ import {
   type ConstellationSearch,
 } from "@/lib/constellation-match";
 
+// Opaque fills with the alpha on `globalAlpha`: an `rgba(…, alpha)` string per star per
+// frame was ~1,400 strings a frame for the canvas to allocate and parse, all session long.
+const WHITE_FILL = `rgb(${STAR_WHITE})`;
+const GOLD_FILL = `rgb(${STAR_GOLD})`;
+const BLOOM_SHADOW = `rgba(${STAR_GOLD}, 0.8)`;
+
 type Star = {
   x: number;
   /** Position within the virtual field, NOT the viewport. See FIELD_MULT. */
@@ -210,7 +216,9 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     let figureScrollY = 0;
 
     function paintBackground() {
-      const off = document.createElement("canvas");
+      // Resized in place: a fresh viewport-sized bitmap per resize event (~20MB at 2x) was
+      // garbage the moment the next event came, and a window drag sends dozens a second.
+      const off = bg ?? document.createElement("canvas");
       off.width = Math.floor(width * dpr);
       off.height = Math.floor(height * dpr);
       const bctx = off.getContext("2d");
@@ -663,9 +671,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
               // One soft arc rather than a shadow: shadowBlur is the expensive
               // call in this loop and is reserved for the few bloom stars.
               ctx!.beginPath();
-              ctx!.fillStyle = s.gold
-                ? `rgba(${STAR_GOLD}, ${0.16 * s.glow})`
-                : `rgba(${STAR_WHITE}, ${0.16 * s.glow})`;
+              ctx!.fillStyle = s.gold ? GOLD_FILL : WHITE_FILL;
+              ctx!.globalAlpha = 0.16 * s.glow;
               ctx!.arc(x, y, r * 2.6 + 1.5, 0, Math.PI * 2);
               ctx!.fill();
             }
@@ -674,16 +681,16 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
 
         if (s.bloom) {
           ctx!.shadowBlur = 6;
-          ctx!.shadowColor = `rgba(${STAR_GOLD}, 0.8)`;
+          ctx!.shadowColor = BLOOM_SHADOW;
         }
         ctx!.beginPath();
-        ctx!.fillStyle = s.gold
-          ? `rgba(${STAR_GOLD}, ${alpha})`
-          : `rgba(${STAR_WHITE}, ${alpha})`;
+        ctx!.fillStyle = s.gold ? GOLD_FILL : WHITE_FILL;
+        ctx!.globalAlpha = alpha;
         ctx!.arc(x, y, r, 0, Math.PI * 2);
         ctx!.fill();
         if (s.bloom) ctx!.shadowBlur = 0;
       }
+      ctx!.globalAlpha = 1;
 
       if (active) settled = !anyMoving;
 
@@ -814,7 +821,17 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
 
     // Listeners attach before the first draw so that if the viewport is zero-sized at
     // mount, the resize event that gives it real dimensions can still repair the field.
-    window.addEventListener("resize", resize);
+    // At most one rebuild per frame, however many resize events a drag delivers.
+    let resizeFrame = 0;
+    function onResize() {
+      if (resizeFrame) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = 0;
+        resize();
+      });
+    }
+
+    window.addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", onVisibility);
     if (well) window.addEventListener(STARFIELD_PULSE_EVENT, onPulse);
     if (hoverOk) {
@@ -827,7 +844,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     nextShot = performance.now() + 800;
     draw(performance.now());
     return () => {
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", onResize);
+      cancelAnimationFrame(resizeFrame);
       document.removeEventListener("visibilitychange", onVisibility);
       if (well) window.removeEventListener(STARFIELD_PULSE_EVENT, onPulse);
       if (hoverOk) {
@@ -836,6 +854,10 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         window.removeEventListener("blur", onBlur);
       }
       cancelAnimationFrame(raf);
+      if (bg) {
+        bg.width = 0;
+        bg.height = 0;
+      }
     };
   }, [reduced, interactive]);
 

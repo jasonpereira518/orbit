@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { format } from "date-fns";
 import {
   BookOpen,
@@ -186,7 +187,7 @@ export function KnowledgeBaseView({
             ) : (
               filtered.map((entry) => (
                 <li key={entry.id}>
-                  <Link
+                  <IntentLink
                     href={`/contacts/${entry.contactId}`}
                     className="flex gap-3 px-4 py-3.5 transition-colors hover:bg-muted/40"
                   >
@@ -218,7 +219,7 @@ export function KnowledgeBaseView({
                         {entry.snippet}
                       </p>
                     </div>
-                  </Link>
+                  </IntentLink>
                 </li>
               ))
             )}

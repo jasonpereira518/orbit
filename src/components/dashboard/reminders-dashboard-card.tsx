@@ -9,7 +9,10 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-const PREVIEW_COUNT = 5;
+// Four, not five: this card shares a stretched row with Due follow-ups, whose rows are
+// about a third the height of these. Five reminders left that card with a quarter of its
+// height empty; four keeps the pair close, and "See more" holds the rest.
+const PREVIEW_COUNT = 4;
 
 export type DashboardReminderItem = {
   id: string;

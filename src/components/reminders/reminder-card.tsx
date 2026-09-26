@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
@@ -151,12 +152,12 @@ export function ReminderCard({
             )}
           </div>
           {contactId && contactName && (
-            <Link
+            <IntentLink
               href={`/contacts/${contactId}`}
               className="mt-0.5 block text-xs text-primary hover:underline"
             >
               {contactName}
-            </Link>
+            </IntentLink>
           )}
           {description && (
             <ExpandableText text={description} lines={2} className="mt-1" />
@@ -170,7 +171,7 @@ export function ReminderCard({
               className={cn(
                 "mt-1 text-xs",
                 due.overdue
-                  ? "font-medium text-amber-700 dark:text-amber-300"
+                  ? "font-medium text-amber-700 dark:text-warning"
                   : "text-muted-foreground"
               )}
             >

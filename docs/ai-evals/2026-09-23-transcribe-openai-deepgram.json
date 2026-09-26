@@ -1,0 +1,39 @@
+{
+  "label": "transcribe-openai-deepgram",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "date": "2026-09-23T06:00:54.214Z",
+  "commit": "f54a6e30",
+  "fixtures": "074a060d9c04",
+  "runs": 1,
+  "decisions": null,
+  "tasks": {
+    "transcribe": {
+      "cases": 4,
+      "metrics": {
+        "nameRecall": 1,
+        "wer": 0.011194029850746268,
+        "deepgramNameRecall": 1,
+        "deepgramWer": 0.015154994259471873
+      },
+      "misses": [],
+      "p50LatencyMs": 2943.5,
+      "costMicros": 0,
+      "costPerCaseMicros": 0,
+      "usage": [
+        {
+          "operation": "capture.transcribe.audio",
+          "model": "whisper-1",
+          "calls": 4,
+          "failures": 0,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 4,
+          "p50Ms": 2891
+        }
+      ]
+    }
+  }
+}

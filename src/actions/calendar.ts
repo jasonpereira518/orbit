@@ -17,10 +17,9 @@ function normalizeIcsUrl(raw: string) {
   let url = raw.trim();
   if (!url) throw new UserFacingError("Paste the calendar’s ICS link first");
 
-  // Apple / Outlook often copy webcal:// links
-  if (url.startsWith("webcal://")) {
-    url = `https://${url.slice("webcal://".length)}`;
-  }
+  // Apple / Outlook often copy webcal:// links. Plain http:// is upgraded too: the feed is
+  // fetched through the SSRF guard, which only speaks https.
+  url = url.replace(/^(?:webcal|http):\/\//i, "https://");
 
   let parsed: URL;
   try {

@@ -7,7 +7,7 @@
  *
  * A server component: it renders a list and links, and needs nothing from the browser.
  */
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { Users } from "lucide-react";
 import type { RepeatPerson } from "@/lib/events/people-store";
 
@@ -44,9 +44,9 @@ export function RepeatPeoplePanel({ people }: { people: RepeatPerson[] }) {
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-ink">
                   {person.contactId ? (
-                    <Link href={`/contacts/${person.contactId}`} className="hover:underline">
+                    <IntentLink href={`/contacts/${person.contactId}`} className="hover:underline">
                       {person.name ?? "Someone"}
-                    </Link>
+                    </IntentLink>
                   ) : (
                     (person.name ?? "Someone")
                   )}

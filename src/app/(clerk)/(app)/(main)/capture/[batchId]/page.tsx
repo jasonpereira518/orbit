@@ -6,6 +6,7 @@ import { CaptureSourceCard } from "@/components/capture/capture-source-card";
 import { NoteBatchResultView } from "@/components/capture/note-batch-result";
 import { captureSourceKinds } from "@/lib/note-batches";
 import { isoDay } from "@/lib/suggested-reminder-utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function NoteBatchPage({
   params,
@@ -18,6 +19,7 @@ export default async function NoteBatchPage({
   const fromMeeting = Boolean(batch.result.meeting);
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <RenderStamp />
       <div>
         {/* This page is reachable from the capture history as well as straight after a
             save, so it needs a way back that is not the browser's. */}

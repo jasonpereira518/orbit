@@ -7,8 +7,9 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections, imports, userSettings } from "@/db/schema";
+import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
 import {
@@ -23,12 +24,23 @@ import {
   hasGmailReadScope,
   hasSendScope,
 } from "@/lib/gmail";
-import { isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
+import {
+  grantCovers,
+  isGooglePurpose,
+  parseGooglePurposes,
+  serializeGooglePurposes,
+  type GooglePurpose,
+} from "@/lib/google-scopes";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
+import { pauseSync, resumeSync } from "@/lib/provider-connections";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { deleteEventConnection } from "@/lib/events/connections";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
+import { demoGmailConnectionStatus } from "@/lib/demo-workspace-connections";
+import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
 
@@ -52,12 +64,26 @@ export type GmailConnectionStatus = {
   canRead: boolean;
   /** The grant covers contacts.readonly. */
   canImportContacts: boolean;
+  /**
+   * The grant covers calendar.readonly, so continuous meeting sync can run.
+   *
+   * `hasCalendarScope` was already read here — it just fed `deriveConnectionHealth` and was
+   * never returned, so nothing could tell a person their calendar sync was available and off.
+   * Named to match `OutlookConnectionStatus.hasCalendarScope` so one adapter reads both.
+   */
+  hasCalendarScope: boolean;
+  /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
+  syncPaused: boolean;
+  /** The grant covers drive.file, so the Drive picker can open. */
+  canImportDrive: boolean;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
 
 export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus> {
   const userId = await requireUserId();
+  const demoEmail = await demoWorkspaceEmail(userId);
+  if (demoEmail) return demoGmailConnectionStatus(demoEmail);
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
     return {
@@ -71,6 +97,9 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       nextSyncAt: null,
       canRead: false,
       canImportContacts: false,
+      hasCalendarScope: false,
+      syncPaused: false,
+      canImportDrive: false,
       redirectUri: summary.redirectUri,
     };
   }
@@ -85,12 +114,15 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     connected: Boolean(conn && conn.status === "active"),
     emailAddress: conn?.emailAddress || null,
     lastSyncedAt: conn?.lastSyncedAt?.toISOString() || null,
-    canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
+    canSend: Boolean(
+      conn && conn.status === "active" && hasSendScope(conn.scopes),
+    ),
     status: conn
       ? deriveConnectionHealth({
           status: conn.status,
           nextSyncAt: conn.nextSyncAt,
           syncError: conn.syncError,
+          syncStatus: conn.syncStatus,
           calendarScopeGranted: hasCalendarScope(conn.scopes),
         })
       : null,
@@ -98,23 +130,34 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     nextSyncAt: conn?.nextSyncAt?.toISOString() ?? null,
     canRead: Boolean(conn && conn.status === "active" && hasGmailReadScope(conn.scopes)),
     canImportContacts: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
+    hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
+    syncPaused: Boolean(conn && conn.syncStatus === "paused"),
+    canImportDrive: Boolean(conn && conn.status === "active" && grantCovers("drive", conn.scopes)),
     redirectUri: summary.redirectUri,
   };
 }
 
 export async function startGmailOAuth(input: {
-  purpose: GooglePurpose;
+  /** One purpose — the way every feature button asks. */
+  purpose?: GooglePurpose;
+  /** Several at once — what Connect sends (`GOOGLE_CONNECT_PURPOSES`). */
+  purposes?: readonly GooglePurpose[];
   returnTo?: string;
 }): Promise<{ url: string }> {
-  if (!isGooglePurpose(input.purpose)) throw new Error("Unknown Google connection purpose");
-  const userId = await requireSyncUser();
+  const purposes = input.purposes ?? (input.purpose ? [input.purpose] : []);
+  if (purposes.length === 0 || !purposes.every(isGooglePurpose)) {
+    throw new Error("Unknown Google connection purpose");
+  }
+  // Connecting Google is free: the spec puts contacts, meetings and sending on every plan, and
+  // the one paid feature (the recruiter inbox scan) is gated where it runs, not here.
+  const userId = await requireUserId();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError
       ? ` (${summary.redirectUriError})`
       : "";
     throw new Error(
-      `Gmail is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.${hint}`
+      `Gmail is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.${hint}`,
     );
   }
 
@@ -126,9 +169,9 @@ export async function startGmailOAuth(input: {
 
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo = safeReturnPath(input.returnTo) ?? "";
-  // The purpose rides in the state so the callback can check that Google granted the one
-  // scope this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
-  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${input.purpose}`;
+  // The purposes ride in the state so the callback can check that Google granted the scopes
+  // this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
+  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${serializeGooglePurposes(purposes)}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
@@ -138,11 +181,49 @@ export async function startGmailOAuth(input: {
     maxAge: 600,
   });
 
-  return { url: buildGmailAuthUrl(state, input.purpose) };
+  return { url: buildGmailAuthUrl(state, purposes) };
+}
+
+/**
+ * The Meetings switch on the Google account page. Off leaves the grant alone.
+ *
+ * Answers rather than throws, because the switch shows the refusal below verbatim and a
+ * thrown Server Action message is replaced by a digest in production — the person would read
+ * a paragraph about Server Components instead of the one sentence that says what to do.
+ * `asActionResult` rescues the `UserFacingError` as data; a genuine fault still throws, and
+ * still reaches the caller's friendly fallback.
+ */
+export async function setCalendarSync(enabled: boolean): Promise<ActionResult<void>> {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    if (enabled) {
+      // `resumeSync` arms the row whatever the grant covers, and the upsert deliberately never
+      // arms a grant without calendar: the scheduler would claim it, disarm it for the missing
+      // scope, and leave the account page saying calendar sync is paused to someone who never
+      // asked for calendar — the defect this phase removes. A server action takes a direct POST,
+      // so the check belongs here and not only in front of the switch.
+      const db = await getDb();
+      const conn = await db.query.gmailConnections.findFirst({
+        where: eq(gmailConnections.userId, userId),
+        columns: { scopes: true },
+      });
+      if (!hasCalendarScope(conn?.scopes)) {
+        throw new UserFacingError(
+          "Allow Orbit to see your calendar first — reconnect Google and tick calendar access"
+        );
+      }
+      await resumeSync("google", userId);
+    } else {
+      await pauseSync("google", userId);
+    }
+    revalidatePath("/settings");
+  });
 }
 
 export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
+  // Nothing is stored to disconnect, and `alsoDelete` would purge the seeded workspace.
+  if (await isDemoWorkspace(userId)) return;
   const db = await getDb();
   const grant = await db.query.gmailConnections.findFirst({
     where: eq(gmailConnections.userId, userId),
@@ -150,16 +231,28 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   });
   // Row first: the disconnect is done even if Google never answers.
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+  // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
+  // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
+  // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
+  // double the calendar.
+  await deleteCalendarSourcesForProvider(userId, "google");
   if (grant) await revokeGoogleGrant(grant);
   if (opts.alsoDelete === true) {
     await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });
   }
+  // The confirmation-email scan is an opt-in row that carries no token of its own — it borrows
+  // this connection's. Left behind, the scheduler claims it every pass and fails on a mailbox
+  // that is no longer connected.
+  await deleteEventConnection(userId, "gmail");
   revalidatePath("/recruiters");
+  revalidatePath("/settings");
+  revalidatePath("/imports");
+  revalidatePath("/events");
 }
 
 export async function consumeGmailOAuthState(
   state: string | null
-): Promise<{ userId: string; returnTo: string | null; purpose: GooglePurpose | null }> {
+): Promise<{ userId: string; returnTo: string | null; purposes: GooglePurpose[] }> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
@@ -172,10 +265,9 @@ export async function consumeGmailOAuthState(
   return {
     userId,
     returnTo: safeReturnPath(returnTo),
-    purpose: isGooglePurpose(rawPurpose) ? rawPurpose : null,
+    purposes: parseGooglePurposes(rawPurpose),
   };
 }
-
 
 export type GmailScanStatus = {
   importId: string;
@@ -212,9 +304,15 @@ function toScanStatus(row: typeof imports.$inferSelect): GmailScanStatus {
  * backstop), so it survives navigation, a closed tab, and a dead invocation. The client
  * only polls.
  */
-export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
+export async function startGmailRecruiterScan(): Promise<
+  ActionResult<{ importId: string }>
+> {
   return asActionResult(async () => {
-    const userId = await requireSyncUser();
+    const userId = await requireRecruitersUser();
+    const demoEmail = await demoWorkspaceEmail(userId);
+    if (demoEmail) {
+      return { importId: await recordDemoRecruiterScan(userId, GMAIL_SCAN_IMPORT_TYPE, demoEmail) };
+    }
     const db = await getDb();
 
     const conn = await db.query.gmailConnections.findFirst({
@@ -224,7 +322,9 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
       throw new UserFacingError("Connect Gmail first, then scan");
     }
     if (!hasGmailReadScope(conn.scopes)) {
-      throw new UserFacingError("Allow Orbit to read your mail first — reconnect Gmail and tick mail access");
+      throw new UserFacingError(
+        "Allow Orbit to read your mail first — reconnect Gmail and tick mail access",
+      );
     }
 
     // Fail here rather than after the mailbox sweep: classification is the whole point of
@@ -238,7 +338,7 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
         throw new UserFacingError(err.message);
       }
       throw new UserFacingError(
-        "Add an AI API key in Settings before scanning — the scan uses it to identify recruiters and summarize your threads"
+        "Add an AI API key in Settings before scanning — the scan uses it to identify recruiters and summarize your threads",
       );
     }
 
@@ -246,7 +346,7 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
       where: and(
         eq(imports.userId, userId),
         eq(imports.importType, GMAIL_SCAN_IMPORT_TYPE),
-        eq(imports.status, "processing")
+        eq(imports.status, "processing"),
       ),
     });
     if (running) return { importId: running.id };
@@ -272,7 +372,7 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
 
 /** Read-only poll target for the scan panel. */
 export async function getGmailScanStatus(
-  importId?: string
+  importId?: string,
 ): Promise<GmailScanStatus | null> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -284,7 +384,7 @@ export async function getGmailScanStatus(
     : await db.query.imports.findFirst({
         where: and(
           eq(imports.userId, userId),
-          eq(imports.importType, GMAIL_SCAN_IMPORT_TYPE)
+          eq(imports.importType, GMAIL_SCAN_IMPORT_TYPE),
         ),
         orderBy: [desc(imports.createdAt)],
       });
@@ -294,7 +394,7 @@ export async function getGmailScanStatus(
 }
 
 export async function cancelGmailRecruiterScan(importId: string) {
-  const userId = await requireSyncUser();
+  const userId = await requireRecruitersUser();
   const db = await getDb();
   // The runner re-reads status every iteration, so flipping the row is the cancel.
   await db
@@ -303,7 +403,6 @@ export async function cancelGmailRecruiterScan(importId: string) {
     .where(and(eq(imports.id, importId), eq(imports.userId, userId)));
   revalidatePath("/recruiters");
 }
-
 
 export type GmailSendIdentity = {
   connected: boolean;
@@ -328,6 +427,18 @@ export type GmailSendIdentity = {
 
 export async function getGmailSendIdentity(): Promise<GmailSendIdentity> {
   const userId = await requireUserId();
+  const demoEmail = await demoWorkspaceEmail(userId);
+  if (demoEmail) {
+    const profile = await getCurrentUserProfile().catch(() => null);
+    return {
+      connected: true,
+      canSend: true,
+      sendingAs: demoEmail,
+      displayName: profile?.name?.trim() || null,
+      loginEmail: demoEmail,
+      matchesLogin: true,
+    };
+  }
   const db = await getDb();
 
   const conn = await db.query.gmailConnections.findFirst({

@@ -21,6 +21,7 @@ import { OutlookImportPanel } from "@/components/recruiters/outlook-import-panel
 import { RecruiterSharingToggle } from "@/components/recruiters/sharing-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function RecruitersPage({
   searchParams,
@@ -41,7 +42,7 @@ export default async function RecruitersPage({
   const tab = params.tab === "discover" ? "discover" : "mine";
   const q = params.q || "";
 
-  const [{ enabled: sharing }, mine, gmail, scan, outlook, outlookScan, showWork] = await Promise.all([
+  const [{ enabled: sharing }, mine, gmail, scan, outlook, outlookScan, showWork, discover] = await Promise.all([
     getRecruiterSharing(),
     listMyRecruiters(),
     getGmailConnectionStatus(),
@@ -52,11 +53,10 @@ export default async function RecruitersPage({
     getOutlookScanStatus(),
     // The Work pill follows Leads' release, like the pill on /contacts.
     isSurfaceReleased(userId, "page.leads"),
+    // Alongside the rest rather than after it: it depends on none of them. Returns [] for a
+    // private viewer, so this is safe to call unconditionally.
+    tab === "discover" ? listDiscoverRecruiters(q || undefined) : Promise.resolve([]),
   ]);
-
-  // Returns [] for a private viewer, so this is safe to call unconditionally.
-  const discover =
-    tab === "discover" ? await listDiscoverRecruiters(q || undefined) : [];
 
   const filteredMine =
     q && tab === "mine"
@@ -97,6 +97,7 @@ export default async function RecruitersPage({
         </>
       }
     >
+      <RenderStamp />
       <div className="space-y-6">
         <RecruiterSharingToggle enabled={sharing} />
         <GmailImportPanel connection={gmail} initialScan={scan} />

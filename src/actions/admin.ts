@@ -28,6 +28,14 @@ import {
   setConstellationConfig,
   type ConstellationConfig,
 } from "@/lib/constellation-config";
+import { setStealth } from "@/lib/site-access";
+import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
+import {
+  inviteToSite,
+  revokeSiteInvite,
+  SiteInviteError,
+  type SiteInviteResult,
+} from "@/lib/site-invites";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -833,4 +841,77 @@ export async function refreshProvidersAction(): Promise<{ ok: true }> {
   await loadProviderStatuses({ force: true });
   revalidatePath("/admin/health");
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------------ site access */
+
+function revalidateAccess() {
+  revalidatePath("/admin/access");
+  revalidatePath("/admin/growth/interest-list");
+}
+
+/**
+ * Switch stealth on or off for the whole site. Takes effect within the proxy's cache window
+ * (seconds), on every instance, with no deploy. Confirmed and reasoned in the UI because
+ * turning it off opens every page to the public.
+ */
+export async function setSiteStealthAction(input: {
+  enabled: boolean;
+  reason: string;
+}): Promise<{ ok: true; stealth: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  ops.requireReason(input.reason);
+  const mode = await setStealth(adminUserId, input.enabled);
+  revalidateAccess();
+  return { ok: true, stealth: mode.stealth };
+}
+
+/**
+ * Show or hide the waitlist page's "Take it for a spin" product demo. Low stakes and easy to
+ * reverse, so unlike stealth it asks for no reason — the audit log still records who and when.
+ * The public page reads it through a ten-second cache; `/interest` is revalidated so the
+ * instance that made the change shows it at once.
+ */
+export async function setWaitlistDemoAction(input: {
+  enabled: boolean;
+}): Promise<{ ok: true; enabled: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  const enabled = await setWaitlistDemoEnabled(adminUserId, input.enabled === true);
+  revalidatePath("/interest");
+  revalidatePath("/");
+  revalidatePath("/admin/growth/interest-list");
+  return { ok: true, enabled };
+}
+
+/**
+ * Invite someone to create an account, stealth or not. Returns the result rather than
+ * throwing for a bad address, so the form can say what was wrong in place; Clerk and
+ * database failures still throw.
+ */
+export async function inviteToSiteAction(input: {
+  email: string;
+  notify: boolean;
+  firstName?: string | null;
+}): Promise<SiteInviteResult | { kind: "error"; message: string }> {
+  const adminUserId = await requireAdminUserId();
+  const firstName = input.firstName?.trim().slice(0, 60) || null;
+  try {
+    const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify, firstName });
+    revalidateAccess();
+    return result;
+  } catch (err) {
+    if (err instanceof SiteInviteError) return { kind: "error", message: err.message };
+    throw err;
+  }
+}
+
+export async function revokeSiteInviteAction(input: {
+  invitationId: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  ops.requireReason(input.reason);
+  const { email } = await revokeSiteInvite({ adminUserId, invitationId: input.invitationId });
+  revalidateAccess();
+  return { ok: true, email };
 }

@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import {
   chatThreads,
@@ -239,26 +239,44 @@ export async function getDataQuality(): Promise<DataQualityRow[]> {
   const db = await getDb();
 
   const [
-    totals,
-    unnormalized,
+    contactPass,
     noEmbedding,
     dupeEmail,
     dupeName,
-    avatars,
     staleReminders,
     orphans,
   ] = await Promise.all([
-    db.select({ n: countInt }).from(contacts),
+    // Every plain per-row check on `contacts` in ONE pass. The duplicate and embedding
+    // checks below need a GROUP BY or an anti-join, so they stay their own statements.
+    //
+    // The avatar host list mirrors isUnusableAvatarUrl. Pushed into SQL on purpose — the
+    // JS path would require selecting every profile_image_url in the database. Both avatar
+    // tests read a `data:` value through `substr(…, 1, 5)`, which detoasts only the first
+    // chunk, instead of LIKE, which detoasts all of it: those values are the base64 avatars,
+    // up to 120 KB each. `substr(x, 1, 5) = 'data:'` is exactly `x LIKE 'data:%'`, null
+    // included. The CASE (evaluated in order, unlike AND) keeps the host scan off them;
+    // every inline avatar Orbit writes is `data:<type>;base64,…`, and a base64 body has no
+    // `.` in its alphabet, so neither host could ever have matched one.
     db
-      .select({ n: countInt })
-      .from(contacts)
-      .where(
-        and(
-          isNotNull(contacts.company),
-          ne(contacts.company, ""),
-          isNull(contacts.companyId)
-        )
-      ),
+      .select({
+        total: countInt,
+        unnormalized: sql<number>`count(*) filter (
+          where ${contacts.company} is not null
+            and ${contacts.company} <> ''
+            and ${contacts.companyId} is null
+        )::int`,
+        inlined: sql<number>`count(*) filter (
+          where substr(${contacts.profileImageUrl}, 1, 5) = 'data:'
+        )::int`,
+        broken: sql<number>`count(*) filter (
+          where case
+            when substr(${contacts.profileImageUrl}, 1, 5) = 'data:' then false
+            else ${contacts.profileImageUrl} like '%unavatar.io%'
+              or ${contacts.profileImageUrl} like '%static.licdn.com/aero%'
+          end
+        )::int`,
+      })
+      .from(contacts),
     db.execute(sql`
       SELECT count(*)::int AS n FROM contacts c
       WHERE NOT EXISTS (SELECT 1 FROM contact_embeddings e WHERE e.contact_id = c.id)
@@ -275,17 +293,6 @@ export async function getDataQuality(): Promise<DataQualityRow[]> {
         SELECT count(*) - 1 AS extra FROM contacts
         GROUP BY user_id, lower(trim(full_name)) HAVING count(*) > 1
       ) d
-    `),
-    // The host list mirrors isUnusableAvatarUrl. Pushed into SQL on purpose — the JS path
-    // would require selecting every profile_image_url in the database.
-    db.execute(sql`
-      SELECT
-        count(*) filter (where profile_image_url LIKE 'data:%')::int AS inlined,
-        count(*) filter (
-          where profile_image_url LIKE '%unavatar.io%'
-             OR profile_image_url LIKE '%static.licdn.com/aero%'
-        )::int AS broken
-      FROM contacts
     `),
     db
       .select({ n: countInt })
@@ -311,13 +318,13 @@ export async function getDataQuality(): Promise<DataQualityRow[]> {
     `),
   ]);
 
-  const total = totals[0]?.n ?? 0;
-  const avatarRow = rowsOf<{ inlined: number; broken: number }>(avatars)[0];
+  const pass = contactPass[0];
+  const total = pass?.total ?? 0;
 
   return [
     {
       label: "Company set but never normalized",
-      count: unnormalized[0]?.n ?? 0,
+      count: num(pass?.unnormalized),
       total,
       hint: "backfillContactCompanies() fixes these",
     },
@@ -331,12 +338,12 @@ export async function getDataQuality(): Promise<DataQualityRow[]> {
     { label: "Duplicate by name", count: rowsOf<{ n: number }>(dupeName)[0]?.n ?? 0 },
     {
       label: "Avatars on known-broken hosts",
-      count: num(avatarRow?.broken),
+      count: num(pass?.broken),
       total,
     },
     {
       label: "Avatars inlined as base64",
-      count: num(avatarRow?.inlined),
+      count: num(pass?.inlined),
       total,
       hint: "Vercel Blob is not configured",
     },

@@ -108,6 +108,70 @@ if (sameEmailTwice.length !== 1) {
   );
 }
 
+// RECURRENCE-ID marks an override VEVENT of one occurrence of a series sharing its UID —
+// resolved the same TZID-aware way EXDATE already is, falling back to DTSTART's zone when the
+// line carries none. `recurrence.ts`'s `expandEvent`/`expandIcsEvents` are what consume this;
+// here we only pin that the parser actually keeps it (it used to drop it entirely, which is
+// REGRESSION 1: a rescheduled instance silently replacing the meeting it moved).
+const icsWithOverride = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:series-with-override
+SUMMARY:Weekly sync
+DTSTART;TZID=America/New_York:20240610T090000
+DTEND;TZID=America/New_York:20240610T093000
+RRULE:FREQ=WEEKLY;COUNT=3
+ATTENDEE;CN=Jane Doe:mailto:jane@example.com
+END:VEVENT
+BEGIN:VEVENT
+UID:series-with-override
+RECURRENCE-ID;TZID=America/New_York:20240617T090000
+SUMMARY:Weekly sync (moved)
+DTSTART;TZID=America/New_York:20240618T140000
+DTEND;TZID=America/New_York:20240618T143000
+ATTENDEE;CN=Jane Doe:mailto:jane@example.com
+END:VEVENT
+END:VCALENDAR`;
+const overrideEvents = parseIcsEvents(icsWithOverride);
+if (overrideEvents.length !== 2) {
+  throw new Error(`expected 2 VEVENTs (master + override), got ${overrideEvents.length}`);
+}
+const [masterEvent, overrideEvent] = overrideEvents;
+if (masterEvent!.recurrenceId != null) {
+  throw new Error("the master VEVENT must carry no RECURRENCE-ID");
+}
+if (overrideEvent!.recurrenceId?.toISOString() !== "2024-06-17T13:00:00.000Z") {
+  throw new Error(
+    `RECURRENCE-ID should resolve against its own TZID like DTSTART does, got ${overrideEvent!.recurrenceId?.toISOString()}`
+  );
+}
+if (overrideEvent!.rrule !== null) {
+  throw new Error("an override VEVENT should carry no RRULE of its own");
+}
+
+// RECURRENCE-ID with no TZID of its own falls back to DTSTART's zone — same rule EXDATE
+// already follows.
+const icsOverrideNoTzid = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:series-fallback-tz
+SUMMARY:Weekly sync
+DTSTART;TZID=America/New_York:20240610T090000
+DTEND;TZID=America/New_York:20240610T093000
+RRULE:FREQ=WEEKLY;COUNT=3
+END:VEVENT
+BEGIN:VEVENT
+UID:series-fallback-tz
+RECURRENCE-ID:20240617T090000
+DTSTART;TZID=America/New_York:20240618T140000
+DTEND;TZID=America/New_York:20240618T143000
+END:VEVENT
+END:VCALENDAR`;
+const fallbackTzEvents = parseIcsEvents(icsOverrideNoTzid);
+if (fallbackTzEvents[1]?.recurrenceId?.toISOString() !== "2024-06-17T13:00:00.000Z") {
+  throw new Error(
+    `a bare RECURRENCE-ID should still resolve to the right instant, got ${fallbackTzEvents[1]?.recurrenceId?.toISOString()}`
+  );
+}
+
 // The interaction external-id format is a stored data contract, not an implementation
 // detail: `interactions_user_external_uidx` dedupes re-imports and re-syncs on it, so every
 // id already written to a database was produced by the literal below. Extracting the formula

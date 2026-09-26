@@ -16,7 +16,12 @@
  * Scripts run SEQUENTIALLY: PGlite is single-writer, and the pglite tier shares one
  * throwaway directory per run so the DDL bootstraps once, not fifty times.
  *
- * Run: npx tsx scripts/run-smoke.ts [--ci] [--check] [--only <name>...]
+ * `--shard i/n` runs every n-th script (1-based i) so CI can split the suite across
+ * machines. Each shard is its own process with its own PGlite directory, so the
+ * single-writer rule still holds, and the shards together cover every script exactly once.
+ * `--list` prints the selection and exits, for checking a partition without running it.
+ *
+ * Run: npx tsx scripts/run-smoke.ts [--ci] [--check] [--shard i/n] [--list] [--only <name>...]
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
@@ -29,18 +34,29 @@ type Tier = "pure" | "pglite" | "manual";
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
+  "smoke-connectivity": "pure",
+  "smoke-offline-queue": "pure",
+  "smoke-chat-thread-prefetch": "pure",
+  "smoke-render-stamp-pages": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-oauth-return": "pure",
+  "smoke-openrouter-oauth": "pure",
   "smoke-report-error": "pure",
   "smoke-toast-actions": "pure",
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
+  "smoke-action-user-scope": "pure",
   "smoke-toast-copy": "pure",
+  "smoke-drive-picker-token": "pure",
+  "smoke-settle-once": "pure",
   "smoke-vercel-ignore-build": "pure",
   "smoke-admin-gate": "pure",
   "smoke-admin-redaction": "pure",
   "smoke-admin-yc-calculations": "pure",
   "smoke-ai-key-check": "pure",
+  "smoke-ai-providers": "pure",
+  "smoke-apple-calendar-map": "pure",
+  "smoke-provider-exhaustive": "pure",
   "smoke-avatar-blob": "pure",
   "smoke-avatar-encode": "pure",
   "smoke-avatar-storage": "pure",
@@ -49,7 +65,12 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-backdrop-filter": "pure",
   "smoke-backup-workflow": "pure",
   "smoke-connection-status": "pure",
+  "smoke-connect-gates": "pure",
+  "smoke-integration-status": "pure",
+  "smoke-account-rows": "pure",
   "smoke-connector-oauth": "pure",
+  "smoke-google-contacts-map": "pure",
+  "smoke-inbound-mail": "pure",
   "smoke-api-connector-routes": "pure",
   "smoke-capture-body-limits": "pure",
   "smoke-capture-planets": "pure",
@@ -60,9 +81,12 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-draft": "pure",
   "smoke-capture-file-date": "pure",
   "smoke-capture-fanout": "pure",
+  "smoke-capture-fanout-hook": "pure",
   "smoke-capture-bins": "pure",
+  "smoke-calendar-sources": "pure",
   "smoke-capture-file-drop": "pure",
   "smoke-cadence": "pure",
+  "smoke-caldav-client": "pure",
   "smoke-chat-history-groups": "pure",
   "smoke-chat-mentions": "pure",
   "smoke-chat-evidence": "pure",
@@ -78,6 +102,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-stream-drain": "pure",
   "smoke-chat-commands": "pure",
   "smoke-chat-refine": "pure",
+  "smoke-cross-tenant-refs": "pglite",
+  "smoke-sentry-scrub": "pure",
   "smoke-chat-send": "pglite",
   "smoke-chat-versions": "pglite",
   "smoke-draft-prompts": "pglite",
@@ -114,8 +140,11 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-disconnect-categories": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
+  "smoke-deepgram-params": "pure",
+  "smoke-speaker-map": "pure",
   "smoke-dev-logging": "pure",
   "smoke-dictation": "pure",
+  "smoke-dictation-deepgram": "pure",
   "smoke-duplicate-index": "pure",
   "smoke-earth-camera": "pure",
   "smoke-embedding-cache": "pure",
@@ -134,6 +163,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-gmail-batch": "pure",
   "smoke-gmail-send-mime": "pure",
   "smoke-graph-canvas": "pure",
+  "smoke-hash-stream": "pure",
+  "smoke-sky-layout": "pure",
   "smoke-graph-family-seating": "pure",
   "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",
@@ -142,10 +173,22 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-microsoft-scopes": "pure",
   "smoke-google-calendar-map": "pure",
   "smoke-outlook-calendar-map": "pure",
+  "smoke-recurrence": "pure",
   "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-icon-button-names": "pure",
+  "smoke-import-detect": "pure",
+  "smoke-import-errors": "pure",
+  "smoke-import-history-render": "pure",
+  "smoke-import-sources": "pure",
+  "smoke-import-queue": "pure",
   "smoke-import-progress-card": "pure",
+  "smoke-drive-reminder-rules": "pure",
+  "smoke-drive-triage": "pure",
+  "smoke-drive-client": "pure",
+  "smoke-import-provenance": "pure",
+  "smoke-import-finish": "pure",
+  "smoke-finish-scene-geometry": "pure",
   "smoke-linkedin-slug-guard": "pglite",
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
@@ -177,6 +220,10 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schedules": "pure",
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-waitlist-host": "pure",
+  "smoke-site-invite-email": "pure",
+  "smoke-speech-limits": "pure",
+  "smoke-speech-usage-tag": "pure",
   "smoke-stripe-ordering": "pure",
   "smoke-stripe-revocation": "pure",
   "smoke-settings-layout": "pure",
@@ -190,11 +237,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-meeting-chunk-errors": "pure",
   "smoke-meeting-digest": "pure",
   "smoke-meeting-upload-queue": "pure",
+  "smoke-meeting-live-coverage": "pure",
   "smoke-outreach-email": "pure",
   "smoke-vocabulary-terms": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
+  "smoke-import-history": "pglite",
   "smoke-account-deletion": "pglite",
   "smoke-ai-access": "pglite",
   "smoke-jev-client": "pglite",
@@ -210,6 +259,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-api-routes": "pglite",
   "smoke-api-connector-routes-live": "pglite",
   "smoke-apollo-hosted-budget": "pglite",
+  "smoke-apple-actions": "pglite",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",
@@ -256,11 +306,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-resolve": "pglite",
   "smoke-demo-signin-message": "pure",
   "smoke-demo-data": "pglite",
+  "smoke-demo-workspace": "pglite",
   "smoke-duplicate-review": "pglite",
   "smoke-event-companies": "pglite",
   "smoke-event-discovery-store": "pglite",
   "smoke-event-roster": "pglite",
   "smoke-constellation-admin": "pglite",
+  "smoke-site-access": "pglite",
   "smoke-constellation-payload-leak": "pglite",
   "smoke-constellation-pin": "pglite",
   "smoke-constellation-signals": "pglite",
@@ -277,13 +329,20 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-gmail-scan-abort": "pglite",
   "smoke-outlook-scan": "pglite",
   "smoke-outlook-disconnect-purge": "pglite",
+  "smoke-disconnect-cleanup": "pglite",
   "smoke-gmail-scope-storage": "pglite",
   "smoke-outlook-scope-storage": "pglite",
+  "smoke-admin-health": "pglite",
   "smoke-health-token": "pglite",
   "smoke-health": "pglite",
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",
+  "smoke-import-row-staging": "pglite",
+  "smoke-capture-upload-parts": "pglite",
+  "smoke-import-people": "pglite",
+  "smoke-drive-import": "pglite",
   "smoke-import-stall": "pglite",
+  "smoke-import-undo": "pglite",
   "smoke-ingest-events": "pglite",
   "smoke-ingest-people": "pglite",
   "smoke-import-resumption-auth": "pglite",
@@ -293,16 +352,24 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-interest-list-join": "pglite",
   "smoke-interest-list-page": "pglite",
   "smoke-interest-ticket-image": "pglite",
+  "smoke-waitlist-copy": "pglite",
+  "smoke-waitlist-position": "pglite",
   "smoke-internal-auth": "pglite", // imports route handlers that reach @/db
   "smoke-launch-p2-schema": "pglite",
   "smoke-polish-migrations": "pglite",
   "smoke-ai-derived-interactions": "pglite",
   "smoke-calendar-feed-token": "pglite",
+  "smoke-calendar-subscription-sync": "pglite",
+  "smoke-calendar-source-rows": "pglite",
   "smoke-housekeeping-sweeps": "pglite",
   "smoke-linkedin-direction": "pglite",
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
+  "smoke-behavior-golden": "pglite",
+  "smoke-due-follow-ups-parity": "pglite",
+  "smoke-avatar-backfill-route": "pglite",
+  "smoke-chat-lookup-tools": "pglite",
   "smoke-tool-registry": "pglite",
   "smoke-memory-search": "pglite",
   "smoke-memory-embedding": "pglite",
@@ -324,10 +391,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-note-batch": "pglite",
   "smoke-opportunities": "pglite",
   "smoke-capture-history": "pglite",
+  "smoke-org-brand-colors": "pglite",
   "smoke-meeting-sessions": "pglite",
+  "smoke-meeting-gate": "pglite",
   "smoke-ops-snapshot": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-admin-analytics": "pglite",
+  "smoke-admin-feature-adoption": "pglite",
   "smoke-page-load-timing": "pglite",
   "smoke-contact-closeness": "pglite",
   "smoke-growth-trends": "pglite",
@@ -361,10 +431,16 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-leads": "pglite",
   "smoke-recruiter-pii": "pglite",
   "smoke-resend-rejection": "pglite",
+  "smoke-schema-bootstrap": "pglite",
   "smoke-schema-fingerprint": "pglite",
   "smoke-related-contacts-scale": "pglite",
+  "smoke-contact-profile-reads": "pglite",
+  "smoke-batched-writes": "pglite",
+  "smoke-grouped-sweep-writes": "pglite",
+  "smoke-bounded-reads": "pglite",
   "smoke-schema-upgrade": "pglite",
   "smoke-connector-connections": "pglite",
+  "smoke-speech-quota": "pglite",
   "smoke-stripe-unattributed": "pglite",
   "smoke-stripe-webhook": "pglite",
   "smoke-billing-portal": "pglite",
@@ -374,6 +450,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-surface-visibility": "pglite",
   "smoke-sync-concurrency": "pglite",
   "smoke-sync-scheduler": "pglite",
+  "smoke-google-contacts-sync": "pglite",
+  "smoke-inbound-mail-log": "pglite",
   "smoke-sync-columns": "pglite",
   "smoke-trigram-search": "pglite",
   "smoke-transcription-vocabulary": "pglite",
@@ -390,6 +468,8 @@ const MANIFEST: Record<string, Tier> = {
 const TIMEOUT_MS: Partial<Record<string, number>> = {
   "smoke-page-budgets": 5 * 60_000,
   "smoke-import-engine": 5 * 60_000,
+  "smoke-drive-import": 3 * 60_000,
+  "smoke-import-undo": 3 * 60_000,
 };
 const DEFAULT_TIMEOUT_MS = 3 * 60_000;
 
@@ -437,6 +517,19 @@ function main() {
   const checkOnly = args.includes("--check");
   const onlyIdx = args.indexOf("--only");
   const only = onlyIdx >= 0 ? args.slice(onlyIdx + 1).filter((a) => !a.startsWith("--")) : null;
+  const listOnly = args.includes("--list");
+  const shardIdx = args.indexOf("--shard");
+  let shard: { index: number; total: number } | null = null;
+  if (shardIdx >= 0) {
+    const m = /^(\d+)\/(\d+)$/.exec(args[shardIdx + 1] ?? "");
+    const index = m ? Number(m[1]) : 0;
+    const total = m ? Number(m[2]) : 0;
+    if (!m || index < 1 || index > total) {
+      console.error("run-smoke: --shard takes i/n with 1 <= i <= n, for example --shard 2/4.");
+      process.exit(2);
+    }
+    shard = { index, total };
+  }
 
   const problems = check();
   if (problems.length > 0) {
@@ -449,7 +542,15 @@ function main() {
 
   const selected = Object.entries(MANIFEST)
     .filter(([name, tier]) => (only ? only.includes(name) : ci ? tier !== "manual" : true))
-    .map(([name]) => name);
+    .map(([name]) => name)
+    // Round-robin over manifest order, so the few long scripts (see TIMEOUT_MS) land in
+    // different shards rather than one shard inheriting a whole block of them.
+    .filter((_, i) => !shard || i % shard.total === shard.index - 1);
+  if (shard) console.log(`run-smoke: shard ${shard.index}/${shard.total} — ${selected.length} scripts.`);
+  if (listOnly) {
+    console.log(selected.join("\n"));
+    process.exit(0);
+  }
 
   // One throwaway PGlite directory for the whole run: the DDL bootstraps once.
   const pgliteDir = mkdtempSync(join(tmpdir(), "orbit-smoke-run-"));

@@ -7,7 +7,7 @@ import {
   upsertOutlookConnection,
 } from "@/lib/outlook";
 import { isDemoMode } from "@/lib/auth";
-import { grantCovers } from "@/lib/microsoft-scopes";
+import { missingMicrosoftPurposes, serializeMicrosoftPurposes } from "@/lib/microsoft-scopes";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
 /** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
@@ -41,7 +41,8 @@ export async function GET(request: Request) {
     // "Cancel" on Microsoft's screen ignored where the user started from. Best-effort: a
     // bad or missing state just keeps the default.
     try {
-      const { returnTo, purpose } = await consumeOutlookOAuthState(state);
+      const { returnTo, purposes } = await consumeOutlookOAuthState(state);
+      const [purpose] = purposes;
       if (returnTo) redirectBase = new URL(returnTo, url.origin);
       if (purpose) redirectBase.searchParams.set("purpose", purpose);
     } catch {
@@ -55,9 +56,9 @@ export async function GET(request: Request) {
   try {
     if (!code) throw new Error("Missing authorization code");
 
-    const { userId: stateUserId, returnTo, purpose } = await consumeOutlookOAuthState(state);
+    const { userId: stateUserId, returnTo, purposes } = await consumeOutlookOAuthState(state);
     if (returnTo) redirectBase = new URL(returnTo, url.origin);
-    if (purpose) redirectBase.searchParams.set("purpose", purpose);
+    if (purposes.length > 0) redirectBase.searchParams.set("purpose", purposes[0]);
 
     let sessionUserId: string | null = null;
     if (isDemoMode()) {
@@ -73,18 +74,25 @@ export async function GET(request: Request) {
 
     const tokens = await exchangeCodeForTokens(code);
     const email = await fetchMicrosoftProfileEmail(tokens.access_token);
-    const connection = await upsertOutlookConnection(sessionUserId, tokens, email);
+    const { row: connection, switchedFrom } = await upsertOutlookConnection(sessionUserId, tokens, email);
 
-    // Consent can finish without the scope this entry point asked for (a work or school
-    // tenant's policy, or an admin-consent requirement). The connection is kept — whatever
-    // WAS granted still works — but the feature that asked cannot run, so say so instead of
-    // "connected".
-    if (purpose && !grantCovers(purpose, connection?.scopes)) {
+    // The upsert has already run by here — whatever it did (including swapping the account
+    // and resetting scopes/cursor to the new grant alone) is true regardless of what the
+    // missing-scope check below decides, so every redirect from this point on must say so.
+    if (switchedFrom) redirectBase.searchParams.set("switched", "1");
+
+    // Consent can finish without every scope this entry point asked for (a work or school
+    // tenant's policy, or an admin-consent requirement). Only a grant that covers none of
+    // what was asked is a failed connect; a partial one is connected, and the feature whose
+    // scope is missing offers its own Allow button on the account page.
+    const missing = missingMicrosoftPurposes(purposes, connection?.scopes);
+    if (purposes.length > 0 && missing.length === purposes.length) {
       await recordErrorEvent({
         source: ERROR_SOURCES.oauthOutlookCallback,
         kind: "missing_scope",
-        message: purpose,
+        message: serializeMicrosoftPurposes(missing),
       });
+      redirectBase.searchParams.set("purpose", missing[0]);
       redirectBase.searchParams.set("outlook", "error");
       redirectBase.searchParams.set("reason", "missing_scope");
       return NextResponse.redirect(redirectBase);

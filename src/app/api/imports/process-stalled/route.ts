@@ -1,6 +1,6 @@
-import { count, isNotNull, lt } from "drizzle-orm";
+import { isNotNull, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
@@ -11,8 +11,7 @@ import { isClerkConfigured } from "@/lib/demo-account";
 import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
 import { sweepExpiredHandoffs } from "@/lib/scan-handoff";
 import { clerkClient } from "@clerk/nextjs/server";
-import { resumeStalledCaptureJobs } from "@/lib/capture-jobs";
-import { runCaptureJobById } from "@/lib/capture-job-runner";
+import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import {
   finishCronRun,
@@ -20,7 +19,6 @@ import {
   type CronRunStatus,
 } from "@/lib/cron-runs";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
-import { sweepInterestListFollowUps } from "@/lib/interest-list-follow-up";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
 import { accountCanEmbed, kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { usersWithPendingMemoryWork } from "@/lib/memory-backfill";
@@ -31,6 +29,7 @@ import {
 import { backfillEmbeddingVectors, neonClient } from "@/db";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
+import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 
 export const maxDuration = 300;
 
@@ -45,6 +44,14 @@ const USAGE_EVENT_RETENTION_DAYS = 180;
 
 /** Networks recalibrated per run. Bounded so one huge orbit cannot eat the invocation. */
 const RECALIBRATE_BATCH = 25;
+
+/**
+ * Wall-clock ceiling on the recalibration loop. A count alone cannot bound it: one
+ * recalibration rewrites every contact of that user, so 25 users at 50k contacts each can
+ * outlast the route on their own. Users past the budget are still stale and come back
+ * next run.
+ */
+const RECALIBRATE_BUDGET_MS = 60 * 1000;
 
 /** Users listed per run for the embedding backstop — see the try block below. */
 const EMBED_BACKFILL_USERS = 25;
@@ -83,26 +90,57 @@ const EMBED_SWEEP_BUDGET_MS = 90 * 1000;
  */
 const ERROR_EVENT_RETENTION_DAYS = 30;
 
+/** Rows deleted per statement by `pruneOlderThan`. */
+const PRUNE_BATCH = 5_000;
+
+/**
+ * Wall-clock ceiling on pruning one table. A backlog still there when it runs out is the
+ * next hour's; the resumption work below is what this route exists for.
+ */
+const PRUNE_BUDGET_MS = 20 * 1000;
+
+/**
+ * Deletes rows past the retention window in bounded batches, the way `prunePageViews`
+ * does and for its reasons: one unbounded DELETE over a neglected table holds its locks
+ * for as long as it takes inside a function with a timeout.
+ *
+ * Each batch counts itself (`RETURNING 1` into `count(*)`) rather than trusting a
+ * driver-specific `rowCount` — neon-http and pglite disagree about the shape of a delete
+ * result — so there is no separate count scan, and no deleted row leaves Postgres. Both
+ * tables are indexed on created_at.
+ */
 async function pruneOlderThan(
   table: typeof usageEvents | typeof errorEvents,
   days: number
 ): Promise<number> {
   const db = await getDb();
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  // Count first rather than trusting a driver-specific `rowCount` — neon-http and pglite
-  // disagree about the shape of a delete result. Both tables are indexed on created_at.
-  const [row] = await db
-    .select({ value: count() })
-    .from(table)
-    .where(lt(table.createdAt, cutoff));
-  await db.delete(table).where(lt(table.createdAt, cutoff));
-  return row?.value ?? 0;
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const deadline = deadlineAfter(PRUNE_BUDGET_MS);
+  let pruned = 0;
+  for (;;) {
+    const res = await db.execute(sql`
+      WITH d AS (
+        DELETE FROM ${table} WHERE ${table.id} IN (
+          SELECT ${table.id} FROM ${table} WHERE ${table.createdAt} < ${cutoff} LIMIT ${PRUNE_BATCH}
+        )
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM d
+    `);
+    const n = Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
+    pruned += n;
+    if (n < PRUNE_BATCH || deadlineReached(deadline)) return pruned;
+  }
 }
 
 /**
  * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
  * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
  * resumption path is still each job's own self-continuation; this is the last resort.
+ *
+ * Resuming means KICKING each job's own internal route, never running it here. A job
+ * can take minutes, and running them inline let two stalled imports kill this 300s route
+ * before any of the housekeeping below it ran.
  *
  * Housekeeping rides along and every run is recorded in `cron_runs`. A job that loses
  * self-continuation can sit stalled for up to an hour.
@@ -129,6 +167,8 @@ export async function GET(request: Request) {
     captureResumed: 0,
     captureGaveUp: 0,
     captureSwept: 0,
+    /** Uploads sent in parts whose last part never arrived, closed as failed. */
+    captureAbandoned: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
@@ -148,10 +188,6 @@ export async function GET(request: Request) {
     embeddingBackfillsKicked: 0,
     /** Users handed to the self-continuing LinkedIn timeline-event backfill route. */
     timelineBackfillsKicked: 0,
-    /** Day-3 interest-list follow-ups delivered on this run. */
-    followUpsSent: 0,
-    /** Claimed but refused by Resend; released, so tomorrow retries them. */
-    followUpsFailed: 0,
     /** Deletion runs picked up, finished, still failing, and given up after 5 attempts. */
     purgesFound: 0,
     purgesFinished: 0,
@@ -174,11 +210,12 @@ export async function GET(request: Request) {
     stats.resumeGaveUp = sweep.gaveUp;
 
     try {
-      const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: runCaptureJobById });
+      const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: kickCaptureJob });
       stats.captureStalledFound = captures.found;
       stats.captureResumed = captures.resumed;
       stats.captureGaveUp = captures.gaveUp;
       stats.captureSwept = captures.swept;
+      stats.captureAbandoned = captures.abandoned;
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.captures" });
@@ -251,22 +288,6 @@ export async function GET(request: Request) {
     }
 
     try {
-      // Day-3 interest-list follow-ups. Rides on this route rather than taking a cron slot
-      // of its own: this is already the product's only scheduled job, and the Hobby plan's
-      // minimum interval is daily either way. The sweep bounds its own batch.
-      const followUps = await sweepInterestListFollowUps();
-      stats.followUpsSent = followUps.sent;
-      stats.followUpsFailed = followUps.failed;
-      // A send that Resend refused released its claim and will retry tomorrow, but a run
-      // that could not deliver anything it tried is worth surfacing rather than burying
-      // in a count nobody reads.
-      if (followUps.failed > 0 && followUps.sent === 0) status = "partial";
-    } catch (err) {
-      status = "partial";
-      reportError(err, { where: "job.process-stalled.interest-follow-ups" });
-    }
-
-    try {
       // Redraw closeness for users whose ranking has been drifting.
       //
       // Ordinary edits score their own contact immediately and flag the distribution
@@ -274,7 +295,9 @@ export async function GET(request: Request) {
       // full-network scan that materializing closeness exists to remove. This is what
       // eventually settles it. Bounded per run so one enormous orbit cannot use up the
       // whole invocation.
+      const recalibrateDeadline = Date.now() + RECALIBRATE_BUDGET_MS;
       for (const staleUserId of await findStaleCohorts(RECALIBRATE_BATCH)) {
+        if (Date.now() > recalibrateDeadline) break;
         await recalibrateCloseness(staleUserId).catch(
           reportAndContinue({ where: "job.process-stalled.recalibrate-user", userId: staleUserId }, null)
         );
@@ -300,17 +323,19 @@ export async function GET(request: Request) {
     try {
       // Backstop only — imports kick the backfill directly on completion. This catches
       // users whose kick was lost along with the invocation that sent it.
-      const staleContactUsers = await db
-        .selectDistinct({ userId: contacts.userId })
-        .from(contacts)
-        .where(isNotNull(contacts.embeddingStaleAt))
-        .limit(EMBED_BACKFILL_USERS);
-      // Stale contacts used to be the only way onto this list, so an account whose only
-      // outstanding work was passages of its notes — every existing account, the day those
-      // shipped — would never have been swept unless it happened to import something.
-      const memoryUsers = await usersWithPendingMemoryWork(EMBED_BACKFILL_USERS, accountCanEmbed).catch(
-        reportAndContinue({ where: "job.process-stalled.memory-users" }, [] as string[])
-      );
+      const [staleContactUsers, memoryUsers] = await Promise.all([
+        db
+          .selectDistinct({ userId: contacts.userId })
+          .from(contacts)
+          .where(isNotNull(contacts.embeddingStaleAt))
+          .limit(EMBED_BACKFILL_USERS),
+        // Stale contacts used to be the only way onto this list, so an account whose only
+        // outstanding work was passages of its notes — every existing account, the day those
+        // shipped — would never have been swept unless it happened to import something.
+        usersWithPendingMemoryWork(EMBED_BACKFILL_USERS, accountCanEmbed).catch(
+          reportAndContinue({ where: "job.process-stalled.memory-users" }, [] as string[])
+        ),
+      ]);
       const staleUsers = [
         ...new Set([...staleContactUsers.map((u) => u.userId), ...memoryUsers]),
       ]

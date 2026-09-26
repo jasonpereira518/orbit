@@ -11,7 +11,7 @@ import {
   type RecruiterMessage,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { requireRecruitersUser, requireSyncUser } from "@/lib/plan-guards";
+import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import { sendGmailMessage } from "@/lib/gmail-send";
@@ -28,6 +28,7 @@ import {
 } from "@/lib/recruiter-message-types";
 import { pooledIdsForViewer, resolveRecruiterPii } from "@/lib/recruiters";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { actionFailure } from "@/lib/action-failure";
 
 /** Spacing between sends in a batch, so an approved batch trickles rather than bursts. */
@@ -146,27 +147,46 @@ export async function generateRecruiterDrafts(
     );
 
     const pooled = await pooledIdsForViewer(userId, links.map((l) => l.recruiterId));
-    const created: RecruiterDraft[] = [];
-    for (let i = 0; i < links.length; i += 1) {
+
+    // Every successful draft in one multi-row insert rather than one per recruiter. Rows
+    // come back keyed by `recruiterId` — unique per user (`user_recruiter_links`), so
+    // unique across `links` — rather than trusting RETURNING's order.
+    const toInsert = links.flatMap((link, i) => {
       const draft = drafts[i];
-      if (!draft || "error" in draft) continue;
-      const [row] = await db
-        .insert(recruiterMessages)
-        .values({
-          userId,
-          recruiterId: links[i].recruiterId,
-          intent,
-          subject: draft.subject,
-          body: draft.body,
-          status: "draft",
-          gmailThreadId: links[i].gmailThreadId,
-        })
-        .returning();
+      if (!draft || "error" in draft) return [];
+      return [{ link, draft }];
+    });
+    const rows = toInsert.length
+      ? await db
+          .insert(recruiterMessages)
+          .values(
+            toInsert.map(({ link, draft }, slot) => ({
+              userId,
+              recruiterId: link.recruiterId,
+              intent,
+              subject: draft.subject,
+              body: draft.body,
+              status: "draft" as const,
+              gmailThreadId: link.gmailThreadId,
+              // One statement means one `now()` for every row; `listRecruiterDrafts` sorts
+              // by `created_at`, so a microsecond per slot keeps the order these were
+              // drafted in, as the per-row inserts did.
+              createdAt: sql`now() + ${slot}::integer * interval '1 microsecond'`,
+            }))
+          )
+          .returning()
+      : [];
+    const rowByRecruiter = new Map(rows.map((row) => [row.recruiterId, row]));
+
+    const created: RecruiterDraft[] = [];
+    for (const { link } of toInsert) {
+      const row = rowByRecruiter.get(link.recruiterId);
+      if (!row) continue;
       created.push(
         toDraft(
           row,
-          links[i].recruiter,
-          resolveRecruiterPii(links[i].recruiter, links[i], pooled.has(links[i].recruiterId)).email
+          link.recruiter,
+          resolveRecruiterPii(link.recruiter, link, pooled.has(link.recruiterId)).email
         )
       );
     }
@@ -257,8 +277,12 @@ export async function sendRecruiterDrafts(
   ids: string[]
 ): Promise<ActionResult<SendDraftsResult>> {
   return asActionResult(async () => {
-    const userId = await requireSyncUser();
-    await requireRecruitersUser();
+    // Recruiter tracking is the gate here and the only one. `requireSyncUser` ran first and
+    // refused a free user with the sync denial — which Task 6 reworded to talk about calendar
+    // subscriptions and event sources, and `asActionResult` now hands that text straight to
+    // someone who pressed Send on a recruiter email. Sending from your own address is on every
+    // plan per the spec, so the sync gate never belonged here.
+    const userId = await requireRecruitersUser();
     const db = await getDb();
 
     const unique = Array.from(new Set(ids.filter(Boolean)));
@@ -275,6 +299,29 @@ export async function sendRecruiterDrafts(
       throw new Error(
         `You can send ${remaining} more today (limit ${DAILY_RECRUITER_SEND_LIMIT}). Deselect ${unique.length - remaining}.`
       );
+    }
+
+    // The demo workspace has no Gmail grant to send with (`demo-workspace-connections.ts`),
+    // and its recruiters are `.example` addresses: record the drafts as sent, deliver nothing.
+    if (await isDemoWorkspace(userId)) {
+      const marked = await db
+        .update(recruiterMessages)
+        .set({ status: "sent", sentAt: new Date(), errorMessage: null, updatedAt: new Date() })
+        .where(
+          and(
+            eq(recruiterMessages.userId, userId),
+            eq(recruiterMessages.status, "draft"),
+            inArray(recruiterMessages.id, unique)
+          )
+        )
+        .returning(); // bare: a field selector breaks over the Db union
+      revalidatePath("/recruiters/compose");
+      revalidatePath("/recruiters");
+      return {
+        sent: marked.length,
+        failed: [],
+        quotaRemaining: Math.max(0, DAILY_RECRUITER_SEND_LIMIT - used - marked.length),
+      };
     }
 
     // Resolve the sending identity once, not per message: every email in a batch must

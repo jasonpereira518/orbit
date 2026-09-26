@@ -407,6 +407,29 @@ export function ConstellationPreviewCanvas({
     []
   );
 
+  // Canvas backing stores are only reclaimed at GC, and iOS caps their total: leaving the
+  // dashboard hands back the card's four pane-sized bitmaps now. On a StrictMode remount the
+  // layout effect below re-bakes all of them.
+  useEffect(
+    () => () => {
+      for (const canvas of [
+        canvasRef.current,
+        backdropRef.current,
+        backgroundRef.current,
+        washesRef.current?.canvas,
+      ]) {
+        if (canvas) {
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+      }
+      backdropRef.current = null;
+      backgroundRef.current = null;
+      washesRef.current = null;
+    },
+    []
+  );
+
   // Before paint, so the card never shows an empty frame.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;

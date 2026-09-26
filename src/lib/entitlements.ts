@@ -43,11 +43,11 @@ export type Entitlements = {
    * The public API, outbound webhooks and the MCP server.
    *
    * A key of its own rather than folding into `canUseSync`, for two reasons. The denial copy
-   * for sync says "Mailbox and calendar sync are available on…", which is simply wrong on an
-   * API 402. More importantly `gate_events` is the only place demand for a gated feature is
-   * observable, and the pricing question depends entirely on it — conflating "someone wanted
-   * to connect Zapier" with "someone wanted mailbox sync" destroys exactly the signal that
-   * table exists to collect.
+   * for sync says "Calendar subscriptions and event sources are available on…", which is
+   * simply wrong on an API 402. More importantly `gate_events` is the only place demand for a
+   * gated feature is observable, and the pricing question depends entirely on it — conflating
+   * "someone wanted to connect Zapier" with "someone wanted a calendar subscription" destroys
+   * exactly the signal that table exists to collect.
    */
   canUseApi: boolean;
   /**
@@ -71,6 +71,14 @@ export type Entitlements = {
    * which really are paid, do not silently become free with it.
    */
   canUseMcp: boolean;
+  /**
+   * Meeting recording and transcription. Orbit pays a per-minute transcription bill for
+   * every meeting, so unlike the rest of Capture (notes, voice, scans — all free), this is
+   * paid on both tiers. `loadMeetingTranscript` and `discardMeetingSession` stay ungated so
+   * a downgraded account can still read and delete meetings it already recorded — only
+   * starting, resuming, ending and analyzing a NEW recording cost money.
+   */
+  canUseMeetings: boolean;
 };
 
 /**
@@ -92,6 +100,7 @@ export const FEATURE_KEYS = [
   "extension",
   "api",
   "crm",
+  "meetings",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -181,6 +190,7 @@ export function entitlementsForPlan(
     canUseApi: paid,
     canUseCrm: paid,
     canUseMcp: true,
+    canUseMeetings: paid,
   };
 }
 
@@ -202,24 +212,34 @@ function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements 
  * background code resolve identically. Same rationale as the mirrored `email` column.
  */
 export const getEntitlements = cache(
-  async (userId: string): Promise<Entitlements> => {
-    const row = await ensureUserSettings(userId);
-    const { plan, source } = resolvePlan(row);
-    // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
-    // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
-    // from a free account, and the pricing surfaces should still tell the truth about
-    // what was bought. Only the gates are lifted.
-    if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
-    // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
-    // even while a Pro subscription is still winding down. Buying Lifetime cancels Pro on
-    // the spot (`endProForLifetime`), so the two are never meant to overlap; the resolver
-    // no longer unions a lingering subscription's enrichment back in.
-    const hostedEnrichment = plan === "orbit";
-    return entitlementsForPlan(plan, source, { hostedEnrichment });
-  }
+  async (userId: string): Promise<Entitlements> =>
+    entitlementsFromSettings(userId, await ensureUserSettings(userId))
 );
 
-const FEATURE_DENIAL: Record<FeatureKey, string> = {
+/**
+ * `getEntitlements` for a caller that already holds the account's `user_settings` row.
+ *
+ * `cache()` only deduplicates inside a React render. In a route handler or a Server Action
+ * it is a pass-through, so a path that has just read the row (an API key check, say) and
+ * then calls `getEntitlements` reads it again. Resolving from the row in hand is the same
+ * computation on the same data, one round trip cheaper.
+ */
+export function entitlementsFromSettings(userId: string, row: BillingColumns): Entitlements {
+  const { plan, source } = resolvePlan(row);
+  // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
+  // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
+  // from a free account, and the pricing surfaces should still tell the truth about
+  // what was bought. Only the gates are lifted.
+  if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
+  // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
+  // even while a Pro subscription is still winding down. Buying Lifetime cancels Pro on
+  // the spot (`endProForLifetime`), so the two are never meant to overlap; the resolver
+  // no longer unions a lingering subscription's enrichment back in.
+  const hostedEnrichment = plan === "orbit";
+  return entitlementsForPlan(plan, source, { hostedEnrichment });
+}
+
+export const FEATURE_DENIAL: Record<FeatureKey, string> = {
   outreach: "Outreach is available on Orbit Pro and Orbit Lifetime.",
   hostedSending:
     "Sending email and SMS on Orbit's credits is available on Orbit Pro and Orbit Lifetime.",
@@ -228,8 +248,9 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
   api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
   crm: "Salesforce and HubSpot sync are available on Orbit Pro and Orbit Lifetime.",
-  sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
+  sync: "Calendar subscriptions and event sources are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
+  meetings: "Meeting transcription is available on Orbit Pro and Orbit Lifetime.",
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
@@ -241,6 +262,7 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   extension: "canUseExtension",
   api: "canUseApi",
   crm: "canUseCrm",
+  meetings: "canUseMeetings",
 };
 
 /**

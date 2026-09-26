@@ -63,3 +63,16 @@ export function calendarExternalIdBase(eventUid: string): string {
 export function eventExternalIdBase(eventId: string): string {
   return `evt:${eventId}`;
 }
+
+/**
+ * A logged email, keyed by its RFC 5322 Message-ID.
+ *
+ * That header is the one identifier every mail client and relay preserves, so the same
+ * message BCC'd twice — or forwarded after being BCC'd — folds onto one interaction per
+ * contact instead of two. A message arriving without one is not given a synthetic id here;
+ * the caller decides whether to drop it, because inventing an id would defeat the dedupe
+ * this function exists for.
+ */
+export function mailExternalIdBase(messageId: string): string {
+  return `mail:${messageId}`;
+}

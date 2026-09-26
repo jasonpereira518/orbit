@@ -67,7 +67,14 @@ const MESSAGES_ONLY_FIELDS = [
   "content",
 ];
 
-function looksLikeMessagesExport(fields: string[]) {
+/**
+ * Whether these header fields came from a Messages.csv rather than Connections.csv.
+ *
+ * Exported because detection routes on it: a file whose header says "messages" goes to the
+ * messages importer instead of being refused, which is the whole point of dropping a file
+ * rather than picking a card. `contacts-file.ts` reads it too, so there is one definition.
+ */
+export function looksLikeMessagesExport(fields: string[]) {
   const lower = fields.map((f) => f.trim().toLowerCase());
   const hasNameFields = lower.includes("first name") && lower.includes("last name");
   if (hasNameFields) return false;

@@ -246,7 +246,7 @@ export function BulkActionBar({
         pending={pending}
       />
       {dangerOpen && qualityNote && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">{qualityNote}</p>
+        <p className="text-xs text-amber-700 dark:text-warning">{qualityNote}</p>
       )}
     </div>
   );

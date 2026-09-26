@@ -15,6 +15,7 @@ import {
   suppressIntro,
 } from "@/lib/graph/intro-signal";
 import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
+import { preloadConstellation } from "@/components/graph/constellation-modules";
 import { cn } from "@/lib/utils";
 
 /**
@@ -108,6 +109,11 @@ export function ConstellationIntro() {
       });
       if (warp && reason) beginIntro(reason);
     }
+
+    // After decision one has read whether the chunk is cold. This host hydrates with the page
+    // shell, long before the payload streams in behind the boundary, so the chart's code
+    // downloads alongside the data instead of after it.
+    preloadConstellation({ speculative: true });
 
     return release;
   }, []);

@@ -9,6 +9,7 @@ import {
 import { canonicalCompanyClusterName } from "@/lib/company-family";
 import { foldSchoolNames } from "@/lib/school-name";
 import { normalizeCompanyName } from "@/lib/company-name";
+import { settle, unwrap } from "@/lib/settled";
 
 /**
  * Exact, complete answer to "who do I know at <org>?".
@@ -119,10 +120,12 @@ export async function findOrgRosters(
 
   if (matched.length === 0) return [];
 
-  const rosters: OrgRoster[] = [];
-  for (const entry of matched) {
+  // At most MAX_ROSTERS independent reads: all started together, consumed in `matched`
+  // order, so the rosters — and which failure surfaces first — come out as they did when
+  // each waited for the one before.
+  const reads = matched.map((entry) => {
     const variants = [...entry.variants];
-    const rows = await db.query.contacts.findMany({
+    return settle(db.query.contacts.findMany({
       where: and(
         eq(contacts.userId, userId),
         entry.kind === "company"
@@ -139,7 +142,12 @@ export async function findOrgRosters(
       },
       orderBy: (c, { desc }) => [desc(c.closeness)],
       limit: ROSTER_PEOPLE_CAP,
-    });
+    }));
+  });
+
+  const rosters: OrgRoster[] = [];
+  for (const [index, entry] of matched.entries()) {
+    const rows = unwrap(await reads[index]);
 
     rosters.push({
       kind: entry.kind,

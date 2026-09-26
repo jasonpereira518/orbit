@@ -18,6 +18,7 @@ import {
   assertDeliverable,
   enqueueWebhookEvent,
   isBlockedAddress,
+  rotatingWindow,
 } from "../src/lib/webhooks/dispatch";
 
 const USER = "webhook-smoke-user";
@@ -70,6 +71,17 @@ run(async () => {
     ["fd00::1", "IPv6 unique local"],
     ["fe80::1", "IPv6 link local"],
     ["::ffff:169.254.169.254", "IPv4-mapped metadata address"],
+    // What the URL parser turns `[::ffff:169.254.169.254]` into — the form a URL really carries.
+    ["::ffff:a9fe:a9fe", "IPv4-mapped metadata address, hex form"],
+    ["::ffff:7f00:1", "IPv4-mapped loopback, hex form"],
+    ["0:0:0:0:0:ffff:0a00:0001", "IPv4-mapped RFC1918, uncompressed"],
+    ["::7f00:1", "IPv4-compatible loopback"],
+    ["64:ff9b::a9fe:a9fe", "NAT64-embedded metadata address"],
+    ["2002:7f00:1::", "6to4-embedded loopback"],
+    ["2001:0:4136:e378:8000:63bf:3fff:fdd2", "Teredo"],
+    ["ff02::1", "IPv6 multicast"],
+    ["fe80::1%eth0", "IPv6 link local with a zone"],
+    ["198.18.0.1", "benchmarking range"],
     ["239.1.1.1", "multicast"],
     ["not-an-ip", "an unparseable address"],
   ] as const;
@@ -162,6 +174,16 @@ run(async () => {
 
   check("the retry ladder is bounded", MAX_DELIVERY_ATTEMPTS > 0 && MAX_DELIVERY_ATTEMPTS <= 10);
   check("endpoints are disabled after repeated failure", MAX_CONSECUTIVE_FAILURES >= 3);
+
+  // --- followup.due serves every subscriber in turn ------------------------------------------
+  // It used to take `DISTINCT user_id LIMIT 20` with no order, so past 20 subscribers some
+  // were never served. Consecutive sweeps now take consecutive windows.
+  const subs = Array.from({ length: 45 }, (_, i) => `u${i}`);
+  const served = new Set<string>();
+  for (let slot = 1000; slot < 1003; slot++) for (const u of rotatingWindow(subs, 20, slot)) served.add(u);
+  check("three sweeps of 20 reach all 45 subscribers", served.size === 45, String(served.size));
+  check("a window never repeats a subscriber", new Set(rotatingWindow(subs, 20, 7)).size === 20);
+  check("under the cap, everyone every time", rotatingWindow(subs.slice(0, 5), 20, 3).length === 5);
 
   await db.execute(sql`DELETE FROM webhook_endpoints WHERE user_id = ${USER}`);
   if (failures > 0) {

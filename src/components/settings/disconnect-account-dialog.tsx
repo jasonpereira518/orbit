@@ -20,28 +20,62 @@ import {
 
 const NAMES: Record<DisconnectProvider, string> = { gmail: "Google", outlook: "Outlook" };
 
-/** One confirmation for every Gmail/Outlook Disconnect button. DB-free imports only. */
+/**
+ * One confirmation for every Gmail/Outlook Disconnect button. DB-free imports only.
+ *
+ * Opens itself from its own outline button, unless a caller passes `open` — the account
+ * pages reach Disconnect through the header's ⋯ menu, which is the trigger, so there the
+ * button would be a second one nobody asked for.
+ *
+ * `hasDeletableData` decides between the two halves below: the checkbox that offers to
+ * delete what this account produced, or the paragraph saying contacts stay. It defaults to
+ * offering the checkbox, because a caller that hasn't looked must not hide a way to delete
+ * data that exists.
+ */
 export function DisconnectAccountDialog({
   provider,
   disabled,
   onConfirm,
+  open: openProp,
+  onOpenChange,
+  hasDeletableData,
 }: {
   provider: DisconnectProvider;
   disabled?: boolean;
   onConfirm: (opts: { alsoDelete: boolean }) => void;
+  /** Controlled: the caller owns the open state, and no trigger button is rendered. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /**
+   * Whether this account has actually produced any of `DISCONNECT_DELETE_CATEGORIES`'
+   * data. Only an explicit `false` — a caller that looked and found none — drops the
+   * checkbox; `undefined` means "not known", and keeps it.
+   */
+  hasDeletableData?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : uncontrolledOpen;
+  function setOpen(next: boolean) {
+    if (controlled) onOpenChange?.(next);
+    else setUncontrolledOpen(next);
+  }
   const [alsoDelete, setAlsoDelete] = useState(false);
   const name = NAMES[provider];
-  const extra = DATA_CATEGORY_META.filter((c) =>
-    DISCONNECT_DELETE_CATEGORIES[provider].includes(c.id)
-  );
+  const extra =
+    hasDeletableData === false
+      ? []
+      : DATA_CATEGORY_META.filter((c) =>
+          DISCONNECT_DELETE_CATEGORIES[provider].includes(c.id)
+        );
 
   return (
     <>
-      <Button variant="outline" disabled={disabled} onClick={() => setOpen(true)}>
-        Disconnect
-      </Button>
+      {controlled ? null : (
+        <Button variant="outline" disabled={disabled} onClick={() => setOpen(true)}>
+          Disconnect
+        </Button>
+      )}
       <Dialog
         open={open}
         onOpenChange={(next) => {

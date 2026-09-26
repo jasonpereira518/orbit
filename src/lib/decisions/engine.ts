@@ -1,4 +1,4 @@
-import { resolveAiAccess } from "@/lib/ai-access";
+import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import {
   askPerItem,
   openDecider,
@@ -39,12 +39,16 @@ export const NO_ENGINES: Engines = Object.freeze({ jev: null, llm: null });
 
 /**
  * One account read, then both engines. `llm: false` skips building the LLM engine for flows
- * whose policies never use it. Never throws: a failed read is "no engines", and every call
+ * whose policies never use it. `access`: the account already resolved for this request,
+ * which skips even that read. Never throws: a failed read is "no engines", and every call
  * site then runs its rule.
  */
-export async function openEngines(userId: string, opts: { llm?: boolean } = {}): Promise<Engines> {
+export async function openEngines(
+  userId: string,
+  opts: { llm?: boolean; access?: AiAccess } = {},
+): Promise<Engines> {
   try {
-    const access = await resolveAiAccess(userId);
+    const access = opts.access?.forUser(userId) ?? (await resolveAiAccess(userId));
     const jev = await openDecider(userId, access);
     const llm = opts.llm ? openLlmDecider(userId, access) : null;
     return { jev, llm };

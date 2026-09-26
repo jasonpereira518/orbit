@@ -40,27 +40,8 @@ import { purgeUserData } from "@/lib/user-data";
  * `retryImport` therefore prepares the job and hands the caller back the id to schedule.
  */
 
-/** Every privileged mutation writes one of these, awaited, before or with the mutation. */
-export async function recordAdminAction(input: {
-  adminUserId: string;
-  action: string;
-  targetUserId?: string | null;
-  resourceType?: string | null;
-  resourceId?: string | null;
-  detail?: Record<string, unknown>;
-  reason?: string | null;
-}) {
-  const db = await getDb();
-  await db.insert(adminAuditLog).values({
-    adminUserId: input.adminUserId,
-    action: input.action,
-    targetUserId: input.targetUserId ?? null,
-    resourceType: input.resourceType ?? null,
-    resourceId: input.resourceId ?? null,
-    detail: input.detail ?? {},
-    reason: input.reason?.trim() || null,
-  });
-}
+export { recordAdminAction } from "@/lib/admin-audit";
+import { recordAdminAction } from "@/lib/admin-audit";
 
 export function requireReason(reason: string, minimum = 4): string {
   const trimmed = reason.trim();

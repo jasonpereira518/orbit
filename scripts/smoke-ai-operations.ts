@@ -113,6 +113,10 @@ console.log("\nEvery reachable model is priced");
 {
   const reachable = new Set<string>();
   for (const p of AI_PROVIDERS) {
+    // OpenRouter reports its own real cost (a later task adds `reportedCostMicros`); it is
+    // deliberately absent from the static `ai-pricing.ts` table — same reasoning as
+    // `smoke-fast-model.ts`'s equivalent skip.
+    if (p.id === "openrouter") continue;
     reachable.add(DEFAULT_MODELS[p.id]);
     reachable.add(FAST_MODELS[p.id]);
     reachable.add(VISION_MODELS[p.id]);
@@ -120,7 +124,10 @@ console.log("\nEvery reachable model is priced");
     for (const m of PROVIDER_MODELS[p.id]) reachable.add(m.value);
     for (const m of MANAGED_MODELS[p.id]) reachable.add(m);
   }
-  for (const m of Object.values(EMBEDDING_MODELS)) reachable.add(m);
+  for (const [backend, m] of Object.entries(EMBEDDING_MODELS)) {
+    if (backend === "openrouter") continue;
+    reachable.add(m);
+  }
   // The decision tier's one model: unpriced, every Jev call would record no cost.
   reachable.add(JEV_MODEL);
   for (const model of reachable) check(`${model} has a price row`, priceFor(model) !== null);

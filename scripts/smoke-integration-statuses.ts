@@ -18,7 +18,7 @@ import { run } from "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { CONNECTORS } from "../src/lib/connectors/registry";
 import { CONNECTOR_STATUS_LOOKUP_IDS } from "../src/lib/connectors/status";
-import { getDb } from "../src/db";
+import { getDb, rowsOf } from "../src/db";
 import { encrypt } from "../src/lib/crypto";
 
 let failures = 0;
@@ -107,6 +107,14 @@ run(async () => {
     INSERT INTO gmail_connections (user_id, email_address, status, access_token_encrypted, refresh_token_encrypted)
     VALUES (${USER}, 'demo@example.com', 'active', ${encrypt("access")}, ${encrypt("refresh")})
   `);
+  // LinkedIn answers from the newest completed import, and the runner shares one PGlite per
+  // shard: an earlier script's import made this read "Imported 2 months ago" when the shard
+  // split changed. Seed one stamped now, so the newest row is always ours whatever ran first.
+  const seededImport = await db.execute(sql`
+    INSERT INTO imports (user_id, import_type, status, updated_at)
+    VALUES (${USER}, 'linkedin_connections', 'completed', now())
+    RETURNING id
+  `);
   await db.execute(sql`
     INSERT INTO outlook_connections (user_id, email_address, status, access_token_encrypted, refresh_token_encrypted)
     VALUES (${USER}, 'demo@example.com', 'active', ${encrypt("access")}, ${encrypt("refresh")})
@@ -121,7 +129,7 @@ run(async () => {
   const EXPECTED: Record<string, string> = {
     google: "Connected",
     outlook: "Connected",
-    linkedin: "Upload a CSV export",
+    linkedin: "Imported less than a minute ago",
     calendar_ics: "1 feed",
     luma: "Connected",
     eventbrite: "Connected",
@@ -130,7 +138,7 @@ run(async () => {
     hubspot: "acme.hubspot.com",
   };
   for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
-    const status = statuses[id];
+    const status = statuses.connectors[id];
     check(
       `${id}: its own lookup answered, not the back-fill`,
       status !== undefined &&
@@ -143,12 +151,15 @@ run(async () => {
   // map — but it must never be what a registered connector's answer comes from. Prove the
   // sentinel it writes is absent from a fully-seeded workspace.
   const backFilled = CONNECTOR_STATUS_LOOKUP_IDS.filter((id) => {
-    const s = statuses[id];
+    const s = statuses.connectors[id];
     return s !== undefined && s !== "unknown" && s.detail === "Not connected";
   });
   check("no registered connector fell through to the back-fill", backFilled.length === 0, backFilled.join(","));
 
   await cleanup();
+  // Only the row seeded above: other scripts' imports are theirs to leave or clear.
+  const [{ id: importId }] = rowsOf<{ id: string }>(seededImport);
+  await db.execute(sql`DELETE FROM imports WHERE id = ${importId}`);
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

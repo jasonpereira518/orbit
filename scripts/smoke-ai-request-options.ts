@@ -10,6 +10,7 @@ import {
   isOpenAiReasoningModel,
   openaiCompletionOptions,
 } from "../src/lib/ai-request-options";
+import { anthropicAcceptsTemperature } from "../src/lib/ai-providers";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -52,6 +53,51 @@ check("gpt-5.6 minimal → none", effort("gpt-5.6-luna", "minimal") === "none");
 check("gpt-5 minimal stays minimal", effort("gpt-5-mini", "minimal") === "minimal");
 check("o-series minimal → low", effort("o4-mini", "minimal") === "low");
 check("low is low everywhere", effort("gpt-5.6-luna", "low") === "low" && effort("o4-mini", "low") === "low");
+
+/**
+ * OpenRouter presets are `vendor/model` slugs, and every family rule above is anchored. A
+ * slug that answered differently from its bare id is a 400 on every call: the GPT-5 family
+ * rejects `temperature`/`max_tokens`, and Claude 4.7+ rejects sampling parameters too, so
+ * `openai/gpt-5.4-mini` and `anthropic/claude-sonnet-5` both used to be broken presets.
+ * Each family is asserted in BOTH forms so the two cannot drift apart again.
+ */
+console.log("\nOpenRouter vendor/model slugs");
+check("openai/gpt-5.4-mini is a reasoning model, same as its bare id", isOpenAiReasoningModel("openai/gpt-5.4-mini") && isOpenAiReasoningModel("gpt-5.4-mini"));
+check("openai/o4-mini is too", isOpenAiReasoningModel("openai/o4-mini") && isOpenAiReasoningModel("o4-mini"));
+check("openai/gpt-4o-mini still is not", !isOpenAiReasoningModel("openai/gpt-4o-mini") && !isOpenAiReasoningModel("gpt-4o-mini"));
+check("a non-OpenAI slug is not (google/gemini-3.8-flash)", !isOpenAiReasoningModel("google/gemini-3.8-flash"));
+
+const slugReasoning = openaiCompletionOptions("openai/gpt-5.4-mini", { temperature: 0.2, maxOutputTokens: 500 });
+check(
+  "openai/gpt-5.4-mini gets max_completion_tokens and no temperature",
+  "max_completion_tokens" in slugReasoning && !("temperature" in slugReasoning)
+);
+check("a slug's reasoning effort resolves like the bare id: gpt-5.4 minimal → none", effort("openai/gpt-5.4-mini", "minimal") === "none" && effort("gpt-5.4-mini", "minimal") === "none");
+check("o-series slug minimal → low", effort("openai/o4-mini", "minimal") === "low");
+
+const slugSonnet5 = openaiCompletionOptions("anthropic/claude-sonnet-5", { temperature: 0.2, maxOutputTokens: 500 });
+check(
+  "anthropic/claude-sonnet-5 over OpenRouter sends no temperature (Claude 4.7+ 400s on one)",
+  !("temperature" in slugSonnet5) && "max_tokens" in slugSonnet5
+);
+check(
+  "...and the bare id agrees",
+  !anthropicAcceptsTemperature("claude-sonnet-5") && !anthropicAcceptsTemperature("anthropic/claude-sonnet-5")
+);
+const slugHaiku = openaiCompletionOptions("anthropic/claude-haiku-4.5", { temperature: 0.2, maxOutputTokens: 500 });
+check(
+  "anthropic/claude-haiku-4.5 keeps temperature — OpenRouter writes the version with a dot, Orbit with a dash",
+  "temperature" in slugHaiku && "max_tokens" in slugHaiku
+);
+check(
+  "...and the bare id agrees",
+  anthropicAcceptsTemperature("claude-haiku-4-5") && anthropicAcceptsTemperature("anthropic/claude-haiku-4.5")
+);
+const slugGemini = openaiCompletionOptions("google/gemini-3.8-flash", { temperature: 0.2, maxOutputTokens: 500 });
+check(
+  "a Gemini slug still takes sampling parameters",
+  "temperature" in slugGemini && "max_tokens" in slugGemini
+);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

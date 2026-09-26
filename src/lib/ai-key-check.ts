@@ -1,6 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
-import OpenAI from "openai";
 import { AI_PROVIDERS, DEFAULT_MODELS, type AiProvider } from "@/lib/ai-providers";
 import { JEV_MODEL } from "@/lib/ai-models";
 import { isAiKeyRejectedError } from "@/lib/errors";
@@ -35,17 +32,39 @@ export const KEY_CHECK_TIMEOUT_MS = 6_000;
 
 export const KEY_PROBES: Record<AiProvider, KeyProbe> = {
   // Metadata for one model that exists: authenticated, free, a few hundred bytes.
+  // Each probe loads its SDK when it runs: this module is imported by the settings actions,
+  // which every page that reads settings pulls in, and a key check is rare.
   gemini: async (apiKey, signal) => {
+    const { GoogleGenAI } = await import("@google/genai");
     await new GoogleGenAI({ apiKey }).models.get({
       model: DEFAULT_MODELS.gemini,
       config: { abortSignal: signal },
     });
   },
   openai: async (apiKey, signal) => {
+    const { default: OpenAI } = await import("openai");
     await new OpenAI({ apiKey, maxRetries: 0 }).models.list({ signal });
   },
   anthropic: async (apiKey, signal) => {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
     await new Anthropic({ apiKey, maxRetries: 0 }).models.list({ limit: 1 }, { signal });
+  },
+  // OpenRouter has no SDK, so this is the one probe that speaks raw HTTP — `/api/v1/key`
+  // is metadata about the caller's own key, authenticated the same way every other
+  // OpenRouter request is. `smoke-ai-access.ts`'s source guard treats this exact path (and
+  // the OAuth pieces in `openrouter-oauth.ts` / the callback route) as the narrow exception
+  // to "only the gate reaches a provider host" — every other OpenRouter path still routes
+  // through `openrouterClient`.
+  openrouter: async (apiKey, signal) => {
+    const res = await fetch("https://openrouter.ai/api/v1/key", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal,
+    });
+    if (!res.ok) {
+      throw Object.assign(new Error(`OpenRouter key check failed (${res.status})`), {
+        status: res.status,
+      });
+    }
   },
 };
 

@@ -7,19 +7,23 @@
  * client can import them from. Client-safe: no `next/*`, no `node:*`, no `@/db`.
  */
 import { z } from "zod";
-import { planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
+import type { WelcomePlanet } from "@/lib/welcome-planets";
 
 /** A bot fills a form faster than a person can read it. */
 export const MIN_FILL_MS = 2500;
 
-/** Below this many signups the proof line shows the next planet only, never the count. */
+/** Below this many people on the waitlist the proof line shows no count at all. */
 export const INTEREST_LIST_COUNT_FLOOR = 50;
 
 /** Share and ticket tokens are base64url of 32 bytes = 43 chars; this leaves headroom. */
 export const SHARE_TOKEN_MAX = 64;
 
-/** Moons drawn around the planet; past this the count line carries the rest. */
-export const MOONS_DRAWN_MAX = 12;
+/**
+ * Friends who must join through your link to put you in the front wave — the first group
+ * let in, ahead of everyone who has not. Only friends still on the waitlist count, so an
+ * address that bounces (the Resend webhook unsubscribes it) stops counting by itself.
+ */
+export const FRONT_WAVE_REFERRALS = 3;
 
 export const interestListSchema = z.object({
   email: z.email("That address doesn't look right.").max(160),
@@ -33,15 +37,21 @@ export const interestListSchema = z.object({
 
 export type InterestListInput = z.input<typeof interestListSchema>;
 
-/** What a joiner gets back, and what `/interest?me=…` renders. */
+/** What a joiner gets back, and what the waitlist's `?me=…` renders. */
 export type InterestTicket = {
-  /** 1-based ordinal by (created_at, id). */
+  /** 1-based join ordinal by (created_at, id), over every row ever. Picks the planet. */
   number: number;
+  /**
+   * Place in line among the people still waiting: the front wave first, then everyone
+   * else, each by join order. Moves as friends join and as people leave.
+   */
+  position: number;
+  /** Friends who joined through this ticket's link and are still on the waitlist. */
+  referrals: number;
+  frontWave: boolean;
   planet: WelcomePlanet;
   /** ISO string — this crosses the server-action boundary. */
   joinedAt: string;
-  /** People who joined through this ticket's share link. */
-  moons: number;
   shareToken: string;
 };
 
@@ -49,34 +59,44 @@ export type InterestListResult =
   | { ok: true; ticket: InterestTicket }
   | { ok: false; message: string };
 
-export function buildTicketUrl(appUrl: string, token: string) {
-  return `${appUrl}/interest?me=${encodeURIComponent(token)}`;
+/**
+ * `pageUrl` is the waitlist page itself — `https://<waitlist host>/` in production,
+ * `…/interest` on the app's own origin — or a bare path for in-page history.
+ */
+export function buildTicketUrl(pageUrl: string, token: string) {
+  return `${pageUrl}?me=${encodeURIComponent(token)}`;
 }
 
-export function buildShareUrl(appUrl: string, token: string) {
-  return `${appUrl}/interest?ref=${encodeURIComponent(token)}`;
+export function buildShareUrl(pageUrl: string, token: string) {
+  return `${pageUrl}?ref=${encodeURIComponent(token)}`;
 }
 
-export function buildTicketImageUrl(appUrl: string, token: string) {
-  return `${appUrl}/api/interest-list/ticket-image?token=${encodeURIComponent(token)}`;
+export function buildTicketImageUrl(origin: string, token: string) {
+  return `${origin}/api/interest-list/ticket-image?token=${encodeURIComponent(token)}`;
 }
 
 export function formatTicketNumber(number: number) {
   return number.toLocaleString("en-US");
 }
 
-/** "Passenger 1,285, bound for Mars." */
-export function passengerLine(ticket: Pick<InterestTicket, "number" | "planet">) {
-  return `Passenger ${formatTicketNumber(ticket.number)}, bound for ${planetLabel(ticket.planet)}.`;
+/** "You're #1,285 on the waitlist." */
+export function positionLine(ticket: Pick<InterestTicket, "position">) {
+  return `You're #${formatTicketNumber(ticket.position)} on the waitlist.`;
 }
 
-export function moonsLine(moons: number) {
-  if (moons === 0) return "No moons yet. Share your link and watch them arrive.";
-  if (moons === 1) return "1 person joined through you. That's the moon.";
-  return `${formatTicketNumber(moons)} people joined through you. They're the moons.`;
+/** The front-wave meter's caption. */
+export function frontWaveLine(referrals: number) {
+  if (referrals >= FRONT_WAVE_REFERRALS) return "You're in the front wave.";
+  const left = FRONT_WAVE_REFERRALS - referrals;
+  if (referrals === 0) {
+    return `Invite ${FRONT_WAVE_REFERRALS} friends to skip ahead to the front wave.`;
+  }
+  return `${referrals} of ${FRONT_WAVE_REFERRALS} friends joined. ${left === 1 ? "One more" : `${left} more`} and you're in the front wave.`;
 }
 
 /** The prewritten share text; the URL is appended by the share target. */
-export function shareText(ticket: Pick<InterestTicket, "number" | "planet">) {
-  return `I'm passenger #${formatTicketNumber(ticket.number)} on Orbit's interest list, bound for ${planetLabel(ticket.planet)}. Get your planet:`;
-}
+export const SHARE_TEXT =
+  "Just got on the waitlist for something I think you'd actually use. Grab a spot before it opens up:";
+
+/** The native share sheet's title. */
+export const SHARE_TITLE = "Early access";

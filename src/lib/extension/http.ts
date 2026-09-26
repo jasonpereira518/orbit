@@ -18,7 +18,7 @@ import { MAX_BODY_BYTES } from "./contract.schema";
 import {
   ExtensionRateLimitError,
   ExtensionUnauthorizedError,
-  requireExtensionUserId,
+  requireExtensionUser,
 } from "./auth";
 
 /** Rolling one-minute budgets, per user. */
@@ -198,6 +198,12 @@ async function readJsonBody<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
 
 export type RouteContext<TIn> = {
   userId: string;
+  /**
+   * The caller's `user_settings` row, as authentication just read it. A route handler is
+   * where `cache()` does nothing, so pass this on (`entitlementsFromSettings`,
+   * `userHasApolloKey(userId, settings)`) rather than reading the row again.
+   */
+  settings: Awaited<ReturnType<typeof requireExtensionUser>>["settings"];
   input: TIn;
   req: Request;
 };
@@ -251,14 +257,14 @@ export function extensionRoute<TIn, TOut>(config: {
 }) {
   return async function handle(req: Request) {
     try {
-      const userId = await requireExtensionUserId(req);
+      const { userId, settings } = await requireExtensionUser(req);
       await consumeBudget(userId, config.cost ?? "request");
 
       const input = config.schema
         ? await readJsonBody(req, config.schema)
         : (undefined as TIn);
 
-      const data = await config.handler({ userId, input, req });
+      const data = await config.handler({ userId, settings, input, req });
       return jsonOk(data);
     } catch (error) {
       return toErrorResponse(error);

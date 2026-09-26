@@ -27,6 +27,7 @@ import { getDb, rowsOf } from "@/db";
 import { eventCompanies } from "@/db/schema";
 import { createCompanyResolver } from "@/lib/companies";
 import { companyMatchKeys } from "@/lib/events/company-list-parse";
+import { assertEventOwnedBy } from "@/lib/events/store";
 
 export type EventCompanyRole = "host" | "sponsor" | "exhibitor" | "employer";
 export type EventCompanySource = "page" | "paste" | "screenshot" | "ai" | "manual";
@@ -51,6 +52,7 @@ export async function upsertEventCompanies(
   inputs: CompanyInput[]
 ): Promise<number> {
   if (inputs.length === 0) return 0;
+  await assertEventOwnedBy(userId, eventId);
   const db = await getDb();
   // The batching resolver, primed: a fair's employer list is forty names at once, and
   // `resolveCompany` per row would be two statements each — see `prime`'s own comment for

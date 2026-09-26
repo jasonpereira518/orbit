@@ -150,7 +150,9 @@ export async function buildRemindersFeed(userId: string) {
       contactPreferredName: contacts.preferredName,
     })
     .from(reminders)
-    .leftJoin(contacts, eq(reminders.contactId, contacts.id))
+    // Scoped to the owner too: a reminder's contactId is a client-supplied reference, and an
+    // unscoped join would print another account's contact name into this feed.
+    .leftJoin(contacts, and(eq(reminders.contactId, contacts.id), eq(contacts.userId, userId)))
     .where(
       and(
         eq(reminders.userId, userId),

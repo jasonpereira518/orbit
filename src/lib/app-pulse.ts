@@ -1,5 +1,6 @@
-import { getEntitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings } from "@/lib/entitlements";
 import { loadNotificationPanel } from "@/lib/notification-panel";
+import type { AccountHealthContext } from "@/lib/account-health";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { isAdminUser } from "@/lib/admin";
 import { isViewingAsUser } from "@/lib/surface-visibility";
@@ -15,6 +16,12 @@ import type { Plan } from "@/lib/plan-limits";
  * `src/lib/app-pulse-store.ts` shares the result across every component that cares.
  *
  * Plain function of `userId` so the smoke test can drive it without a session.
+ *
+ * `settings` is the row the action's `requireAuthenticatedUser()` already read. This runs as
+ * a Server Action, where `cache()` is a pass-through, so every `ensureUserSettings` /
+ * `getEntitlements` below it used to be its own read of that one row — about seven per pulse,
+ * three of them one after another. With the row passed, the panel's reads and the alerts'
+ * combined select are the pulse's only statements. Omitted, it is read once here.
  */
 
 export type AppPulse = {
@@ -35,11 +42,15 @@ export type AppPulse = {
 
 const DESKTOP_BATCH = 12;
 
-export async function loadAppPulse(userId: string, now: Date): Promise<AppPulse> {
-  const [rawPanel, settings, entitlements, canOpenAdmin] = await Promise.all([
-    loadNotificationPanel(userId, now),
-    ensureUserSettings(userId),
-    getEntitlements(userId),
+export async function loadAppPulse(
+  userId: string,
+  now: Date,
+  loadedSettings?: AccountHealthContext["settings"]
+): Promise<AppPulse> {
+  const settings = loadedSettings ?? (await ensureUserSettings(userId));
+  const entitlements = entitlementsFromSettings(userId, settings);
+  const [rawPanel, canOpenAdmin] = await Promise.all([
+    loadNotificationPanel(userId, now, { withAlerts: true, settings, entitlements }),
     isAdminUser(userId) ? isViewingAsUser(userId).then((v) => !v) : Promise.resolve(false),
   ]);
   const panel = { ...rawPanel, canOpenAdmin };
