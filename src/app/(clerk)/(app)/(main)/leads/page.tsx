@@ -9,6 +9,7 @@ import { LeadsPipeline } from "@/components/leads/leads-pipeline";
 import { TeamPanel } from "@/components/leads/team-panel";
 import { LeadsPipelineSkeleton, TeamPanelSkeleton } from "@/components/loading/page-skeletons";
 import { requireUserId } from "@/lib/auth";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function LeadsPage() {
   // First, before anything else: a click straight from a sibling route skips the
@@ -20,6 +21,7 @@ export default async function LeadsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      <RenderStamp />
       <LeadsHeader />
       <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
         <Suspense fallback={<TeamPanelSkeleton />}>
