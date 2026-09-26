@@ -1,13 +1,15 @@
 import { Suspense } from "react";
 import { getTeamEligibility, listTeamMembersAction } from "@/actions/teams";
 import { loadPipelineAction } from "@/actions/leads";
+import { loadCrmStatusAction } from "@/actions/crm";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { ApolloSearch } from "@/components/leads/apollo-search";
+import { CrmCard } from "@/components/leads/crm-card";
 import { FindPath } from "@/components/leads/find-path";
 import { LeadsHeader } from "@/components/leads/leads-header";
 import { LeadsPipeline } from "@/components/leads/leads-pipeline";
 import { TeamPanel } from "@/components/leads/team-panel";
-import { LeadsPipelineSkeleton, TeamPanelSkeleton } from "@/components/loading/page-skeletons";
+import { CrmCardSkeleton, LeadsPipelineSkeleton, TeamPanelSkeleton } from "@/components/loading/page-skeletons";
 import { requireUserId } from "@/lib/auth";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
@@ -26,6 +28,11 @@ export default async function LeadsPage() {
       <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
         <Suspense fallback={<TeamPanelSkeleton />}>
           <TeamSection />
+        </Suspense>
+      </div>
+      <div className="reveal-mount" style={{ "--reveal-delay": "75ms" } as React.CSSProperties}>
+        <Suspense fallback={<CrmCardSkeleton />}>
+          <CrmSection />
         </Suspense>
       </div>
       <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
@@ -47,6 +54,11 @@ async function TeamSection() {
   const [eligibility, userId] = await Promise.all([getTeamEligibility(), requireUserId()]);
   const members = eligibility.kind === "member" ? await listTeamMembersAction() : [];
   return <TeamPanel eligibility={eligibility} members={members} viewerUserId={userId} />;
+}
+
+async function CrmSection() {
+  const status = await loadCrmStatusAction();
+  return <CrmCard status={status} />;
 }
 
 async function PipelineSection() {

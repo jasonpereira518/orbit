@@ -44,6 +44,8 @@ export const ERROR_SOURCES = {
    */
   eventPageFetch: "event.page_fetch",
   oauthEventbriteCallback: "oauth.eventbrite.callback",
+  /** The generic connector OAuth callback (`/api/connectors/[id]/callback`) — HubSpot first. */
+  oauthConnectorCallback: "oauth.connector.callback",
   /**
    * A CalDAV request to iCloud (`src/lib/caldav/client.ts`) exhausted its retries. Kept
    * apart from `eventPageFetch` deliberately — the two share `guardedFetchText`'s retry

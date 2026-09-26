@@ -51,6 +51,12 @@ export type Entitlements = {
    */
   canUseApi: boolean;
   /**
+   * Connecting Salesforce or HubSpot to Leads. Its own key, like `canUseApi`, so the denial
+   * copy names the right thing and `gate_events` tells CRM demand apart from mailbox sync.
+   * Joining a team and looking up warm paths are free and never consult it.
+   */
+  canUseCrm: boolean;
+  /**
    * The MCP server — Orbit inside Claude, ChatGPT or any other assistant that speaks the
    * protocol. True on every plan, including free, which is the one deliberate exception to
    * the paid-connector line above.
@@ -93,6 +99,7 @@ export const FEATURE_KEYS = [
   "sync",
   "extension",
   "api",
+  "crm",
   "meetings",
 ] as const;
 
@@ -181,6 +188,7 @@ export function entitlementsForPlan(
     canUseSync: paid,
     canUseExtension: paid,
     canUseApi: paid,
+    canUseCrm: paid,
     canUseMcp: true,
     canUseMeetings: paid,
   };
@@ -239,6 +247,7 @@ export const FEATURE_DENIAL: Record<FeatureKey, string> = {
     "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
   api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
+  crm: "Salesforce and HubSpot sync are available on Orbit Pro and Orbit Lifetime.",
   sync: "Calendar subscriptions and event sources are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
   meetings: "Meeting transcription is available on Orbit Pro and Orbit Lifetime.",
@@ -252,6 +261,7 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   sync: "canUseSync",
   extension: "canUseExtension",
   api: "canUseApi",
+  crm: "canUseCrm",
   meetings: "canUseMeetings",
 };
 

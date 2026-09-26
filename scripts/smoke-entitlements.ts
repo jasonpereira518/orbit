@@ -96,6 +96,7 @@ async function main() {
   check("sync gated", ent.canUseSync === false);
   check("hosted sending gated", ent.canUseHostedSending === false);
   check("hosted enrichment gated", ent.canUseHostedEnrichment === false);
+  check("crm gated", ent.canUseCrm === false);
 
   const resolver = await createCompanyResolver(USER);
   const bulk = Array.from({ length: FREE_CONTACT_LIMIT - 1 }, (_, i) => ({
@@ -165,6 +166,7 @@ async function main() {
   check("outreach unlocked", ent.canUseOutreach === true);
   check("sync unlocked", ent.canUseSync === true);
   check("extension unlocked", ent.canUseExtension === true);
+  check("crm unlocked on lifetime", ent.canUseCrm === true);
   // The whole point of the split: Lifetime sends on Orbit's credits (bounded by
   // DAILY_SEND_LIMIT) but enriches on its own Apollo key (which has no ceiling).
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
@@ -190,6 +192,7 @@ async function main() {
   check("plan is orbit", ent.plan === "orbit", ent.plan);
   check("hosted sending unlocked", ent.canUseHostedSending === true);
   check("hosted enrichment unlocked", ent.canUseHostedEnrichment === true);
+  check("crm unlocked on pro", ent.canUseCrm === true);
 
   // --- one plan at a time ---
   // Buying Lifetime cancels Pro, but the mirror can still show a subscription until its
@@ -237,7 +240,8 @@ async function main() {
         ent.canUseRecruiters &&
         ent.canUseSync &&
         ent.canUseExtension &&
-        ent.canUseApi,
+        ent.canUseApi &&
+        ent.canUseCrm,
       JSON.stringify(ent)
     );
     let demoThrew: unknown = null;

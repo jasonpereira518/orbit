@@ -19,6 +19,8 @@ import { contactTags, contacts, tags } from "@/db/schema";
 import { rankContacts } from "@/lib/contact-ranking";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { importIdsFrom } from "@/lib/imports/import-ids";
+import { workContactsCondition } from "@/lib/crm/work-contacts";
+import { isSurfaceReleased } from "@/lib/surface-visibility";
 import {
   contactsCursorCondition,
   contactsCursorFor,
@@ -101,6 +103,12 @@ export async function listContactsPage(
     conditions.push(
       sql`${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= now()`
     );
+  }
+
+  // Work contacts are a Leads feature: while Leads is closed to this viewer the flag reads as
+  // the plain list, the same as the pill that would have set it.
+  if (filters?.work && (await isSurfaceReleased(userId, "page.leads"))) {
+    conditions.push(workContactsCondition(userId));
   }
 
   // One id, or the comma-separated list the done card sends. It no longer narrows the list —

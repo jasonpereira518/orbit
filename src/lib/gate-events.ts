@@ -32,6 +32,7 @@ export type GateFeature =
   | "sync"
   | "extension"
   | "api"
+  | "crm"
   | "meetings"
   | "contacts";
 

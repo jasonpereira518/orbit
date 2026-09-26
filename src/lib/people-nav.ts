@@ -1,12 +1,13 @@
 export const PEOPLE_NAV_COOKIE = "orbit_people_nav";
 
-/** Direction for contacts ↔ recruiters list transitions (View Transition typed). */
-export function directionForPeopleNav(
-  from: "contacts" | "recruiters",
-  to: "contacts" | "recruiters"
-): -1 | 0 | 1 {
-  if (from === to) return 0;
-  return to === "recruiters" ? 1 : -1;
+/** The people views, left to right as the toggle shows them. */
+export const PEOPLE_VIEWS = ["contacts", "work", "recruiters"] as const;
+export type PeopleView = (typeof PEOPLE_VIEWS)[number];
+
+/** Direction for people-list transitions (View Transition typed): rightward is forward. */
+export function directionForPeopleNav(from: PeopleView, to: PeopleView): -1 | 0 | 1 {
+  const delta = PEOPLE_VIEWS.indexOf(to) - PEOPLE_VIEWS.indexOf(from);
+  return delta === 0 ? 0 : delta > 0 ? 1 : -1;
 }
 
 /** Short-lived cookie so loading.tsx can skip skeletons during people toggle nav. */

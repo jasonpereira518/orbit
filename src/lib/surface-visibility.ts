@@ -216,6 +216,13 @@ export async function requireReleasedSurface(userId: string, surfaceKey: string)
   }
 }
 
+/** The boolean form of `requireReleasedSurface`: switched on AND not coming soon for this viewer. */
+export async function isSurfaceReleased(userId: string, surfaceKey: string): Promise<boolean> {
+  if (isAlwaysVisible(surfaceKey)) return true;
+  const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+  return !hidden.has(surfaceKey) && !comingSoon.has(surfaceKey);
+}
+
 /**
  * Hide or unhide a surface for everyone.
  *

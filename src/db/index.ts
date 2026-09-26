@@ -1469,11 +1469,46 @@ CREATE TABLE IF NOT EXISTS team_members (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS team_members_user_uidx ON team_members(user_id);
 CREATE INDEX IF NOT EXISTS team_members_team_sharing_idx ON team_members(team_id, share_network);
+CREATE TABLE IF NOT EXISTS crm_records (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  remote_type text NOT NULL,
+  remote_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  lifecycle text NOT NULL,
+  stage text,
+  display_name text NOT NULL,
+  email text,
+  email_normalized text,
+  phone text,
+  linkedin_url text,
+  company_name text,
+  company_normalized text,
+  company_domain text,
+  title text,
+  remote_owner_ref text,
+  remote_url text,
+  last_activity_at timestamptz,
+  remote_created_at timestamptz,
+  remote_updated_at timestamptz,
+  properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+  link_blocked_at timestamptz,
+  synced_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS crm_records_remote_uidx ON crm_records(user_id, connector_id, remote_type, remote_id);
+CREATE INDEX IF NOT EXISTS crm_records_user_contact_idx ON crm_records(user_id, contact_id);
+CREATE INDEX IF NOT EXISTS crm_records_contact_idx ON crm_records(contact_id);
+CREATE INDEX IF NOT EXISTS crm_records_user_lifecycle_idx ON crm_records(user_id, connector_id, lifecycle);
+CREATE INDEX IF NOT EXISTS crm_records_link_blocked_idx ON crm_records(user_id, connector_id) WHERE link_blocked_at IS NOT NULL;
 CREATE TABLE IF NOT EXISTS leads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   source text NOT NULL,
   contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  crm_record_id uuid REFERENCES crm_records(id) ON DELETE SET NULL,
   display_name text NOT NULL,
   email text,
   email_normalized text,
@@ -2132,7 +2167,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 122 = leads: the Leads pipeline — manual and Apollo targets, ranked by who on the team
 // knows them. P3 of docs/superpowers/specs/2026-09-22-leads-design.md. First shipped on its
 // branch as 92; renumbered with the rest of the Leads stack on merging main at 118 (see 121).
-export const SCHEMA_VERSION = 122;
+//
+// 123 = crm_records and leads.crm_record_id: the HubSpot read sync — P4 of
+// docs/superpowers/specs/2026-09-22-leads-design.md. First shipped on its branch as 94 (which
+// also covered merging the connector spine, since merged to main); renumbered with the rest
+// of the Leads stack on merging main at 118 (see 121).
+export const SCHEMA_VERSION = 123;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3222,6 +3262,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v76: the outbox claim is an identity with its own lease, not an overloaded schedule.
   await ensureColumn(client, "connector_outbox", "claimed_by", "uuid");
   await ensureColumn(client, "connector_outbox", "claimed_until", "timestamptz");
+  // v94: a CRM lead's record (P4).
+  await ensureColumn(client, "leads", "crm_record_id", "uuid REFERENCES crm_records(id) ON DELETE SET NULL");
 
   // v89: Deepgram diarization label on a local database built before it existed.
   await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
@@ -3884,6 +3926,10 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,
   // v121 (first shipped as v90): the Leads team model (docs/superpowers/specs/2026-09-22-leads-design.md, P2).
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS team_shared integer NOT NULL DEFAULT 1`,
+  // v123 (first shipped as v94): a CRM lead's record (P4). The partial unique lives here only, after its column: the
+  // template runs first, and on a database that already has `leads` the column is not there yet.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_record_id uuid REFERENCES crm_records(id) ON DELETE SET NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS leads_user_crm_record_uidx ON leads(user_id, crm_record_id) WHERE crm_record_id IS NOT NULL`,
 ];
 
 /**

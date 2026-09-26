@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Mail, RotateCcw, UserPlus, X } from "lucide-react";
+import { ExternalLink, Mail, RotateCcw, UserPlus, X } from "lucide-react";
 import { convertLeadAction, setLeadStatusAction } from "@/actions/leads";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -97,6 +97,17 @@ function LeadDetail({ row }: { row: PipelineRow }) {
             {LEAD_STATUS_LABEL[lead.status]} · {LEAD_SOURCE_LABEL[lead.source]}
           </span>
         </div>
+        {row.crm ? (
+          <a
+            href={row.crm.url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
+          >
+            Open in {row.crm.label}
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+          </a>
+        ) : null}
 
         <section className="space-y-2">
           <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Who knows them</h3>

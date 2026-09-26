@@ -40,6 +40,7 @@ export function ContactsFilters({
   initialCompany,
   initialMinScore,
   initialFollowUp,
+  view,
   importId,
   children,
 }: {
@@ -47,6 +48,7 @@ export function ContactsFilters({
   initialCompany: string;
   initialMinScore: string;
   initialFollowUp?: string;
+  view?: "work";
   /**
    * The active `/contacts?importId=…` scope, if any. Not a control this component offers —
    * only the page's banner sets or clears it — but every filter change here rebuilds the URL
@@ -81,6 +83,7 @@ export function ContactsFilters({
     if (cc) params.set("company", cc);
     if (ms && ms !== "any") params.set("minScore", ms);
     if (fu === "due") params.set("followUp", "due");
+    if (view === "work") params.set("view", "work");
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";

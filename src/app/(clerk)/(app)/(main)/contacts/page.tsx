@@ -5,6 +5,8 @@ import { listContactLetters, listContactsPage } from "@/actions/contacts";
 import { CONTACTS_PAGE_SIZE, type ContactSort } from "@/lib/contacts-page";
 import { getPlanOverview } from "@/actions/settings";
 import { countDuplicates } from "@/actions/duplicates";
+import { requireUserId } from "@/lib/auth";
+import { isSurfaceReleased } from "@/lib/surface-visibility";
 import { buttonVariants } from "@/components/ui/button";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
@@ -26,6 +28,7 @@ export default async function ContactsPage({
     followUp?: string;
     sort?: string;
     letter?: string;
+    view?: string;
     /** Marks one import's new people in the list (`ContactsList` draws them in yellow). */
     importId?: string;
   }>;
@@ -40,12 +43,18 @@ export default async function ContactsPage({
     : undefined;
   const sort: ContactSort = explicitSort ?? (params.q?.trim() ? "relevance" : "name");
 
+  // The Work pill follows Leads' release, like the team pill on a contact page. A `view=work`
+  // link opened while Leads is closed is simply the plain list.
+  const showWork = await isSurfaceReleased(await requireUserId(), "page.leads");
+  const work = showWork && params.view === "work";
+
   const filters = {
     q: params.q,
     company: params.company,
     minScore: params.minScore ? Number(params.minScore) : undefined,
     followUp: params.followUp === "due" ? ("due" as const) : undefined,
     sort,
+    work: work ? (true as const) : undefined,
     letter: params.letter,
     importId: params.importId,
   };
@@ -65,12 +74,17 @@ export default async function ContactsPage({
 
   return (
     <PeopleListShell
-      active="contacts"
-      title="Contacts"
+      active={work ? "work" : "contacts"}
+      showWork={showWork}
+      title={work ? "Work contacts" : "Contacts"}
       subtitle={
-        page.total === null
-          ? "Your network"
-          : `${page.total.toLocaleString()} ${page.total === 1 ? "person" : "people"} in your network`
+        work
+          ? page.total === null
+            ? "From your CRM"
+            : `${page.total.toLocaleString()} ${page.total === 1 ? "person" : "people"} from your CRM`
+          : page.total === null
+            ? "Your network"
+            : `${page.total.toLocaleString()} ${page.total === 1 ? "person" : "people"} in your network`
       }
       actions={
         <>
@@ -110,6 +124,7 @@ export default async function ContactsPage({
           initialCompany={params.company || ""}
           initialMinScore={params.minScore || ""}
           initialFollowUp={params.followUp || ""}
+          view={work ? "work" : undefined}
           importId={params.importId}
         >
           {/*
@@ -119,7 +134,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, sort, params.importId].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, sort, params.importId, work ? "work" : ""].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}
