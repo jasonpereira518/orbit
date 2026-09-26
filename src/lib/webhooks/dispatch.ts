@@ -93,6 +93,21 @@ export async function enqueueWebhookEvent(
    */
   opts: { eventId?: string } = {}
 ): Promise<string[]> {
+  return enqueueWebhookEvents(userId, type, [{ object, eventId: opts.eventId }]);
+}
+
+/**
+ * `enqueueWebhookEvent` for several events of one type at once: the endpoints are read once
+ * and every delivery row goes in one multi-row insert, so a sweep queueing N events costs two
+ * statements rather than 2N. Same contract — never throws, returns the endpoint ids to try
+ * inline (empty when nothing is subscribed or the queue write failed).
+ */
+export async function enqueueWebhookEvents(
+  userId: string,
+  type: WebhookEventType,
+  events: Array<{ object: unknown; eventId?: string }>
+): Promise<string[]> {
+  if (events.length === 0) return [];
   try {
     const db = await getDb();
     const endpoints = await db.query.webhookEndpoints.findMany({
@@ -102,24 +117,26 @@ export async function enqueueWebhookEvent(
     const subscribed = endpoints.filter((e) => (e.eventTypes ?? []).includes(type));
     if (subscribed.length === 0) return [];
 
-    const eventId = opts.eventId
-      ? `evt_${opts.eventId}`
-      : `evt_${randomUUID().replace(/-/g, "")}`;
-    const envelope = buildEnvelope({ id: eventId, type, createdAt: new Date(), object });
+    const createdAt = new Date();
+    const rows = events.flatMap(({ object, eventId: chosen }) => {
+      const eventId = chosen
+        ? `evt_${chosen}`
+        : `evt_${randomUUID().replace(/-/g, "")}`;
+      const envelope = buildEnvelope({ id: eventId, type, createdAt, object });
+      return subscribed.map((e) => ({
+        userId,
+        endpointId: e.id,
+        eventId,
+        eventType: type,
+        payload: envelope,
+        status: "pending" as const,
+        nextAttemptAt: createdAt,
+      }));
+    });
 
     await db
       .insert(outboundWebhookDeliveries)
-      .values(
-        subscribed.map((e) => ({
-          userId,
-          endpointId: e.id,
-          eventId,
-          eventType: type,
-          payload: envelope,
-          status: "pending" as const,
-          nextAttemptAt: new Date(),
-        }))
-      )
+      .values(rows)
       // Makes enqueue idempotent: a retried write cannot double-deliver.
       .onConflictDoNothing();
 
@@ -307,6 +324,19 @@ export async function verifyEndpoint(
   return { ok: true };
 }
 
+/** The drain sweep's cadence; the follow-up window advances once per slot. */
+const FOLLOWUP_SWEEP_SLOT_MS = 10 * 60 * 1000;
+
+/**
+ * `size` items starting at a slot-dependent offset, wrapping around. Consecutive slots take
+ * consecutive windows, so over ceil(n / size) sweeps every item is served once.
+ */
+export function rotatingWindow<T>(items: readonly T[], size: number, slot: number): T[] {
+  if (items.length <= size) return [...items];
+  const start = (((slot * size) % items.length) + items.length) % items.length;
+  return Array.from({ length: size }, (_, i) => items[(start + i) % items.length]!);
+}
+
 /**
  * Emit `followup.due` for anyone with a subscribed endpoint.
  *
@@ -324,26 +354,34 @@ export async function emitDueFollowupEvents(
   now: Date = new Date()
 ): Promise<{ users: number; events: number }> {
   const db = await getDb();
-  const users = rowsOf<{ user_id: string }>(
+  // Every subscriber, ordered, then a window that rotates with the ten-minute slot. The
+  // query used to be `DISTINCT … LIMIT 20` with no order, so past 20 subscribers the same
+  // ones could be served on every sweep and the rest never. The list is one row per
+  // subscribed account (normally none), small enough to read whole.
+  const subscribers = rowsOf<{ user_id: string }>(
     await db.execute(sql`
       SELECT DISTINCT user_id FROM webhook_endpoints
        WHERE status = 'active' AND event_types ? 'followup.due'
-       LIMIT ${limitUsers}
+       ORDER BY user_id
     `)
   );
+  const users = rotatingWindow(subscribers, limitUsers, Math.floor(now.getTime() / FOLLOWUP_SWEEP_SLOT_MS));
   if (users.length === 0) return { users: 0, events: 0 };
 
   const day = now.toISOString().slice(0, 10);
-  const { getDashboardData } = await import("@/lib/reminders");
+  // The dashboard's due list without the rest of the dashboard: this runs every ten minutes
+  // for every subscribed account.
+  const { loadDueFollowUps } = await import("@/lib/due-follow-ups");
   let events = 0;
   for (const { user_id: userId } of users) {
     try {
-      const data = await getDashboardData(userId);
-      for (const contact of data.dueFollowUps.slice(0, 25)) {
-        const queued = await enqueueWebhookEvent(
-          userId,
-          "followup.due",
-          {
+      const due = (await loadDueFollowUps(userId)).slice(0, 25);
+      // One endpoint read and one insert for the whole list, not two statements a contact.
+      const queued = await enqueueWebhookEvents(
+        userId,
+        "followup.due",
+        due.map((contact) => ({
+          object: {
             contactId: contact.id,
             name: contact.fullName,
             company: contact.company ?? null,
@@ -352,10 +390,10 @@ export async function emitDueFollowupEvents(
               ? new Date(contact.nextFollowUpAt).toISOString()
               : null,
           },
-          { eventId: `followup:${contact.id}:${day}` }
-        );
-        if (queued.length > 0) events++;
-      }
+          eventId: `followup:${contact.id}:${day}`,
+        }))
+      );
+      if (queued.length > 0) events += due.length;
     } catch (err) {
       // One user's dashboard failing must not stop the others.
       reportError(err, { where: "job.webhooks.followup-emit", level: "warning" });

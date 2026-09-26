@@ -21,7 +21,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What is the difference between Orbit Pro and Orbit Lifetime?",
-    a: "One thing: contact enrichment. Both are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Orbit Pro also enriches contacts on Orbit's Apollo credits; Lifetime connects your own Apollo key instead. Sending is capped at a fixed number per day on every plan, so a single payment can cover it. Enrichment has no such ceiling, which is the one thing a single payment cannot honestly cover forever.",
+    a: "One thing: contact enrichment. Both are uncapped, both include recruiter tracking, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Orbit Pro also enriches contacts on Orbit's Apollo credits; Lifetime connects your own Apollo key instead. Sending is capped at a fixed number per day on every plan, so a single payment can cover it. Enrichment has no such ceiling, which is the one thing a single payment cannot honestly cover forever.",
   },
   {
     q: `Why is Orbit Lifetime $${LIFETIME_INTRO_PRICE} instead of $${LIFETIME_STANDARD_PRICE}?`,

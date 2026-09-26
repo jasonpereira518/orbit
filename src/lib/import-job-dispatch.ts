@@ -17,6 +17,8 @@ import { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-type";
 import { runGmailRecruiterScanJob } from "@/lib/gmail-scan-processor";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { runOutlookRecruiterScanJob } from "@/lib/outlook-scan-processor";
+import { DRIVE_IMPORT_TYPE } from "@/lib/drive-import-type";
+import { runDriveImportJob } from "@/lib/drive-import-processor";
 
 /**
  * Re-exported from their adapters, which is where these constants now live: the adapter
@@ -54,6 +56,7 @@ export const RESUMABLE_IMPORT_TYPES = [
   CALENDAR_CSV_IMPORT_TYPE,
   GMAIL_SCAN_IMPORT_TYPE,
   OUTLOOK_SCAN_IMPORT_TYPE,
+  DRIVE_IMPORT_TYPE,
 ] as const;
 
 /**
@@ -76,6 +79,8 @@ export async function runImportJobById(importId: string): Promise<void> {
       return runGmailRecruiterScanJob(importId);
     case OUTLOOK_SCAN_IMPORT_TYPE:
       return runOutlookRecruiterScanJob(importId);
+    case DRIVE_IMPORT_TYPE:
+      return runDriveImportJob(importId);
     case LINKEDIN_IMPORT_TYPE:
     case GOOGLE_CONTACTS_IMPORT_TYPE:
     case OUTLOOK_CONTACTS_IMPORT_TYPE:

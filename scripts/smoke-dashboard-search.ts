@@ -4,7 +4,7 @@
  * Run: npx tsx scripts/smoke-dashboard-search.ts
  */
 import { readFileSync } from "node:fs";
-import { shouldUseSemanticArm, toKeywordHits } from "../src/actions/search-adapter";
+import { shouldUseSemanticArm, toKeywordHits } from "../src/lib/search-adapter";
 import type { RankedContact } from "../src/lib/hybrid-search";
 
 function check(label: string, condition: boolean, detail?: string) {

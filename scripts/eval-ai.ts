@@ -7,6 +7,19 @@
  *   ORBIT_EVAL_ANTHROPIC_KEY=… ORBIT_EVAL_OPENAI_KEY=… npx tsx scripts/eval-ai.ts \
  *     --provider anthropic --model claude-sonnet-5 --runs 2 \
  *     --compare docs/ai-evals/2026-09-19-anthropic-claude-sonnet-4-5.json
+ *   ORBIT_EVAL_OPENROUTER_KEY=… npx tsx scripts/eval-ai.ts --provider openrouter \
+ *     --model google/gemini-3.5-flash --task capture --runs 2 \
+ *     --compare docs/ai-evals/2026-09-19-gemini-baseline/capture.json
+ *
+ * `--compare` reads one baseline `EvalReport` file and gates only the tasks that file has.
+ * `docs/ai-evals/2026-09-19-gemini-baseline/` holds one such file per task (capture.json,
+ * chat.json, digest.json, extension.json, ocr.json, recruiter.json, transcribe.json) — repeat
+ * the command above with matching `--task`/`--compare` pairs to gate the rest.
+ *
+ * That baseline ran at `gemini-3.5-flash`, not the current `DEFAULT_MODELS.openrouter`
+ * (`google/gemini-3.8-flash`, 3.5's successor — no 3.8 baseline exists yet). `--model
+ * google/gemini-3.5-flash` pins the OpenRouter run to the same model the baseline used, so a
+ * divergence is the proxy's to explain, not a different model's.
  *
  * A candidate is a JSON file passed with `--config`, applied to the registry and the tier
  * maps before anything runs:
@@ -17,22 +30,27 @@
  *     "fastModels": { "gemini": "gemini-3.5-flash-lite" },
  *     "visionModels": { "gemini": "gemini-3.8-flash" } }
  *
- * Flags: --provider gemini|openai|anthropic (default gemini) · --model <id> (default: the
- * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,research,digest
+ * Flags: --provider gemini|openai|anthropic|openrouter (default gemini) · --model <id>
+ * (default: the provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,research,digest
  * (default all) · --runs N (default 1; use 2+ for a gate decision — models are not
  * deterministic) · --limit N (cases per task, for a quick look) · --label <name> ·
  * --out <file> (default docs/ai-evals/<date>-<label>.json) · --compare <baseline.json>
  * (exits 1 when a threshold in scripts/eval-fixtures/ai-eval-thresholds.json is broken).
  *
- * KEYS. Only `ORBIT_EVAL_{GEMINI,OPENAI,ANTHROPIC}_KEY` are used, stored as the
+ * KEYS. Only `ORBIT_EVAL_{GEMINI,OPENAI,ANTHROPIC,OPENROUTER}_KEY` are used, stored as the
  * synthetic user's OWN keys — the same bring-your-own-key path a person's pasted key takes
  * through the AI gate, so every model is reachable (Orbit's managed keys would pin the model
  * to the managed allowlist). The ordinary `GEMINI_API_KEY`-style names are deliberately
  * ignored and stripped: a developer's `.env.local` key must never be spent by just running a
  * script. To spend them on purpose, name the file: `--keys-from ../../.env.local` reads its
- * `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` as the eval
+ * `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` as the eval
  * keys (an `ORBIT_EVAL_*` variable still wins). A full run costs roughly a dollar or two per
  * provider.
+ *
+ * `ORBIT_EVAL_DEEPGRAM_KEY` (or `--keys-from`'s `DEEPGRAM_API_KEY`) is separate: Deepgram is
+ * not an `AiProvider`, so it is never stored on the synthetic user — `--task transcribe`
+ * reads it straight back into `process.env.DEEPGRAM_API_KEY` (see `setDeepgramKey`) and
+ * scores it directly, alongside whichever of Whisper/Gemini `--provider` selects.
  *
  * DECISIONS. `--decisions jev` also stores `ORBIT_EVAL_TYPESAFE_KEY` (or, with `--keys-from`,
  * that file's `TYPESAFE_API_KEY`) as the synthetic user's own TypeSafe key, so every step with
@@ -182,8 +200,25 @@ function evalKeys(keysFrom?: string) {
     gemini: read("ORBIT_EVAL_GEMINI_KEY", "GEMINI_API_KEY"),
     openai: read("ORBIT_EVAL_OPENAI_KEY", "OPENAI_API_KEY"),
     anthropic: read("ORBIT_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"),
+    openrouter: read("ORBIT_EVAL_OPENROUTER_KEY", "OPENROUTER_API_KEY"),
     typesafe: read("ORBIT_EVAL_TYPESAFE_KEY", "TYPESAFE_API_KEY"),
+    // Deepgram is not an `AiProvider` — it is Orbit's own hosted key
+    // (`DEEPGRAM_API_KEY`, read straight from `process.env` by `src/lib/deepgram.ts`), never
+    // a key a synthetic user pastes into `userSettings` the way the three above are. `./smoke/_env`
+    // already stripped any real `DEEPGRAM_API_KEY` off this process, so `setDeepgramKey` below
+    // is what puts one back, deliberately, the same way any smoke script that needs a live key
+    // sets it itself after that import.
+    deepgram: read("ORBIT_EVAL_DEEPGRAM_KEY", "DEEPGRAM_API_KEY"),
   };
+}
+
+/**
+ * Puts Deepgram's key back into `process.env` for this run only, after `./smoke/_env` stripped
+ * it — the transcribe task reads it directly (`deepgramConfigured()`), not through the
+ * `userSettings` BYOK path `setUpUser` writes for the other three providers.
+ */
+function setDeepgramKey(key: string | null) {
+  if (key) process.env.DEEPGRAM_API_KEY = key;
 }
 
 async function setUpUser(args: Args, keys: ReturnType<typeof evalKeys>) {
@@ -194,6 +229,7 @@ async function setUpUser(args: Args, keys: ReturnType<typeof evalKeys>) {
     geminiApiKeyEncrypted: keys.gemini ? encrypt(keys.gemini) : null,
     openaiApiKeyEncrypted: keys.openai ? encrypt(keys.openai) : null,
     anthropicApiKeyEncrypted: keys.anthropic ? encrypt(keys.anthropic) : null,
+    openrouterApiKeyEncrypted: keys.openrouter ? encrypt(keys.openrouter) : null,
     // Only on a `--decisions jev` run: a baseline must measure the path without Jev.
     typesafeApiKeyEncrypted: args.decisions === "jev" && keys.typesafe ? encrypt(keys.typesafe) : null,
   };
@@ -346,6 +382,10 @@ async function main() {
   }
   const present = Object.entries(keys).filter(([, v]) => v).map(([k]) => k);
   console.log(`eval-ai: keys for ${present.join(", ")}${args.keysFrom ? ` (from ${args.keysFrom})` : ""}`);
+  if (args.tasks.includes("transcribe") && !keys.deepgram) {
+    console.warn("eval-ai: no Deepgram key (ORBIT_EVAL_DEEPGRAM_KEY or --keys-from) — transcribe will skip Deepgram and only score the provider engine.");
+  }
+  setDeepgramKey(keys.deepgram);
   await setUpUser(args, keys);
 
   console.log(`eval-ai: ${args.label} — ${args.provider} / ${args.model}${args.decisions ? ` + ${args.decisions}` : ""}, ${args.runs} run(s), tasks: ${args.tasks.join(", ")}`);

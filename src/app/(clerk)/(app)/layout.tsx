@@ -12,6 +12,10 @@ import { MANAGED_AI_ENABLED } from "@/lib/managed-ai-policy";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
+import { LearnedBrandColors } from "@/components/layout/learned-brand-colors";
+import { registerLearnedBrands } from "@/lib/brand-colors";
+import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
+import { OfflineSync } from "@/components/layout/offline-sync";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
@@ -22,6 +26,8 @@ import { getEntitlements } from "@/lib/entitlements";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
+import { isHeldByStealth } from "@/lib/site-access";
+import { stealthWaitlistUrl } from "@/lib/waitlist-host";
 
 /**
  * No route in this group can be statically prerendered: every one of them resolves a
@@ -82,6 +88,11 @@ export default async function AppLayout({
   // without it a suspended user would hit an error boundary instead of an explanation.
   if (settings.suspendedAt) redirect("/suspended");
 
+  // Stealth's second layer: an account made during stealth without an invitation (a Google
+  // sign-in on /sign-in creates one) waits on the waitlist like everyone else. The real gate
+  // is `requireUserId()`; this is the friendly surface, as for suspension above.
+  if (clerkOn && (await isHeldByStealth(userId, settings))) redirect(stealthWaitlistUrl());
+
   // First-run gate. This HAS to happen here, above <AppShell>, not in the (main) layout
   // below it: by the time a nested layout redirects, this layout has already rendered and
   // Next has flushed the shell, so the redirect degrades from a 307 into a client-side one
@@ -116,10 +127,22 @@ export default async function AppLayout({
   // layout that wraps the whole product, because the nav lives in client components that
   // cannot read the database themselves. `hiddenForUsers` rides along so an exempt operator
   // can be shown a "Hidden" tag on items their users are not getting — see `AppSidebar`.
-  const [{ plan }, visibility] = await Promise.all([
+  //
+  // `brandColors` is the brand color Orbit has learned for each of the viewer's companies and
+  // schools that the curated table does not know, plus which ones it has not looked up yet.
+  // Those are learned after the response is sent, so a newly added company shows its own
+  // color from the next page load on. A failed read costs only the colors, never the page.
+  const [{ plan }, visibility, brandColors] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
+    loadOrgBrandColors(userId).catch(() => ({ learned: [], missing: [] })),
   ]);
+  // The server-component realm has its own copy of the registry; the client component below
+  // fills the SSR and browser ones.
+  registerLearnedBrands(brandColors.learned);
+  if (brandColors.missing.length) {
+    after(() => learnOrgBrandColors(userId, brandColors.missing).catch(() => {}));
+  }
 
   // Whether "Lifetime includes AI" is true on this deployment — see LifetimeAiOfferProvider.
   // False while managed AI is off, even on a dev server holding its own local keys: those
@@ -129,6 +152,9 @@ export default async function AppLayout({
 
   return (
     <LifetimeAiOfferProvider value={lifetimeIncludesAi}>
+      {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
+          color the shell and the page ask for is registered by then. */}
+      <LearnedBrandColors brands={brandColors.learned} />
       <AppShell
       clerkOn={clerkOn}
       demoMode={demoMode}
@@ -142,6 +168,11 @@ export default async function AppLayout({
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}
       <PresenceHeartbeat />
+
+      {/* Renders nothing either. Sends changes queued while offline once the connection
+          is back, and re-renders a page that sat through a long outage. Here rather than
+          in AppShell so onboarding gets it too, and so it is handed this account's id. */}
+      <OfflineSync userId={userId} />
 
       {/* Also renders nothing. Glows whatever `#id` the URL names, so any link that points
           at a card — every account alert does — lands with that card called out. Mounted

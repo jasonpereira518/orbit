@@ -96,6 +96,13 @@ async function main() {
   await refuses("refuses a bare private IP host", () =>
     assertDeliverable("https://10.0.0.1/x")
   );
+  // The URL parser rewrites the host to `[::ffff:a9fe:a9fe]`, which a dotted-quad match misses.
+  await refuses("refuses the metadata IP as an IPv4-mapped IPv6 host", () =>
+    assertDeliverable("https://[::ffff:169.254.169.254]/latest/meta-data/")
+  );
+  await refuses("refuses loopback as a NAT64 IPv6 host", () =>
+    assertDeliverable("https://[64:ff9b::7f00:1]/x")
+  );
   await refuses("refuses the metadata IP as a host", () =>
     assertDeliverable("https://169.254.169.254/latest/meta-data/")
   );

@@ -102,6 +102,16 @@ export type CalendarFetchResult = {
   tombstones: number;
   /** Emails Google itself marked `self`, used to filter the calendar owner out. */
   selfEmails: string[];
+  /**
+   * The recurrence/query window this page was fetched against. Only the CalDAV connector
+   * (`apple-calendar.ts`) sets this — Google's and Microsoft's incremental sync is unbounded
+   * by date, so they have no window whose containment a cursor could usefully assert. It
+   * exists here, on the type every connector shares, rather than as a CalDAV-only return
+   * shape, only so `advanceCursor` can persist it onto `CalendarSyncCursor.windowStart` /
+   * `windowEnd` — the fields `caldav/client.ts`'s ctag fallback short-circuit depends on
+   * (`windowCoveredByCursor`) and that nothing was writing, leaving that short-circuit dead.
+   */
+  window?: { from: Date; to: Date };
 };
 
 function parseWhen(when: GoogleEvent["start"]): Date | null {

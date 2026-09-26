@@ -334,6 +334,30 @@ export type AnalyzeInput = {
   attendees: string[];
 };
 
+/**
+ * "you" -> "You", "speaker-2" -> "Speaker 2". Null (no speaker identified for that
+ * stretch — the older chunk-upload path, not an error) and anything unrecognized pass
+ * through as null, which callers render as no label at all.
+ */
+export function speakerLabel(speaker: string | null): string | null {
+  if (!speaker) return null;
+  if (speaker === "you") return "You";
+  const match = /^speaker-(\d+)$/.exec(speaker);
+  return match ? `Speaker ${match[1]}` : null;
+}
+
+/**
+ * Render one transcript segment as the digest reads it: `"You: ..."` / `"Speaker 2: ..."`
+ * when a speaker is known, bare text when it is null — exactly as today. Trims the text;
+ * callers should drop segments that are empty after trimming before calling this, since a
+ * label alone (`"You: "`) is not a paragraph worth keeping.
+ */
+export function formatTranscriptSegment(segment: { speaker: string | null; text: string }): string {
+  const text = segment.text.trim();
+  const label = speakerLabel(segment.speaker);
+  return label ? `${label}: ${text}` : text;
+}
+
 const SHAPE = `{
   "title": string,                 // short meeting title; reuse the given one if there is one
   "summary": string,               // 3-6 sentences: purpose, what happened, outcome
@@ -351,14 +375,14 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
   const who = input.userName ? `${input.userName} (called "the user" below)` : "the user";
   return [
     `You are reading the transcript of a video call (Zoom or Google Meet) that ${who} recorded for their personal networking CRM.`,
-    `How the transcript was made — this matters: it is machine speech-to-text of ONE mixed audio stream, the user's microphone plus everyone else's audio. There are NO speaker labels and turns are not marked. Paragraph breaks are roughly one-minute recording chunks, not changes of speaker. Names may be misspelled.`,
+    `How the transcript was made — this matters: it is machine speech-to-text of the meeting's audio. Lines may be prefixed with a speaker: "You:" is the user; "Speaker 1:", "Speaker 2:" and so on are other people, identified by voice, and the same person may be renumbered after a line saying the recording reconnected. Unprefixed lines come from a stretch where speakers were not identified. Names may be misspelled.`,
     part
       ? `This is part ${part.index} of ${part.total} of the transcript. Extract only what is in this part.`
       : "",
     "Return JSON of exactly this shape:",
     SHAPE,
     "Rules:",
-    `- action_items: concrete next steps someone committed to or was asked to do. "owner" is "me" ONLY when it is clear the user took it on (e.g. they are addressed by name and agree); a person's name when it was said out loud; otherwise null. Never guess an owner from who probably spoke.`,
+    `- action_items: concrete next steps someone committed to or was asked to do. "owner" is "me" when it is clear the user took it on — either it is spoken on a "You:" line, or (e.g. on an unprefixed line) they are addressed by name and agree; a person's name when it was said out loud; otherwise null. On a line with no speaker prefix, never guess an owner from who probably spoke.`,
     `- due_phrase: the exact words from the transcript that say when ("by Friday", "next week", "September 30"), or null.`,
     `- blockers: things stopping progress or waiting on someone/something — an approval, a dependency, missing information.`,
     `- open_questions: questions raised that were NOT answered by the end of the call.`,

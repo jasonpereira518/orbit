@@ -18,6 +18,7 @@ import {
   rateLimitTokensFor,
   readyEntries,
   replaceEntry,
+  startableEntries,
   summarize,
   type FanoutEntry,
   type UploadOutcome,
@@ -67,6 +68,30 @@ console.log("\nconcurrency is bounded");
   const entries = [entry("a", { status: "queued" }), entry("b", { status: "failed" }), entry("c")];
   const ready = readyEntries(entries, NOW);
   check("settled entries never restart", ready.length === 1 && ready[0].id === "c");
+}
+
+console.log("\nan upload already started is never started again");
+
+{
+  // The pump runs from an effect, and can run against a list that does not yet show what it
+  // just started as uploading. The started set is what it trusts.
+  const entries = [entry("a"), entry("b"), entry("c")];
+  const ready = startableEntries(entries, new Set(["a"]), NOW);
+  check("a started id is not returned", !ready.some((e) => e.id === "a"));
+  check("  and it still holds a slot", ready.length === 1 && ready[0].id === "b", ready.map((e) => e.id).join());
+  check(
+    "a full started set starts nothing",
+    startableEntries(entries, new Set(["a", "b"]), NOW).length === 0
+  );
+  check(
+    "an uploading entry is not counted twice",
+    startableEntries([entry("a", { status: "uploading" }), entry("b")], new Set(["a"]), NOW).length === 1
+  );
+  check(
+    "with nothing started it is readyEntries",
+    JSON.stringify(startableEntries(entries, new Set(), NOW)) === JSON.stringify(readyEntries(entries, NOW))
+  );
+  check("the input is not mutated", entries.every((e) => e.status === "pending"));
 }
 
 console.log("\na 429 waits and comes back — it never drops the file");

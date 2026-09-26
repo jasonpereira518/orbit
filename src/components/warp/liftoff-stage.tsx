@@ -89,8 +89,8 @@ export function LiftoffStage({ run }: { run: WarpRun }) {
     const groundHex =
       getComputedStyle(document.documentElement)
         .getPropertyValue("--background")
-        .trim() || (night ? "#272727" : "#fbfbf9");
-    const ground = hexToRgb(groundHex.startsWith("#") ? groundHex : night ? "#272727" : "#fbfbf9");
+        .trim() || (night ? "#141517" : "#fbfbf9");
+    const ground = hexToRgb(groundHex.startsWith("#") ? groundHex : night ? "#141517" : "#fbfbf9");
 
     function paintSpaceLayer() {
       const off = document.createElement("canvas");
@@ -176,7 +176,7 @@ export function LiftoffStage({ run }: { run: WarpRun }) {
         if (c.y - c.r > height + c.r) c.y = -c.r * 1.5;
         if (c.y + c.r < -c.r * 1.5) c.y = height + c.r;
         const grad = ctx!.createRadialGradient(c.x, c.y, 0, c.x, c.y, c.r);
-        const tint = night ? "168, 186, 214" : "255, 255, 255";
+        const tint = night ? "186, 194, 206" : "255, 255, 255";
         grad.addColorStop(0, `rgba(${tint}, ${c.a * vis})`);
         grad.addColorStop(0.55, `rgba(${tint}, ${c.a * vis * 0.4})`);
         grad.addColorStop(1, `rgba(${tint}, 0)`);

@@ -286,12 +286,17 @@ export function ContactProfileHero({
       const el = sentinelRef.current;
       const main =
         el?.closest("main") ?? document.querySelector("main");
-      if (main instanceof HTMLElement) {
-        const rect = main.getBoundingClientRect();
-        setFrame({ left: rect.left, width: rect.width });
-      } else {
-        setFrame({ left: 0, width: window.innerWidth });
-      }
+      const next =
+        main instanceof HTMLElement
+          ? main.getBoundingClientRect()
+          : { left: 0, width: window.innerWidth };
+      // Runs on every scroll event: handing back the same object when nothing moved lets
+      // React skip the render, where a fresh one re-rendered the whole hero per frame.
+      setFrame((prev) =>
+        prev.left === next.left && prev.width === next.width
+          ? prev
+          : { left: next.left, width: next.width }
+      );
 
       // Keep the fixed bar below the mobile top header when present
       const mobileHeader = document.querySelector<HTMLElement>("main > header");

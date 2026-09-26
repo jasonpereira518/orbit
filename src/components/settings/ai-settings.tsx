@@ -9,6 +9,8 @@ import {
 } from "@/actions/settings";
 import {
   AI_PROVIDERS,
+  SELECTABLE_AI_PROVIDERS,
+  isSelectableAiProvider,
   DEFAULT_MODELS,
   PROVIDER_MODELS,
   type AiProvider,
@@ -37,7 +39,10 @@ type Settings = Awaited<ReturnType<typeof getSettings>>;
 
 const CUSTOM_MODEL = "__custom__";
 
-const PROVIDER_ITEMS = AI_PROVIDERS.map((p) => ({ value: p.id, label: p.label }));
+// SELECTABLE_AI_PROVIDERS, not AI_PROVIDERS: the full table also carries providers whose
+// plumbing exists but which no surface offers (OpenRouter). `providerMeta` below still
+// looks up the full table, so an account already on one keeps its real name in the copy.
+const PROVIDER_ITEMS = SELECTABLE_AI_PROVIDERS.map((p) => ({ value: p.id, label: p.label }));
 
 function modelLabel(provider: AiProvider, id: string) {
   return PROVIDER_MODELS[provider].find((m) => m.value === id)?.label ?? id;
@@ -320,48 +325,53 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
 
       <SettingsRow title="Saved keys">
         <ul className="space-y-1 text-sm text-muted-foreground">
-          {settings.providers.map((p) => (
-            <li key={p.id} className="flex min-h-9 items-center justify-between gap-3">
-              <span>
-                {p.label}:{" "}
-                {p.hasPersonalKey
-                  ? "saved"
-                  : p.managedAvailable
-                    ? onLocalDevKeys
-                      ? "none — .env.local"
-                      : "none — Orbit’s key"
-                    : "none"}
-              </span>
-              {/* Per key, not per selected provider: switching provider used to leave the
-                  old key live for embeddings and transcription with no way to remove it. */}
-              {p.hasPersonalKey ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={pending}
-                  aria-label={`Clear saved ${p.label} key`}
-                  onClick={() =>
-                    start(async () => {
-                      try {
-                        const res = await clearApiKey(p.id);
-                        setSettings(await getSettings());
-                        toast.success(
-                          res.embeddingReset
-                            ? `${p.label} key cleared — search will re-index`
-                            : `${p.label} key cleared`
-                        );
-                      } catch (err) {
-                        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
-                      }
-                    })
-                  }
-                >
-                  Clear
-                </Button>
-              ) : null}
-            </li>
-          ))}
+          {/* Same rule as the picker: a provider with no user-facing surface is not listed
+              — unless this account actually holds a key for it, in which case the row is
+              the only way to clear that key. */}
+          {settings.providers
+            .filter((p) => isSelectableAiProvider(p.id) || p.hasPersonalKey)
+            .map((p) => (
+              <li key={p.id} className="flex min-h-9 items-center justify-between gap-3">
+                <span>
+                  {p.label}:{" "}
+                  {p.hasPersonalKey
+                    ? "saved"
+                    : p.managedAvailable
+                      ? onLocalDevKeys
+                        ? "none — .env.local"
+                        : "none — Orbit’s key"
+                      : "none"}
+                </span>
+                {/* Per key, not per selected provider: switching provider used to leave the
+                    old key live for embeddings and transcription with no way to remove it. */}
+                {p.hasPersonalKey ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={pending}
+                    aria-label={`Clear saved ${p.label} key`}
+                    onClick={() =>
+                      start(async () => {
+                        try {
+                          const res = await clearApiKey(p.id);
+                          setSettings(await getSettings());
+                          toast.success(
+                            res.embeddingReset
+                              ? `${p.label} key cleared — search will re-index`
+                              : `${p.label} key cleared`
+                          );
+                        } catch (err) {
+                          toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+                        }
+                      })
+                    }
+                  >
+                    Clear
+                  </Button>
+                ) : null}
+              </li>
+            ))}
         </ul>
       </SettingsRow>
     </SettingsSection>

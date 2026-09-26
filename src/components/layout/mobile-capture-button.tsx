@@ -27,6 +27,7 @@ import { handOffVoiceRecording } from "@/lib/pending-voice-note";
 import { toast } from "@/lib/toast";
 import { useVoiceRecorder } from "@/lib/use-voice-recorder";
 import { cn } from "@/lib/utils";
+import { CAPTURE_CELL_CLASS, CAPTURE_CIRCLE_CLASS } from "@/components/layout/tab-row-face";
 import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
 
 /**
@@ -192,7 +193,7 @@ export function MobileCaptureButton({
           e.preventDefault();
         }
       }}
-      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1.5 text-[10.5px] font-medium text-primary select-none [-webkit-touch-callout:none]"
+      className={cn(CAPTURE_CELL_CLASS, "select-none [-webkit-touch-callout:none]")}
     >
       <AnimatePresence>
         {live && (
@@ -238,7 +239,7 @@ export function MobileCaptureButton({
 
       <motion.span
         aria-hidden
-        className="absolute -top-5 left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
+        className={CAPTURE_CIRCLE_CLASS}
         // No tap-shrink during a hold: it would pin the circle small for the whole note.
         whileTap={reducedMotion || holding ? undefined : { scale: 0.88 }}
         // Lifted as it grows, by the ~5px the extra 20% adds at the bottom edge, or the

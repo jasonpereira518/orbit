@@ -3,7 +3,9 @@
  * the server can read, and the one upload call. No server imports — this is pulled into
  * client components, and anything reaching `@/db` would drag `node:fs` into the bundle.
  */
-import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
+import { CAPTURE_MAX_UPLOAD_BYTES, CAPTURE_REQUEST_FILE_BYTES, formatUploadSize } from "@/lib/capture-limits";
+import { mergeHints } from "@/lib/capture/merge-hints";
+import { CAPTURE_CHUNK_SEPARATOR, planUploadBatches } from "@/lib/capture/upload-batches";
 import type { CaptureParseHints } from "@/lib/ai";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import type { CaptureJobSource } from "@/lib/capture/types";
@@ -68,14 +70,12 @@ export type CaptureUploadResult =
     }
   | { ok: false; error: string; status: number; retryAfterSec: number | null };
 
-/**
- * Send media to `/api/capture/jobs`, which transcribes it inside the request and leaves a
- * `transcribed` job behind. A dropped connection after the bytes land loses nothing.
- */
-export async function uploadCaptureMedia(input: {
+type UploadFile = File | { filename: string; mimeType: string; blob: Blob };
+
+type UploadInput = {
   sourceKind: CaptureJobSource;
   text?: string;
-  files: Array<File | { filename: string; mimeType: string; blob: Blob }>;
+  files: UploadFile[];
   /** Set when this file is one of a multi-file drop. Suspends the one-review-at-a-time rule. */
   batchGroupId?: string | null;
   /** The original filename, for the queue row. */
@@ -93,19 +93,100 @@ export async function uploadCaptureMedia(input: {
    * it has a transcript-editing step in between; a folder of meeting notes does not.
    */
   autoQueue?: boolean;
-}): Promise<CaptureUploadResult> {
+};
+
+const asFile = (f: UploadFile): File =>
+  f instanceof File ? f : new File([f.blob], f.filename, { type: f.mimeType });
+
+/**
+ * Send media to `/api/capture/jobs`, which transcribes it inside the request and leaves a
+ * `transcribed` job behind. A dropped connection after the bytes land loses nothing.
+ *
+ * In parts when it has to be. Vercel refuses a request body over 4.5MB before the route
+ * runs, and one capture can be several times that (twelve scanned pages budget 14.4MB).
+ * The files are split, in order, into requests under `CAPTURE_REQUEST_FILE_BYTES`: the
+ * first creates the job, each later one extends it, and only the last moves it to
+ * `transcribed` (and queues it, under `autoQueue`). The caller sees one result either way:
+ * the parts' text joined the way the server joins one request's files, and their hints
+ * merged the way the server merges them.
+ */
+export async function uploadCaptureMedia(input: UploadInput): Promise<CaptureUploadResult> {
+  const files = input.files.map(asFile);
+  const { batches, oversized } = planUploadBatches(files, (f) => f.size, CAPTURE_REQUEST_FILE_BYTES);
+  if (oversized.length) {
+    const first = oversized[0]!;
+    return {
+      ok: false,
+      status: 413,
+      retryAfterSec: null,
+      error: `${first.name} is ${formatUploadSize(first.size)} — one file can be at most ${formatUploadSize(CAPTURE_REQUEST_FILE_BYTES)}`,
+    };
+  }
+  if (batches.length <= 1) return postCapturePart(input, files, { final: true });
+
+  const isPage = (f: File) => f.type.startsWith("image/");
+  const pageTotal = files.filter(isPage).length;
+  let pageOffset = 0;
+  let jobId: string | null = null;
+  let last: Extract<CaptureUploadResult, { ok: true }> | null = null;
+  const texts: string[] = [];
+  const sources: string[] = [];
+  let hints: CaptureParseHints = {};
+  let transcriptionEngine: string | null = null;
+
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i]!;
+    const res = await postCapturePart(input, batch, {
+      final: i === batches.length - 1,
+      continueJobId: jobId,
+      pageOffset,
+      pageTotal,
+    });
+    if (!res.ok) return res;
+    jobId = res.job.id;
+    pageOffset += batch.filter(isPage).length;
+    if (res.text.trim()) texts.push(res.text.trim());
+    sources.push(...res.sources);
+    hints = mergeHints(hints, res.hints);
+    transcriptionEngine = res.transcriptionEngine ?? transcriptionEngine;
+    last = res;
+  }
+
+  return {
+    ok: true,
+    job: last!.job,
+    text: texts.join(CAPTURE_CHUNK_SEPARATOR),
+    hints,
+    sources,
+    transcriptionEngine,
+  };
+}
+
+/** One request: the whole capture, or one part of it. */
+async function postCapturePart(
+  input: UploadInput,
+  files: File[],
+  part: { final: boolean; continueJobId?: string | null; pageOffset?: number; pageTotal?: number }
+): Promise<CaptureUploadResult> {
   const form = new FormData();
   form.set("sourceKind", input.sourceKind);
-  if (input.text) form.set("text", input.text);
-  if (input.batchGroupId) form.set("batchGroupId", input.batchGroupId);
-  if (input.sourceLabel) form.set("sourceLabel", input.sourceLabel);
-  if (input.anchorDate) form.set("anchorDate", input.anchorDate);
-  if (input.mentionPicks?.length) form.set("mentionPicks", JSON.stringify(input.mentionPicks));
-  if (input.autoQueue) form.set("autoQueue", "1");
-  for (const f of input.files) {
-    if (f instanceof File) form.append("files", f, f.name);
-    else form.append("files", new File([f.blob], f.filename, { type: f.mimeType }), f.filename);
+  if (part.continueJobId) {
+    // The job already carries the note's text, label, date and picks from the first part.
+    form.set("continueJobId", part.continueJobId);
+  } else {
+    if (input.text) form.set("text", input.text);
+    if (input.batchGroupId) form.set("batchGroupId", input.batchGroupId);
+    if (input.sourceLabel) form.set("sourceLabel", input.sourceLabel);
+    if (input.mentionPicks?.length) form.set("mentionPicks", JSON.stringify(input.mentionPicks));
   }
+  if (input.anchorDate) form.set("anchorDate", input.anchorDate);
+  if (input.autoQueue) form.set("autoQueue", "1");
+  if (!part.final) form.set("final", "0");
+  if (part.pageTotal) {
+    form.set("pageOffset", String(part.pageOffset ?? 0));
+    form.set("pageTotal", String(part.pageTotal));
+  }
+  for (const f of files) form.append("files", f, f.name);
   const res = await fetch("/api/capture/jobs", {
     method: "POST",
     body: form,
@@ -121,7 +202,14 @@ export async function uploadCaptureMedia(input: {
       ok: false,
       status: res.status,
       retryAfterSec,
-      error: typeof body.error === "string" ? body.error : "Couldn’t read that file — try again?",
+      error:
+        typeof body.error === "string"
+          ? body.error
+          : // Vercel's own refusal is plain text, so there is no `error` to show. Say what it
+            // means rather than "try again", which would fail the same way forever.
+            res.status === 413
+            ? `That upload is too large to send — try fewer or smaller files`
+            : "Couldn’t read that file — try again?",
     };
   }
   return {

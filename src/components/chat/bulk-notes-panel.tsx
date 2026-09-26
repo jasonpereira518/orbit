@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { History, X } from "lucide-react";
@@ -10,11 +10,11 @@ import { toast } from "@/lib/toast";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
 import {
   confirmBulkCapture,
-  ingestCaptureMedia,
   parseBulkCaptureNotes,
   type BulkParseOptions,
 } from "@/actions/capture";
 import type { BulkNotePersonPreview, SuggestedReminderPreview } from "@/lib/capture/types";
+import { ingestCaptureMediaInParts } from "@/lib/capture/ingest-media-in-parts";
 import type { MeetingExtraReminderInput } from "@/lib/note-batch-save";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { capturePhotoSrc } from "@/components/capture/capture-source-meta";
@@ -46,7 +46,7 @@ import {
   useScanDropZone,
 } from "@/components/scan/scan-controls";
 import { finishBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
-import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
+import { releaseScanPage, type ScanPage } from "@/lib/scan-page";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import {
   pickLockedParticipant,
@@ -640,6 +640,9 @@ export function BulkNotesPanel({
 
     const totalBytes = pages.reduce((sum, page) => sum + page.bytes, 0);
     if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+      // Refused before the transition whose `finally` releases them, so release here: each
+      // page's preview is an object URL over a ~1 MB Blob that nothing else will revoke.
+      for (const page of pages) releaseScanPage(page);
       toast.error(
         `Those pages total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer at a time`
       );
@@ -668,7 +671,7 @@ export function BulkNotesPanel({
         total: 0,
       });
       try {
-        const res = await ingestCaptureMedia({
+        const res = await ingestCaptureMediaInParts({
           files: pages.map((page) => ({
             filename: page.filename,
             mimeType: page.mimeType,
@@ -796,7 +799,7 @@ export function BulkNotesPanel({
     label: string,
     successMessage: string
   ) {
-    const res = await ingestCaptureMedia({ text: notes, files: payloads });
+    const res = await ingestCaptureMediaInParts({ text: notes, files: payloads });
     if (!res.ok) {
       toast.error(refusalMessage(res.error));
       return;
@@ -1658,13 +1661,13 @@ function PersonReviewCard({
                 />
                 <span>
                   Update{" "}
-                  <Link
+                  <IntentLink
                     href={`/contacts/${d.id}`}
                     className="text-primary underline"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {d.fullName}
-                  </Link>
+                  </IntentLink>
                   {d.company ? ` (${d.company})` : ""}
                 </span>
               </label>
@@ -1736,7 +1739,7 @@ function Field({
       <Label
         className={cn(
           "text-xs",
-          lowConfidence && "text-amber-700 dark:text-amber-400"
+          lowConfidence && "text-amber-700 dark:text-warning"
         )}
       >
         {label}

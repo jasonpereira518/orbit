@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -6,6 +7,8 @@ import { requireUserId } from "@/lib/auth";
 import { mergeConfidentDuplicates } from "@/lib/duplicate-sweep";
 import { openEngines } from "@/lib/decisions/engine";
 import { DuplicateReviewList } from "@/components/contacts/duplicate-review-list";
+import { DuplicatesListSkeleton } from "@/components/loading/page-skeletons";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export const metadata: Metadata = {
   title: "Duplicates",
@@ -29,17 +32,10 @@ export default async function DuplicatesPage() {
   // `revalidatePath`, and Next refuses that during a render. Nothing needs revalidating
   // here anyway — every contact surface is dynamic, so the next request re-reads.
   const userId = await requireUserId();
-  // With a decision model, a merge that rests only on a name is checked first (Jev only —
-  // the sweep never waits on a chat model; see duplicate-sweep.ts).
-  await mergeConfidentDuplicates(userId, { engines: await openEngines(userId) });
-
-  const [{ proposed }, recentMerges] = await Promise.all([
-    listDuplicates(),
-    listRecentMerges(),
-  ]);
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
+      <RenderStamp />
       <div className="space-y-2">
         <Link
           href="/contacts"
@@ -57,7 +53,25 @@ export default async function DuplicatesPage() {
         </p>
       </div>
 
-      <DuplicateReviewList proposed={proposed} recentMerges={recentMerges} />
+      {/* The header is static; only the list waits on the sweep and the reads. */}
+      <Suspense fallback={<DuplicatesListSkeleton />}>
+        <DuplicatesList userId={userId} />
+      </Suspense>
     </div>
   );
+}
+
+async function DuplicatesList({ userId }: { userId: string }) {
+  // Same order as before: settle whatever can be merged automatically, THEN read what is
+  // left — reading first would list pairs the sweep is about to merge. With a decision
+  // model, a merge that rests only on a name is checked first (Jev only — the sweep never
+  // waits on a chat model; see duplicate-sweep.ts).
+  await mergeConfidentDuplicates(userId, { engines: await openEngines(userId) });
+
+  const [{ proposed }, recentMerges] = await Promise.all([
+    listDuplicates(),
+    listRecentMerges(),
+  ]);
+
+  return <DuplicateReviewList proposed={proposed} recentMerges={recentMerges} />;
 }

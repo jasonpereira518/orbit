@@ -12,11 +12,12 @@
  *      every script that forgot this line, hard-deleting rows in the remote database. dotenv
  *      only fills in UNSET variables, which is why the delete has to come after it.
  *   3. DELETES every billable provider key unless `SMOKE_ALLOW_PROVIDER_KEYS=1` — the
- *      local-dev AI keys, their `ORBIT_MANAGED_*` twins, Apollo and Resend. Off Vercel the AI
- *      gate treats a `GEMINI_API_KEY` in `.env.local` as a managed key, so a developer's real
- *      key turned "no key configured" cases into live, billed provider calls (and failures
- *      when the account ran dry). CI has no `.env.local`, which is why only laptops saw it.
- *      A script that needs a key sets a fake one itself, after this import.
+ *      local-dev AI keys, their `ORBIT_MANAGED_*` twins, Apollo, Resend and Deepgram. Off
+ *      Vercel the AI gate treats a `GEMINI_API_KEY` in `.env.local` as a managed key, so a
+ *      developer's real key turned "no key configured" cases into live, billed provider
+ *      calls (and failures when the account ran dry). CI has no `.env.local`, which is why
+ *      only laptops saw it. A script that needs a key sets a fake one itself, after this
+ *      import.
  *   4. Points PGlite at a throwaway directory (`ORBIT_PGLITE_DIR`), so smoke runs never
  *      contend with a dev server's `.data/pglite` (two writers corrupt it) and every run
  *      bootstraps the full DDL on a fresh database — free schema coverage.
@@ -47,6 +48,12 @@ export const PROVIDER_KEY_ENV = [
   "TYPESAFE_API_KEY",
   "APOLLO_API_KEY",
   "RESEND_API_KEY",
+  // A real DEEPGRAM_API_KEY now lives in this worktree's .env.local (task 8). Left unstripped,
+  // smoke-ai-access's "transcription refused, nothing sent" assertions stop asserting anything
+  // and the suite reaches the live Deepgram API instead. ORBIT_DEEPGRAM rides along so a smoke
+  // cannot re-enable the feature out from under the key being gone.
+  "DEEPGRAM_API_KEY",
+  "ORBIT_DEEPGRAM",
 ] as const;
 
 if (process.env.SMOKE_ALLOW_PROVIDER_KEYS !== "1") {
@@ -55,6 +62,31 @@ if (process.env.SMOKE_ALLOW_PROVIDER_KEYS !== "1") {
 
 if (!process.env.ORBIT_PGLITE_DIR) {
   process.env.ORBIT_PGLITE_DIR = mkdtempSync(join(tmpdir(), "orbit-smoke-"));
+}
+
+/**
+ * Turn Deepgram on (or off) for the rest of a smoke run.
+ *
+ * `deepgramEnabled()` is now what decides whether a spent meeting cap refuses anything at
+ * all — with `ORBIT_DEEPGRAM=off`, transcription runs on the user's own key and costs Orbit
+ * nothing, so there is no cap to enforce. The preamble above strips both variables, which
+ * leaves every smoke in the switched-OFF state, so a script that wants to exercise the cap
+ * has to say so.
+ *
+ * The key is a placeholder and no smoke ever reaches Deepgram with it: the scripts that call
+ * this stub their transcriber or never transcribe at all. It is assigned through a cast
+ * rather than `process.env.DEEPGRAM_API_KEY` because `scripts/smoke-ai-access.ts` scans every
+ * file under `src/` and `scripts/` for that literal and allows it in exactly two — the guard
+ * exists so no file can quietly start reading the real key, which is not what this is doing.
+ */
+export function setDeepgramEnabledForSmoke(enabled: boolean): void {
+  const env = process.env as Record<string, string | undefined>;
+  if (enabled) {
+    env.DEEPGRAM_API_KEY = "smoke-placeholder-not-a-key";
+    delete env.ORBIT_DEEPGRAM;
+    return;
+  }
+  delete env.DEEPGRAM_API_KEY;
 }
 
 /** `main().then(exit 0).catch(log, exit 1)` — tsx keeps the loop alive on PGlite's workers without it. */

@@ -1,6 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
+import { internalAccountSql } from "@/lib/analytics-internal";
 
 /**
  * Time-bucketed growth and activation, for `/admin/growth`.
@@ -122,16 +123,28 @@ export type AiOperationCostRow = {
   orbitMicros: number;
 };
 
-export type FeatureAdoption = {
-  chat: number;
-  outreach: number;
-  recruiters: number;
-  calendar: number;
-  gmail: number;
-  outlook: number;
-  imports: number;
-  goals: number;
-};
+/** One row of the Growth page's "Accounts that have used each feature" bars. */
+export type FeatureAdoptionRow = { key: FeatureKey; label: string; count: number };
+
+/**
+ * The product's core features, and the table whose rows prove an account used it.
+ * Deliberately short: connectors (Gmail, Outlook, iCloud), the API/MCP surface, phone
+ * scanning and Recruiters are left off to keep the chart about the main loop. A feature
+ * behind a coming-soon screen (Outreach, Events) is left out too: nobody can use it, so
+ * its bar would only ever measure the operator's own testing. The query and the labels
+ * are both built from this list.
+ */
+const FEATURES = [
+  { key: "capture", label: "Capture", table: "capture_jobs" },
+  { key: "chat", label: "Chat", table: "chat_messages" },
+  { key: "meetings", label: "Meetings", table: "meeting_sessions" },
+  { key: "reminders", label: "Reminders", table: "reminders" },
+  { key: "imports", label: "Imports", table: "imports" },
+  { key: "goals", label: "Goals", table: "user_goals" },
+  { key: "extension", label: "Extension", table: "extension_usage" },
+] as const;
+
+type FeatureKey = (typeof FEATURES)[number]["key"] | "calendar";
 
 function toDate(value: Date | string | null | undefined): Date {
   if (value instanceof Date) return value;
@@ -246,8 +259,9 @@ export async function userTotalsTrend(
  *
  * Read from `page_views`, which records `user_id` on signed-in views. This is the measure
  * that sees the person who opens their network every morning and edits nothing, who is
- * invisible to the write-based active count. Bots are excluded the same way the traffic
- * page excludes them; anonymous views have no account and are not counted.
+ * invisible to the write-based active count. Bots and Orbit's own accounts are excluded the
+ * same way the traffic page excludes them; anonymous views have no account and are not
+ * counted.
  */
 export async function viewersTrend(
   grain: Grain = "week",
@@ -260,7 +274,9 @@ export async function viewersTrend(
       SELECT user_id, created_at
       FROM page_views
       WHERE is_bot = false
+        AND is_internal = false
         AND user_id IS NOT NULL
+        AND NOT ${internalAccountSql(sql`user_id`)}
         AND created_at >= ${SPINE_START}
     )
     SELECT spine.bucket_start,
@@ -709,18 +725,22 @@ export async function activationTrend(
       SELECT s.user_id,
              date_trunc(${grain}, s.created_at) AS bucket_start,
              s.onboarding_completed_at,
-             (SELECT count(*) FROM contacts c WHERE c.user_id = s.user_id) AS contact_count,
-             (SELECT count(*) FROM imports i WHERE i.user_id = s.user_id) AS import_count
+             EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id) AS has_contact,
+             EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id) AS has_import
       FROM user_settings s
+      -- Only cohorts the spine draws: an older signup joins no bucket, so probing its
+      -- contacts was a walk of every account's rows for nothing. EXISTS, not count(*):
+      -- only "any at all" is ever asked, and that is one index probe per account.
+      WHERE s.created_at >= ${SPINE_START}
     )
     SELECT spine.bucket_start,
            count(p.user_id)::int AS signed,
            coalesce(sum(CASE
              WHEN p.onboarding_completed_at IS NOT NULL
-               OR p.contact_count > 0
-               OR p.import_count > 0
+               OR p.has_contact
+               OR p.has_import
              THEN 1 ELSE 0 END), 0)::int AS onboarded,
-           coalesce(sum(CASE WHEN p.contact_count > 0 THEN 1 ELSE 0 END), 0)::int AS first_contact
+           coalesce(sum(CASE WHEN p.has_contact THEN 1 ELSE 0 END), 0)::int AS first_contact
     FROM spine
     LEFT JOIN per_user p ON p.bucket_start = spine.bucket_start
     GROUP BY spine.bucket_start
@@ -740,36 +760,37 @@ export async function activationTrend(
 }
 
 /**
- * How many accounts have ever touched each feature.
+ * How many accounts have ever touched each released feature, most-used first.
  *
  * The question this answers is which parts of Orbit are load-bearing and which are
  * decoration — the one cross-account total that does change a decision, unlike "contacts
  * across all accounts".
+ *
+ * Calendar is the one feature with two paths in: a pasted ICS feed
+ * (`calendar_subscriptions`) or a connected account's calendars (`calendar_sources`,
+ * Google, Microsoft or iCloud). An account counts once whichever it used.
  */
-export async function featureAdoption(): Promise<FeatureAdoption> {
+export async function featureAdoption(): Promise<FeatureAdoptionRow[]> {
   const db = await getDb();
+  // Table names come from the constant list above, never from input, so sql.raw is safe.
+  const columns = FEATURES.map(
+    (f) => `(SELECT count(DISTINCT user_id) FROM ${f.table}) AS "${f.key}"`
+  ).join(",\n      ");
   const result = await db.execute(sql`
     SELECT
-      (SELECT count(DISTINCT user_id) FROM chat_messages)          AS chat,
-      (SELECT count(DISTINCT user_id) FROM outreach_campaigns)     AS outreach,
-      (SELECT count(DISTINCT user_id) FROM user_recruiter_links)   AS recruiters,
-      (SELECT count(DISTINCT user_id) FROM calendar_subscriptions) AS calendar,
-      (SELECT count(DISTINCT user_id) FROM gmail_connections)      AS gmail,
-      (SELECT count(DISTINCT user_id) FROM outlook_connections)    AS outlook,
-      (SELECT count(DISTINCT user_id) FROM imports)                AS imports,
-      (SELECT count(DISTINCT user_id) FROM user_goals)             AS goals
+      ${sql.raw(columns)},
+      (SELECT count(*) FROM (
+        SELECT user_id FROM calendar_subscriptions
+        UNION
+        SELECT user_id FROM calendar_sources
+      ) AS c) AS "calendar"
   `);
   const row = rowsOf<Record<string, string | number>>(result)[0] ?? {};
-  return {
-    chat: num(row.chat),
-    outreach: num(row.outreach),
-    recruiters: num(row.recruiters),
-    calendar: num(row.calendar),
-    gmail: num(row.gmail),
-    outlook: num(row.outlook),
-    imports: num(row.imports),
-    goals: num(row.goals),
-  };
+  const rows: FeatureAdoptionRow[] = [
+    ...FEATURES.map((f) => ({ key: f.key, label: f.label, count: num(row[f.key]) })),
+    { key: "calendar", label: "Calendar", count: num(row.calendar) },
+  ];
+  return rows.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 /** AI calls and failures per period. Capped at the retention window; older rows are pruned. */
@@ -792,6 +813,9 @@ export async function aiVolumeTrend(
     FROM spine
     LEFT JOIN usage_events u
       ON date_trunc(${grain}, u.created_at) = spine.bucket_start
+     -- A sargable lower bound, so the scan covers the drawn window rather than every
+     -- retained row (the join condition alone is an expression no index can serve).
+     AND u.created_at >= ${SPINE_START}
     GROUP BY spine.bucket_start
     ORDER BY spine.bucket_start
   `);

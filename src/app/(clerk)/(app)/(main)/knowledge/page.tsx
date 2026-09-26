@@ -1,11 +1,13 @@
 import { getKnowledgeBase } from "@/actions/knowledge";
 import { KnowledgeBaseView } from "@/components/knowledge/knowledge-base-view";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function KnowledgePage() {
   const { stats, entries } = await getKnowledgeBase();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <RenderStamp />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Knowledge base

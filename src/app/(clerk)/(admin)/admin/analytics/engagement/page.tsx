@@ -67,11 +67,13 @@ export default async function AdminEngagementPage({
     : "30d";
   const days = rangeDays(range);
 
+  // Each panel degrades on its own, as on the Traffic tab: one failed query used to take
+  // the whole page down. A failed tile shows "—", never a zero it did not measure.
   const [imports, captures, outreach, depth] = await Promise.all([
-    importsByProvider(range),
-    capturesBySource(range),
-    outreachByChannel(range),
-    engagementDepth(range),
+    importsByProvider(range).catch(() => []),
+    capturesBySource(range).catch(() => []),
+    outreachByChannel(range).catch(() => []),
+    engagementDepth(range).catch(() => null),
   ]);
 
   const rangeLink = (value: Range) => (
@@ -107,13 +109,21 @@ export default async function AdminEngagementPage({
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Tile label="Chat questions asked" value={depth.chatQueries} />
-          <Tile label="Contacts merged by hand" value={depth.manualMerges} />
-          <Tile label="Graph opened" value={depth.graphViews} />
+          <Tile label="Chat questions asked" value={depth?.chatQueries ?? null} />
+          <Tile
+            label="Contacts merged by hand"
+            value={depth?.manualMerges ?? null}
+            note="button and review queue"
+          />
+          <Tile
+            label="Graph opened"
+            value={depth?.graphViews ?? null}
+            note="accounts, not views"
+          />
           <Tile
             label="Reached /upgrade"
-            value={depth.upgradePageViews}
-            note="intent, not a completed purchase"
+            value={depth?.upgradePageViews ?? null}
+            note="accounts · intent, not a completed purchase"
           />
         </div>
 
@@ -208,10 +218,15 @@ export default async function AdminEngagementPage({
             </li>
             <li>
               <span className="text-foreground">Contacts merged by hand excludes the automatic sweep.</span>{" "}
-              Only merges made from the &ldquo;Merge into…&rdquo; button on a
-              contact&apos;s own page — the one action here with a reason string that
-              can&apos;t also mean &ldquo;the background matcher decided this for
-              you&rdquo;.
+              It counts merges a person confirmed — the &ldquo;Merge into…&rdquo; button
+              and the duplicate-review queue — and none the background matcher or an
+              import made on its own.
+            </li>
+            <li>
+              <span className="text-foreground">Orbit&apos;s own accounts are left out.</span>{" "}
+              Admins and the showcase account are excluded from every count except
+              outreach, whose messages carry no account to filter by. Imports and
+              captures are dated by when they started.
             </li>
           </ul>
         </AdminPanel>
@@ -226,14 +241,14 @@ function Tile({
   note,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   note?: string;
 }) {
   return (
     <div className="rounded-2xl border border-border/70 bg-card p-4">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 text-2xl font-medium tabular-nums text-ink">
-        {value.toLocaleString()}
+        {value == null ? "—" : value.toLocaleString()}
       </div>
       {note && <div className="mt-1 text-xs text-muted-foreground">{note}</div>}
     </div>

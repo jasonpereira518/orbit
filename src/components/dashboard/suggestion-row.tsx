@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
@@ -63,12 +63,12 @@ export function SuggestionRow({
           <div className="flex flex-wrap items-center gap-2">
             {tier && <ClosenessTierBadge tier={tier} dotOnly />}
             {contactId ? (
-              <Link
+              <IntentLink
                 href={`/contacts/${contactId}`}
                 className="font-medium text-primary hover:underline"
               >
                 {contactName}
-              </Link>
+              </IntentLink>
             ) : (
               <p className="font-medium text-ink">{contactName}</p>
             )}
@@ -136,12 +136,12 @@ export function SuggestionRow({
               </Button>
             )}
             {contactId && (
-              <Link
+              <IntentLink
                 href={`/contacts/${contactId}`}
                 className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "h-8")}
               >
                 Open contact
-              </Link>
+              </IntentLink>
             )}
           </div>
         </div>

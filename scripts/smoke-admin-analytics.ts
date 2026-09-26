@@ -35,8 +35,8 @@ import {
   UNKNOWN_ROUTE,
   isTrackedPath,
   normalizeRoute,
-  redactUrlForVendor,
 } from "../src/lib/analytics-routes";
+import { isIdSegment, redactUrlForVendor } from "../src/lib/analytics-redact";
 import { isBotUserAgent } from "../src/lib/analytics-bots";
 import {
   analyticsEnabled,
@@ -61,6 +61,7 @@ import {
   engagementDepth,
 } from "../src/lib/admin-analytics";
 import { startQueryCount, stopQueryCount, capturedQueries } from "../src/lib/query-counter";
+import { isDemoMode } from "../src/lib/auth";
 import type { CaptureJobResult } from "../src/lib/capture/types";
 
 let failures = 0;
@@ -188,7 +189,7 @@ console.log("\nvendor URL redaction");
 const token = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
 check(
   "a scan handoff token never reaches Vercel",
-  redactUrlForVendor(`https://orbit.example/scan/${token}`) === "https://orbit.example/scan/[token]",
+  redactUrlForVendor(`https://orbit.example/scan/${token}`) === "https://orbit.example/scan/[id]",
   String(redactUrlForVendor(`https://orbit.example/scan/${token}`))
 );
 check(
@@ -204,7 +205,7 @@ check(
   "query strings lose everything but campaign tags",
   redactUrlForVendor(
     "https://orbit.example/sign-in?redirect_url=%2Fcontacts%2Fabc&__clerk_ticket=secret&utm_campaign=launch"
-  ) === "https://orbit.example/sign-in/[[...sign-in]]?utm_campaign=launch",
+  ) === "https://orbit.example/sign-in?utm_campaign=launch",
   String(
     redactUrlForVendor(
       "https://orbit.example/sign-in?redirect_url=%2Fcontacts%2Fabc&__clerk_ticket=secret&utm_campaign=launch"
@@ -213,6 +214,27 @@ check(
 );
 check("a plain page passes through as itself", redactUrlForVendor("https://orbit.example/pricing") === "https://orbit.example/pricing");
 check("garbage is dropped", redactUrlForVendor("not a url") === null);
+check(
+  "page names are never mistaken for ids",
+  ROUTE_PATTERNS.flatMap((p) => p.split("/")).filter((seg) => seg && !seg.startsWith("[")).every((seg) => !isIdSegment(seg))
+);
+check(
+  "a share token and a Clerk user id are ids",
+  isIdSegment("Zq3kP9xW2mR7vT1yB5nC8dF4gH6jK0lA2sD9fG7hJ3k") && isIdSegment("user_2abcXYZ1234567890")
+);
+// The redaction ships to every page, the waitlist's own domain included. It must not be
+// the route list: that is the one place the app's page names would be in client JS.
+const redactSource = readFileSync("src/lib/analytics-redact.ts", "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, " ")
+  .replace(/^\s*\/\/.*$/gm, " ");
+check(
+  "the client-side redaction module knows no app routes",
+  !/["'`]\/(contacts|capture|outreach|recruiters|graph|knowledge|reminders|dashboard|chat)\b/.test(redactSource) &&
+    !/from\s+["'][^"']*analytics-routes["']/.test(redactSource)
+);
+for (const file of ["src/components/analytics/pageview-beacon.tsx", "src/components/analytics/vercel-telemetry.tsx"]) {
+  check(`${file} does not import the route list`, !readFileSync(file, "utf8").includes("analytics-routes"));
+}
 
 // --- 3. Visitor hashing --------------------------------------------------------------
 
@@ -250,9 +272,18 @@ for (const ua of [
   "python-requests/2.31.0",
   "curl/8.4.0",
   "Mozilla/5.0 AppleWebKit Chrome-Lighthouse",
+  "Mozilla/5.0 (compatible; Google-InspectionTool/1.0)",
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ChatGPT-User/1.0; +https://openai.com/bot)",
+  "Mozilla/5.0 (compatible; AhrefsSiteAudit/6.1)",
+  "Mozilla/5.0 DatadogSynthetics",
+  "meta-externalagent/1.1",
 ]) {
   check(`bot: ${ua.slice(0, 32)}`, isBotUserAgent(ua));
 }
+check(
+  "the CUBOT phone brand is not a crawler",
+  !isBotUserAgent("Mozilla/5.0 (Linux; Android 11; CUBOT X30) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
+);
 check("empty agent counts as a bot", isBotUserAgent("") && isBotUserAgent(null));
 const realChrome =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
@@ -312,9 +343,9 @@ async function main() {
 
   /**
    * Three sessions, hand-built so every derived number has a known answer:
-   *   s1  visitor A, 3 views over 10 minutes, last view dwelt 30s  -> 630s, not a bounce
-   *   s2  visitor B, 1 view, no dwell recorded                     ->   0s, a bounce
-   *   s3  visitor A (same day), 2 views over 4 minutes             -> 240s, not a bounce
+   *   s1  visitor A, anonymous, 3 views over 10 minutes, last dwelt 30s -> 630s, not a bounce
+   *   s2  visitor B, anonymous, 1 view, no dwell recorded                -> unknown, a bounce
+   *   s3  visitor A (same day), SIGNED IN, 2 views over 4 minutes         -> 240s, never a bounce
    * Plus one bot row that must never appear in any total.
    */
   const s1 = randomUUID();
@@ -361,22 +392,82 @@ async function main() {
   );
   check("signed-in views split out", totals.signedInViews === 2, `got ${totals.signedInViews}`);
   check(
-    "one-view session is a bounce",
+    "an anonymous one-view session is a bounce",
     totals.bouncedSessions === 1,
     `got ${totals.bouncedSessions}`
   );
-  // s1 = 600s span + 30s dwell = 630; s2 = 0; s3 = 240. Median of [0, 240, 630] is 240.
   check(
-    "median session duration includes the exit dwell",
-    totals.medianSessionSeconds === 240,
-    `got ${totals.medianSessionSeconds}, expected 240 from [0, 240, 630]`
+    "only anonymous sessions are in the bounce denominator",
+    totals.anonymousSessions === 2,
+    `got ${totals.anonymousSessions}; s3 is signed in`
   );
+  // s1 = 600s span + 30s dwell = 630; s3 = 240; s2 has one view and no dwell, so its length
+  // is UNKNOWN and it is left out rather than counted as zero. Median of [240, 630] is 435.
+  check(
+    "median session leaves out sessions of unknown length",
+    totals.medianSessionSeconds === 435 && totals.measuredSessions === 2,
+    `got ${totals.medianSessionSeconds} over ${totals.measuredSessions}, expected 435 over 2`
+  );
+  check(
+    "the window is clamped to when tracking began",
+    totals.window.clamped && totals.window.days === 1,
+    JSON.stringify(totals.window)
+  );
+  check(
+    "visitor-days per day divide by the measured days, not the range",
+    totals.avgDailyVisitors === 2,
+    `got ${totals.avgDailyVisitors}; 2 visitor-days over 1 measured day, not over 30`
+  );
+
+  // A one-page visit that was READ is not a bounce.
+  const readId = randomUUID();
+  await db.insert(pageViews).values({ ...base, id: readId, visitorHash: visitorB, sessionId: randomUUID(), route: "/pricing", createdAt: ago(25), dwellMs: 45_000 });
+  const withRead = await trafficTotals("30d");
+  check(
+    "one page read for 45s is engaged, not a bounce",
+    withRead.bouncedSessions === 1 && withRead.anonymousSessions === 3,
+    `bounced ${withRead.bouncedSessions} of ${withRead.anonymousSessions}`
+  );
+  await db.delete(pageViews).where(eq(pageViews.id, readId));
+
+  // Orbit's own traffic: flagged at ingest, or from an admin account, whenever it was written.
+  const internalIds = [randomUUID(), randomUUID()];
+  const savedAdmins = process.env.ADMIN_USER_IDS;
+  process.env.ADMIN_USER_IDS = "user_admin_smoke";
+  await db.insert(pageViews).values([
+    { ...base, id: internalIds[0], visitorHash: visitorB, sessionId: randomUUID(), route: "/", createdAt: ago(7), isInternal: true },
+    { ...base, id: internalIds[1], visitorHash: visitorB, sessionId: randomUUID(), route: "/dashboard", createdAt: ago(7), userId: "user_admin_smoke" },
+  ]);
+  const withInternal = await trafficTotals("30d");
+  // Demo mode treats everyone as an admin, so the by-account half is off there by design.
+  const expectInternal = isDemoMode() ? 1 : 2;
+  check(
+    "Orbit's own traffic is excluded from every total",
+    withInternal.views === totals.views,
+    `got ${withInternal.views}, expected ${totals.views}`
+  );
+  check(
+    "and counted beside them, like bots",
+    withInternal.internalViews === expectInternal,
+    `got ${withInternal.internalViews}, expected ${expectInternal}`
+  );
+  check(
+    "the trend excludes it too",
+    (await trafficTrend("30d")).reduce((a, p) => a + p.views, 0) === totals.views
+  );
+  await db.delete(pageViews).where(inArray(pageViews.id, internalIds));
+  if (savedAdmins === undefined) delete process.env.ADMIN_USER_IDS;
+  else process.env.ADMIN_USER_IDS = savedAdmins;
 
   const trend = await trafficTrend("30d");
   check(
-    "trend reaches one bucket past the window so its first bar covers the window start",
-    trend.length === 31,
-    `got ${trend.length}`
+    "the trend starts where tracking began, not thirty empty days earlier",
+    trend.length === 1,
+    `got ${trend.length}; every row was written in the last hour`
+  );
+  check(
+    "the running bucket is marked partial",
+    trend[trend.length - 1]?.partial === true
   );
   check(
     "trend totals agree with the headline",
@@ -397,6 +488,14 @@ async function main() {
     const summed = tr.reduce((a, p) => a + p.views, 0);
     check(`${r} bars sum to the ${r} headline, window edge included`, summed === t.views, `${summed} vs ${t.views}`);
   }
+  // With tracking reaching back past the window, the full spine returns.
+  const fullTrend = await trafficTrend("30d");
+  check(
+    "trend reaches one bucket past the window so its first bar covers the window start",
+    fullTrend.length === 31 && fullTrend[0]?.partial === true,
+    `got ${fullTrend.length}`
+  );
+  check("a window inside tracking is not clamped", !(await trafficTotals("30d")).window.clamped);
   await db.delete(pageViews).where(inArray(pageViews.id, edgeIds));
 
   const routesOut = await topRoutes("30d");
@@ -427,7 +526,16 @@ async function main() {
   );
   check("but it still counts toward its country", geo.countries.some((c) => c.country === "DE"));
   await db.delete(pageViews).where(eq(pageViews.id, noCityId));
-  check("countries rolled up", geo.countries.length === 3, `got ${geo.countries.length}; US, GB and the city-less DE`);
+  check(
+    "countries rolled up",
+    geo.countries.filter((c) => c.country != null).length === 3,
+    `got ${geo.countries.length}; US, GB and the city-less DE`
+  );
+  check(
+    "views with no country are an Unknown bar, so the bars add up",
+    geo.countries.reduce((a, c) => a + c.views, 0) === totals.views + 1,
+    `${geo.countries.reduce((a, c) => a + c.views, 0)} vs ${totals.views} + the DE row`
+  );
   check(
     "US country total sums its cities",
     geo.countries.find((c) => c.country === "US")?.views === 3
@@ -438,6 +546,11 @@ async function main() {
   const sources = await sourceBreakdown("30d");
   check("referrer captured", sources.referrers[0]?.label === "news.ycombinator.com");
   check("campaign captured", sources.campaigns[0]?.label === "launch");
+  check(
+    "a source is its own list, not ranked against campaigns",
+    sources.sources[0]?.label === "twitter" && !sources.campaigns.some((c) => c.label === "twitter"),
+    JSON.stringify(sources)
+  );
 
   const devices = await deviceBreakdown("30d");
   check(
@@ -529,8 +642,13 @@ async function main() {
   // --- 7b. The funnel ------------------------------------------------------------------
 
   console.log("\nacquisition funnel");
+  // Tracking "began" nine days ago, so accounts created eight days ago are both inside the
+  // measured window and old enough (FUNNEL_MATURITY_DAYS) to be scored on activation.
+  await db.insert(pageViews).values({ ...base, id: randomUUID(), visitorHash: hashVisitor("10.7.7.7", "UA-EARLY", now), sessionId: randomUUID(), route: "/terms", createdAt: new Date(now.getTime() - 9 * 86_400_000) });
+  const savedFunnelAdmins = process.env.ADMIN_USER_IDS;
+  process.env.ADMIN_USER_IDS = "fun_admin";
   const before = await acquisitionFunnel("30d");
-  const nowIso = new Date();
+  const nowIso = new Date(now.getTime() - 8 * 86_400_000);
   await db.insert(userSettings).values([
     // Signed up, did nothing.
     { userId: "fun_idle", email: "idle@example.com", createdAt: nowIso },
@@ -547,6 +665,12 @@ async function main() {
     },
     // Ordinary subscriber, visible through the ledger.
     { userId: "fun_sub", email: "sub@example.com", createdAt: nowIso, onboardingCompletedAt: nowIso },
+    // Bought Lifetime and was refunded in full: not paid.
+    { userId: "fun_refunded", email: "refunded@example.com", createdAt: nowIso, onboardingCompletedAt: nowIso },
+    // Signed up an hour ago and already onboarded — too new to be scored either way.
+    { userId: "fun_fresh", email: "fresh@example.com", createdAt: new Date(), onboardingCompletedAt: new Date() },
+    // The operator's own account: in no stage at all.
+    { userId: "fun_admin", email: "admin@example.com", createdAt: nowIso, onboardingCompletedAt: nowIso },
   ]);
   await db.insert(contacts).values({
     userId: "fun_active",
@@ -561,6 +685,10 @@ async function main() {
     mrrDeltaCents: 500,
     effectiveAt: nowIso,
   });
+  await db.insert(billingEvents).values([
+    { source: "stripe", eventId: `evt_${randomUUID()}`, kind: "lifetime", userId: "fun_refunded", amountCents: 4900, mrrDeltaCents: 0, effectiveAt: nowIso },
+    { source: "stripe", eventId: `evt_${randomUUID()}`, kind: "refund", userId: "fun_refunded", amountCents: 4900, mrrDeltaCents: 0, effectiveAt: nowIso },
+  ]);
 
   // An existing customer reading /pricing while signed in — not a prospect.
   await db.insert(pageViews).values({ ...base, id: randomUUID(), visitorHash: hashVisitor("10.9.9.9", "UA-CUSTOMER", now), sessionId: randomUUID(), userId: "fun_customer", route: "/pricing", createdAt: ago(4) });
@@ -573,7 +701,7 @@ async function main() {
   const delta = (label: string) =>
     (stage(label)?.count ?? 0) - (before.find((s) => s.label === label)?.count ?? 0);
 
-  check("funnel starts from traffic", (stage("Unique visitors")?.count ?? 0) > 0);
+  check("funnel starts from traffic", (stage("Visitor-days")?.count ?? 0) > 0);
   // Visitor A hit BOTH /pricing and /interest on the same day; visitor B hit neither.
   // One, not two: the stage counts visitor-days with intent, not pages with intent. If
   // this ever reads 2, the funnel has started counting views and every rate below it is
@@ -583,26 +711,36 @@ async function main() {
     stage("Reached pricing or interest")?.count === 1,
     `got ${stage("Reached pricing or interest")?.count}`
   );
-  check("accounts counted", delta("Created an account") === 4, `delta ${delta("Created an account")}`);
+  const adminCounted = isDemoMode() ? 1 : 0;
   check(
-    "activation mirrors isOnboarded, not the bare column",
-    delta("Activated") === 3,
-    `delta ${delta("Activated")}; fun_active has a contact but no timestamp`
+    "accounts counted, Orbit's own left out",
+    delta("Created an account") === 6 + adminCounted,
+    `delta ${delta("Created an account")}; six fixture accounts plus fun_admin only in demo mode`
   );
   check(
-    "paid counts a Lifetime purchase as well as MRR",
+    "activation is scored on mature accounts only",
+    stage("Activated")?.ofLabel?.includes("7+ days") === true,
+    stage("Activated")?.ofLabel ?? "no label"
+  );
+  check(
+    "activation mirrors isOnboarded, not the bare column",
+    delta("Activated") === 4 + adminCounted,
+    `delta ${delta("Activated")}; fun_active has a contact but no timestamp, fun_fresh is too new`
+  );
+  check(
+    "paid counts a Lifetime purchase as well as MRR, and not a full refund",
     delta("Paid") === 2,
-    `delta ${delta("Paid")}; a mrr_delta_cents-only test would say 1`
+    `delta ${delta("Paid")}; a mrr_delta_cents-only test would say 1, ignoring refunds 3`
   );
   check(
     "an account older than the first recorded view is not counted",
-    delta("Created an account") === 4,
+    delta("Created an account") === 6 + adminCounted,
     `delta ${delta("Created an account")}; fun_old predates tracking and must not be`
   );
   check(
     "the funnel says when its window was shortened",
-    (stage("Unique visitors")?.note ?? "").includes("when tracking began"),
-    stage("Unique visitors")?.note
+    (stage("Visitor-days")?.note ?? "").includes("when tracking began"),
+    stage("Visitor-days")?.note
   );
   check(
     "a signed-in customer is not a visitor in the acquisition funnel",
@@ -610,9 +748,11 @@ async function main() {
     `got ${stage("Reached pricing or interest")?.count}; fun_customer's signed-in /pricing view must not count`
   );
   check(
-    "every stage after the first carries a denominator",
-    funnel.slice(1).every((s) => s.of != null)
+    "every stage after the first carries a named denominator",
+    funnel.slice(1).every((s) => s.of != null && s.ofLabel != null)
   );
+  if (savedFunnelAdmins === undefined) delete process.env.ADMIN_USER_IDS;
+  else process.env.ADMIN_USER_IDS = savedFunnelAdmins;
 
   check("a small denominator withholds the percentage", formatRate(9, 14) === "9 of 14");
   check(
@@ -743,6 +883,9 @@ async function main() {
     JSON.stringify(capturesOut)
   );
 
+  // outreachByChannel counts every user's messages, and the database is shared with the other
+  // smokes (a seeded demo workspace sends some), so check what these rows add, not the totals.
+  const outreachBefore = await outreachByChannel("30d");
   const [campaign] = await db
     .insert(outreachCampaigns)
     .values({ userId: "eng_user", name: "Smoke campaign" })
@@ -761,12 +904,13 @@ async function main() {
     { prospectId: prospects[0].id, channel: "sms", status: "draft" },
   ]);
   const outreachOut = await outreachByChannel("30d");
+  const added = (channel: string) =>
+    (outreachOut.find((r) => r.channel === channel)?.count ?? 0) -
+    (outreachBefore.find((r) => r.channel === channel)?.count ?? 0);
   check(
     "counts only sent messages, by channel",
-    outreachOut.find((r) => r.channel === "email")?.count === 1 &&
-      outreachOut.find((r) => r.channel === "linkedin")?.count === 1 &&
-      !outreachOut.some((r) => r.channel === "sms"),
-    JSON.stringify(outreachOut)
+    added("email") === 1 && added("linkedin") === 1 && added("sms") === 0,
+    JSON.stringify({ before: outreachBefore, after: outreachOut })
   );
 
   const [thread] = await db
@@ -788,7 +932,8 @@ async function main() {
       status: "done",
       reason: "Merged by hand",
     },
-    // Matcher-generated, not the "Merge into…" button — must not be counted.
+    // Confirmed from the duplicate-review queue: the matcher's reason, but a person's
+    // decision — `mergeDuplicatePair` records no confidence. Counted.
     {
       userId: "eng_user",
       winnerContactId: randomUUID(),
@@ -797,9 +942,21 @@ async function main() {
       status: "done",
       reason: "Same full name",
     },
+    // The automatic sweep, same reason, with the confidence it always records. Not counted.
+    {
+      userId: "eng_user",
+      winnerContactId: randomUUID(),
+      loserContactId: randomUUID(),
+      loserSnapshot: {},
+      status: "done",
+      reason: "Same full name",
+      confidence: 0.6,
+    },
   ]);
   await db.insert(pageViews).values([
     { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/graph", createdAt: ago(1) },
+    { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/upgrade", createdAt: ago(1) },
+    // A reload of the same page by the same account: intent once, not twice.
     { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/upgrade", createdAt: ago(1) },
   ]);
   const depth = await engagementDepth("30d");
@@ -815,8 +972,8 @@ async function main() {
     `delta ${depth.chatQueries - depthBefore.chatQueries}`
   );
   check(
-    "counts only the hand-merge reason, not the matcher's",
-    depth.manualMerges - depthBefore.manualMerges === 1,
+    "counts person-confirmed merges from the button and the queue, not the sweep",
+    depth.manualMerges - depthBefore.manualMerges === 2,
     `delta ${depth.manualMerges - depthBefore.manualMerges}`
   );
   check(
@@ -825,7 +982,7 @@ async function main() {
     `delta ${depth.graphViews - depthBefore.graphViews}`
   );
   check(
-    "counts a signed-in /upgrade view",
+    "counts an account reaching /upgrade once, however many views",
     depth.upgradePageViews - depthBefore.upgradePageViews === 1,
     `delta ${depth.upgradePageViews - depthBefore.upgradePageViews}`
   );
@@ -898,7 +1055,8 @@ async function main() {
     trafficText.includes("not a headcount"),
     trafficText.slice(0, 400)
   );
-  check("it names the session measure honestly", trafficText.includes("first pageview to last"));
+  check("it names the session measure honestly", trafficText.includes("first view to last"));
+  check("it says bounces are marketing bounces", trafficText.includes("Marketing bounce"));
   check("it lists a country", trafficText.includes("US"), trafficText.slice(0, 600));
   check("it lists a referrer", trafficText.includes("news.ycombinator.com"));
 
@@ -916,13 +1074,14 @@ async function main() {
   const funnelPage = await FunnelPage({ searchParams: Promise.resolve({}) });
   const funnelText = textOf(funnelPage).join(" | ");
   check("the funnel page renders without throwing", funnelPage != null);
-  check("it names every stage", funnelText.includes("Unique visitors") && funnelText.includes("Paid"));
+  check("it names every stage", funnelText.includes("Visitor-days") && funnelText.includes("Paid"));
+  check("it names what each rate is a fraction of", funnelText.includes("Conversion"));
   check(
     "it warns these are not one group of people",
     funnelText.includes("These are not one group of people."),
     funnelText.slice(0, 400)
   );
-  check("it explains the Lifetime caveat", funnelText.includes("Paid includes Lifetime."));
+  check("it explains the Lifetime caveat", funnelText.includes("Paid includes Lifetime, net of refunds."));
 
   const engagementPage = await EngagementPage({ searchParams: Promise.resolve({}) });
   const engagementText = textOf(engagementPage).join(" | ");
@@ -1003,6 +1162,34 @@ async function main() {
   await beacon({ kind: "dwell", id: extRef, dwellMs: 12_000 });
   check("a dwell beacon through the route lands", (await viewOf(extRef))?.dwellMs === 12_000);
 
+  for (const roundTrip of ["https://checkout.stripe.com/c/pay/cs_x", "https://accounts.google.com/o/oauth2"]) {
+    const rtId = randomUUID();
+    await beacon({ kind: "view", id: rtId, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", referrer: roundTrip });
+    check(
+      `a round trip through ${new URL(roundTrip).host} is not a referral`,
+      (await viewOf(rtId))?.referrerHost == null,
+      `got ${(await viewOf(rtId))?.referrerHost}`
+    );
+    await db.delete(pageViews).where(eq(pageViews.id, rtId));
+  }
+
+  const optedOut = randomUUID();
+  await beacon({ kind: "view", id: optedOut, sessionId: randomUUID(), path: "/", url: "https://orbit.example/", referrer: null, internal: true });
+  check("an opted-out browser's view is recorded as internal", (await viewOf(optedOut))?.isInternal === true);
+
+  const scripted = randomUUID();
+  await beacon({ kind: "view", id: scripted, sessionId: randomUUID(), path: "/", url: "https://orbit.example/", referrer: null, automated: true });
+  check("a webdriver-driven browser is flagged as a bot", (await viewOf(scripted))?.isBot === true);
+  await db.delete(pageViews).where(inArray(pageViews.id, [optedOut, scripted]));
+
+  const savedVercelEnv = process.env.VERCEL_ENV;
+  process.env.VERCEL_ENV = "preview";
+  const previewId = randomUUID();
+  await beacon({ kind: "view", id: previewId, sessionId: randomUUID(), path: "/", url: "https://orbit.example/", referrer: null });
+  check("a preview deployment records nothing", (await viewOf(previewId)) == null);
+  if (savedVercelEnv === undefined) delete process.env.VERCEL_ENV;
+  else process.env.VERCEL_ENV = savedVercelEnv;
+
   const adminId = randomUUID();
   await beacon({ kind: "view", id: adminId, sessionId: randomUUID(), path: "/admin/analytics", url: "https://orbit.example/admin/analytics", referrer: null });
   check("the admin console is never recorded", (await viewOf(adminId)) == null);
@@ -1034,7 +1221,7 @@ async function main() {
 
   // Leave the shared database as we found it. 111 other scripts run against this same
   // PGlite directory, and several of them count users.
-  const fixtureUsers = ["fun_idle", "fun_active", "fun_lifetime", "fun_sub", "fun_old"];
+  const fixtureUsers = ["fun_idle", "fun_active", "fun_lifetime", "fun_sub", "fun_old", "fun_refunded", "fun_fresh", "fun_admin"];
   await db.delete(pageViews);
   await db.delete(contacts).where(inArray(contacts.userId, fixtureUsers));
   await db.delete(billingEvents).where(inArray(billingEvents.userId, fixtureUsers));

@@ -2,7 +2,7 @@
 
 import { Analytics, type BeforeSendEvent } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
-import { redactUrlForVendor } from "@/lib/analytics-routes";
+import { redactUrlForVendor } from "@/lib/analytics-redact";
 
 /**
  * Vercel Web Analytics and Speed Insights, with every event's URL redacted first.

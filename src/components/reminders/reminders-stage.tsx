@@ -52,6 +52,7 @@ import type {
   ReminderRow as ReminderRowData,
   RemindersPage,
 } from "@/lib/reminders-page";
+import { isQueuedOffline } from "@/lib/offline-queue-store";
 import { runToastAction } from "@/lib/toast";
 import type { TriageCommand } from "@/lib/triage-keys";
 import { cn } from "@/lib/utils";
@@ -184,6 +185,13 @@ export function RemindersStage({
   const [busy, setBusy] = useState(false);
 
   const rowRefs = useRef(new Map<string, HTMLLIElement>());
+  // Stable, so `ReminderRow`'s memo holds; each row wraps it in its own stable ref callback.
+  // Same effect on `rowRefs` as the old inline callback: set on attach, deleted on detach
+  // (including unmount).
+  const registerRow = useCallback((id: string, el: HTMLLIElement | null) => {
+    if (el) rowRefs.current.set(id, el);
+    else rowRefs.current.delete(id);
+  }, []);
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
@@ -381,9 +389,12 @@ export function RemindersStage({
           failure: "Couldn’t mark that done — try again?",
           refresh,
           undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
+          offline: { kind: "reminder.done", args: [id], subject: id },
         });
         refresh();
-        return res !== undefined;
+        // Queued offline counts as done here: the row stays gone, and the sync on
+        // reconnect makes it true.
+        return res !== undefined || isQueuedOffline(id);
       })
     );
   }
@@ -411,9 +422,10 @@ export function RemindersStage({
           failure: "Couldn’t snooze that — try again?",
           refresh,
           undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
+          offline: { kind: "reminder.reschedule", args: [id, ymd], subject: id },
         });
         refresh();
-        return res !== undefined;
+        return res !== undefined || isQueuedOffline(id);
       })
     );
   }
@@ -753,7 +765,7 @@ export function RemindersStage({
                           id={`bucket-${group.bucket}`}
                           className={cn(
                             "sticky top-0 z-10 flex items-center gap-2 border-b border-border/50 bg-card/95 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide backdrop-blur-sm sm:px-4",
-                            group.bucket === "overdue" ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"
+                            group.bucket === "overdue" ? "text-amber-700 dark:text-warning" : "text-muted-foreground"
                           )}
                         >
                           {DUE_BUCKET_LABELS[group.bucket]}
@@ -782,10 +794,7 @@ export function RemindersStage({
                             snoozeOpen={snoozeFor === item.id}
                             moreOpen={moreFor === item.id}
                             handlers={handlers}
-                            rowRef={(el) => {
-                              if (el) rowRefs.current.set(item.id, el);
-                              else rowRefs.current.delete(item.id);
-                            }}
+                            registerRow={registerRow}
                           />
                         ))}
                       </ul>

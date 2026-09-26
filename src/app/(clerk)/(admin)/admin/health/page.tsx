@@ -68,7 +68,7 @@ export default async function AdminHealthPage() {
     health.connections.length +
     health.calendars.length +
     health.imports.length +
-    health.missingKeyAccounts.length;
+    health.missingKeyTotal;
 
   const initialLive: HealthLiveData = { health, cron, webhooks, errors, outreach, ops };
 

@@ -1,9 +1,14 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
-import OpenAI from "openai";
-import { and, eq, gte, sql } from "drizzle-orm";
+// Types only at the top: the SDKs themselves load on the first client built. This module is
+// reached by most server routes (the app layout, the app pulse, health), and evaluating three
+// provider SDKs — @google/genai pulls google-auth-library, protobufjs and ws — was part of
+// every cold start for routes that never make a model call.
+import type Anthropic from "@anthropic-ai/sdk";
+import type { GoogleGenAI } from "@google/genai";
+import type OpenAI from "openai";
+import { and, eq, gte, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan } from "@/lib/entitlements";
@@ -20,6 +25,8 @@ import {
 } from "@/lib/ai-providers";
 import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
+import { deepgramEnabled } from "@/lib/deepgram";
+import { speechAllowance } from "@/lib/speech-quota";
 import {
   systemOneRequest,
   type SystemOneRequest,
@@ -99,6 +106,9 @@ const MANAGED_ENV: Record<AiProvider, string> = {
   gemini: "ORBIT_MANAGED_GEMINI_API_KEY",
   openai: "ORBIT_MANAGED_OPENAI_API_KEY",
   anthropic: "ORBIT_MANAGED_ANTHROPIC_API_KEY",
+  // Never read: MANAGED_PROVIDER_ORDER excludes openrouter, so managedKey() never looks this
+  // name up. Present only to satisfy the Record — Orbit holds no OpenRouter key.
+  openrouter: "ORBIT_MANAGED_OPENROUTER_API_KEY",
 };
 
 /**
@@ -111,6 +121,9 @@ const LOCAL_ENV: Record<AiProvider, string> = {
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  // Never read as a MANAGED key, for the same reason as MANAGED_ENV.openrouter above — but
+  // named to match anyway, in case something outside the gate ever reads it directly.
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 /**
@@ -155,6 +168,8 @@ export function managedKeysConfigured(): Record<AiProvider, boolean> {
     gemini: Boolean(managedKey("gemini")),
     openai: Boolean(managedKey("openai")),
     anthropic: Boolean(managedKey("anthropic")),
+    // Orbit holds no OpenRouter key — never a managed provider (managed-ai-policy.ts).
+    openrouter: false,
   };
 }
 
@@ -238,16 +253,80 @@ function keyFor(grant: AiGrant<AiProvider>, provider: AiProvider): string {
   return key;
 }
 
-export function geminiClient(grant: AiGrant<AiProvider>): GoogleGenAI {
-  return new GoogleGenAI({ apiKey: keyFor(grant, "gemini") });
+// The grant is checked before the SDK loads, so a forged or mismatched grant is refused
+// without ever importing a provider.
+export async function geminiClient(grant: AiGrant<AiProvider>): Promise<GoogleGenAI> {
+  const apiKey = keyFor(grant, "gemini");
+  const { GoogleGenAI } = await import("@google/genai");
+  return new GoogleGenAI({ apiKey });
 }
 
-export function openaiClient(grant: AiGrant<AiProvider>): OpenAI {
-  return new OpenAI({ apiKey: keyFor(grant, "openai") });
+export async function openaiClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  const apiKey = keyFor(grant, "openai");
+  const { default: OpenAI } = await import("openai");
+  return new OpenAI({ apiKey });
 }
 
-export function anthropicClient(grant: AiGrant<AiProvider>): Anthropic {
-  return new Anthropic({ apiKey: keyFor(grant, "anthropic") });
+export async function anthropicClient(grant: AiGrant<AiProvider>): Promise<Anthropic> {
+  const apiKey = keyFor(grant, "anthropic");
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  return new Anthropic({ apiKey });
+}
+
+/**
+ * OpenRouter is the OpenAI SDK pointed somewhere else. `keyFor` keeps the invariant that a
+ * grant minted for one provider cannot build another's client.
+ */
+export async function openrouterClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  const apiKey = keyFor(grant, "openrouter");
+  const { default: OpenAI } = await import("openai");
+  return new OpenAI({
+    apiKey,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": getAppBaseUrl(),
+      "X-Title": "Orbit",
+    },
+  });
+}
+
+/** Providers that speak the OpenAI wire format, so `ai.ts` can share one code path. */
+export function isOpenAiShaped(provider: AiProvider): boolean {
+  return provider === "openai" || provider === "openrouter";
+}
+
+export function openAiShapedClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  return grant.provider === "openrouter" ? openrouterClient(grant) : openaiClient(grant);
+}
+
+/**
+ * OpenRouter puts a `cost` field (USD, not micros) on the `usage` object of every response,
+ * with no extra request parameter needed — direct OpenAI's `usage` never carries it. The
+ * OpenAI SDK's own `usage` type has no such field, so this narrow shape exists to read it
+ * without an `as any`.
+ */
+export type OpenAiUsageWithCost = { usage?: { cost?: number } };
+
+/**
+ * USD × 1e6, or `null` when the response carried no `usage.cost` — always true for direct
+ * OpenAI, never true for OpenRouter.
+ */
+export function reportedCostMicros(response: OpenAiUsageWithCost): number | null {
+  const cost = response.usage?.cost;
+  return typeof cost === "number" ? Math.round(cost * 1_000_000) : null;
+}
+
+/**
+ * Orbit's payloads are private relationship notes, so every OpenRouter request constrains
+ * the upstream pool to providers that do not retain or train on what is sent.
+ *
+ * A helper rather than a spread at each call site on purpose: a privacy guarantee that
+ * depends on remembering to spread is one forgotten spread away from being off, and
+ * `smoke-provider-exhaustive` asserts no OpenRouter `.create(` bypasses this.
+ */
+export function withOpenRouterRouting<T extends object>(provider: AiProvider, params: T): T {
+  if (provider !== "openrouter") return params;
+  return { ...params, provider: { data_collection: "deny" } } as T;
 }
 
 /**
@@ -359,33 +438,44 @@ export function managedCostSql() {
 export async function managedUsageThisMonth(userId: string, now = new Date()): Promise<ManagedUsage> {
   const { start } = managedWindow(now);
   const db = await getDb();
-  const [row] = await db
-    .select({
-      spent: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
-      calls: sql<number>`count(*)::int`,
-    })
-    .from(usageEvents)
-    .where(
-      and(
-        eq(usageEvents.userId, userId),
-        eq(usageEvents.keyOwner, "orbit"),
-        gte(usageEvents.createdAt, start),
+  // Independent sums over two tables, so they go out together.
+  const [[row], [reserved]] = await Promise.all([
+    db
+      .select({
+        spent: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
+        calls: sql<number>`count(*)::int`,
+      })
+      .from(usageEvents)
+      .where(
+        and(
+          eq(usageEvents.userId, userId),
+          eq(usageEvents.keyOwner, "orbit"),
+          gte(usageEvents.createdAt, start),
+          // Deepgram rows carry keyOwner "orbit" too — it's Orbit's own key, but it is a hosted
+          // service metered by `speech_usage`, not an LLM call against the managed allowance.
+          // Without this exclusion, `UNPRICED_CALL_MICROS.transcription` (managedCostSql's
+          // fallback for a null-cost transcription row, which Deepgram rows always are — see
+          // the note in ai.ts) would charge every voice note against the same monthly cap that
+          // gates a Lifetime account's chat and capture calls, so recording a few voice notes
+          // could throttle that account out of its own AI completions.
+          ne(usageEvents.provider, "deepgram"),
+        ),
       ),
-    );
-  const [reserved] = await db
-    .select({
-      micros: sql<string>`coalesce(sum(${aiBatchJobs.estCostMicros}), 0)::bigint`,
-      calls: sql<string>`coalesce(sum(${aiBatchJobs.requestCount}), 0)::bigint`,
-    })
-    .from(aiBatchJobs)
-    .where(
-      and(
-        eq(aiBatchJobs.userId, userId),
-        eq(aiBatchJobs.keyOwner, "orbit"),
-        eq(aiBatchJobs.status, "submitted"),
-        gte(aiBatchJobs.createdAt, start),
+    db
+      .select({
+        micros: sql<string>`coalesce(sum(${aiBatchJobs.estCostMicros}), 0)::bigint`,
+        calls: sql<string>`coalesce(sum(${aiBatchJobs.requestCount}), 0)::bigint`,
+      })
+      .from(aiBatchJobs)
+      .where(
+        and(
+          eq(aiBatchJobs.userId, userId),
+          eq(aiBatchJobs.keyOwner, "orbit"),
+          eq(aiBatchJobs.status, "submitted"),
+          gte(aiBatchJobs.createdAt, start),
+        ),
       ),
-    );
+  ]);
   return {
     spentMicros: Number(row?.spent ?? 0) + Number(reserved?.micros ?? 0),
     calls: Number(row?.calls ?? 0) + Number(reserved?.calls ?? 0),
@@ -404,7 +494,12 @@ export function allowanceFrom(usage: ManagedUsage, now = new Date()): ManagedAll
 /* -------------------------------------------------------------------- the gate ------- */
 
 /**
- * One account's AI access, resolved once per AI call.
+ * One account's AI access: the settings read, plan and keys, resolved once per AI call — or
+ * once per request, when a request that makes several calls opens it once and passes it
+ * down (`/api/chat`; see `forUser`). Only the account READ is shared that way: the managed
+ * allowance is checked in `grant()`, so every `completion()` / `embedding()` on a shared
+ * access still sums this month's usage afresh, including what earlier calls in the same
+ * request spent.
  *
  * Built by `resolveAiAccess`. Decrypts only what exists and holds the plaintext privately;
  * callers only ever see grants.
@@ -425,7 +520,10 @@ export class AiAccess {
   ) {}
 
   static async open(userId: string, opts: AiAccessOptions = {}): Promise<AiAccess> {
-    let row = await loadAccount(userId);
+    if (opts.row && opts.row.userId !== userId) {
+      throw new Error("AiAccess.open was handed another account's settings row");
+    }
+    let row = opts.row !== undefined ? (opts.row ?? undefined) : await loadAccount(userId);
     let plan = resolvePlan(row).plan;
     let upgradePending = false;
 
@@ -455,6 +553,7 @@ export class AiAccess {
       gemini: decryptOrNull(row?.geminiApiKeyEncrypted),
       openai: decryptOrNull(row?.openaiApiKeyEncrypted),
       anthropic: decryptOrNull(row?.anthropicApiKeyEncrypted),
+      openrouter: decryptOrNull(row?.openrouterApiKeyEncrypted),
     };
     for (const [provider, key] of Object.entries(decrypted)) {
       if (key) personal[provider as AiProvider] = key;
@@ -486,6 +585,16 @@ export class AiAccess {
     return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed, decisionKey);
   }
 
+  /**
+   * This access, for a call made on behalf of `userId` — the idiom every `access?` parameter
+   * uses: `access?.forUser(userId) ?? (await resolveAiAccess(userId))`. An access opened for
+   * another account is a programming error, never something to bill: it throws.
+   */
+  forUser(userId: string): AiAccess {
+    if (this.userId !== userId) throw new Error("AiAccess was opened for another account");
+    return this;
+  }
+
   get selectedProvider(): AiProvider {
     return resolveAiProvider(this.settings?.aiProvider);
   }
@@ -503,11 +612,14 @@ export class AiAccess {
         gemini: Boolean(this.personal.gemini),
         openai: Boolean(this.personal.openai),
         anthropic: Boolean(this.personal.anthropic),
+        openrouter: Boolean(this.personal.openrouter),
       },
       managed: {
         gemini: Boolean(this.managed.gemini),
         openai: Boolean(this.managed.openai),
         anthropic: Boolean(this.managed.anthropic),
+        // Orbit holds no OpenRouter key — never a managed provider (managed-ai-policy.ts).
+        openrouter: false,
       },
     };
   }
@@ -624,6 +736,14 @@ export type AiAccessOptions = {
    * test passes a stand-in so the "just paid" states can be exercised without it.
    */
   retrieveSession?: SessionRetriever;
+  /**
+   * The account's whole `user_settings` row, when the caller already holds it — the one
+   * `requireAuthenticatedUser()` returns is the same full-row read. Skips the gate's own
+   * read; `null` means "no row". Only pass a row read in the same request: the plan is
+   * resolved from it. The re-read after a just-granted Lifetime checkout still happens, so
+   * that write is always what the grants are built from.
+   */
+  row?: AccountRow | null;
 };
 
 /** The one entry point. Every AI call in `ai.ts` starts here. */
@@ -649,7 +769,7 @@ export type AiAccessStatus = {
   hasPersonalKey: boolean;
   /** This deployment holds at least one managed key. */
   managedConfigured: boolean;
-  /** Voice and meeting capture have an engine (see `AiAccess.canTranscribe`). */
+  /** Voice and meeting capture have an engine — Deepgram's quota or `AiAccess.canTranscribe()`. */
   canTranscribe: boolean;
   /** This month's managed allowance — eligible accounts only. */
   allowance: ManagedAllowance | null;
@@ -668,10 +788,15 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   const choice = chooseCompletionKey(facts);
   const now = new Date();
 
-  const allowance =
-    access.eligibility && MANAGED_AI_ENABLED
-      ? allowanceFrom(await managedUsageThisMonth(userId, now), now)
-      : null;
+  // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
+  // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
+  // callers rely on. Read alongside the managed allowance, but only once `resolveAiAccess`
+  // has settled: that can grant a just-paid Lifetime plan, and the speech limit is per plan.
+  const [usage, speech] = await Promise.all([
+    access.eligibility && MANAGED_AI_ENABLED ? managedUsageThisMonth(userId, now) : null,
+    deepgramEnabled() ? speechAllowance(userId, "shortform") : null,
+  ]);
+  const allowance = usage ? allowanceFrom(usage, now) : null;
 
   let reason: AiAccessDenial | null = null;
   if (!choice.ok) {
@@ -679,6 +804,8 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   } else if (choice.source === "managed" && allowance && !managedCallAllowed(allowance, "status")) {
     reason = "managed_limit";
   }
+
+  const deepgram = speech ? !speech.exhausted : false;
 
   return {
     ready: reason === null,
@@ -691,7 +818,7 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
     eligibility: access.eligibility,
     hasPersonalKey: facts.personal[facts.selectedProvider],
     managedConfigured: Object.values(managedKeysConfigured()).some(Boolean),
-    canTranscribe: access.canTranscribe(),
+    canTranscribe: deepgram || access.canTranscribe(),
     allowance,
   };
 }
@@ -709,6 +836,7 @@ export function aiReadyFromSettings(
     geminiApiKeyEncrypted?: string | null;
     openaiApiKeyEncrypted?: string | null;
     anthropicApiKeyEncrypted?: string | null;
+    openrouterApiKeyEncrypted?: string | null;
     compedPlan?: "orbit" | "lifetime" | null;
     lifetimePurchasedAt?: Date | null;
     subscriptionPlan?: "orbit" | null;
@@ -727,6 +855,7 @@ export function aiReadyFromSettings(
       gemini: Boolean(row?.geminiApiKeyEncrypted),
       openai: Boolean(row?.openaiApiKeyEncrypted),
       anthropic: Boolean(row?.anthropicApiKeyEncrypted),
+      openrouter: Boolean(row?.openrouterApiKeyEncrypted),
     },
     managed: configured,
   });

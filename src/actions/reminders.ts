@@ -1,6 +1,7 @@
 "use server";
 
 import { and, eq, inArray } from "drizzle-orm";
+import { cache } from "react";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
@@ -11,7 +12,7 @@ import {
   type ReminderActionKind,
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
-import { requireUserId, getDisplayProfile } from "@/lib/auth";
+import { requireAuthenticatedUser, requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -30,14 +31,17 @@ import {
   ensureReminderLists,
   findReminderListForUser,
   getInboxListId,
+  inboxIdFromLists,
   normalizeListName,
 } from "@/lib/reminder-lists";
 import { resolveTimeZone, TZ_COOKIE } from "@/lib/reminder-due-bucket";
 import {
+  assertReminderContactOwned,
   createReminderForUser,
   scheduleContactFollowUpForUser,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
+import { settle, unwrap } from "@/lib/settled";
 import {
   REMINDERS_PAGE_SIZE,
   isReminderSource,
@@ -114,8 +118,9 @@ export async function fetchDashboard() {
   //
   // Started alongside the load rather than awaited ahead of it: on every visit but an
   // account's first, this is a one-row existence check that used to add a whole round
-  // trip in front of everything else. When it DID build (returns true), the load below
-  // raced it and may have read an empty queue, so it is simply run again — once, ever.
+  // trip in front of everything else. When the build actually put rows in the queue (returns
+  // true), the load below raced it and may have read an empty queue, so it is simply run
+  // again — once, ever. A build that found nothing to suggest changed nothing to re-read.
   const ensured = ensureOutreachSuggestions(userId).catch(() => false);
   // Calendar sync and the suggestion rebuild are slow; run both after the
   // response instead of on the dashboard's critical path. Suggestions are
@@ -174,6 +179,19 @@ async function viewerTimeZone() {
 }
 
 /**
+ * `ensureReminderLists`, deduplicated within one server render. The /reminders page loads
+ * the rail and the first page in parallel and each needs the lists, so on a render they
+ * share one read (and, on a brand-new account, one Inbox insert instead of two racing on
+ * the unique name index, the loser falling back to a re-read of the same rows).
+ *
+ * Scoped to these two READ loaders only — never wrapped around `ensureReminderLists`
+ * itself, whose write paths must see lists created earlier in the same request. React's
+ * `cache()` is per request during a render and a pass-through in a Server Action, so
+ * paging from the client (`loadRemindersPage` as an action) reads fresh every time.
+ */
+const ensureReminderListsForRender = cache(ensureReminderLists);
+
+/**
  * The reminders rail: lists with their pending counts, and the smart-view counts. Separate
  * from `loadRemindersPage` so paging and filtering never recount the rail.
  */
@@ -185,7 +203,7 @@ export async function loadReminderRail(): Promise<{
   const userId = await requireUserId();
   const db = await getDb();
   const [lists, tz] = await Promise.all([
-    ensureReminderLists(userId),
+    ensureReminderListsForRender(userId),
     viewerTimeZone(),
   ]);
   const inboxId =
@@ -220,7 +238,8 @@ export async function loadRemindersPage(
   const userId = await requireUserId();
   const db = await getDb();
   const [inboxId, tz] = await Promise.all([
-    getInboxListId(userId),
+    // `getInboxListId`, over the render-shared lists read (see above).
+    ensureReminderListsForRender(userId).then(inboxIdFromLists),
     viewerTimeZone(),
   ]);
 
@@ -313,7 +332,10 @@ export async function updateReminder(
   if (input.dueDate !== undefined) {
     patch.dueDate = input.dueDate ? new Date(input.dueDate) : null;
   }
-  if (input.contactId !== undefined) patch.contactId = input.contactId;
+  if (input.contactId !== undefined) {
+    await assertReminderContactOwned(userId, input.contactId);
+    patch.contactId = input.contactId;
+  }
   if (input.listId !== undefined) {
     if (input.listId) {
       const list = await findReminderListForUser(userId, input.listId);
@@ -542,12 +564,26 @@ export async function scheduleContactFollowUpAt(
 ) {
   const userId = await requireUserId();
   const db = await getDb();
-  const inboxId = await getInboxListId(userId);
-
-  const contact = await db.query.contacts.findFirst({
+  // The inbox lookup (which lazily creates the Inbox, before any not-found check — as it
+  // always has), the contact and its pending reminder need nothing from each other, so all
+  // three start together. Outcomes are taken in the old order: an inbox failure first, then
+  // the contact read and its not-found, then the date check, then the reminder. The
+  // reminder read is scoped to this user, so starting it early reads nothing foreign.
+  const inboxRead = settle(getInboxListId(userId));
+  const contactRead = settle(db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: { id: true, fullName: true, preferredName: true },
-  });
+  }));
+  const existingRead = settle(db.query.reminders.findFirst({
+    where: and(
+      eq(reminders.userId, userId),
+      eq(reminders.contactId, contactId),
+      eq(reminders.status, "pending")
+    ),
+  }));
+  const inboxId = unwrap(await inboxRead);
+
+  const contact = unwrap(await contactRead);
   if (!contact) throw new Error("Contact not found");
 
   const due = new Date(`${dateIso}T12:00:00`);
@@ -561,13 +597,7 @@ export async function scheduleContactFollowUpAt(
     contactId,
   });
 
-  const existing = await db.query.reminders.findFirst({
-    where: and(
-      eq(reminders.userId, userId),
-      eq(reminders.contactId, contactId),
-      eq(reminders.status, "pending")
-    ),
-  });
+  const existing = unwrap(await existingRead);
 
   let row;
   if (existing) {
@@ -996,12 +1026,15 @@ export async function undoBulkReminderAction(snapshot: BulkReminderSnapshot) {
 
 /** Full inbox for the in-app notifications panel. */
 export async function listNotificationPanel() {
-  const userId = await requireUserId();
+  // The gate's row is handed on: in a Server Action `cache()` is a pass-through, so the
+  // panel's entitlements and alerts would otherwise each read it again.
+  const { userId, settings } = await requireAuthenticatedUser();
   const { isAdminUser } = await import("@/lib/admin");
   const { isViewingAsUser } = await import("@/lib/surface-visibility");
 
   const panel = await loadNotificationPanel(userId, new Date(), {
     withAlerts: true,
+    settings,
   });
 
   return {
@@ -1025,10 +1058,10 @@ export async function listNotificationPanel() {
 /** Lightweight payload for browser/desktop notification polling. */
 export async function listDueNotificationItems() {
   const { getDesktopNotifiedIds } = await import("@/actions/notifications");
-  const userId = await requireUserId();
+  const { userId, settings } = await requireAuthenticatedUser();
   const [notifiedIds, panel] = await Promise.all([
     getDesktopNotifiedIds(),
-    loadNotificationPanel(userId, new Date(), { withAlerts: false }),
+    loadNotificationPanel(userId, new Date(), { withAlerts: false, settings }),
   ]);
   const notified = new Set(notifiedIds);
 

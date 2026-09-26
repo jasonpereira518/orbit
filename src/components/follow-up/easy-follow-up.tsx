@@ -8,7 +8,10 @@ import {
   scheduleContactFollowUp,
 } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
-import { FollowUpDraftSheetLazy } from "@/components/follow-up/follow-up-draft-sheet-lazy";
+import {
+  FollowUpDraftSheetLazy,
+  preloadFollowUpDraftSheet,
+} from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
@@ -137,6 +140,9 @@ export function EasyFollowUp({
             size="sm"
             disabled={pending}
             className="h-8 px-2.5"
+            // Warm the draft sheet's code on the way to the click, so it opens at once.
+            onPointerEnter={preloadFollowUpDraftSheet}
+            onFocus={preloadFollowUpDraftSheet}
             onClick={openFollowUp}
           >
             Follow up

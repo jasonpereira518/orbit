@@ -12,11 +12,13 @@ export default function NotFound() {
       <p className="text-muted-foreground">
         That route doesn’t exist — or the link may be out of date.
       </p>
+      {/* One way out, to `/`, and deliberately not "Go to dashboard": the root not-found
+          is rendered into EVERY page's payload as its boundary fallback, the waitlist's
+          included, so an app path named here ships in the waitlist's HTML. From `/` a
+          signed-in user is one click from the app (in stealth mode, `/` IS the way in).
+          See lib/waitlist-host.ts. */}
       <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        <Link href="/dashboard" className={cn(buttonVariants())}>
-          Go to dashboard
-        </Link>
-        <Link href="/" className={cn(buttonVariants({ variant: "outline" }))}>
+        <Link href="/" className={cn(buttonVariants())}>
           Back to home
         </Link>
       </div>

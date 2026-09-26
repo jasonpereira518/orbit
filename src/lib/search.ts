@@ -90,6 +90,8 @@ export async function upsertContactEmbedding(
             eq(contactEmbeddings.sourceType, sourceType),
             eq(contactEmbeddings.sourceId, sourceId)
           ),
+          // Only the id and hash are read below — never the stored vector (jsonb) or text.
+          columns: { id: true, contentHash: true },
         })
       : undefined;
 
@@ -218,6 +220,55 @@ type ContactEmbeddingSource = {
 };
 
 /**
+ * Exactly the contact columns and relations `buildContactEmbeddingContent` (and the split
+ * below) reads, plus `id`. Every loader that feeds it used to pull the whole contact —
+ * inline base64 avatar, every enrichment column — and the whole profile and experience
+ * rows, to read these. Relation row order is untouched (only the selected fields narrow),
+ * so tag order and `orderExperiences`' tie-break by input position come out the same.
+ */
+export const CONTACT_EMBEDDING_COLUMNS = {
+  id: true,
+  fullName: true,
+  preferredName: true,
+  title: true,
+  company: true,
+  location: true,
+  email: true,
+  phone: true,
+  linkedinUrl: true,
+  website: true,
+  aiSummary: true,
+  notes: true,
+  metContext: true,
+  dateMet: true,
+  howMet: true,
+  keyFacts: true,
+  opportunities: true,
+} as const;
+
+export const CONTACT_EMBEDDING_WITH = {
+  contactTags: {
+    columns: { tagId: true },
+    with: { tag: { columns: { name: true } } },
+  },
+  profile: { columns: { about: true, headline: true } },
+  experiences: {
+    columns: {
+      kind: true,
+      organization: true,
+      title: true,
+      fieldOfStudy: true,
+      startYear: true,
+      startMonth: true,
+      endYear: true,
+      endMonth: true,
+      isCurrent: true,
+      sortIndex: true,
+    },
+  },
+} as const;
+
+/**
  * Embedding-content audit (spec §3), re-checked in Task 6:
  *
  * 1. This function never absorbs content that has its own source row. LinkedIn messages
@@ -321,11 +372,8 @@ export async function rebuildContactEmbedding(
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    with: {
-      contactTags: { with: { tag: true } },
-      profile: true,
-      experiences: true,
-    },
+    columns: CONTACT_EMBEDDING_COLUMNS,
+    with: CONTACT_EMBEDDING_WITH,
   });
   if (!contact) return false;
 
@@ -364,11 +412,8 @@ export async function rebuildContactEmbeddingsBatch(
   const db = await getDb();
   const rows = await db.query.contacts.findMany({
     where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
-    with: {
-      contactTags: { with: { tag: true } },
-      profile: true,
-      experiences: true,
-    },
+    columns: CONTACT_EMBEDDING_COLUMNS,
+    with: CONTACT_EMBEDDING_WITH,
   });
 
   const existing = await db.query.contactEmbeddings.findMany({

@@ -230,7 +230,8 @@ export function SceneFinale({
  * answers ship in the document for anyone who opens them (and for search).
  * The button above creates a FREE account, so no answer may promise a Pro
  * feature as if it came with it. "Does Orbit email people for me? Yes" was cut
- * for exactly that: Gmail sync and sending are Pro (plan-copy.ts).
+ * for exactly that: outreach campaigns that send on Orbit's own credits are
+ * Pro (plan-copy.ts) — connecting Gmail itself is free on every plan.
  */
 function FinaleCloser({
   clerkOn,
