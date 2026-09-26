@@ -5315,6 +5315,12 @@
         "label": "Anthropic",
         "hasPersonalKey": false,
         "managedAvailable": false
+      },
+      {
+        "id": "openrouter",
+        "label": "OpenRouter",
+        "hasPersonalKey": false,
+        "managedAvailable": false
       }
     ],
     "outreach": {

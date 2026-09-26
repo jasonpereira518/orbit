@@ -21,6 +21,7 @@ import { getDb, rowsOf } from "@/db";
 import { eventAttendees, events, type EventRecord } from "@/db/schema";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { personKeyOf } from "@/lib/events/people";
+import { UserFacingError } from "@/lib/errors";
 import type {
   AttendeeRole,
   AttendeeSource,
@@ -186,6 +187,36 @@ export async function getEventForUser(
   return row ?? null;
 }
 
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Throws unless `eventId` is one of `userId`'s events.
+ *
+ * The write paths below insert child rows (attendees, companies) that carry the caller's
+ * `user_id` but ANOTHER row's `event_id`, and their `ON CONFLICT (event_id, …)` updates
+ * reach rows that already exist on that event. So an event id taken from a client must be
+ * proven the caller's before anything is written against it — a scoped WHERE on the child
+ * row cannot do that.
+ */
+export async function assertEventOwnedBy(userId: string, eventId: string): Promise<void> {
+  if (!UUID_SHAPE.test(eventId)) throw new EventNotFoundError();
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: events.id })
+    .from(events)
+    .where(and(eq(events.id, eventId), eq(events.userId, userId)))
+    .limit(1);
+  if (!row) throw new EventNotFoundError();
+}
+
+/** A `UserFacingError`, so an action's caller sees the message rather than a digest. */
+export class EventNotFoundError extends UserFacingError {
+  constructor() {
+    super("That event no longer exists");
+    this.name = "EventNotFoundError";
+  }
+}
+
 export async function listRosterForUser(
   userId: string,
   eventId: string
@@ -279,9 +310,15 @@ export async function updateEventForUser(
   }
 ): Promise<void> {
   const db = await getDb();
+  // Identity columns are never an edit, whatever a caller let through.
+  const { userId: _owner, id: _id, createdAt: _created, ...safe } = patch as typeof patch & {
+    userId?: unknown;
+    id?: unknown;
+    createdAt?: unknown;
+  };
   await db
     .update(events)
-    .set({ ...patch, updatedAt: new Date() })
+    .set({ ...safe, updatedAt: new Date() })
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));
 }
 
@@ -313,6 +350,7 @@ export async function upsertEventAttendees(
   source: AttendeeSource
 ): Promise<number> {
   if (attendees.length === 0) return 0;
+  await assertEventOwnedBy(userId, eventId);
   const db = await getDb();
 
   const values = attendees.map((a) => {

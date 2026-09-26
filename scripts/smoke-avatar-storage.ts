@@ -10,7 +10,9 @@ import type { AddressInfo } from "node:net";
 import {
   AvatarStorageError,
   downloadAndPersistAvatar,
+  downloadImageBytes,
   isDurableAvatarUrl,
+  parseImageDataUrl,
 } from "../src/lib/contact-avatar";
 
 // 1x1 JPEG — real enough for sharp to decode, small enough to inline.
@@ -39,20 +41,66 @@ async function withEnv(
 
 async function main() {
   const bytes = Buffer.from(PIXEL_JPEG_BASE64, "base64");
+  let serverHits = 0;
   const server = createServer((_req, res) => {
+    serverHits++;
     res.writeHead(200, { "Content-Type": "image/jpeg" });
     res.end(bytes);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const photoUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/photo.jpg`;
+  // The fixture server is on loopback, which the production SSRF guard refuses (checked
+  // below), so storage is exercised through the unguarded seam.
+  const local = { fetch: (url: string, init: RequestInit) => fetch(url, init) };
 
   try {
+    // --- SSRF: the default download path is guarded ---------------------------------------
+    // A photo URL is user-supplied (the extension's `photoUrl`, a scraped og:image), so it
+    // must never reach loopback, private ranges or the metadata address.
+    const hitsBefore = serverHits;
+    if ((await downloadImageBytes(photoUrl)) !== null || serverHits !== hitsBefore) {
+      throw new Error("expected the guarded download to refuse a loopback photo URL");
+    }
+
+    // A public host that redirects inward: the guard must run again on the next hop.
+    const realFetch = globalThis.fetch;
+    const asked: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      asked.push(String(input));
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://169.254.169.254/latest/meta-data/" },
+      });
+    }) as typeof fetch;
+    try {
+      const got = await downloadImageBytes("https://93.184.216.34/photo.jpg");
+      if (got !== null || asked.length !== 1) {
+        throw new Error(`expected the redirect to the metadata address to be refused, asked ${asked.join(", ")}`);
+      }
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    // --- Stored-XSS: never serve script-capable image types from Orbit's origin ----------
+    if (parseImageDataUrl("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=") !== null) {
+      throw new Error("expected an SVG data URL to be rejected");
+    }
+    if (!parseImageDataUrl(`data:image/jpeg;base64,${PIXEL_JPEG_BASE64}`)) {
+      throw new Error("expected a JPEG data URL to parse");
+    }
+    if (isDurableAvatarUrl("https://evil.example/.public.blob.vercel-storage.com/x.jpg")) {
+      throw new Error("expected a Blob-looking path on another host not to count as durable");
+    }
+    if (!isDurableAvatarUrl("https://abc123.public.blob.vercel-storage.com/avatars/x.jpg")) {
+      throw new Error("expected a real Blob store URL to count as durable");
+    }
+
     // Without Blob credentials the photo must still land somewhere durable,
     // instead of silently resolving to null for every single contact.
     await withEnv(
       { BLOB_READ_WRITE_TOKEN: undefined, BLOB_STORE_ID: undefined },
       async () => {
-        const stored = await downloadAndPersistAvatar("contact-1", photoUrl);
+        const stored = await downloadAndPersistAvatar("contact-1", photoUrl, local);
         if (!stored) {
           throw new Error("expected a stored photo when Blob is unconfigured");
         }
@@ -69,7 +117,7 @@ async function main() {
       async () => {
         let thrown: unknown;
         try {
-          await downloadAndPersistAvatar("contact-2", photoUrl);
+          await downloadAndPersistAvatar("contact-2", photoUrl, local);
         } catch (err) {
           thrown = err;
         }
@@ -80,6 +128,7 @@ async function main() {
         }
       }
     );
+
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

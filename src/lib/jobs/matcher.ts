@@ -126,7 +126,15 @@ async function loadWatchers(pivot: string = crypto.randomUUID()): Promise<Map<st
       company: contacts.company,
     })
     .from(contactOpportunities)
-    .innerJoin(contacts, eq(contacts.id, contactOpportunities.contactId))
+    // Same owner on both sides: an opportunity's contactId must never surface a contact from
+    // another account in this user's suggestions.
+    .innerJoin(
+      contacts,
+      and(
+        eq(contacts.id, contactOpportunities.contactId),
+        eq(contacts.userId, contactOpportunities.userId)
+      )
+    )
     .where(
       and(
         // Both lists come from `opportunity-kinds.ts` rather than being re-typed here: the

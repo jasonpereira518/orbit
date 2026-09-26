@@ -308,6 +308,10 @@ export async function submitAiBatch(
     return null;
   }
 
+  // No batch adapter exists for OpenRouter yet — nothing calls it until a later task wires
+  // its client. The ordinary (non-batch) completion path handles it instead.
+  if (grant.provider === "openrouter") return null;
+
   // The operation's tier, exactly as the inline path picks it (`completeJson`): a batched
   // recruiter scan ran on the person's full model while the eval measured — and the inline
   // path used — the fast one, so batching at half price still cost more than not batching.

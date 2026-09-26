@@ -96,7 +96,7 @@ export async function fetchOutlookContactPhoto(
     const accessToken = await getOutlookAccessToken(userId);
     const res = await fetch(
       `https://graph.microsoft.com/v1.0/me/contacts/${outlookContactId}/photo/$value`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000) }
     );
     if (!res.ok) return null;
 

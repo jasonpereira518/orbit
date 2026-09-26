@@ -13,6 +13,9 @@ import {
   type MicrosoftPurpose,
 } from "@/lib/microsoft-scopes";
 
+/** Token exchange and refresh sit on the shared sync path; a hung provider must not hold it. */
+const OAUTH_FETCH_TIMEOUT_MS = 10_000;
+
 // No module-wide scope list any more: each entry point asks for its own scope through
 // `microsoftScopesFor(purpose)` in src/lib/microsoft-scopes.ts (audit B5, Microsoft side).
 
@@ -165,6 +168,7 @@ export async function exchangeCodeForTokens(code: string): Promise<TokenResponse
     `https://login.microsoftonline.com/${tenant()}/oauth2/v2.0/token`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
@@ -194,6 +198,7 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
     `https://login.microsoftonline.com/${tenant()}/oauth2/v2.0/token`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         refresh_token: refreshToken,
@@ -428,6 +433,7 @@ export async function getValidAccessToken(
 export async function fetchMicrosoftProfileEmail(accessToken: string) {
   const res = await fetch("https://graph.microsoft.com/v1.0/me", {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error("Failed to load Microsoft profile");
   const data = (await res.json()) as { mail?: string; userPrincipalName?: string };
@@ -478,6 +484,8 @@ export async function fetchOutlookContacts(
   while (url) {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      // A page of contacts, not a token call: longer, but still bounded.
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) {
       const text = await res.text();

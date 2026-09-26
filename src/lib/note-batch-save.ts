@@ -369,7 +369,14 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     // pointing at somebody else's contact. It also covers the honest case: a contact deleted
     // between the parse and the save, which reads here as exactly what it is, a name in the
     // note that no longer links to anyone.
-    const claimedIds = [...new Set((input.mentions ?? []).map((m) => m.contactId).filter((id): id is string => Boolean(id)))];
+    // Commitments carry browser-supplied contact ids too (they become reminders below).
+    const claimedIds = [
+      ...new Set(
+        [...(input.mentions ?? []), ...input.commitments]
+          .map((m) => m.contactId)
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
     const ownedIds = new Set<string>(
       claimedIds.length
         ? (await db
@@ -410,7 +417,13 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
 
     // 2. Dated commitments → reminder drafts.
     for (const c of input.commitments) {
-      const contactId = c.contactId ?? (c.personName ? contactIdByName.get(c.personName.trim().toLowerCase()) ?? null : null);
+      // A claimed id counts only if it is this user's (checked above) or was created by this
+      // batch; otherwise fall back to the name, exactly as if no id had been sent.
+      const claimed =
+        c.contactId && (ownedIds.has(c.contactId) || participantIds.has(c.contactId))
+          ? c.contactId
+          : null;
+      const contactId = claimed ?? (c.personName ? contactIdByName.get(c.personName.trim().toLowerCase()) ?? null : null);
       drafts.push({
         contactId,
         sourceInteractionId: contactId ? interactionIdByContact.get(contactId) ?? null : null,
