@@ -59,6 +59,11 @@ export type OpsSnapshot = {
   stripeCheckoutErrorsLastHour: number;
   /** `error_events` rows from `resend.rejected` in the last hour. */
   resendRejectedLastHour: number;
+  /**
+   * `error_events` rows from `ai.security` in the last hour, and how many accounts they span.
+   * Optional so a snapshot built before this existed still evaluates.
+   */
+  aiSecurityLastHour?: { events: number; accounts: number };
   wedgedImports: number;
   failedImportsLast24h: number;
   outreach: { overdue: number; oldestOverdueDays: number | null };
@@ -120,6 +125,13 @@ export const REMIND_AFTER_MS: Record<OpsSeverity, number | null> = {
 
 const WEBHOOK_STREAK = 3;
 export const PARTIAL_STREAK = 3;
+
+/**
+ * `ai.security` rows in an hour that open the condition. Each row is already throttled to one
+ * per (kind, account) per ten minutes, so five is five distinct episodes — a single agent
+ * tripping one wire once is noise; several in an hour is someone probing.
+ */
+export const AI_SECURITY_ALERT_EVENTS = 5;
 const FAILED_IMPORT_BURST = 3;
 const ERROR_BURST = 5;
 const PERF_SLOW_BURST = 3;
@@ -245,6 +257,19 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: unattributed.fulfilments > 0 ? "critical" : "warning",
       title: unattributed.fulfilments > 0 ? "Someone paid and has no plan" : "Stripe events match no account",
       detail: `${unattributed.fulfilments} checkout fulfilment(s) and ${unattributed.other} other Stripe event(s) in the last day matched no Orbit account. error_events (source stripe.unattributed) holds each event id.`,
+      href: "/admin/health",
+    });
+  }
+
+  const aiSec = s.aiSecurityLastHour;
+  if (aiSec && aiSec.events >= AI_SECURITY_ALERT_EVENTS) {
+    out.push({
+      id: "ai.security",
+      // Critical when it is not one account: several accounts tripping guards in the same hour
+      // looks like a poisoned shared source (a recruiter row, an event page) or a campaign.
+      severity: aiSec.accounts >= 3 ? "critical" : "warning",
+      title: "AI guardrails are tripping",
+      detail: `${aiSec.events} AI security event(s) across ${aiSec.accounts} account(s) in the last hour — refused tool calls, oversized MCP batches, draft floods or scrubbed answers. error_events (source ai.security) holds the kind and account of each.`,
       href: "/admin/health",
     });
   }

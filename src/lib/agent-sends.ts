@@ -20,7 +20,7 @@
  * and closing that hole also closed the pre-existing one where contact follow-up emails
  * skipped the cap (see `countSendsToday`).
  */
-import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { agentSendRequests, contacts, type AgentSendRequest } from "@/db/schema";
 import { sanitizeAgentText } from "@/lib/mcp/sanitize";
@@ -31,6 +31,70 @@ export const AGENT_SEND_TTL_DAYS = 7;
 
 /** Bodies are bounded so one tool call cannot stage a megabyte of text. */
 export const MAX_BODY_CHARS = 5_000;
+
+/**
+ * Drafts that may wait for approval at once.
+ *
+ * The approval card is the security boundary, and a boundary a person has to click through
+ * two hundred times is one they stop reading. An injected agent's best play against a human
+ * check is volume — bury one exfiltration draft among a flood of plausible ones — so the
+ * queue is bounded and the agent is told to wait rather than allowed to stack more.
+ */
+export const MAX_PENDING_AGENT_SENDS = 20;
+
+export class AgentSendLimitError extends Error {
+  constructor() {
+    super(
+      `There are already ${MAX_PENDING_AGENT_SENDS} drafts waiting for the user's approval. ` +
+        "Ask them to review those before drafting more."
+    );
+    this.name = "AgentSendLimitError";
+  }
+}
+
+/**
+ * How far the approval card can vouch for the recipient. Computed on the server from the
+ * user's own contacts — never from anything the agent said about who the message is for.
+ *
+ *   - `linked_contact` — the address IS the email of the contact the draft is attached to.
+ *   - `known_contact`  — the address belongs to one of the user's contacts.
+ *   - `mismatch`       — the draft is attached to a contact, but goes somewhere else. This is
+ *                        the spoof to catch: "to attacker@evil.example · Priya Shah" reads as
+ *                        a message to Priya.
+ *   - `unknown`        — nobody the user knows.
+ *
+ * Anything but the first two needs an extra, explicit confirmation to send, enforced in
+ * `approveAgentSend`, not only drawn on the card.
+ */
+export type RecipientTrust = "linked_contact" | "known_contact" | "mismatch" | "unknown";
+
+export function classifyRecipient(
+  toEmail: string,
+  linkedContactEmail: string | null | undefined,
+  knownEmails: ReadonlySet<string>
+): RecipientTrust {
+  const to = toEmail.trim().toLowerCase();
+  const linked = linkedContactEmail?.trim().toLowerCase() || null;
+  if (linked && linked === to) return "linked_contact";
+  if (linked) return "mismatch";
+  return knownEmails.has(to) ? "known_contact" : "unknown";
+}
+
+export function recipientNeedsConfirmation(trust: RecipientTrust): boolean {
+  return trust === "mismatch" || trust === "unknown";
+}
+
+/** The user's contacts' emails among `emails`, lowercased. One indexed query. */
+async function knownContactEmails(userId: string, emails: string[]): Promise<Set<string>> {
+  const wanted = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  if (!wanted.length) return new Set();
+  const db = await getDb();
+  const rows = await db
+    .select({ email: sql<string>`lower(${contacts.email})` })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(sql`lower(${contacts.email})`, wanted)));
+  return new Set(rows.map((r) => r.email));
+}
 
 export type CreateAgentSendInput = {
   toEmail: string;
@@ -48,6 +112,8 @@ export type AgentSendSummary = {
   body: string;
   contactId: string | null;
   contactName: string | null;
+  /** See `RecipientTrust`. The card warns, and approval demands a second confirmation. */
+  recipientTrust: RecipientTrust;
   clientName: string | null;
   createdAt: string;
   expiresAt: string;
@@ -70,6 +136,18 @@ export async function createAgentSendRequest(
   input: CreateAgentSendInput
 ): Promise<{ id: string; approveUrl: string; expiresAt: Date }> {
   const db = await getDb();
+
+  const [pending] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(agentSendRequests)
+    .where(
+      and(
+        eq(agentSendRequests.userId, userId),
+        eq(agentSendRequests.status, "pending"),
+        sql`${agentSendRequests.expiresAt} > now()`
+      )
+    );
+  if ((pending?.count ?? 0) >= MAX_PENDING_AGENT_SENDS) throw new AgentSendLimitError();
 
   let contactId: string | null = null;
   if (input.contactId) {
@@ -104,7 +182,7 @@ export async function createAgentSendRequest(
 }
 
 function toSummary(
-  row: AgentSendRequest & { contactName?: string | null }
+  row: AgentSendRequest & { contactName?: string | null; recipientTrust: RecipientTrust }
 ): AgentSendSummary {
   return {
     id: row.id,
@@ -114,6 +192,7 @@ function toSummary(
     body: row.body,
     contactId: row.contactId,
     contactName: row.contactName ?? null,
+    recipientTrust: row.recipientTrust,
     clientName: row.clientName,
     createdAt: row.createdAt.toISOString(),
     expiresAt: row.expiresAt.toISOString(),
@@ -132,7 +211,18 @@ export async function getAgentSendRequest(
     where: and(eq(agentSendRequests.id, id), eq(agentSendRequests.userId, userId)),
   });
   if (!row) return null;
-  return toSummary(await withExpiry(row));
+  const linked = row.contactId
+    ? await db.query.contacts.findFirst({
+        where: and(eq(contacts.id, row.contactId), eq(contacts.userId, userId)),
+        columns: { fullName: true, email: true },
+      })
+    : null;
+  const known = await knownContactEmails(userId, [row.toEmail]);
+  return toSummary({
+    ...(await withExpiry(row)),
+    contactName: linked?.fullName ?? null,
+    recipientTrust: classifyRecipient(row.toEmail, linked?.email, known),
+  });
 }
 
 /** Everything still awaiting a decision, newest first. */
@@ -143,15 +233,24 @@ export async function listPendingAgentSends(userId: string): Promise<AgentSendSu
     .select({
       row: agentSendRequests,
       contactName: contacts.fullName,
+      contactEmail: contacts.email,
     })
     .from(agentSendRequests)
-    .leftJoin(contacts, eq(contacts.id, agentSendRequests.contactId))
+    // Joined on the owner too: `contactId` is resolved to the caller's own contact when the
+    // draft is created, and this keeps that true even if a row were ever written otherwise.
+    .leftJoin(
+      contacts,
+      and(eq(contacts.id, agentSendRequests.contactId), eq(contacts.userId, agentSendRequests.userId))
+    )
     .where(
       and(eq(agentSendRequests.userId, userId), eq(agentSendRequests.status, "pending"))
     )
     .orderBy(desc(agentSendRequests.createdAt))
     .limit(50);
-  return rows.map(({ row, contactName }) => toSummary({ ...row, contactName }));
+  const known = await knownContactEmails(userId, rows.map(({ row }) => row.toEmail));
+  return rows.map(({ row, contactName, contactEmail }) =>
+    toSummary({ ...row, contactName, recipientTrust: classifyRecipient(row.toEmail, contactEmail, known) })
+  );
 }
 
 /** Count of pending drafts, for a badge. */

@@ -40,7 +40,9 @@ import {
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { findConfidentDuplicate } from "@/lib/contact-resolve";
 import { sanitizeAgentText } from "@/lib/mcp/sanitize";
+import { cleanAgentContactFields, recordAiSecurityEvent } from "@/lib/ai-security";
 import {
+  AgentSendLimitError,
   createAgentSendRequest,
   getAgentSendRequest,
   MAX_BODY_CHARS,
@@ -764,13 +766,22 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       userId,
       args: { to: string; subject?: string; body: string; contactId?: string; clientName?: string }
     ) {
-      const draft = await createAgentSendRequest(userId, {
-        toEmail: args.to,
-        subject: args.subject,
-        body: args.body,
-        contactId: args.contactId,
-        clientName: args.clientName,
-      });
+      let draft: Awaited<ReturnType<typeof createAgentSendRequest>>;
+      try {
+        draft = await createAgentSendRequest(userId, {
+          toEmail: args.to,
+          subject: args.subject,
+          body: args.body,
+          contactId: args.contactId,
+          clientName: args.clientName,
+        });
+      } catch (err) {
+        if (err instanceof AgentSendLimitError) {
+          void recordAiSecurityEvent({ kind: "draft_flood", userId, surface: "mcp.request_send" });
+          return toolError(err.message);
+        }
+        throw err;
+      }
       return {
         status: "pending_approval",
         sent: false,
@@ -841,9 +852,13 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         howMet?: string;
       }
     ) {
-      const { contactId, ...fields } = args;
+      const { contactId, ...raw } = args;
       const existing = await ownedContact(userId, contactId);
       if (!existing) return toolError("No such contact.");
+      // Every field cleaned, not only the prose ones: a name, title or company is read into
+      // Orbit's chat prompt as a row, and a link ends up in an `href`.
+      const { fields, badUrl } = cleanAgentContactFields(raw);
+      if (badUrl) return toolError("linkedinUrl must be an http(s) URL.");
 
       // An allowlist, spelled out field by field rather than spread from the arguments.
       // The tool's own schema already bounds this, but `updateContactForUser` accepts a
@@ -856,8 +871,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         ...(fields.location !== undefined ? { location: fields.location } : {}),
         ...(fields.email !== undefined ? { email: fields.email } : {}),
         ...(fields.linkedinUrl !== undefined ? { linkedinUrl: fields.linkedinUrl } : {}),
-        ...(fields.notes !== undefined ? { notes: sanitizeAgentText(fields.notes) } : {}),
-        ...(fields.howMet !== undefined ? { howMet: sanitizeAgentText(fields.howMet) } : {}),
+        ...(fields.notes !== undefined ? { notes: fields.notes } : {}),
+        ...(fields.howMet !== undefined ? { howMet: fields.howMet } : {}),
       };
       if (Object.keys(patch).length === 0) {
         return { updated: false, error: "Nothing to change." };
@@ -1049,6 +1064,17 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         force: boolean;
       }
     ) {
+      const cleaned = cleanAgentContactFields({
+        fullName: args.fullName,
+        company: args.company,
+        title: args.title,
+        linkedinUrl: args.linkedinUrl,
+        notes: args.notes,
+        howMet: args.howMet,
+      });
+      if (cleaned.badUrl) return toolError("linkedinUrl must be an http(s) URL.");
+      if (!cleaned.fields.fullName) return toolError("fullName is required.");
+      args = { ...args, ...cleaned.fields, fullName: cleaned.fields.fullName };
       if (!args.force) {
         // Bounded the same way /api/v1/contacts is: an indexed `contact_identities`
         // lookup for the identifier tiers, then a narrow by-name scan — never a
@@ -1082,8 +1108,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
             company: args.company,
             title: args.title,
             linkedinUrl: args.linkedinUrl,
-            notes: args.notes ? sanitizeAgentText(args.notes) : undefined,
-            howMet: args.howMet ? sanitizeAgentText(args.howMet) : undefined,
+            notes: args.notes || undefined,
+            howMet: args.howMet || undefined,
             source: "mcp",
           },
           // A tool call has no page to revalidate, and the `(app)` group is already

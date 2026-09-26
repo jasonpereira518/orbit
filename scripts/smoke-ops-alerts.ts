@@ -197,6 +197,13 @@ function main() {
     find({ ...HEALTHY, resendRejectedLastHour: 1 }, "resend.rejected")?.severity === "warning");
   check("…whose detail names the usual cause",
     Boolean(find({ ...HEALTHY, resendRejectedLastHour: 3 }, "resend.rejected")?.detail.includes("RESEND_FROM_EMAIL")));
+  check("AI guardrails quiet → no ai.security condition", !find(HEALTHY, "ai.security"));
+  check("a few AI security events is below the threshold",
+    !find({ ...HEALTHY, aiSecurityLastHour: { events: 4, accounts: 1 } }, "ai.security"));
+  check("five AI security events from one account → ai.security (warning)",
+    find({ ...HEALTHY, aiSecurityLastHour: { events: 5, accounts: 1 } }, "ai.security")?.severity === "warning");
+  check("AI security events across three accounts → critical (a poisoned shared source)",
+    find({ ...HEALTHY, aiSecurityLastHour: { events: 6, accounts: 3 } }, "ai.security")?.severity === "critical");
   check("a wedged import → warning", find({ ...HEALTHY, wedgedImports: 1 }, "import.wedged")?.severity === "warning");
   check("three failed imports in 24h → import.failed_burst", Boolean(find({ ...HEALTHY, failedImportsLast24h: 3 }, "import.failed_burst")));
   check("two failed imports is not a burst", !find({ ...HEALTHY, failedImportsLast24h: 2 }, "import.failed_burst"));

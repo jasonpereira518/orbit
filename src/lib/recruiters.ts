@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { cleanSingleLine } from "@/lib/ai-security";
 import {
   recruiters,
   userRecruiterLinks,
@@ -327,7 +328,20 @@ export async function upsertCanonicalRecruiter(
   opts: { contributePii?: boolean; createdByUserId?: string } = {}
 ): Promise<Recruiter> {
   const db = await getDb();
-  const fullName = input.fullName.trim();
+  // Cleaned before anything else sees it. This row is SHARED across accounts once anyone
+  // contributes to it, and its name, firm and specialty are read into other users' chat
+  // prompts — often from a model's classification of an inbound email the recruiter wrote.
+  // One line each, bounded, with invisible and executable content removed.
+  input = {
+    ...input,
+    fullName: cleanSingleLine(input.fullName, 120) ?? "",
+    firm: cleanSingleLine(input.firm, 120),
+    specialty: (input.specialty ?? [])
+      .map((s) => cleanSingleLine(s, 60))
+      .filter((s): s is string => Boolean(s))
+      .slice(0, 10),
+  };
+  const fullName = input.fullName;
   if (!fullName) throw new Error("Recruiter name is required");
   // Matching may use every identifier; WRITING contact details to the shared row needs consent.
   const shared = opts.contributePii

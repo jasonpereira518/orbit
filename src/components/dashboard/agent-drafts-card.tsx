@@ -16,9 +16,10 @@
  * irreversible, so it costs a deliberate click.
  */
 import { useState, useTransition } from "react";
-import { Bot, Check, ChevronDown, X } from "lucide-react";
+import { AlertTriangle, Bot, Check, ChevronDown, X } from "lucide-react";
 import { approveAgentDraft, rejectAgentDraft } from "@/actions/agent-sends";
 import type { AgentSendSummary } from "@/lib/agent-sends";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -58,11 +59,15 @@ function DraftRow({ draft, onDone }: { draft: AgentSendSummary; onDone: () => vo
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState(draft.body);
   const [pending, startTransition] = useTransition();
+  // The server refuses these without `confirmRecipient` (see `approveAgentSend`); the
+  // checkbox is how a person gives it, after reading the address in full.
+  const needsConfirm = draft.recipientTrust === "mismatch" || draft.recipientTrust === "unknown";
+  const [confirmed, setConfirmed] = useState(false);
 
   function onApprove() {
     startTransition(async () => {
       try {
-        const result = await approveAgentDraft(draft.id, { body });
+        const result = await approveAgentDraft(draft.id, { body, confirmRecipient: needsConfirm && confirmed });
         if (!result.ok) {
           toast.error(result.error);
           return;
@@ -98,9 +103,10 @@ function DraftRow({ draft, onDone }: { draft: AgentSendSummary; onDone: () => vo
           <p className="truncate text-sm font-medium">
             {draft.subject || "(no subject)"}
           </p>
-          <p className="text-muted-foreground truncate font-mono text-xs">
+          <p className="text-muted-foreground break-all font-mono text-xs">
             to {draft.toEmail}
-            {draft.contactName ? ` · ${draft.contactName}` : " · not in your contacts"}
+            {draft.recipientTrust === "linked_contact" && draft.contactName ? ` · ${draft.contactName}` : ""}
+            {draft.recipientTrust === "known_contact" ? " · in your contacts" : ""}
           </p>
         </div>
         {draft.clientName ? (
@@ -128,12 +134,27 @@ function DraftRow({ draft, onDone }: { draft: AgentSendSummary; onDone: () => vo
         </p>
       ) : null}
 
+      {needsConfirm ? (
+        <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs" role="alert">
+          <p className="flex items-start gap-1.5 font-medium">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            {draft.recipientTrust === "mismatch"
+              ? `Attached to ${draft.contactName ?? "a contact"}, but addressed to ${draft.toEmail} — not their email.`
+              : `${draft.toEmail} isn’t anyone in your contacts.`}
+          </p>
+          <label className="flex items-center gap-2">
+            <Checkbox checked={confirmed} onCheckedChange={(v) => setConfirmed(v === true)} />
+            I checked this address and want to send to it
+          </label>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)}>
           <ChevronDown className="size-4" aria-hidden />
           {open ? "Collapse" : "Read and edit"}
         </Button>
-        <Button size="sm" variant="secondary" disabled={pending} onClick={onApprove}>
+        <Button size="sm" variant="secondary" disabled={pending || (needsConfirm && !confirmed)} onClick={onApprove}>
           <Check className="size-4" aria-hidden />
           Send it
         </Button>
