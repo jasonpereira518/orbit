@@ -1193,6 +1193,16 @@ CREATE TABLE IF NOT EXISTS constellation_settings (
   updated_by text,
   CONSTRAINT constellation_settings_single_row CHECK (id = 1)
 );
+CREATE TABLE IF NOT EXISTS org_brand_colors (
+  name_key text NOT NULL,
+  kind text NOT NULL,
+  name text NOT NULL,
+  hex text,
+  domain text,
+  source text NOT NULL,
+  resolved_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind);
 CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
@@ -2004,7 +2014,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 103 = page_views.is_internal (traffic analytics accuracy pass). Rescanned every remote ref,
 // every local branch and every worktree's working file on Sep 24 2026: 102 was the highest
 // claimed anywhere.
-export const SCHEMA_VERSION = 103;
+//
+// 110 = org_brand_colors (learned brand colors for companies and schools the curated table
+// does not know). NOT 104–109: rescanned every remote ref, every local branch and every
+// worktree's working file on Sep 26 2026 — main is at 103, branches reach 108, and a
+// worktree's working file claims 109.
+export const SCHEMA_VERSION = 110;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3640,6 +3655,9 @@ const alters = [
   // at query time, which covers every row from before this column without the migration
   // having to know ADMIN_USER_IDS. The index lives in the template (step 4 of applySchema).
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS is_internal boolean NOT NULL DEFAULT false`,
+  // Schema v110: learned brand colors for companies and schools outside the curated table.
+  `CREATE TABLE IF NOT EXISTS org_brand_colors (name_key text NOT NULL, kind text NOT NULL, name text NOT NULL, hex text, domain text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,
 ];
 
 /**

@@ -12,6 +12,9 @@ import { MANAGED_AI_ENABLED } from "@/lib/managed-ai-policy";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
+import { LearnedBrandColors } from "@/components/layout/learned-brand-colors";
+import { registerLearnedBrands } from "@/lib/brand-colors";
+import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
@@ -123,10 +126,22 @@ export default async function AppLayout({
   // layout that wraps the whole product, because the nav lives in client components that
   // cannot read the database themselves. `hiddenForUsers` rides along so an exempt operator
   // can be shown a "Hidden" tag on items their users are not getting — see `AppSidebar`.
-  const [{ plan }, visibility] = await Promise.all([
+  //
+  // `brandColors` is the brand color Orbit has learned for each of the viewer's companies and
+  // schools that the curated table does not know, plus which ones it has not looked up yet.
+  // Those are learned after the response is sent, so a newly added company shows its own
+  // color from the next page load on. A failed read costs only the colors, never the page.
+  const [{ plan }, visibility, brandColors] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
+    loadOrgBrandColors(userId).catch(() => ({ learned: [], missing: [] })),
   ]);
+  // The server-component realm has its own copy of the registry; the client component below
+  // fills the SSR and browser ones.
+  registerLearnedBrands(brandColors.learned);
+  if (brandColors.missing.length) {
+    after(() => learnOrgBrandColors(userId, brandColors.missing).catch(() => {}));
+  }
 
   // Whether "Lifetime includes AI" is true on this deployment — see LifetimeAiOfferProvider.
   // False while managed AI is off, even on a dev server holding its own local keys: those
@@ -136,6 +151,9 @@ export default async function AppLayout({
 
   return (
     <LifetimeAiOfferProvider value={lifetimeIncludesAi}>
+      {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
+          color the shell and the page ask for is registered by then. */}
+      <LearnedBrandColors brands={brandColors.learned} />
       <AppShell
       clerkOn={clerkOn}
       demoMode={demoMode}
