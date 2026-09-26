@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   chatMessages,
@@ -37,6 +37,9 @@ import { actionFailure } from "@/lib/action-failure";
 
 
 
+/** Threads the history rail lists. Older ones are still reachable by link and by search. */
+const CHAT_THREAD_LIST_LIMIT = 200;
+
 export async function listChatThreads() {
   const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
@@ -49,7 +52,89 @@ export async function listChatThreads() {
       createdAt: true,
       updatedAt: true,
     },
+    // Unbounded, a years-old account's rail was every conversation it ever had.
+    limit: CHAT_THREAD_LIST_LIMIT,
   });
+}
+
+/** Messages a thread opens with, and each "show earlier" page after that. */
+const CHAT_MESSAGE_PAGE = 60;
+
+type ChatDb = Awaited<ReturnType<typeof getDb>>;
+
+/**
+ * One page of a thread's active messages, oldest first, ending just before `before` (or at
+ * the newest message). A page never starts on an answer whose question is on the previous
+ * page: that row is left for the page before, so a question and its answer always arrive
+ * together. `earlierCount` is how many active messages precede the page.
+ */
+async function loadMessagePage(
+  db: ChatDb,
+  userId: string,
+  threadId: string,
+  beforeId: string | null
+) {
+  const scope = and(
+    eq(chatMessages.threadId, threadId),
+    eq(chatMessages.userId, userId),
+    eq(chatMessages.isActive, true)
+  );
+  // Compared against the anchor ROW, in SQL: a JS Date carries milliseconds and created_at
+  // carries microseconds, so passing the timestamp through would skip rows in that gap.
+  const olderThan = (id: string) =>
+    sql`(${chatMessages.createdAt}, ${chatMessages.id}) < (select m.created_at, m.id from chat_messages m where m.id = ${id}::uuid)`;
+  const beforeCond = beforeId ? olderThan(beforeId) : undefined;
+  const newestFirst = await db.query.chatMessages.findMany({
+    where: beforeCond ? and(scope, beforeCond) : scope,
+    orderBy: [desc(chatMessages.createdAt), desc(chatMessages.id)],
+    limit: CHAT_MESSAGE_PAGE + 1,
+  });
+  let page = newestFirst.slice(0, CHAT_MESSAGE_PAGE).reverse();
+  const more = newestFirst.length > CHAT_MESSAGE_PAGE;
+  if (more && page[0]?.role === "assistant") page = page.slice(1);
+  let earlierCount = 0;
+  if (more && page[0]) {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(chatMessages)
+      .where(
+        and(scope, olderThan(page[0].id))
+      );
+    earlierCount = row?.n ?? 0;
+  }
+  return { messages: page, earlierCount };
+}
+
+/**
+ * Which of these assistant messages' drafts have already been emailed. Derived, not stored:
+ * the send claims an interaction row keyed `chat-send:<messageId>:<contactId>`, so that row
+ * IS the record, and a reloaded card cannot offer to send again what the timeline says was
+ * sent.
+ *
+ * Filtered to these messages, with no row cap. It used to take the first 500 of the user's
+ * sends in no particular order, so past 500 sends a thread's markers dropped out at random
+ * and a reloaded card offered to email someone a second time.
+ */
+async function sentMarkers(db: ChatDb, userId: string, messages: Array<{ id: string; role: string }>) {
+  const messageIds = new Set(messages.filter((m) => m.role === "assistant").map((m) => m.id));
+  const sent: Record<string, Record<string, string>> = {};
+  if (messageIds.size === 0) return sent;
+  const claims = await db
+    .select({ externalId: interactions.externalId, at: interactions.interactionDate })
+    .from(interactions)
+    .where(
+      and(
+        eq(interactions.userId, userId),
+        eq(interactions.source, "chat_send"),
+        inArray(sql`split_part(${interactions.externalId}, ':', 2)`, [...messageIds])
+      )
+    );
+  for (const claim of claims) {
+    const match = /^chat-send:([^:]+):([^:]+)$/.exec(claim.externalId ?? "");
+    if (!match || !messageIds.has(match[1]!)) continue;
+    (sent[match[1]!] ??= {})[match[2]!] = claim.at.toISOString();
+  }
+  return sent;
 }
 
 export async function getChatThread(threadId: string) {
@@ -61,51 +146,35 @@ export async function getChatThread(threadId: string) {
   });
   if (!thread) throw new Error("Chat not found");
 
-  const messages = await db.query.chatMessages.findMany({
-    where: and(
-      eq(chatMessages.threadId, threadId),
-      eq(chatMessages.userId, userId),
-      eq(chatMessages.isActive, true)
-    ),
-    orderBy: [asc(chatMessages.createdAt)],
-  });
+  // The newest page, not the whole thread: a long-running conversation used to load every
+  // message with every answer's evidence and activity on each open. Earlier pages load on
+  // request (`getEarlierChatMessages`).
+  const { messages, earlierCount } = await loadMessagePage(db, userId, threadId, null);
 
   // Every version of the LAST turn, for the switcher — only the last turn ever has more than
   // one. `versions` is empty for a thread with no messages or whose last turn was never
   // versioned, which is the common case and costs nothing extra to detect.
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-  const versions = lastAssistant?.slot
-    ? await loadVersions(db, userId, threadId, lastAssistant.slot)
-    : [];
+  const [versions, sent] = await Promise.all([
+    lastAssistant?.slot ? loadVersions(db, userId, threadId, lastAssistant.slot) : Promise.resolve([]),
+    sentMarkers(db, userId, messages),
+  ]);
 
-  // Which drafts in this thread have already been emailed. Derived, not stored: the send
-  // claims an interaction row keyed `chat-send:<messageId>:<contactId>`, so that row IS the
-  // record, and a reloaded card cannot offer to send again what the timeline says was sent.
-  //
-  // Filtered to THIS thread's messages, with no row cap. It used to take the first 500 of
-  // the user's sends in no particular order, so past 500 sends a thread's markers dropped
-  // out at random and a reloaded card offered to email someone a second time.
-  const messageIds = new Set(messages.filter((m) => m.role === "assistant").map((m) => m.id));
-  const sent: Record<string, Record<string, string>> = {};
-  if (messageIds.size > 0) {
-    const claims = await db
-      .select({ externalId: interactions.externalId, at: interactions.interactionDate })
-      .from(interactions)
-      .where(
-        and(
-          eq(interactions.userId, userId),
-          eq(interactions.source, "chat_send"),
-          inArray(sql`split_part(${interactions.externalId}, ':', 2)`, [...messageIds])
-        )
-      );
-    for (const claim of claims) {
-      const match = /^chat-send:([^:]+):([^:]+)$/.exec(claim.externalId ?? "");
-      if (!match || !messageIds.has(match[1]!)) continue;
-      (sent[match[1]!] ??= {})[match[2]!] = claim.at.toISOString();
-    }
-  }
+  return { thread, messages, sent, versions, versionSlot: lastAssistant?.slot ?? null, earlierCount };
+}
 
-  return { thread, messages, sent, versions, versionSlot: lastAssistant?.slot ?? null };
+/** The page of a thread's messages before `beforeId` (the oldest one on screen). */
+export async function getEarlierChatMessages(threadId: string, beforeId: string) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  // The anchor must be this user's, in this thread; the page query is scoped the same way.
+  const anchor = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.id, beforeId), eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
+    columns: { id: true },
+  });
+  if (!anchor) return { messages: [], sent: {}, earlierCount: 0 };
+  const { messages, earlierCount } = await loadMessagePage(db, userId, threadId, anchor.id);
+  return { messages, sent: await sentMarkers(db, userId, messages), earlierCount };
 }
 
 export async function createChatThread() {

@@ -38,6 +38,7 @@ import {
   createChatThread,
   deleteChatThread,
   getChatThread,
+  getEarlierChatMessages,
   listChatThreads,
   switchChatVersion,
   updateChatThreadContext,
@@ -241,6 +242,39 @@ function initialQuestionFromUrl() {
 
 type LoadedThread = Awaited<ReturnType<typeof getChatThread>>;
 
+/** Stored rows → what the panel renders. Shared by a thread's first page and its earlier ones. */
+function toThreadMessages(
+  rows: LoadedThread["messages"],
+  sent: LoadedThread["sent"]
+): ThreadMessage[] {
+  return rows.map((row) =>
+    row.role === "user"
+      ? {
+          id: row.id,
+          role: "user" as const,
+          content: row.content,
+          mentionNames: row.attachedContacts?.length
+            ? row.attachedContacts.map((c) => c.name)
+            : undefined,
+        }
+      : {
+          id: row.id,
+          role: "assistant" as const,
+          answer: row.content,
+          recommendations: row.recommendations || [],
+          // Answers written before this column existed have none, and simply show no
+          // summary rather than a fabricated one.
+          steps: row.activity ?? undefined,
+          evidence: row.evidence ?? undefined,
+          proposedActions: row.proposedActions ?? undefined,
+          feedback: row.feedback ?? null,
+          // It came out of the database, so by definition there is a row to rate.
+          persisted: true,
+          sentTo: sent[row.id],
+        }
+  );
+}
+
 export function ChatPanel({
   initialThreads = null,
 }: {
@@ -332,6 +366,9 @@ export function ChatPanel({
     busy && !messages.some((m) => m.role === "assistant" && m.streaming);
   const reduceMotion = usePrefersReducedMotion();
   const listRef = useRef<HTMLDivElement>(null);
+  /** Messages older than the first one loaded. A thread opens on its newest page. */
+  const [earlierCount, setEarlierCount] = useState(0);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   /** The `+` menu is outside the field, so it reaches the splice through here. */
@@ -671,34 +708,10 @@ export function ChatPanel({
       setEditingUserId(null);
       stickToBottomRef.current = true;
     }
-    const next: ThreadMessage[] = rows.map((row) =>
-      row.role === "user"
-        ? {
-            id: row.id,
-            role: "user" as const,
-            content: row.content,
-            mentionNames: row.attachedContacts?.length
-              ? row.attachedContacts.map((c) => c.name)
-              : undefined,
-          }
-        : {
-            id: row.id,
-            role: "assistant" as const,
-            answer: row.content,
-            recommendations: row.recommendations || [],
-            // Answers written before this column existed have none, and simply show no
-            // summary rather than a fabricated one.
-            steps: row.activity ?? undefined,
-            evidence: row.evidence ?? undefined,
-            proposedActions: row.proposedActions ?? undefined,
-            feedback: row.feedback ?? null,
-            // It came out of the database, so by definition there is a row to rate.
-            persisted: true,
-            sentTo: sent[row.id],
-          }
-    );
+    const next = toThreadMessages(rows, sent);
     messagesRef.current = next;
     setMessages(next);
+    setEarlierCount(loaded.earlierCount);
     const lastUser = [...rows].reverse().find((row) => row.role === "user");
     setLastUserQuery(lastUser?.content ?? "");
     if (opening) {
@@ -707,6 +720,36 @@ export function ChatPanel({
     }
     return next;
   }, [clearComposer, scrollToBottom, setContextNotes]);
+
+  /**
+   * Prepend the page before the oldest message on screen, keeping what the reader is looking
+   * at where it is: the list grows ABOVE the viewport, so the scroll offset moves by exactly
+   * the height added.
+   */
+  const loadEarlier = useCallback(async () => {
+    const oldest = messagesRef.current[0];
+    const id = threadIdRef.current;
+    if (!oldest || !id || loadingEarlier) return;
+    setLoadingEarlier(true);
+    try {
+      const page = await getEarlierChatMessages(id, oldest.id);
+      if (threadIdRef.current !== id) return;
+      const el = listRef.current;
+      const before = el ? el.scrollHeight - el.scrollTop : 0;
+      const next = [...toThreadMessages(page.messages, page.sent), ...messagesRef.current];
+      stickToBottomRef.current = false;
+      messagesRef.current = next;
+      setMessages(next);
+      setEarlierCount(page.earlierCount);
+      requestAnimationFrame(() => {
+        if (el) el.scrollTop = el.scrollHeight - before;
+      });
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t load earlier messages — try again?"));
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [loadingEarlier]);
 
   /**
    * Open a saved thread. `prefetched: true` — only from a history click — lets it use a read
@@ -812,6 +855,7 @@ export function ChatPanel({
         setThreadId(created.id);
         setThreadTitle(created.title);
         setMessages([]);
+        setEarlierCount(0);
         clearComposer();
         setLastUserQuery("");
         resetContext();
@@ -842,6 +886,7 @@ export function ChatPanel({
             setThreadId(null);
             setThreadTitle(null);
             setMessages([]);
+            setEarlierCount(0);
             clearComposer();
             resetContext();
           }
@@ -1494,6 +1539,22 @@ export function ChatPanel({
                       </p>
                     </div>
                   )}
+
+                  {earlierCount > 0 && messages.length > 0 ? (
+                    <div className="flex justify-center">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-muted-foreground"
+                        onClick={() => void loadEarlier()}
+                        disabled={loadingEarlier}
+                      >
+                        {loadingEarlier ? <Loader2 className="size-4 animate-spin" /> : null}
+                        Show {earlierCount.toLocaleString()} earlier {earlierCount === 1 ? "message" : "messages"}
+                      </Button>
+                    </div>
+                  ) : null}
 
                   {messages.map((msg, i) => {
                     // Only the pair that ends the thread can be edited or regenerated —

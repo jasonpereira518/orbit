@@ -325,6 +325,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scale-sweep-guards": "pglite",
   "smoke-dashboard-reminders": "pglite",
   "smoke-contact-timeline-window": "pglite",
+  "smoke-chat-thread-paging": "pglite",
   "smoke-import-people": "pglite",
   "smoke-drive-import": "pglite",
   "smoke-import-stall": "pglite",
