@@ -640,6 +640,9 @@ export function BulkNotesPanel({
 
     const totalBytes = pages.reduce((sum, page) => sum + page.bytes, 0);
     if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+      // Refused before the transition whose `finally` releases them, so release here: each
+      // page's preview is an object URL over a ~1 MB Blob that nothing else will revoke.
+      for (const page of pages) releaseScanPage(page);
       toast.error(
         `Those pages total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer at a time`
       );

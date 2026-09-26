@@ -12,7 +12,6 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
-  ArrowRight,
   BellPlus,
   CalendarClock,
   CornerDownLeft,
@@ -55,6 +54,8 @@ export type PaletteAskMode = "bar" | "chat" | null;
 type Command = PaletteEntry & {
   icon: LucideIcon;
   hint?: string;
+  /** Shown on an empty palette. The rest wait for a search, so recent people stay in view. */
+  featured?: boolean;
 };
 
 type Row = {
@@ -62,6 +63,8 @@ type Row = {
   group: string;
   label: ReactNode;
   hint?: ReactNode;
+  /** Keep the hint on every row, not just the highlighted one — a person's company is who they are. */
+  hintAlways?: boolean;
   icon: ReactNode;
   run: () => void;
   /** A route worth fetching in full while this row is highlighted — a person's profile. */
@@ -76,6 +79,7 @@ const ACTIONS: Command[] = [
   {
     id: "action:capture",
     label: "New capture",
+    featured: true,
     hint: "Paste notes or upload photos",
     href: "/capture",
     icon: Sparkles,
@@ -84,6 +88,7 @@ const ACTIONS: Command[] = [
   {
     id: "action:voice",
     label: "Record a voice note",
+    featured: true,
     href: "/capture?mode=voice",
     icon: Mic,
     keywords: "dictate audio speak capture microphone",
@@ -99,6 +104,7 @@ const ACTIONS: Command[] = [
   {
     id: "action:add-contact",
     label: "Add a contact",
+    featured: true,
     href: "/contacts/new",
     icon: UserPlus,
     keywords: "new person create",
@@ -114,6 +120,7 @@ const ACTIONS: Command[] = [
   {
     id: "action:new-reminder",
     label: "New reminder",
+    featured: true,
     href: "/reminders?new=1",
     icon: BellPlus,
     keywords: "add create task follow up remind todo",
@@ -161,11 +168,20 @@ const SETTINGS: Command[] = SETTINGS_SECTIONS.map((section) => ({
   keywords: "preferences configure",
 }));
 
+/** A bare glyph in an avatar-sized slot, so icons and faces line up down the list. */
 function CommandIcon({ icon: Icon }: { icon: LucideIcon }) {
   return (
-    <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background text-muted-foreground">
-      <Icon className="size-3.5" aria-hidden />
+    <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground transition-colors group-aria-selected:text-primary">
+      <Icon className="size-4" strokeWidth={1.75} aria-hidden />
     </span>
+  );
+}
+
+function Key({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border/60 bg-background px-1 font-sans text-[11px] text-muted-foreground">
+      {children}
+    </kbd>
   );
 }
 
@@ -330,8 +346,34 @@ export function CommandPaletteDialog({
     const note = captureRow && looksLikeNote(term);
     if (note) out.push(captureRow);
 
-    const actions = rankEntries(visibleEntries(ACTIONS, hidden), term);
-    const theme = rankEntries([themeCommand], term);
+    const personRows: Row[] =
+      contactsVisible
+        ? people.map((p) => ({
+            id: `contact:${p.id}`,
+            group: term ? "People" : "Recent",
+            label: p.preferredName || p.fullName,
+            hint: p.company ?? undefined,
+            hintAlways: true,
+            icon: (
+              <ContactAvatar
+                contactId={p.id}
+                firstName={p.firstName}
+                fullName={p.fullName}
+                profileImageUrl={p.avatarUrl}
+                size="sm"
+                className="size-7"
+              />
+            ),
+            run: () => go(`/contacts/${p.id}`),
+            prefetchHref: `/contacts/${p.id}`,
+          }))
+        : [];
+    // Empty, the palette is mostly a way back to someone, so they lead.
+    if (!term) out.push(...personRows);
+
+    const visibleActions = visibleEntries(ACTIONS, hidden);
+    const actions = term ? rankEntries(visibleActions, term) : visibleActions.filter((c) => c.featured);
+    const theme = term ? rankEntries([themeCommand], term) : [];
     out.push(...actions.map((c) => commandRow("Actions", c)));
     out.push(
       ...theme.map((c) => ({
@@ -347,28 +389,7 @@ export function CommandPaletteDialog({
       }))
     );
 
-    if (contactsVisible && people.length) {
-      out.push(
-        ...people.map((p) => ({
-          id: `contact:${p.id}`,
-          group: term ? "People" : "Recent people",
-          label: p.preferredName || p.fullName,
-          hint: p.company ?? undefined,
-          icon: (
-            <ContactAvatar
-              contactId={p.id}
-              firstName={p.firstName}
-              fullName={p.fullName}
-              profileImageUrl={p.avatarUrl}
-              size="sm"
-              className="size-7"
-            />
-          ),
-          run: () => go(`/contacts/${p.id}`),
-          prefetchHref: `/contacts/${p.id}`,
-        }))
-      );
-    }
+    if (term) out.push(...personRows);
 
     const pages = rankEntries(
       visibleEntries(PAGES, hidden).filter((c) => c.href !== pathname),
@@ -446,20 +467,18 @@ export function CommandPaletteDialog({
       <DialogContent
         showCloseButton={false}
         initialFocus={inputRef}
-        className="top-[12vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
+        className="top-[14vh] translate-y-0 gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl ring-foreground/[0.08] sm:max-w-[34rem]"
       >
         <DialogTitle className="sr-only">Search Orbit</DialogTitle>
-        <div className="flex items-center gap-2 border-b border-border/70 px-3">
-          <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <div className="flex items-center gap-3 px-4">
+          <Search className="size-[18px] shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={
-              askMode
-                ? "Search people and pages, or ask a question…"
-                : "Search people, pages and actions…"
+              askMode ? "Find someone, go somewhere, or ask a question" : "Find someone or go somewhere"
             }
             role="combobox"
             aria-expanded="true"
@@ -468,12 +487,9 @@ export function CommandPaletteDialog({
             aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
-            className="h-12 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            className="h-14 min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80"
           />
-          {searching && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />}
-          <kbd className="hidden shrink-0 rounded border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground [@media(hover:hover)]:inline">
-            Esc
-          </kbd>
+          {searching && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground/70" aria-hidden />}
         </div>
 
         <div
@@ -481,12 +497,21 @@ export function CommandPaletteDialog({
           id={listboxId}
           role="listbox"
           aria-label="Results"
-          className="max-h-[min(60vh,26rem)] overflow-y-auto overscroll-contain p-1.5"
+          className="max-h-[min(60vh,26rem)] overflow-y-auto overscroll-contain border-t border-border/50 px-2 pb-2"
         >
           {rows.length === 0 ? (
-            <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-              {searching ? "Searching…" : "Nothing matches that."}
-            </p>
+            <div className="px-4 py-10 text-center">
+              {searching ? (
+                <p className="text-sm text-muted-foreground">Looking…</p>
+              ) : (
+                <>
+                  <p className="text-sm text-foreground">
+                    Nothing for <span className="font-medium text-ink">&ldquo;{query.trim()}&rdquo;</span>
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">Try a name, a company or a page.</p>
+                </>
+              )}
+            </div>
           ) : (
             rows.map((row) => {
               const heading = row.group !== lastGroup ? row.group : null;
@@ -495,10 +520,7 @@ export function CommandPaletteDialog({
               return (
                 <div key={row.id} role="presentation">
                   {heading && (
-                    <p
-                      role="presentation"
-                      className="px-2 pt-2.5 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase"
-                    >
+                    <p role="presentation" className="px-3 pt-3 pb-1 text-xs text-muted-foreground">
                       {heading}
                     </p>
                   )}
@@ -516,19 +538,22 @@ export function CommandPaletteDialog({
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={row.run}
                     className={cn(
-                      "flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 text-sm",
-                      selected ? "bg-muted text-foreground" : "text-foreground/90"
+                      "group flex cursor-pointer items-center gap-3 rounded-xl px-2 py-1.5 text-sm transition-colors duration-100",
+                      selected ? "bg-primary/[0.07] text-ink dark:bg-primary/[0.12]" : "text-foreground/85"
                     )}
                   >
                     {row.icon}
                     <span className="min-w-0 flex-1 truncate">{row.label}</span>
-                    {row.hint && (
+                    {row.hint && (row.hintAlways || selected) && (
                       <span className="hidden max-w-[45%] shrink truncate text-xs text-muted-foreground sm:inline">
                         {row.hint}
                       </span>
                     )}
                     {selected && (
-                      <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                      <CornerDownLeft
+                        className="hidden size-3.5 shrink-0 text-muted-foreground/70 [@media(hover:hover)]:block"
+                        aria-hidden
+                      />
                     )}
                   </div>
                 </div>
@@ -537,21 +562,25 @@ export function CommandPaletteDialog({
           )}
         </div>
 
-        <div className="hidden items-center gap-4 border-t border-border/70 px-3 py-2 text-[11px] text-muted-foreground [@media(hover:hover)]:flex">
-          <span className="flex items-center gap-1">
-            <kbd className="rounded border border-border/70 bg-muted/50 px-1">↑</kbd>
-            <kbd className="rounded border border-border/70 bg-muted/50 px-1">↓</kbd>
-            to move
+        <div className="hidden items-center gap-4 border-t border-border/50 bg-muted/30 px-4 py-2 text-xs text-muted-foreground [@media(hover:hover)]:flex">
+          <span className="flex items-center gap-1.5">
+            <Key>↑</Key>
+            <Key>↓</Key>
+            move
           </span>
-          <span className="flex items-center gap-1">
-            <kbd className="rounded border border-border/70 bg-muted/50 px-1">
-              <CornerDownLeft className="inline size-3" aria-hidden />
-            </kbd>
-            to open
+          <span className="flex items-center gap-1.5">
+            <Key>
+              <CornerDownLeft className="size-3" aria-hidden />
+            </Key>
+            open
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Key>esc</Key>
+            close
           </span>
           {askMode === "bar" && (
-            <span className="ml-auto flex items-center gap-1">
-              <kbd className="rounded border border-border/70 bg-muted/50 px-1">⌘J</kbd>
+            <span className="ml-auto flex items-center gap-1.5">
+              <Key>⌘J</Key>
               ask your network
             </span>
           )}

@@ -177,21 +177,33 @@ export function runKeptAction(id: string) {
   liveActions.get(id)?.();
 }
 
+/**
+ * A second tab writing the mirror should not silently diverge from this one. One listener
+ * for the store, not one per subscriber: each would re-read the mirror and notify every
+ * subscriber, so N mounted readers did N² work per write.
+ */
+function onStorage(event: StorageEvent) {
+  if (event.key !== STORAGE_KEY) return;
+  hydrated = false;
+  entries.clear();
+  hydrate();
+  // Undo closures for entries the other tab removed would otherwise be held forever:
+  // `prune` only walks `entries`, so it can never find them.
+  for (const id of liveActions.keys()) {
+    if (!entries.has(id)) liveActions.delete(id);
+  }
+  // `hydrate` returns early when the other tab removed the key outright.
+  recompute();
+  for (const l of listeners) l();
+}
+
 function subscribe(listener: () => void) {
   hydrate();
+  if (listeners.size === 0) window.addEventListener("storage", onStorage);
   listeners.add(listener);
-  // A second tab writing the mirror should not silently diverge from this one.
-  const onStorage = (event: StorageEvent) => {
-    if (event.key !== STORAGE_KEY) return;
-    hydrated = false;
-    entries.clear();
-    hydrate();
-    for (const l of listeners) l();
-  };
-  window.addEventListener("storage", onStorage);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener("storage", onStorage);
+    if (listeners.size === 0) window.removeEventListener("storage", onStorage);
   };
 }
 

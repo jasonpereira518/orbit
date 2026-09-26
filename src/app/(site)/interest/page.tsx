@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { headers } from "next/headers";
-import { Clock3, Network, ShieldCheck } from "lucide-react";
+import { Network, Plug, Sparkles } from "lucide-react";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { InterestHero, type HeroInitial } from "@/components/interest/interest-hero";
 import { RingsBackdrop } from "@/components/interest/rings-backdrop";
+import { AppDemo } from "@/components/interest/app-demo/app-demo";
+import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
 import {
@@ -29,12 +32,14 @@ export const dynamic = "force-dynamic";
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 /**
- * THE WAITLIST IS UNBRANDED AND LEADS NOWHERE. It goes out to a large audience before the
- * product is public, so this page names no product, shows no logo, describes nothing it
- * does beyond one line, and links to nothing but itself, its privacy notice and the share
- * targets. On its own domain (`WAITLIST_HOST`) it is served at `/`, and every other path
- * there redirects back to it — see `lib/waitlist-host.ts`. Keep it that way: no header,
- * no footer nav, no sign-in, no "learn more".
+ * THE WAITLIST LEADS NOWHERE. It goes out to a large audience before the product is
+ * public, so beyond the "Project: Orbit" mark top left it links to nothing but itself, its
+ * privacy notice and the share targets. On its own domain (`WAITLIST_HOST`) it is served
+ * at `/`, and every other path there redirects back to it — see `lib/waitlist-host.ts`.
+ * Keep it that way: no nav, no sign-in, no "learn more". The mark's image is a copy under
+ * `public/waitlist/`, the one folder the waitlist host serves; `/orbit-logo.png` redirects.
+ * The "Take it for a spin" demo (`components/interest/app-demo/`) is a self-contained fake
+ * of the app on a made-up network: it links nowhere and loads nothing outside `/waitlist/`.
  */
 const TITLE = "Early access — the future of networking";
 const DESCRIPTION =
@@ -94,7 +99,6 @@ const HEADING =
  * floor, so the count itself is hidden. */
 const EMPTY_PROOF: InterestProof = { count: 0, total: 0, recent: [] };
 
-/** High level on purpose: what it is for, never what it does or how. */
 const PILLARS = [
   {
     icon: Network,
@@ -102,14 +106,14 @@ const PILLARS = [
     body: "Everyone you know, finally in one place that understands them.",
   },
   {
-    icon: Clock3,
+    icon: Sparkles,
     title: "Always a step ahead",
-    body: "It knows who matters, and when — so the right moment never slips by.",
+    body: "An advanced recommendation engine reads your whole network and tells you who to reach, and when — before the moment slips by.",
   },
   {
-    icon: ShieldCheck,
-    title: "Private by design",
-    body: "Your network is yours. It stays that way.",
+    icon: Plug,
+    title: "Works with the tools you already use",
+    body: "It plugs into your inbox, your calendar and the apps you rely on every day. No starting from scratch.",
   },
 ];
 
@@ -194,9 +198,30 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   return (
     // `landing-root` is load-bearing: globals.css paints the body deep-space while it is
     // mounted, which is what stops a light strip appearing on overscroll. The starfield
-    // renders position:fixed, so this root must stay free of transform/filter.
-    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+    // renders position:fixed, so this root must stay free of transform/filter. It clips BOTH
+    // axes: the closing section's 720px glow hangs below the footer, and clipping only x
+    // left that overhang as dead scroll under the page.
+    <div className="landing-root relative overflow-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield interactive />
+
+      {/* Overlaid, not in flow: the page below sits exactly where it did without it. The
+          hero's eyebrow starts 64px down on phones (main pt-6 + hero pt-10) and 104px from
+          md; this row ends at 48px / 64px, so it never touches it. */}
+      <header className="absolute inset-x-0 top-0 z-20 mx-auto flex w-full max-w-6xl items-center px-6 pt-4 md:px-10 md:pt-8">
+        <div className="flex items-center gap-2.5">
+          <Image
+            src="/waitlist/logo.png"
+            alt=""
+            width={32}
+            height={32}
+            priority
+            className="shrink-0 rounded-full"
+          />
+          <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-[#e8f3f1]">
+            Project: Orbit
+          </span>
+        </div>
+      </header>
 
       <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
         <div className="relative">
@@ -217,6 +242,23 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
             ))}
           </ul>
         </Reveal>
+
+        {/* Desktop only: the demo is a desktop window, and phones never fetch its chunk. */}
+        <section className="mt-32 hidden md:block" aria-labelledby="waitlist-demo">
+          <Reveal className="reveal-celestial">
+            <h2 id="waitlist-demo" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
+              Take it for a spin.
+            </h2>
+          </Reveal>
+          <Reveal className="reveal-celestial" delay={80}>
+            <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
+              A working preview with a made-up network. Watch the tour, or hit “Explore it yourself” and click anything.
+            </p>
+          </Reveal>
+          <div className="mt-10">
+            <AppDemo />
+          </div>
+        </section>
 
         <section className="mt-24 md:mt-32" aria-labelledby="waitlist-how">
           <Reveal className="reveal-celestial">
@@ -275,12 +317,25 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         </section>
       </main>
 
-      <footer className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 pb-10 text-xs text-[#6d807c] md:px-10">
+      <footer className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 pb-6 text-xs text-[#6d807c] md:px-10">
         <span>© {new Date().getFullYear()}</span>
         <Link href={privacyHref} className="transition-colors hover:text-[#9aada8]">
           Privacy
         </Link>
       </footer>
+
+      {/* The landing page's closing frame: "Orbit" in star dots, cut off by the bottom of the
+          page, so nothing may follow it. Its own stacking context lets the vignette sit
+          behind it without dropping under the page background. */}
+      <div className="relative z-10">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[520px] bg-[linear-gradient(to_bottom,transparent_0%,rgba(0,2,8,0.55)_55%,#00010a_100%)]"
+        />
+        <div className="px-6 md:px-10">
+          <FooterWordmark className="relative mx-auto max-w-6xl" />
+        </div>
+      </div>
     </div>
   );
 }

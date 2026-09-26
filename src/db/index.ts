@@ -4059,9 +4059,7 @@ export async function reconcileSchema(options: ReconcileOptions = {}): Promise<S
   });
 }
 
-export async function getDb(): Promise<Db> {
-  await ready();
-
+function startSchemaReconcile(): Promise<void> {
   if (!schemaReconciled) {
     schemaReconciled = reconcileSchema({ lockWaitMs: RUNTIME_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "skip" })
       .then(() => undefined)
@@ -4070,7 +4068,34 @@ export async function getDb(): Promise<Db> {
         throw err;
       });
   }
-  await schemaReconciled;
+  return schemaReconciled;
+}
+
+/**
+ * COLD START: begin the schema check the moment this module loads in a production server,
+ * not when the first query asks for it. A new instance evaluates this module partway
+ * through loading the route, and still has the rest of the route's modules and the render
+ * up to its first `getDb()` ahead of it; the check's round trip — on a cold instance also
+ * the TLS handshake to Neon, and a suspended Neon compute waking — overlaps that work
+ * instead of queueing behind it. It is the very promise `getDb()` awaits, so nothing runs
+ * twice, and a failure only clears it for `getDb()` to retry as before.
+ *
+ * Neon only (PGlite is single-writer and opens a directory; it waits for a real caller),
+ * inside a Next server only (scripts import this module and must not touch the network on
+ * import), and never while `next build` collects pages.
+ */
+if (
+  process.env.DATABASE_URL?.trim() &&
+  process.env.NEXT_RUNTIME === "nodejs" &&
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
+  startSchemaReconcile().catch(() => undefined);
+}
+
+export async function getDb(): Promise<Db> {
+  await ready();
+  await startSchemaReconcile();
 
   // In dev the wrapper is rebuilt per call so schema HMR picks up new relations. In
   // production the schema cannot change under us, and `getDb()` is called dozens of times
