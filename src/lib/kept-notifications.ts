@@ -96,6 +96,34 @@ function prune() {
 }
 
 /**
+ * Two entries that say the same thing are one problem, not two: a flaky network
+ * fires the same "Couldn’t save" toast every retry, and a list of identical rows
+ * buries whatever else went wrong. Ids are unique per toast, so repeats are
+ * matched on what the row would show.
+ */
+function sameThing(a: KeptNotification, b: KeptNotification) {
+  return (
+    a.tone === b.tone &&
+    a.title === b.title &&
+    (a.description ?? "") === (b.description ?? "")
+  );
+}
+
+/** Drop every entry that repeats another, keeping the newest of each. */
+function collapseRepeats() {
+  const byNewest = Array.from(entries.values()).sort((a, b) => b.at - a.at);
+  const kept: KeptNotification[] = [];
+  for (const entry of byNewest) {
+    if (kept.some((k) => sameThing(k, entry))) {
+      entries.delete(entry.id);
+      liveActions.delete(entry.id);
+    } else {
+      kept.push(entry);
+    }
+  }
+}
+
+/**
  * Read the mirror once, on the first client subscription rather than at module
  * scope: touching localStorage during render would make the server and client
  * snapshots disagree and trip hydration.
@@ -120,6 +148,7 @@ function hydrate() {
         entries.set(entry.id, entry);
       }
     }
+    collapseRepeats();
     prune();
     recompute();
   } catch {
@@ -137,7 +166,19 @@ export function keepNotification(
   hydrate();
   if (entries.has(entry.id)) return;
   const { onAction, ...rest } = entry;
-  entries.set(entry.id, { ...rest, at: entry.at ?? Date.now(), read: false });
+  const next: KeptNotification = {
+    ...rest,
+    at: entry.at ?? Date.now(),
+    read: false,
+  };
+  // A repeat replaces the earlier row (fresh time, fresh action) instead of stacking.
+  for (const [id, existing] of entries) {
+    if (sameThing(existing, next)) {
+      entries.delete(id);
+      liveActions.delete(id);
+    }
+  }
+  entries.set(entry.id, next);
   if (onAction) liveActions.set(entry.id, onAction);
   prune();
   emit();

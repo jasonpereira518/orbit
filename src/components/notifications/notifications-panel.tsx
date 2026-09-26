@@ -12,14 +12,12 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
-  CalendarClock,
   Check,
   CheckCircle2,
   Clock,
   Loader2,
   NotebookPen,
   Shield,
-  Sparkles,
   UserRound,
   X,
   XCircle,
@@ -27,21 +25,13 @@ import {
 import { runToastAction } from "@/lib/toast";
 import {
   clearContactFollowUp,
-  dismissSuggestion,
   markReminderDone,
   reopenReminderAction,
-  restoreSuggestion,
   snoozeReminderAction,
   unsnoozeReminderAction,
 } from "@/actions/reminders";
-import {
-  confirmSuggestedReminder,
-  discardSuggestedReminder,
-  restoreSuggestedReminder,
-} from "@/actions/suggested-reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ExpandableText } from "@/components/ui/expandable-text";
 import {
   Sheet,
   SheetContent,
@@ -50,6 +40,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { playDing } from "@/lib/ding";
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
 import {
@@ -81,6 +72,13 @@ type PanelItem = PanelData["items"][number];
 // three separate timers that used to run. `refreshPanel` keeps its old name and contract
 // (`force` after a mutation) so the action handlers below read the same.
 const refreshPanel = (force = false) => refreshPulse(force);
+
+/**
+ * The panel is for what needs you now, not a full inbox: due reminders and follow-ups,
+ * running work, and failures you missed. Upcoming items and outreach suggestions live on
+ * /reminders and the dashboard. Past this many due rows the panel links there instead.
+ */
+const DUE_VISIBLE = 5;
 
 export function NotificationsPanelButton({
   tooltip = false,
@@ -134,12 +132,10 @@ export function NotificationsPanelButton({
     () => data?.items.filter((i) => i.urgency === "due") ?? [],
     [data]
   );
-  const upcomingItems = useMemo(
-    () => data?.items.filter((i) => i.urgency === "upcoming") ?? [],
-    [data]
-  );
-  const suggestionItems = useMemo(
-    () => data?.items.filter((i) => i.urgency === "info") ?? [],
+  // Captured notes waiting for review (or that failed) are the one "info" item worth a
+  // slot here: the user has to act on them, and nothing else will surface them.
+  const captureItems = useMemo(
+    () => data?.items.filter((i) => i.kind === "capture_review") ?? [],
     [data]
   );
   const alerts = data?.alerts ?? [];
@@ -147,7 +143,10 @@ export function NotificationsPanelButton({
   // alert-only account should still see the scroll area say there is nothing due rather
   // than render an empty region with no explanation.
   const hasAnything =
-    (data?.totalCount ?? 0) > 0 || jobs.length > 0 || kept.length > 0;
+    dueItems.length > 0 ||
+    captureItems.length > 0 ||
+    jobs.length > 0 ||
+    kept.length > 0;
 
   const refresh = () => refreshPanel(true);
 
@@ -188,41 +187,6 @@ export function NotificationsPanelButton({
             ? `Follow-up cleared — ${res.remindersClosed} ${res.remindersClosed === 1 ? "reminder" : "reminders"} closed too`
             : "Follow-up cleared",
         failure: "Couldn’t clear that follow-up — try again?",
-        refresh,
-      }).then(() => undefined)
-    );
-  }
-
-  function dismiss(suggestionId: string) {
-    start(() =>
-      runToastAction({
-        run: () => dismissSuggestion(suggestionId),
-        success: "Dismissed",
-        failure: "Couldn’t dismiss that — try again?",
-        refresh,
-        undo: () => () => restoreSuggestion(suggestionId),
-      }).then(() => undefined)
-    );
-  }
-
-  function discardSuggested(suggestedReminderId: string) {
-    start(() =>
-      runToastAction({
-        run: () => discardSuggestedReminder(suggestedReminderId),
-        success: "Dismissed",
-        failure: "Couldn’t dismiss that — try again?",
-        refresh,
-        undo: () => () => restoreSuggestedReminder(suggestedReminderId),
-      }).then(() => undefined)
-    );
-  }
-
-  function confirmSuggested(suggestedReminderId: string) {
-    start(() =>
-      runToastAction({
-        run: () => confirmSuggestedReminder(suggestedReminderId),
-        success: "Reminder added",
-        failure: "Couldn’t add that reminder — try again?",
         refresh,
       }).then(() => undefined)
     );
@@ -313,11 +277,11 @@ export function NotificationsPanelButton({
               Notifications
             </SheetTitle>
             <SheetDescription>
-              Reminders, due follow-ups, and outreach suggestions.
+              What needs your attention right now.
             </SheetDescription>
           </SheetHeader>
 
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+          <div className="min-h-[7rem] flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3 [scrollbar-width:thin]">
             {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
 
             {loading && !data ? (
@@ -333,40 +297,9 @@ export function NotificationsPanelButton({
                 </p>
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <Section title="Due now" count={dueItems.length}>
-                  {dueItems.map((item) => (
-                    <NotificationRow
-                      key={item.id}
-                      item={item}
-                      pending={pending}
-                      onDone={() => {
-                        if (item.kind === "reminder" && item.reminderId) {
-                          markDone(item.reminderId);
-                        } else if (
-                          item.kind === "follow_up" &&
-                          item.contactId
-                        ) {
-                          clearFollowUp(item.contactId);
-                        }
-                      }}
-                      onSnooze={() => {
-                        if (item.kind === "reminder" && item.reminderId) {
-                          snooze(item.reminderId);
-                        }
-                      }}
-                      onDismiss={() => {
-                        if (item.kind === "suggestion" && item.suggestionId) {
-                          dismiss(item.suggestionId);
-                        }
-                      }}
-                      onNavigate={() => setOpen(false)}
-                    />
-                  ))}
-                </Section>
-
-                <Section title="Upcoming" count={upcomingItems.length}>
-                  {upcomingItems.map((item) => (
+                  {dueItems.slice(0, DUE_VISIBLE).map((item) => (
                     <NotificationRow
                       key={item.id}
                       item={item}
@@ -389,28 +322,23 @@ export function NotificationsPanelButton({
                       onNavigate={() => setOpen(false)}
                     />
                   ))}
+                  {dueItems.length > DUE_VISIBLE && (
+                    <Link
+                      href="/reminders"
+                      onClick={() => setOpen(false)}
+                      className="block px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      See all {dueItems.length} in Reminders
+                    </Link>
+                  )}
                 </Section>
 
-                <Section title="Suggestions" count={suggestionItems.length}>
-                  {suggestionItems.map((item) => (
+                <Section title="Waiting on you" count={captureItems.length}>
+                  {captureItems.map((item) => (
                     <NotificationRow
                       key={item.id}
                       item={item}
                       pending={pending}
-                      onDone={() => {
-                        if (item.suggestedReminderId) {
-                          confirmSuggested(item.suggestedReminderId);
-                        }
-                      }}
-                      onDismiss={() => {
-                        if (item.suggestedReminderId) {
-                          discardSuggested(item.suggestedReminderId);
-                          return;
-                        }
-                        if (item.suggestionId) {
-                          dismiss(item.suggestionId);
-                        }
-                      }}
                       onNavigate={() => setOpen(false)}
                     />
                   ))}
@@ -460,7 +388,7 @@ export function NotificationsPanelButton({
               room this needs instead of overflowing the window.
 
               The cap is a backstop for the expanded state only: collapsed, this is at most
-              `ALERTS_COLLAPSED_VISIBLE` rows and nowhere near 45% of the window, so the
+              `ALERTS_COLLAPSED_VISIBLE` rows and nowhere near 30% of the window, so the
               nested scroller the alerts docblock warns about never actually appears.
 
               It renders nothing when there are no live alerts, so the border comes from the
@@ -468,7 +396,7 @@ export function NotificationsPanelButton({
           <AccountAlerts
             alerts={alerts}
             onNavigate={() => setOpen(false)}
-            className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border/60 px-4 py-3"
+            className="max-h-[30%] shrink-0 overflow-y-auto border-t border-border/60 px-4 py-3"
           />
 
           <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 p-4">
@@ -527,8 +455,23 @@ function Section({
 }
 
 /**
- * A toast that timed out before it was dealt with. Same row shape as `JobRow`,
- * but the icon carries the tone: a failure looks like a failure here too.
+ * Rows are one or two lines: a title, a single muted meta line, and icon-only actions on
+ * the right. The old cards stacked an icon disc, a body paragraph and a button row.
+ */
+const ROW = "flex items-center gap-3 rounded-lg border border-border/30 bg-popover px-3.5 py-3";
+/** Soft disc behind each row's leading icon. */
+function IconDisc({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground/[0.06]">
+      {children}
+    </span>
+  );
+}
+const ICON_BTN = "size-7 shrink-0 text-muted-foreground";
+
+/**
+ * A toast that timed out before it was dealt with. The icon carries the tone: a failure
+ * looks like a failure here too.
  *
  * The action button appears only while its callback is still in memory. After a
  * reload the entry survives (it is mirrored to localStorage) but the closure
@@ -545,57 +488,44 @@ function KeptRow({
   const actionable = !!entry.actionLabel && hasLiveAction(entry.id);
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-3">
-      <div className="flex items-start gap-3">
-        <div
-          className={cn(
-            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-            entry.tone === "error"
-              ? "bg-destructive/10 text-destructive"
-              : "bg-muted text-muted-foreground"
-          )}
-        >
-          {entry.tone === "error" ? (
-            <XCircle className="h-3.5 w-3.5" />
-          ) : (
-            <Clock className="h-3.5 w-3.5" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <ExpandableText text={entry.title} className="font-medium text-ink" />
-          {entry.description && (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {entry.description}
-            </p>
-          )}
-          <div className="mt-1 flex items-center gap-2">
-            <p className="text-xs text-muted-foreground">
-              {formatDistanceToNow(entry.at, { addSuffix: true })}
-            </p>
-            {actionable && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-6 px-2 text-xs"
-                onClick={onAct}
-              >
-                {entry.actionLabel}
-              </Button>
-            )}
-          </div>
-        </div>
+    <div className={ROW}>
+      <IconDisc>
+        {entry.tone === "error" ? (
+          <XCircle className="h-4 w-4 text-destructive" />
+        ) : (
+          <Clock className="h-4 w-4 text-muted-foreground" />
+        )}
+      </IconDisc>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-ink" title={entry.title}>
+          {entry.title}
+        </p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          {formatDistanceToNow(entry.at, { addSuffix: true })}
+          {entry.description ? ` · ${entry.description}` : ""}
+        </p>
+      </div>
+      {actionable && (
         <Button
           type="button"
-          size="icon"
-          variant="ghost"
-          className="size-7 shrink-0 text-muted-foreground"
-          aria-label="Dismiss notification"
-          onClick={() => dismissKeptNotification(entry.id)}
+          size="sm"
+          variant="outline"
+          className="h-6 shrink-0 px-2 text-xs"
+          onClick={onAct}
         >
-          <X className="h-3.5 w-3.5" />
+          {entry.actionLabel}
         </Button>
-      </div>
+      )}
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className={ICON_BTN}
+        aria-label="Dismiss notification"
+        onClick={() => dismissKeptNotification(entry.id)}
+      >
+        <X className="h-3.5 w-3.5" />
+      </Button>
     </div>
   );
 }
@@ -603,77 +533,75 @@ function KeptRow({
 function JobRow({ job }: { job: BackgroundJob }) {
   const determinate = job.total > 0;
   const pct = determinate ? Math.min(100, Math.round((job.done / job.total) * 100)) : null;
+  const running = job.status === "running";
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-3">
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          {job.status === "running" ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-          ) : job.status === "completed" ? (
-            <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
-          ) : job.status === "failed" ? (
-            <XCircle className="h-3.5 w-3.5 text-destructive" />
-          ) : (
-            <XCircle className="h-3.5 w-3.5" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="font-medium text-ink">
-            {job.status === "running"
-              ? job.cancelling
-                ? "Stopping…"
-                : job.label
-              : job.status === "completed"
-                ? job.resultMessage || `${job.label} — done`
-                : job.status === "failed"
-                  ? job.error || `${job.label} failed`
-                  : job.resultMessage || `${job.label} stopped`}
-          </p>
-          {job.status === "running" && (
-            <div className="mt-1.5 space-y-1">
-              <div className="h-1.5 overflow-hidden rounded-full bg-border/80">
-                <div
-                  className={cn(
-                    "h-full rounded-full bg-primary transition-[width] duration-300 ease-out",
-                    !determinate && "w-1/3 animate-pulse"
-                  )}
-                  style={determinate ? { width: `${pct}%` } : undefined}
-                />
-              </div>
-              {determinate && (
-                <p className="text-xs tabular-nums text-muted-foreground">
-                  {job.done} of {job.total} · {pct}%
-                </p>
-              )}
+    <div className={ROW}>
+      <IconDisc>
+      {running ? (
+        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+      ) : job.status === "completed" ? (
+        <CheckCircle2 className="h-4 w-4 text-primary" />
+      ) : job.status === "failed" ? (
+        <XCircle className="h-4 w-4 text-destructive" />
+      ) : (
+        <XCircle className="h-4 w-4 text-muted-foreground" />
+      )}
+      </IconDisc>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-ink">
+          {running
+            ? job.cancelling
+              ? "Stopping…"
+              : job.label
+            : job.status === "completed"
+              ? job.resultMessage || `${job.label} — done`
+              : job.status === "failed"
+                ? job.error || `${job.label} failed`
+                : job.resultMessage || `${job.label} stopped`}
+        </p>
+        {running && (
+          <div className="mt-1 flex items-center gap-2">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-border/80">
+              <div
+                className={cn(
+                  "h-full rounded-full bg-primary transition-[width] duration-300 ease-out",
+                  !determinate && "w-1/3 animate-pulse"
+                )}
+                style={determinate ? { width: `${pct}%` } : undefined}
+              />
             </div>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-2.5 flex flex-wrap items-center gap-1">
-        {job.status === "running" && job.onCancel && (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={job.cancelling}
-            onClick={job.onCancel}
-          >
-            <X className="h-3.5 w-3.5" />
-            Stop
-          </Button>
-        )}
-        {job.status !== "running" && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => dismissBackgroundJob(job.id)}
-          >
-            <X className="h-3.5 w-3.5" />
-            Dismiss
-          </Button>
+            {determinate && (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {pct}%
+              </span>
+            )}
+          </div>
         )}
       </div>
+      {running && job.onCancel && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 shrink-0 px-2 text-xs"
+          disabled={job.cancelling}
+          onClick={job.onCancel}
+        >
+          Stop
+        </Button>
+      )}
+      {!running && (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className={ICON_BTN}
+          aria-label="Dismiss"
+          onClick={() => dismissBackgroundJob(job.id)}
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </div>
   );
 }
@@ -683,115 +611,73 @@ function NotificationRow({
   pending,
   onDone,
   onSnooze,
-  onDismiss,
   onNavigate,
 }: {
   item: PanelItem;
   pending: boolean;
   onDone?: () => void;
   onSnooze?: () => void;
-  onDismiss?: () => void;
   onNavigate: () => void;
 }) {
   const Icon =
-    item.kind === "reminder"
-      ? Bell
-      : item.kind === "follow_up"
-        ? UserRound
-        : item.kind === "suggested_reminder"
-          ? CalendarClock
-          : item.kind === "capture_review"
-            ? NotebookPen
-            : Sparkles;
+    item.kind === "follow_up"
+      ? UserRound
+      : item.kind === "capture_review"
+        ? NotebookPen
+        : Bell;
+  const when = item.dueAt
+    ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
+    : item.kind === "capture_review"
+      ? "Waiting on you"
+      : "No due date";
 
   return (
-    <div
-      className={cn(
-        "rounded-xl border border-border/60 bg-card p-3",
-        item.urgency === "due" && "border-primary/25 bg-primary/[0.03]"
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          <Icon className="h-3.5 w-3.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <Link
-            href={item.url}
-            onClick={onNavigate}
-            className="font-medium text-primary hover:underline"
-          >
-            {item.title}
-          </Link>
-          {item.body && (
-            <ExpandableText text={item.body} lines={2} className="mt-0.5" />
-          )}
-          <p className="mt-1 text-xs text-muted-foreground">
-            {item.dueAt
-              ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
-              : item.kind === "suggestion"
-                ? "Outreach tip"
-                : item.kind === "suggested_reminder"
-                  ? "Found in your notes"
-                  : item.kind === "capture_review"
-                    ? "Waiting on you"
-                    : "No due date"}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-2.5 flex flex-wrap items-center gap-1">
-        {(item.kind === "reminder" || item.kind === "follow_up") && onDone && (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={pending}
-            onClick={onDone}
-          >
-            <Check className="h-3.5 w-3.5" />
-            Done
-          </Button>
-        )}
-        {item.kind === "reminder" && onSnooze && (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={pending}
-            onClick={onSnooze}
-          >
-            <Clock className="h-3.5 w-3.5" />
-            Snooze
-          </Button>
-        )}
-        {item.kind === "suggested_reminder" && onDone && (
-          <Button size="sm" variant="ghost" disabled={pending} onClick={onDone}>
-            <Check className="h-3.5 w-3.5" />
-            Add reminder
-          </Button>
-        )}
-        {(item.kind === "suggestion" || item.kind === "suggested_reminder") &&
-          onDismiss && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={pending}
-              onClick={onDismiss}
-            >
-              <X className="h-3.5 w-3.5" />
-              Dismiss
-            </Button>
-          )}
-        <Link
-          href={item.url}
-          onClick={onNavigate}
-          className={cn(
-            buttonVariants({ variant: "ghost", size: "sm" }),
-            "ml-auto"
-          )}
+    <div className={cn(ROW, "border-primary/15 bg-popover")}>
+      <IconDisc>
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </IconDisc>
+      <Link
+        href={item.url}
+        onClick={onNavigate}
+        className="min-w-0 flex-1 hover:underline"
+      >
+        <span className="block truncate text-sm font-medium text-ink">
+          {item.title}
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+          {when}
+          {item.body ? ` · ${item.body}` : ""}
+        </span>
+      </Link>
+      {item.kind === "reminder" && onSnooze && (
+        <Button
+          size="icon"
+          variant="ghost"
+          className={ICON_BTN}
+          disabled={pending}
+          aria-label="Snooze 7 days"
+          title="Snooze 7 days"
+          onClick={onSnooze}
         >
-          Open
-        </Link>
-      </div>
+          <Clock className="h-3.5 w-3.5" />
+        </Button>
+      )}
+      {onDone && (
+        <Button
+          size="icon"
+          variant="ghost"
+          className={ICON_BTN}
+          disabled={pending}
+          aria-label="Mark done"
+          title="Mark done"
+          onClick={() => {
+            playDing();
+            onDone();
+          }}
+        >
+          <Check className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </div>
   );
 }
