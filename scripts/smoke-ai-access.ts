@@ -849,10 +849,13 @@ async function byokOnly() {
   );
     let local = await lastSent(() => json(U.localDev));
     check("`next dev`: the key from .env.local went on the wire", local.req?.key === DEV_KEY, local.req?.key ?? local.err);
+    // A stored `gemini-2.5-pro` now migrates on read (`LEGACY_MODEL_MAP`) to
+    // `gemini-3.8-flash` — Google 404s the old id, so the wire request must carry the
+    // remapped model, not the broken one Settings still has on file.
     await account(U.localDev, { aiModel: "gemini-2.5-pro" });
     local = await lastSent(() => json(U.localDev));
-    check("…at the model Settings asks for, with no allowance to ration it",
-      /models\/gemini-2\.5-pro:/.test(local.req?.url ?? ""), local.req?.url ?? local.err);
+    check("…at the model Settings asks for (migrated from the dead 2.5-pro id), with no allowance to ration it",
+      /models\/gemini-3\.8-flash:/.test(local.req?.url ?? ""), local.req?.url ?? local.err);
     const localStatus = await getAiAccessStatus(U.localDev);
     check("…and the UI says AI will run, with no allowance to show",
       localStatus.ready && localStatus.source === "managed" && localStatus.allowance === null, JSON.stringify(localStatus));
