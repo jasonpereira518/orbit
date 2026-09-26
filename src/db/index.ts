@@ -2023,14 +2023,26 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 //
 // 107 = merging P2b (which carries main at 103 — apple_connections/calendar_sources at 99,
 // site_settings at 102, page_views.is_internal at 103) into this branch (104, 105). No DDL
-// of its own. Keeping 105 was the plan and is wrong for the reason recorded at 87, 96, 97
-// and 99 above: this branch's preview databases are stamped 105 WITHOUT main's 99/102/103
-// columns, and main's are stamped 103 without 104/105, and `isSchemaCurrent` returns true
-// for any recorded version at or above the running one — so either half would be skipped in
-// silence. `smoke-schema-ddl.ts` caught it: same version 105, different DDL fingerprint.
-// NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62.
-// Scanned every remote ref, every local branch and every worktree's working
-// src/db/index.ts on Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
+// of its own. NOT the silent-skip hazard recorded at 87, 96, 97 and 99 above: those entries
+// predate `schemaFingerprint()`, and `isSchemaCurrent` now compares fingerprints at an EQUAL
+// version, so a database stamped 105 by this branch would disagree with a merged-105 build
+// and re-sweep on its own. The reasons to bump are narrower, and all three hold:
+//
+//   - `smoke-schema-ddl.ts` refuses 105 outright. The lock holds 105 with a different
+//     fingerprint, which takes its `lock.version === schemaVersion` branch — the one whose
+//     remedy text says to bump first and only then `--update`. Keeping 105 would mean
+//     re-recording the lock at an un-bumped version, which is the exact move that guard
+//     exists to prevent.
+//   - The runtime fingerprint is a narrower net than the version integer, and deliberately
+//     so: `schemaFingerprint()` hashes DDL, SCALE_DDL and `alters`, but NOT `migratePglite`'s
+//     `ensureColumn` calls or `migratePgvector` (see the comment above it). It is not a
+//     general substitute for a bump.
+//   - This file's convention, set at 87, 96 and 99, is never to reuse a number another
+//     branch shipped.
+//
+// NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62. Scanned
+// every remote ref, every local branch and every worktree's working src/db/index.ts on
+// Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
 export const SCHEMA_VERSION = 107;
 
 /**

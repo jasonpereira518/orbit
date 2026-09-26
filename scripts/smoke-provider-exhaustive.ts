@@ -471,10 +471,10 @@ function selfTestMechanism() {
   const stub = (createArg: string) =>
     ts.createSourceFile(
       "self-test.ts",
-      `function f(grant: { provider: string }) {
+      `async function f(grant: { provider: string }) {
         if (isOpenAiShaped(grant.provider)) {
-          const client = openAiShapedClient(grant);
-          return client.chat.completions.create(${createArg});
+          const client = await openAiShapedClient(grant);
+          return await client.chat.completions.create(${createArg});
         }
       }`,
       ts.ScriptTarget.Latest,
@@ -500,10 +500,10 @@ function selfTestMechanism() {
   const guardStub = (createArg: string) =>
     ts.createSourceFile(
       "self-test-guard.ts",
-      `function f(grant: { provider: string }) {
+      `async function f(grant: { provider: string }) {
         if (!isOpenAiShaped(grant.provider)) return null;
-        const client = openAiShapedClient(grant);
-        return client.chat.completions.create(${createArg});
+        const client = await openAiShapedClient(grant);
+        return await client.chat.completions.create(${createArg});
       }`,
       ts.ScriptTarget.Latest,
       true
@@ -520,9 +520,10 @@ function selfTestMechanism() {
   // `.create(` there would be a false positive that invites a bogus allowlist entry.
   const excludedBranch = ts.createSourceFile(
     "self-test-excluded.ts",
-    `function f(grant: { provider: string }) {
+    `async function f(grant: { provider: string }) {
       if (!isOpenAiShaped(grant.provider)) {
-        return anthropicClient(grant).messages.create({ model: params.model });
+        const client = await anthropicClient(grant);
+        return await client.messages.create({ model: params.model });
       }
       return null;
     }`,
