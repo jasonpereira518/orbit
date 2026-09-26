@@ -211,6 +211,15 @@ check("…with the mail copy when the purpose is unknown", describeOAuthReason("
   check("success is { ok: true, value }", okR.ok === true && okR.value === 42);
   const bad = await asActionResult(async () => { throw new UserFacingError("A list with that name already exists"); });
   check("a UserFacingError comes back as data", bad.ok === false && bad.error === "A list with that name already exists");
+  const paywalled = await asActionResult(async () => {
+    throw Object.assign(new Error("Recruiter tracking is available on Orbit Pro and Orbit Lifetime."), {
+      name: "PaywallError",
+    });
+  });
+  check(
+    "a PaywallError comes back as data too, not a thrown digest",
+    paywalled.ok === false && paywalled.error === "Recruiter tracking is available on Orbit Pro and Orbit Lifetime."
+  );
   let rethrown = false;
   try { await asActionResult(async () => { throw new Error("db exploded"); }); } catch { rethrown = true; }
   check("anything else is rethrown, not swallowed", rethrown);

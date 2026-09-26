@@ -334,6 +334,54 @@ async function main() {
   );
   check("a genuine miss IS cooldown-stamped", marked2.includes("miss-1"));
 
+  // A source the caller could not stand up at all is the same situation as a quota refusal:
+  // that contact never got a real look, so it must stay retryable. This is what turned an
+  // expired Google token into a 500 for the whole batch before — the pre-flight index build
+  // threw outside the per-contact guard.
+  const marked3: string[] = [];
+  const unavailable = await runAvatarBackfillBatch(
+    [{ id: "no-index-1", linkedinUrl: null, email: "someone@example.com", remoteUrl: null }],
+    {
+      deadline: Date.now() + 5_000,
+      persistRemote: async () => null,
+      resolveLinkedIn: async () => null,
+      resolveGravatar: async () => null,
+      save: async () => {},
+      markChecked: async (id) => void marked3.push(id),
+      sourcesUnavailable: { connectedAccount: true },
+    }
+  );
+  check(
+    "a contact whose connected-account index never built is NOT cooldown-stamped",
+    marked3.length === 0,
+    `markChecked called for ${marked3.join(",")}`
+  );
+  check(
+    "…and is not handed back as a skipId",
+    unavailable.failedIds.length === 0,
+    unavailable.failedIds.join(",")
+  );
+
+  // The flag is scoped to the contacts that source could have answered for — without this
+  // check the fix would pass just as well if it disabled the cooldown for everyone.
+  const marked4: string[] = [];
+  await runAvatarBackfillBatch(
+    [{ id: "no-email-1", linkedinUrl: LINKEDIN_URL, email: null, remoteUrl: null }],
+    {
+      deadline: Date.now() + 5_000,
+      persistRemote: async () => null,
+      resolveLinkedIn: async () => null,
+      resolveGravatar: async () => null,
+      save: async () => {},
+      markChecked: async (id) => void marked4.push(id),
+      sourcesUnavailable: { connectedAccount: true },
+    }
+  );
+  check(
+    "a contact that source could never have answered for IS still stamped",
+    marked4.includes("no-email-1")
+  );
+
   if (failures > 0) {
     console.error(`\n${failures} avatar tier check(s) failed`);
     process.exit(1);
