@@ -41,7 +41,7 @@
  * Accepting one is what creates a reminder, and `scheduleFromSuggestion`, `dismissSuggestion`
  * and `restoreSuggestion` already exist — so the triage UI is free.
  */
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   aiSuggestions,
@@ -108,9 +108,14 @@ function displayName(c: { fullName: string; preferredName: string | null }) {
  * name — an opportunity's own label is prose ("summer internship on the infra team") and
  * was never a company name.
  */
-async function loadWatchers(): Promise<Map<string, Watcher[]>> {
+async function loadWatchers(pivot: string = crypto.randomUUID()): Promise<Map<string, Watcher[]>> {
   const db = await getDb();
-  const rows = await db
+  // Past the cap, which opportunities a run sees must rotate. The scan used to take the
+  // first MAX_WATCHED_OPPORTUNITIES in whatever order the planner produced, so the same
+  // users could be skipped on every run forever. Now each run starts at a random point in
+  // the (uniformly random, v4) id space and wraps around. Below the cap that is the whole
+  // table, same as before; above it, every opportunity gets its turn.
+  const scan = (range: SQL) => db
     .select({
       opportunityId: contactOpportunities.id,
       userId: contactOpportunities.userId,
@@ -136,10 +141,17 @@ async function loadWatchers(): Promise<Map<string, Watcher[]>> {
         // taxonomy is one `as const satisfies` array by convention, and a second copy is how
         // a kind added there silently stops being watched.
         inArray(contactOpportunities.status, [...OPEN_OPPORTUNITY_STATUSES]),
-        inArray(contactOpportunities.kind, [...JOB_SIGNAL_KINDS])
+        inArray(contactOpportunities.kind, [...JOB_SIGNAL_KINDS]),
+        range
       )
     )
+    .orderBy(asc(contactOpportunities.id))
     .limit(MAX_WATCHED_OPPORTUNITIES);
+  const head = await scan(gte(contactOpportunities.id, pivot));
+  const rows =
+    head.length >= MAX_WATCHED_OPPORTUNITIES
+      ? head
+      : [...head, ...(await scan(lt(contactOpportunities.id, pivot))).slice(0, MAX_WATCHED_OPPORTUNITIES - head.length)];
 
   const byBucket = new Map<string, Watcher[]>();
   for (const row of rows) {

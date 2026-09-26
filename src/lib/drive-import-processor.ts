@@ -15,6 +15,7 @@
  */
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { stageImportRows } from "@/lib/import-job-rows";
 import {
   imports,
   importJobRows,
@@ -160,7 +161,7 @@ export async function stageDriveImport(
     })
     .returning();
 
-  await db.insert(importJobRows).values(
+  await stageImportRows(
     usable.map((f, i) => ({
       importId: row.id,
       userId,

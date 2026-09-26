@@ -11,6 +11,7 @@
  */
 import "./smoke/_env";
 
+import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { imports } from "../src/db/schema";
@@ -75,6 +76,24 @@ async function main() {
     JSON.stringify(byId.get(exhausted)));
   check("a runner failure leaves the job processing for next time", byId.get(broken)?.status === "processing");
   check("the active job is untouched", byId.get(active)?.stallResumes === 0 && byId.get(active)?.status === "processing");
+
+  console.log("bounded per sweep, oldest first");
+  await db.delete(imports).where(eq(imports.userId, USER));
+  const ids: string[] = [];
+  for (let i = 0; i < 5; i++) ids.push(await seed({ updatedAt: new Date(Date.now() - (60 - i) * MIN) }));
+  const capped: string[] = [];
+  const cappedResult = await resumeStalledImports({ now: new Date(), limit: 2, runner: async (id) => { capped.push(id); } });
+  check("takes no more than the limit", cappedResult.found === 2 && capped.length === 2, JSON.stringify(cappedResult));
+  check("and takes the longest-stalled first", capped[0] === ids[0] && capped[1] === ids[1], JSON.stringify({ capped, ids }));
+
+  console.log("the backstop kicks, it does not run");
+  // Running a job inline let two stalled imports kill the 300s hourly route before any of
+  // its housekeeping ran. The default runner must hand the job to its continuation route.
+  const stallSrc = readFileSync("src/lib/import-stall.ts", "utf8");
+  check("the default runner is the continuation kick", /options\.runner \?\? kickImportContinuation/.test(stallSrc));
+  check("import-stall does not import the inline runner", !/runImportJobById/.test(stallSrc));
+  const routeSrc = readFileSync("src/app/api/imports/process-stalled/route.ts", "utf8");
+  check("the route resumes captures by kicking them too", /runner: kickCaptureJob/.test(routeSrc) && !/runCaptureJobById/.test(routeSrc));
 
   await db.delete(imports).where(eq(imports.userId, USER));
   if (failures > 0) {

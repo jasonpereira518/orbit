@@ -18,6 +18,7 @@ import {
   assertDeliverable,
   enqueueWebhookEvent,
   isBlockedAddress,
+  rotatingWindow,
 } from "../src/lib/webhooks/dispatch";
 
 const USER = "webhook-smoke-user";
@@ -173,6 +174,16 @@ run(async () => {
 
   check("the retry ladder is bounded", MAX_DELIVERY_ATTEMPTS > 0 && MAX_DELIVERY_ATTEMPTS <= 10);
   check("endpoints are disabled after repeated failure", MAX_CONSECUTIVE_FAILURES >= 3);
+
+  // --- followup.due serves every subscriber in turn ------------------------------------------
+  // It used to take `DISTINCT user_id LIMIT 20` with no order, so past 20 subscribers some
+  // were never served. Consecutive sweeps now take consecutive windows.
+  const subs = Array.from({ length: 45 }, (_, i) => `u${i}`);
+  const served = new Set<string>();
+  for (let slot = 1000; slot < 1003; slot++) for (const u of rotatingWindow(subs, 20, slot)) served.add(u);
+  check("three sweeps of 20 reach all 45 subscribers", served.size === 45, String(served.size));
+  check("a window never repeats a subscriber", new Set(rotatingWindow(subs, 20, 7)).size === 20);
+  check("under the cap, everyone every time", rotatingWindow(subs.slice(0, 5), 20, 3).length === 5);
 
   await db.execute(sql`DELETE FROM webhook_endpoints WHERE user_id = ${USER}`);
   if (failures > 0) {

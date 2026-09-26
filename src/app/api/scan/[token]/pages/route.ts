@@ -44,9 +44,13 @@ export async function POST(
   if (!handoff) return notFound();
 
   let files: CaptureMediaFile[];
+  let remainingPages = 0;
   try {
-    const body = (await request.json()) as { files?: CaptureMediaFile[] };
+    const body = (await request.json()) as { files?: CaptureMediaFile[]; remainingPages?: unknown };
     files = Array.isArray(body?.files) ? body.files : [];
+    // The phone sends a scan in batches under Vercel's 4.5MB request cap. It says how many
+    // pages are still to come (this batch included) so pages are numbered within the note.
+    remainingPages = Number.isInteger(body?.remainingPages) ? Math.min(Number(body.remainingPages), 10 * MAX_SCAN_PAGES) : 0;
   } catch {
     return NextResponse.json({ error: "Malformed request body" }, { status: 400 });
   }
@@ -97,7 +101,13 @@ export async function POST(
   // shrunk and re-encoded server-side, unattached until the job saves. Text is still what
   // crosses to the desktop; the photo rows live behind the owner-checked photo route.
   const [normalizedResult, storedResult] = await Promise.allSettled([
-    normalizeCaptureInput(handoff.userId, { files }),
+    normalizeCaptureInput(handoff.userId, {
+      files,
+      pageNumbering: {
+        offset: handoff.pageCount ?? 0,
+        total: (handoff.pageCount ?? 0) + Math.max(remainingPages, files.length),
+      },
+    }),
     storeCapturePhotos(handoff.userId, captureImageFiles(files).map((img) => ({ filename: img.filename, base64: img.base64 }))),
   ]);
   const photos = storedResult.status === "fulfilled" ? storedResult.value : [];
