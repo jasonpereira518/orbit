@@ -70,7 +70,9 @@ export function ConstellationScopeToggle({ className }: { className?: string }) 
   const label = state.loading
     ? `Loading all ${total} connections…`
     : showingAll
-      ? `Showing all ${total} connections. Show only the people you have engaged with.`
+      ? state.cappedAt
+        ? `Showing your closest ${state.cappedAt.toLocaleString()} of ${total} connections. Show only the people you have engaged with.`
+        : `Showing all ${total} connections. Show only the people you have engaged with.`
       : `Showing ${state.shown.toLocaleString()} of ${total} — the people you have engaged with. Show all ${total} connections.`;
 
   return (

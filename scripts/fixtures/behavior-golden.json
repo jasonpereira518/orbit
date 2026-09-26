@@ -3240,7 +3240,8 @@
         "scope": "engaged",
         "shown": 25,
         "engaged": 25,
-        "available": 25
+        "available": 25,
+        "capped": false
       },
       "userName": "You",
       "userImageUrl": null,
@@ -10643,7 +10644,8 @@
         "scope": "engaged",
         "shown": 26,
         "engaged": 26,
-        "available": 27
+        "available": 27,
+        "capped": false
       },
       "userName": "You",
       "userImageUrl": null,

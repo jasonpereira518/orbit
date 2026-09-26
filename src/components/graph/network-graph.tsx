@@ -423,6 +423,7 @@ export function NetworkGraph({
       // scope is everyone. The toggle needs the count it would go back to.
       shown: filter?.engaged ?? 0,
       total: data?.summary.total ?? 0,
+      cappedAt: showAllStars && filter?.capped ? filter.shown : null,
     });
   }, [compact, data, showAllStars, loadingAll]);
 
@@ -708,10 +709,12 @@ export function NetworkGraph({
 
     try {
       let offset = 0;
+      let after: string | null = null;
+      let total: number | undefined;
       let done = false;
       while (!done) {
         if (operationsStoppedRef.current || refreshStoppedRef.current) return;
-        const result = await refreshConstellationBatch({ offset, limit: 8 });
+        const result: Awaited<ReturnType<typeof refreshConstellationBatch>> = await refreshConstellationBatch({ offset, limit: 8, after, total });
         setRefreshProgress({
           processed: result.processed,
           total: result.total,
@@ -721,6 +724,8 @@ export function NetworkGraph({
           total: result.total,
         });
         offset = result.processed;
+        after = result.cursor;
+        total = result.total;
         done = result.done;
         // Hand the app back to whatever else it was doing before asking for the next batch.
         // Server actions are issued one at a time, and each batch holds a 20s budget, so a
