@@ -577,7 +577,7 @@ export function ContactTimeline({
     {
       value: "all",
       label: "All",
-      count: sorted.length,
+      count: haveAll ? sorted.length : (totalCount ?? sorted.length),
       active: "border-ink/25 bg-muted text-ink",
       dot: "bg-muted-foreground",
     },
