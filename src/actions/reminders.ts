@@ -12,7 +12,7 @@ import {
   type ReminderActionKind,
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
-import { requireUserId, getDisplayProfile } from "@/lib/auth";
+import { requireAuthenticatedUser, requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -1022,12 +1022,15 @@ export async function undoBulkReminderAction(snapshot: BulkReminderSnapshot) {
 
 /** Full inbox for the in-app notifications panel. */
 export async function listNotificationPanel() {
-  const userId = await requireUserId();
+  // The gate's row is handed on: in a Server Action `cache()` is a pass-through, so the
+  // panel's entitlements and alerts would otherwise each read it again.
+  const { userId, settings } = await requireAuthenticatedUser();
   const { isAdminUser } = await import("@/lib/admin");
   const { isViewingAsUser } = await import("@/lib/surface-visibility");
 
   const panel = await loadNotificationPanel(userId, new Date(), {
     withAlerts: true,
+    settings,
   });
 
   return {
@@ -1051,10 +1054,10 @@ export async function listNotificationPanel() {
 /** Lightweight payload for browser/desktop notification polling. */
 export async function listDueNotificationItems() {
   const { getDesktopNotifiedIds } = await import("@/actions/notifications");
-  const userId = await requireUserId();
+  const { userId, settings } = await requireAuthenticatedUser();
   const [notifiedIds, panel] = await Promise.all([
     getDesktopNotifiedIds(),
-    loadNotificationPanel(userId, new Date(), { withAlerts: false }),
+    loadNotificationPanel(userId, new Date(), { withAlerts: false, settings }),
   ]);
   const notified = new Set(notifiedIds);
 
