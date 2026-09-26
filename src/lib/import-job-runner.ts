@@ -555,6 +555,46 @@ export type StartImportJobOptions = {
   step?: { index: number; total: number };
 };
 
+/**
+ * The server action that starts `input`'s import, callable once. Once called it lets go of
+ * `input` — the uploaded file's full text (a LinkedIn export can be tens of MB) — which is
+ * otherwise held by the thunk for as long as the job is polled.
+ */
+function importStarter(
+  input: ImportJobInput,
+): () => Promise<{ importId: string; totalRows: number }> {
+  let pending: ImportJobInput | null = input;
+  return () => {
+    const job = pending;
+    pending = null;
+    if (!job) throw new Error("This import was already started.");
+    switch (job.kind) {
+      case "connections":
+        return startLinkedInImport(job.csvText, job.fileName, job.ids);
+      case "google_contacts":
+        return confirmGoogleContactsImport(job.ids);
+      case "outlook_contacts":
+        return confirmOutlookContactsImport(job.ids);
+      case "contacts_file":
+        return confirmContactsFileImport(job.text, job.fileName, job.ids);
+      case "messages":
+        return startLinkedInMessagesImport(job.csvText, job.fileName, job.ids);
+      case "calendar":
+        return confirmCalendarImport({
+          kind: job.calendarKind,
+          text: job.text,
+          fileName: job.fileName,
+          createFollowUps: job.createFollowUps,
+        });
+      case "drive_docs":
+        return startDriveImport(job.files).then((r) => {
+          if (!r.ok) throw new UserFacingError(r.error);
+          return r.value;
+        });
+    }
+  };
+}
+
 export function startImportJob(
   input: ImportJobInput,
   { step }: StartImportJobOptions = {},
@@ -589,114 +629,21 @@ export function startImportJob(
         ? input.files.length
         : input.ids.length;
 
+  const kind = input.kind;
+  const begin = importStarter(input);
+
   // Fire-and-forget — callers should not await completion for navigation safety.
+  // Deliberately closes over `kind` and `begin`, never `input`: the import outlives the page
+  // that started it by minutes, and `input` carries the whole uploaded file.
   void (async () => {
     try {
-      if (input.kind === "connections") {
-        await runServerOwnedImportJob(
-          jobId,
-          "connections",
-          label,
-          total,
-          () => startLinkedInImport(input.csvText, input.fileName, input.ids),
-          step,
-        );
-        return;
-      }
-
-      if (input.kind === "google_contacts") {
-        await runServerOwnedImportJob(
-          jobId,
-          "google_contacts",
-          label,
-          total,
-          () => confirmGoogleContactsImport(input.ids),
-          step,
-        );
-        return;
-      }
-
-      if (input.kind === "outlook_contacts") {
-        await runServerOwnedImportJob(
-          jobId,
-          "outlook_contacts",
-          label,
-          total,
-          () => confirmOutlookContactsImport(input.ids),
-          step,
-        );
-        return;
-      }
-
-      if (input.kind === "contacts_file") {
-        await runServerOwnedImportJob(
-          jobId,
-          "contacts_file",
-          label,
-          total,
-          () =>
-            confirmContactsFileImport(input.text, input.fileName, input.ids),
-          step,
-        );
-        return;
-      }
-
-      if (input.kind === "messages") {
-        await runServerOwnedImportJob(
-          jobId,
-          "messages",
-          label,
-          total,
-          () =>
-            startLinkedInMessagesImport(
-              input.csvText,
-              input.fileName,
-              input.ids,
-            ),
-          step,
-        );
-        return;
-      }
-
-      if (input.kind === "calendar") {
-        await runServerOwnedImportJob(
-          jobId,
-          "calendar",
-          label,
-          total,
-          () =>
-            confirmCalendarImport({
-              kind: input.calendarKind,
-              text: input.text,
-              fileName: input.fileName,
-              createFollowUps: input.createFollowUps,
-            }),
-          step,
-        );
-        return;
-      }
-
-      if (input.kind === "drive_docs") {
-        await runServerOwnedImportJob(
-          jobId,
-          "drive_docs",
-          label,
-          total,
-          () =>
-            startDriveImport(input.files).then((r) => {
-              if (!r.ok) throw new UserFacingError(r.error);
-              return r.value;
-            }),
-          step,
-        );
-        return;
-      }
+      await runServerOwnedImportJob(jobId, kind, label, total, begin, step);
     } catch (err) {
       if (snapshot?.id !== jobId) return;
       cancelJobId = null;
       setSnapshot({
         id: jobId,
-        kind: input.kind,
+        kind,
         step,
         status: "failed",
         progress: null,

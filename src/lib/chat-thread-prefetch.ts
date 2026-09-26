@@ -68,6 +68,12 @@ export const THREAD_PREFETCH_FRESH_MS = 2_000;
 /** An older read is still worth showing for the instant it takes to re-read, up to this age. */
 export const THREAD_PREFETCH_KEEP_MS = 5 * 60_000;
 export const THREAD_PREFETCH_DELAY_MS = 80;
+/**
+ * Settled reads held at once. Each is a whole thread — messages, evidence, actions — and a
+ * pointer sweeping the rail would otherwise leave one behind per row for as long as the
+ * panel stays mounted, since only `take` and `forget` ever removed them.
+ */
+export const THREAD_PREFETCH_MAX_HELD = 8;
 
 export function createThreadPrefetcher<T extends ThreadPrefetchResult>(
   fetchThread: (id: string) => Promise<T>,
@@ -98,6 +104,21 @@ export function createThreadPrefetcher<T extends ThreadPrefetchResult>(
     return entry.previous;
   }
 
+  /** Drop reads too old for `take` to show, then the oldest past the cap. Never one in flight. */
+  function evict() {
+    const settled: [string, number][] = [];
+    for (const [key, entry] of entries) {
+      if (entry.value === undefined) continue;
+      if (now() - entry.at >= keepMs) entries.delete(key);
+      else settled.push([key, entry.at]);
+    }
+    if (settled.length <= THREAD_PREFETCH_MAX_HELD) return;
+    settled.sort((a, b) => a[1] - b[1]);
+    for (const [key] of settled.slice(0, settled.length - THREAD_PREFETCH_MAX_HELD)) {
+      entries.delete(key);
+    }
+  }
+
   function start(id: string) {
     if (fresh(entries.get(id))) return;
     if (inFlight) {
@@ -105,6 +126,7 @@ export function createThreadPrefetcher<T extends ThreadPrefetchResult>(
       return;
     }
     inFlight = true;
+    evict();
     const before = landed(entries.get(id));
     const entry: Entry<T> = { at: now(), promise: fetchThread(id), previous: before };
     entries.set(id, entry);

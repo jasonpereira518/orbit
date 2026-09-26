@@ -22,7 +22,11 @@ function hasWebGL2() {
   if (webglSupport !== null) return webglSupport;
   try {
     const probe = document.createElement("canvas");
-    webglSupport = Boolean(probe.getContext("webgl2"));
+    const gl = probe.getContext("webgl2");
+    webglSupport = Boolean(gl);
+    // A live context counts against the browser's small per-page cap until GC finds the
+    // probe; the answer is all this needed.
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
   } catch {
     webglSupport = false;
   }
@@ -97,14 +101,21 @@ export function EarthGlobeMount({
 
   useEffect(() => {
     const frame = frameRef.current;
-    if (!frame || !enabled || near) return;
+    if (!frame || !enabled) return;
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) setNear(true);
+        const inside = entries.some((e) => e.isIntersecting);
+        if (inside !== near) setNear(inside);
       },
-      // A viewport and a half of runway: the chunk and its texture are in
-      // hand before the pin's first frame, without ever touching first load.
-      { rootMargin: "150% 0px" }
+      near
+        ? // Well past the runway, the globe unmounts: its WebGL context and up to ~45MB
+          // of 4096² texture are disposed rather than held for the rest of the page. The
+          // wider margin is hysteresis, so a scroll back and forth at the edge does not
+          // rebuild it; returning is the same runway as the first arrival.
+          { rootMargin: "300% 0px" }
+        : // A viewport and a half of runway: the chunk and its texture are in
+          // hand before the pin's first frame, without ever touching first load.
+          { rootMargin: "150% 0px" }
     );
     io.observe(frame);
     return () => io.disconnect();

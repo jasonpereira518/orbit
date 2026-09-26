@@ -27,7 +27,7 @@
  * ends in a "Resume" banner on the next visit rather than a lost meeting.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, useTransform, type MotionValue } from "motion/react";
@@ -689,10 +689,17 @@ export function MeetingCapturePanel({
     () => Object.values(segments).sort((a, b) => a.seq - b.seq),
     [segments]
   );
-  const failedCount = ordered.filter((s) => s.status === "failed").length;
-  const pendingCount = ordered.filter((s) => s.status !== "done" && s.status !== "failed").length;
-  const heardNothing =
-    ordered.length > 0 && ordered.every((s) => s.silent || (s.status === "done" && !s.text));
+  // Memoized: the panel re-renders on every interim revision and elapsed tick, and a
+  // three-hour meeting is thousands of segments to rescan each time.
+  const { failedCount, pendingCount, heardNothing } = useMemo(
+    () => ({
+      failedCount: ordered.filter((s) => s.status === "failed").length,
+      pendingCount: ordered.filter((s) => s.status !== "done" && s.status !== "failed").length,
+      heardNothing:
+        ordered.length > 0 && ordered.every((s) => s.silent || (s.status === "done" && !s.text)),
+    }),
+    [ordered]
+  );
 
   // ── Review ─────────────────────────────────────────────────────────────────────────
   if (phase === "review" && analysis && sessionId) {
@@ -1228,37 +1235,7 @@ function TranscriptList({
         )}
         aria-live="polite"
       >
-        {segments.map((s) => (
-          <div key={s.seq}>
-            {boundarySet.has(s.seq) && (
-              <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-                Reconnected — speakers renumbered from here.
-              </p>
-            )}
-            <p className="leading-relaxed">
-              <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
-                {formatElapsed(s.startMs)}
-              </span>
-              {s.speaker && (
-                <span className="mr-1.5 font-medium text-foreground">{speakerLabel(s.speaker)}:</span>
-              )}
-              {s.status === "done" ? (
-                s.text ? (
-                  s.text
-                ) : (
-                  <span className="text-muted-foreground italic">(silence)</span>
-                )
-              ) : s.silent && s.status !== "failed" ? (
-                <span className="text-muted-foreground italic">(silence)</span>
-              ) : (
-                <span className={cn("italic", s.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
-                  {STATUS_COPY[s.status]}
-                  {s.detail && s.status !== "uploading" ? ` — ${s.detail}` : ""}
-                </span>
-              )}
-            </p>
-          </div>
-        ))}
+        <SegmentLines segments={segments} boundarySet={boundarySet} />
         {/*
           `aria-hidden`, inside an `aria-live` region on purpose. Deepgram revises the
           in-progress sentence several times a second, and every revision would otherwise be
@@ -1275,6 +1252,55 @@ function TranscriptList({
     </div>
   );
 }
+
+/**
+ * The settled lines, apart from the live one. Memoized so the interim sentence — revised
+ * several times a second — and the elapsed tick re-render one line, not every segment of a
+ * meeting that can run for three hours.
+ */
+const SegmentLines = memo(function SegmentLines({
+  segments,
+  boundarySet,
+}: {
+  segments: SegmentView[];
+  boundarySet: Set<number>;
+}) {
+  return (
+    <>
+      {segments.map((s) => (
+        <div key={s.seq}>
+          {boundarySet.has(s.seq) && (
+            <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+              Reconnected — speakers renumbered from here.
+            </p>
+          )}
+          <p className="leading-relaxed">
+            <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
+              {formatElapsed(s.startMs)}
+            </span>
+            {s.speaker && (
+              <span className="mr-1.5 font-medium text-foreground">{speakerLabel(s.speaker)}:</span>
+            )}
+            {s.status === "done" ? (
+              s.text ? (
+                s.text
+              ) : (
+                <span className="text-muted-foreground italic">(silence)</span>
+              )
+            ) : s.silent && s.status !== "failed" ? (
+              <span className="text-muted-foreground italic">(silence)</span>
+            ) : (
+              <span className={cn("italic", s.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
+                {STATUS_COPY[s.status]}
+                {s.detail && s.status !== "uploading" ? ` — ${s.detail}` : ""}
+              </span>
+            )}
+          </p>
+        </div>
+      ))}
+    </>
+  );
+});
 
 function parseAttendees(text: string): { name: string }[] {
   return text
