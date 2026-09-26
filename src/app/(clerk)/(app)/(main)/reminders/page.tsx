@@ -7,6 +7,7 @@ import type { RailTarget } from "@/components/reminders/reminder-rail";
 import { RemindersStageSkeleton } from "@/components/loading/page-skeletons";
 import { isReminderActionKind } from "@/lib/reminder-action-kind";
 import { isReminderSource, isReminderView } from "@/lib/reminders-page";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 type Params = {
   view?: string;
@@ -25,9 +26,12 @@ export default function RemindersPage({
   searchParams: Promise<Params>;
 }) {
   return (
-    <Suspense fallback={<RemindersStageSkeleton />}>
-      <RemindersContent searchParams={searchParams} />
-    </Suspense>
+    <>
+      <RenderStamp />
+      <Suspense fallback={<RemindersStageSkeleton />}>
+        <RemindersContent searchParams={searchParams} />
+      </Suspense>
+    </>
   );
 }
 

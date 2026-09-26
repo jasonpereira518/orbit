@@ -16,11 +16,14 @@ export const GOOGLE_SCOPES = {
   gmailRead: "https://www.googleapis.com/auth/gmail.readonly",
   gmailSend: "https://www.googleapis.com/auth/gmail.send",
   calendar: "https://www.googleapis.com/auth/calendar.readonly",
+  // Only files the person picks in the Google Picker. Non-sensitive; the restricted
+  // drive.readonly would need a CASA assessment, which is why whole-Drive search is later.
+  drive: "https://www.googleapis.com/auth/drive.file",
 } as const;
 
 export type GoogleScope = (typeof GOOGLE_SCOPES)[keyof typeof GOOGLE_SCOPES];
 
-export const GOOGLE_PURPOSES = ["contacts", "recruiter_scan", "send", "calendar", "event_mail"] as const;
+export const GOOGLE_PURPOSES = ["contacts", "recruiter_scan", "send", "calendar", "event_mail", "drive"] as const;
 export type GooglePurpose = (typeof GOOGLE_PURPOSES)[number];
 
 const IDENTITY_SCOPES: readonly GoogleScope[] = [GOOGLE_SCOPES.openid, GOOGLE_SCOPES.email];
@@ -31,6 +34,7 @@ const PURPOSE_SCOPE: Record<GooglePurpose, GoogleScope> = {
   send: GOOGLE_SCOPES.gmailSend,
   calendar: GOOGLE_SCOPES.calendar,
   event_mail: GOOGLE_SCOPES.gmailRead,
+  drive: GOOGLE_SCOPES.drive,
 };
 
 export function isGooglePurpose(value: unknown): value is GooglePurpose {
@@ -41,8 +45,44 @@ export function requiredScopeFor(purpose: GooglePurpose): GoogleScope {
   return PURPOSE_SCOPE[purpose];
 }
 
-export function googleScopesFor(purpose: GooglePurpose): GoogleScope[] {
-  return [...IDENTITY_SCOPES, PURPOSE_SCOPE[purpose]];
+/** What one Connect asks for: the everyday features, never mail (see the spec's consent decision). */
+export const GOOGLE_CONNECT_PURPOSES: readonly GooglePurpose[] = ["contacts", "calendar"];
+
+/** The scopes one consent screen should ask for, identity included, each listed once. */
+export function googleScopesFor(purposes: readonly GooglePurpose[]): GoogleScope[] {
+  return [...new Set<GoogleScope>([...IDENTITY_SCOPES, ...purposes.map((p) => PURPOSE_SCOPE[p])])];
+}
+
+/**
+ * Which of the requested purposes the grant does not cover. Google's granular consent lets
+ * people untick boxes, so a connect can come back covering some of what it asked for.
+ */
+export function missingGooglePurposes(
+  purposes: readonly GooglePurpose[],
+  scopes: string | null | undefined
+): GooglePurpose[] {
+  return purposes.filter((purpose) => !grantCovers(purpose, scopes));
+}
+
+/**
+ * How the purpose list rides in the OAuth state and comes back on the URL.
+ *
+ * The separator is `.` and not `+` because of the way back. RFC 6749 sends the state to the
+ * redirect URI form-urlencoded, where a literal `+` decodes to a SPACE — so a provider that
+ * decodes the value and echoes it raw hands back `contacts calendar`, the comparison against
+ * the cookie in `consumeGmailOAuthState` fails, and every two-purpose Connect dies as
+ * `oauth_failed`. `.` is unreserved in RFC 3986 and form decoding leaves it alone.
+ */
+export function serializeGooglePurposes(purposes: readonly GooglePurpose[]): string {
+  return purposes.join(".");
+}
+
+/**
+ * Tolerates a single purpose — a consent screen opened before the list shipped says just
+ * `contacts` — and the `+` this used to join with, for a screen opened before that changed.
+ */
+export function parseGooglePurposes(raw: string | null | undefined): GooglePurpose[] {
+  return (raw ?? "").split(/[.+]/).filter(isGooglePurpose);
 }
 
 /** Google returns granted scopes space-separated; so does `gmail_connections.scopes`. */
@@ -84,6 +124,8 @@ export function missingScopeMessage(purpose: GooglePurpose | null | undefined): 
       return "Google didn’t grant calendar access — reconnect and allow it";
     case "send":
       return "Google didn’t grant permission to send — reconnect and allow it";
+    case "drive":
+      return "Google didn’t grant Drive access — reconnect and allow it";
     default:
       return "Google didn’t grant mail access — reconnect and allow it";
   }

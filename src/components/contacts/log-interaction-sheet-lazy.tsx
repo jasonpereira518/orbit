@@ -11,6 +11,11 @@ const LogInteractionSheet = dynamic(
   { ssr: false, loading: () => null }
 );
 
+/** Fetch the sheet's code ahead of the click (hover/focus of a "Log" button). */
+export function preloadLogInteractionSheet() {
+  void import("@/components/contacts/log-interaction-sheet").catch(() => {});
+}
+
 export function LogInteractionSheetLazy({
   contactId,
   contactName,

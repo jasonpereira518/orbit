@@ -6,6 +6,10 @@
  * Run: npx tsx scripts/smoke-meeting-sessions.ts
  */
 import "./smoke/_env";
+import { setDeepgramEnabledForSmoke } from "./smoke/_env";
+// The meeting cap is only enforced while Orbit is the one paying, and `_env` strips the key
+// from every smoke — so the checks below that expect a 402 need the switch back on.
+setDeepgramEnabledForSmoke(true);
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-meeting-sessions";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-meeting-sessions";
 
@@ -17,6 +21,7 @@ import {
   meetingTranscriptSegments,
   noteBatches,
   reminders,
+  speechUsage,
   userSettings,
   type MeetingDigest,
 } from "../src/db/schema";
@@ -31,6 +36,8 @@ import {
   ingestMeetingChunk,
   markMeetingSessionSaved,
   missingSeqs,
+  recordLiveSegments,
+  type LiveSegmentInput,
   resumeMeetingSessionRow,
   storeMeetingDigest,
   toNoteBatchMeeting,
@@ -53,22 +60,39 @@ async function reset() {
   const db = await getDb();
   for (const user of [USER, OTHER]) {
     await db.delete(meetingTranscriptSegments).where(eq(meetingTranscriptSegments.userId, user));
+    await db.delete(speechUsage).where(eq(speechUsage.userId, user));
     await db.delete(meetingSessions).where(eq(meetingSessions.userId, user));
     await db.delete(reminders).where(eq(reminders.userId, user));
     await db.delete(noteBatches).where(eq(noteBatches.userId, user));
     await db.delete(contacts).where(eq(contacts.userId, user));
     await db.delete(userSettings).where(eq(userSettings.userId, user));
     await ensureUserSettings(user);
+    // Pro, because meetings are a paid feature and — since the meter fix — chunk recovery
+    // asks `speechAllowance(userId, "meeting")` before it spends Orbit's key. A free account
+    // has a meeting limit of 0, i.e. permanently exhausted, so every chunk below would be a
+    // 402. The route these functions sit behind already refuses a free account outright
+    // (`requireMeetingsUser`), so a paid plan is also the only state they are ever reached in.
+    await db
+      .update(userSettings)
+      .set({ subscriptionStatus: "active", subscriptionPlan: "orbit" })
+      .where(eq(userSettings.userId, user));
   }
 }
 
-/** A stub transcriber that records every call and returns a line per chunk. */
-function stubTranscriber() {
+/**
+ * A stub transcriber that records every call and returns a line per chunk.
+ *
+ * `engine` matters: the meeting meter counts ORBIT's Deepgram spend, so `ingestMeetingChunk`
+ * books seconds only when Deepgram actually ran. The default stays "whisper" (the user's own
+ * key — Orbit paid nothing) so the bulk of the checks below exercise the storage rules without
+ * touching usage; the metering section passes "deepgram".
+ */
+function stubTranscriber(engine: "whisper" | "deepgram" = "whisper") {
   const calls: { filename?: string; opts?: TranscribeOptions; bytes: number }[] = [];
   const fn: Transcriber = async (_userId, input, opts) => {
     calls.push({ filename: input.filename, opts, bytes: Buffer.from(input.base64, "base64").length });
     const seq = Number(input.filename?.match(/meeting-(\d+)/)?.[1] ?? -1);
-    return { text: `line ${seq}`, engine: "whisper" };
+    return { text: `line ${seq}`, engine };
   };
   return { fn, calls };
 }
@@ -288,6 +312,202 @@ async function main() {
     const s = await db.query.meetingSessions.findFirst({ where: eq(meetingSessions.id, doomed.id) });
     const segs = await db.query.meetingTranscriptSegments.findMany({ where: eq(meetingTranscriptSegments.sessionId, doomed.id) });
     check("discard deletes the session and every line of it", !s && segs.length === 0);
+  }
+
+  // ── Live segments ──────────────────────────────────────────────────────────────────
+  console.log("\nlive segments");
+  {
+    const session = await createMeetingSessionRow(USER, { includesMic: true, recorderId: "rec-1" });
+    const first = await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-1",
+      segments: [
+        { seq: 0, startMs: 0, endMs: 4_000, speaker: "you", text: "Met Priya from Stripe." },
+        { seq: 1, startMs: 4_000, endMs: 9_000, speaker: "speaker-1", text: "We talked about pricing." },
+      ],
+    });
+    check("both segments are written", first.ok && first.written === 2);
+    check("duration follows the last segment", first.ok && first.durationMs === 9_000);
+
+    const again = await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-1",
+      segments: [{ seq: 1, startMs: 4_000, endMs: 9_000, speaker: "speaker-1", text: "We talked about pricing." }],
+    });
+    check("a retried batch writes nothing new", again.ok && again.written === 0);
+
+    const stolen = await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-2",
+      segments: [{ seq: 2, startMs: 9_000, endMs: 12_000, speaker: null, text: "Later." }],
+    });
+    check("another recorder is refused", !stolen.ok && stolen.status === 409);
+
+    const rows = await db.select().from(meetingTranscriptSegments).where(eq(meetingTranscriptSegments.sessionId, session.id));
+    check("speakers are stored", rows.find((r) => r.seq === 0)?.speaker === "you");
+    check("the engine is deepgram", rows.every((r) => r.engine === "deepgram"));
+
+    const usage = await db.select().from(speechUsage).where(eq(speechUsage.sessionId, session.id));
+    check("usage is metered once, in seconds", usage.length === 1 && usage[0]?.seconds === 9);
+
+    const empty = await recordLiveSegments(USER, session.id, { recorderId: "rec-1", segments: [] });
+    check("an empty batch is a no-op success, not an error", empty.ok && empty.written === 0 && empty.durationMs === 9_000);
+
+    // A route parses JSON and casts it — nothing upstream guarantees a segment actually has
+    // the shape it claims to, so a missing `text` must come back as this function's own 400
+    // rather than throwing a TypeError out of `.length` that the route's catch turns into a 502.
+    const malformed = await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-1",
+      segments: [{ seq: 3, startMs: 12_000, endMs: 13_000, speaker: "you" } as unknown as LiveSegmentInput],
+    });
+    check("a segment missing text is a 400, not a thrown error", !malformed.ok && malformed.status === 400);
+
+    await discardMeetingSessionRow(USER, session.id);
+  }
+
+  // ── Chunk recovery spends the MEETING meter ─────────────────────────────────────────
+  // The firewall case: `wss://` is blocked, the live socket never opens, and every minute of
+  // the meeting comes up the chunk route instead. That is Orbit's Deepgram key either way, so
+  // it must check and spend the `meeting` cap — it used to check and spend `shortform`, which
+  // left the 5 h meeting cap reading zero for a three-hour meeting and quietly drained the
+  // user's voice-note allowance until voice notes stopped working.
+  console.log("\nchunk recovery spends the meeting meter");
+  {
+    await reset();
+    const session = await createMeetingSessionRow(USER, { includesMic: true, recorderId: "rec-M" });
+    const dg = stubTranscriber("deepgram");
+
+    const one = await ingestMeetingChunk(USER, session.id, meta(0, "rec-M"), WAV, dg.fn);
+    check("a recovered chunk is stored", one.ok && one.engine === "deepgram");
+    check("…and carries its session id, so the Deepgram request can be tagged", dg.calls[0]?.opts?.sessionId === session.id);
+
+    let usage = await db.select().from(speechUsage).where(eq(speechUsage.userId, USER));
+    check("it spends the meeting meter", usage.length === 1 && usage[0]?.kind === "meeting", JSON.stringify(usage));
+    check("…and not a second of short-form", usage.every((u) => u.kind !== "shortform"));
+    check("…metered as a position on the meeting's clock", usage[0]?.seconds === 60, String(usage[0]?.seconds));
+    check("…on the session's own row", usage[0]?.sessionId === session.id);
+
+    // A chunk transcribed on the USER's key is not Orbit's spend, so the meter must not move.
+    const byok = stubTranscriber("whisper");
+    await ingestMeetingChunk(USER, session.id, meta(1, "rec-M"), WAV, byok.fn);
+    usage = await db.select().from(speechUsage).where(eq(speechUsage.userId, USER));
+    check("a chunk on the user's own key never moves it", usage.length === 1 && usage[0]?.seconds === 60);
+
+    // Live and chunk recovery meter the SAME number into the SAME row — the session's
+    // high-water mark — so a recovery chunk during a healthy live stretch is not a second
+    // charge for audio the live path already booked. The number is the clock MINUS the
+    // minute the user's own key carried: three minutes have elapsed, Orbit paid for two.
+    await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-M",
+      segments: [{ seq: 10, startMs: 120_000, endMs: 180_000, speaker: "you", text: "Live." }],
+    });
+    usage = await db.select().from(speechUsage).where(eq(speechUsage.userId, USER));
+    check("live segments raise the same row, not a new one", usage.length === 1, `${usage.length} rows`);
+    check(
+      "…to the clock minus the stretch Orbit never paid for",
+      usage[0]?.seconds === 120,
+      String(usage[0]?.seconds)
+    );
+
+    const overlap = await ingestMeetingChunk(USER, session.id, { seq: 11, startMs: 120_000, endMs: 180_000, recorderId: "rec-M" }, WAV, dg.fn);
+    check("a recovery chunk under live-covered audio still stores", overlap.ok);
+    usage = await db.select().from(speechUsage).where(eq(speechUsage.userId, USER));
+    check("…but is not charged twice", usage.length === 1 && usage[0]?.seconds === 120, String(usage[0]?.seconds));
+
+    // And the cap actually bites: a spent month refuses the chunk before any audio is sent.
+    await db.insert(speechUsage).values({
+      userId: USER,
+      kind: "meeting",
+      seconds: 18_000,
+      source: "stream",
+      sessionId: "22222222-2222-4222-8222-222222222222",
+    });
+    const callsBefore = dg.calls.length;
+    const refused = await ingestMeetingChunk(USER, session.id, meta(12, "rec-M"), WAV, dg.fn);
+    check("a spent meeting cap refuses the chunk", !refused.ok && refused.status === 402, JSON.stringify(refused));
+    check("…before spending anything on it", dg.calls.length === callsBefore);
+
+    const stillSilent = await ingestMeetingChunk(USER, session.id, meta(13, "rec-M"), null, dg.fn);
+    check("…while a silent chunk, which costs nothing, still records", stillSilent.ok && stillSilent.engine === "silent");
+
+    // The kill switch, with that same spent cap still in place. `ORBIT_DEEPGRAM=off` sends
+    // this chunk to the user's own OpenAI/Gemini key, which costs Orbit nothing — so the cap
+    // has nothing to protect and must not refuse. Before this, pulling the incident lever
+    // also stopped every paying account whose month was spent from recording at all.
+    setDeepgramEnabledForSmoke(false);
+    const byokUnderSpentCap = await ingestMeetingChunk(USER, session.id, meta(14, "rec-M"), WAV, byok.fn);
+    check(
+      "with Deepgram off, a spent cap does not refuse the chunk",
+      byokUnderSpentCap.ok && byokUnderSpentCap.engine === "whisper",
+      JSON.stringify(byokUnderSpentCap)
+    );
+    setDeepgramEnabledForSmoke(true);
+  }
+
+  // ── What the meter books is the audio ORBIT paid for ────────────────────────────────
+  // The reviewed bug: a recovery chunk booked `ceil(durationMs / 1000)` — the whole elapsed
+  // clock — whenever THAT chunk ran on Deepgram, however many earlier ones had fallen through
+  // to the user's own key. Deepgram erroring for a minute mid-meeting therefore charged the
+  // user's meeting cap for a minute Orbit never bought.
+  console.log("\nthe meeting meter books only the audio Orbit paid Deepgram for");
+  {
+    await reset();
+    const dg = stubTranscriber("deepgram");
+    const byok = stubTranscriber("whisper");
+
+    // A meeting Deepgram carried end to end: the meter is the whole clock.
+    const whole = await createMeetingSessionRow(USER, { includesMic: true, recorderId: "rec-W" });
+    for (const seq of [0, 1, 2, 3]) {
+      await ingestMeetingChunk(USER, whole.id, meta(seq, "rec-W"), WAV, dg.fn);
+    }
+    let usage = await db.select().from(speechUsage).where(eq(speechUsage.sessionId, whole.id));
+    check("Deepgram carried all four minutes, so all four are metered", usage[0]?.seconds === 240, String(usage[0]?.seconds));
+
+    // The same meeting with Deepgram dropping out for one minute in the middle. One minute
+    // less metered — the clock still ran, Orbit's key did not.
+    const dropped = await createMeetingSessionRow(USER, { includesMic: true, recorderId: "rec-D" });
+    await ingestMeetingChunk(USER, dropped.id, meta(0, "rec-D"), WAV, dg.fn);
+    await ingestMeetingChunk(USER, dropped.id, meta(1, "rec-D"), WAV, byok.fn);
+    await ingestMeetingChunk(USER, dropped.id, meta(2, "rec-D"), WAV, dg.fn);
+    await ingestMeetingChunk(USER, dropped.id, meta(3, "rec-D"), WAV, dg.fn);
+    usage = await db.select().from(speechUsage).where(eq(speechUsage.sessionId, dropped.id));
+    check(
+      "a minute on the user's own key is metered as LESS than the clock, by that minute",
+      usage[0]?.seconds === 180,
+      String(usage[0]?.seconds)
+    );
+    const droppedRow = await db.query.meetingSessions.findFirst({ where: eq(meetingSessions.id, dropped.id) });
+    check("the clock itself still ran for the full four minutes", droppedRow?.durationMs === 240_000, String(droppedRow?.durationMs));
+    check("…and the session remembers the minute it spent elsewhere", droppedRow?.offDeepgramMs === 60_000, String(droppedRow?.offDeepgramMs));
+
+    // Silence is the same story: nothing is sent to Deepgram, so nothing is charged, even
+    // though a later Deepgram chunk carries the clock past it.
+    const quiet = await createMeetingSessionRow(USER, { includesMic: true, recorderId: "rec-Q" });
+    await ingestMeetingChunk(USER, quiet.id, meta(0, "rec-Q"), WAV, dg.fn);
+    await ingestMeetingChunk(USER, quiet.id, meta(1, "rec-Q"), null, dg.fn);
+    await ingestMeetingChunk(USER, quiet.id, meta(2, "rec-Q"), WAV, dg.fn);
+    usage = await db.select().from(speechUsage).where(eq(speechUsage.sessionId, quiet.id));
+    check("a silent minute is not charged either", usage[0]?.seconds === 120, String(usage[0]?.seconds));
+
+    // And the property the whole design rests on: live and recovery book the SAME number
+    // into the SAME row, so replaying either path cannot charge the meeting twice.
+    const mixed = await createMeetingSessionRow(USER, { includesMic: true, recorderId: "rec-X" });
+    await recordLiveSegments(USER, mixed.id, {
+      recorderId: "rec-X",
+      segments: [{ seq: 0, startMs: 0, endMs: 60_000, speaker: "you", text: "Live." }],
+    });
+    await ingestMeetingChunk(USER, mixed.id, { seq: 1, startMs: 60_000, endMs: 120_000, recorderId: "rec-X" }, WAV, dg.fn);
+    await recordLiveSegments(USER, mixed.id, {
+      recorderId: "rec-X",
+      segments: [{ seq: 2, startMs: 120_000, endMs: 180_000, speaker: "you", text: "Live again." }],
+    });
+    // Both paths report their totals a second time, the way a retried batch or a redelivered
+    // chunk would.
+    await recordLiveSegments(USER, mixed.id, {
+      recorderId: "rec-X",
+      segments: [{ seq: 2, startMs: 120_000, endMs: 180_000, speaker: "you", text: "Live again." }],
+    });
+    await ingestMeetingChunk(USER, mixed.id, { seq: 1, startMs: 60_000, endMs: 120_000, recorderId: "rec-X" }, WAV, dg.fn);
+    usage = await db.select().from(speechUsage).where(eq(speechUsage.sessionId, mixed.id));
+    check("live plus recovery is one row", usage.length === 1, `${usage.length} rows`);
+    check("…metered once, at the session's clock", usage[0]?.seconds === 180, String(usage[0]?.seconds));
   }
 
   await reset();

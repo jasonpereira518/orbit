@@ -89,6 +89,8 @@ export type ChatSuggestion = {
   contactIds: readonly string[];
   /** Drives the card's icon via `interactionTypeIcon`. Only set for `recent_interaction`. */
   interactionType: string | null;
+  /** The company the question names, as written in it — so a card can tint it in its brand color. */
+  company?: string;
   rank: number;
 };
 
@@ -330,6 +332,7 @@ function buildCandidates(signals: SuggestionSignals): Candidate[] {
       id: `company_cluster:${companyKeyFor(cluster.company)}`,
       kind: "company_cluster",
       question: `Who else do I know at ${company}?`,
+      company,
       basis: extra
         ? `${names[0]}, ${names[1]} and ${extra} other${extra === 1 ? "" : "s"} work there`
         : `${names[0]} and ${names[1]} both work there`,
@@ -508,6 +511,7 @@ function buildCandidates(signals: SuggestionSignals): Candidate[] {
         id: `starter_company:${companyKeyFor(signals.biggestCompany.company)}`,
         kind: "starter_company",
         question: `Who else do I know at ${company}?`,
+      company,
         basis: `${signals.biggestCompany.total} people work there`,
         contactIds: [],
         interactionType: null,

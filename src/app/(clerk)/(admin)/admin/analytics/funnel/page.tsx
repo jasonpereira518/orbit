@@ -67,7 +67,13 @@ export default async function AdminFunnelPage({
     </a>
   );
 
-  const max = Math.max(1, ...stages.map((s) => s.count));
+  // Each population is scaled against its own largest stage. One scale across all three drew
+  // a few signups as a sliver under thousands of visitor-days — a narrowing funnel of one
+  // group of people, which is exactly the reading this page exists to prevent.
+  const groupMax = new Map<string, number>();
+  for (const stage of stages) {
+    groupMax.set(stage.group, Math.max(groupMax.get(stage.group) ?? 1, stage.count));
+  }
 
   return (
     <>
@@ -98,7 +104,7 @@ export default async function AdminFunnelPage({
                 <>
                   <Th>Stage</Th>
                   <Th numeric>Count</Th>
-                  <Th>Of the stage above</Th>
+                  <Th>Conversion</Th>
                 </>
               }
             >
@@ -116,11 +122,16 @@ export default async function AdminFunnelPage({
                       {/* Hand-built, like every other bar in this console. */}
                       <div
                         className="h-1.5 shrink-0 rounded-full bg-primary/70"
-                        style={{ width: `${(stage.count / max) * 100}%`, minWidth: 2 }}
+                        style={{
+                          width: `${(stage.count / (groupMax.get(stage.group) ?? 1)) * 100}%`,
+                          minWidth: 2,
+                        }}
                         aria-hidden
                       />
                       <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                        {stage.of == null ? "—" : formatRate(stage.count, stage.of)}
+                        {stage.of == null
+                          ? "—"
+                          : `${formatRate(stage.count, stage.of)} ${stage.ofLabel ?? ""}`.trim()}
                       </span>
                     </div>
                   </Td>
@@ -139,7 +150,8 @@ export default async function AdminFunnelPage({
             <li>
               <span className="text-foreground">These are not one group of people.</span>{" "}
               The first two rows count traffic, the third counts the interest list, and the
-              last three count accounts created in the same window. Nothing links a visitor
+              last three count accounts created in the same window. Each group&apos;s bars are
+              scaled on their own, and every rate names what it is a fraction of. Nothing links a visitor
               to the account they later create — the visitor hash is salted per day and
               expires at midnight, which is exactly why Orbit needs no tracking cookie.
             </li>
@@ -161,9 +173,23 @@ export default async function AdminFunnelPage({
               you which of those people came back.
             </li>
             <li>
-              <span className="text-foreground">Paid includes Lifetime.</span> A one-off
+              <span className="text-foreground">
+                Activated and Paid wait a week.
+              </span>{" "}
+              Both are counted over accounts at least 7 days old, so a signup from
+              yesterday is not scored as a miss. On the 7-day range that leaves nothing to
+              count yet.
+            </li>
+            <li>
+              <span className="text-foreground">Orbit&apos;s own accounts are left out.</span>{" "}
+              Admins and the showcase account are excluded from every row, interest-list
+              signups included when their email matches.
+            </li>
+            <li>
+              <span className="text-foreground">Paid includes Lifetime, net of refunds.</span> A one-off
               purchase moves no recurring revenue, so a paid test written against MRR alone
-              would score every Lifetime customer as a non-conversion.
+              would score every Lifetime customer as a non-conversion. An account whose
+              payments were refunded in full is not counted.
             </li>
           </ul>
         </AdminPanel>

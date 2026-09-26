@@ -44,6 +44,7 @@ import { billingEvents, errorEvents, rateLimitBuckets, usageEvents, userSettings
 import { encrypt } from "../src/lib/crypto";
 import { priceFor } from "../src/lib/ai-pricing";
 import type { AiOperationId } from "../src/lib/ai-operations";
+import { DEFAULT_MODELS } from "../src/lib/ai-providers";
 import {
   AiAccessError,
   aiReadyFromSettings,
@@ -67,13 +68,23 @@ import {
   MANAGED_AI_ENABLED,
   MANAGED_DEFAULT_MODELS,
   MANAGED_MODELS,
+  MANAGED_PROVIDER_ORDER,
   chooseCompletionKey,
   chooseEmbeddingKey,
   managedCallAllowed,
   managedEligibility,
   type KeyFacts,
 } from "../src/lib/managed-ai-policy";
-import { completeJson, createEmbedding, transcribeAudioWithAI, transcribeImagePages } from "../src/lib/ai";
+import {
+  completeJson,
+  completeJsonOn,
+  createEmbedding,
+  resolveEmbeddingBackend,
+  transcribeAudioWithAI,
+  transcribeImagePages,
+} from "../src/lib/ai";
+import { __clearEmbeddingCacheForTests, defaultResolveScope, getQueryEmbedding } from "../src/lib/embedding-cache";
+import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { friendlyError, isMissingAiApiKeyError } from "../src/lib/errors";
 import { confirmLifetimeCheckout, judgeLifetimeSession } from "../src/lib/lifetime-checkout";
 import { LIFETIME_METADATA_KEY, LIFETIME_METADATA_VALUE } from "../src/lib/stripe";
@@ -100,7 +111,7 @@ async function refusal(p: Promise<unknown>): Promise<AiAccessError | null> {
 
 /* ------------------------------------------------------------------ fetch stub ------- */
 
-type Sent = { url: string; key: string | null };
+type Sent = { url: string; key: string | null; headers: Record<string, string>; body: string | null };
 const sent: Sent[] = [];
 let respondWith: "ok" | "key_refused" = "ok";
 
@@ -113,7 +124,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     headers.get("x-api-key") ??
     headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
     null;
-  sent.push({ url, key });
+  sent.push({
+    url,
+    key,
+    headers: Object.fromEntries(headers.entries()),
+    body: typeof init?.body === "string" ? init.body : null,
+  });
   if (respondWith === "key_refused") {
     return new Response(
       JSON.stringify({ error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } }),
@@ -127,6 +143,15 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     return Response.json({
       candidates: [{ content: { role: "model", parts: [{ text: '{"ok":true,"text":"hello there"}' }] }, finishReason: "STOP" }],
       usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 100 },
+    });
+  }
+  if (/^https:\/\/openrouter\.ai\/api\/v1\/embeddings/.test(url)) {
+    return Response.json({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+  }
+  if (/^https:\/\/openrouter\.ai\/api\/v1\/chat\/completions/.test(url)) {
+    return Response.json({
+      choices: [{ message: { role: "assistant", content: '{"ok":true,"text":"hello there"}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1000, completion_tokens: 100 },
     });
   }
   return realFetch(input, init);
@@ -164,6 +189,40 @@ const KEY_PROBE = "src/lib/ai-key-check.ts";
  */
 const TYPESAFE_TRANSPORT = "src/lib/typesafe-api.ts";
 const TYPESAFE_TRANSPORT_TEST = "scripts/smoke-jev-client.ts";
+/**
+ * Deepgram's own client (task 3 of the speech-to-text plan). It is not an LLM provider and
+ * is deliberately outside the gate above, but it still reads exactly one key and names
+ * exactly one host — so it gets the same narrow exemption as the gate and the transport.
+ */
+const DEEPGRAM_CLIENT = "src/lib/deepgram.ts";
+/**
+ * The live Deepgram socket wrapper (task 8). It runs in the BROWSER, holds only the
+ * 30-second grant token `deepgram.ts` minted server-side, and never sees `DEEPGRAM_API_KEY`
+ * — so it is exempted from the host check (it does legitimately open a socket to Deepgram)
+ * but not from the env-key check (it has no business reading the raw key, and doesn't).
+ */
+const DEEPGRAM_LIVE_CLIENT = "src/lib/deepgram-live.ts";
+/**
+ * The CSP builder (task 8). It only NAMES `api.deepgram.com` inside a policy string so the
+ * browser is allowed to reach it — it never dials the host itself — so it gets the same
+ * host-check exemption as the two files above.
+ */
+const SECURITY_HEADERS = "src/lib/security-headers.ts";
+/**
+ * The eval harness, exempted from the ENV-KEY rule only (task 17). It is a developer tool
+ * that never ships and is never imported by the app, and holding provider keys is its whole
+ * job — it already carries Gemini/OpenAI/Anthropic/TypeSafe keys, which only escape this
+ * regex because it reads them under `ORBIT_EVAL_*` names. Deepgram is the one that cannot be
+ * hidden that way: it is not an `AiProvider`, so it cannot ride the encrypted-`userSettings`
+ * BYOK path `setUpUser` uses for the other four, and `src/lib/deepgram.ts` reads it straight
+ * off `process.env` — so `setDeepgramKey` has to write `process.env.DEEPGRAM_API_KEY` by that
+ * literal name for a `--task transcribe` run to reach Deepgram at all.
+ *
+ * Narrow on purpose: this file is still held to the SDK-import, client-construction,
+ * TypeSafe-transport and provider-host rules below, and every other file — including every
+ * other script — is still held to the env-key rule.
+ */
+const EVAL_HARNESS = "scripts/eval-ai.ts";
 
 function sourceGuard() {
   console.log("\nOnly the gate can reach a provider");
@@ -175,8 +234,20 @@ function sourceGuard() {
   const dynamicImport = new RegExp(String.raw`import\(\s*["'](${SDKS.map((s) => s.replace(/[/@.-]/g, (c) => `\\${c}`)).join("|")})["']\s*\)`);
   const construct = /new\s+(GoogleGenAI|OpenAI|Anthropic)\s*\(/;
   const transportImport = /^\s*import\s+(?!type\b)[^;]*?from\s+["'](?:@\/lib|\.\.?(?:\/[\w.-]+)*)\/typesafe-api["']|import\(\s*["'][^"']*typesafe-api["']\s*\)/m;
-  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|TYPESAFE_API_KEY)\b/;
-  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai/;
+  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|TYPESAFE_API_KEY|OPENROUTER_API_KEY|DEEPGRAM_API_KEY)\b/;
+  // OpenRouter's own bare host, unlike the other three, is also where a person's browser
+  // legitimately links out — the credits page (errors.ts's quota copy, verified by curl to
+  // be /settings/credits — /credits itself 308s there) and the authorize URL (Task 5).
+  // Task 5 adds two more narrow exceptions, both raw HTTP because OpenRouter has no SDK:
+  // `ai-key-check.ts`'s save-time probe (`GET /api/v1/key`, the same file and reasoning
+  // that already exempts the other three probes' SDK constructors) and the OAuth
+  // callback's code-for-key exchange (`POST /api/v1/auth/keys`), which mints the very key
+  // the gate later hands out — it has nothing of its own to ask the gate either.
+  // Excluding only these specific paths, rather than requiring "/api", keeps the bare-host
+  // literal itself tripping the guard everywhere else — including a split host/path form
+  // (`const H = "https://openrouter.ai"; fetch(\`${H}/api/v1/...\`)`) that a "must contain
+  // /api" pattern would miss, since the literal alone carries no path.
+  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|api\.deepgram\.com|openrouter\.ai(?!\/(settings\/credits|auth|api\/v1\/key|api\/v1\/auth\/keys)\b)/;
 
   const offenders: string[] = [];
   for (const file of [...walk("src"), ...walk("scripts")]) {
@@ -187,8 +258,21 @@ function sourceGuard() {
     if (!probe && (valueImport.test(code) || dynamicImport.test(code))) offenders.push(`${file}: imports an AI SDK`);
     if (!probe && construct.test(code)) offenders.push(`${file}: constructs an AI client`);
     if (!probe && file !== TYPESAFE_TRANSPORT_TEST && transportImport.test(code)) offenders.push(`${file}: imports TypeSafe's raw-key transport`);
-    if (envKey.test(code) && file !== "scripts/smoke-contact-brief.ts") offenders.push(`${file}: reads an AI key from the environment`);
-    if (providerHost.test(code) && file !== TYPESAFE_TRANSPORT) offenders.push(`${file}: talks to a provider host directly`);
+    if (
+      envKey.test(code) &&
+      file !== "scripts/smoke-contact-brief.ts" &&
+      file !== DEEPGRAM_CLIENT &&
+      file !== EVAL_HARNESS
+    )
+      offenders.push(`${file}: reads an AI key from the environment`);
+    if (
+      providerHost.test(code) &&
+      file !== TYPESAFE_TRANSPORT &&
+      file !== DEEPGRAM_CLIENT &&
+      file !== DEEPGRAM_LIVE_CLIENT &&
+      file !== SECURITY_HEADERS
+    )
+      offenders.push(`${file}: talks to a provider host directly`);
   }
   check("no file outside the gate imports an SDK, builds a client, reads a key or calls a provider", offenders.length === 0, offenders.join("\n       "));
 
@@ -199,7 +283,20 @@ function sourceGuard() {
   check("the transport-import rule catches a stray import", transportImport.test(`import { systemOneRequest } from "@/lib/typesafe-api";`) && transportImport.test(`import { x } from "../src/lib/typesafe-api";`));
   check("…but not a type-only one", !transportImport.test(`import type { SystemOneRequest } from "@/lib/typesafe-api";`));
   check("the env rule catches TYPESAFE_API_KEY", envKey.test("process.env.TYPESAFE_API_KEY"));
+  // The exemption above is by exact path, so the rule it exempts must still bite everywhere
+  // else — otherwise a weakened regex and a working guard look identical on a clean tree.
+  check("the env rule catches DEEPGRAM_API_KEY", envKey.test(`const k = process.env.DEEPGRAM_API_KEY;`) && envKey.test(`process.env["DEEPGRAM_API_KEY"]`));
+  check("…and the eval harness is the only script exempted from it", EVAL_HARNESS === "scripts/eval-ai.ts" && envKey.test(readFileSync(EVAL_HARNESS, "utf8")));
   check("the host rule catches TypeSafe's host", providerHost.test("https://api.typesafe.ai/v1/systemone"));
+  check("…and OpenRouter's API path", providerHost.test("https://openrouter.ai/api/v1/chat/completions"));
+  check(
+    "…and a split host/path form of the same call",
+    providerHost.test('const H = "https://openrouter.ai"; fetch(`${H}/api/v1/chat/completions`)')
+  );
+  check("…but not a plain link to OpenRouter's credits page", !providerHost.test("https://openrouter.ai/settings/credits"));
+  check("…nor the OAuth authorize URL (Task 5)", !providerHost.test("https://openrouter.ai/auth"));
+  check("…nor the save-time key-check probe (Task 5)", !providerHost.test("https://openrouter.ai/api/v1/key"));
+  check("…nor the OAuth code-for-key exchange (Task 5)", !providerHost.test("https://openrouter.ai/api/v1/auth/keys"));
   const ai = readFileSync("src/lib/ai.ts", "utf8");
   check("ai.ts imports the SDKs for types only", !valueImport.test(ai) && /import type OpenAI/.test(ai));
   check("every ai.ts provider path starts at resolveAiAccess", (ai.match(/resolveAiAccess\(/g) ?? []).length >= 6);
@@ -211,14 +308,14 @@ const facts = (over: Partial<KeyFacts>): KeyFacts => ({
   eligibility: null,
   selectedProvider: "gemini",
   selectedModel: "gemini-3.5-flash",
-  personal: { gemini: false, openai: false, anthropic: false },
-  managed: { gemini: true, openai: false, anthropic: false },
+  personal: { gemini: false, openai: false, anthropic: false, openrouter: false },
+  managed: { gemini: true, openai: false, anthropic: false, openrouter: false },
   ...over,
 });
 
 function purePolicy() {
   console.log("\nThe rule, as a matrix");
-  const own = { gemini: true, openai: false, anthropic: false };
+  const own = { gemini: true, openai: false, anthropic: false, openrouter: false };
   const pick = (f: KeyFacts) => {
     const c = chooseCompletionKey(f);
     return c.ok ? `${c.source}:${c.provider}:${c.model}` : `refused:${c.reason}`;
@@ -227,8 +324,8 @@ function purePolicy() {
   check("Lifetime + no key → Orbit's key", pick(facts({ eligibility: "lifetime" })) === "managed:gemini:gemini-3.5-flash");
   check("non-Lifetime + own key → their key", pick(facts({ personal: own })) === "personal:gemini:gemini-3.5-flash");
   check("non-Lifetime + no key → refused, never Orbit's key", pick(facts({})) === "refused:key_required");
-  check("non-Lifetime + no key + managed keys configured → still refused", pick(facts({ managed: { gemini: true, openai: true, anthropic: true } })) === "refused:key_required");
-  check("Lifetime + no key + no managed key → managed_unavailable", pick(facts({ eligibility: "lifetime", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:managed_unavailable");
+  check("non-Lifetime + no key + managed keys configured → still refused", pick(facts({ managed: { gemini: true, openai: true, anthropic: true, openrouter: true } })) === "refused:key_required");
+  check("Lifetime + no key + no managed key → managed_unavailable", pick(facts({ eligibility: "lifetime", managed: { gemini: false, openai: false, anthropic: false, openrouter: false } })) === "refused:managed_unavailable");
   check("Pro resolves to no managed eligibility", managedEligibility("orbit", false) === null && managedEligibility("free", false) === null);
   if (MANAGED_AI_ENABLED) {
     check("Lifetime and demo are eligible", managedEligibility("lifetime", false) === "lifetime" && managedEligibility("free", true) === "demo");
@@ -238,7 +335,7 @@ function purePolicy() {
     check("…and 'demo' is the localhost dev-key path only", managedEligibility("free", true) === "demo");
   }
   check("a demo account with no key anywhere is told to add one — it was never promised Orbit's AI",
-    pick(facts({ eligibility: "demo", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:key_required");
+    pick(facts({ eligibility: "demo", managed: { gemini: false, openai: false, anthropic: false, openrouter: false } })) === "refused:key_required");
 
   console.log("\nManaged keys run managed models");
   // The allowlist protects Orbit's money; with managed AI off the only key behind that path
@@ -261,9 +358,51 @@ function purePolicy() {
     const c = chooseEmbeddingKey(f);
     return c.ok ? `${c.source}:${c.provider}` : `refused:${c.reason}`;
   };
-  check("Anthropic-only, not Lifetime → refused", emb(facts({ selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true } })) === "refused:key_required");
-  check("Anthropic-only on Lifetime → Orbit's Gemini", emb(facts({ eligibility: "lifetime", selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true } })) === "managed:gemini");
-  check("a personal OpenAI key beats a managed Gemini one", emb(facts({ eligibility: "lifetime", personal: { gemini: false, openai: true, anthropic: false } })) === "personal:openai");
+  check("Anthropic-only, not Lifetime → refused", emb(facts({ selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false } })) === "refused:key_required");
+  check("Anthropic-only on Lifetime → Orbit's Gemini", emb(facts({ eligibility: "lifetime", selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false } })) === "managed:gemini");
+  check("a personal OpenAI key beats a managed Gemini one", emb(facts({ eligibility: "lifetime", personal: { gemini: false, openai: true, anthropic: false, openrouter: false } })) === "personal:openai");
+
+  const noManaged = { gemini: false, openai: false, anthropic: false, openrouter: false };
+
+  const pickedWithGemini = chooseEmbeddingKey({
+    eligibility: null,
+    selectedProvider: "openrouter",
+    selectedModel: "",
+    personal: { gemini: true, openai: false, anthropic: false, openrouter: true },
+    managed: noManaged,
+  });
+  check(
+    "a personal gemini key still embeds when openrouter is selected",
+    pickedWithGemini.ok && pickedWithGemini.provider === "gemini",
+  );
+
+  const pickedWithOpenai = chooseEmbeddingKey({
+    eligibility: null,
+    selectedProvider: "openrouter",
+    selectedModel: "",
+    personal: { gemini: false, openai: true, anthropic: false, openrouter: true },
+    managed: noManaged,
+  });
+  check(
+    "a personal openai key still embeds when openrouter is selected",
+    pickedWithOpenai.ok && pickedWithOpenai.provider === "openai",
+  );
+
+  const pickedOpenrouterOnly = chooseEmbeddingKey({
+    eligibility: null,
+    selectedProvider: "openrouter",
+    selectedModel: "",
+    personal: { gemini: false, openai: false, anthropic: false, openrouter: true },
+    managed: noManaged,
+  });
+  check(
+    "openrouter embeds only when there is nothing else",
+    pickedOpenrouterOnly.ok && pickedOpenrouterOnly.provider === "openrouter",
+  );
+  check(
+    "an openrouter-only account can embed at all",
+    pickedOpenrouterOnly.ok,
+  );
 
   console.log("\nThe allowance");
   const cap = MANAGED_AI_BUDGET.monthlyCostMicros;
@@ -319,6 +458,7 @@ function purePolicy() {
 
 const USER_KEY = "user-gemini-key";
 const MANAGED = "managed-gemini-key";
+const USER_OPENROUTER_KEY = "user-openrouter-key";
 const U = {
   lifetimeOwn: "smoke-aia-lifetime-own",
   lifetimeNone: "smoke-aia-lifetime-none",
@@ -333,6 +473,9 @@ const U = {
   capped: "smoke-aia-capped",
   pending: "smoke-aia-pending",
   asyncPayer: "smoke-aia-async",
+  shared: "smoke-aia-shared",
+  other: "smoke-aia-other",
+  openrouterOnly: "smoke-aia-openrouter-only",
 };
 
 async function account(userId: string, cols: Partial<typeof userSettings.$inferInsert>) {
@@ -371,6 +514,11 @@ async function realGate() {
   await account(U.freeNone, {});
   await account(U.proNone, { subscriptionPlan: "orbit", subscriptionStatus: "active" });
   await account(U.compNone, { compedPlan: "lifetime" });
+  await account(U.openrouterOnly, {
+    aiProvider: "openrouter",
+    aiModel: DEFAULT_MODELS.openrouter,
+    openrouterApiKeyEncrypted: encrypt(USER_OPENROUTER_KEY),
+  });
 
   console.log("\nThe matrix, through the real SDK calls (completions)");
   let r = await lastSent(() => json(U.lifetimeOwn));
@@ -415,6 +563,33 @@ async function realGate() {
   check("photo OCR with no key reports the key message per page, sends nothing",
     pages[0]?.ok === false && isMissingAiApiKeyError(pages[0]?.error), pages[0]?.error);
 
+  console.log("\nOpenRouter shares the OpenAI-shaped path and never lets a provider keep the data");
+  r = await lastSent(() => json(U.openrouterOnly));
+  const captured = r.req;
+  check("openrouter completions go to openrouter.ai", (captured?.url ?? "").startsWith("https://openrouter.ai/api/v1/"), captured?.url);
+  check("openrouter completions carry the user’s key", captured?.headers.authorization === `Bearer ${USER_OPENROUTER_KEY}`, captured?.headers.authorization);
+  check("openrouter completions identify Orbit", captured?.headers["x-title"] === "Orbit", captured?.headers["x-title"]);
+  check("openrouter completions carry a referer", Boolean(captured?.headers["http-referer"]), captured?.headers["http-referer"]);
+  check(
+    "openrouter completions refuse data collection",
+    JSON.parse(captured?.body ?? "{}").provider?.data_collection === "deny",
+    captured?.body
+  );
+
+  r = await lastSent(() => createEmbedding(U.openrouterOnly, "a contact"));
+  const capturedEmbed = r.req;
+  check("openrouter embeddings go to openrouter.ai", (capturedEmbed?.url ?? "").startsWith("https://openrouter.ai/api/v1/"), capturedEmbed?.url);
+  check(
+    "openrouter embeddings refuse data collection",
+    JSON.parse(capturedEmbed?.body ?? "{}").provider?.data_collection === "deny",
+    capturedEmbed?.body
+  );
+  check(
+    "openrouter embeddings use the 1536-dim model",
+    JSON.parse(capturedEmbed?.body ?? "{}").model === "openai/text-embedding-3-small",
+    capturedEmbed?.body
+  );
+
   console.log("\nWhat the UI is told");
   const status = async (u: string) => {
     const s = await getAiAccessStatus(u);
@@ -433,7 +608,7 @@ async function realGate() {
   const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
   let threw = false;
   try {
-    geminiClient(forged);
+    await geminiClient(forged);
   } catch {
     threw = true;
   }
@@ -441,7 +616,7 @@ async function realGate() {
   const real = await (await resolveAiAccess(U.lifetimeNone)).completion("x");
   threw = false;
   try {
-    (await import("../src/lib/ai-access")).openaiClient(real);
+    await (await import("../src/lib/ai-access")).openaiClient(real);
   } catch {
     threw = true;
   }
@@ -485,12 +660,18 @@ async function transitions() {
   check("background work stops at its share", isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
   r = await lastSent(() => json(U.capped, "chat.answer"));
   check("…while the person can still ask", r.req?.key === MANAGED, r.err);
+  // One access opened BEFORE the cap is hit, as `/api/chat` opens one per question: the
+  // allowance must still be summed per call, not frozen at open time.
+  const sharedCapped = await resolveAiAccess(U.capped);
   await db.insert(usageEvents).values({
     userId: U.capped, operation: "chat.answer", provider: "gemini", model: "gemini-3.5-flash",
     kind: "completion", keyOwner: "orbit", estimatedCostMicros: MANAGED_AI_BUDGET.monthlyCostMicros, success: 1,
   });
   r = await lastSent(() => json(U.capped, "chat.answer"));
   check("past the cap: refused as managed_limit, nothing sent", isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
+  r = await lastSent(() => completeJson(U.capped, { system: "Return JSON.", user: "hi", operation: "chat.answer", access: sharedCapped }));
+  check("…and on an access opened before the cap was hit (one per request), still refused per call",
+    isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
   check("…with words that say so", friendlyError(r.err, "x") === AI_ACCESS_COPY.managed_limit);
   check("…and the UI is told the same", (await getAiAccessStatus(U.capped)).reason === "managed_limit");
   await db.update(userSettings).set(ownKey()).where(eq(userSettings.userId, U.capped));
@@ -598,6 +779,11 @@ async function byokOnly() {
     await account(U.proNone, { subscriptionPlan: "orbit", subscriptionStatus: "active" });
     await account(U.freeNone, {});
     await account(U.freeOwn, ownKey());
+    await account(U.openrouterOnly, {
+      aiProvider: "openrouter",
+      aiModel: DEFAULT_MODELS.openrouter,
+      openrouterApiKeyEncrypted: encrypt(USER_OPENROUTER_KEY),
+    });
 
     console.log("\nManaged AI is off: every plan is bring-your-own-key");
     check("no managed key counts as configured, whatever the environment holds",
@@ -630,6 +816,33 @@ async function byokOnly() {
     check("no usage row names Orbit as the payer", owners.length > 0 && owners.every((x) => x.o === "user"), owners.map((x) => x.o).join(","));
     check("neither Orbit's nor the developer's key ever went on the wire", sent.every((x) => x.key !== MANAGED && x.key !== DEV_KEY));
 
+    console.log("\nOpenRouter shares the OpenAI-shaped path and never lets a provider keep the data");
+    let orResult = await lastSent(() => json(U.openrouterOnly));
+    const captured = orResult.req;
+    check("openrouter completions go to openrouter.ai", (captured?.url ?? "").startsWith("https://openrouter.ai/api/v1/"), captured?.url);
+    check("openrouter completions carry the user’s key", captured?.headers.authorization === `Bearer ${USER_OPENROUTER_KEY}`, captured?.headers.authorization);
+    check("openrouter completions identify Orbit", captured?.headers["x-title"] === "Orbit", captured?.headers["x-title"]);
+    check("openrouter completions carry a referer", Boolean(captured?.headers["http-referer"]), captured?.headers["http-referer"]);
+    check(
+      "openrouter completions refuse data collection",
+      JSON.parse(captured?.body ?? "{}").provider?.data_collection === "deny",
+      captured?.body
+    );
+
+    orResult = await lastSent(() => createEmbedding(U.openrouterOnly, "a contact"));
+    const capturedEmbed = orResult.req;
+    check("openrouter embeddings go to openrouter.ai", (capturedEmbed?.url ?? "").startsWith("https://openrouter.ai/api/v1/"), capturedEmbed?.url);
+    check(
+      "openrouter embeddings refuse data collection",
+      JSON.parse(capturedEmbed?.body ?? "{}").provider?.data_collection === "deny",
+      capturedEmbed?.body
+    );
+    check(
+      "openrouter embeddings use the 1536-dim model",
+      JSON.parse(capturedEmbed?.body ?? "{}").model === "openai/text-embedding-3-small",
+      capturedEmbed?.body
+    );
+
     console.log("\nA just-paid Lifetime checkout does not ask Stripe for AI");
     await account(U.pending, { lifetimeCheckoutSessionId: "cs_test_paid", lifetimeCheckoutStartedAt: new Date() });
     let asked = false;
@@ -645,7 +858,12 @@ async function byokOnly() {
 
     console.log("\nLocalhost still runs on the developer's .env.local");
     setNodeEnv("development");
-    check("…and only then does a key count as configured", Object.values(managedKeysConfigured()).every(Boolean));
+    check(
+    "…and only then does a key count as configured",
+    MANAGED_PROVIDER_ORDER.every((p) => managedKeysConfigured()[p]) &&
+      // OpenRouter is never a managed provider — Orbit holds no key for it.
+      !managedKeysConfigured().openrouter
+  );
     let local = await lastSent(() => json(U.localDev));
     check("`next dev`: the key from .env.local went on the wire", local.req?.key === DEV_KEY, local.req?.key ?? local.err);
     await account(U.localDev, { aiModel: "gemini-2.5-pro" });
@@ -695,7 +913,7 @@ async function byokOnly() {
     const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
     let threw = false;
     try {
-      geminiClient(forged);
+      await geminiClient(forged);
     } catch {
       threw = true;
     }
@@ -724,6 +942,96 @@ async function byokOnly() {
   }
 }
 
+/** `user_settings` statements issued while `fn` runs (the query counter is process-wide). */
+async function settingsReads(fn: () => Promise<unknown>): Promise<{ reads: number; err: unknown }> {
+  startQueryCount();
+  let err: unknown = null;
+  try {
+    await fn();
+  } catch (e) {
+    err = e;
+  } finally {
+    stopQueryCount();
+  }
+  return { reads: capturedQueries().filter((q) => /"user_settings"/.test(q)).length, err };
+}
+
+/**
+ * One request, one account read (`AiAccess.forUser`, `AiAccess.open({ row })`): a request that makes
+ * several model calls — `/api/chat` makes up to nine — resolves the account once and passes
+ * it down. What must NOT be shared is pinned too: each call still mints its own grant and
+ * writes its own usage row, and an access for one account can never pay for another.
+ * (The managed allowance on a shared access is pinned in `transitions()`.)
+ */
+async function sharedAccess() {
+  const db = await getDb();
+  await account(U.shared, ownKey());
+  await account(U.other, ownKey());
+  __clearEmbeddingCacheForTests();
+
+  console.log("\nOne account read per request");
+  // The old shape: scope and embedding each opened the account for themselves.
+  const unshared = await settingsReads(() =>
+    getQueryEmbedding(U.shared, "who knows rust", (u, t) => createEmbedding(u, t), (u) => defaultResolveScope(u)),
+  );
+  check("a query embedding with separately-opened halves reads user_settings twice (the old cost)", unshared.reads === 2, `${unshared.reads} ${String(unshared.err)}`);
+  __clearEmbeddingCacheForTests();
+  let r = await lastSent(() => getQueryEmbedding(U.shared, "who knows rust"));
+  check("getQueryEmbedding still embeds on the account's own key", r.req?.key === USER_KEY, r.req?.key ?? r.err);
+  __clearEmbeddingCacheForTests();
+  const shared = await settingsReads(() => getQueryEmbedding(U.shared, "who knows rust"));
+  check("getQueryEmbedding: scope + embedding now share ONE user_settings read", shared.reads === 1, `${shared.reads} ${String(shared.err)}`);
+  const hit = await settingsReads(() => getQueryEmbedding(U.shared, "who knows rust"));
+  check("…and a cache hit costs that one read, as before", hit.reads === 1, String(hit.reads));
+
+  const access = await resolveAiAccess(U.shared);
+  __clearEmbeddingCacheForTests();
+  const passed = await settingsReads(() =>
+    getQueryEmbedding(U.shared, "who knows go", createEmbedding, defaultResolveScope, { access }),
+  );
+  check("with the request's access passed in: no user_settings read at all", passed.reads === 0, `${passed.reads} ${String(passed.err)}`);
+  check("resolveEmbeddingBackend on a passed access agrees with a fresh open",
+    (await resolveEmbeddingBackend(U.shared, access)).backend === (await resolveEmbeddingBackend(U.shared)).backend);
+
+  const before = sent.length;
+  const calls = await settingsReads(async () => {
+    await completeJson(U.shared, { system: "Return JSON.", user: "hi", operation: "chat.understand", access });
+    await completeJsonOn(access)(U.shared, { system: "Return JSON.", user: "hi", operation: "chat.title" });
+    await createEmbedding(U.shared, "a contact", access);
+  });
+  check("three model calls on one access: zero user_settings reads", calls.reads === 0, `${calls.reads} ${String(calls.err)}`);
+  check("…each still went out on the account's own key", sent.length - before === 3 && sent.slice(before).every((x) => x.key === USER_KEY), sent.slice(before).map((x) => x.key).join(","));
+  await settle();
+  const usage = await db.select({ op: usageEvents.operation, owner: usageEvents.keyOwner }).from(usageEvents).where(eq(usageEvents.userId, U.shared));
+  check("…and each wrote its own usage row (accounting is per call, not per access)",
+    ["chat.understand", "chat.title", "search.embed"].every((op) => usage.some((u) => u.op === op && u.owner === "user")),
+    usage.map((u) => u.op).join(","));
+
+  const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, U.shared) });
+  const fromRow = await settingsReads(() => resolveAiAccess(U.shared, { row: row ?? null }));
+  check("AiAccess.open with the caller's row: no read of its own", fromRow.reads === 0, String(fromRow.reads));
+  const viaRow = await resolveAiAccess(U.shared, { row: row ?? null });
+  check("…and resolves exactly what its own read would",
+    JSON.stringify(viaRow.facts()) === JSON.stringify(access.facts()) && viaRow.plan === access.plan && viaRow.eligibility === access.eligibility);
+  const noRow = await resolveAiAccess(U.freeNone + "-missing", { row: null });
+  check("a null row is 'no row': no key, refused like a missing account",
+    (await refusal(noRow.completion("chat.answer")))?.reason === "key_required");
+
+  console.log("\nA shared access never crosses accounts");
+  r = await lastSent(() => completeJson(U.other, { system: "Return JSON.", user: "hi", operation: "chat.answer", access }));
+  check("another account's access is refused before anything is sent", r.err instanceof Error && r.count === 0, r.err);
+  r = await lastSent(() => createEmbedding(U.other, "a contact", access));
+  check("…for embeddings too", r.err instanceof Error && r.count === 0, r.err);
+  let crossed = false;
+  try {
+    access.forUser(U.other);
+  } catch {
+    crossed = true;
+  }
+  check("AiAccess.forUser refuses a mismatched account", crossed);
+  check("AiAccess.open refuses another account's row", await resolveAiAccess(U.other, { row: row ?? null }).then(() => false, () => true));
+}
+
 /**
  * `run-smoke` shares one PGlite directory across scripts, and the ops sweep and admin
  * readers scan every account — so the Lifetime accounts, managed usage and managed-failure
@@ -750,6 +1058,7 @@ run(async () => {
     } else {
       await byokOnly();
     }
+    await sharedAccess();
   } finally {
     await cleanup();
   }

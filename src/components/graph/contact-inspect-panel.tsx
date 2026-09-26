@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { format, formatDistanceToNow } from "date-fns";
@@ -28,7 +29,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatHowMetSummary } from "@/lib/met-context";
-import { closenessTierChipClass } from "@/lib/closeness";
+import { closenessPercentChipClass, closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
 import type { UserSocialLinks } from "@/actions/graph";
 import { friendlyError } from "@/lib/errors";
@@ -72,7 +73,11 @@ function formatMaybeRelative(value: string | null | undefined) {
   }
 }
 
-function closenessChipClass(tier: "inner" | "mid" | "outer" | undefined) {
+function closenessChipClass(
+  closeness: number | undefined,
+  tier: "inner" | "mid" | "outer" | undefined
+) {
+  if (typeof closeness === "number") return closenessPercentChipClass(closeness);
   if (!tier) return "bg-muted text-muted-foreground";
   return closenessTierChipClass(tier);
 }
@@ -471,7 +476,7 @@ function ContactPanelBody({
           <span
             className={cn(
               "rounded-full px-2.5 py-1 text-xs font-medium",
-              closenessChipClass(data.closenessTier)
+              closenessChipClass(data.closeness, data.closenessTier)
             )}
           >
             {RING_LABELS[data.score || 2] || "Orbit"}
@@ -653,7 +658,7 @@ function ContactPanelBody({
           }}
         />
         <div className="flex w-full items-stretch gap-2">
-          <Link
+          <IntentLink
             href={`/contacts/${id}`}
             className={cn(
               buttonVariants(),
@@ -661,7 +666,7 @@ function ContactPanelBody({
             )}
           >
             Open full profile
-          </Link>
+          </IntentLink>
           {/*
             Straight to LinkedIn, the logo alone: their saved profile when there is one, and a
             LinkedIn search for their name and company when there is not.

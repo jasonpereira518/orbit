@@ -16,7 +16,9 @@ export async function register() {
     if (report.warnings.length > 0 && process.env.VERCEL_ENV === "production") {
       console.warn(`[env] ${report.warnings.length} optional variable(s) unset: ${report.warnings.map((w) => w.split(" ")[0]).join(", ")}`);
     }
-    await import("../sentry.server.config");
+    // Without a DSN the init is inert (`enabled: false`), but loading the server SDK still
+    // costs every cold instance ~80ms before its first request. Skip the load too.
+    if (process.env.SENTRY_DSN) await import("../sentry.server.config");
   }
   if (process.env.NEXT_RUNTIME === "edge") {
     await import("../sentry.edge.config");

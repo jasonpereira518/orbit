@@ -75,11 +75,35 @@ export async function loadAttachedPeople(
 
   const db = await getDb();
   const [rows, history] = await Promise.all([
+    // Both projected to what the mapping below reads — not whole rows (inline avatars,
+    // enrichment blobs) for a handful of prompt fields.
     db.query.contacts.findMany({
       where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
+      columns: {
+        id: true,
+        fullName: true,
+        preferredName: true,
+        title: true,
+        company: true,
+        location: true,
+        relationshipScore: true,
+        keyFacts: true,
+        aiSummary: true,
+        notes: true,
+        firstInteractionAt: true,
+        lastInteractionAt: true,
+        nextFollowUpAt: true,
+      },
     }),
     db.query.interactions.findMany({
       where: and(eq(interactions.userId, userId), inArray(interactions.contactId, ids)),
+      columns: {
+        contactId: true,
+        interactionDate: true,
+        interactionType: true,
+        aiSummary: true,
+        rawNotes: true,
+      },
       orderBy: [desc(interactions.interactionDate), desc(interactions.sameDayOrder)],
       // Bounded by the number of people, not by the size of any one history.
       limit: ids.length * (TIMELINE_LIMIT + 8),

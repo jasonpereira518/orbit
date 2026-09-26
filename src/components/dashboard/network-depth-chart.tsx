@@ -22,14 +22,14 @@ const TIER_META = [
   {
     key: "mid" as const,
     label: "Warm",
-    color: "bg-sky-500",
-    text: "text-sky-700 dark:text-sky-300",
+    color: "bg-amber-500",
+    text: "text-amber-700 dark:text-amber-300",
   },
   {
     key: "outer" as const,
     label: "Cool",
-    color: "bg-amber-500",
-    text: "text-amber-700 dark:text-amber-300",
+    color: "bg-sky-500",
+    text: "text-sky-700 dark:text-sky-300",
   },
 ];
 

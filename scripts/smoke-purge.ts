@@ -197,6 +197,16 @@ async function seed() {
     engine: "whisper",
   });
 
+  // The Deepgram usage meter (v89). Tied to the same session id as the segment above —
+  // the unique index on `session_id` is what makes a meeting's usage one row that grows.
+  await db.insert(schema.speechUsage).values({
+    userId: USER,
+    kind: "meeting",
+    seconds: 60,
+    source: "stream",
+    sessionId: meetingRow.id,
+  });
+
   // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
   // thing under test, and an unseeded table proves nothing about it.
   await db.insert(schema.contactBriefs).values({
@@ -525,6 +535,31 @@ async function seed() {
     authKind: "api_key",
     apiKeyEncrypted: "ciphertext-luma-key",
   });
+  // Same class of secret as the rows above, for a connector that is not Gmail or Outlook.
+  await db.insert(schema.connectorConnections).values({
+    userId: USER,
+    connectorId: "hubspot",
+    authKind: "oauth2",
+    accessTokenEncrypted: "ciphertext-hubspot-access",
+    refreshTokenEncrypted: "ciphertext-hubspot-refresh",
+  });
+  // Maps this user's rows into someone else's system; must not outlive the connection.
+  await db.insert(schema.externalLinks).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    entityType: "reminder",
+    entityId: "rem-1",
+    remoteId: "remote-1",
+  });
+  // A pending write, possibly still carrying an unsent payload.
+  await db.insert(schema.connectorOutbox).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-1",
+    payload: { title: "Follow up" },
+  });
 
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
@@ -534,6 +569,24 @@ async function seed() {
       refreshTokenEncrypted: "ciphertext-refresh",
     });
   }
+
+  // An iCloud connection: an app-specific password rather than OAuth tokens.
+  await db.insert(schema.appleConnections).values({
+    userId: USER,
+    emailAddress: `${USER}@icloud.test`,
+    appPasswordEncrypted: "ciphertext-app-password",
+    principalUrl: "https://caldav.icloud.com/1/principal/",
+    calendarHomeUrl: "https://caldav.icloud.com/1/calendars/",
+  });
+
+  // A calendar picked off one of the connections above. No FK to any of the three connection
+  // tables by design (they are separate — see provider-connections.ts), so any uuid does.
+  await db.insert(schema.calendarSources).values({
+    userId: USER,
+    provider: "google",
+    connectionId: randomUUID(),
+    calendarId: "primary",
+  });
 
   const [thread] = await db
     .insert(schema.chatThreads)

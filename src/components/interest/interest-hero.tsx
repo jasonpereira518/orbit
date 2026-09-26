@@ -17,7 +17,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { pulseStarfield } from "@/lib/starfield-events";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
-import { planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
+import type { WelcomePlanet } from "@/lib/welcome-planets";
 
 export type HeroInitial =
   | { kind: "form"; proof: InterestProof; invite: WelcomePlanet | null; ref: string | null }
@@ -57,12 +57,14 @@ type Phase = "form" | "turning" | "ticket";
  */
 export function InterestHero({
   initial,
-  appUrl,
-  signUpHref,
+  pageUrl,
+  pagePath,
 }: {
   initial: HeroInitial;
-  appUrl: string;
-  signUpHref: string;
+  /** The waitlist page on its own domain, for the share link. */
+  pageUrl: string;
+  /** The path this page is served at — `/` on the waitlist host — for the pass's URL. */
+  pagePath: string;
 }) {
   const reduced = usePrefersReducedMotion();
   const [phase, setPhase] = useState<Phase>(initial.kind === "ticket" ? "ticket" : "form");
@@ -103,13 +105,13 @@ export function InterestHero({
   // heading after the assembly so the browser's focus scroll does not fight the motion.
   useEffect(() => {
     if (phase !== "ticket" || entrance !== "flip" || !ticket) return;
-    window.history.replaceState(window.history.state, "", buildTicketUrl("", ticket.shareToken));
+    window.history.replaceState(window.history.state, "", buildTicketUrl(pagePath, ticket.shareToken));
     const id = window.setTimeout(
       () => headingRef.current?.focus({ preventScroll: true }),
       reduced ? 0 : 1600
     );
     return () => window.clearTimeout(id);
-  }, [phase, entrance, ticket, reduced]);
+  }, [phase, entrance, ticket, reduced, pagePath]);
 
   function fail(message: string) {
     setError(message);
@@ -162,12 +164,14 @@ export function InterestHero({
   return (
     <>
       <section className="pt-10 text-center md:pt-16">
-        <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">Interest list</p>
-        <h1 className={cn(HEADING, "mt-4 grid text-[clamp(32px,5vw,56px)]")}>
+        <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
+          Early access · Opening in waves
+        </p>
+        <h1 className={cn(HEADING, "mt-4 grid text-[clamp(34px,5.4vw,60px)]")}>
           {/* Both headlines occupy the same grid cell so the crossfade does not reflow. */}
           <AnimatePresence initial={false}>
             <motion.span
-              key={showTicket ? "in" : "stay"}
+              key={showTicket ? "in" : "pitch"}
               className="col-start-1 row-start-1"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -177,16 +181,25 @@ export function InterestHero({
               {/* Fraunces' true italic, declared in the root layout — the word that
                   carries the idea is the word that leans. */}
               {showTicket ? (
-                <>You&apos;re in <em className="italic">orbit</em>.</>
+                <>You&apos;re <em className="italic">in line</em>.</>
               ) : (
-                <>Stay in <em className="italic">orbit</em>.</>
+                <>The future of <em className="italic">networking</em>.</>
               )}
             </motion.span>
           </AnimatePresence>
         </h1>
-        <p className="mx-auto mt-5 max-w-[46ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
-          Occasional notes from the one person building Orbit. Join and you&apos;re handed a
-          planet.
+        <p className="mx-auto mt-5 max-w-[48ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
+          {showTicket ? (
+            <>
+              Your place is saved. We&apos;re letting people in wave by wave — share your link
+              to move up to the front.
+            </>
+          ) : (
+            <>
+              A central intelligence for everyone you know. We&apos;re letting people in wave by
+              wave — join the waitlist and you&apos;ll be among the first.
+            </>
+          )}
         </p>
       </section>
 
@@ -196,13 +209,13 @@ export function InterestHero({
         className="relative mt-12 scroll-mt-24 md:mt-16"
       >
         <h2 id="interest-join-heading" className="sr-only">
-          {showTicket ? "Your ticket" : "Join the interest list"}
+          {showTicket ? "Your early access pass" : "Join the waitlist"}
         </h2>
 
         {/* Lives outside the swap so it exists before its text changes — a live region
             that mounts already populated is not announced. */}
         <p role="status" aria-live="polite" className="sr-only">
-          {pending ? "Joining the list…" : showTicket ? "You're on the list." : ""}
+          {pending ? "Joining the waitlist…" : showTicket ? "You're on the waitlist." : ""}
         </p>
 
         <div className="interest-flip-stage mx-auto max-w-xl">
@@ -224,8 +237,7 @@ export function InterestHero({
               >
                 <BoardingPass
                   ticket={ticket}
-                  appUrl={appUrl}
-                  signUpHref={signUpHref}
+                  pageUrl={pageUrl}
                   entrance={entrance}
                   headingRef={headingRef}
                 />
@@ -246,15 +258,18 @@ export function InterestHero({
                   <p className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#f2c14e]/25 bg-[#f2c14e]/[0.06] px-3.5 py-2.5 text-sm text-[#e8f3f1]">
                     <PlanetArt planet={invite} size={22} />
                     <span>
-                      {`Someone on ${planetLabel(invite)} invited you. Join and you'll orbit right behind them.`}
+                      A friend saved you a seat. Join and you&apos;ll help them reach the front
+                      wave.
                     </span>
                   </p>
                 ) : null}
 
                 <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
-                  Join the list
+                  Join the waitlist
                 </p>
-                <p className="mt-2 text-lg text-[#e8f3f1]">One address. Occasional news.</p>
+                <p className="mt-2 text-lg text-[#e8f3f1]">
+                  We&apos;ll only email you about your place in line.
+                </p>
 
                 <div ref={rowScope} className="mt-5 flex flex-col gap-3 sm:flex-row">
                   <label htmlFor="interest-email" className="sr-only">
@@ -284,13 +299,13 @@ export function InterestHero({
                   >
                     {pending ? (
                       <>
-                        {/* An orbit, not a spinner: one dot circling a faint ring. */}
+                        {/* One dot circling a faint ring, not a spinner. */}
                         <span aria-hidden="true" className="relative inline-block size-4">
                           <span className="absolute inset-0 rounded-full border border-current/30" />
                           <span
                             className={cn(
                               "absolute inset-0",
-                              !reduced && "animate-[interest-orbit_0.9s_linear_infinite]"
+                              !reduced && "animate-[interest-spin_0.9s_linear_infinite]"
                             )}
                           >
                             <span className="absolute left-1/2 top-0 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current" />
@@ -299,7 +314,7 @@ export function InterestHero({
                         Joining…
                       </>
                     ) : (
-                      "Join the list"
+                      "Join the waitlist"
                     )}
                   </button>
                 </div>

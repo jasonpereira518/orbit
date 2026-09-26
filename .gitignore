@@ -63,3 +63,6 @@ extension/public/inject/
 /test-results/
 /playwright-report/
 /blob-report/
+
+# constellation bench fixtures (scripts/bench/constellation-fixtures.ts)
+/.bench-data/

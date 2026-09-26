@@ -62,6 +62,7 @@ import {
   updateAttendeeForUser,
   deleteAttendeeForUser,
   upsertEventAttendees,
+  type CreateEventInput,
   type EventListRow,
   type UpdateAttendeeResult,
 } from "@/lib/events/store";
@@ -264,6 +265,49 @@ export async function enrichEventFromUrl(
   return result;
 }
 
+const EVENT_TEXT_MAX = 10_000;
+const EVENT_ATTENDANCE_MODES = ["offline", "online", "mixed"] as const;
+const EVENT_ROLES = ["attended", "hosted"] as const;
+
+/**
+ * The fields an edit may change, copied one by one and type-checked.
+ *
+ * Never spread the argument: this is a public POST endpoint, and `updateEventForUser`'s
+ * `.set()` writes any key that names a real column — `userId` included, which moved an
+ * event (with a phishing link or a tracking cover) into someone else's account.
+ */
+function pickEventEdits(patch: Record<string, unknown>) {
+  const text = (key: string, nullable = true): string | null | undefined => {
+    const value = patch[key];
+    if (value === undefined) return undefined;
+    if (value === null && nullable) return null;
+    if (typeof value !== "string") throw new UserFacingError(`Invalid ${key}`);
+    return value.slice(0, EVENT_TEXT_MAX);
+  };
+  const out: Partial<Record<string, unknown>> = {};
+  const title = text("title", false);
+  if (title !== undefined) out.title = title;
+  for (const key of ["venue", "city", "description", "organizerName", "organizerUrl", "notes"]) {
+    const value = text(key);
+    if (value !== undefined) out[key] = value;
+  }
+  if (patch.attendanceMode !== undefined) {
+    const mode = patch.attendanceMode;
+    if (mode !== null && !EVENT_ATTENDANCE_MODES.includes(mode as never)) {
+      throw new UserFacingError("Invalid attendance mode");
+    }
+    out.attendanceMode = mode;
+  }
+  if (patch.role !== undefined) {
+    if (!EVENT_ROLES.includes(patch.role as never)) throw new UserFacingError("Invalid role");
+    out.role = patch.role;
+  }
+  return out as Pick<
+    CreateEventInput,
+    "title" | "venue" | "city" | "description" | "organizerName" | "organizerUrl" | "notes" | "attendanceMode" | "role"
+  >;
+}
+
 /**
  * Edit an event by hand.
  *
@@ -305,7 +349,7 @@ export async function updateEvent(
     value === undefined ? undefined : value ? new Date(value) : null;
 
   await updateEventForUser(userId, eventId, {
-    ...patch,
+    ...pickEventEdits(patch as Record<string, unknown>),
     ...(url === undefined ? {} : { url: url || null }),
     startsAt: asDate(patch.startsAt),
     endsAt: asDate(patch.endsAt),

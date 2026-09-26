@@ -13,6 +13,12 @@ import { useSyncExternalStore } from "react";
 import { getCaptureJob } from "@/actions/capture-jobs";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import type { CaptureJobStatus } from "@/lib/capture/types";
+import {
+  isOffline,
+  onReconnect,
+  reportRequestError,
+  reportRequestOk,
+} from "@/lib/connectivity-store";
 
 /** Matches `POLL_INTERVAL_MS` in scan-qr-handoff and the import runner: one cadence app-wide. */
 export const CAPTURE_POLL_MS = 1500;
@@ -32,6 +38,7 @@ const listeners = new Set<() => void>();
 let timer: number | null = null;
 let inFlight: Promise<void> | null = null;
 let sequence = 0;
+let stopReconnect: (() => void) | null = null;
 
 function set(next: Partial<CaptureJobSnapshot>) {
   snapshot = { ...snapshot, ...next };
@@ -51,13 +58,18 @@ function syncTimer() {
   if (typeof window === "undefined") return;
   if (shouldPoll() && timer === null) {
     timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refreshCaptureJob();
+      // Offline, a poll every 1.5 s is a stream of guaranteed failures; the reconnect
+      // listener below catches up the moment the connection is back.
+      if (document.visibilityState === "visible" && !isOffline()) void refreshCaptureJob();
     }, CAPTURE_POLL_MS);
     document.addEventListener("visibilitychange", onVisible);
+    stopReconnect = onReconnect(() => void refreshCaptureJob());
   } else if (!shouldPoll() && timer !== null) {
     window.clearInterval(timer);
     timer = null;
     document.removeEventListener("visibilitychange", onVisible);
+    stopReconnect?.();
+    stopReconnect = null;
   }
 }
 
@@ -85,6 +97,7 @@ export function refreshCaptureJob(): Promise<void> {
   const id = ++sequence;
   const run = getCaptureJob(current.id, current.updatedAt)
     .then((res) => {
+      reportRequestOk();
       if (id !== sequence) return;
       if (!res.ok) {
         set({ error: res.error });
@@ -96,8 +109,10 @@ export function refreshCaptureJob(): Promise<void> {
       }
       seedCaptureJob(res.job);
     })
-    .catch(() => {
-      // Network blips: the next tick gets it.
+    .catch((err) => {
+      // Network blips: the next tick gets it. Told to the connectivity store, which is how
+      // a dead connection gets noticed while someone watches an extraction.
+      reportRequestError(err);
     })
     .finally(() => {
       if (id === sequence) inFlight = null;

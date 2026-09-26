@@ -121,6 +121,26 @@ export function readyEntries(
     .slice(0, slots);
 }
 
+/**
+ * `readyEntries` for a caller that also remembers which ids it has already started.
+ *
+ * The hook's pump runs from an effect, and an effect can run again against a list that does
+ * not yet show an upload it started as `uploading`. An id in `started` therefore always holds
+ * a slot and is never returned, whatever its status in `entries` says — which is what stops
+ * one note being uploaded twice, and a stale list opening more than `concurrency` slots.
+ */
+export function startableEntries(
+  entries: readonly FanoutEntry[],
+  started: ReadonlySet<string>,
+  now: number,
+  concurrency = DEFAULT_FANOUT_CONCURRENCY
+): FanoutEntry[] {
+  const view = entries.map((e) =>
+    started.has(e.id) && e.status !== "uploading" ? { ...e, status: "uploading" as const } : e
+  );
+  return readyEntries(view, now, concurrency);
+}
+
 /** Apply an upload's outcome to one entry. Returns a new entry; never mutates. */
 export function applyOutcome(
   entry: FanoutEntry,

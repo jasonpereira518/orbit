@@ -258,7 +258,7 @@ export function NotesLibraryUpload({
                   {/* A note that went up short still went up, so this is not styled as a
                       failure — but it is never left unsaid. */}
                   {e.notice && (
-                    <span className="mt-0.5 block text-xs text-amber-600 dark:text-amber-500">
+                    <span className="mt-0.5 block text-xs text-amber-600 dark:text-warning">
                       {e.notice}
                     </span>
                   )}

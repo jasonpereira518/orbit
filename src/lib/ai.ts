@@ -9,10 +9,16 @@ import {
   anthropicClient,
   geminiClient,
   getAiAccessStatus,
+  isOpenAiShaped,
   openaiClient,
+  openAiShapedClient,
+  reportedCostMicros,
   resolveAiAccess,
   runOnGrant,
+  withOpenRouterRouting,
+  type AiAccess,
   type AiGrant,
+  type OpenAiUsageWithCost,
 } from "@/lib/ai-access";
 import {
   loadNetworkVocabulary,
@@ -20,6 +26,11 @@ import {
   vocabularyToWhisperPrompt,
   WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
+import { deepgramEnabled, transcribeFile } from "@/lib/deepgram";
+import { DEEPGRAM_MODEL, meetingTag, shortformTag } from "@/lib/deepgram-params";
+import { speechAllowance, recordSpeechSeconds } from "@/lib/speech-quota";
+import { speechKindForOperation } from "@/lib/speech-limits";
+import { speechTagIdFor } from "@/lib/speech-tag-id";
 import { z } from "zod";
 import {
   impliedStepListSchema,
@@ -28,6 +39,7 @@ import {
 import { closenessLegend } from "@/lib/capture/closeness";
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 import {
+  recordUsage,
   withUsage,
   tokensFromGemini,
   tokensFromOpenAi,
@@ -41,6 +53,7 @@ import {
   aiProviderLabel,
   classifyAiError,
   friendlyError,
+  UserFacingError,
 } from "@/lib/errors";
 import {
   RECOMMENDATIONS_MARKER,
@@ -312,7 +325,6 @@ const DETAIL_BATCH_SIZE = 6;
 const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 
 const GEMINI_EMBEDDING_MODEL = EMBEDDING_MODELS.gemini;
-const OPENAI_EMBEDDING_MODEL = EMBEDDING_MODELS.openai;
 
 export { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "@/lib/ai-models";
 
@@ -359,12 +371,15 @@ export async function userCanUseAi(userId: string): Promise<boolean> {
 /**
  * Which embedding API semantic search would use. Throws `AiAccessError` when none — an
  * Anthropic-only account with no OpenAI/Gemini key and no Lifetime, for instance.
+ *
+ * `access`: the account already resolved for this request (see `AiAccess.forUser`), so asking
+ * costs no second `user_settings` read.
  */
-export async function resolveEmbeddingBackend(userId: string): Promise<{
+export async function resolveEmbeddingBackend(userId: string, access?: AiAccess): Promise<{
   backend: EmbeddingBackend;
 }> {
-  const access = await resolveAiAccess(userId);
-  return { backend: access.requireEmbeddingBackend() };
+  const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  return { backend: resolved.requireEmbeddingBackend() };
 }
 
 function extractJsonText(raw: string) {
@@ -525,10 +540,17 @@ export async function completeJson(
      * caller had moved on. With a signal, the request itself is aborted.
      */
     signal?: AbortSignal;
+    /**
+     * The account already resolved for this request (see `AiAccess.forUser`): skips the
+     * `user_settings` read. The grant — and with it the managed-allowance check — is still
+     * minted for this call alone.
+     */
+    access?: AiAccess;
   },
 ): Promise<string> {
   const { operation } = input;
-  const grant = await (await resolveAiAccess(userId)).completion(operation);
+  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  const grant = await access.completion(operation);
   const { provider, keyOwner } = grant;
   const model = modelForOperation(operation, grant);
   const temperature = input.temperature ?? 0.2;
@@ -550,7 +572,7 @@ export async function completeJson(
     async (report) => {
       try {
         if (provider === "gemini") {
-          const client = geminiClient(grant);
+          const client = await geminiClient(grant);
           const response = await client.models.generateContent({
             model,
             contents: userText,
@@ -568,9 +590,9 @@ export async function completeJson(
           return normalizeJsonResponse(content);
         }
 
-        if (provider === "openai") {
-          const client = openaiClient(grant);
-          const response = await client.chat.completions.create({
+        if (isOpenAiShaped(provider)) {
+          const client = await openAiShapedClient(grant);
+          const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
             response_format: { type: "json_object" },
@@ -579,14 +601,14 @@ export async function completeJson(
               { role: "user", content: userText },
             ],
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
-          }, { signal: callSignal() });
-          report(tokensFromOpenAi(response));
+          }), { signal: callSignal() });
+          report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
         }
 
-        const client = anthropicClient(grant);
+        const client = await anthropicClient(grant);
         const response = await client.messages.create({
           model,
           max_tokens: maxOutputTokens,
@@ -626,6 +648,16 @@ export async function completeJson(
     },
     { cancelSignal: input.signal },
   ));
+}
+
+/**
+ * `completeJson` with the account already resolved for this request, for the helpers that
+ * take an injectable `completeFn` (`understandQuery`, the rerank, `generateChatTitle`).
+ * With no access it IS `completeJson`, so a caller can pass the result unconditionally.
+ */
+export function completeJsonOn(access: AiAccess | undefined): typeof completeJson {
+  if (!access) return completeJson;
+  return (userId, input) => completeJson(userId, { ...input, access: input.access ?? access });
 }
 
 /** Multimodal JSON completion for vision OCR / image+text prompts. */
@@ -678,7 +710,7 @@ async function completeMultimodalJsonInner(
 
   try {
     if (provider === "gemini") {
-      const client = geminiClient(grant);
+      const client = await geminiClient(grant);
       const contents = [
         ...textParts.map((p) => ({ text: p.text })),
         ...mediaParts.map((p) => ({
@@ -705,8 +737,8 @@ async function completeMultimodalJsonInner(
       return normalizeJsonResponse(content);
     }
 
-    if (provider === "openai") {
-      const client = openaiClient(grant);
+    if (isOpenAiShaped(provider)) {
+      const client = await openAiShapedClient(grant);
       const content: OpenAI.Chat.ChatCompletionContentPart[] = [
         ...textParts.map((p): OpenAI.Chat.ChatCompletionContentPart => ({
           type: "text",
@@ -729,7 +761,7 @@ async function completeMultimodalJsonInner(
           };
         }),
       ];
-      const response = await client.chat.completions.create({
+      const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
         model,
         ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
         response_format: { type: "json_object" },
@@ -737,14 +769,14 @@ async function completeMultimodalJsonInner(
           { role: "system", content: system },
           { role: "user", content },
         ],
-      }, { signal: aiSignal() });
-      report(tokensFromOpenAi(response));
+      }), { signal: aiSignal() });
+      report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
       return normalizeJsonResponse(out);
     }
 
-    const client = anthropicClient(grant);
+    const client = await anthropicClient(grant);
     type AnthropicContent = Exclude<
       Anthropic.MessageCreateParams["messages"][0]["content"],
       string
@@ -809,7 +841,7 @@ async function completeMultimodalJsonInner(
 }
 
 /** Which engine actually produced a transcript, so the UI can say so when it wasn't the first choice. */
-export type TranscriptionEngine = "whisper" | "gemini";
+export type TranscriptionEngine = "deepgram" | "whisper" | "gemini";
 
 export type TranscriptionResult = { text: string; engine: TranscriptionEngine };
 
@@ -823,6 +855,12 @@ export type TranscribeOptions = {
   allowEmpty?: boolean;
   /** `usage_events.operation`. Defaults to `capture.transcribe.audio`. */
   operation?: AiOperationId;
+  /**
+   * The meeting this audio belongs to, when the operation is a meeting one. It tags the
+   * Deepgram request `meeting:<id>` so the nightly reconciliation job can see it — see
+   * `speechKindForOperation` below for why the meter itself follows the operation.
+   */
+  sessionId?: string | null;
 };
 
 /** How much of `contextText` to carry over. About two sentences. */
@@ -862,6 +900,70 @@ export async function transcribeAudioWithAI(
   // transcript with misspelled names beats no transcript.
   const vocabulary = await loadNetworkVocabulary(userId);
 
+  // Deepgram first, on Orbit's key, while the account has short-form seconds left. It is the
+  // only engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
+  if (deepgramEnabled()) {
+    // The METER FOLLOWS THE OPERATION, not the call site. `meeting.transcribe` is meeting
+    // chunk recovery — the fallback that carries a whole meeting whenever the live socket
+    // cannot open — and it bills Orbit's key exactly like a live meeting does, so it must
+    // check and spend the `meeting` cap. Before this, it checked and spent `shortform`: a
+    // three-hour meeting behind a firewall cost Orbit three hours, left the 5 h meeting cap
+    // reading zero, and ate the user's voice-note allowance until voice notes stopped.
+    const kind = speechKindForOperation(operation);
+    const allowance = await speechAllowance(userId, kind);
+    if (kind === "meeting" && allowance.exhausted) {
+      // Not a fall-through to the user's own key, unlike short-form below: a meeting's cap is
+      // the product promise ("5 hours a month"), and `ingestMeetingChunk` has already refused
+      // this chunk with a 402 by the time we could get here. This is the backstop.
+      throw new UserFacingError("You’ve used this month’s meeting transcription minutes");
+    }
+    if (!allowance.exhausted) {
+      // A meeting is tagged by its session, which belongs to one recording. Everything else
+      // is tagged with the account's OPAQUE id — never the user id, which would sit in
+      // Deepgram's usage records linking every voice note an account ever made. See
+      // `src/lib/speech-tag-id.ts`.
+      const tag = kind === "meeting"
+        ? (opts.sessionId ? meetingTag(opts.sessionId) : null)
+        : shortformTag(await speechTagIdFor(userId));
+      try {
+        const result = await transcribeFile(
+          { bytes: Buffer.from(input.base64, "base64"), mimeType: input.mimeType || "audio/wav" },
+          { keyterms: vocabulary, tag },
+        );
+        // No token counts: Deepgram bills per audio-second, not per token, and a fabricated
+        // token count would get summed into admin-facing "input tokens" totals alongside
+        // real LLM prompt tokens (see usage-events.ts's own null-vs-zero rule). The
+        // per-second price in `ai-pricing.ts` documents Deepgram's rate; `speech_usage`
+        // (via `recordSpeechSeconds` below) is the actual meter for what this cost.
+        recordUsage({
+          userId, operation, provider: "deepgram", model: DEEPGRAM_MODEL,
+          kind: "transcription", keyOwner: "orbit", success: true, errorKind: null,
+        });
+        // Short-form only. A MEETING's seconds are booked by `ingestMeetingChunk`, against
+        // the session's own high-water mark — the same number `recordLiveSegments` books —
+        // because a meeting is one growing row keyed by session, not a sum of requests.
+        // Booking this chunk's own duration here instead would be wrong twice over: a
+        // 60-second chunk would lose to the session's running total in the `greatest(...)`
+        // upsert and vanish, and on a meeting that never got a live segment at all the row
+        // would never rise above one chunk. See `speech-quota.ts`.
+        if (kind === "shortform") {
+          await recordSpeechSeconds({
+            userId, kind, seconds: result.seconds, source: "file",
+            requestId: result.requestId,
+          });
+        }
+        if (!result.text) return empty("deepgram");
+        return { text: result.text, engine: "deepgram" };
+      } catch (err) {
+        // Never fail a capture over Orbit's own service: fall through to the user's key.
+        recordUsage({
+          userId, operation, provider: "deepgram", model: DEEPGRAM_MODEL,
+          kind: "transcription", keyOwner: "orbit", success: false, errorKind: classifyAiError(err),
+        });
+      }
+    }
+  }
+
   // The gate picks the user's own Whisper, then their own Gemini, then — Lifetime only —
   // Orbit's Gemini before Orbit's Whisper (see `AiAccess.transcription`).
   const grant = await access.transcription(operation);
@@ -875,8 +977,14 @@ export async function transcribeAudioWithAI(
     );
   }
 
+  // Deliberately openai-only, not isOpenAiShaped: `withOpenRouterRouting` would need to
+  // wrap this params object for OpenRouter, but the SDK encodes transcription params as
+  // multipart form data, where a nested `provider: { data_collection: "deny" }` serialises
+  // as the string "[object Object]" rather than a real field — and "whisper-1" is not a
+  // valid OpenRouter model slug regardless. OpenRouter transcription is deliberately not
+  // wired up; `access.transcription()` never grants it, so this stays openai/gemini only.
   if (grant.provider === "openai") {
-    const client = openaiClient(grant);
+    const client = await openaiClient(grant);
     const bytes = Buffer.from(input.base64, "base64");
     const file = new File(
       [bytes],
@@ -924,7 +1032,7 @@ export async function transcribeAudioWithAI(
   }
 
   {
-    const client = geminiClient(grant);
+    const client = await geminiClient(grant);
     // The user's configured Gemini model on their own key; a managed model on Orbit's.
     const model = grant.model;
     return runOnGrant(grant, withUsage(
@@ -1070,9 +1178,16 @@ const TRANSCRIBE_CONCURRENCY = 3;
 export async function transcribeImagePages(
   userId: string,
   images: Array<{ mimeType: string; base64: string }>,
+  /**
+   * Where these pages sit in the whole note, when it arrives in parts (see
+   * `planUploadBatches`). Without it the second request's first page would be read, and
+   * reported unreadable, as "page 1".
+   */
+  numbering: { offset: number; total: number } = { offset: 0, total: images.length },
 ): Promise<PageTranscription[]> {
   const total = images.length;
   if (!total) return [];
+  const noteTotal = Math.max(numbering.total, numbering.offset + total);
 
   const results: PageTranscription[] = new Array(total);
   let next = 0;
@@ -1081,9 +1196,9 @@ export async function transcribeImagePages(
     for (;;) {
       const i = next++;
       if (i >= total) return;
-      const pageNumber = i + 1;
+      const pageNumber = numbering.offset + i + 1;
       try {
-        const text = await transcribeNotePage(userId, images[i]!, pageNumber, total);
+        const text = await transcribeNotePage(userId, images[i]!, pageNumber, noteTotal);
         results[i] = { pageNumber, text, ok: true };
       } catch (err) {
         // One bad photo must not cost the person the other seven — but the REASON is kept
@@ -1584,12 +1699,13 @@ export async function parseMultiPersonNotesWithAI(
   return single;
 }
 
-export async function createEmbedding(userId: string, text: string) {
-  const grant = await (await resolveAiAccess(userId)).embedding("search.embed");
+/** `access`: as for `completeJson` — shares the account read, never the grant. */
+export async function createEmbedding(userId: string, text: string, access?: AiAccess) {
+  const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  const grant = await resolved.embedding("search.embed");
   const { provider: backend, keyOwner } = grant;
   const input = text.slice(0, 8000);
-  const model =
-    backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
+  const model = EMBEDDING_MODELS[backend];
 
   return runOnGrant(grant, withUsage(
     {
@@ -1602,22 +1718,22 @@ export async function createEmbedding(userId: string, text: string) {
     },
     (report) =>
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
-        if (backend === "openai") {
-          const client = openaiClient(grant);
+        if (isOpenAiShaped(backend)) {
+          const client = await openAiShapedClient(grant);
           // maxRetries 0: `withRateLimitBackoff` around this call already retries a rate
           // limit, and the SDK's own two retries stacked under it made one throttled batch
           // up to twelve requests.
-          const res = await client.embeddings.create({
-            model: OPENAI_EMBEDDING_MODEL,
+          const res = await client.embeddings.create(withOpenRouterRouting(backend, {
+            model,
             input,
-          }, { signal: aiSignal(), maxRetries: 0 });
-          report(tokensFromOpenAi(res));
+          }), { signal: aiSignal(), maxRetries: 0 });
+          report({ ...tokensFromOpenAi(res), reportedCostMicros: reportedCostMicros(res as OpenAiUsageWithCost) });
           const values = res.data[0]?.embedding;
           if (!values?.length) throw new Error("Empty embedding response");
           return values;
         }
 
-        const client = geminiClient(grant);
+        const client = await geminiClient(grant);
         const res = await client.models.embedContent({
           model: GEMINI_EMBEDDING_MODEL,
           contents: input,
@@ -1641,8 +1757,7 @@ export async function createEmbeddingsBatch(
   const grant = await (await resolveAiAccess(userId)).embedding("search.embed.batch");
   const { provider: backend, keyOwner } = grant;
   const inputs = texts.map((text) => text.slice(0, 8000));
-  const model =
-    backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
+  const model = EMBEDDING_MODELS[backend];
 
   return runOnGrant(grant, withUsage(
     {
@@ -1655,14 +1770,14 @@ export async function createEmbeddingsBatch(
     },
     (report) =>
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
-        if (backend === "openai") {
-          const client = openaiClient(grant);
+        if (isOpenAiShaped(backend)) {
+          const client = await openAiShapedClient(grant);
           // maxRetries 0 for the same reason as `createEmbedding`: the backoff wrapper owns retries.
-          const res = await client.embeddings.create({
-            model: OPENAI_EMBEDDING_MODEL,
+          const res = await client.embeddings.create(withOpenRouterRouting(backend, {
+            model,
             input: inputs,
-          }, { signal: aiSignal(), maxRetries: 0 });
-          report(tokensFromOpenAi(res));
+          }), { signal: aiSignal(), maxRetries: 0 });
+          report({ ...tokensFromOpenAi(res), reportedCostMicros: reportedCostMicros(res as OpenAiUsageWithCost) });
           const values = res.data
             .slice()
             .sort((a, b) => a.index - b.index)
@@ -1673,7 +1788,7 @@ export async function createEmbeddingsBatch(
           return values;
         }
 
-        const client = geminiClient(grant);
+        const client = await geminiClient(grant);
         const res = await client.models.embedContent({
           model: GEMINI_EMBEDDING_MODEL,
           contents: inputs,
@@ -2010,10 +2125,13 @@ async function streamText(
     maxOutputTokens?: number;
     operation: AiOperationId;
     signal?: AbortSignal;
+    /** As for `completeJson` — shares the account read, never the grant. */
+    access?: AiAccess;
   },
   onDelta: (delta: string) => void
 ): Promise<string> {
-  const grant = await (await resolveAiAccess(userId)).completion(input.operation);
+  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  const grant = await access.completion(input.operation);
   const { provider, keyOwner } = grant;
   const model = modelForOperation(input.operation, grant);
   const temperature = input.temperature ?? 0.3;
@@ -2032,7 +2150,7 @@ async function streamText(
       };
 
       if (provider === "gemini") {
-        const client = geminiClient(grant);
+        const client = await geminiClient(grant);
         const stream = await client.models.generateContentStream({
           model,
           contents: input.user,
@@ -2050,10 +2168,10 @@ async function streamText(
           last = chunk;
         }
         if (last) report(tokensFromGemini(last));
-      } else if (provider === "openai") {
-        const client = openaiClient(grant);
+      } else if (isOpenAiShaped(provider)) {
+        const client = await openAiShapedClient(grant);
         const stream = await client.chat.completions.create(
-          {
+          withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
             stream: true,
@@ -2062,7 +2180,7 @@ async function streamText(
               { role: "system", content: input.system },
               { role: "user", content: input.user },
             ],
-          },
+          }),
           { signal }
         );
         let usage: unknown = null;
@@ -2070,9 +2188,14 @@ async function streamText(
           emit(chunk.choices[0]?.delta?.content);
           if (chunk.usage) usage = chunk.usage;
         }
-        if (usage) report(tokensFromOpenAi({ usage }));
+        if (usage) {
+          report({
+            ...tokensFromOpenAi({ usage }),
+            reportedCostMicros: reportedCostMicros({ usage } as OpenAiUsageWithCost),
+          });
+        }
       } else {
-        const client = anthropicClient(grant);
+        const client = await anthropicClient(grant);
         const stream = client.messages.stream(
           {
             model,
@@ -2152,6 +2275,8 @@ export async function chatWithNetworkStream(
     evidence?: string | null;
     notePassages?: Parameters<typeof chatWithNetwork>[12];
     writingPreferences?: string | null;
+    /** The account already resolved for this request (see `AiAccess.forUser`). */
+    access?: AiAccess;
   } = {}
 ): Promise<SplitResult & { evidence: Record<string, EvidenceSource> }> {
   const prompt = buildChatPrompt({
@@ -2178,6 +2303,7 @@ export async function chatWithNetworkStream(
       user: prompt.user,
       system: `${prompt.systemCore}${CHAT_STREAM_TAIL}`,
       signal: options.signal,
+      access: options.access,
     },
     (delta) => {
       const out = splitter.push(delta);

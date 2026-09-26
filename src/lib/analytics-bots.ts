@@ -11,7 +11,12 @@
  * traffic.
  */
 const BOT_PATTERNS: readonly RegExp[] = [
-  /bot\b/i,
+  // `bot` as a WORD or a suffix of a CamelCase crawler name (Googlebot, bingbot, AhrefsBot),
+  // but not the phone brand CUBOT, whose user agents otherwise read as a crawler's.
+  /(?<!cu)bot\b/i,
+  // Crawlers and agents that never say "bot": Google's own tools, AI fetchers, audits.
+  /google-inspectiontool|googleother|google-extended|chatgpt-user|gptbot|meta-externalagent|claude-web|perplexity/i,
+  /ahrefssiteaudit|semrush|datadogsynthetics|checkly|newrelicsynthetics|vercel-screenshot/i,
   /crawler|spider|scraper/i,
   /headless/i,
   /phantomjs|puppeteer|playwright|selenium|webdriver/i,

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Plus, Settings } from "lucide-react";
@@ -125,7 +126,7 @@ export function GoalsSummary({
             <ul className="space-y-1">
               {goalAlignedContacts.map((c) => (
                 <li key={c.id}>
-                  <Link
+                  <IntentLink
                     href={`/contacts/${c.id}`}
                     className={cn(
                       "flex items-center justify-between px-2 py-1.5",
@@ -144,7 +145,7 @@ export function GoalsSummary({
                     <span className="text-xs tabular-nums text-muted-foreground">
                       {Math.round(c.goalRelevance * 100)}% match
                     </span>
-                  </Link>
+                  </IntentLink>
                 </li>
               ))}
             </ul>

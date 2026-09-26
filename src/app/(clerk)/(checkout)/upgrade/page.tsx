@@ -15,7 +15,7 @@ import { getLifetimeAvailability } from "@/actions/billing";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
-import { isProCheckoutConfigured } from "@/lib/stripe";
+import { isProCheckoutConfigured } from "@/lib/stripe-config";
 
 export const metadata: Metadata = {
   title: "Upgrade — Orbit",
