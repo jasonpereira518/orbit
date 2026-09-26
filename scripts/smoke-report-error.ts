@@ -9,7 +9,10 @@
  *     and the message carries its reference;
  *   - Orbit's own copy (`UserFacingError`) and a failure the person fixes themselves (no
  *     key, a refused key, offline) pass through unreported and unreferenced;
- *   - reporting never throws, never logs a secret-named field, and throttles warnings.
+ *   - reporting never throws, never logs a secret-named field, and throttles warnings;
+ *   - with a DSN, the Sentry event carries the reference as its id, plus the level, the
+ *     `where` tag, the account and the sanitized context. Sentry is imported lazily there,
+ *     and a hint with top-level `level`/`tags` silently loses `event_id`, so this is pinned.
  *
  * Also pins `friendlyError`'s digest reference: a Server Action throw in production shows
  * the digest Next logged with the real error.
@@ -24,6 +27,7 @@ import {
   withReference,
 } from "../src/lib/errors";
 import { reportAndContinue, reportError, reportedFailure } from "../src/lib/report-error";
+import * as Sentry from "@sentry/nextjs";
 
 let failures = 0;
 // Bound before console.error is replaced below, so a FAIL line is never captured as a log.
@@ -113,11 +117,31 @@ check("a digested Server Action error shows the fallback with the digest",
 check("no digest, no reference", friendlyError(new Error("An error occurred in the Server Components render."), FALLBACK) === FALLBACK);
 check("withReference ignores an empty ref", withReference(FALLBACK, " ") === FALLBACK);
 
-console.error = realError;
-console.warn = realWarn;
-if (failures > 0) {
-  console.error(`\n${failures} report-error check(s) failed`);
-  process.exit(1);
+async function finish() {
+  // 7. With a DSN: the event reaches Sentry under the reference, with its context. The DSN is
+  // fake; `beforeSend` records the event and drops it, so nothing leaves the machine.
+  const sent: Sentry.ErrorEvent[] = [];
+  process.env.SENTRY_DSN = "https://public@o0.ingest.sentry.io/0";
+  Sentry.init({ dsn: process.env.SENTRY_DSN, beforeSend: (event) => (sent.push(event), null) });
+  const sentryRef = reportError(new Error("to sentry"), { where: "smoke.sentry", userId: "user_smoke", extra: { plan: "pro", apiKey: "sk_live_NOPE" } });
+  const sentryWarnRef = reportError(new Error("to sentry, softly"), { where: "smoke.sentry.warn", level: "warning" });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const event = sent.find((e) => e.tags?.where === "smoke.sentry");
+  const warnEvent = sent.find((e) => e.tags?.where === "smoke.sentry.warn");
+  check("the Sentry event id starts with the reference the person sees", Boolean(event?.event_id?.startsWith(sentryRef)), `${sentryRef} vs ${event?.event_id}`);
+  check("…and carries the level, the account and the context", event?.level === "error" && event.user?.id === "user_smoke" && event.extra?.plan === "pro", JSON.stringify(event?.extra));
+  check("…without secret-named fields", !JSON.stringify(event?.extra ?? {}).includes("NOPE"));
+  check("a warning reaches Sentry as a warning under its reference", warnEvent?.level === "warning" && Boolean(warnEvent.event_id?.startsWith(sentryWarnRef)));
+  delete process.env.SENTRY_DSN;
+
+  console.error = realError;
+  console.warn = realWarn;
+  if (failures > 0) {
+    console.error(`\n${failures} report-error check(s) failed`);
+    process.exit(1);
+  }
+  console.log("\nAll report-error checks passed.");
+  process.exit(0);
 }
-console.log("\nAll report-error checks passed.");
-process.exit(0);
+
+void finish();

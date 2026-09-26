@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import Link from "next/link";
 import { useEffect } from "react";
 import { buttonVariants } from "@/components/ui/button";
@@ -11,6 +10,11 @@ import { cn } from "@/lib/utils";
  *
  * Reports the error to Sentry from the browser (a render error inside a boundary never
  * reaches `onRequestError` on the server), then offers a retry and a way home.
+ *
+ * Sentry is imported inside the effect, never at the top. This boundary is on every page,
+ * and its server render resolves `@sentry/nextjs` to the whole Node SDK (~1.7 MB) — loaded
+ * on every cold start for an effect that only ever runs in the browser, where
+ * `instrumentation-client.ts` has already loaded the SDK and the import is free.
  */
 export function ErrorFallback({
   error,
@@ -23,7 +27,7 @@ export function ErrorFallback({
 }) {
   useEffect(() => {
     console.error(error);
-    Sentry.captureException(error);
+    void import("@sentry/nextjs").then((Sentry) => Sentry.captureException(error));
   }, [error]);
 
   return (
