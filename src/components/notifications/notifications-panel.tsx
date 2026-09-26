@@ -40,6 +40,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { playDing } from "@/lib/ding";
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
 import {
@@ -669,7 +670,10 @@ function NotificationRow({
           disabled={pending}
           aria-label="Mark done"
           title="Mark done"
-          onClick={onDone}
+          onClick={() => {
+            playDing();
+            onDone();
+          }}
         >
           <Check className="h-3.5 w-3.5" />
         </Button>
