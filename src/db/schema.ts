@@ -1673,7 +1673,7 @@ export const imports = pgTable("imports", {
    */
   stallResumes: integer("stall_resumes").default(0).notNull(),
   /**
-   * The runner currently working this job, and until when (v113). Taken by
+   * The runner currently working this job, and until when (v116). Taken by
    * `runImportJobById` before any processor runs and released when it returns, so two
    * invocations (a continuation and a manual retry, or a slow continuation and the stall
    * backstop) can never claim the same rows at once. The row claim alone let them, and a
@@ -3326,7 +3326,7 @@ export const rateLimitBuckets = pgTable("rate_limit_buckets", {
 });
 
 /**
- * Who is running a keyed background job, and until when (v113). One row per key, e.g.
+ * Who is running a keyed background job, and until when (v116). One row per key, e.g.
  * `embedding-backfill:<userId>`. See `src/lib/job-lease.ts`: a lease is taken only when the
  * row is absent or expired, so a job that died frees its key on its own.
  */

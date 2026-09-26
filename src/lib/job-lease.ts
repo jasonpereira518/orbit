@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 
 /**
- * A keyed lease for background work that must not run twice at once (`job_leases`, v113).
+ * A keyed lease for background work that must not run twice at once (`job_leases`, v116).
  *
  * Taken with one INSERT ... ON CONFLICT that only overwrites an EXPIRED holder, so of two
  * callers racing for a free key exactly one gets it, and a holder that died frees the key

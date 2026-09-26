@@ -1,5 +1,5 @@
 /**
- * Keyed job leases (`src/lib/job-lease.ts`, `job_leases`, v113) and the per-user embedding
+ * Keyed job leases (`src/lib/job-lease.ts`, `job_leases`, v116) and the per-user embedding
  * backfill that uses one (`runEmbeddingBackfillExclusive`).
  *
  * Local PGlite. Run: npx tsx scripts/smoke-job-lease.ts

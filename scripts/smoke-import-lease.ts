@@ -1,5 +1,5 @@
 /**
- * One runner per import (`runImportJobById` in src/lib/import-job-dispatch.ts, v113).
+ * One runner per import (`runImportJobById` in src/lib/import-job-dispatch.ts, v116).
  *
  * The row claim alone let two runners work one import at once: a continuation and a manual
  * retry, or a slow continuation and the stall backstop's kick. Each claimed rows the other

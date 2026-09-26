@@ -2060,7 +2060,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // stamped 113 would have skipped this DDL. NOT 114: claude/integrations-ui-pass and
 // claude/settings-popup-redesign-0ed30d both claim it. Rescanned every remote ref, local
 // branch and worktree on Sep 26 2026: 114 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 115;
+//
+// 116 = scalability phase 5: imports.runner_token/runner_lease_until (one runner per import),
+// the job_leases table (one embedding backfill chain per user), and the age indexes the
+// retention sweep reads (gate_events, outbound deliveries by status, rate_limit_buckets).
+// Stacked on 115. Rescanned every remote ref, local branch and worktree on Sep 26 2026: 115
+// (this stack) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 116;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2536,13 +2542,13 @@ export const SCALE_DDL: string[] = [
      ON interactions FOR EACH ROW EXECUTE FUNCTION interactions_mark_memory_dirty()`,
   `CREATE INDEX IF NOT EXISTS interactions_memory_dirty_idx ON interactions(user_id) WHERE memory_dirty`,
 
-  // --- v113: one runner per import ------------------------------------------------------
+  // --- v116: one runner per import ------------------------------------------------------
   //
   // The runner holding an import, and until when. See imports.runnerToken in schema.ts.
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS runner_token text`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS runner_lease_until timestamptz`,
 
-  // --- v113: retention -------------------------------------------------------------------
+  // --- v116: retention -------------------------------------------------------------------
   //
   // The hourly retention sweep (src/lib/retention.ts) finds each table's old rows by age.
   // These three had no index on that age, so every batch would have scanned the table.
