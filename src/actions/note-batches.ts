@@ -6,7 +6,7 @@ import { getDb } from "@/db";
 import { contacts, noteBatches, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
-import { dismissNoteReminderForUser, undoNoteBatchForUser } from "@/lib/note-batch-save";
+import { deleteNoteBatchForUser, dismissNoteReminderForUser, undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
 
 export async function getNoteBatch(batchId: string) {
@@ -59,6 +59,17 @@ export async function undoNoteBatch(batchId: string) {
   revalidatePath(`/capture/${batchId}`);
   revalidatePath("/contacts");
   return out;
+}
+
+/** Delete a capture from the history. The people and interactions it saved stay. */
+export async function deleteNoteBatch(batchId: string) {
+  const userId = await requireUserId();
+  const deleted = await deleteNoteBatchForUser(userId, batchId);
+  revalidateReminderPaths();
+  revalidatePath("/capture");
+  revalidatePath(`/capture/${batchId}`);
+  revalidatePath("/contacts");
+  return { deleted };
 }
 
 export async function dismissNoteReminder(reminderId: string) {

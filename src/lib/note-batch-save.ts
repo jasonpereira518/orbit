@@ -7,10 +7,11 @@
  *   interactions  — `externalId = notes:<sourceHash>:<contactId>` (unique per user)
  *   reminders     — `itemHash = sha256(sourceHash|dueIso|title)` (unique per user, NULLs allowed)
  *   undo          — marks reminders `dismissed`, never deletes, so the hash keeps blocking
+ *   delete        — undo first, then the batch row itself; the hashes still block
  */
 import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, contacts, interactionMentions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin } from "@/db/schema";
+import { actionItems, captureJobs, contactOpportunities, contacts, ignoredPeople, interactionMentions, interactions, meetingSessions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -40,6 +41,7 @@ import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
 import { reportAndContinue } from "@/lib/report-error";
+import { deleteCapturePhotosForBatch } from "@/lib/capture-photos";
 
 export type NoteBatchParticipantInput = {
   notes: string;
@@ -617,6 +619,46 @@ export async function undoNoteBatchForUser(userId: string, batchId: string) {
     mentionsRemoved,
     opportunitiesDismissed: dismissedOpportunities.length,
   };
+}
+
+/**
+ * Remove a capture from the history for good: its notes, its photos, the record itself.
+ *
+ * Whatever undo reverses goes first — pending reminders dismissed, this batch's mention
+ * links removed, its opportunities dismissed — so nothing live is left pointing at a
+ * capture that no longer exists. The people and interactions it saved stay, exactly as
+ * they do after an undo: those are the person's CRM now, not the capture's.
+ *
+ * `note_batch_id` is a plain column (no foreign key) everywhere except `capture_photos`,
+ * so the rows that carried it are detached by hand; a dangling id would otherwise render
+ * as "From a capture" with nothing behind it. Neither the interaction `externalId` nor the
+ * reminder `itemHash` is touched, so re-pasting the same note still creates nothing twice.
+ *
+ * Idempotent: a batch that is already gone (or never was this user's) returns `false`.
+ */
+export async function deleteNoteBatchForUser(userId: string, batchId: string) {
+  const db = await getDb();
+  const batch = await db.query.noteBatches.findFirst({
+    where: and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId)),
+    columns: { id: true, status: true },
+  });
+  if (!batch) return false;
+
+  if (batch.status !== "undone") await undoNoteBatchForUser(userId, batchId);
+
+  const detach = { noteBatchId: null } as const;
+  await Promise.all([
+    db.update(interactions).set(detach).where(and(eq(interactions.userId, userId), eq(interactions.noteBatchId, batchId))),
+    db.update(reminders).set(detach).where(and(eq(reminders.userId, userId), eq(reminders.noteBatchId, batchId))),
+    db.update(contactOpportunities).set(detach).where(and(eq(contactOpportunities.userId, userId), eq(contactOpportunities.noteBatchId, batchId))),
+    db.update(meetingSessions).set(detach).where(and(eq(meetingSessions.userId, userId), eq(meetingSessions.noteBatchId, batchId))),
+    db.update(captureJobs).set(detach).where(and(eq(captureJobs.userId, userId), eq(captureJobs.noteBatchId, batchId))),
+    db.update(ignoredPeople).set(detach).where(and(eq(ignoredPeople.userId, userId), eq(ignoredPeople.noteBatchId, batchId))),
+  ]);
+
+  await deleteCapturePhotosForBatch(userId, batchId);
+  await db.delete(noteBatches).where(and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId)));
+  return true;
 }
 
 export async function dismissNoteReminderForUser(userId: string, reminderId: string) {
