@@ -34,6 +34,7 @@ import { apiKeys } from "@/db/schema";
 import { bearerFrom, hashApiKey, looksLikeApiKey, type ApiKeyScope } from "@/lib/api/keys";
 import { entitlementsFromSettings, type Entitlements } from "@/lib/entitlements";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { isHeldByStealth } from "@/lib/site-access";
 
 export type ApiCaller = {
   userId: string;
@@ -132,6 +133,11 @@ export async function assertAccountUsable(
   const settings = await ensureUserSettings(userId);
   if (settings.suspendedAt) {
     throw new ApiAuthError("suspended", "This Orbit account is suspended.");
+  }
+  // An account stealth is holding is not signed in anywhere else in the app; a key or an
+  // OAuth grant must not be the way around that.
+  if (await isHeldByStealth(userId, settings)) {
+    throw new ApiAuthError("suspended", "This account is waiting for an invitation.");
   }
 
   const entitlements = entitlementsFromSettings(userId, settings);

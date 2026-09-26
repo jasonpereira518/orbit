@@ -14,6 +14,8 @@ import {
 export { hasGmailReadScope } from "@/lib/google-scopes";
 import { googleFetchWithRetry as gmailFetchWithRetry } from "@/lib/google-fetch";
 
+/** Token exchange and refresh sit on the shared sync path; a hung provider must not hold it. */
+const OAUTH_FETCH_TIMEOUT_MS = 10_000;
 
 /**
  * Sending as the user, rather than through Orbit's own Resend domain, is what makes a
@@ -166,6 +168,7 @@ export async function exchangeCodeForTokens(code: string): Promise<TokenResponse
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
@@ -192,6 +195,7 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       refresh_token: refreshToken,
@@ -498,6 +502,7 @@ export {
   firmFromEmail,
   looksLikeRecruiter,
 } from "@/lib/recruiter-detect";
+
 
 /**
  * Gmail-side keyword filter. Everything downstream is far more expensive than this —
