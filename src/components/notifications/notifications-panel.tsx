@@ -219,7 +219,7 @@ export function NotificationsPanelButton({
             </SheetDescription>
           </SheetHeader>
 
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+          <div className="min-h-[7rem] flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3 [scrollbar-width:thin]">
             {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
 
             {loading && !data ? (
@@ -321,7 +321,7 @@ export function NotificationsPanelButton({
               room this needs instead of overflowing the window.
 
               The cap is a backstop for the expanded state only: collapsed, this is at most
-              `ALERTS_COLLAPSED_VISIBLE` rows and nowhere near 45% of the window, so the
+              `ALERTS_COLLAPSED_VISIBLE` rows and nowhere near 30% of the window, so the
               nested scroller the alerts docblock warns about never actually appears.
 
               It renders nothing when there are no live alerts, so the border comes from the
@@ -329,7 +329,7 @@ export function NotificationsPanelButton({
           <AccountAlerts
             alerts={alerts}
             onNavigate={() => setOpen(false)}
-            className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border/60 px-4 py-3"
+            className="max-h-[30%] shrink-0 overflow-y-auto border-t border-border/60 px-4 py-3"
           />
 
           <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 p-4">
@@ -391,7 +391,7 @@ function Section({
  * Rows are one or two lines: a title, a single muted meta line, and icon-only actions on
  * the right. The old cards stacked an icon disc, a body paragraph and a button row.
  */
-const ROW = "flex items-center gap-2.5 rounded-lg border border-border/60 bg-card px-3 py-2";
+const ROW = "flex items-center gap-2.5 rounded-lg border border-border/50 bg-foreground/[0.045] px-3 py-2";
 const ICON_BTN = "size-7 shrink-0 text-muted-foreground";
 
 /**
@@ -546,7 +546,7 @@ function NotificationRow({
     : "No due date";
 
   return (
-    <div className={cn(ROW, "border-primary/25 bg-primary/[0.03]")}>
+    <div className={cn(ROW, "border-primary/20 bg-primary/[0.07]")}>
       <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
       <Link
         href={item.url}
