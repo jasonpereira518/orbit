@@ -73,6 +73,17 @@ async function main() {
     check("an inline avatar becomes the avatar route", contact?.profile_image_url === `/api/avatars/${contactId}`);
     check("nobody else's rows", out.categories.contacts.contacts.every((c) => c.user_id === USER));
     check("recruiter links name the recruiter", out.categories.recruiters.user_recruiter_links?.[0]?.recruiter_full_name === "Rec");
+
+    console.log("\nPaging past one page (500 rows)");
+    // Pages by key, not OFFSET, past the first page: every row exactly once, in key order.
+    const db = await getDb();
+    await db.insert(schema.tags).values(Array.from({ length: 1_234 }, (_, i) => ({ userId: USER, name: `bulk-tag-${i}` })));
+    const paged = await collectUserExport(USER);
+    const tagRows = Object.values(paged.categories).flatMap((byName) => byName.tags ?? []) as Array<{ id: string; name: string }>;
+    const bulk = tagRows.filter((t) => t.name.startsWith("bulk-tag-"));
+    check("every row across three pages", bulk.length === 1_234 && new Set(bulk.map((t) => t.id)).size === 1_234, `${bulk.length}`);
+    const ids = tagRows.map((t) => t.id);
+    check("in key order", ids.every((id, i) => i === 0 || ids[i - 1]! < id));
   } finally {
     await purgeUserData(USER, { keepSettings: false }).catch(() => {});
     await purgeUserData("smoke-export-someone-else", { keepSettings: false }).catch(() => {});

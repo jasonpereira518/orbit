@@ -86,7 +86,7 @@ async function resolvePageOverrides(sources: readonly ExportSource[]): Promise<P
       sql`, `
     );
     const pageColumns = source.pageColumns!;
-    overrides.set(source, (userId, limit, offset) => pageColumns(columns, userId, limit, offset));
+    overrides.set(source, (userId, limit, offset, after) => pageColumns(columns, userId, limit, offset, after));
   }
   return overrides;
 }
@@ -96,14 +96,20 @@ async function* datasetChunks(userId: string, source: ExportSource, overrides: P
   yield `${JSON.stringify(source.name)}:[`;
   let first = true;
   const page = overrides.get(source) ?? source.page;
+  // By key where the source supports it: each page starts after the last row of the one
+  // before, so page N costs what page 1 does. OFFSET is only the fallback.
+  let after: unknown = undefined;
   for (let offset = 0; ; offset += PAGE) {
-    const rows = rowsOf<Record<string, unknown>>(await db.execute(page(userId, PAGE, offset)));
+    const rows = rowsOf<Record<string, unknown>>(await db.execute(page(userId, PAGE, offset, after)));
     for (const raw of rows) {
       const clean = redactExportRow(raw);
       yield `${first ? "" : ","}${JSON.stringify(source.transform ? source.transform(clean) : clean)}`;
       first = false;
     }
     if (rows.length < PAGE) break;
+    const last = source.keyColumn ? rows[rows.length - 1]?.[source.keyColumn] : undefined;
+    // A key the page did not return (redaction dropped it) falls back to OFFSET, correctly.
+    after = last === undefined || last === null ? undefined : last;
   }
   yield "]";
 }

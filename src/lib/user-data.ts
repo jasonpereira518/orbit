@@ -152,13 +152,20 @@ type Db = Awaited<ReturnType<typeof getDb>>;
 /** One dataset of a category's export: a page of this user's rows, snake_case keys. */
 export type ExportSource = {
   name: string;
-  page: (userId: string, limit: number, offset: number) => SQL;
+  /**
+   * A page of rows. `after`, when given, is the previous page's last `keyColumn` value and
+   * replaces `offset`: sources that support it page by key, not by OFFSET, which re-read
+   * every earlier row on every page and made a large account's export quadratic.
+   */
+  page: (userId: string, limit: number, offset: number, after?: unknown) => SQL;
+  /** The unique-per-user column `page` orders by, when it can page by key. */
+  keyColumn?: string;
   /**
    * Single-table sources only: `page` with `columns` in place of `*`. The export uses it to
    * name exactly the columns that survive redaction (in table order), so vectors and raw
    * bytes it would drop anyway are never read or shipped. Same rows, same order.
    */
-  pageColumns?: (columns: SQL, userId: string, limit: number, offset: number) => SQL;
+  pageColumns?: (columns: SQL, userId: string, limit: number, offset: number, after?: unknown) => SQL;
   /**
    * Column -> the expression selected in its place under the same name, for a column the
    * `transform` only inspects. Must be provably output-identical after `transform`.
@@ -170,11 +177,17 @@ export type ExportSource = {
 /** Every row of `table` whose `user_id` is this user, in a stable order. */
 export function ownRowsSource(table: PgTable, orderBy = "id"): ExportSource {
   const name = getTableName(table);
-  const pageColumns: NonNullable<ExportSource["pageColumns"]> = (columns, userId, limit, offset) =>
-    sql`SELECT ${columns} FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`;
+  const key = sql.identifier(orderBy);
+  // `orderBy` is unique per user for every source (a primary key, or a column unique within
+  // the user), which is what makes "> the last one" a correct next page.
+  const pageColumns: NonNullable<ExportSource["pageColumns"]> = (columns, userId, limit, offset, after) =>
+    after === undefined || after === null
+      ? sql`SELECT ${columns} FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${key} LIMIT ${limit} OFFSET ${offset}`
+      : sql`SELECT ${columns} FROM ${sql.identifier(name)} WHERE user_id = ${userId} AND ${key} > ${after} ORDER BY ${key} LIMIT ${limit}`;
   return {
     name,
-    page: (userId, limit, offset) => pageColumns(sql`*`, userId, limit, offset),
+    keyColumn: orderBy,
+    page: (userId, limit, offset, after) => pageColumns(sql`*`, userId, limit, offset, after),
     pageColumns,
   };
 }
