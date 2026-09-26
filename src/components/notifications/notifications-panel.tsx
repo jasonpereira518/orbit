@@ -391,7 +391,7 @@ function Section({
  * Rows are one or two lines: a title, a single muted meta line, and icon-only actions on
  * the right. The old cards stacked an icon disc, a body paragraph and a button row.
  */
-const ROW = "flex items-center gap-2.5 rounded-lg border border-border/60 bg-popover px-3 py-2";
+const ROW = "flex items-center gap-3 rounded-lg border border-border/30 bg-popover px-3.5 py-3";
 const ICON_BTN = "size-7 shrink-0 text-muted-foreground";
 
 /**
@@ -423,7 +423,7 @@ function KeptRow({
         <p className="truncate text-sm font-medium text-ink" title={entry.title}>
           {entry.title}
         </p>
-        <p className="truncate text-xs text-muted-foreground">
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {formatDistanceToNow(entry.at, { addSuffix: true })}
           {entry.description ? ` · ${entry.description}` : ""}
         </p>
@@ -546,7 +546,7 @@ function NotificationRow({
     : "No due date";
 
   return (
-    <div className={cn(ROW, "border-primary/25 bg-popover")}>
+    <div className={cn(ROW, "border-primary/15 bg-popover")}>
       <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
       <Link
         href={item.url}
@@ -556,7 +556,7 @@ function NotificationRow({
         <span className="block truncate text-sm font-medium text-ink">
           {item.title}
         </span>
-        <span className="block truncate text-xs text-muted-foreground">
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
           {when}
           {item.body ? ` · ${item.body}` : ""}
         </span>
