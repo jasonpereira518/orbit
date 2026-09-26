@@ -65,14 +65,23 @@ export function AiUsageCard() {
             the last 30 days.
           </p>
           <p className="text-muted-foreground">
-            Most of it was{" "}
-            {topRows.map((row, i) => (
-              <span key={row.operation}>
-                {i > 0 ? (i === topRows.length - 1 && !hasMoreRows ? " and " : ", ") : ""}
-                {row.label} ({row.calls.toLocaleString()})
-              </span>
-            ))}
-            {hasMoreRows ? ", and a few other things" : ""}.
+            {/* At one call there is no "most of it" and no list to build: the sentence-builder
+                below would say "Most of it was Chat: answering (1)", which counts a thing
+                against itself. Name it and stop. */}
+            {summary.totalCalls === 1 ? (
+              <>That one was {topRows[0].label}.</>
+            ) : (
+              <>
+                Most of it was{" "}
+                {topRows.map((row, i) => (
+                  <span key={row.operation}>
+                    {i > 0 ? (i === topRows.length - 1 && !hasMoreRows ? " and " : ", ") : ""}
+                    {row.label} ({row.calls.toLocaleString()})
+                  </span>
+                ))}
+                {hasMoreRows ? ", and a few other things" : ""}.
+              </>
+            )}
           </p>
           {totalFailures > 0 ? (
             <p className="text-muted-foreground">

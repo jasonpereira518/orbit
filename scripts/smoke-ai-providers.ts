@@ -118,9 +118,13 @@ check(
   "Gemini has no `best` tier — 3.5 Flash is not it (worse AND pricier than 3.8 per the recorded evals)",
   !PROVIDER_MODELS.gemini.some((m) => m.tier === "best")
 );
+// Exact, per provider: the loop above only asks for cheapest + balanced, so without this
+// OpenAI's `best` was pinned by nothing — dropping `tier: "best"` from gpt-4.1 would quietly
+// take a tier off the card and every other check here would still pass.
 check(
   "tieredModels returns declared tiers in cheapest, balanced, best order",
   tieredModels("gemini").map((m) => m.tier).join(",") === "cheapest,balanced" &&
+    tieredModels("openai").map((m) => m.tier).join(",") === "cheapest,balanced,best" &&
     tieredModels("anthropic").map((m) => m.tier).join(",") === "cheapest,balanced,best"
 );
 

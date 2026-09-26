@@ -179,7 +179,11 @@ export async function pendingTimelineContactCount(userId: string): Promise<numbe
 
 /**
  * Pending contacts whose thread would cost a model call — what the import card's estimate
- * multiplies. Same predicate as the claim, plus the extractor's own skip rule.
+ * multiplied. Same predicate as the claim, plus the extractor's own skip rule.
+ *
+ * No production reader since `getTimelineBackfillStatus` was deleted (the backfill is
+ * automatic now); kept, like the estimate itself, for smoke-linkedin-timeline-backfill.ts.
+ * See the note in src/lib/timeline-cost.ts.
  */
 export async function pendingTimelineAiContactCount(userId: string): Promise<number> {
   const db = await getDb();

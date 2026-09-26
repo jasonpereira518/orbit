@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { Disclosure } from "@/components/settings/disclosure";
-import { ProviderCard } from "@/components/settings/provider-card";
+import { ProviderCard, SAVE_THREW } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import {
@@ -62,8 +62,10 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const provider = settings.aiProvider;
   const model = settings.aiModel;
   /**
-   * Set when a default changed under this account (`ai_model_migrated_from`). Shown once,
-   * beside the model it moved to; saving anything clears it.
+   * Set when a default changed under this account (`ai_model_migrated_from`). Shown once, on
+   * the card body rather than inside Advanced: `saveAiSettings` clears the flag on ANY save,
+   * so anyone who picked a tier before opening Advanced burned the notice without reading it
+   * — and it discloses an automatic model change made on their own spend.
    */
   const movedFrom = settings.aiModelMigratedFrom;
   const providerMeta = AI_PROVIDERS.find((p) => p.id === provider)!;
@@ -91,7 +93,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
     provider: AiProvider;
     model?: string;
     apiKey?: string;
-  }): Promise<string | null> {
+  }): Promise<string | null | typeof SAVE_THREW> {
     try {
       const res = await saveAiSettings({
         provider: input.provider,
@@ -115,7 +117,9 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       return null;
     } catch (err) {
       toast.error(friendlyError(err, TOAST_COPY.saveFailed));
-      return null;
+      // Not `null`: that is what a save that went through returns, and a card reading it as
+      // success would clear the key field the user had just pasted into.
+      return SAVE_THREW;
     }
   }
 
@@ -150,6 +154,25 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           />
         ))}
       </ul>
+
+      {movedFrom ? (
+        <p className="rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">
+          Moved from {modelLabel(provider, movedFrom)} to {modelLabel(provider, model)}: newer, and
+          about half the price per token.{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-ink"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                await save({ provider, model: movedFrom });
+              })
+            }
+          >
+            Switch back
+          </button>
+        </p>
+      ) : null}
 
       <Disclosure label="Advanced">
         <p className="text-sm text-muted-foreground">
@@ -231,24 +254,6 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             Runs {providerMeta.label} on an id of your own — anything the provider serves,
             including models with no tier above.
           </p>
-          {movedFrom && model === DEFAULT_MODELS[provider] ? (
-            <p className="text-xs text-muted-foreground">
-              Moved from {modelLabel(provider, movedFrom)} to {modelLabel(provider, model)}: newer, and
-              about half the price per token.{" "}
-              <button
-                type="button"
-                className="underline underline-offset-2 hover:text-ink"
-                disabled={pending}
-                onClick={() =>
-                  start(async () => {
-                    await save({ provider, model: movedFrom });
-                  })
-                }
-              >
-                Switch back
-              </button>
-            </p>
-          ) : null}
         </div>
 
         <div className="space-y-3 border-t border-border/60 pt-4">

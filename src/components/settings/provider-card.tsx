@@ -9,7 +9,7 @@ import {
   GeminiMark,
   OpenAiMark,
 } from "@/components/settings/provider-marks";
-import { tieredModels, type AiProvider, type ModelTier } from "@/lib/ai-providers";
+import { PROVIDER_MODELS, tieredModels, type AiProvider, type ModelTier } from "@/lib/ai-providers";
 import { cn } from "@/lib/utils";
 
 /** What the three tiers are called on screen. The model's own name is the small print. */
@@ -33,6 +33,14 @@ export type ProviderCardStatus = {
   hasPersonalKey: boolean;
   managedAvailable: boolean;
 };
+
+/**
+ * What `onSave` answers when the save THREW rather than being refused. It already toasted,
+ * and settings were deliberately not refreshed, so there is nothing to show under the field
+ * — but it is not success either, and returning the same `null` as success made this card
+ * wipe the key the user had just pasted and collapse the Replace field on every thrown save.
+ */
+export const SAVE_THREW = Symbol("provider-card:save-threw");
 
 /**
  * One provider: its mark, its name, a state line, and then the model choice, a place to
@@ -66,12 +74,13 @@ export function ProviderCard({
   /** The stored model, when this is the active provider — otherwise null, so no tier reads
    *  as chosen on a card that is not the one in use. */
   model: string | null;
-  /** Resolves to a refusal to show under the key field, or null when it went through. */
+  /** Resolves to a refusal to show under the key field, null when it went through, or
+   *  `SAVE_THREW` when it blew up and has already been toasted. */
   onSave: (input: {
     provider: AiProvider;
     model?: string;
     apiKey?: string;
-  }) => Promise<string | null>;
+  }) => Promise<string | null | typeof SAVE_THREW>;
   onClear: (provider: AiProvider) => Promise<void>;
 }) {
   const [apiKey, setApiKey] = useState("");
@@ -91,13 +100,22 @@ export function ProviderCard({
   const showKeyField = !hasKey || replacing;
   const chosenIndex = tiers.findIndex((m) => active && model === m.value);
 
-  const stateLine = hasKey
+  const base = hasKey
     ? active
       ? "Your key is saved, and Orbit is using it"
       : "Your key is saved"
     : status?.managedAvailable
       ? "No key saved — AI is already covered for you"
       : "No key yet — paste one to turn on AI features";
+  /**
+   * An active account can sit on an id no tier button carries — an untagged preset, a custom
+   * id, or one this branch dropped from the presets — and then every button reads unselected
+   * with nothing on screen saying what is actually running. Say it.
+   */
+  const stateLine =
+    active && model && chosenIndex === -1
+      ? `${base} · Running ${PROVIDER_MODELS[provider.id].find((m) => m.value === model)?.label ?? model}`
+      : base;
 
   /**
    * Arrows move focus without choosing. A radio group may do that where selection on focus
@@ -205,12 +223,15 @@ export function ProviderCard({
                 start(async () => {
                   // Straight to `saveAiSettings`, which overwrites the stored key. Never via
                   // `clearApiKey` — that can reset this account's embeddings.
-                  const error = await onSave({
+                  const result = await onSave({
                     provider: provider.id,
                     apiKey: apiKey.trim(),
                   });
-                  setKeyError(error);
-                  if (!error) {
+                  // A throw is neither a refusal to show nor a save: leave the pasted key and
+                  // the open field alone, and let the toast be the only word on it.
+                  if (result === SAVE_THREW) return;
+                  setKeyError(result);
+                  if (!result) {
                     setApiKey("");
                     setReplacing(false);
                   }

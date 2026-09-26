@@ -6,6 +6,9 @@ import { estimateCostMicros, formatCostMicros } from "@/lib/ai-pricing";
  * shown is the number the code enforces. `TimelineBackfillStatus`/`timelineEstimateLabel`
  * below no longer have a production reader — the opt-in checkbox they served is gone
  * (schema v108, task 9) — but stay for their own smoke coverage (smoke-timeline-cost.ts).
+ * `pendingTimelineAiContactCount` (src/lib/linkedin-timeline-backfill.ts) is in the same
+ * position: it counted the calls that estimate multiplied, lost its only production caller
+ * when `getTimelineBackfillStatus` went, and now has only smoke coverage.
  */
 
 /** Threads with fewer usable messages get only the rule-based reach-out, never a model call. */
