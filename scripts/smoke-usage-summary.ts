@@ -8,7 +8,7 @@ import { run } from "./smoke/_env";
 import { inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { usageEvents } from "../src/db/schema";
-import { loadUsageSummary } from "../src/lib/usage-summary";
+import { loadUsageSummary, summarizeUsageRows, USAGE_SUMMARY_DAYS } from "../src/lib/usage-summary";
 
 const USER = "smoke-usage-summary-user";
 const OTHER = "smoke-usage-summary-other";
@@ -25,6 +25,30 @@ function check(label: string, ok: boolean, detail?: string) {
 }
 
 const base = { provider: "gemini" as const, model: "gemini-3.5-flash", kind: "completion" as const, keyOwner: "user" as const };
+
+/**
+ * Thin wrapper over `summarizeUsageRows`, the real row-mapping function — this exercises
+ * shipped code, not a parallel copy of the logic. Each entry stands for one row already
+ * grouped into a single operation, so `costSource` is all that matters for these checks.
+ */
+function summaryFor(rows: { costSource: "estimated" | "reported" }[]) {
+  const grouped =
+    rows.length === 0
+      ? []
+      : [
+          {
+            operation: "test.op",
+            calls: rows.length,
+            failures: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            costMicros: 0,
+            unpricedCalls: 0,
+            hasEstimatedRow: rows.some((r) => r.costSource === "estimated"),
+          },
+        ];
+  return summarizeUsageRows(grouped, NOW, USAGE_SUMMARY_DAYS);
+}
 
 run(async () => {
   const db = await getDb();
@@ -53,9 +77,24 @@ run(async () => {
   check("calls on Orbit's managed key never count as the person's own", byOp.get("chat.answer")?.costMicros === 5000, `${byOp.get("chat.answer")?.costMicros}`);
   check("totals carry the unpriced count", summary.unpricedCalls === 1);
   check("known operations get a readable label", byOp.get("capture.parse")?.label === "Capture: reading notes");
+  check("a window of table-estimated rows is marked an estimate", summary.costIsEstimated === true);
 
   const empty = await loadUsageSummary("smoke-usage-summary-nobody", { now: NOW });
   check("an account with no calls gets an empty summary", empty.rows.length === 0 && empty.totalCalls === 0);
+  check("an empty account's window is not claimed as exact", empty.costIsEstimated === true);
+
+  check(
+    "a window with any estimated row reports the cost as an estimate",
+    summaryFor([{ costSource: "estimated" }, { costSource: "reported" }]).costIsEstimated === true
+  );
+  check(
+    "a window of only reported rows does not call the cost an estimate",
+    summaryFor([{ costSource: "reported" }, { costSource: "reported" }]).costIsEstimated === false
+  );
+  check(
+    "an empty window is not claimed as exact",
+    summaryFor([]).costIsEstimated === true
+  );
 
   await db.delete(usageEvents).where(inArray(usageEvents.userId, [USER, OTHER]));
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
