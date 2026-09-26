@@ -1,5 +1,9 @@
+"use client";
+
+import { useId } from "react";
+
 /**
- * The Google, Microsoft, LinkedIn, Gemini, OpenAI, Anthropic, Claude and ChatGPT marks, in
+ * The Google, Microsoft, LinkedIn, Gemini, OpenAI, Claude and ChatGPT marks, in
  * the providers' own colours as their brand guidelines ask. Decorative: the provider's name
  * always sits beside them.
  *
@@ -9,19 +13,22 @@
  * in almost-Google colours beside the real one is what gets noticed.
  *
  * GeminiMark is the Gemini spark, not the Google "G" — the G already means "your Google
- * account" elsewhere in this dialog. Google's own spark artwork is a gradient; #8E75B2 is its
- * flattened brand hex (simple-icons' recorded value for it), a single-colour stand-in the same
- * way `GoogleMark`'s four flat swatches stand in for any bevel Google's own icon adds.
+ * account" elsewhere in this dialog. It carries Google's own blue-to-purple-to-red gradient
+ * (#4285F4 → #9B72CB → #D96570) rather than the flattened #8E75B2 an icon pack ships, because
+ * the flat hex reads as "some purple app" beside two marks that are recognisably themselves.
+ * The gradient's id comes from `useId`, so two sparks on one page cannot collide — a fixed id
+ * would make the second instance inherit the first's gradient.
  *
- * ChatGPT and OpenAI are not the same mark, any more than Claude and Anthropic are: OpenAI's
- * is its 2025 "blossom" symbol (openai.com/brand, black); ChatGPT's is its own squircle app
- * icon (teal #74AA9C tile, white swirl) — sourced from Wikimedia Commons, credited back to
- * OpenAI's brand assets in both cases, not approximated.
+ * OpenAI's blossom and ChatGPT's knot are drawn in `currentColor`, not a fixed hex. Both of
+ * their brand marks are near-black, which is invisible against this app's dark surfaces; the
+ * providers publish a light-on-dark version for exactly that case, and inheriting the text
+ * colour beside them is how one component serves both themes. The knot is the monochrome
+ * lockup rather than the teal #74AA9C squircle app icon, which is a tile for a home screen
+ * and reads as a mismatch in a row of flat marks.
  *
- * Claude and Anthropic are two different marks from the same company: Claude's is the orange
- * asterisk (#D97757); Anthropic's is the wordmark's chevron glyph, rendered near-black
- * (#191919) — both are simple-icons' recorded brand hexes, not a guess at "the same orange
- * for both" because they share a parent company.
+ * Claude's orange asterisk (#D97757) is what stands for Anthropic here. Anthropic's own
+ * wordmark chevron is the corporate mark; the card names the model someone is choosing, and
+ * Claude is the thing they know. The asterisk also survives both themes unchanged.
  */
 type MarkProps = { className?: string };
 
@@ -72,10 +79,18 @@ export function LinkedInMark({ className }: MarkProps) {
 
 /** Google's own Gemini spark artwork — a gradient — flattened to its recorded brand hex. */
 export function GeminiMark({ className }: MarkProps) {
+  const id = useId();
   return (
     <svg viewBox="0 0 24 24" aria-hidden className={className}>
+      <defs>
+        <linearGradient id={id} x1="0" y1="24" x2="24" y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#4285F4" />
+          <stop offset="52%" stopColor="#9B72CB" />
+          <stop offset="100%" stopColor="#D96570" />
+        </linearGradient>
+      </defs>
       <path
-        fill="#8E75B2"
+        fill={`url(#${id})`}
         d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"
       />
     </svg>
@@ -87,24 +102,13 @@ export function OpenAiMark({ className }: MarkProps) {
   return (
     <svg viewBox="1.68 1.75 16.65 16.5" aria-hidden className={className}>
       <path
-        fill="#000000"
+        fill="currentColor"
         d="M11.248 18.25q-.825 0-1.568-.314a4.3 4.3 0 0 1-1.32-.874 4 4 0 0 1-1.304.214 4 4 0 0 1-2.046-.544 4.27 4.27 0 0 1-1.518-1.485 4 4 0 0 1-.56-2.095q0-.48.131-1.04A4.4 4.4 0 0 1 2.04 10.71a4.07 4.07 0 0 1 .017-3.4 4.2 4.2 0 0 1 1.056-1.418 3.8 3.8 0 0 1 1.6-.842 3.9 3.9 0 0 1 .76-1.683q.593-.759 1.451-1.188a4.04 4.04 0 0 1 1.832-.429q.825 0 1.567.313.742.314 1.32.875a4 4 0 0 1 1.304-.215q1.106 0 2.046.545a4.14 4.14 0 0 1 1.501 1.485q.578.941.578 2.095 0 .48-.132 1.04.66.61 1.023 1.419.363.792.363 1.666 0 .892-.38 1.717a4.3 4.3 0 0 1-1.072 1.435 3.8 3.8 0 0 1-1.584.825 3.8 3.8 0 0 1-.775 1.683 4.06 4.06 0 0 1-1.436 1.188 4.04 4.04 0 0 1-1.832.429m-4.076-2.062q.825 0 1.435-.347l3.103-1.782a.36.36 0 0 0 .164-.313v-1.42L7.881 14.62a.67.67 0 0 1-.726 0l-3.118-1.798a.5.5 0 0 1-.017.115v.198q0 .841.396 1.551.413.693 1.139 1.089a3.2 3.2 0 0 0 1.617.412m.165-2.69a.4.4 0 0 0 .181.05q.083 0 .165-.05l1.238-.71-3.977-2.31a.7.7 0 0 1-.363-.643v-3.58q-.825.362-1.32 1.122a2.9 2.9 0 0 0-.495 1.65q0 .809.413 1.55.412.743 1.072 1.123zm3.91 3.663q.875 0 1.585-.396a2.96 2.96 0 0 0 1.534-2.64v-3.564a.32.32 0 0 0-.165-.297l-1.254-.726v4.604a.7.7 0 0 1-.363.643l-3.119 1.799a3 3 0 0 0 1.783.577m.627-6.039V8.878L10.01 7.822 8.129 8.878v2.244l1.881 1.056zM7.057 5.859a.7.7 0 0 1 .363-.644l3.119-1.798a3 3 0 0 0-1.782-.578q-.874 0-1.584.396A2.96 2.96 0 0 0 6.05 4.324a3.07 3.07 0 0 0-.396 1.551v3.547q0 .199.165.314l1.237.726zm8.383 7.887q.825-.364 1.303-1.123.495-.758.495-1.65a3.15 3.15 0 0 0-.412-1.55q-.413-.743-1.073-1.123l-3.086-1.782q-.099-.065-.181-.049a.3.3 0 0 0-.165.05l-1.238.692 3.993 2.327a.6.6 0 0 1 .264.264.64.64 0 0 1 .1.363zm-3.317-8.382a.63.63 0 0 1 .726 0l3.135 1.831v-.297q0-.792-.396-1.501a2.86 2.86 0 0 0-1.105-1.155q-.71-.43-1.65-.43-.825 0-1.436.347L8.294 5.941a.36.36 0 0 0-.165.314v1.418z"
       />
     </svg>
   );
 }
 
-/** Anthropic's own wordmark glyph (the chevron mark), simple-icons' recorded brand hex. */
-export function AnthropicMark({ className }: MarkProps) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className={className}>
-      <path
-        fill="#191919"
-        d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"
-      />
-    </svg>
-  );
-}
 
 /** Claude's own asterisk mark, simple-icons' recorded brand hex — not Anthropic's wordmark. */
 export function ClaudeMark({ className }: MarkProps) {
@@ -118,40 +122,43 @@ export function ClaudeMark({ className }: MarkProps) {
   );
 }
 
-/** ChatGPT's own squircle app icon (teal tile, white swirl), Wikimedia Commons via OpenAI's brand assets. */
+/**
+ * ChatGPT's knot, monochrome. The artwork is the squircle app icon's swirl (Wikimedia
+ * Commons, via OpenAI's brand assets) with the teal tile dropped, so the viewBox is cropped
+ * to the swirl's own bounds — left at the tile's 0 0 2406 2406 it would render inside a
+ * square of empty padding and read a size smaller than the marks beside it. The box is the
+ * measured getBBox of the six petals (x 144, y 272, 2119 x 1862), squared off about their
+ * centre rather than estimated from the path data.
+ */
 export function ChatGptMark({ className }: MarkProps) {
   return (
-    <svg viewBox="0 0 2406 2406" aria-hidden className={className}>
+    <svg viewBox="144 144 2119 2119" aria-hidden className={className}>
       <path
-        fill="#74AA9C"
-        d="M1 578.4C1 259.5 259.5 1 578.4 1h1249.1c319 0 577.5 258.5 577.5 577.4V2406H578.4C259.5 2406 1 2147.5 1 1828.6V578.4z"
-      />
-      <path
-        fill="#fff"
+        fill="currentColor"
         d="M1107.3 299.1c-197.999 0-373.9 127.3-435.2 315.3L650 743.5v427.9c0 21.4 11 40.4 29.4 51.4l344.5 198.515V833.3h.1v-27.9L1372.7 604c33.715-19.52 70.44-32.857 108.47-39.828L1447.6 450.3C1361 353.5 1237.1 298.5 1107.3 299.1zm0 117.5-.6.6c79.699 0 156.3 27.5 217.6 78.4-2.5 1.2-7.4 4.3-11 6.1L952.8 709.3c-18.4 10.4-29.4 30-29.4 51.4V1248l-155.1-89.4V755.8c-.1-187.099 151.601-338.9 339-339.2z"
       />
       <path
-        fill="#fff"
+        fill="currentColor"
         d="M1107.3 299.1c-197.999 0-373.9 127.3-435.2 315.3L650 743.5v427.9c0 21.4 11 40.4 29.4 51.4l344.5 198.515V833.3h.1v-27.9L1372.7 604c33.715-19.52 70.44-32.857 108.47-39.828L1447.6 450.3C1361 353.5 1237.1 298.5 1107.3 299.1zm0 117.5-.6.6c79.699 0 156.3 27.5 217.6 78.4-2.5 1.2-7.4 4.3-11 6.1L952.8 709.3c-18.4 10.4-29.4 30-29.4 51.4V1248l-155.1-89.4V755.8c-.1-187.099 151.601-338.9 339-339.2z"
         transform="rotate(60 1203 1203)"
       />
       <path
-        fill="#fff"
+        fill="currentColor"
         d="M1107.3 299.1c-197.999 0-373.9 127.3-435.2 315.3L650 743.5v427.9c0 21.4 11 40.4 29.4 51.4l344.5 198.515V833.3h.1v-27.9L1372.7 604c33.715-19.52 70.44-32.857 108.47-39.828L1447.6 450.3C1361 353.5 1237.1 298.5 1107.3 299.1zm0 117.5-.6.6c79.699 0 156.3 27.5 217.6 78.4-2.5 1.2-7.4 4.3-11 6.1L952.8 709.3c-18.4 10.4-29.4 30-29.4 51.4V1248l-155.1-89.4V755.8c-.1-187.099 151.601-338.9 339-339.2z"
         transform="rotate(120 1203 1203)"
       />
       <path
-        fill="#fff"
+        fill="currentColor"
         d="M1107.3 299.1c-197.999 0-373.9 127.3-435.2 315.3L650 743.5v427.9c0 21.4 11 40.4 29.4 51.4l344.5 198.515V833.3h.1v-27.9L1372.7 604c33.715-19.52 70.44-32.857 108.47-39.828L1447.6 450.3C1361 353.5 1237.1 298.5 1107.3 299.1zm0 117.5-.6.6c79.699 0 156.3 27.5 217.6 78.4-2.5 1.2-7.4 4.3-11 6.1L952.8 709.3c-18.4 10.4-29.4 30-29.4 51.4V1248l-155.1-89.4V755.8c-.1-187.099 151.601-338.9 339-339.2z"
         transform="rotate(180 1203 1203)"
       />
       <path
-        fill="#fff"
+        fill="currentColor"
         d="M1107.3 299.1c-197.999 0-373.9 127.3-435.2 315.3L650 743.5v427.9c0 21.4 11 40.4 29.4 51.4l344.5 198.515V833.3h.1v-27.9L1372.7 604c33.715-19.52 70.44-32.857 108.47-39.828L1447.6 450.3C1361 353.5 1237.1 298.5 1107.3 299.1zm0 117.5-.6.6c79.699 0 156.3 27.5 217.6 78.4-2.5 1.2-7.4 4.3-11 6.1L952.8 709.3c-18.4 10.4-29.4 30-29.4 51.4V1248l-155.1-89.4V755.8c-.1-187.099 151.601-338.9 339-339.2z"
         transform="rotate(240 1203 1203)"
       />
       <path
-        fill="#fff"
+        fill="currentColor"
         d="M1107.3 299.1c-197.999 0-373.9 127.3-435.2 315.3L650 743.5v427.9c0 21.4 11 40.4 29.4 51.4l344.5 198.515V833.3h.1v-27.9L1372.7 604c33.715-19.52 70.44-32.857 108.47-39.828L1447.6 450.3C1361 353.5 1237.1 298.5 1107.3 299.1zm0 117.5-.6.6c79.699 0 156.3 27.5 217.6 78.4-2.5 1.2-7.4 4.3-11 6.1L952.8 709.3c-18.4 10.4-29.4 30-29.4 51.4V1248l-155.1-89.4V755.8c-.1-187.099 151.601-338.9 339-339.2z"
         transform="rotate(300 1203 1203)"
       />

@@ -13,6 +13,7 @@ import {
   isSelectableAiProvider,
   DEFAULT_MODELS,
   PROVIDER_MODELS,
+  tieredModels,
   type AiProvider,
 } from "@/lib/ai-providers";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { Disclosure } from "@/components/settings/disclosure";
-import { ProviderCard, SAVE_THREW } from "@/components/settings/provider-card";
+import { ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import {
@@ -231,12 +232,28 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         <div className="space-y-1.5">
           <Label htmlFor="model">Custom model ID</Label>
           <div className="flex gap-2">
+            {/*
+              A datalist rather than a select: the tiers are the ids worth suggesting, but this
+              field is the one way to reach a model Orbit has not tagged — a preview id, or the
+              id an account is already stored on. A select would make those unreachable from
+              the UI entirely, which is the opposite of what an escape hatch is for.
+            */}
             <Input
               id="model"
+              list={`${provider}-model-options`}
               value={customModel}
               onChange={(e) => setCustomModel(e.target.value)}
               placeholder="model-id"
             />
+            <datalist id={`${provider}-model-options`}>
+              {tieredModels(provider).map((m) => (
+                <option
+                  key={m.value}
+                  value={m.value}
+                  label={m.tier ? `${TIER_LABELS[m.tier]} — ${m.label}` : m.label}
+                />
+              ))}
+            </datalist>
             <Button
               type="button"
               variant="outline"

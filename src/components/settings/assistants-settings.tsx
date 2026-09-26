@@ -22,7 +22,7 @@ const ASSISTANTS: Record<
 > = {
   claude: {
     label: "Claude",
-    settingsHref: "https://claude.ai/settings/connectors",
+    settingsHref: "https://claude.ai/new#customize/connectors/yours",
     settingsLabel: "Open Claude",
     steps: [
       "Copy your Orbit link.",
@@ -32,7 +32,7 @@ const ASSISTANTS: Record<
   },
   chatgpt: {
     label: "ChatGPT",
-    settingsHref: "https://chatgpt.com/#settings",
+    settingsHref: "https://chatgpt.com/plugins",
     settingsLabel: "Open ChatGPT",
     steps: [
       "Copy your Orbit link.",

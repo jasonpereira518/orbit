@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  AnthropicMark,
+  ClaudeMark,
   GeminiMark,
   OpenAiMark,
 } from "@/components/settings/provider-marks";
@@ -13,7 +13,7 @@ import { PROVIDER_MODELS, tieredModels, type AiProvider, type ModelTier } from "
 import { cn } from "@/lib/utils";
 
 /** What the three tiers are called on screen. The model's own name is the small print. */
-const TIER_LABELS: Record<ModelTier, string> = {
+export const TIER_LABELS: Record<ModelTier, string> = {
   cheapest: "Cheapest",
   balanced: "Balanced",
   best: "Most accurate",
@@ -26,7 +26,7 @@ const TIER_LABELS: Record<ModelTier, string> = {
 const MARKS: Partial<Record<AiProvider, (props: { className?: string }) => React.ReactElement>> = {
   gemini: GeminiMark,
   openai: OpenAiMark,
-  anthropic: AnthropicMark,
+  anthropic: ClaudeMark,
 };
 
 export type ProviderCardStatus = {
