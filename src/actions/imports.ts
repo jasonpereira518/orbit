@@ -84,8 +84,11 @@ import {
 import {
   fetchOutlookContacts,
   getValidAccessToken as getValidOutlookAccessToken,
+  hasContactsScope as hasOutlookContactsScope,
 } from "@/lib/outlook";
 import { actionFailure } from "@/lib/action-failure";
+import { lastCompletedImportAt } from "@/lib/import-history";
+import { UserFacingError } from "@/lib/errors";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoAddressBookPreview, recordDemoContactsImport } from "@/lib/demo-workspace-actions";
 
@@ -1028,6 +1031,12 @@ export async function listImports(
   }));
 }
 
+/** When the last LinkedIn import finished — the LinkedIn line on the Integrations overview. */
+export async function getLastLinkedInImportAt(): Promise<Date | null> {
+  const userId = await requireUserId();
+  return lastCompletedImportAt(userId, ["linkedin_connections", LINKEDIN_MESSAGES_IMPORT_TYPE]);
+}
+
 export async function previewCalendarImport(payload: {
   kind: "ics" | "csv";
   text: string;
@@ -1409,12 +1418,17 @@ export type OutlookContactPerson = {
 
 export async function previewOutlookContacts(): Promise<{
   connected: boolean;
+  contactsScopeGranted: boolean;
   people: OutlookContactPerson[];
 }> {
   const userId = await requireUserId();
   if (await isDemoWorkspace(userId)) {
     const people = await demoAddressBookPreview(userId);
-    return { connected: true, people: people.map(({ photoUrl: _photo, ...p }) => p) };
+    return {
+      connected: true,
+      contactsScopeGranted: true,
+      people: people.map(({ photoUrl: _photo, ...p }) => p),
+    };
   }
   const db = await getDb();
   const conn = await db.query.outlookConnections.findFirst({
@@ -1423,8 +1437,9 @@ export async function previewOutlookContacts(): Promise<{
       eq(outlookConnections.status, "active"),
     ),
   });
-  if (!conn) {
-    return { connected: false, people: [] };
+  if (!conn) return { connected: false, contactsScopeGranted: false, people: [] };
+  if (!hasOutlookContactsScope(conn.scopes)) {
+    return { connected: true, contactsScopeGranted: false, people: [] };
   }
 
   const accessToken = await getValidOutlookAccessToken(userId);
@@ -1472,7 +1487,7 @@ export async function previewOutlookContacts(): Promise<{
     };
   });
 
-  return { connected: true, people };
+  return { connected: true, contactsScopeGranted: true, people };
 }
 
 /**
@@ -1489,6 +1504,13 @@ export async function confirmOutlookContactsImport(
     return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
   }
   const db = await getDb();
+
+  const conn = await db.query.outlookConnections.findFirst({
+    where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
+  });
+  if (!hasOutlookContactsScope(conn?.scopes)) {
+    throw new UserFacingError("Allow Orbit to read your contacts first — reconnect Outlook and tick contacts access");
+  }
 
   const accessToken = await getValidOutlookAccessToken(userId);
   const outlookContacts = await fetchOutlookContacts(accessToken);

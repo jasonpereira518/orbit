@@ -9,7 +9,7 @@ import { getDb } from "@/db";
 import { gmailConnections, imports, userSettings } from "@/db/schema";
 import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
 import {
@@ -24,12 +24,17 @@ import {
   hasGmailReadScope,
   hasSendScope,
 } from "@/lib/gmail";
-import { grantCovers, isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
 import {
-  deriveConnectionHealth,
-  type ConnectionHealth,
-} from "@/lib/connection-status";
+  grantCovers,
+  isGooglePurpose,
+  parseGooglePurposes,
+  serializeGooglePurposes,
+  type GooglePurpose,
+} from "@/lib/google-scopes";
+import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
+import { pauseSync, resumeSync } from "@/lib/provider-connections";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { deleteEventConnection } from "@/lib/events/connections";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
@@ -67,6 +72,8 @@ export type GmailConnectionStatus = {
    * Named to match `OutlookConnectionStatus.hasCalendarScope` so one adapter reads both.
    */
   hasCalendarScope: boolean;
+  /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
+  syncPaused: boolean;
   /** The grant covers drive.file, so the Drive picker can open. */
   canImportDrive: boolean;
   /** Safe: configured redirect URI only (no secrets). */
@@ -91,6 +98,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       canRead: false,
       canImportContacts: false,
       hasCalendarScope: false,
+      syncPaused: false,
       canImportDrive: false,
       redirectUri: summary.redirectUri,
     };
@@ -114,34 +122,35 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
           status: conn.status,
           nextSyncAt: conn.nextSyncAt,
           syncError: conn.syncError,
+          syncStatus: conn.syncStatus,
           calendarScopeGranted: hasCalendarScope(conn.scopes),
         })
       : null,
     syncError: conn?.syncError ?? null,
     nextSyncAt: conn?.nextSyncAt?.toISOString() ?? null,
-    canRead: Boolean(
-      conn && conn.status === "active" && hasGmailReadScope(conn.scopes),
-    ),
-    canImportContacts: Boolean(
-      conn && conn.status === "active" && hasContactsScope(conn.scopes),
-    ),
-    hasCalendarScope: Boolean(
-      conn && conn.status === "active" && hasCalendarScope(conn.scopes),
-    ),
-    canImportDrive: Boolean(
-      conn && conn.status === "active" && grantCovers("drive", conn.scopes),
-    ),
+    canRead: Boolean(conn && conn.status === "active" && hasGmailReadScope(conn.scopes)),
+    canImportContacts: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
+    hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
+    syncPaused: Boolean(conn && conn.syncStatus === "paused"),
+    canImportDrive: Boolean(conn && conn.status === "active" && grantCovers("drive", conn.scopes)),
     redirectUri: summary.redirectUri,
   };
 }
 
 export async function startGmailOAuth(input: {
-  purpose: GooglePurpose;
+  /** One purpose — the way every feature button asks. */
+  purpose?: GooglePurpose;
+  /** Several at once — what Connect sends (`GOOGLE_CONNECT_PURPOSES`). */
+  purposes?: readonly GooglePurpose[];
   returnTo?: string;
 }): Promise<{ url: string }> {
-  if (!isGooglePurpose(input.purpose))
+  const purposes = input.purposes ?? (input.purpose ? [input.purpose] : []);
+  if (purposes.length === 0 || !purposes.every(isGooglePurpose)) {
     throw new Error("Unknown Google connection purpose");
-  const userId = await requireSyncUser();
+  }
+  // Connecting Google is free: the spec puts contacts, meetings and sending on every plan, and
+  // the one paid feature (the recruiter inbox scan) is gated where it runs, not here.
+  const userId = await requireUserId();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError
@@ -160,9 +169,9 @@ export async function startGmailOAuth(input: {
 
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo = safeReturnPath(input.returnTo) ?? "";
-  // The purpose rides in the state so the callback can check that Google granted the one
-  // scope this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
-  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${input.purpose}`;
+  // The purposes ride in the state so the callback can check that Google granted the scopes
+  // this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
+  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${serializeGooglePurposes(purposes)}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
@@ -172,7 +181,43 @@ export async function startGmailOAuth(input: {
     maxAge: 600,
   });
 
-  return { url: buildGmailAuthUrl(state, input.purpose) };
+  return { url: buildGmailAuthUrl(state, purposes) };
+}
+
+/**
+ * The Meetings switch on the Google account page. Off leaves the grant alone.
+ *
+ * Answers rather than throws, because the switch shows the refusal below verbatim and a
+ * thrown Server Action message is replaced by a digest in production — the person would read
+ * a paragraph about Server Components instead of the one sentence that says what to do.
+ * `asActionResult` rescues the `UserFacingError` as data; a genuine fault still throws, and
+ * still reaches the caller's friendly fallback.
+ */
+export async function setCalendarSync(enabled: boolean): Promise<ActionResult<void>> {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    if (enabled) {
+      // `resumeSync` arms the row whatever the grant covers, and the upsert deliberately never
+      // arms a grant without calendar: the scheduler would claim it, disarm it for the missing
+      // scope, and leave the account page saying calendar sync is paused to someone who never
+      // asked for calendar — the defect this phase removes. A server action takes a direct POST,
+      // so the check belongs here and not only in front of the switch.
+      const db = await getDb();
+      const conn = await db.query.gmailConnections.findFirst({
+        where: eq(gmailConnections.userId, userId),
+        columns: { scopes: true },
+      });
+      if (!hasCalendarScope(conn?.scopes)) {
+        throw new UserFacingError(
+          "Allow Orbit to see your calendar first — reconnect Google and tick calendar access"
+        );
+      }
+      await resumeSync("google", userId);
+    } else {
+      await pauseSync("google", userId);
+    }
+    revalidatePath("/settings");
+  });
 }
 
 export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
@@ -195,16 +240,19 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   if (opts.alsoDelete === true) {
     await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });
   }
+  // The confirmation-email scan is an opt-in row that carries no token of its own — it borrows
+  // this connection's. Left behind, the scheduler claims it every pass and fails on a mailbox
+  // that is no longer connected.
+  await deleteEventConnection(userId, "gmail");
   revalidatePath("/recruiters");
+  revalidatePath("/settings");
+  revalidatePath("/imports");
+  revalidatePath("/events");
 }
 
 export async function consumeGmailOAuthState(
-  state: string | null,
-): Promise<{
-  userId: string;
-  returnTo: string | null;
-  purpose: GooglePurpose | null;
-}> {
+  state: string | null
+): Promise<{ userId: string; returnTo: string | null; purposes: GooglePurpose[] }> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
@@ -217,7 +265,7 @@ export async function consumeGmailOAuthState(
   return {
     userId,
     returnTo: safeReturnPath(returnTo),
-    purpose: isGooglePurpose(rawPurpose) ? rawPurpose : null,
+    purposes: parseGooglePurposes(rawPurpose),
   };
 }
 
@@ -260,7 +308,7 @@ export async function startGmailRecruiterScan(): Promise<
   ActionResult<{ importId: string }>
 > {
   return asActionResult(async () => {
-    const userId = await requireSyncUser();
+    const userId = await requireRecruitersUser();
     const demoEmail = await demoWorkspaceEmail(userId);
     if (demoEmail) {
       return { importId: await recordDemoRecruiterScan(userId, GMAIL_SCAN_IMPORT_TYPE, demoEmail) };
@@ -346,7 +394,7 @@ export async function getGmailScanStatus(
 }
 
 export async function cancelGmailRecruiterScan(importId: string) {
-  const userId = await requireSyncUser();
+  const userId = await requireRecruitersUser();
   const db = await getDb();
   // The runner re-reads status every iteration, so flipping the row is the cancel.
   await db

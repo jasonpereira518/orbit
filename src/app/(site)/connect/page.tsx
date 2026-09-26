@@ -149,7 +149,7 @@ export default function ConnectPage() {
       <DocFooterCta
         title="Your network, in the window you already have open"
         body="Connect Orbit to your assistant and ask it something. It works on every plan, free included."
-        primary={{ href: "/settings?integration=api", label: "Get your connector URL" }}
+        primary={{ href: "/settings?integration=assistants", label: "Get your Orbit link" }}
         secondary={{ href: "/pricing", label: "See plans" }}
       />
     </MarketingDocShell>

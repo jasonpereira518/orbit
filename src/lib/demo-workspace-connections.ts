@@ -8,7 +8,7 @@
  *
  * Import-free on purpose (types only), so the status actions pay nothing for it.
  */
-import type { IntegrationStatuses } from "@/actions/integrations";
+import type { IntegrationStatuses, PageStatus } from "@/lib/integration-status";
 import type { GmailConnectionStatus } from "@/actions/gmail";
 import type { OutlookConnectionStatus } from "@/actions/outlook";
 
@@ -38,6 +38,8 @@ export function demoGmailConnectionStatus(
     canImportContacts: true,
     hasCalendarScope: true,
     canImportDrive: true,
+    // The demo workspace never pauses meetings: nothing schedules them in the first place.
+    syncPaused: false,
     redirectUri: null,
   };
 }
@@ -54,6 +56,7 @@ export function demoOutlookConnectionStatus(
     hasContactsScope: true,
     hasCalendarScope: true,
     hasMailScope: true,
+    syncPaused: false,
     status: "active",
     syncError: null,
     nextSyncAt: minutesFromNow(NEXT_SYNC_MINUTES_AHEAD + 6, now),
@@ -67,25 +70,44 @@ export function demoOutlookConnectionStatus(
  * integrations that would otherwise read "not connected" are lifted.
  */
 export function withDemoIntegrationStatuses(real: IntegrationStatuses): IntegrationStatuses {
-  const on = (detail: string) => ({ state: "on" as const, detail });
-  const lift = <K extends keyof IntegrationStatuses>(key: K, detail: string) => {
-    const current = real[key];
+  const on = (detail: string): PageStatus => ({ state: "on", detail });
+  /**
+   * Lifted only where the real answer is not already "on": the page lines and the connector
+   * lines are two views of the same account, so both are lifted, and anything the account
+   * genuinely set up keeps its own wording in either view.
+   */
+  const lift = <K extends string>(
+    from: Partial<Record<K, PageStatus | "unknown">>,
+    key: K,
+    detail: string
+  ): PageStatus => {
+    const current = from[key];
     return current && current !== "unknown" && current.state === "on" ? current : on(detail);
   };
+  const pages = real.pages;
+  const connectors = real.connectors;
   return {
     ...real,
-    google: on("Connected"),
-    gmail: on("Connected"),
-    outlook: on("Connected"),
-    linkedin: on("Connections imported"),
-    outreach: lift("outreach", "3 of 3 set up"),
-    apollo: lift("apollo", "Key saved"),
-    webhooks: lift("webhooks", "1 live"),
-    calendar: lift("calendar", "Feed on"),
-    calendar_ics: lift("calendar_ics", "2 feeds"),
-    luma: on("Connected"),
-    eventbrite: on("Connected"),
-    api: lift("api", "1 key"),
-    zapier: lift("zapier", "1 key"),
+    pages: {
+      ...pages,
+      google: on("Connected"),
+      microsoft: on("Connected"),
+      linkedin: on("Connections imported"),
+      outreach: lift(pages, "outreach", "3 of 3 set up"),
+      webhooks: lift(pages, "webhooks", "1 live"),
+      reminders: lift(pages, "reminders", "Feed on"),
+      api: lift(pages, "api", "1 key"),
+    },
+    connectors: {
+      ...connectors,
+      google: on("Connected"),
+      outlook: on("Connected"),
+      linkedin: on("Connections imported"),
+      calendar_ics: lift(connectors, "calendar_ics", "2 feeds"),
+      luma: on("Connected"),
+      eventbrite: on("Connected"),
+      apollo: lift(connectors, "apollo", "Key saved"),
+      zapier: lift(connectors, "zapier", "1 key"),
+    },
   };
 }

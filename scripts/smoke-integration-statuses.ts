@@ -116,7 +116,7 @@ run(async () => {
   const EXPECTED: Record<string, string> = {
     google: "Connected",
     outlook: "Connected",
-    linkedin: "Upload a CSV export",
+    linkedin: "Not imported yet",
     calendar_ics: "1 feed",
     luma: "Connected",
     eventbrite: "Connected",
@@ -124,7 +124,7 @@ run(async () => {
     zapier: "1 key",
   };
   for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
-    const status = statuses[id];
+    const status = statuses.connectors[id];
     check(
       `${id}: its own lookup answered, not the back-fill`,
       status !== undefined &&
@@ -137,7 +137,7 @@ run(async () => {
   // map — but it must never be what a registered connector's answer comes from. Prove the
   // sentinel it writes is absent from a fully-seeded workspace.
   const backFilled = CONNECTOR_STATUS_LOOKUP_IDS.filter((id) => {
-    const s = statuses[id];
+    const s = statuses.connectors[id];
     return s !== undefined && s !== "unknown" && s.detail === "Not connected";
   });
   check("no registered connector fell through to the back-fill", backFilled.length === 0, backFilled.join(","));

@@ -34,6 +34,8 @@ type Tier = "pure" | "pglite" | "manual";
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
+  "smoke-connectivity": "pure",
+  "smoke-offline-queue": "pure",
   "smoke-chat-thread-prefetch": "pure",
   "smoke-render-stamp-pages": "pure",
   "smoke-oauth-refresh-rejection": "pure",
@@ -60,6 +62,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-backdrop-filter": "pure",
   "smoke-backup-workflow": "pure",
   "smoke-connection-status": "pure",
+  "smoke-connect-gates": "pure",
+  "smoke-integration-status": "pure",
+  "smoke-account-rows": "pure",
   "smoke-connector-oauth": "pure",
   "smoke-google-contacts-map": "pure",
   "smoke-inbound-mail": "pure",
@@ -229,6 +234,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
+  "smoke-import-history": "pglite",
   "smoke-account-deletion": "pglite",
   "smoke-ai-access": "pglite",
   "smoke-jev-client": "pglite",
@@ -307,6 +313,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-gmail-scan-abort": "pglite",
   "smoke-outlook-scan": "pglite",
   "smoke-outlook-disconnect-purge": "pglite",
+  "smoke-disconnect-cleanup": "pglite",
   "smoke-gmail-scope-storage": "pglite",
   "smoke-outlook-scope-storage": "pglite",
   "smoke-health-token": "pglite",

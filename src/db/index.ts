@@ -1197,6 +1197,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
   stealth_since timestamptz,
+  waitlist_demo_enabled boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -2004,7 +2005,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 103 = page_views.is_internal (traffic analytics accuracy pass). Rescanned every remote ref,
 // every local branch and every worktree's working file on Sep 24 2026: 102 was the highest
 // claimed anywhere.
-export const SCHEMA_VERSION = 103;
+//
+// 109 = site_settings.waitlist_demo_enabled (the admin console's switch for the waitlist page's
+// product demo). NOT 104: rescanned every remote ref and every worktree's working file on Sep 26
+// 2026 — 108 (claude/integrations-ui-pass, and a worktree) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 109;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3640,6 +3645,9 @@ const alters = [
   // at query time, which covers every row from before this column without the migration
   // having to know ADMIN_USER_IDS. The index lives in the template (step 4 of applySchema).
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS is_internal boolean NOT NULL DEFAULT false`,
+  // Schema v109: `site_settings.waitlist_demo_enabled`. Null (never set) reads as on, so no
+  // backfill: the demo stays up until an admin takes it down from the waitlist admin page.
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS waitlist_demo_enabled boolean`,
 ];
 
 /**

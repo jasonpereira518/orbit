@@ -23,6 +23,7 @@ import {
   getTicketByShareToken,
   type InterestProof,
 } from "@/lib/interest-list-ticket";
+import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import { isWaitlistHostHeader } from "@/lib/waitlist-host";
 
 // The proof line, the invited strip and the pass all come from the URL and the database
@@ -168,7 +169,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   const privacyHref = onWaitlistHost ? "/privacy" : "/interest/privacy";
 
   // The proof line never depends on either token, so it runs alongside the pass.
-  const [proof, ticket] = await Promise.all([
+  const [proof, ticket, showDemo] = await Promise.all([
     getInterestProof().catch((err: unknown) => {
       console.error("[interest] proof read failed", err);
       return EMPTY_PROOF;
@@ -179,6 +180,8 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
           return null;
         })
       : Promise.resolve(null),
+    // The admin console's switch. Never throws: a failed read shows the demo.
+    getWaitlistDemoEnabled(),
   ]);
 
   // `?ref=` loses to a pass that actually RESOLVED, not to the mere presence of `?me=`: a
@@ -243,22 +246,27 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
           </ul>
         </Reveal>
 
-        {/* Desktop only: the demo is a desktop window, and phones never fetch its chunk. */}
-        <section className="mt-32 hidden md:block" aria-labelledby="waitlist-demo">
-          <Reveal className="reveal-celestial">
-            <h2 id="waitlist-demo" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
-              Take it for a spin.
-            </h2>
-          </Reveal>
-          <Reveal className="reveal-celestial" delay={80}>
-            <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
-              A working preview with a made-up network. Watch the tour, or hit “Explore it yourself” and click anything.
-            </p>
-          </Reveal>
-          <div className="mt-10">
-            <AppDemo />
-          </div>
-        </section>
+        {/* An admin can hide the demo from /admin/growth/interest-list. */}
+        {showDemo && (
+          <>
+            {/* Desktop only: the demo is a desktop window, and phones never fetch its chunk. */}
+            <section className="mt-32 hidden md:block" aria-labelledby="waitlist-demo">
+              <Reveal className="reveal-celestial">
+                <h2 id="waitlist-demo" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
+                  Take it for a spin.
+                </h2>
+              </Reveal>
+              <Reveal className="reveal-celestial" delay={80}>
+                <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
+                  A working preview with a made-up network. Watch the tour, or click anything to take over.
+                </p>
+              </Reveal>
+              <div className="mt-10">
+                <AppDemo />
+              </div>
+            </section>
+          </>
+        )}
 
         <section className="mt-24 md:mt-32" aria-labelledby="waitlist-how">
           <Reveal className="reveal-celestial">

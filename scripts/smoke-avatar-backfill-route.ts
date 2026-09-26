@@ -60,6 +60,24 @@ run(async () => {
     JSON.stringify(routeBody) === JSON.stringify(direct),
     `${JSON.stringify(routeBody)} vs ${JSON.stringify(direct)}`
   );
+  /**
+   * The no-body call cannot pass skipIds — that is the whole point of it — so it runs the
+   * real backfill over whatever contacts are in the database. Leave the leftovers in place
+   * and this check depends on shard order and on the network, which is how it came to fail
+   * in CI and pass on every laptop.
+   *
+   * The failure is not in the route. When the backfill actually saves a photo,
+   * `backfillContactAvatars` calls `revalidatePath("/contacts")`, and outside a request
+   * that throws `Invariant: static generation store missing` — which the route turns into
+   * the 500 this check then reports. In production the route runs inside a real request and
+   * revalidatePath is exactly right, so there is nothing to fix there; the test has to stop
+   * driving a save.
+   *
+   * Clearing this user's contacts first makes the call assert what it claims to assert —
+   * that a missing body means `skipIds: []` rather than a crash — with nothing to look up,
+   * no network, and no revalidate.
+   */
+  await db.delete(contacts).where(eq(contacts.userId, "demo-user"));
   const noBody = await POST(
     new Request("https://orbit.test/api/contacts/avatar-backfill", { method: "POST", headers: { host: "orbit.test" } })
   );

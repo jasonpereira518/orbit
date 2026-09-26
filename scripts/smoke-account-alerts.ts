@@ -483,7 +483,7 @@ async function main() {
   const pausedAlert = paused.find((a) => a.code === "connection.google_calendar");
   check("20 a disarmed calendar sync alerts", Boolean(pausedAlert), JSON.stringify(paused.map((a) => a.code)));
   check("20 it is a warning (no red dot)", pausedAlert?.severity === "warn");
-  check("20 it points at the Google card", pausedAlert?.cta?.href === "/imports#import-google-contacts");
+  check("20 it points at the Google page", pausedAlert?.cta?.href === "/settings?integration=google");
   check("20 it never shows the raw sync error", !(pausedAlert?.body ?? "").includes("403"));
 
   await reset();
