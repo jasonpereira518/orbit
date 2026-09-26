@@ -9,6 +9,7 @@ import {
 import {
   fetchOutlookContacts,
   getValidAccessToken as getOutlookAccessToken,
+  hasContactsScope as hasOutlookContactsScope,
 } from "@/lib/outlook";
 
 /**
@@ -65,7 +66,9 @@ export async function buildOutlookContactIndex(userId: string): Promise<Map<stri
   const conn = await db.query.outlookConnections.findFirst({
     where: eq(outlookConnections.userId, userId),
   });
-  if (!conn || conn.status !== "active") return new Map();
+  if (!conn || conn.status !== "active" || !hasOutlookContactsScope(conn.scopes)) {
+    return new Map();
+  }
 
   try {
     const accessToken = await getOutlookAccessToken(userId);
@@ -93,7 +96,7 @@ export async function fetchOutlookContactPhoto(
     const accessToken = await getOutlookAccessToken(userId);
     const res = await fetch(
       `https://graph.microsoft.com/v1.0/me/contacts/${outlookContactId}/photo/$value`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000) }
     );
     if (!res.ok) return null;
 

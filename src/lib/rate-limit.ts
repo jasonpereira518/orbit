@@ -23,6 +23,7 @@ const BUCKET_LABELS: Record<string, string> = {
   chatSend: "email send",
   capture: "capture",
   captureHandoff: "scan",
+  captureParts: "capture",
   meetingChunk: "meeting transcription",
   avatarResolve: "photo lookup",
   feedback: "feedback",
@@ -77,6 +78,14 @@ export const RATE_LIMITS = {
   chatSend: { limit: 10, windowSec: 600 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
+  /**
+   * The second and later parts of one capture sent in pieces (`continueJobId` on
+   * `/api/capture/jobs`). A capture bigger than one 4.5MB request is several requests, and
+   * charging each to `capture` would spend a twelve-page scan's budget four times over.
+   * They can only extend a job the first part already paid for, so this bucket only has to
+   * stop a runaway client, not price the work.
+   */
+  captureParts: { limit: 30, windowSec: 60 },
   /**
    * Photos posted from a phone against a scan handoff token.
    *

@@ -34,6 +34,13 @@ export type TokenCounts = {
    */
   cacheWriteTokens?: number | null;
   audioInputTokens?: number | null;
+  /**
+   * The provider's own figure for what this call cost, in USD × 1e6. Null or undefined
+   * means it did not report one. Zero is a real answer and must not be treated as missing.
+   * Lives here rather than only on `UsageRecord` because it travels the same `report(...)`
+   * path as the token counts above — OpenRouter puts it on the same `usage` object.
+   */
+  reportedCostMicros?: number | null;
 };
 
 /**
@@ -61,12 +68,51 @@ export type UsageMeta = {
   batch?: boolean;
 };
 
-type UsageRecord = UsageMeta &
+export type UsageRecord = UsageMeta &
   TokenCounts & {
     success: boolean;
     errorKind?: string | null;
     durationMs?: number | null;
   };
+
+/**
+ * Builds the row `recordUsage` inserts, as a pure function so a smoke test can assert on the
+ * real mapping rather than a copy of it.
+ *
+ * A reported cost (OpenRouter's `usage.cost`) wins over Orbit's own estimate from
+ * `ai-pricing.ts` — that table has no OpenRouter slugs at all and is ~5x low for the
+ * providers it does cover. `costSource` records which figure ended up in the column, since
+ * blending the two without a source would make that gap invisible.
+ */
+export function usageRow(rec: UsageRecord) {
+  const reported = rec.reportedCostMicros ?? null;
+  return {
+    userId: rec.userId,
+    operation: rec.operation,
+    provider: rec.provider,
+    model: rec.model,
+    kind: rec.kind,
+    keyOwner: rec.keyOwner,
+    inputTokens: rec.inputTokens ?? null,
+    outputTokens: rec.outputTokens ?? null,
+    cachedInputTokens: rec.cachedInputTokens ?? null,
+    estimatedCostMicros:
+      reported ??
+      estimateCostMicros({
+        model: rec.model,
+        inputTokens: rec.inputTokens,
+        outputTokens: rec.outputTokens,
+        cachedInputTokens: rec.cachedInputTokens,
+        cacheWriteTokens: rec.cacheWriteTokens,
+        audioInputTokens: rec.audioInputTokens,
+        batch: rec.batch,
+      }),
+    costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
+    success: rec.success ? 1 : 0,
+    errorKind: rec.errorKind ?? null,
+    durationMs: rec.durationMs ?? null,
+  };
+}
 
 /**
  * Fire-and-forget write. Never throws, never blocks the response.
@@ -78,29 +124,7 @@ export function recordUsage(rec: UsageRecord): void {
   const write = async () => {
     try {
       const db = await getDb();
-      await db.insert(usageEvents).values({
-        userId: rec.userId,
-        operation: rec.operation,
-        provider: rec.provider,
-        model: rec.model,
-        kind: rec.kind,
-        keyOwner: rec.keyOwner,
-        inputTokens: rec.inputTokens ?? null,
-        outputTokens: rec.outputTokens ?? null,
-        cachedInputTokens: rec.cachedInputTokens ?? null,
-        estimatedCostMicros: estimateCostMicros({
-          model: rec.model,
-          inputTokens: rec.inputTokens,
-          outputTokens: rec.outputTokens,
-          cachedInputTokens: rec.cachedInputTokens,
-          cacheWriteTokens: rec.cacheWriteTokens,
-          audioInputTokens: rec.audioInputTokens,
-          batch: rec.batch,
-        }),
-        success: rec.success ? 1 : 0,
-        errorKind: rec.errorKind ?? null,
-        durationMs: rec.durationMs ?? null,
-      });
+      await db.insert(usageEvents).values(usageRow(rec));
     } catch {
       // Telemetry must never surface as a user-visible failure.
     }

@@ -36,6 +36,7 @@ import {
 } from "@/lib/reminder-lists";
 import { resolveTimeZone, TZ_COOKIE } from "@/lib/reminder-due-bucket";
 import {
+  assertReminderContactOwned,
   createReminderForUser,
   scheduleContactFollowUpForUser,
 } from "@/lib/reminder-writes";
@@ -331,7 +332,10 @@ export async function updateReminder(
   if (input.dueDate !== undefined) {
     patch.dueDate = input.dueDate ? new Date(input.dueDate) : null;
   }
-  if (input.contactId !== undefined) patch.contactId = input.contactId;
+  if (input.contactId !== undefined) {
+    await assertReminderContactOwned(userId, input.contactId);
+    patch.contactId = input.contactId;
+  }
   if (input.listId !== undefined) {
     if (input.listId) {
       const list = await findReminderListForUser(userId, input.listId);

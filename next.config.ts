@@ -59,11 +59,15 @@ const nextConfig: NextConfig = {
     // even when the sha is unhelpful (a redeploy of the same commit).
     BUILD_TIME: new Date().toISOString(),
   },
+  // drizzle-orm is deliberately NOT here. As an external it loads through Node's ESM loader
+  // on every cold instance — its package root re-exports ~440 files, each read, parsed and
+  // linked one by one — which measured ~220ms of a 310ms route's module load, before any
+  // query. Bundled, Turbopack keeps only what is imported and ships it inside the route's
+  // chunks. (`scripts/dev/cold-start-report.cjs` measures this per route.)
   serverExternalPackages: [
     "@electric-sql/pglite",
     "@neondatabase/serverless",
     "@google/genai",
-    "drizzle-orm",
     "sharp",
   ],
   // PGlite is the local-development database and only runs when DATABASE_URL is unset, but
@@ -100,8 +104,9 @@ const nextConfig: NextConfig = {
     serverFunctions: false,
   },
   experimental: {
-    // Route navigations animate via React's <ViewTransition> (route-transition.tsx).
-    viewTransition: true,
+    // Route navigations animate via React's <ViewTransition> (route-transition.tsx). Since
+    // Next 16.3 the App Router enables it with no flag, and `viewTransition` is no longer a
+    // valid experimental key (it fails the build's type check).
     // Client router cache for dynamic pages. The default (0) re-renders a page on the
     // server on every visit, so going back to a tab you left seconds ago showed its
     // skeleton again for ~350ms minimum — React holds a Suspense reveal for 300ms once a

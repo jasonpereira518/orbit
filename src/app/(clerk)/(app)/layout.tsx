@@ -15,6 +15,7 @@ import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import { LearnedBrandColors } from "@/components/layout/learned-brand-colors";
 import { registerLearnedBrands } from "@/lib/brand-colors";
 import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
+import { OfflineSync } from "@/components/layout/offline-sync";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
@@ -167,6 +168,11 @@ export default async function AppLayout({
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}
       <PresenceHeartbeat />
+
+      {/* Renders nothing either. Sends changes queued while offline once the connection
+          is back, and re-renders a page that sat through a long outage. Here rather than
+          in AppShell so onboarding gets it too, and so it is handed this account's id. */}
+      <OfflineSync userId={userId} />
 
       {/* Also renders nothing. Glows whatever `#id` the URL names, so any link that points
           at a card — every account alert does — lands with that card called out. Mounted

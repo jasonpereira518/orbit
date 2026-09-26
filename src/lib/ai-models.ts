@@ -20,6 +20,7 @@ export const FAST_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.1-flash-lite",
   openai: "gpt-4o-mini",
   anthropic: "claude-haiku-4-5",
+  openrouter: "google/gemini-3.1-flash-lite",
 };
 
 /**
@@ -41,11 +42,15 @@ export const VISION_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.8-flash",
   openai: "gpt-4o",
   anthropic: "claude-sonnet-4-5",
+  openrouter: "google/gemini-3.8-flash",
 };
 
 export const EMBEDDING_MODELS: Record<EmbeddingBackend, string> = {
   gemini: "gemini-embedding-001",
   openai: "text-embedding-3-small",
+  // The 1536-dim OpenAI model, so nothing OpenRouter embeds is truncated against what the
+  // direct OpenAI backend already stores.
+  openrouter: "openai/text-embedding-3-small",
 };
 
 /**

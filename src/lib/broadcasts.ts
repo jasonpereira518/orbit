@@ -9,14 +9,13 @@ import {
 import { BODY_MAX, BODY_MIN, SUBJECT_MAX, SUBJECT_MIN } from "@/lib/broadcast-limits";
 import {
   ACCENT,
-  BG,
-  FAINT,
-  FONT_STACK,
-  MUTED,
-  TEXT,
+  INK,
+  SERIF_STACK,
   WAITLIST_FOOTER,
   buildUnsubscribeUrl,
   escapeHtml,
+  paperParagraph,
+  paperShell,
   waitlistReplyTo,
   waitlistSender,
 } from "@/lib/interest-list-email";
@@ -42,7 +41,7 @@ export type BroadcastSendStats = {
 };
 
 /**
- * Wraps operator prose in the same shell the welcome note uses.
+ * Wraps operator prose in the same paper letter the welcome note uses.
  *
  * The operator writes plain text and this builds the markup, which is what stops a broadcast
  * from drifting off the product's look or shipping broken HTML to an entire list at once.
@@ -71,41 +70,18 @@ export function buildBroadcastEmail(input: {
     `Leave the waitlist: ${input.unsubscribeUrl}`,
   ].join("\n");
 
-  const html = `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background-color:${BG};font-family:${FONT_STACK};">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${BG};">
-      <tr>
-        <td align="center" style="padding:40px 20px;">
-          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
-${paragraphs
-  .map(
-    (block, i) =>
-      `            <tr><td style="font-size:${i === 0 ? "17px" : "15px"};line-height:1.65;color:${
-        i === 0 ? TEXT : MUTED
-      };${i === 0 ? "font-weight:600;" : ""}padding-bottom:18px;">${escapeHtml(block).replace(
-        /\n/g,
-        "<br />"
-      )}</td></tr>`
-  )
-  .join("\n")}
-            <tr>
-              <td style="font-size:15px;line-height:1.65;color:${MUTED};padding-top:8px;padding-bottom:28px;">
-                — Jason
-              </td>
-            </tr>
-            <tr>
-              <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid rgba(232,243,241,0.14);padding-top:22px;">
-                ${WAITLIST_FOOTER}
-                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Leave the waitlist</a>.
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`;
+  // The opening paragraph is set as the letter's first line, in the serif; the rest is body.
+  const html = paperShell({
+    rows: paragraphs
+      .map((block, i) => {
+        const content = escapeHtml(block).replace(/\n/g, "<br />");
+        return i === 0
+          ? `<tr><td style="font-family:${SERIF_STACK};font-size:21px;line-height:1.35;color:${INK};padding-bottom:16px;">${content}</td></tr>`
+          : paperParagraph(content);
+      })
+      .join("\n            "),
+    unsubscribeUrl: input.unsubscribeUrl,
+  });
 
   return { subject: input.subject, html, text, accent: ACCENT };
 }

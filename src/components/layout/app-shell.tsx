@@ -15,6 +15,7 @@ import { MobileNav } from "@/components/layout/mobile-nav";
 import { useSmallSky } from "@/components/graph/use-small-sky";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { PreviewUnreleasedBanner } from "@/components/layout/preview-unreleased-banner";
+import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
@@ -113,6 +114,7 @@ export function AppShell({
       <MotionConfig reducedMotion="user">
         <div className="min-h-screen bg-background">
           <ThemeSync theme={theme} />
+          <ConnectivityBanner />
           {children}
         </div>
       </MotionConfig>
@@ -127,6 +129,7 @@ export function AppShell({
       {/* Transparent in dark so the portalled starfield behind this tree
           shows through; the body still paints `--background` either way. */}
       <div className="flex h-dvh flex-col">
+        <ConnectivityBanner />
         {viewingAsUser && (
           <ViewAsUserBanner hiddenCount={hiddenForUsersSet.size} />
         )}
@@ -168,6 +171,7 @@ export function AppShell({
             />
           </div>
           <main
+            id="app-main-scroll"
             className={cn(
               "relative flex h-full min-h-0 flex-1 flex-col",
               isViewportLocked

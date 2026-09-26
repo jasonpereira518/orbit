@@ -9,10 +9,15 @@ import {
   anthropicClient,
   geminiClient,
   getAiAccessStatus,
+  isOpenAiShaped,
   openaiClient,
+  openAiShapedClient,
+  reportedCostMicros,
   resolveAiAccess,
   runOnGrant,
+  withOpenRouterRouting,
   type AiGrant,
+  type OpenAiUsageWithCost,
 } from "@/lib/ai-access";
 import {
   loadNetworkVocabulary,
@@ -319,7 +324,6 @@ const DETAIL_BATCH_SIZE = 6;
 const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 
 const GEMINI_EMBEDDING_MODEL = EMBEDDING_MODELS.gemini;
-const OPENAI_EMBEDDING_MODEL = EMBEDDING_MODELS.openai;
 
 export { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "@/lib/ai-models";
 
@@ -575,9 +579,9 @@ export async function completeJson(
           return normalizeJsonResponse(content);
         }
 
-        if (provider === "openai") {
-          const client = await openaiClient(grant);
-          const response = await client.chat.completions.create({
+        if (isOpenAiShaped(provider)) {
+          const client = await openAiShapedClient(grant);
+          const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
             response_format: { type: "json_object" },
@@ -586,8 +590,8 @@ export async function completeJson(
               { role: "user", content: userText },
             ],
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
-          }, { signal: callSignal() });
-          report(tokensFromOpenAi(response));
+          }), { signal: callSignal() });
+          report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
@@ -712,8 +716,8 @@ async function completeMultimodalJsonInner(
       return normalizeJsonResponse(content);
     }
 
-    if (provider === "openai") {
-      const client = await openaiClient(grant);
+    if (isOpenAiShaped(provider)) {
+      const client = await openAiShapedClient(grant);
       const content: OpenAI.Chat.ChatCompletionContentPart[] = [
         ...textParts.map((p): OpenAI.Chat.ChatCompletionContentPart => ({
           type: "text",
@@ -736,7 +740,7 @@ async function completeMultimodalJsonInner(
           };
         }),
       ];
-      const response = await client.chat.completions.create({
+      const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
         model,
         ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
         response_format: { type: "json_object" },
@@ -744,8 +748,8 @@ async function completeMultimodalJsonInner(
           { role: "system", content: system },
           { role: "user", content },
         ],
-      }, { signal: aiSignal() });
-      report(tokensFromOpenAi(response));
+      }), { signal: aiSignal() });
+      report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
       return normalizeJsonResponse(out);
@@ -952,6 +956,12 @@ export async function transcribeAudioWithAI(
     );
   }
 
+  // Deliberately openai-only, not isOpenAiShaped: `withOpenRouterRouting` would need to
+  // wrap this params object for OpenRouter, but the SDK encodes transcription params as
+  // multipart form data, where a nested `provider: { data_collection: "deny" }` serialises
+  // as the string "[object Object]" rather than a real field — and "whisper-1" is not a
+  // valid OpenRouter model slug regardless. OpenRouter transcription is deliberately not
+  // wired up; `access.transcription()` never grants it, so this stays openai/gemini only.
   if (grant.provider === "openai") {
     const client = await openaiClient(grant);
     const bytes = Buffer.from(input.base64, "base64");
@@ -1147,9 +1157,16 @@ const TRANSCRIBE_CONCURRENCY = 3;
 export async function transcribeImagePages(
   userId: string,
   images: Array<{ mimeType: string; base64: string }>,
+  /**
+   * Where these pages sit in the whole note, when it arrives in parts (see
+   * `planUploadBatches`). Without it the second request's first page would be read, and
+   * reported unreadable, as "page 1".
+   */
+  numbering: { offset: number; total: number } = { offset: 0, total: images.length },
 ): Promise<PageTranscription[]> {
   const total = images.length;
   if (!total) return [];
+  const noteTotal = Math.max(numbering.total, numbering.offset + total);
 
   const results: PageTranscription[] = new Array(total);
   let next = 0;
@@ -1158,9 +1175,9 @@ export async function transcribeImagePages(
     for (;;) {
       const i = next++;
       if (i >= total) return;
-      const pageNumber = i + 1;
+      const pageNumber = numbering.offset + i + 1;
       try {
-        const text = await transcribeNotePage(userId, images[i]!, pageNumber, total);
+        const text = await transcribeNotePage(userId, images[i]!, pageNumber, noteTotal);
         results[i] = { pageNumber, text, ok: true };
       } catch (err) {
         // One bad photo must not cost the person the other seven — but the REASON is kept
@@ -1665,8 +1682,7 @@ export async function createEmbedding(userId: string, text: string) {
   const grant = await (await resolveAiAccess(userId)).embedding("search.embed");
   const { provider: backend, keyOwner } = grant;
   const input = text.slice(0, 8000);
-  const model =
-    backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
+  const model = EMBEDDING_MODELS[backend];
 
   return runOnGrant(grant, withUsage(
     {
@@ -1679,16 +1695,16 @@ export async function createEmbedding(userId: string, text: string) {
     },
     (report) =>
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
-        if (backend === "openai") {
-          const client = await openaiClient(grant);
+        if (isOpenAiShaped(backend)) {
+          const client = await openAiShapedClient(grant);
           // maxRetries 0: `withRateLimitBackoff` around this call already retries a rate
           // limit, and the SDK's own two retries stacked under it made one throttled batch
           // up to twelve requests.
-          const res = await client.embeddings.create({
-            model: OPENAI_EMBEDDING_MODEL,
+          const res = await client.embeddings.create(withOpenRouterRouting(backend, {
+            model,
             input,
-          }, { signal: aiSignal(), maxRetries: 0 });
-          report(tokensFromOpenAi(res));
+          }), { signal: aiSignal(), maxRetries: 0 });
+          report({ ...tokensFromOpenAi(res), reportedCostMicros: reportedCostMicros(res as OpenAiUsageWithCost) });
           const values = res.data[0]?.embedding;
           if (!values?.length) throw new Error("Empty embedding response");
           return values;
@@ -1718,8 +1734,7 @@ export async function createEmbeddingsBatch(
   const grant = await (await resolveAiAccess(userId)).embedding("search.embed.batch");
   const { provider: backend, keyOwner } = grant;
   const inputs = texts.map((text) => text.slice(0, 8000));
-  const model =
-    backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
+  const model = EMBEDDING_MODELS[backend];
 
   return runOnGrant(grant, withUsage(
     {
@@ -1732,14 +1747,14 @@ export async function createEmbeddingsBatch(
     },
     (report) =>
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
-        if (backend === "openai") {
-          const client = await openaiClient(grant);
+        if (isOpenAiShaped(backend)) {
+          const client = await openAiShapedClient(grant);
           // maxRetries 0 for the same reason as `createEmbedding`: the backoff wrapper owns retries.
-          const res = await client.embeddings.create({
-            model: OPENAI_EMBEDDING_MODEL,
+          const res = await client.embeddings.create(withOpenRouterRouting(backend, {
+            model,
             input: inputs,
-          }, { signal: aiSignal(), maxRetries: 0 });
-          report(tokensFromOpenAi(res));
+          }), { signal: aiSignal(), maxRetries: 0 });
+          report({ ...tokensFromOpenAi(res), reportedCostMicros: reportedCostMicros(res as OpenAiUsageWithCost) });
           const values = res.data
             .slice()
             .sort((a, b) => a.index - b.index)
@@ -2127,10 +2142,10 @@ async function streamText(
           last = chunk;
         }
         if (last) report(tokensFromGemini(last));
-      } else if (provider === "openai") {
-        const client = await openaiClient(grant);
+      } else if (isOpenAiShaped(provider)) {
+        const client = await openAiShapedClient(grant);
         const stream = await client.chat.completions.create(
-          {
+          withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
             stream: true,
@@ -2139,7 +2154,7 @@ async function streamText(
               { role: "system", content: input.system },
               { role: "user", content: input.user },
             ],
-          },
+          }),
           { signal }
         );
         let usage: unknown = null;
@@ -2147,7 +2162,12 @@ async function streamText(
           emit(chunk.choices[0]?.delta?.content);
           if (chunk.usage) usage = chunk.usage;
         }
-        if (usage) report(tokensFromOpenAi({ usage }));
+        if (usage) {
+          report({
+            ...tokensFromOpenAi({ usage }),
+            reportedCostMicros: reportedCostMicros({ usage } as OpenAiUsageWithCost),
+          });
+        }
       } else {
         const client = await anthropicClient(grant);
         const stream = client.messages.stream(
