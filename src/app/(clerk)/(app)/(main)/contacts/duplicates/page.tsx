@@ -61,12 +61,28 @@ export default async function DuplicatesPage() {
   );
 }
 
+/**
+ * Users whose last sweep here merged nothing, and when. The sweep runs inside the render,
+ * and this page re-renders on every refresh and return visit; with nothing to merge it was
+ * still a self-join over the user's contacts each time. Per instance and short, so a new
+ * duplicate is merged on a visit a minute later at worst — and every write path already
+ * guards identities as it writes (contact_identities).
+ */
+const recentEmptySweeps = new Map<string, number>();
+const EMPTY_SWEEP_QUIET_MS = 60_000;
+
 async function DuplicatesList({ userId }: { userId: string }) {
   // Same order as before: settle whatever can be merged automatically, THEN read what is
   // left — reading first would list pairs the sweep is about to merge. With a decision
   // model, a merge that rests only on a name is checked first (Jev only — the sweep never
   // waits on a chat model; see duplicate-sweep.ts).
-  await mergeConfidentDuplicates(userId, { engines: await openEngines(userId) });
+  const quietUntil = recentEmptySweeps.get(userId) ?? 0;
+  if (Date.now() >= quietUntil) {
+    const swept = await mergeConfidentDuplicates(userId, { engines: await openEngines(userId) });
+    if (swept.merged === 0) recentEmptySweeps.set(userId, Date.now() + EMPTY_SWEEP_QUIET_MS);
+    else recentEmptySweeps.delete(userId);
+    if (recentEmptySweeps.size > 5_000) recentEmptySweeps.clear();
+  }
 
   const [{ proposed }, recentMerges] = await Promise.all([
     listDuplicates(),
