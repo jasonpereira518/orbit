@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { getContact } from "@/actions/contacts";
+import { getContactLabel } from "@/actions/contacts";
 import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
@@ -46,7 +46,7 @@ export default async function CapturePage({
   let contactId: string | null = null;
   let contactName: string | null = null;
   if (requestedContactId) {
-    const contact = await getContact(requestedContactId);
+    const contact = await getContactLabel(requestedContactId);
     if (contact) {
       contactId = contact.id;
       contactName = contact.preferredName || contact.fullName;

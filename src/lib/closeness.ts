@@ -625,7 +625,14 @@ export function formatInteractionFrequency(
     const t = new Date(d).getTime();
     return Number.isFinite(t) && t >= cutoff;
   }).length;
+  return interactionFrequencyLabel(recent);
+}
 
+/**
+ * The same label from a count already taken over the trailing 90 days, for callers that
+ * counted in SQL rather than loading every row to count them here.
+ */
+export function interactionFrequencyLabel(recent: number): string {
   if (recent === 0) return "No touches in 90 days";
   if (recent === 1) return "1× in 90 days";
 

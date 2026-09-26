@@ -5205,7 +5205,20 @@
     "tags": [
       "AI",
       "Warm intro"
-    ]
+    ],
+    "timeline": {
+      "total": 6,
+      "typeCounts": {
+        "call": 1,
+        "email": 1,
+        "event": 1,
+        "intro": 1,
+        "linkedin_message": 2
+      },
+      "hasLoggedInteraction": true,
+      "latestLoggedAt": "<ts>",
+      "recentLoggedCount": 6
+    }
   },
   "action: listRelatedContacts": [
     {
