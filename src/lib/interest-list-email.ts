@@ -3,7 +3,7 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getWaitlistOrigin } from "@/lib/app-url";
 import { formatTicketNumber, FRONT_WAVE_REFERRALS } from "@/lib/interest-list";
 import { waitlistHost } from "@/lib/waitlist-host";
-import type { WelcomePlanet } from "@/lib/welcome-planets";
+import { planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
 
 // Re-exported so existing importers keep working; the definitions moved to a client-safe
 // module because the pass needs them in the browser.
@@ -27,6 +27,10 @@ export function buildUnsubscribeUrl(token: string) {
   return `${getWaitlistOrigin()}/api/interest-list/unsubscribe?token=${token}`;
 }
 
+/**
+ * The dark palette. No waitlist email uses it any more; the admin invitation
+ * (`site-invite-email.ts`) still builds its boarding pass from these.
+ */
 export const BG = "#05070f";
 export const TEXT = "#e8f3f1";
 export const MUTED = "#9aada8";
@@ -34,6 +38,15 @@ export const FAINT = "#6d807c";
 export const ACCENT = "#f2c14e";
 export const FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+/** The paper letter every waitlist email is written on. */
+export const PAPER = "#f6f4ee";
+export const INK = "#1d2320";
+export const INK_MUTED = "#5d6661";
+export const INK_FAINT = "#8a918c";
+export const RULE = "#e2e0d8";
+export const LINK = "#0f3d3e";
+export const SERIF_STACK = "'Fraunces', Georgia, 'Times New Roman', serif";
 
 export function escapeHtml(value: string) {
   return value
@@ -46,61 +59,102 @@ export function escapeHtml(value: string) {
 /** The footer every waitlist email ends with. */
 export const WAITLIST_FOOTER = "You're getting this because you joined the waitlist.";
 
-const paragraph = (content: string) =>
-  `<tr><td style="font-size:15px;line-height:1.65;color:${MUTED};padding-bottom:18px;">${content}</td></tr>`;
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const inWords = (n: number) => NUMBER_WORDS[n] ?? String(n);
+const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+/** A body paragraph. `content` is HTML the caller has already escaped. */
+export const paperParagraph = (content: string) =>
+  `<tr><td style="font-size:15px;line-height:1.65;color:${INK_MUTED};padding-bottom:16px;">${content}</td></tr>`;
+
+/** The one link in a waitlist email: underlined teal text, not a button. */
+const textLink = (href: string, label: string) =>
+  `<a href="${escapeHtml(href)}" style="color:${LINK};text-decoration:underline;font-weight:600;">${escapeHtml(label)}</a>`;
 
 /**
- * The shell every waitlist email shares: the planet as a small decorative mark, a
+ * The paper letter every waitlist email shares: an eyebrow line with the planet, a serif
  * headline, the body rows, the sign-off and the leave link.
  *
  * UNBRANDED ON PURPOSE. The waitlist does not name the product, show its logo, link to its
  * domain or describe what it does (see `lib/waitlist-host.ts`), and an email is the easiest
- * thing in the world to forward — so these carry no name but Jason's, no image but the
+ * thing in the world to forward, so these carry no name but Jason's, no image but the
  * planet, and no link that is not on the waitlist's own domain.
  *
+ * WRITTEN TO REACH THE INBOX. A light letter with one text link, no button, no printed
+ * referral URL and a plain-text twin reads as correspondence rather than a campaign, which
+ * is how the filters that were junking the old dark card score it. `color-scheme: light`
+ * asks clients not to invert it; the ones that do anyway still get readable ink on paper.
+ *
  * Inline styles and a table shell rather than a stylesheet: most email clients strip
- * `<style>` blocks. Nothing load-bearing is carried by the one `<img>` — the planet is
- * decorative with empty alt text, so a client that blocks images loses nothing.
+ * `<style>` blocks. The planet is decorative with empty alt text, so a client that blocks
+ * images loses nothing.
  */
-function emailShell(input: {
-  preheader: string;
-  planet: WelcomePlanet;
-  headline: string;
+export function paperShell(input: {
+  preheader?: string;
+  /** Small caps line above the headline, beside the planet. Escaped here. */
+  eyebrow?: string;
+  planet?: WelcomePlanet;
+  /** Serif headline. Escaped here. Omitted, the rows start straight away. */
+  headline?: string;
   rows: string;
   unsubscribeUrl: string;
 }) {
-  const planetUrl = `${getWaitlistOrigin()}/landing/planets/${input.planet}.png`;
-  return `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background-color:${BG};font-family:${FONT_STACK};">
-    <span style="display:none;font-size:1px;color:${BG};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
-      ${escapeHtml(input.preheader)}
-    </span>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${BG};">
-      <tr>
-        <td align="center" style="padding:40px 20px;">
-          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
-            <tr>
-              <td style="padding-bottom:26px;">
-                <img src="${escapeHtml(planetUrl)}" alt="" width="44" height="44"
-                     style="display:block;border:0;outline:none;width:44px;height:44px;" />
+  const planetImg = input.planet
+    ? `<img src="${escapeHtml(`${getWaitlistOrigin()}/landing/planets/${input.planet}.png`)}" alt="" width="28" height="28"
+                           style="display:block;border:0;outline:none;width:28px;height:28px;" />`
+    : "";
+  const eyebrow =
+    input.eyebrow || planetImg
+      ? `<tr>
+              <td style="padding-bottom:18px;">
+                <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+                  ${planetImg ? `<td style="padding-right:10px;vertical-align:middle;">${planetImg}</td>` : ""}
+                  ${
+                    input.eyebrow
+                      ? `<td style="vertical-align:middle;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${INK_FAINT};">${escapeHtml(input.eyebrow)}</td>`
+                      : ""
+                  }
+                </tr></table>
               </td>
-            </tr>
-            <tr>
-              <td style="font-size:22px;line-height:1.35;color:${TEXT};font-weight:600;padding-bottom:18px;">
+            </tr>`
+      : "";
+  const headline = input.headline
+    ? `<tr>
+              <td style="font-family:${SERIF_STACK};font-size:25px;line-height:1.25;color:${INK};padding-bottom:16px;">
                 ${escapeHtml(input.headline)}
               </td>
-            </tr>
+            </tr>`
+    : "";
+  const preheader = input.preheader
+    ? `<span style="display:none;font-size:1px;color:${PAPER};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+      ${escapeHtml(input.preheader)}
+    </span>`
+    : "";
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta name="color-scheme" content="light only" />
+    <meta name="supported-color-schemes" content="light" />
+  </head>
+  <body style="margin:0;padding:0;background-color:${PAPER};font-family:${FONT_STACK};color:${INK};">
+    ${preheader}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${PAPER};">
+      <tr>
+        <td align="center" style="padding:44px 20px;">
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
+            ${eyebrow}
+            ${headline}
             ${input.rows}
             <tr>
-              <td style="font-size:15px;line-height:1.65;color:${MUTED};padding-top:4px;padding-bottom:28px;">
+              <td style="font-size:15px;line-height:1.65;color:${INK};padding-top:4px;padding-bottom:28px;">
                 — Jason
               </td>
             </tr>
             <tr>
-              <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid rgba(232,243,241,0.14);padding-top:22px;">
+              <td style="font-size:12px;line-height:1.6;color:${INK_FAINT};border-top:1px solid ${RULE};padding-top:18px;">
                 ${WAITLIST_FOOTER}
-                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Leave the waitlist</a>.
+                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${INK_FAINT};text-decoration:underline;">Leave the waitlist</a>.
               </td>
             </tr>
           </table>
@@ -111,32 +165,14 @@ function emailShell(input: {
 </html>`;
 }
 
-const button = (href: string, label: string) => `<tr>
-              <td style="padding-top:4px;padding-bottom:26px;">
-                <a href="${escapeHtml(href)}"
-                   style="display:inline-block;background-color:${ACCENT};color:${BG};font-weight:600;font-size:15px;text-decoration:none;padding:13px 26px;border-radius:10px;">
-                  ${escapeHtml(label)}
-                </a>
-              </td>
-            </tr>`;
-
-/** The invite link printed in full, so it can be copied straight out of the email. */
-const inviteLinkRow = (shareUrl: string) => `<tr>
-              <td style="padding-bottom:24px;">
-                <div style="font-size:11px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${ACCENT};padding-bottom:8px;">
-                  Your invite link
-                </div>
-                <a href="${escapeHtml(shareUrl)}" style="font-size:14px;color:${TEXT};word-break:break-all;text-decoration:underline;">${escapeHtml(shareUrl)}</a>
-              </td>
-            </tr>`;
-
 /**
  * Sent the moment someone joins (and again when someone who left rejoins).
  *
- * It says three things: your place in line, that early access opens in waves and the
+ * It says three things: your place in line, that spots open a few at a time and the
  * invite will come by email, and how to move up. `position` is null only when the line
  * could not be counted at join time; the email then leaves the number out rather than
- * guessing one.
+ * guessing one. The referral link itself is not in the email: the pass page shows it with a
+ * copy button, and a printed `?ref=` URL was one of the things filters held against it.
  */
 export function buildInterestListWelcomeEmail(input: {
   unsubscribeUrl: string;
@@ -144,21 +180,18 @@ export function buildInterestListWelcomeEmail(input: {
   links?: EmailLinks;
   position?: number | null;
 }) {
-  const place = input.position ? `#${formatTicketNumber(input.position)}` : null;
-  const subject = place ? `You're ${place} on the waitlist` : "You're on the waitlist";
-  const headline = place ? `You're ${place} on the waitlist.` : "You're on the waitlist.";
-  const opening =
-    "Thanks for joining. We're opening early access in waves over the coming weeks, and you'll hear from me the moment yours opens.";
-  const moveUp = `Want in sooner? When ${FRONT_WAVE_REFERRALS} friends join with your link, you move into the front wave — the first people through the door.`;
+  const place = input.position ? formatTicketNumber(input.position) : null;
+  const subject = "You're on the list";
+  const headline = "Thanks for joining.";
+  const opening = `${place ? `You're #${place} in line. ` : ""}I'm letting people in a few at a time, in the order they joined. When your spot opens, I'll write to you here.`;
+  const moveUp = `${capitalize(inWords(FRONT_WAVE_REFERRALS))} friends joining from your pass moves you into the front wave, the first group through the door.`;
 
   const text = [
     headline,
     "",
     opening,
     "",
-    ...(input.links
-      ? [moveUp, "", `Your invite link: ${input.links.shareUrl}`, `Your pass: ${input.links.ticketUrl}`, ""]
-      : []),
+    ...(input.links ? [moveUp, "", `Open your pass: ${input.links.ticketUrl}`, ""] : []),
     "— Jason",
     "",
     "—",
@@ -167,14 +200,13 @@ export function buildInterestListWelcomeEmail(input: {
   ].join("\n");
 
   const rows = [
-    paragraph(escapeHtml(opening)),
-    ...(input.links
-      ? [paragraph(escapeHtml(moveUp)), inviteLinkRow(input.links.shareUrl), button(input.links.ticketUrl, "See your pass")]
-      : []),
+    paperParagraph(escapeHtml(opening)),
+    ...(input.links ? [paperParagraph(`${escapeHtml(moveUp)} ${textLink(input.links.ticketUrl, "Open your pass")}`)] : []),
   ].join("\n            ");
 
-  const html = emailShell({
-    preheader: "Your place in line, and how to move up.",
+  const html = paperShell({
+    preheader: "A quick note on what happens next.",
+    eyebrow: `${place ? `No. ${place}` : "On the waitlist"} · ${planetLabel(input.planet)}`,
     planet: input.planet,
     headline,
     rows,
@@ -190,10 +222,10 @@ export function buildFrontWaveEmail(input: {
   planet: WelcomePlanet;
   links: EmailLinks;
 }) {
-  const subject = "You're in the front wave";
+  const subject = "You moved to the front";
   const headline = "You're in the front wave.";
-  const body = `${FRONT_WAVE_REFERRALS} friends joined with your link, so you're now in the first group we let in. There's nothing else to do — your invite will arrive by email when the doors open.`;
-  const thanks = "Thank you for spreading the word.";
+  const body = `${capitalize(inWords(FRONT_WAVE_REFERRALS))} friends joined from your pass, so you'll be in the first group through the door. There's nothing else to do; your invite will come by email.`;
+  const thanks = "Thank you for passing it on.";
 
   const text = [
     headline,
@@ -202,7 +234,7 @@ export function buildFrontWaveEmail(input: {
     "",
     thanks,
     "",
-    `Your pass: ${input.links.ticketUrl}`,
+    `Open your pass: ${input.links.ticketUrl}`,
     "",
     "— Jason",
     "",
@@ -211,13 +243,15 @@ export function buildFrontWaveEmail(input: {
     `Leave the waitlist: ${input.unsubscribeUrl}`,
   ].join("\n");
 
-  const html = emailShell({
-    preheader: "Your friends moved you up.",
+  const html = paperShell({
+    preheader: thanks,
+    eyebrow: `Front wave · ${planetLabel(input.planet)}`,
     planet: input.planet,
     headline,
-    rows: [paragraph(escapeHtml(body)), paragraph(escapeHtml(thanks)), button(input.links.ticketUrl, "See your pass")].join(
-      "\n            "
-    ),
+    rows: [
+      paperParagraph(escapeHtml(body)),
+      paperParagraph(`${escapeHtml(thanks)} ${textLink(input.links.ticketUrl, "Open your pass")}`),
+    ].join("\n            "),
     unsubscribeUrl: input.unsubscribeUrl,
   });
 

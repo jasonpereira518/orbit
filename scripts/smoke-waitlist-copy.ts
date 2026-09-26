@@ -77,7 +77,12 @@ async function main() {
   console.log("\nEvery email the waitlist sends:");
   assertClean("welcome", email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: 1285 }));
   const numbered = email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: 1285 });
-  check("welcome: states the place in line", numbered.subject === "You're #1,285 on the waitlist" && numbered.text.includes("#1,285"));
+  check("welcome: states the place in line", numbered.text.includes("#1,285") && numbered.html.includes("No. 1,285"));
+  check("welcome: the subject is the paper letter's", numbered.subject === "You're on the list");
+  check("welcome: the referral URL stays on the pass page", !numbered.html.includes("?ref=") && !numbered.text.includes("?ref="));
+  const anchors = [...numbered.html.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1]!);
+  check("welcome: one link besides the leave link", anchors.length === 2 && anchors[0]!.includes("?me=tok"), anchors.join(", "));
+  check("welcome: asks clients not to invert the paper", numbered.html.includes('content="light only"'));
   const unnumbered = email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: null });
   check("welcome: without a count, says no number rather than a wrong one", !/#\d/.test(unnumbered.subject + unnumbered.text));
   check("welcome: explains the front wave", numbered.text.includes("front wave"));
