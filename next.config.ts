@@ -59,11 +59,15 @@ const nextConfig: NextConfig = {
     // even when the sha is unhelpful (a redeploy of the same commit).
     BUILD_TIME: new Date().toISOString(),
   },
+  // drizzle-orm is deliberately NOT here. As an external it loads through Node's ESM loader
+  // on every cold instance — its package root re-exports ~440 files, each read, parsed and
+  // linked one by one — which measured ~220ms of a 310ms route's module load, before any
+  // query. Bundled, Turbopack keeps only what is imported and ships it inside the route's
+  // chunks. (`scripts/dev/cold-start-report.cjs` measures this per route.)
   serverExternalPackages: [
     "@electric-sql/pglite",
     "@neondatabase/serverless",
     "@google/genai",
-    "drizzle-orm",
     "sharp",
   ],
   // PGlite is the local-development database and only runs when DATABASE_URL is unset, but
