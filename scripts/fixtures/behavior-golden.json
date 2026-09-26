@@ -15,7 +15,9 @@
     "eventAttendees": 12,
     "chatThreads": 2,
     "imports": 1,
-    "goals": 3
+    "goals": 3,
+    "teamMembers": 3,
+    "leads": 4
   },
   "loader: dashboard": {
     "stats": {
@@ -2418,41 +2420,6 @@
         "substantive": true
       },
       {
-        "id": "<contacts:Aisha Rahman>",
-        "fullName": "Aisha Rahman",
-        "preferredName": null,
-        "company": "Google",
-        "school": null,
-        "title": "Senior Product Manager",
-        "relationshipScore": 3,
-        "closeness": 0.519281,
-        "closenessTier": "mid",
-        "orbitScore": 2,
-        "lastInteractionAt": "<ts>",
-        "hasLoggedInteraction": true,
-        "nextFollowUpAt": "<ts>",
-        "tags": [
-          "Former coworker"
-        ],
-        "aiSummary": "Aisha Rahman is Senior Product Manager at Google. How you met: Former teammate at my first job. Worked together on the billing team. Now on Google Cloud's developer experience org. Reliable sounding board for anything pricing-related.",
-        "keyFacts": [
-          "Former teammate",
-          "Now on Google Cloud DevEx"
-        ],
-        "howMet": "Former teammate at my first job",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
-        "profileImageUrl": null,
-        "dormant": false,
-        "substantive": true
-      },
-      {
         "id": "<contacts:Marcus Lee>",
         "fullName": "Marcus Lee",
         "preferredName": null,
@@ -2587,6 +2554,41 @@
         "notes": null,
         "sharedInterests": [],
         "email": "james@bellwether.example",
+        "phone": null,
+        "linkedinUrl": null,
+        "website": null,
+        "profileImageUrl": null,
+        "dormant": false,
+        "substantive": true
+      },
+      {
+        "id": "<contacts:Aisha Rahman>",
+        "fullName": "Aisha Rahman",
+        "preferredName": null,
+        "company": "Google",
+        "school": null,
+        "title": "Senior Product Manager",
+        "relationshipScore": 3,
+        "closeness": 0.519281,
+        "closenessTier": "mid",
+        "orbitScore": 2,
+        "lastInteractionAt": "<ts>",
+        "hasLoggedInteraction": true,
+        "nextFollowUpAt": "<ts>",
+        "tags": [
+          "Former coworker"
+        ],
+        "aiSummary": "Aisha Rahman is Senior Product Manager at Google. How you met: Former teammate at my first job. Worked together on the billing team. Now on Google Cloud's developer experience org. Reliable sounding board for anything pricing-related.",
+        "keyFacts": [
+          "Former teammate",
+          "Now on Google Cloud DevEx"
+        ],
+        "howMet": "Former teammate at my first job",
+        "metContext": null,
+        "dateMet": "<ts>",
+        "notes": null,
+        "sharedInterests": [],
+        "email": null,
         "phone": null,
         "linkedinUrl": null,
         "website": null,
@@ -3061,9 +3063,9 @@
       "AI",
       "Warm intro",
       "Engineering",
-      "Former coworker",
       "Hiring",
       "Investor",
+      "Former coworker",
       "Founder",
       "Design"
     ],
@@ -8045,21 +8047,21 @@
           }
         ],
         [
+          "<contacts:Golden Newperson>",
+          {
+            "raw": 0.51086,
+            "tier": "mid",
+            "closeness": 0.502662,
+            "orbitScore": 2
+          }
+        ],
+        [
           "<contacts:Marcus Webb>",
           {
             "raw": 0.602105,
             "tier": "inner",
             "closeness": 0.659983,
             "orbitScore": 4
-          }
-        ],
-        [
-          "<contacts:Aisha Rahman>",
-          {
-            "raw": 0.526255,
-            "tier": "mid",
-            "closeness": 0.519281,
-            "orbitScore": 2
           }
         ],
         [
@@ -8095,6 +8097,15 @@
             "raw": 0.532241,
             "tier": "mid",
             "closeness": 0.534302,
+            "orbitScore": 2
+          }
+        ],
+        [
+          "<contacts:Aisha Rahman>",
+          {
+            "raw": 0.526255,
+            "tier": "mid",
+            "closeness": 0.519281,
             "orbitScore": 2
           }
         ],
@@ -8212,15 +8223,6 @@
             "raw": 0.454951,
             "tier": "outer",
             "closeness": 0.445667,
-            "orbitScore": 2
-          }
-        ],
-        [
-          "<contacts:Golden Newperson>",
-          {
-            "raw": 0.51086,
-            "tier": "mid",
-            "closeness": 0.502662,
             "orbitScore": 2
           }
         ],
@@ -9705,6 +9707,36 @@
         "substantive": true
       },
       {
+        "id": "<contacts:Golden Newperson>",
+        "fullName": "Golden Newperson",
+        "preferredName": null,
+        "company": "Acme",
+        "school": null,
+        "title": "Engineer",
+        "relationshipScore": 2,
+        "closeness": 0.502662,
+        "closenessTier": "mid",
+        "orbitScore": 2,
+        "lastInteractionAt": "<ts>",
+        "hasLoggedInteraction": true,
+        "nextFollowUpAt": "<ts>",
+        "tags": [],
+        "aiSummary": "Golden Newperson is Engineer at Acme. Recent conversations covered: Golden: met at the extension test..",
+        "keyFacts": [],
+        "howMet": null,
+        "metContext": null,
+        "dateMet": null,
+        "notes": null,
+        "sharedInterests": [],
+        "email": null,
+        "phone": null,
+        "linkedinUrl": null,
+        "website": null,
+        "profileImageUrl": null,
+        "dormant": false,
+        "substantive": true
+      },
+      {
         "id": "<contacts:Marcus Webb>",
         "fullName": "Marcus Webb",
         "preferredName": null,
@@ -9734,41 +9766,6 @@
           "developer tooling",
           "hiring"
         ],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
-        "profileImageUrl": null,
-        "dormant": false,
-        "substantive": true
-      },
-      {
-        "id": "<contacts:Aisha Rahman>",
-        "fullName": "Aisha Rahman",
-        "preferredName": null,
-        "company": "Google",
-        "school": null,
-        "title": "Senior Product Manager",
-        "relationshipScore": 3,
-        "closeness": 0.519281,
-        "closenessTier": "mid",
-        "orbitScore": 2,
-        "lastInteractionAt": "<ts>",
-        "hasLoggedInteraction": true,
-        "nextFollowUpAt": "<ts>",
-        "tags": [
-          "Former coworker"
-        ],
-        "aiSummary": "Aisha Rahman is Senior Product Manager at Google. How you met: Former teammate at my first job. Worked together on the billing team. Now on Google Cloud's developer experience org. Reliable sounding board for anything pricing-related.",
-        "keyFacts": [
-          "Former teammate",
-          "Now on Google Cloud DevEx"
-        ],
-        "howMet": "Former teammate at my first job",
-        "metContext": null,
-        "dateMet": "<ts>",
-        "notes": null,
-        "sharedInterests": [],
         "email": null,
         "phone": null,
         "linkedinUrl": null,
@@ -9912,6 +9909,41 @@
         "notes": null,
         "sharedInterests": [],
         "email": "james@bellwether.example",
+        "phone": null,
+        "linkedinUrl": null,
+        "website": null,
+        "profileImageUrl": null,
+        "dormant": false,
+        "substantive": true
+      },
+      {
+        "id": "<contacts:Aisha Rahman>",
+        "fullName": "Aisha Rahman",
+        "preferredName": null,
+        "company": "Google",
+        "school": null,
+        "title": "Senior Product Manager",
+        "relationshipScore": 3,
+        "closeness": 0.519281,
+        "closenessTier": "mid",
+        "orbitScore": 2,
+        "lastInteractionAt": "<ts>",
+        "hasLoggedInteraction": true,
+        "nextFollowUpAt": "<ts>",
+        "tags": [
+          "Former coworker"
+        ],
+        "aiSummary": "Aisha Rahman is Senior Product Manager at Google. How you met: Former teammate at my first job. Worked together on the billing team. Now on Google Cloud's developer experience org. Reliable sounding board for anything pricing-related.",
+        "keyFacts": [
+          "Former teammate",
+          "Now on Google Cloud DevEx"
+        ],
+        "howMet": "Former teammate at my first job",
+        "metContext": null,
+        "dateMet": "<ts>",
+        "notes": null,
+        "sharedInterests": [],
+        "email": null,
         "phone": null,
         "linkedinUrl": null,
         "website": null,
@@ -10360,36 +10392,6 @@
         "substantive": true
       },
       {
-        "id": "<contacts:Golden Newperson>",
-        "fullName": "Golden Newperson",
-        "preferredName": null,
-        "company": "Acme",
-        "school": null,
-        "title": "Engineer",
-        "relationshipScore": 2,
-        "closeness": 0.502662,
-        "closenessTier": "mid",
-        "orbitScore": 2,
-        "lastInteractionAt": "<ts>",
-        "hasLoggedInteraction": true,
-        "nextFollowUpAt": "<ts>",
-        "tags": [],
-        "aiSummary": "Golden Newperson is Engineer at Acme. Recent conversations covered: Golden: met at the extension test..",
-        "keyFacts": [],
-        "howMet": null,
-        "metContext": null,
-        "dateMet": null,
-        "notes": null,
-        "sharedInterests": [],
-        "email": null,
-        "phone": null,
-        "linkedinUrl": null,
-        "website": null,
-        "profileImageUrl": null,
-        "dormant": false,
-        "substantive": true
-      },
-      {
         "id": "<contacts:Sarah Chen>",
         "fullName": "Sarah Chen",
         "preferredName": null,
@@ -10456,9 +10458,9 @@
       "Student",
       "AI",
       "Engineering",
-      "Former coworker",
       "Hiring",
       "Investor",
+      "Former coworker",
       "Founder",
       "Design",
       "Warm intro"

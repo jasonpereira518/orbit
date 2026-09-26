@@ -25,6 +25,7 @@ import {
   imports,
   interactionMentions,
   interactions,
+  leads,
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
@@ -38,12 +39,16 @@ import {
   reminders,
   suggestedReminders,
   tags,
+  teamMembers,
+  teams,
   userGoals,
   userRecruiterLinks,
   userSettings,
 } from "../src/db/schema";
 import { ensureLocalDemoData } from "../src/lib/demo-data/ensure";
 import { DEMO_PEOPLE } from "../src/lib/demo-data/network";
+import { DEMO_LEADS, DEMO_TEAM_DOMAIN, DEMO_TEAMMATE_CONTACTS, DEMO_TEAMMATES, demoTeamAllowed } from "../src/lib/demo-data/team";
+import { loadPipeline } from "../src/lib/leads/pipeline";
 import { DEMO_CAPTURES, DEMO_OPPORTUNITIES } from "../src/lib/demo-data/network-extra";
 import { buildExtendedCast } from "../src/lib/demo-data/seed-extended";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -82,8 +87,9 @@ const contactCount = (userId: string) => rowsFor(contacts, contacts.userId, user
  */
 async function cleanup() {
   const db = await getDb();
-  const users = [FRESH, REMOTE_USER, EXISTING, SECOND];
+  const users = [FRESH, REMOTE_USER, EXISTING, SECOND, ...DEMO_TEAMMATES.map((m) => m.userId)];
   for (const table of [
+    leads, teamMembers,
     suggestedReminders, reminders, reminderLists, outreachCampaigns, events, chatThreads,
     recruiterMessages, userRecruiterLinks, imports, userGoals, contacts, companies, tags,
     closenessCohorts, noteBatches, meetingSessions, apiKeys, userSettings,
@@ -91,6 +97,7 @@ async function cleanup() {
     await db.delete(table).where(inArray(table.userId, users));
   }
   await db.delete(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
+  await db.delete(teams).where(eq(teams.domain, DEMO_TEAM_DOMAIN));
 }
 
 async function main() {
@@ -177,6 +184,21 @@ async function main() {
     check("import history seeded", (await rows(imports, imports.userId)) === 6);
     check("goals seeded", (await rows(userGoals, userGoals.userId)) === 3);
 
+    console.log("\nthe demo team");
+    check(
+      "the demo team is never seeded into a shared database",
+      !demoTeamAllowed({ DATABASE_URL: "postgres://shared.example/orbit" }) && demoTeamAllowed({})
+    );
+    const pipeline = await loadPipeline(FRESH);
+    check("the demo account is on a sharing team", pipeline.team === "ok", pipeline.team);
+    check(`the demo leads are seeded (${DEMO_LEADS.length})`, pipeline.rows.length === DEMO_LEADS.length, String(pipeline.rows.length));
+    const warmthOf = new Map(pipeline.rows.map((r) => [r.lead.displayName, r.path?.warmth ?? "none"]));
+    check(
+      "the leads land on every rung of the ladder",
+      DEMO_LEADS.every((l) => warmthOf.get(l.displayName) === l.expected),
+      JSON.stringify([...warmthOf])
+    );
+
     // Demo data must never be picked up by a sender: a `scheduled` or `queued` row is.
     const campaignIds = (
       await db.select({ id: outreachCampaigns.id }).from(outreachCampaigns).where(eq(outreachCampaigns.userId, FRESH))
@@ -223,6 +245,15 @@ async function main() {
     const reused = await db.select().from(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
     check("a later account reuses the rows rather than duplicating them", reused.length === 3, String(reused.length));
     check("…and still sees their details", (await seenBy(SECOND)) === 3, String(await seenBy(SECOND)));
+
+    const alex = DEMO_TEAMMATES[0].userId;
+    const alexContacts = await rowsFor(contacts, contacts.userId, alex);
+    check(
+      "a later account reuses the demo colleagues",
+      alexContacts === DEMO_TEAMMATE_CONTACTS.filter((c) => c.teammate === alex).length,
+      String(alexContacts)
+    );
+    check("…and joins the same team", (await loadPipeline(SECOND)).team === "ok");
   } finally {
     setNodeEnv(priorNodeEnv);
     await cleanup();

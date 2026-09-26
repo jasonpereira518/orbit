@@ -53,6 +53,7 @@ import { sql } from "drizzle-orm";
   "broadcast_recipients",
   "teams",
   "team_members",
+  "leads",
 ] as const;
 
 async function main() {

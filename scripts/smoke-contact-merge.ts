@@ -43,6 +43,8 @@ async function reset() {
     await db.execute(sql`DELETE FROM contact_merges WHERE user_id = ${user}`);
     await db.execute(sql`DELETE FROM duplicate_suggestions WHERE user_id = ${user}`);
     await db.execute(sql`DELETE FROM interactions WHERE user_id = ${user}`);
+    // leads.contact_id is ON DELETE SET NULL, so deleting contacts never clears these rows.
+    await db.execute(sql`DELETE FROM leads WHERE user_id = ${user}`);
     await db.execute(sql`DELETE FROM contacts WHERE user_id = ${user}`);
     await db.execute(sql`DELETE FROM tags WHERE user_id = ${user}`);
     await db.execute(sql`DELETE FROM companies WHERE user_id = ${user}`);
@@ -149,6 +151,16 @@ async function main() {
                  (${loser}::uuid, ${loserOnly}::uuid)`
     );
 
+    // A converted lead pointing at the loser: leads.contact_id is ON DELETE SET NULL, so
+    // without a repoint this would silently unlink rather than raise anything.
+    const leadId = rowsOf<{ id: string }>(
+      await db.execute(
+        sql`INSERT INTO leads (user_id, source, display_name, contact_id, status)
+            VALUES (${USER}, 'manual', 'Lead for the loser', ${loser}::uuid, 'converted')
+            RETURNING id`
+      )
+    )[0]!.id;
+
     const { mergeId } = await mergeContacts(USER, winner, loser, {
       reason: "Same email",
       confidence: 0.95,
@@ -181,6 +193,12 @@ async function main() {
         sql`SELECT count(*)::int AS v FROM contact_tags
              WHERE contact_id = ${winner}::uuid AND tag_id = ${loserOnly}::uuid`
       )) === 1
+    );
+    check(
+      "the converted lead followed the contact it became, onto the winner",
+      (await scalar<string | null>(
+        sql`SELECT contact_id::text AS v FROM leads WHERE id = ${leadId}::uuid`
+      )) === winner
     );
 
     const merged = rowsOf<{
@@ -264,6 +282,12 @@ async function main() {
       (await scalar<number>(
         sql`SELECT count(*)::int AS v FROM contact_tags WHERE contact_id = ${loser}::uuid`
       )) === 2
+    );
+    check(
+      "the lead is repointed back to the loser on undo",
+      (await scalar<string | null>(
+        sql`SELECT contact_id::text AS v FROM leads WHERE id = ${leadId}::uuid`
+      )) === loser
     );
     check(
       "the archive row is gone once undone",

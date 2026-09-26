@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { asActionResult, UserFacingError, type ActionResult } from "@/lib/errors";
 import { parseTargetInput, type ParsedTarget } from "@/lib/leads/target-input";
+import { isUuid } from "@/lib/leads/validate";
 import type { WarmPathLookup } from "@/lib/leads/warm-path";
 import { findWarmPaths } from "@/lib/leads/warm-path-query";
 import { requireLeadsUser } from "@/lib/plan-guards";
@@ -23,13 +24,6 @@ import {
  * this — not the nav — is the boundary, and while Leads is coming soon it refuses everyone.
  * `UserFacingError`s come back as data through `asActionResult`; a throw would digest.
  */
-
-// Same pattern as `isUuid` in `src/lib/chat-send.ts:20`, copied rather than imported: that
-// module pulls in `outreach-quality` and `chat-draft`, unrelated to a team action's bundle.
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isUuid(value: unknown): value is string {
-  return typeof value === "string" && UUID.test(value);
-}
 
 type JoinTeamInput = { shareNetwork: boolean };
 type JoinTeamResult = { teamId: string; memberCount: number };

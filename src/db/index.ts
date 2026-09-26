@@ -1469,6 +1469,32 @@ CREATE TABLE IF NOT EXISTS team_members (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS team_members_user_uidx ON team_members(user_id);
 CREATE INDEX IF NOT EXISTS team_members_team_sharing_idx ON team_members(team_id, share_network);
+CREATE TABLE IF NOT EXISTS leads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  display_name text NOT NULL,
+  email text,
+  email_normalized text,
+  linkedin_url text,
+  linkedin_slug text,
+  phone text,
+  phone_e164 text,
+  company_name text,
+  company_normalized text,
+  title text,
+  apollo_id text,
+  status text NOT NULL DEFAULT 'open',
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS leads_user_status_idx ON leads(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS leads_user_email_idx ON leads(user_id, email_normalized);
+CREATE INDEX IF NOT EXISTS leads_user_linkedin_idx ON leads(user_id, linkedin_slug);
+CREATE INDEX IF NOT EXISTS leads_contact_idx ON leads(contact_id);
+CREATE UNIQUE INDEX IF NOT EXISTS leads_user_apollo_uidx ON leads(user_id, apollo_id) WHERE apollo_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS contact_merges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2102,7 +2128,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // would skip this DDL in silence). NOT 119-120: claude/integrations-ui-pass claims 120 and
 // 119 sits between. Scanned every remote ref and every worktree on Sep 26 2026. The Leads
 // stack takes 121 (P2 teams), 122 (P3 pipeline) and 123 (P4 HubSpot).
-export const SCHEMA_VERSION = 121;
+//
+// 122 = leads: the Leads pipeline — manual and Apollo targets, ranked by who on the team
+// knows them. P3 of docs/superpowers/specs/2026-09-22-leads-design.md. First shipped on its
+// branch as 92; renumbered with the rest of the Leads stack on merging main at 118 (see 121).
+export const SCHEMA_VERSION = 122;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
