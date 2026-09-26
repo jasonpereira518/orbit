@@ -139,6 +139,8 @@ export async function GET(request: Request) {
     captureResumed: 0,
     captureGaveUp: 0,
     captureSwept: 0,
+    /** Uploads sent in parts whose last part never arrived, closed as failed. */
+    captureAbandoned: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
@@ -185,6 +187,7 @@ export async function GET(request: Request) {
       stats.captureResumed = captures.resumed;
       stats.captureGaveUp = captures.gaveUp;
       stats.captureSwept = captures.swept;
+      stats.captureAbandoned = captures.abandoned;
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.captures" });

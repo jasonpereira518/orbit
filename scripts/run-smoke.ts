@@ -314,6 +314,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",
   "smoke-import-row-staging": "pglite",
+  "smoke-capture-upload-parts": "pglite",
   "smoke-import-people": "pglite",
   "smoke-drive-import": "pglite",
   "smoke-import-stall": "pglite",
