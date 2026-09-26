@@ -35,6 +35,7 @@ const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
   "smoke-paged-list-refresh": "pure",
+  "smoke-sentry-sampling": "pure",
   "smoke-redundant-refresh": "pure",
   "smoke-connectivity": "pure",
   "smoke-offline-queue": "pure",
