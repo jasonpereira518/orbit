@@ -183,6 +183,51 @@ export function concatInt16(chunks: readonly Int16Array[]): Int16Array {
   return out;
 }
 
+/**
+ * 16-bit samples gathered into one growing buffer.
+ *
+ * The worklet posts every 128-sample render quantum, so a push-and-concat list held one
+ * small `Int16Array` per ~3ms of audio: ~135k objects for a six-minute note, whose
+ * per-object overhead outweighed the audio itself, and then a full copy to join them.
+ * Growth doubles, never past `maxSamples`, so the cap is also the most this ever holds.
+ */
+export class PcmAccumulator {
+  private data: Int16Array;
+  private used = 0;
+
+  constructor(
+    private readonly maxSamples: number,
+    initialSamples = 16_000 * 15
+  ) {
+    this.data = new Int16Array(Math.min(initialSamples, maxSamples));
+  }
+
+  get length(): number {
+    return this.used;
+  }
+
+  /** Append as much of `samples` as fits under the cap; returns how many were kept. */
+  append(samples: Int16Array): number {
+    const kept = Math.min(samples.length, this.maxSamples - this.used);
+    if (kept <= 0) return 0;
+    if (this.used + kept > this.data.length) {
+      const grown = new Int16Array(
+        Math.min(this.maxSamples, Math.max(this.used + kept, this.data.length * 2))
+      );
+      grown.set(this.data.subarray(0, this.used));
+      this.data = grown;
+    }
+    this.data.set(kept === samples.length ? samples : samples.subarray(0, kept), this.used);
+    this.used += kept;
+    return kept;
+  }
+
+  /** The samples so far, as a view — no copy. */
+  samples(): Int16Array {
+    return this.data.subarray(0, this.used);
+  }
+}
+
 // ── WAV framing ───────────────────────────────────────────────────────────────────────
 
 /**
