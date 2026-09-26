@@ -103,6 +103,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-commands": "pure",
   "smoke-chat-refine": "pure",
   "smoke-cross-tenant-refs": "pglite",
+  "smoke-ai-guardrails": "pglite",
+  "smoke-ai-guardrails-db": "pglite",
   "smoke-sentry-scrub": "pure",
   "smoke-chat-send": "pglite",
   "smoke-chat-versions": "pglite",

@@ -18,6 +18,7 @@ import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { reportedFailure } from "@/lib/report-error";
+import { createStreamRedactor } from "@/lib/ai-security";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -184,6 +185,10 @@ export async function POST(request: Request) {
         });
 
         steps.start("answer", "Writing the answer");
+        // Secrets and fence markers are scrubbed from the LIVE stream, not only from what is
+        // stored afterwards — see `createStreamRedactor`. (A scrub is recorded once the
+        // stored copy is guarded, by `guardChatAnswer`; nothing is recorded here twice.)
+        const redactor = createStreamRedactor();
         const result = await traced(
           "chat.stream",
           () =>
@@ -195,7 +200,10 @@ export async function POST(request: Request) {
               ctx.orgRosters,
               ctx.attention,
               ctx.modelRecruiters,
-              (delta) => send({ type: "answer", delta }),
+              (delta) => {
+                const safe = redactor.push(delta);
+                if (safe) send({ type: "answer", delta: safe });
+              },
               ctx.focusProfile,
               ctx.attachedContext,
               {
@@ -209,6 +217,8 @@ export async function POST(request: Request) {
             ),
           { userId }
         );
+        const tail = redactor.flush();
+        if (tail) send({ type: "answer", delta: tail });
         steps.done("answer", { label: "Wrote the answer" });
 
         // The prose has already streamed live, marker and all — this only decides what gets

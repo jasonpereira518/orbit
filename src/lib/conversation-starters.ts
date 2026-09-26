@@ -493,13 +493,23 @@ const startersResponseSchema = z.object({
  * `page.text.blob` is scraped from a page an attacker can control, so it is
  * fenced and explicitly labelled as untrusted data. Control characters are
  * stripped so a payload can't fake the fence.
+ *
+ * The closer is a fixed sigil (`PAGE`), which on its own is forgeable: a page
+ * with a line reading exactly `PAGE` would end the fence early and everything
+ * after it would read as prompt. So any line that could be taken for either
+ * delimiter is neutralised with a `| ` prefix — the only string that closes
+ * the fence is the one this function writes. (Deterministic rather than a
+ * nonce so the draft-prompt goldens stay byte-stable.)
  */
+const PAGE_DELIMITER_LINE = /^[ \t]*(?:<<<[ \t]*)?PAGE[ \t]*$/gim;
+
 export function untrustedPageBlock(page: PageContext): string {
   const blob = page.text.blob
      
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
+    .replace(PAGE_DELIMITER_LINE, (line) => `| ${line.trim()}`)
     .trim();
   if (!blob) return "";
   return [

@@ -32,6 +32,7 @@ const BUCKET_LABELS: Record<string, string> = {
   apiWrite: "API write",
   apiIngest: "event import",
   mcp: "MCP tool call",
+  mcpWrite: "MCP write",
   providerSync: "sync",
   eventEnrich: "link lookup",
   eventHostFetch: "event lookup",
@@ -162,6 +163,13 @@ export const RATE_LIMITS = {
    * a minute, and a loop producing thirty is a runaway, not a user.
    */
   mcpFree: { limit: 30, windowSec: 60 },
+  /**
+   * WRITE tool calls over MCP, on top of `mcp`. A write lands in the user's records, and a
+   * written note is re-read by Orbit's own chat on every later question — so a looping or
+   * injected agent writing fast is the shape to stop, not a person's assistant filing a few
+   * notes after a meeting. Counted per call, not per request (see `handleMcpRequest`).
+   */
+  mcpWrite: { limit: 30, windowSec: 60 },
   /** One provider sync run per connection per window — see `sync-scheduler.ts`. */
   providerSync: { limit: 4, windowSec: 3600 },
   /**
@@ -211,29 +219,34 @@ export const RATE_LIMITS = {
  * Count one request against `scope:key`; throws `RateLimitedError` past `limit` within the
  * window. Returns how many are left. Never fails open on a DB error — a limiter that
  * cannot count should not silently allow — but the caller decides what a throw means.
+ *
+ * `cost` charges several units at once — an MCP request carrying a JSON-RPC batch of five
+ * tool calls is five calls, not one request.
  */
 export async function consumeBucket(
   scope: string,
   key: string,
-  policy: BucketPolicy
+  policy: BucketPolicy,
+  cost = 1
 ): Promise<{ remaining: number }> {
+  const units = Math.max(1, Math.floor(cost));
   const db = await getDb();
   const bucket = `${scope}:${key}`;
   const expired = sql`now() - ${rateLimitBuckets.windowStartedAt} > interval '${sql.raw(String(policy.windowSec))} seconds'`;
 
   const [row] = await db
     .insert(rateLimitBuckets)
-    .values({ bucket, windowStartedAt: new Date(), count: 1 })
+    .values({ bucket, windowStartedAt: new Date(), count: units })
     .onConflictDoUpdate({
       target: rateLimitBuckets.bucket,
       set: {
         windowStartedAt: sql`CASE WHEN ${expired} THEN now() ELSE ${rateLimitBuckets.windowStartedAt} END`,
-        count: sql`CASE WHEN ${expired} THEN 1 ELSE ${rateLimitBuckets.count} + 1 END`,
+        count: sql`CASE WHEN ${expired} THEN ${units} ELSE ${rateLimitBuckets.count} + ${units} END`,
       },
     })
     .returning();
 
-  const count = row?.count ?? 1;
+  const count = row?.count ?? units;
   if (count > policy.limit) {
     const elapsed = row?.windowStartedAt
       ? Math.floor((Date.now() - row.windowStartedAt.getTime()) / 1000)

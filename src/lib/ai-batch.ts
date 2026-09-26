@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { JSON_SYSTEM_SUFFIX } from "@/lib/ai-security";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs } from "@/db/schema";
@@ -84,7 +85,7 @@ const geminiAdapter: Adapter = {
           model,
           contents: r.user,
           config: {
-            systemInstruction: `${r.system}\n\nRespond with valid JSON only. No markdown fences.`,
+            systemInstruction: `${r.system}${JSON_SYSTEM_SUFFIX}`,
             temperature: r.temperature ?? DEFAULT_TEMPERATURE,
             maxOutputTokens: r.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
             responseMimeType: "application/json",
@@ -149,7 +150,7 @@ const openaiAdapter: Adapter = {
             }),
             response_format: { type: "json_object" },
             messages: [
-              { role: "system", content: `${r.system}\n\nRespond with valid JSON only. No markdown fences.` },
+              { role: "system", content: `${r.system}${JSON_SYSTEM_SUFFIX}` },
               { role: "user", content: r.user },
             ],
           },
@@ -219,7 +220,7 @@ const anthropicAdapter: Adapter = {
         params: {
           model,
           max_tokens: r.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-          system: `${r.system}\n\nRespond with valid JSON only. No markdown fences.`,
+          system: `${r.system}${JSON_SYSTEM_SUFFIX}`,
           messages: [{ role: "user" as const, content: r.user }],
         },
       })),

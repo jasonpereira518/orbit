@@ -13,6 +13,8 @@ import { apiHandler, apiOk, readJson, MAX_BODY_BYTES, deferTelemetry } from "@/l
 import { eventsBody } from "@/lib/api/schemas";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import { enqueueWebhookEvent } from "@/lib/webhooks/dispatch";
+import { auditUntrustedWrite, cleanSingleLine, safeHttpUrl } from "@/lib/ai-security";
+import { sanitizeAgentText } from "@/lib/mcp/sanitize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +24,9 @@ export const POST = apiHandler(
   async (request, { caller }) => {
     const body = await readJson(request, eventsBody, MAX_BODY_BYTES);
 
+    for (const e of body.events.slice(0, 50)) {
+      auditUntrustedWrite(caller.userId, "api.events", "notes", e.notes);
+    }
     const ctx = await openIngestContext(caller.userId, {
       // Provenance, so the timeline can show what an integration wrote and a future
       // source-aware prompt can weigh it differently from something the user typed.
@@ -34,9 +39,17 @@ export const POST = apiHandler(
         externalIdBase: `api:${e.externalId}`,
         type: e.type,
         timestamp: new Date(e.occurredAt),
-        participants: e.participants,
-        summary: e.summary ?? null,
-        notes: e.notes ?? null,
+        // Cleaned like agent-written text: these land in `interactions.raw_notes`, which
+        // Orbit's chat reads back verbatim on every later question about the person.
+        participants: e.participants.map((p) => ({
+          ...p,
+          name: cleanSingleLine(p.name, 200) ?? undefined,
+          company: cleanSingleLine(p.company, 200) ?? undefined,
+          title: cleanSingleLine(p.title, 200) ?? undefined,
+          linkedinUrl: safeHttpUrl(p.linkedinUrl) ?? undefined,
+        })),
+        summary: e.summary ? sanitizeAgentText(e.summary) || null : null,
+        notes: e.notes ? sanitizeAgentText(e.notes) || null : null,
       }))
     );
 

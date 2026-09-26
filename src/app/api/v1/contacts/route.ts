@@ -16,6 +16,7 @@ import { createContactForUser } from "@/lib/contact-writes";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { findConfidentDuplicate } from "@/lib/contact-resolve";
 import { enqueueWebhookEvent } from "@/lib/webhooks/dispatch";
+import { auditUntrustedWrite, cleanAgentContactFields } from "@/lib/ai-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -126,7 +127,27 @@ export const GET = apiHandler({ scope: "read", bucket: "apiRead" }, async (reque
 });
 
 export const POST = apiHandler({ scope: "write", bucket: "apiWrite" }, async (request, { caller }) => {
-  const body = await readJson(request, contactCreateBody);
+  const parsedBody = await readJson(request, contactCreateBody);
+  // Integration-written text is cleaned exactly like agent-written text: names, titles and
+  // companies reach Orbit's chat prompt as rows, notes reach it verbatim, and a link lands in
+  // an `href`. See `cleanAgentContactFields` and `src/lib/mcp/sanitize.ts`.
+  const cleaned = cleanAgentContactFields({
+    fullName: parsedBody.fullName,
+    company: parsedBody.company,
+    title: parsedBody.title,
+    location: parsedBody.location,
+    linkedinUrl: parsedBody.linkedinUrl,
+    notes: parsedBody.notes,
+    howMet: parsedBody.howMet,
+  });
+  if (cleaned.badUrl) {
+    return apiError({ code: "invalid_request", message: "linkedinUrl must be an http(s) URL.", param: "linkedinUrl" });
+  }
+  if (!cleaned.fields.fullName) {
+    return apiError({ code: "invalid_request", message: "fullName is required.", param: "fullName" });
+  }
+  const body = { ...parsedBody, ...cleaned.fields, fullName: cleaned.fields.fullName };
+  auditUntrustedWrite(caller.userId, "api.contacts", "notes", body.notes);
 
   // Duplicate check before creating, unless explicitly overridden. An integration that
   // re-sends the same person on every run must not fork them into a dozen records — the

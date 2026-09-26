@@ -9,6 +9,7 @@ import { gateSkips, gateText } from "@/lib/decisions/gates";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { qualifiesForTimelineAi } from "@/lib/timeline-cost";
 import { parseInteractionDateFromNotes } from "@/lib/interaction-date";
+import { fenceUntrusted } from "@/lib/ai-security";
 
 export type LinkedInTimelineMessage = {
   from?: string | null;
@@ -100,7 +101,7 @@ export function prepareTimelineExtraction(
     .join("\n")
     .slice(0, 14_000);
 
-  return { usable, baseEvents, prompt: { system: TIMELINE_SYSTEM, user: `Thread:\n${transcript}` } };
+  return { usable, baseEvents, prompt: { system: TIMELINE_SYSTEM, user: `Thread:\n${fenceUntrusted("THREAD", transcript)}` } };
 }
 
 /** The model's answer as events. Throws when the answer is not the shape it promised. */

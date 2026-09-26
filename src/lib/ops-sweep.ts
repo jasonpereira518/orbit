@@ -157,12 +157,27 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     .from(dataPurgeRuns)
     .where(eq(dataPurgeRuns.status, "failed"));
 
+  const [aiSecurityRow] = await db
+    .select({
+      events: sql<number>`count(*)::int`,
+      accounts: sql<number>`count(distinct ${errorEvents.userId})::int`,
+    })
+    .from(errorEvents)
+    .where(and(eq(errorEvents.source, ERROR_SOURCES.aiSecurity), gt(errorEvents.createdAt, hourAgo)));
+
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
   const perfSlow = bySource.get(ERROR_SOURCES.perfSlow) ?? 0;
   const stripeCheckout = bySource.get(ERROR_SOURCES.stripeCheckout) ?? 0;
   const resendRejected = bySource.get(ERROR_SOURCES.resendRejected) ?? 0;
   const otherErrors = [...bySource.entries()]
-    .filter(([source]) => source !== ERROR_SOURCES.perfSlow && source !== ERROR_SOURCES.backfillFailed)
+    // `ai.security` has a condition of its own (below); counting it here too would open the
+    // generic error-rate alert for what is a guard doing its job.
+    .filter(
+      ([source]) =>
+        source !== ERROR_SOURCES.perfSlow &&
+        source !== ERROR_SOURCES.backfillFailed &&
+        source !== ERROR_SOURCES.aiSecurity
+    )
     .reduce((sum, [, n]) => sum + n, 0);
 
   const outages = new Map<string, { provider: string | null; errorKind: string; accounts: number }>();
@@ -222,6 +237,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     webhooks,
     stripeCheckoutErrorsLastHour: stripeCheckout,
     resendRejectedLastHour: resendRejected,
+    aiSecurityLastHour: { events: aiSecurityRow?.events ?? 0, accounts: aiSecurityRow?.accounts ?? 0 },
     wedgedImports: issues.wedged,
     failedImportsLast24h: failedImports[0]?.n ?? 0,
     outreach: { overdue: outreach.overdue, oldestOverdueDays: outreach.oldestOverdueDays },

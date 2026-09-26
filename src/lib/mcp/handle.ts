@@ -31,6 +31,45 @@ import type { ApiKeyScope } from "@/lib/api/keys";
 import { buildOrbitMcpServer } from "@/lib/mcp/server";
 import { resourceMetadataUrl, verifyOAuthCaller } from "@/lib/mcp/oauth";
 import { RATE_LIMITS, RateLimitedError, consumeBucket } from "@/lib/rate-limit";
+import { recordAiSecurityEvent } from "@/lib/ai-security";
+
+/**
+ * JSON-RPC messages one HTTP request may carry.
+ *
+ * The SDK's transport still accepts JSON-RPC BATCHES (an array body), which the 2025-06 MCP
+ * spec dropped and no mainstream client sends. Before this cap, the rate limit counted
+ * HTTP requests — so one request carrying five hundred `tools/call` messages was one unit of
+ * a 120-a-minute budget, and a looping or hijacked agent could write thousands of notes or
+ * stage thousands of drafts a minute. The cap bounds a request; `countToolCalls` below makes
+ * each call inside it pay for itself.
+ */
+export const MAX_MCP_BATCH = 10;
+
+/** Largest request body accepted. A tool call's biggest argument is a 5,000-char note. */
+export const MAX_MCP_BODY_BYTES = 256 * 1024;
+
+/**
+ * How many messages a JSON-RPC body carries, and how many of them are tool calls.
+ * Pure, so the batch rules can be pinned without a transport. Unparseable bodies count as
+ * one message and are left for the transport to reject with its own parse error.
+ */
+export function countToolCalls(body: unknown): { messages: number; toolCalls: number } {
+  const list = Array.isArray(body) ? body : [body];
+  const toolCalls = list.filter(
+    (m) => m && typeof m === "object" && (m as { method?: unknown }).method === "tools/call"
+  ).length;
+  return { messages: list.length, toolCalls };
+}
+
+/** Read the body without consuming it for the transport. Null when there is none or it is not JSON. */
+async function peekJson(request: Request): Promise<unknown> {
+  if (request.method !== "POST") return null;
+  try {
+    return await request.clone().json();
+  } catch {
+    return null;
+  }
+}
 
 function jsonRpcError(
   code: number,
@@ -114,14 +153,31 @@ export async function handleMcpRequest(
     return jsonRpcError(-32603, "Authentication failed.", 500);
   }
 
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_MCP_BODY_BYTES) {
+    return jsonRpcError(-32600, "Request body too large.", 413);
+  }
+  const { messages, toolCalls } = countToolCalls(await peekJson(request));
+  if (messages > MAX_MCP_BATCH) {
+    void recordAiSecurityEvent({
+      kind: "batch_rejected",
+      userId: caller.userId,
+      surface: "mcp",
+      detail: { messages, toolCalls },
+    });
+    return jsonRpcError(-32600, `At most ${MAX_MCP_BATCH} messages per request.`, 400);
+  }
+
   // Resolved by the auth check from the settings row it already read. (`getEntitlements`
   // here would read it again: `cache()` does not deduplicate outside a React render.)
   const { entitlements } = caller;
   try {
+    // Charged per tool call, not per HTTP request — see `MAX_MCP_BATCH`.
     await consumeBucket(
       "mcp",
       caller.userId,
-      entitlements.plan === "free" ? RATE_LIMITS.mcpFree : RATE_LIMITS.mcp
+      entitlements.plan === "free" ? RATE_LIMITS.mcpFree : RATE_LIMITS.mcp,
+      Math.max(1, toolCalls)
     );
   } catch (err) {
     if (err instanceof RateLimitedError) {
