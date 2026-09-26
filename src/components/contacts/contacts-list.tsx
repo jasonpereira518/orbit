@@ -47,6 +47,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  closenessPercentChipClass,
   closenessTierChipClass,
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
@@ -983,9 +984,12 @@ function ClosenessChip({
       ? `${Math.round(closeness * 100)}%`
       : `Score ${relationshipScore}`;
 
-  const chipClass = closenessTier
-    ? closenessTierChipClass(closenessTier)
-    : "bg-muted text-muted-foreground";
+  const chipClass =
+    typeof closeness === "number"
+      ? closenessPercentChipClass(closeness)
+      : closenessTier
+        ? closenessTierChipClass(closenessTier)
+        : "bg-muted text-muted-foreground";
 
   const tierHint = closenessTier ? ` (${TIER_TOOLTIP[closenessTier]})` : "";
 
