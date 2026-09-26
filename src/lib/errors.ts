@@ -335,12 +335,15 @@ export function isUserFacingError(err: unknown): err is Error {
 export type ActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
- * Run a Server Action body so that a `UserFacingError` reaches the person.
+ * Run a Server Action body so that a `UserFacingError` — or a plan denial — reaches the
+ * person.
  *
  * A thrown message is replaced by a digest in production; a returned value is not. So a
- * `UserFacingError` becomes `{ ok: false, error }`. Anything else is rethrown untouched,
- * so a genuine fault still surfaces as an error and still gets the caller's friendly
- * fallback — this only rescues the messages that were written to be read.
+ * `UserFacingError` becomes `{ ok: false, error }`, and so does a `PaywallError`: it is
+ * already written for the person who hit it (`FEATURE_DENIAL`), so it earns the same rescue
+ * rather than being reduced to a digest and read as "try again?". Anything else is rethrown
+ * untouched, so a genuine fault still surfaces as an error and still gets the caller's
+ * friendly fallback — this only rescues the messages that were written to be read.
  */
 export async function asActionResult<T>(
   fn: () => Promise<T>
@@ -348,7 +351,12 @@ export async function asActionResult<T>(
   try {
     return { ok: true, value: await fn() };
   } catch (err) {
-    if (isUserFacingError(err)) return { ok: false, error: err.message };
+    // A plan denial is already written for the person who hit it, and a thrown one would reach
+    // the client as a digest. Returned as data it survives — the same shape webhook-endpoints
+    // and api-keys already use for this case.
+    if (isUserFacingError(err) || (err instanceof Error && err.name === "PaywallError")) {
+      return { ok: false, error: err.message };
+    }
     throw err;
   }
 }
@@ -393,6 +401,11 @@ export function friendlyError(err: unknown, fallback: string): string {
     const digest = (err as { digest?: unknown } | null)?.digest;
     return typeof digest === "string" ? withReference(fallback, digest) : fallback;
   }
+
+  // A plan denial is already written for the person who hit it (`FEATURE_DENIAL`), and it is
+  // the one server-thrown message worth showing verbatim. Matched by name, not `instanceof`:
+  // a second module instance would break the class check, and this file imports nothing.
+  if (err instanceof Error && err.name === "PaywallError" && err.message) return err.message;
 
   if (raw && OWN_WORDS.has(raw)) return raw;
   if (raw && isMissingAiApiKeyError(raw)) return MISSING_AI_API_KEY_MESSAGE;

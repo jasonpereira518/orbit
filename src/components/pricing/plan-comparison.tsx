@@ -31,7 +31,13 @@ const COLUMN_ACCENT: Record<Plan, { heading: string; tick: string; tint?: string
  *  - `canUseOutreach`, `canUseRecruiters`, `canUseSync`, `canUseExtension`, and
  *    `canUseHostedSending` are all plain `plan !== "free"`, so Lifetime matches Pro on
  *    each of them. Sending included: it is capped at `DAILY_SEND_LIMIT` a day on every
- *    plan, so it is a bounded cost a one-time payment can carry.
+ *    plan, so it is a bounded cost a one-time payment can carry. `canUseSync` no longer
+ *    means "mailbox and calendar sync" is paid — connecting Google and Microsoft is free
+ *    on every plan, and has its own row. What it still gates is the "Calendar links and
+ *    event sources" row: the pasted-ICS calendar subscriptions in `actions/calendar.ts`
+ *    and the event sources in `actions/events.ts` (Luma, Partiful, Eventbrite and the Gmail
+ *    confirmation scan). That row has to exist — a free user meets that paywall, and until
+ *    it did the pricing page named nothing they could have bought to clear it.
  *  - `canUseHostedEnrichment` is the ONLY entitlement that separates the two paid tiers,
  *    so "Contact enrichment" must stay the only row whose Pro and Lifetime cells differ.
  *    It gates Orbit's *own* Apollo key, never a key the user supplied — see the
@@ -56,7 +62,8 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   // demonstration. See `canUseMcp` in entitlements.ts.
   { label: "Use from Claude and ChatGPT", cells: [true, true, true] },
   { label: "Recruiter tracking", cells: [false, true, true] },
-  { label: "Gmail, Outlook, calendar sync", cells: [false, true, true] },
+  { label: "Contacts, calendar and meetings from Google and Outlook", cells: [true, true, true] },
+  { label: "Calendar links and event sources", cells: [false, true, true] },
   { label: "Chrome extension", cells: [false, true, true] },
   { label: "Outreach campaigns", cells: [false, true, true] },
   { label: "Email and SMS sending", cells: [false, true, true] },

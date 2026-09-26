@@ -162,6 +162,10 @@ export async function markSyncResult(
   const table = sql.raw(PROVIDER_TABLES[provider]);
 
   if (outcome.ok) {
+    // A run claimed the row before the person paused it mid-flight: without the guard this
+    // write lands after `pauseSync` and re-arms a connection they just switched off. Losing
+    // the race silently (the row is simply left `paused`) is correct here — the person's
+    // choice, made after the claim, wins over a run that started before it.
     await db.execute(sql`
       UPDATE ${table}
          SET sync_status = 'idle',
@@ -172,7 +176,7 @@ export async function markSyncResult(
              next_sync_at = ${outcome.nextSyncAt},
              last_synced_at = ${now},
              updated_at = ${now}
-       WHERE id = ${id}
+       WHERE id = ${id} AND sync_status IS DISTINCT FROM 'paused'
     `);
     return;
   }
@@ -196,6 +200,9 @@ export async function markSyncResult(
     return;
   }
 
+  // Same guard as the success write above: a claim taken before the pause must not resurrect
+  // the row as 'error' with a future retry — that would both defeat the pause and, worse,
+  // read as a broken sync once `sync_status` stopped saying 'paused'.
   await db.execute(sql`
     UPDATE ${table}
        SET sync_status = 'error',
@@ -204,7 +211,7 @@ export async function markSyncResult(
            sync_failures = ${failures},
            next_sync_at = ${new Date(now.getTime() + backoffMs(failures))},
            updated_at = ${now}
-     WHERE id = ${id}
+     WHERE id = ${id} AND sync_status IS DISTINCT FROM 'paused'
   `);
 }
 
@@ -225,6 +232,9 @@ export async function disarmSync(
 ): Promise<void> {
   const db = await getDb();
   const table = sql.raw(PROVIDER_TABLES[provider]);
+  // Same guard as `markSyncResult`'s writes: a claim taken before the pause must not land
+  // afterward and relabel a paused row 'error' — that reads as a broken sync (`disarmed`) to
+  // someone who deliberately turned meetings off, and raises a false alarm on the Overview.
   await db.execute(sql`
     UPDATE ${table}
        SET sync_status = 'error',
@@ -233,7 +243,46 @@ export async function disarmSync(
            next_sync_at = NULL,
            ${failures === undefined ? sql`` : sql`sync_failures = ${failures},`}
            updated_at = ${now}
-     WHERE id = ${id}
+     WHERE id = ${id} AND sync_status IS DISTINCT FROM 'paused'
+  `);
+}
+
+/**
+ * The person switched meetings off. Distinct from `disarmSync`, which is the scheduler giving
+ * up: no error is recorded, and the row is taken out of the queue rather than marked broken,
+ * because the claim predicate only skips rows that are already syncing.
+ *
+ * Keyed by user, not connection id: the switch lives on an account page, which knows who is
+ * signed in and not which row id backs it.
+ */
+export async function pauseSync(provider: SyncProvider, userId: string, now = new Date()): Promise<void> {
+  const db = await getDb();
+  const table = sql.raw(PROVIDER_TABLES[provider]);
+  await db.execute(sql`
+    UPDATE ${table}
+       SET sync_status = 'paused',
+           next_sync_at = NULL,
+           sync_started_at = NULL,
+           sync_error = NULL,
+           sync_failures = 0,
+           updated_at = ${now}
+     WHERE user_id = ${userId}
+  `);
+}
+
+/** Back into the queue, starting now, with the failure counters cleared. */
+export async function resumeSync(provider: SyncProvider, userId: string, now = new Date()): Promise<void> {
+  const db = await getDb();
+  const table = sql.raw(PROVIDER_TABLES[provider]);
+  await db.execute(sql`
+    UPDATE ${table}
+       SET sync_status = NULL,
+           next_sync_at = ${now},
+           sync_started_at = NULL,
+           sync_error = NULL,
+           sync_failures = 0,
+           updated_at = ${now}
+     WHERE user_id = ${userId}
   `);
 }
 
