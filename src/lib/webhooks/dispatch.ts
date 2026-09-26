@@ -307,6 +307,19 @@ export async function verifyEndpoint(
   return { ok: true };
 }
 
+/** The drain sweep's cadence; the follow-up window advances once per slot. */
+const FOLLOWUP_SWEEP_SLOT_MS = 10 * 60 * 1000;
+
+/**
+ * `size` items starting at a slot-dependent offset, wrapping around. Consecutive slots take
+ * consecutive windows, so over ceil(n / size) sweeps every item is served once.
+ */
+export function rotatingWindow<T>(items: readonly T[], size: number, slot: number): T[] {
+  if (items.length <= size) return [...items];
+  const start = (((slot * size) % items.length) + items.length) % items.length;
+  return Array.from({ length: size }, (_, i) => items[(start + i) % items.length]!);
+}
+
 /**
  * Emit `followup.due` for anyone with a subscribed endpoint.
  *
@@ -324,13 +337,18 @@ export async function emitDueFollowupEvents(
   now: Date = new Date()
 ): Promise<{ users: number; events: number }> {
   const db = await getDb();
-  const users = rowsOf<{ user_id: string }>(
+  // Every subscriber, ordered, then a window that rotates with the ten-minute slot. The
+  // query used to be `DISTINCT … LIMIT 20` with no order, so past 20 subscribers the same
+  // ones could be served on every sweep and the rest never. The list is one row per
+  // subscribed account (normally none), small enough to read whole.
+  const subscribers = rowsOf<{ user_id: string }>(
     await db.execute(sql`
       SELECT DISTINCT user_id FROM webhook_endpoints
        WHERE status = 'active' AND event_types ? 'followup.due'
-       LIMIT ${limitUsers}
+       ORDER BY user_id
     `)
   );
+  const users = rotatingWindow(subscribers, limitUsers, Math.floor(now.getTime() / FOLLOWUP_SWEEP_SLOT_MS));
   if (users.length === 0) return { users: 0, events: 0 };
 
   const day = now.toISOString().slice(0, 10);
