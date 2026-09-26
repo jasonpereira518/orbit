@@ -365,6 +365,22 @@ function rawMessage(err: unknown): string {
 }
 
 /**
+ * A request that never got an answer from Orbit: no connection, a dropped one, DNS, a
+ * blocked request. What `fetch` (and so every Server Action call) rejects with.
+ *
+ * Only a TypeError counts: that is what fetch throws for a network failure, and a server
+ * message that happens to say "Load failed" must not be mistaken for one. The wording is
+ * per browser — Chrome "Failed to fetch", Firefox "NetworkError when attempting…", Safari
+ * "Load failed" or "The network connection was lost."
+ */
+export function isNetworkError(err: unknown): boolean {
+  if (!(err instanceof TypeError)) return false;
+  return /failed to fetch|networkerror|load failed|network error|network connection was lost|internet connection appears to be offline/i.test(
+    err.message ?? ""
+  );
+}
+
+/**
  * The message a person should see for a failure. Never the raw `err.message`.
  *
  * `err instanceof Error ? err.message : fallback` — the shape at ~100 toast sites — is
@@ -398,11 +414,8 @@ export function friendlyError(err: unknown, fallback: string): string {
   if (raw && isMissingAiApiKeyError(raw)) return MISSING_AI_API_KEY_MESSAGE;
   if (raw && PROVIDER_KEY_REJECTED.test(raw)) return AI_KEY_REJECTED_MESSAGE;
 
-  // Only a TypeError counts: that is what fetch throws for a network failure, and a
-  // server message that happens to say "Load failed" must not be mistaken for one.
   if (
-    (err instanceof TypeError &&
-      /failed to fetch|networkerror|load failed|network error/i.test(raw)) ||
+    isNetworkError(err) ||
     (typeof navigator !== "undefined" && navigator.onLine === false)
   ) {
     return OFFLINE_MESSAGE;
