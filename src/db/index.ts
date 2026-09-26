@@ -2017,29 +2017,67 @@ export const LINKEDIN_SLUG_EXPRESSION =
 /** The rewrite SCALE_DDL performs when that expression changes. Matched by exact text. */
 export const DROP_LINKEDIN_SLUG_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS linkedin_slug";
 
-/** Postgres re-renders stored expressions (casts, upper-case keywords, parentheses). */
+/**
+ * Postgres re-renders stored expressions (casts, upper-case keywords, parentheses). Every
+ * cast is stripped, not just `::text`: a tsvector expression comes back with
+ * `'simple'::regconfig` and `'A'::"char"` that the declared text never wrote.
+ */
 export function normalizeGeneratedExpression(expr: string): string {
-  return expr.toLowerCase().replace(/::text/g, "").replace(/[\s()]/g, "");
+  return expr.toLowerCase().replace(/::(?:"[^"]*"|[a-z_]+)/g, "").replace(/[\s()]/g, "");
+}
+
+/**
+ * The generated expression behind `contacts.search_tsv`, the same text as the SCALE_DDL ADD
+ * below (whitespace aside). `scripts/smoke-scale-sweep-guards.ts` asserts the two match.
+ */
+export const CONTACTS_SEARCH_TSV_EXPRESSION = `
+  setweight(to_tsvector('simple', coalesce(full_name, '') || ' ' || coalesce(preferred_name, '')), 'A') ||
+  setweight(to_tsvector('simple', coalesce(company, '') || ' ' || coalesce(school, '') || ' ' || coalesce(title, '')), 'B') ||
+  setweight(to_tsvector('simple', coalesce(email, '') || ' ' || coalesce(location, '') || ' ' || coalesce(how_met, '') || ' ' || coalesce(met_context, '') || ' ' || coalesce(industry, '') || ' ' || coalesce(opportunities::text, '')), 'C') ||
+  setweight(to_tsvector('simple', coalesce(ai_summary, '') || ' ' || coalesce(notes, '')), 'D')`;
+
+/** The contacts rewrite SCALE_DDL performs when that expression changes. Matched by exact text. */
+export const DROP_CONTACTS_SEARCH_TSV_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS search_tsv";
+
+/** Whether a stored generated expression differs from the declared one. */
+export function generatedExpressionDiffers(stored: string | null, declared: string): boolean {
+  if (stored === null) return false; // no column yet: the ADD creates it
+  return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(declared);
 }
 
 /** Whether the stored linkedin_slug expression differs from LINKEDIN_SLUG_EXPRESSION. */
 export function linkedinSlugNeedsRewrite(stored: string | null): boolean {
-  if (stored === null) return false; // no column yet: the ADD creates it
-  return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(LINKEDIN_SLUG_EXPRESSION);
+  return generatedExpressionDiffers(stored, LINKEDIN_SLUG_EXPRESSION);
 }
 
-/** The stored expression, null when there is no such column, undefined when unreadable. */
-async function storedLinkedinSlugExpression(run: StatementRunner): Promise<string | null | undefined> {
+/**
+ * A contacts generated column's stored expression: null when there is no such column,
+ * undefined when unreadable. `column` is one of this file's constants, never input.
+ */
+async function storedContactsExpression(
+  run: StatementRunner,
+  column: "linkedin_slug" | "search_tsv"
+): Promise<string | null | undefined> {
   try {
     const result = await run(
       `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
          FROM pg_attribute a
          JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
         WHERE a.attrelid = to_regclass(\'public.contacts\')
-          AND a.attname = \'linkedin_slug\'
+          AND a.attname = \'${column}\'
           AND NOT a.attisdropped`
     );
     return rowsOf<{ expr: string | null }>(result)[0]?.expr ?? null;
+  } catch {
+    return undefined;
+  }
+}
+
+/** An index's definition, null when there is no such index, undefined when unreadable. */
+async function storedIndexDefinition(run: StatementRunner, name: string): Promise<string | null | undefined> {
+  try {
+    const result = await run(`SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = '${name}'`);
+    return rowsOf<{ indexdef: string }>(result)[0]?.indexdef ?? null;
   } catch {
     return undefined;
   }
@@ -2431,9 +2469,15 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   // The linkedin_slug DROP rewrites every contacts row under an exclusive lock, so it runs
   // only when the stored expression is not the declared one (or cannot be read — then the
   // old unconditional behaviour is the safe default).
-  const stored = await storedLinkedinSlugExpression(run);
+  const stored = await storedContactsExpression(run, "linkedin_slug");
   const rewriteSlug = stored === undefined || linkedinSlugNeedsRewrite(stored);
-  const statements = rewriteSlug ? SCALE_DDL : SCALE_DDL.filter((s) => s !== DROP_LINKEDIN_SLUG_STATEMENT);
+  // `search_tsv` the same way, and for the same reason. It was dropped and re-added on EVERY
+  // version bump, which rewrote every user's contacts and rebuilt its GIN index each deploy.
+  const storedTsv = await storedContactsExpression(run, "search_tsv");
+  const rewriteTsv = storedTsv === undefined || generatedExpressionDiffers(storedTsv, CONTACTS_SEARCH_TSV_EXPRESSION);
+  const statements = SCALE_DDL.filter(
+    (s) => (rewriteSlug || s !== DROP_LINKEDIN_SLUG_STATEMENT) && (rewriteTsv || s !== DROP_CONTACTS_SEARCH_TSV_STATEMENT)
+  );
   await runStatements(run, statements, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
@@ -2446,8 +2490,12 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
     // The predicates in searchCondition and the hybrid search arms compare
     // lower(column), so the index must be on the identical expression or the
     // planner ignores it. The old contacts_name_trgm on the raw columns was
-    // never usable; drop it on the way through.
-    await run(`DROP INDEX IF EXISTS contacts_name_trgm`);
+    // never usable; drop it on the way through. Only THAT one: dropping unconditionally
+    // rebuilt a GIN over every user's contacts on each version bump.
+    const trgm = await storedIndexDefinition(run, "contacts_name_trgm");
+    if (trgm === undefined || (trgm !== null && !/lower\(/i.test(trgm))) {
+      await run(`DROP INDEX IF EXISTS contacts_name_trgm`);
+    }
     await run(
       `CREATE INDEX IF NOT EXISTS contacts_name_trgm
        ON contacts USING gin(lower(full_name) gin_trgm_ops, lower(coalesce(company, '')) gin_trgm_ops)`
@@ -2462,6 +2510,9 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   // work around that. Drop the existing duplicates before claiming the constraint, or the
   // CREATE fails and the workaround has to stay forever.
   try {
+    // Once the unique index exists there can be no duplicates to delete, so the self-join
+    // over every user's contact_tags runs only on a database that has never had it.
+    if (await storedIndexDefinition(run, "contact_tags_pair_uidx")) return;
     await run(
       `DELETE FROM contact_tags a
        USING contact_tags b
