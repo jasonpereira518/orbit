@@ -14,7 +14,7 @@
 import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
-import { getDb } from "../src/db";
+import { getDb, rowsOf } from "../src/db";
 import { contacts, interactions, userSettings } from "../src/db/schema";
 import {
   getClosenessCohort,
@@ -135,6 +135,18 @@ run(async () => {
     fallback.byId.size > 1 && fallback.byId.has(late),
     `byId size ${fallback.byId.size}`
   );
+
+  // Recalibration only rewrites rows whose score moved. `xmin` is the transaction that last
+  // wrote a row version, so an unchanged score must leave it where it was.
+  await recalibrateCloseness(USER);
+  const versions = async () =>
+    rowsOf<{ id: string; v: string }>(
+      await db.execute(sql`select id, xmin::text as v from contacts where user_id = ${USER} order by id`)
+    ).map((r) => `${r.id}:${r.v}`);
+  const before = await versions();
+  await recalibrateCloseness(USER);
+  const after = await versions();
+  check("a recalibration with nothing changed rewrites no contact rows", JSON.stringify(before) === JSON.stringify(after), `${before.filter((b, i) => b !== after[i]).length} rewritten`);
 
   await reset();
 });
