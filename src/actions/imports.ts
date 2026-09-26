@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
 import { getDb, rowsOf } from "@/db";
+import { stageImportRows } from "@/lib/import-job-rows";
 import { importRowProblemLine } from "@/lib/import-errors";
 import {
   countImportPeople,
@@ -277,7 +278,7 @@ export async function startLinkedInImport(
     })
     .returning();
 
-  await db.insert(importJobRows).values(
+  await stageImportRows(
     selectedIndexes.map((index) => {
       const row = rows[index];
       return {
@@ -887,7 +888,7 @@ export async function startLinkedInMessagesImport(
     })
     .returning();
 
-  await db.insert(importJobRows).values(
+  await stageImportRows(
     selectedConversations.map((conv, index) => {
       const identity = participantIdentity(conv);
       const msgs = byConv.get(conv.conversationId) || [];
@@ -1230,7 +1231,7 @@ export async function confirmCalendarImport(payload: {
     .returning();
 
   if (rowPayloads.length > 0) {
-    await db.insert(importJobRows).values(
+    await stageImportRows(
       rowPayloads.map((rowPayload, index) => ({
         importId: importRow.id,
         userId,
@@ -1373,7 +1374,7 @@ export async function confirmGoogleContactsImport(
     })
     .returning();
 
-  await db.insert(importJobRows).values(
+  await stageImportRows(
     rows.map((row, index) => ({
       importId: importRow.id,
       userId,
@@ -1529,7 +1530,7 @@ export async function confirmOutlookContactsImport(
     })
     .returning();
 
-  await db.insert(importJobRows).values(
+  await stageImportRows(
     rows.map((row, index) => ({
       importId: importRow.id,
       userId,
@@ -1719,7 +1720,7 @@ export async function confirmContactsFileImport(
     })
     .returning();
 
-  await db.insert(importJobRows).values(
+  await stageImportRows(
     selectedIndexes.map((index) => {
       const row = rows[index];
       return {

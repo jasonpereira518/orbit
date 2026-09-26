@@ -10,11 +10,11 @@ import { toast } from "@/lib/toast";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
 import {
   confirmBulkCapture,
-  ingestCaptureMedia,
   parseBulkCaptureNotes,
   type BulkParseOptions,
 } from "@/actions/capture";
 import type { BulkNotePersonPreview, SuggestedReminderPreview } from "@/lib/capture/types";
+import { ingestCaptureMediaInParts } from "@/lib/capture/ingest-media-in-parts";
 import type { MeetingExtraReminderInput } from "@/lib/note-batch-save";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { capturePhotoSrc } from "@/components/capture/capture-source-meta";
@@ -671,7 +671,7 @@ export function BulkNotesPanel({
         total: 0,
       });
       try {
-        const res = await ingestCaptureMedia({
+        const res = await ingestCaptureMediaInParts({
           files: pages.map((page) => ({
             filename: page.filename,
             mimeType: page.mimeType,
@@ -799,7 +799,7 @@ export function BulkNotesPanel({
     label: string,
     successMessage: string
   ) {
-    const res = await ingestCaptureMedia({ text: notes, files: payloads });
+    const res = await ingestCaptureMediaInParts({ text: notes, files: payloads });
     if (!res.ok) {
       toast.error(refusalMessage(res.error));
       return;

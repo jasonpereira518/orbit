@@ -1157,9 +1157,16 @@ const TRANSCRIBE_CONCURRENCY = 3;
 export async function transcribeImagePages(
   userId: string,
   images: Array<{ mimeType: string; base64: string }>,
+  /**
+   * Where these pages sit in the whole note, when it arrives in parts (see
+   * `planUploadBatches`). Without it the second request's first page would be read, and
+   * reported unreadable, as "page 1".
+   */
+  numbering: { offset: number; total: number } = { offset: 0, total: images.length },
 ): Promise<PageTranscription[]> {
   const total = images.length;
   if (!total) return [];
+  const noteTotal = Math.max(numbering.total, numbering.offset + total);
 
   const results: PageTranscription[] = new Array(total);
   let next = 0;
@@ -1168,9 +1175,9 @@ export async function transcribeImagePages(
     for (;;) {
       const i = next++;
       if (i >= total) return;
-      const pageNumber = i + 1;
+      const pageNumber = numbering.offset + i + 1;
       try {
-        const text = await transcribeNotePage(userId, images[i]!, pageNumber, total);
+        const text = await transcribeNotePage(userId, images[i]!, pageNumber, noteTotal);
         results[i] = { pageNumber, text, ok: true };
       } catch (err) {
         // One bad photo must not cost the person the other seven — but the REASON is kept

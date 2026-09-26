@@ -39,8 +39,13 @@ on:
     - cron: "41 5 * * *"
   workflow_dispatch:
 
+# One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
+# pending run per group and cancels the older pending one, so a shared group meant a
+# five-minute sync or feed run silently dropped the ten-minute ops sweep and drains queued
+# behind it. The alerting path losing runs exactly when the system is busiest is the worst
+# trade available. Per schedule, a slow run can still only delay its own next tick.
 concurrency:
-  group: ops
+  group: ops-${{ github.event.schedule || github.event_name }}
   cancel-in-progress: false
 
 permissions:
@@ -49,7 +54,10 @@ permissions:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Above the longest step's own ceiling (curl --max-time 300) plus checkout and the health
+    # probe. At 5 minutes a slow-but-healthy sync or feed sweep was killed and reported as a
+    # failure before its own timeout could answer.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:

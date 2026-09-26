@@ -12,7 +12,8 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
-import { runSyncPass, type SyncDeps } from "../src/lib/sync-scheduler";
+import { CONNECTIONS_PER_RUN, runSyncPass, type SyncDeps } from "../src/lib/sync-scheduler";
+import { readFileSync } from "node:fs";
 import { ReauthRequiredError } from "../src/lib/errors";
 import { encrypt } from "../src/lib/crypto";
 import type { CalendarFetchResult } from "../src/lib/connectors/google-calendar";
@@ -319,6 +320,22 @@ run(async () => {
     const healthy = await readConn(healthyId);
     check("the failure is recorded on the broken connection", broken.sync_error !== null);
     check("the healthy connection is unaffected", healthy.sync_error === null && healthy.sync_status === "idle");
+  }
+
+  // --- A full claim asks for a continuation --------------------------------------------------------
+  // Only a spent budget used to trigger a continuation, so a run that claimed its cap and
+  // finished quickly left everything else due until the next scheduled tick.
+  await clearAll();
+  {
+    const users = Array.from({ length: CONNECTIONS_PER_RUN + 1 }, (_, i) => `sched-full-${String(i).padStart(2, "0")}`);
+    for (const u of users) await seed(u);
+    const { deps } = depsFor(new Map(users.map((u) => [u, "ok" as const])));
+    const stats = await runSyncPass({ deps });
+    check("a claim at the cap reports that more may be due", stats.claimFull && stats.claimed === CONNECTIONS_PER_RUN, JSON.stringify({ claimFull: stats.claimFull, claimed: stats.claimed }));
+    const rest = await runSyncPass({ deps });
+    check("the next pass takes the rest, and does not ask again", !rest.claimFull && rest.claimed === 1, JSON.stringify({ claimFull: rest.claimFull, claimed: rest.claimed }));
+    const route = readFileSync("src/app/api/sync/run/route.ts", "utf8");
+    check("the route continues on a full claim, not only a spent budget", /stats\.budgetExhausted \|\| stats\.claimFull/.test(route));
   }
 
   // --- Exhausting the budget hands off rather than dropping work ---------------------------------

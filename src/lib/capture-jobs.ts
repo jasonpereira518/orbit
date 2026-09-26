@@ -8,7 +8,7 @@
  * runner's; the `claim_token` is what makes the second statement safe — only the holder's
  * outcome lands, the other runner's UPDATE matches zero rows.
  */
-import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
 import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
@@ -26,6 +26,7 @@ import {
   type CaptureReminderChoices,
   type CaptureJobSource,
 } from "@/lib/capture/types";
+import { internalFetch } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
 
 export type CaptureJobRow = typeof captureJobs.$inferSelect;
@@ -257,6 +258,19 @@ export async function appendIngestedBlocks(
       updatedAt: new Date(),
     })
     .where(eq(captureJobs.id, id));
+}
+
+/**
+ * Keep one part's parse hints on a job still collecting parts, so the part that finishes
+ * it can queue with the hints of the WHOLE note (a date read off page 1 still counts when
+ * page 9 arrives last). Replaces the column: the caller has already merged.
+ */
+export async function setIngestingHints(id: string, hints: CaptureParseHints): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(captureJobs)
+    .set({ inputHints: hints, updatedAt: new Date() })
+    .where(and(eq(captureJobs.id, id), eq(captureJobs.status, "ingesting")));
 }
 
 /** Media is all in; the person can now read the transcript and press Extract. */
@@ -491,7 +505,30 @@ export async function failCaptureJob(id: string, message: string): Promise<void>
     .where(eq(captureJobs.id, id));
 }
 
-export type CaptureStallSweepResult = { found: number; resumed: number; resumeFailed: number; gaveUp: number; swept: number };
+/** Stalled capture jobs picked up per sweep; the same bound as `STALL_SWEEP_LIMIT`. */
+export const CAPTURE_STALL_SWEEP_LIMIT = 50;
+
+/**
+ * Resume a capture job through its internal run route, which has its own 300s invocation,
+ * rather than awaiting it inside the hourly backstop. See `kickImportContinuation`.
+ */
+export async function kickCaptureJob(id: string): Promise<void> {
+  const res = await internalFetch(`/api/capture/jobs/${id}/run`, { method: "POST" });
+  if (!res.ok) throw new Error(`capture job kick answered ${res.status}`);
+}
+
+export type CaptureStallSweepResult = {
+  found: number;
+  resumed: number;
+  resumeFailed: number;
+  gaveUp: number;
+  swept: number;
+  /** Uploads sent in parts whose final part never came. */
+  abandoned: number;
+};
+
+/** How long a capture may sit collecting parts before it is called abandoned. */
+export const ABANDONED_INGEST_MS = 30 * 60 * 1000;
 
 /**
  * The cron backstop, a copy of `resumeStalledImports`: pick up jobs that went quiet, a
@@ -501,6 +538,7 @@ export async function resumeStalledCaptureJobs(options: {
   now?: Date;
   thresholdMs?: number;
   maxResumes?: number;
+  limit?: number;
   runner: (id: string) => Promise<unknown>;
 }): Promise<CaptureStallSweepResult> {
   const now = options.now ?? new Date();
@@ -514,9 +552,12 @@ export async function resumeStalledCaptureJobs(options: {
       lt(captureJobs.updatedAt, new Date(now.getTime() - threshold))
     ),
     columns: { id: true },
+    // Oldest first, and bounded: the rest wait for the next sweep.
+    orderBy: [asc(captureJobs.updatedAt)],
+    limit: options.limit ?? CAPTURE_STALL_SWEEP_LIMIT,
   });
 
-  const result: CaptureStallSweepResult = { found: stalled.length, resumed: 0, resumeFailed: 0, gaveUp: 0, swept: 0 };
+  const result: CaptureStallSweepResult = { found: stalled.length, resumed: 0, resumeFailed: 0, gaveUp: 0, swept: 0, abandoned: 0 };
   for (const job of stalled) {
     const resumes = await bumpCaptureStallResumes(job.id);
     if (resumes > maxResumes) {
@@ -532,6 +573,26 @@ export async function resumeStalledCaptureJobs(options: {
       reportError(err, { where: "job.capture.resume-stalled", extra: { jobId: job.id } });
     }
   }
+
+  // A capture sent in parts sits `ingesting` between its requests. If the tab closed
+  // mid-way, nothing will ever send the final part, and the queue would show it collecting
+  // forever. Phone scans are excluded: their handoff has its own expiry sweep.
+  const abandoned = await db
+    .update(captureJobs)
+    .set({
+      status: "failed",
+      error: "That upload stopped part-way — add the files again.",
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(captureJobs.status, "ingesting"),
+        ne(captureJobs.sourceKind, "phone"),
+        lt(captureJobs.updatedAt, new Date(now.getTime() - ABANDONED_INGEST_MS))
+      )
+    )
+    .returning();
+  result.abandoned = abandoned.length;
 
   const cutoff = new Date(now.getTime() - CAPTURE_JOB_RETENTION_DAYS * 86_400_000);
   const swept = await db
