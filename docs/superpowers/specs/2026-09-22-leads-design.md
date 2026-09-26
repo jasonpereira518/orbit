@@ -25,7 +25,7 @@ Leads gives a salesperson one page that answers "who on my team already knows th
 
 ## Data model
 
-Every new table: Drizzle in `src/db/schema.ts`; `CREATE TABLE IF NOT EXISTS` in both `DDL` and `alters` in `src/db/index.ts`; new columns on existing tables also through `ensureColumn` in `migratePglite`; listed in `scripts/setup-db.ts` `EXPECTED_TABLES`; covered by a purge step in `src/lib/user-data.ts`. `SCHEMA_VERSION` is rescanned across every remote branch and local worktree at merge time — two branches writing the same number merge silently.
+Every new table: Drizzle in `src/db/schema.ts`; `CREATE TABLE IF NOT EXISTS` with its indexes in the DDL template (`applySchema` runs the template's `CREATE TABLE`s on every database, so `alters` is for columns and indexes on existing tables); new columns on existing tables also through `ensureColumn` in `migratePglite`; listed in `scripts/setup-db.ts` `EXPECTED_TABLES`; covered by a purge step in `src/lib/user-data.ts`. `SCHEMA_VERSION` is rescanned across every remote branch and local worktree at merge time — two branches writing the same number merge silently.
 
 **`teams`** — `id`, `domain` (unique, lower-cased), `name`, `created_by` (Clerk id or the `TEAM_DELETED_CREATOR` sentinel after a purge; deliberately not named `user_id`), timestamps.
 
@@ -45,7 +45,7 @@ Two tables rather than one because the sync upserts one shape per page regardles
 
 - `src/lib/team-domain.ts` (pure) — `teamDomainForEmail`, `teamNameForDomain`, via `publicEmailDomain()` in `src/lib/closeness-evidence.ts`.
 - `src/lib/teams.ts` — `getViewerTeam` (request-cached), `verifiedWorkEmail` (reads Clerk's `primaryEmailAddress.verification.status`; demo mode short-circuits), `eligibleTeamForUser`, `joinTeam` (race-safe find-or-create like `resolveCompany`), `leaveTeam` (delete the team when empty), `setTeamSharing`, `setContactTeamShared`, `listTeamMembers`.
-- `src/lib/leads/warm-path.ts` (pure) — `TargetIdentity`, `DirectPath`, `AccountPath`, `Warmth`, `WarmPath`, `rankWarmth`, `teammateDisplayName`.
+- `src/lib/leads/warm-path.ts` (pure) — `TargetIdentity`, `DirectPath` (tier and matched identity kind, no score), `AccountPath`, `Warmth`, `WarmPath`, `rankWarmth`, `teammateDisplayName`.
 - `src/lib/leads/target-input.ts` (pure) — `parseTargetInput(raw)`.
 - `src/lib/leads/warm-path-query.ts` — `findWarmPaths`, `warmPathsForTargets` (N targets, two statements), `rankPipeline` (LATERAL unnest over the viewer's open leads; the page never issues N queries).
 - `src/lib/leads.ts` — `createLead`, `importApolloProspects`, `listLeads`, `setLeadStatus`, `convertLeadToContact` (via `createContactForUser`), `upsertCrmLeads`.
@@ -63,7 +63,7 @@ mate as (
   from team_members tm join user_settings us on us.user_id = tm.user_id
   where tm.team_id = $team and tm.share_network = 1 and tm.user_id <> $viewer)
 select distinct on (t.target_key, m.user_id)
-  t.target_key, m.user_id, m.first_name, m.last_name, m.email, c.closeness_tier, c.closeness, t.kind
+  t.target_key, m.user_id, m.first_name, m.last_name, m.email, c.closeness_tier, t.kind
 from target t
 join contact_identities ci on ci.kind = t.kind and ci.value = t.value
 join mate m on m.user_id = ci.user_id
@@ -72,7 +72,7 @@ order by t.target_key, m.user_id,
   case c.closeness_tier when 'inner' then 0 when 'mid' then 1 else 2 end, c.closeness desc nulls last
 ```
 
-Account paths use the same `mate` CTE joined through `companies.name_normalized` → `contacts.company_id`, grouped by teammate, returning a count and best tier (the direct match is subtracted in JS).
+Account paths use the same `mate` CTE joined through `companies.name_normalized` → `contacts.company_id`, grouped by teammate, returning a count and best tier (the target person is excluded in SQL by an anti-join on the target's identities, so count and best tier describe other people at the company).
 
 Rules, enforced by a pure smoke that greps the statement text: the viewer's own sharing is decided once at the top (`no_team` / `not_sharing` short-circuit before any query); every join carries a `user_id` equality; no correlated `EXISTS`; raw `sql` with explicit aliases, never a column interpolated inside a drizzle `.select()` projection; `share_network = 1`, `team_shared = 1` and `<> $viewer` live in SQL, never in a JS post-filter; the SELECT list never names `notes`, `ai_summary`, `c.email`, `c.phone`, `linkedin_url` or `key_facts`; the result type carries no teammate `contact_id`. The "Shared while you share / Never shared" list in the UI is kept in sync with this SELECT list by hand.
 

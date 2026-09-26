@@ -5,6 +5,7 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
+import { sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import * as schema from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
@@ -41,6 +42,18 @@ async function seed() {
   await db.insert(schema.feedback).values({ userId: USER, kind: "churn_reason", text: "words" });
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
   await db.insert(schema.tags).values({ userId: USER, name: "friend" });
+  const [team] = await db
+    .insert(schema.teams)
+    .values({ domain: "smoke-export.test", name: "Smoke Export", createdBy: USER })
+    .onConflictDoUpdate({ target: schema.teams.domain, set: { domain: sql`excluded.domain` } })
+    .returning();
+  await db
+    .insert(schema.teamMembers)
+    .values({ teamId: team.id, userId: USER, shareNetwork: 1, emailDomain: "smoke-export.test" })
+    .onConflictDoUpdate({
+      target: schema.teamMembers.userId,
+      set: { teamId: team.id, shareNetwork: 1, emailDomain: "smoke-export.test", updatedAt: new Date() },
+    });
   return { contactId: contact.id, recruiterId: recruiter.id };
 }
 

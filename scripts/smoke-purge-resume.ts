@@ -70,11 +70,11 @@ async function main() {
     console.log("\nAn interrupted purge");
     await seed();
     const stopped = await interruptedPurge();
-    check("the error names the completed steps", stopped.completed.join(",") === "insights,notes,reminders,imports,connections,events", stopped.completed.join(","));
+    check("the error names the completed steps", stopped.completed.join(",") === "insights,notes,reminders,imports,leads,connections,events", stopped.completed.join(","));
     check("...and what is still pending, starting at goals", stopped.pending[0] === "goals");
     check("rows after the failed step are still there", (await count("contacts")) === 1);
     const stranded = await runFor(stopped.runId);
-    check("the run is recorded as running with its progress", stranded?.status === "running" && stranded.completedSteps.length === 6);
+    check("the run is recorded as running with its progress", stranded?.status === "running" && stranded.completedSteps.length === 7);
     check("...and the error that stopped it", Boolean(stranded?.lastError));
 
     await fixGoals();
