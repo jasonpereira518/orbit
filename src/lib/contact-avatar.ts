@@ -112,10 +112,22 @@ export async function claimAvatarSourceLookup(
 ): Promise<AvatarSourceRateLimitError | null> {
   if (userId === null) return null;
   const label = source === "unavatar" ? "unavatar.io" : "microlink";
+  const shared = !(source === "microlink" && process.env.MICROLINK_API_KEY?.trim());
+  // Known spent on this instance: answer from memory. The shared allowance is ONE row for
+  // the whole deployment, and once the day's 25 are gone every photoless row in every
+  // user's list still upserted it (and the user's own slice) just to be told no again.
+  if (shared && Date.now() < sharedSpentUntil[source]) {
+    return new AvatarSourceRateLimitError(sharedSpentUntil[source], label);
+  }
   try {
     await consumeBucket("avatarSource.user", `${source}:${userId}`, RATE_LIMITS.avatarSourceUser);
-    if (!(source === "microlink" && process.env.MICROLINK_API_KEY?.trim())) {
-      await consumeBucket("avatarSource.shared", source, RATE_LIMITS.avatarSourceShared);
+    if (shared) {
+      try {
+        await consumeBucket("avatarSource.shared", source, RATE_LIMITS.avatarSourceShared);
+      } catch (err) {
+        if (isRateLimitedError(err)) sharedSpentUntil[source] = Date.now() + err.retryAfterSec * 1000;
+        throw err;
+      }
     }
     return null;
   } catch (err) {
@@ -123,6 +135,13 @@ export async function claimAvatarSourceLookup(
     return new AvatarSourceRateLimitError(Date.now() + retryAfterMs, label);
   }
 }
+
+/**
+ * Per instance: when each source's app-wide allowance was last seen spent, until. Another
+ * instance may still spend the last few lookups before it learns the same thing, which the
+ * limiter itself still refuses; this only saves the requests that are certain to be refused.
+ */
+const sharedSpentUntil: Record<AvatarQuotaSource, number> = { unavatar: 0, microlink: 0 };
 
 /** Process-local Unavatar cooldown (ms since epoch). Same shape as Microlink's. */
 let unavatarCooldownUntil = 0;
