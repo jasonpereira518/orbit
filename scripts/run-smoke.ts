@@ -330,6 +330,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-thread-paging": "pglite",
   "smoke-extension-candidates": "pglite",
   "smoke-import-lease": "pglite",
+  "smoke-retention": "pglite",
   "smoke-import-people": "pglite",
   "smoke-drive-import": "pglite",
   "smoke-import-stall": "pglite",

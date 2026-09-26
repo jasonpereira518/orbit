@@ -2496,6 +2496,14 @@ export const SCALE_DDL: string[] = [
   // The runner holding an import, and until when. See imports.runnerToken in schema.ts.
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS runner_token text`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS runner_lease_until timestamptz`,
+
+  // --- v113: retention -------------------------------------------------------------------
+  //
+  // The hourly retention sweep (src/lib/retention.ts) finds each table's old rows by age.
+  // These three had no index on that age, so every batch would have scanned the table.
+  `CREATE INDEX IF NOT EXISTS gate_events_created_idx ON gate_events(created_at)`,
+  `CREATE INDEX IF NOT EXISTS outbound_deliveries_status_created_idx ON outbound_webhook_deliveries(status, created_at)`,
+  `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_idx ON rate_limit_buckets(window_started_at)`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */

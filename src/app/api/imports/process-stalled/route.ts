@@ -1,7 +1,8 @@
-import { count, isNotNull, lt } from "drizzle-orm";
+import { isNotNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
-import { contacts, errorEvents, usageEvents } from "@/db/schema";
+import { contacts } from "@/db/schema";
+import { pruneRetainedTables } from "@/lib/retention";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
@@ -33,13 +34,6 @@ import { reportAndContinue, reportError } from "@/lib/report-error";
 export const maxDuration = 300;
 
 // The stall threshold and the resume limit live in `src/lib/import-stall.ts`.
-
-/**
- * `usage_events` is write-only and nothing user-facing reads it, so without a sweep it
- * quietly becomes the largest table in the database. Six months is well past the window
- * any admin view looks at.
- */
-const USAGE_EVENT_RETENTION_DAYS = 180;
 
 /** Networks recalibrated per run. Bounded so one huge orbit cannot eat the invocation. */
 const RECALIBRATE_BATCH = 25;
@@ -84,28 +78,6 @@ const TIMELINE_BACKFILL_USERS = 25;
 const EMBED_SWEEP_BUDGET_MS = 90 * 1000;
 
 /**
- * Shorter than usage events, because the two answer different questions: usage feeds cost
- * and adoption rollups that look backwards, while this one answers "what is broken now".
- */
-const ERROR_EVENT_RETENTION_DAYS = 30;
-
-async function pruneOlderThan(
-  table: typeof usageEvents | typeof errorEvents,
-  days: number
-): Promise<number> {
-  const db = await getDb();
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  // Count first rather than trusting a driver-specific `rowCount` — neon-http and pglite
-  // disagree about the shape of a delete result. Both tables are indexed on created_at.
-  const [row] = await db
-    .select({ value: count() })
-    .from(table)
-    .where(lt(table.createdAt, cutoff));
-  await db.delete(table).where(lt(table.createdAt, cutoff));
-  return row?.value ?? 0;
-}
-
-/**
  * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
  * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
  * resumption path is still each job's own self-continuation; this is the last resort.
@@ -143,6 +115,8 @@ export async function GET(request: Request) {
     captureAbandoned: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
+    /** Rows removed across every append-only table this run (src/lib/retention.ts). */
+    retentionPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
     /** Meetings nobody finished, past `ABANDONED_SESSION_TTL_DAYS`. */
@@ -194,14 +168,16 @@ export async function GET(request: Request) {
     }
 
     try {
-      stats.usageEventsPruned = await pruneOlderThan(
-        usageEvents,
-        USAGE_EVENT_RETENTION_DAYS
-      );
-      stats.errorEventsPruned = await pruneOlderThan(
-        errorEvents,
-        ERROR_EVENT_RETENTION_DAYS
-      );
+      // Every append-only table, bounded per run (see src/lib/retention.ts). This replaced two
+      // unbounded DELETEs (usage and error events) that a long-neglected table would have
+      // held a lock for, inside this function's timeout.
+      const pruned = await pruneRetainedTables(new Date(), (table, err) => {
+        status = "partial";
+        reportError(err, { where: "job.process-stalled.retention", extra: { table } });
+      });
+      stats.usageEventsPruned = pruned.usage_events ?? 0;
+      stats.errorEventsPruned = pruned.error_events ?? 0;
+      stats.retentionPruned = Object.values(pruned).reduce((a, b) => a + b, 0);
       // Remembered AI answers past the longest TTL any caller reads them with.
       await pruneAiResultCache();
       // Batched background AI: whatever the providers have finished since the last sweep.
