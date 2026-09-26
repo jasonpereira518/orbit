@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,8 +35,8 @@ export type ProviderCardStatus = {
 };
 
 /**
- * One provider: its mark, its name, a state line, and then either a place to paste a key or
- * the model choice plus Clear.
+ * One provider: its mark, its name, a state line, and then the model choice, a place to
+ * paste or replace a key, and Clear.
  *
  * Exactly one provider is active at a time — that is what `aiProvider` means — so `active`
  * is true on at most one card, and picking a model on another card switches to it, because
@@ -44,6 +44,12 @@ export type ProviderCardStatus = {
  *
  * The tiers come from `tieredModels`, however many there are: a provider may declare two.
  * Gemini does, because it has nothing honest to put in the top slot.
+ *
+ * The chooser is shown whenever the provider is USABLE — a personal key, or Orbit's own key
+ * (`managedAvailable`, which a dev server on `.env.local` also has). Gating it on a personal
+ * key alone would take the model choice away from every managed account, and the chosen
+ * model is not cosmetic there: `managedModel()` returns the requested id while managed AI is
+ * off, so it is what actually runs.
  */
 export function ProviderCard({
   provider,
@@ -70,19 +76,45 @@ export function ProviderCard({
 }) {
   const [apiKey, setApiKey] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
+  /** Rotating a saved key in place. Clearing first would be the destructive route: a clear
+   *  can drop this account's embeddings, so key hygiene must not go through it. */
+  const [replacing, setReplacing] = useState(false);
   const [pending, start] = useTransition();
+  const tierRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const Mark = MARKS[provider.id];
   const tiers = tieredModels(provider.id);
   const keyFieldId = `provider-key-${provider.id}`;
   const keyErrorId = `provider-key-error-${provider.id}`;
 
-  const stateLine = status?.hasPersonalKey
+  const hasKey = Boolean(status?.hasPersonalKey);
+  const usable = hasKey || Boolean(status?.managedAvailable);
+  const showKeyField = !hasKey || replacing;
+  const chosenIndex = tiers.findIndex((m) => active && model === m.value);
+
+  const stateLine = hasKey
     ? active
       ? "Your key is saved, and Orbit is using it"
       : "Your key is saved"
     : status?.managedAvailable
       ? "No key saved — AI is already covered for you"
       : "No key yet — paste one to turn on AI features";
+
+  /**
+   * Arrows move focus without choosing. A radio group may do that where selection on focus
+   * would fire something costly, and here each choice is a save round-trip; Space or Enter
+   * on the focused button chooses, which a `<button>` already does.
+   */
+  function onTierKeyDown(event: React.KeyboardEvent, index: number) {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!step) return;
+    event.preventDefault();
+    tierRefs.current[(index + step + tiers.length) % tiers.length]?.focus();
+  }
 
   return (
     <li
@@ -105,63 +137,52 @@ export function ProviderCard({
 
       <p className="text-sm text-muted-foreground">{stateLine}</p>
 
-      {status?.hasPersonalKey ? (
-        <>
-          <div
-            role="radiogroup"
-            aria-label={`${provider.label} model`}
-            className="flex flex-wrap gap-2"
-          >
-            {tiers.map((m) => {
-              const chosen = active && model === m.value;
-              return (
-                <button
-                  key={m.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={chosen}
-                  disabled={pending}
-                  onClick={() =>
-                    start(async () => {
-                      await onSave({ provider: provider.id, model: m.value });
-                    })
-                  }
-                  className={cn(
-                    "min-h-11 flex-1 basis-32 rounded-lg border px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/70 disabled:opacity-60",
-                    chosen
-                      ? "border-primary bg-primary/10"
-                      : "border-border/60 hover:bg-card/60"
-                  )}
-                >
-                  <span className="block text-sm font-medium text-ink">
-                    {m.tier ? TIER_LABELS[m.tier] : m.label}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">{m.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-auto">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={pending}
-              aria-describedby={`provider-card-name-${provider.id}`}
-              onClick={() =>
-                start(async () => {
-                  await onClear(provider.id);
-                })
-              }
-            >
-              Clear key
-            </Button>
-          </div>
-        </>
-      ) : (
-        <div className="mt-auto space-y-1.5">
+      {usable ? (
+        <div
+          role="radiogroup"
+          aria-label={`${provider.label} model`}
+          className="flex flex-wrap gap-2"
+        >
+          {tiers.map((m, index) => {
+            const chosen = active && model === m.value;
+            return (
+              <button
+                key={m.value}
+                ref={(node) => {
+                  tierRefs.current[index] = node;
+                }}
+                type="button"
+                role="radio"
+                aria-checked={chosen}
+                // Roving tabindex: the group is one tab stop, landing on the chosen tier —
+                // or the first, when nothing here is chosen yet.
+                tabIndex={index === (chosenIndex === -1 ? 0 : chosenIndex) ? 0 : -1}
+                disabled={pending}
+                onKeyDown={(event) => onTierKeyDown(event, index)}
+                onClick={() =>
+                  start(async () => {
+                    await onSave({ provider: provider.id, model: m.value });
+                  })
+                }
+                className={cn(
+                  "min-h-11 flex-1 basis-32 rounded-lg border px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/70 disabled:opacity-60",
+                  chosen ? "border-primary bg-primary/10" : "border-border/60 hover:bg-card/60"
+                )}
+              >
+                <span className="block text-sm font-medium text-ink">
+                  {m.tier ? TIER_LABELS[m.tier] : m.label}
+                </span>
+                <span className="block text-xs text-muted-foreground">{m.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {showKeyField ? (
+        <div className="space-y-1.5">
           <Label htmlFor={keyFieldId} className="text-xs text-muted-foreground">
-            {provider.label} API key
+            {hasKey ? `New ${provider.label} API key` : `${provider.label} API key`}
           </Label>
           <div className="flex gap-2">
             <Input
@@ -182,12 +203,17 @@ export function ProviderCard({
               className="bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={() =>
                 start(async () => {
+                  // Straight to `saveAiSettings`, which overwrites the stored key. Never via
+                  // `clearApiKey` — that can reset this account's embeddings.
                   const error = await onSave({
                     provider: provider.id,
                     apiKey: apiKey.trim(),
                   });
                   setKeyError(error);
-                  if (!error) setApiKey("");
+                  if (!error) {
+                    setApiKey("");
+                    setReplacing(false);
+                  }
                 })
               }
             >
@@ -200,7 +226,52 @@ export function ProviderCard({
             </p>
           ) : null}
         </div>
-      )}
+      ) : null}
+
+      {hasKey ? (
+        <div className="mt-auto flex flex-wrap gap-2">
+          {replacing ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={pending}
+              onClick={() => {
+                setReplacing(false);
+                setApiKey("");
+                setKeyError(null);
+              }}
+            >
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              aria-describedby={`provider-card-name-${provider.id}`}
+              onClick={() => setReplacing(true)}
+            >
+              Replace key
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={pending}
+            aria-describedby={`provider-card-name-${provider.id}`}
+            onClick={() =>
+              start(async () => {
+                await onClear(provider.id);
+              })
+            }
+          >
+            Clear key
+          </Button>
+        </div>
+      ) : null}
     </li>
   );
 }

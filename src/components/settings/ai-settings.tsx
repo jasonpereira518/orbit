@@ -48,12 +48,15 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [settings, setSettings] = useState<Settings>(initialSettings);
   // A router refresh (the plan changed — Lifetime bought or revoked) hands down fresh
   // settings; adopt them rather than keep describing the old plan.
+  const [customModel, setCustomModel] = useState(initialSettings.aiModel);
   const [seenInitial, setSeenInitial] = useState(initialSettings);
   if (seenInitial !== initialSettings) {
     setSeenInitial(initialSettings);
     setSettings(initialSettings);
+    // The custom-model field mirrors the stored id, so it has to adopt the fresh settings
+    // too — otherwise it keeps showing the model this account was on before the refresh.
+    setCustomModel(initialSettings.aiModel);
   }
-  const [customModel, setCustomModel] = useState(initialSettings.aiModel);
   const [pending, start] = useTransition();
 
   const provider = settings.aiProvider;
@@ -157,8 +160,10 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
               : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Orbit Lifetime includes AI, so no key is needed there." : ""}`}
         </p>
 
+        {/* No live region below: this sits inside a collapsed panel, and hidden content is
+            never announced, so the role would claim an announcement that cannot happen. */}
         {activeProviderStatus && (
-          <div className="space-y-1 text-sm text-muted-foreground" role="status">
+          <div className="space-y-1 text-sm text-muted-foreground">
             <p>
               Status:{" "}
               {activeProviderStatus.hasPersonalKey
