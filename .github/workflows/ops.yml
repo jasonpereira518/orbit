@@ -54,7 +54,7 @@ jobs:
     # failure before its own timeout could answer.
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
           ref: main
