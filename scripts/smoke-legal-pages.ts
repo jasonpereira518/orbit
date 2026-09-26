@@ -2,14 +2,57 @@
  * The legal pages must say what the code does. This reads their source and pins the
  * statements Google verification and the audit (A3) require, the corrections that must not
  * regress, and the link between the Google scope table and the scopes the code requests.
- * Pure. Run: npx tsx scripts/smoke-legal-pages.ts
+ *
+ * It also holds a LOCK over the two page sources, in the shape of `schema-ddl.lock.json`:
+ * `legal-pages.lock.json` records a hash of both pages beside the LEGAL_LAST_UPDATED and
+ * TERMS_VERSION they were last published under. The checks above only prove the date is
+ * SOURCED from legal.ts, never that it moved, so a rewrite of the consent model could ship
+ * under a stale date with re-consent dormant and a green suite. The lock is what says no.
+ *
+ * Deliberately unforgiving: the hash is of the whole file, whitespace-collapsed, so any edit
+ * to either page — prose, markup, even a comment — counts until someone confirms the date
+ * moved with it. These are the documents people are held to; a false alarm costs one command.
+ *
+ * Pure. Run:    npx tsx scripts/smoke-legal-pages.ts
+ *       Update: npx tsx scripts/smoke-legal-pages.ts --update
  */
-import { readFileSync } from "node:fs";
+import crypto from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
-import { GOOGLE_LIMITED_USE, GOOGLE_LIMITED_USE_SENTENCE, GOOGLE_SCOPE_DISCLOSURES } from "../src/lib/legal";
+import {
+  GOOGLE_LIMITED_USE,
+  GOOGLE_LIMITED_USE_SENTENCE,
+  GOOGLE_SCOPE_DISCLOSURES,
+  LEGAL_LAST_UPDATED,
+  TERMS_VERSION,
+} from "../src/lib/legal";
 
 const privacy = readFileSync("src/app/(site)/(docs)/privacy/page.tsx", "utf8");
 const terms = readFileSync("src/app/(site)/(docs)/terms/page.tsx", "utf8");
+
+const LOCK = path.join(process.cwd(), "scripts", "legal-pages.lock.json");
+
+/** Both page sources, whitespace-collapsed so an indentation change alone is not a rewrite. */
+const fingerprint = crypto
+  .createHash("sha256")
+  .update([terms, privacy].map((s) => s.replace(/\s+/g, " ").trim()).join("\n--\n"))
+  .digest("hex");
+
+if (process.argv.includes("--update")) {
+  writeFileSync(
+    LOCK,
+    JSON.stringify(
+      { lastUpdated: LEGAL_LAST_UPDATED, termsVersion: TERMS_VERSION, fingerprint },
+      null,
+      2
+    ) + "\n"
+  );
+  console.log(
+    `legal-pages: lock updated to ${LEGAL_LAST_UPDATED} / ${TERMS_VERSION} (${fingerprint.slice(0, 12)})`
+  );
+  process.exit(0);
+}
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -67,6 +110,57 @@ check("refunds and chargebacks end access", terms.includes("Refunds and chargeba
 check("account deletion from Settings is described", terms.includes("delete your account yourself"));
 check("the Terms date comes from legal.ts", terms.includes("LEGAL_LAST_UPDATED"));
 check("the timeline cap is quoted from code", terms.includes("TIMELINE_DAILY_CONTACT_CAP"));
+
+console.log("The published version moved with the text");
+
+type LegalLock = { lastUpdated: string; termsVersion: string; fingerprint: string };
+let lock: LegalLock | null = null;
+try {
+  lock = JSON.parse(readFileSync(LOCK, "utf8")) as LegalLock;
+} catch {
+  lock = null;
+}
+
+const REMEDY = "        npx tsx scripts/smoke-legal-pages.ts --update";
+
+if (!lock) {
+  check("the lock exists", false, `no ${path.basename(LOCK)} — create it with:\n${REMEDY}`);
+} else if (lock.fingerprint !== fingerprint) {
+  const stale: string[] = [];
+  if (lock.lastUpdated === LEGAL_LAST_UPDATED) stale.push("LEGAL_LAST_UPDATED");
+  if (lock.termsVersion === TERMS_VERSION) stale.push("TERMS_VERSION");
+  if (stale.length > 0) {
+    check(
+      "the pages changed and the version moved with them",
+      false,
+      `/terms or /privacy changed but ${stale.join(" and ")} did not.\n\n` +
+        `        recorded: ${lock.lastUpdated} / ${lock.termsVersion}  ${lock.fingerprint.slice(0, 12)}\n` +
+        `        current:  ${LEGAL_LAST_UPDATED} / ${TERMS_VERSION}  ${fingerprint.slice(0, 12)}\n\n` +
+        "  Both pages render Last updated from LEGAL_LAST_UPDATED, so this text would ship\n" +
+        "  under a stale date. needsTermsAcceptance() compares the recorded acceptance against\n" +
+        "  TERMS_VERSION, so leaving it still makes shouldShowTermsNotice() false for every\n" +
+        "  existing account and the \u201cWe\u2019ve updated our Terms and Privacy Policy\u201d notice never\n" +
+        "  fires \u2014 and user_settings.terms_version records the old version for accounts that\n" +
+        "  only ever saw the new text. Set both in src/lib/legal.ts to today\u2019s date, then:\n" +
+        REMEDY
+    );
+  } else {
+    check(
+      "the lock records the published text",
+      false,
+      `the pages, LEGAL_LAST_UPDATED and TERMS_VERSION all moved, but the lock is stale. Record it with:\n${REMEDY}`
+    );
+  }
+} else if (lock.lastUpdated !== LEGAL_LAST_UPDATED || lock.termsVersion !== TERMS_VERSION) {
+  check(
+    "the lock records the published version",
+    false,
+    `the version moved (${lock.lastUpdated} / ${lock.termsVersion} \u2192 ${LEGAL_LAST_UPDATED} / ${TERMS_VERSION}) with no change to either page. ` +
+      `If that was deliberate, record it with:\n${REMEDY}`
+  );
+} else {
+  check(`both pages match the text published as ${LEGAL_LAST_UPDATED} (${TERMS_VERSION})`, true);
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
