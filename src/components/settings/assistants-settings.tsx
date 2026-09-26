@@ -59,7 +59,6 @@ export function AssistantsSettings() {
   // No subscription — the origin never changes — and null on the server, which has no window.
   const url = useSyncExternalStore(subscribeNever, getConnectorUrl, () => null);
   const chosen = ASSISTANTS[assistant];
-  const Mark = MARKS[assistant];
 
   async function copyLink() {
     if (!url) return;
@@ -82,29 +81,28 @@ export function AssistantsSettings() {
         aria-label="Which assistant do you use?"
         className="inline-flex rounded-lg border border-border/70 p-0.5"
       >
-        {ASSISTANT_IDS.map((id) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={assistant === id}
-            onClick={() => setAssistant(id)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium outline-none transition-colors duration-fast ease-house",
-              "focus-visible:ring-2 focus-visible:ring-ring/70",
-              assistant === id
-                ? "bg-card text-ink shadow-sm ring-1 ring-border/70"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            I use {ASSISTANTS[id].label}
-          </button>
-        ))}
+        {ASSISTANT_IDS.map((id) => {
+          const Mark = MARKS[id];
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={assistant === id}
+              onClick={() => setAssistant(id)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium outline-none transition-colors duration-fast ease-house",
+                "focus-visible:ring-2 focus-visible:ring-ring/70",
+                assistant === id
+                  ? "bg-card text-ink shadow-sm ring-1 ring-border/70"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Mark className="size-4" />
+              I use {ASSISTANTS[id].label}
+            </button>
+          );
+        })}
       </div>
-
-      <h4 className="flex items-center gap-2 text-sm font-medium text-ink">
-        <Mark className="size-4" />
-        {chosen.label}
-      </h4>
 
       <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
         {chosen.steps.map((step) => (
