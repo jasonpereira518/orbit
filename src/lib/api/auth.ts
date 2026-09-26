@@ -34,6 +34,7 @@ import { apiKeys } from "@/db/schema";
 import { bearerFrom, hashApiKey, looksLikeApiKey, type ApiKeyScope } from "@/lib/api/keys";
 import { entitlementsFromSettings, type Entitlements } from "@/lib/entitlements";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { isHeldByStealth } from "@/lib/site-access";
 
 export type ApiCaller = {
   userId: string;
@@ -91,6 +92,7 @@ export async function requireApiCaller(
       prefix: true,
       scopes: true,
       revokedAt: true,
+      kind: true,
     },
   });
   if (!row) {
@@ -98,6 +100,12 @@ export async function requireApiCaller(
   }
   if (row.revokedAt) {
     throw new ApiAuthError("revoked", "That API key has been revoked.");
+  }
+
+  // A connector key is minted to sit in a URL, where proxies, browser history and logs see
+  // it. It is good for the MCP connector and nothing else — never the REST API or webhooks.
+  if (row.kind === "mcp_url" && opts.surface !== "mcp") {
+    throw new ApiAuthError("unknown", "That key only works as an MCP connector URL.");
   }
 
   const scopes = (row.scopes ?? ["read"]) as ApiKeyScope[];
@@ -132,6 +140,11 @@ export async function assertAccountUsable(
   const settings = await ensureUserSettings(userId);
   if (settings.suspendedAt) {
     throw new ApiAuthError("suspended", "This Orbit account is suspended.");
+  }
+  // An account stealth is holding is not signed in anywhere else in the app; a key or an
+  // OAuth grant must not be the way around that.
+  if (await isHeldByStealth(userId, settings)) {
+    throw new ApiAuthError("suspended", "This account is waiting for an invitation.");
   }
 
   const entitlements = entitlementsFromSettings(userId, settings);
