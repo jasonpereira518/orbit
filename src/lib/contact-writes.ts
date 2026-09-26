@@ -30,7 +30,7 @@ import {
   tags,
   type Interaction,
 } from "@/db/schema";
-import { PaywallError, getEntitlements } from "@/lib/entitlements";
+import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
 import { recordGateHit } from "@/lib/gate-events";
 import {
   companyFieldsForWrite,
@@ -68,6 +68,13 @@ export type ContactWriteOptions = {
    * to re-derive a number that has not changed since the previous chunk.
    */
   headroom?: number | null;
+  /**
+   * The account's entitlements, for a caller that already resolved them (from the settings
+   * row it holds, via `entitlementsFromSettings`). In a Server Action or route handler
+   * `getEntitlements` is not deduplicated by `cache()`, so omitting this costs a read of the
+   * settings row the caller may already have. Omitted, they are read as before.
+   */
+  entitlements?: Entitlements;
 };
 
 export type ContactInput = {
@@ -365,8 +372,12 @@ function contactInsertValues(
  * gated, so a lapsed subscriber sitting above the cap keeps full access to everything
  * already in their orbit — nothing is ever hidden behind the paywall.
  */
-export async function contactHeadroomForUser(userId: string) {
-  const { contactLimit } = await getEntitlements(userId);
+export async function contactHeadroomForUser(
+  userId: string,
+  // Optional: a caller already holding the account's entitlements skips re-reading them.
+  entitlements?: Entitlements
+) {
+  const { contactLimit } = entitlements ?? (await getEntitlements(userId));
   if (contactLimit === null) return null;
 
   const db = await getDb();
@@ -401,9 +412,11 @@ export async function createContactForUser(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
-  const headroom = await contactHeadroomForUser(userId);
+  // Resolved once for both the headroom check and the paywall below; each used to read it.
+  const entitlements = options?.entitlements ?? (await getEntitlements(userId));
+  const headroom = await contactHeadroomForUser(userId, entitlements);
   if (headroom !== null && headroom < 1) {
-    const { plan, contactLimit } = await getEntitlements(userId);
+    const { plan, contactLimit } = entitlements;
     // The cap is the most direct pricing lever Orbit has, and until now hitting it left no
     // trace — so "does the 100-contact limit convert, or just annoy?" had no evidence
     // behind it either way.

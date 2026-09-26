@@ -44,13 +44,15 @@ import {
   sanitizeProfileText,
 } from "@/lib/contact-profile-format";
 import { embeddingFailureNotice } from "@/lib/chat-search-notice";
-import { getQueryEmbedding } from "@/lib/embedding-cache";
+import { completeJsonOn, createEmbedding } from "@/lib/ai";
+import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
+import { defaultResolveScope, getQueryEmbedding } from "@/lib/embedding-cache";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
-import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { loadWritingInstructions, writingInstructionsFromRow } from "@/lib/writing-instructions-store";
 import { sanitizeDraft } from "@/lib/chat-draft";
 
 /**
@@ -162,6 +164,12 @@ export type ChatContext = {
    * `askNetwork` cannot disagree about whether it applies. The client never sends it.
    */
   writingInstructions: string | null;
+  /**
+   * The account's AI access this context was built with — the one settings read the whole
+   * question shares (see `prepareChatContext`). Absent when that open failed, in which case
+   * every call resolves its own, as before. Optional so hand-built contexts in tests work.
+   */
+  access?: AiAccess;
 };
 
 /** Per contact, before the rank tiers trim it further. */
@@ -267,26 +275,33 @@ async function retrieveRankedContacts(
    * Shared with the router (`prepareChatContext`): the decider it already opened, and a hook
    * that hands it the parser's intent flags the moment they exist.
    */
-  routing?: { decider: Promise<Decider | null>; onIntent: (intent: ParsedIntent | null) => void }
+  routing?: {
+    decider: Promise<Decider | null>;
+    onIntent: (intent: ParsedIntent | null) => void;
+    /** The account read the question shares; undefined means each call opens its own. */
+    access?: Promise<AiAccess | undefined>;
+  }
 ): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
-  const activeGoals = await loadActiveGoalTexts(userId);
+  const [activeGoals, access] = await Promise.all([loadActiveGoalTexts(userId), routing?.access]);
+  // Every model call below shares the one account read; each still mints its own grant.
+  const complete = completeJsonOn(access);
   let searchNotice: string | null = null;
   steps.start("understand", "Working out what you're asking for");
   // The embedding still degrades to keywords — but now says so, instead of letting the
   // model conclude the user knows nobody like that. (The comment lives above the call:
   // smoke-chat-pipeline asserts these two run in one Promise.all by source shape.)
   const [queryEmbedding, parsedQuery, decider] = await Promise.all([
-    getQueryEmbedding(userId, q).catch((err) => {
+    getQueryEmbedding(userId, q, createEmbedding, defaultResolveScope, { access }).catch((err) => {
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
-    understandQuery(userId, q, activeGoals).then((parsed) => {
+    understandQuery(userId, q, activeGoals, complete).then((parsed) => {
       routing?.onIntent(parsed.intent ?? null);
       return parsed;
     }),
     // Beside the two above, so an account read costs the question no time. Null (no
     // TypeSafe key) for most accounts, and the rank step then runs the LLM rerank.
-    routing?.decider ?? openDecider(userId),
+    routing?.decider ?? openDecider(userId, access),
   ]);
   steps.done("understand", {
     label: "Worked out what you're asking for",
@@ -321,7 +336,7 @@ async function retrieveRankedContacts(
     userId,
     q,
     candidates,
-    undefined,
+    complete,
     parsedQuery.semanticQuery,
     decider
   );
@@ -491,6 +506,12 @@ export async function prepareChatContext(
      * turn being asked about is not in history anyway (it has not been sent yet).
      */
     excludeSlot?: string | null;
+    /**
+     * The account's AI access, when the caller already resolved it for this request (the
+     * streaming route builds it from the settings row its auth gate read). Otherwise it is
+     * opened here, once, beside the other first reads.
+     */
+    access?: AiAccess;
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -529,7 +550,16 @@ export async function prepareChatContext(
           rows.length && rows[0]!.role === "user" ? rows.slice(1) : rows
         )
     : Promise.resolve([] as Array<{ role: string; content: string }>);
-  const deciderP = openDecider(userId);
+  // ONE account read for the whole question. The decider, the query embedding and its cache
+  // scope, the query parse, the rerank and the writing notes each used to open the account
+  // for themselves — five-plus `user_settings` reads, several of them in series. Only the
+  // read is shared: every model call still mints its own grant, so the managed allowance is
+  // still checked per call. A failed open is `undefined`, and each consumer then opens its
+  // own exactly as it did before, so a bad read degrades the way it always did.
+  const accessP: Promise<AiAccess | undefined> = options.access
+    ? Promise.resolve(options.access)
+    : resolveAiAccess(userId).catch(() => undefined);
+  const deciderP = accessP.then((access) => openDecider(userId, access));
   let settleIntent: (intent: ParsedIntent | null) => void = () => {};
   const intentP = new Promise<ParsedIntent | null>((resolve) => {
     settleIntent = resolve;
@@ -566,7 +596,7 @@ export async function prepareChatContext(
         : Promise.resolve(null),
       priorRowsP,
       // Whatever happens to retrieval, the router is never left waiting on the parser.
-      retrieveRankedContacts(userId, q, steps, photos, { decider: deciderP, onIntent: settleIntent }).finally(
+      retrieveRankedContacts(userId, q, steps, photos, { decider: deciderP, onIntent: settleIntent, access: accessP }).finally(
         () => settleIntent(null)
       ),
       // Exhaustive membership for any organisation the question names — the one thing a
@@ -654,8 +684,13 @@ export async function prepareChatContext(
               });
           })()
         : Promise.resolve([] as AttachedPerson[]),
-      // Style notes never block an answer: a failed read is "no preferences".
-      loadWritingInstructions(userId).catch(() => null),
+      // Style notes never block an answer: a failed read is "no preferences". A column of
+      // the row the access was built from, so no read of their own when that open worked.
+      accessP
+        .then((access) =>
+          access ? writingInstructionsFromRow(access.settings) : loadWritingInstructions(userId)
+        )
+        .catch(() => null),
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
@@ -855,6 +890,7 @@ export async function prepareChatContext(
     modelContacts,
     focusProfile,
     writingInstructions,
+    access: await accessP,
     modelRecruiters: recruitersForChat.map((r) => ({
       id: r.id,
       fullName: r.fullName,

@@ -147,27 +147,46 @@ export async function generateRecruiterDrafts(
     );
 
     const pooled = await pooledIdsForViewer(userId, links.map((l) => l.recruiterId));
-    const created: RecruiterDraft[] = [];
-    for (let i = 0; i < links.length; i += 1) {
+
+    // Every successful draft in one multi-row insert rather than one per recruiter. Rows
+    // come back keyed by `recruiterId` — unique per user (`user_recruiter_links`), so
+    // unique across `links` — rather than trusting RETURNING's order.
+    const toInsert = links.flatMap((link, i) => {
       const draft = drafts[i];
-      if (!draft || "error" in draft) continue;
-      const [row] = await db
-        .insert(recruiterMessages)
-        .values({
-          userId,
-          recruiterId: links[i].recruiterId,
-          intent,
-          subject: draft.subject,
-          body: draft.body,
-          status: "draft",
-          gmailThreadId: links[i].gmailThreadId,
-        })
-        .returning();
+      if (!draft || "error" in draft) return [];
+      return [{ link, draft }];
+    });
+    const rows = toInsert.length
+      ? await db
+          .insert(recruiterMessages)
+          .values(
+            toInsert.map(({ link, draft }, slot) => ({
+              userId,
+              recruiterId: link.recruiterId,
+              intent,
+              subject: draft.subject,
+              body: draft.body,
+              status: "draft" as const,
+              gmailThreadId: link.gmailThreadId,
+              // One statement means one `now()` for every row; `listRecruiterDrafts` sorts
+              // by `created_at`, so a microsecond per slot keeps the order these were
+              // drafted in, as the per-row inserts did.
+              createdAt: sql`now() + ${slot}::integer * interval '1 microsecond'`,
+            }))
+          )
+          .returning()
+      : [];
+    const rowByRecruiter = new Map(rows.map((row) => [row.recruiterId, row]));
+
+    const created: RecruiterDraft[] = [];
+    for (const { link } of toInsert) {
+      const row = rowByRecruiter.get(link.recruiterId);
+      if (!row) continue;
       created.push(
         toDraft(
           row,
-          links[i].recruiter,
-          resolveRecruiterPii(links[i].recruiter, links[i], pooled.has(links[i].recruiterId)).email
+          link.recruiter,
+          resolveRecruiterPii(link.recruiter, link, pooled.has(link.recruiterId)).email
         )
       );
     }

@@ -40,7 +40,7 @@ import {
   type DuplicateSubject,
 } from "@/lib/duplicates";
 import { claimIdentities, findIdentityOwners } from "@/lib/contact-identity";
-import { mergeContacts, recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { mergeContacts, recordDuplicateSuggestion, recordDuplicateSuggestions } from "@/lib/contact-merge";
 import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
@@ -174,15 +174,16 @@ async function recordNameSuggestions(
   matches: { contact: { id: string }; reason: string; confidence: number }[]
 ): Promise<ResolveResult["suggestions"]> {
   const unresolved = matches.filter((m) => m.confidence < DUPLICATE_MERGE_CONFIDENCE);
-  for (const match of unresolved) {
-    await recordDuplicateSuggestion(
-      userId,
-      contactId,
-      match.contact.id,
-      match.reason,
-      match.confidence
-    );
-  }
+  // One insert for all of them, not one per match.
+  await recordDuplicateSuggestions(
+    userId,
+    unresolved.map((match) => ({
+      contactIdA: contactId,
+      contactIdB: match.contact.id,
+      reason: match.reason,
+      confidence: match.confidence,
+    }))
+  );
   return unresolved.map((m) => ({
     contactId: m.contact.id,
     reason: m.reason,

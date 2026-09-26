@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
  * heuristic starters, not an error.
  */
 export const GET = extensionRoute<undefined, MeResponse>({
-  handler: async ({ userId }) => {
+  handler: async ({ userId, settings }) => {
     const db = await getDb();
     const now = new Date();
 
@@ -25,7 +25,9 @@ export const GET = extensionRoute<undefined, MeResponse>({
       await Promise.all([
         getCurrentUserProfile(),
         getAiCapability(userId),
-        userHasApolloKey(userId),
+        // The row authentication already read: without it this is two more sequential
+        // reads (the row, then entitlements re-reading it), since `cache()` does nothing here.
+        userHasApolloKey(userId, settings),
         db
           .select({ value: count() })
           .from(contacts)

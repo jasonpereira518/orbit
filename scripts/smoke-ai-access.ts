@@ -75,7 +75,16 @@ import {
   managedEligibility,
   type KeyFacts,
 } from "../src/lib/managed-ai-policy";
-import { completeJson, createEmbedding, transcribeAudioWithAI, transcribeImagePages } from "../src/lib/ai";
+import {
+  completeJson,
+  completeJsonOn,
+  createEmbedding,
+  resolveEmbeddingBackend,
+  transcribeAudioWithAI,
+  transcribeImagePages,
+} from "../src/lib/ai";
+import { __clearEmbeddingCacheForTests, defaultResolveScope, getQueryEmbedding } from "../src/lib/embedding-cache";
+import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { friendlyError, isMissingAiApiKeyError } from "../src/lib/errors";
 import { confirmLifetimeCheckout, judgeLifetimeSession } from "../src/lib/lifetime-checkout";
 import { LIFETIME_METADATA_KEY, LIFETIME_METADATA_VALUE } from "../src/lib/stripe";
@@ -464,6 +473,8 @@ const U = {
   capped: "smoke-aia-capped",
   pending: "smoke-aia-pending",
   asyncPayer: "smoke-aia-async",
+  shared: "smoke-aia-shared",
+  other: "smoke-aia-other",
   openrouterOnly: "smoke-aia-openrouter-only",
 };
 
@@ -649,12 +660,18 @@ async function transitions() {
   check("background work stops at its share", isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
   r = await lastSent(() => json(U.capped, "chat.answer"));
   check("…while the person can still ask", r.req?.key === MANAGED, r.err);
+  // One access opened BEFORE the cap is hit, as `/api/chat` opens one per question: the
+  // allowance must still be summed per call, not frozen at open time.
+  const sharedCapped = await resolveAiAccess(U.capped);
   await db.insert(usageEvents).values({
     userId: U.capped, operation: "chat.answer", provider: "gemini", model: "gemini-3.5-flash",
     kind: "completion", keyOwner: "orbit", estimatedCostMicros: MANAGED_AI_BUDGET.monthlyCostMicros, success: 1,
   });
   r = await lastSent(() => json(U.capped, "chat.answer"));
   check("past the cap: refused as managed_limit, nothing sent", isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
+  r = await lastSent(() => completeJson(U.capped, { system: "Return JSON.", user: "hi", operation: "chat.answer", access: sharedCapped }));
+  check("…and on an access opened before the cap was hit (one per request), still refused per call",
+    isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
   check("…with words that say so", friendlyError(r.err, "x") === AI_ACCESS_COPY.managed_limit);
   check("…and the UI is told the same", (await getAiAccessStatus(U.capped)).reason === "managed_limit");
   await db.update(userSettings).set(ownKey()).where(eq(userSettings.userId, U.capped));
@@ -925,6 +942,96 @@ async function byokOnly() {
   }
 }
 
+/** `user_settings` statements issued while `fn` runs (the query counter is process-wide). */
+async function settingsReads(fn: () => Promise<unknown>): Promise<{ reads: number; err: unknown }> {
+  startQueryCount();
+  let err: unknown = null;
+  try {
+    await fn();
+  } catch (e) {
+    err = e;
+  } finally {
+    stopQueryCount();
+  }
+  return { reads: capturedQueries().filter((q) => /"user_settings"/.test(q)).length, err };
+}
+
+/**
+ * One request, one account read (`AiAccess.forUser`, `AiAccess.open({ row })`): a request that makes
+ * several model calls — `/api/chat` makes up to nine — resolves the account once and passes
+ * it down. What must NOT be shared is pinned too: each call still mints its own grant and
+ * writes its own usage row, and an access for one account can never pay for another.
+ * (The managed allowance on a shared access is pinned in `transitions()`.)
+ */
+async function sharedAccess() {
+  const db = await getDb();
+  await account(U.shared, ownKey());
+  await account(U.other, ownKey());
+  __clearEmbeddingCacheForTests();
+
+  console.log("\nOne account read per request");
+  // The old shape: scope and embedding each opened the account for themselves.
+  const unshared = await settingsReads(() =>
+    getQueryEmbedding(U.shared, "who knows rust", (u, t) => createEmbedding(u, t), (u) => defaultResolveScope(u)),
+  );
+  check("a query embedding with separately-opened halves reads user_settings twice (the old cost)", unshared.reads === 2, `${unshared.reads} ${String(unshared.err)}`);
+  __clearEmbeddingCacheForTests();
+  let r = await lastSent(() => getQueryEmbedding(U.shared, "who knows rust"));
+  check("getQueryEmbedding still embeds on the account's own key", r.req?.key === USER_KEY, r.req?.key ?? r.err);
+  __clearEmbeddingCacheForTests();
+  const shared = await settingsReads(() => getQueryEmbedding(U.shared, "who knows rust"));
+  check("getQueryEmbedding: scope + embedding now share ONE user_settings read", shared.reads === 1, `${shared.reads} ${String(shared.err)}`);
+  const hit = await settingsReads(() => getQueryEmbedding(U.shared, "who knows rust"));
+  check("…and a cache hit costs that one read, as before", hit.reads === 1, String(hit.reads));
+
+  const access = await resolveAiAccess(U.shared);
+  __clearEmbeddingCacheForTests();
+  const passed = await settingsReads(() =>
+    getQueryEmbedding(U.shared, "who knows go", createEmbedding, defaultResolveScope, { access }),
+  );
+  check("with the request's access passed in: no user_settings read at all", passed.reads === 0, `${passed.reads} ${String(passed.err)}`);
+  check("resolveEmbeddingBackend on a passed access agrees with a fresh open",
+    (await resolveEmbeddingBackend(U.shared, access)).backend === (await resolveEmbeddingBackend(U.shared)).backend);
+
+  const before = sent.length;
+  const calls = await settingsReads(async () => {
+    await completeJson(U.shared, { system: "Return JSON.", user: "hi", operation: "chat.understand", access });
+    await completeJsonOn(access)(U.shared, { system: "Return JSON.", user: "hi", operation: "chat.title" });
+    await createEmbedding(U.shared, "a contact", access);
+  });
+  check("three model calls on one access: zero user_settings reads", calls.reads === 0, `${calls.reads} ${String(calls.err)}`);
+  check("…each still went out on the account's own key", sent.length - before === 3 && sent.slice(before).every((x) => x.key === USER_KEY), sent.slice(before).map((x) => x.key).join(","));
+  await settle();
+  const usage = await db.select({ op: usageEvents.operation, owner: usageEvents.keyOwner }).from(usageEvents).where(eq(usageEvents.userId, U.shared));
+  check("…and each wrote its own usage row (accounting is per call, not per access)",
+    ["chat.understand", "chat.title", "search.embed"].every((op) => usage.some((u) => u.op === op && u.owner === "user")),
+    usage.map((u) => u.op).join(","));
+
+  const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, U.shared) });
+  const fromRow = await settingsReads(() => resolveAiAccess(U.shared, { row: row ?? null }));
+  check("AiAccess.open with the caller's row: no read of its own", fromRow.reads === 0, String(fromRow.reads));
+  const viaRow = await resolveAiAccess(U.shared, { row: row ?? null });
+  check("…and resolves exactly what its own read would",
+    JSON.stringify(viaRow.facts()) === JSON.stringify(access.facts()) && viaRow.plan === access.plan && viaRow.eligibility === access.eligibility);
+  const noRow = await resolveAiAccess(U.freeNone + "-missing", { row: null });
+  check("a null row is 'no row': no key, refused like a missing account",
+    (await refusal(noRow.completion("chat.answer")))?.reason === "key_required");
+
+  console.log("\nA shared access never crosses accounts");
+  r = await lastSent(() => completeJson(U.other, { system: "Return JSON.", user: "hi", operation: "chat.answer", access }));
+  check("another account's access is refused before anything is sent", r.err instanceof Error && r.count === 0, r.err);
+  r = await lastSent(() => createEmbedding(U.other, "a contact", access));
+  check("…for embeddings too", r.err instanceof Error && r.count === 0, r.err);
+  let crossed = false;
+  try {
+    access.forUser(U.other);
+  } catch {
+    crossed = true;
+  }
+  check("AiAccess.forUser refuses a mismatched account", crossed);
+  check("AiAccess.open refuses another account's row", await resolveAiAccess(U.other, { row: row ?? null }).then(() => false, () => true));
+}
+
 /**
  * `run-smoke` shares one PGlite directory across scripts, and the ops sweep and admin
  * readers scan every account — so the Lifetime accounts, managed usage and managed-failure
@@ -951,6 +1058,7 @@ run(async () => {
     } else {
       await byokOnly();
     }
+    await sharedAccess();
   } finally {
     await cleanup();
   }

@@ -92,10 +92,29 @@ export async function redirectIfAuthenticated() {
  *
  * Demo mode is exempt: `demo-user` is a shared local literal, never a real account.
  */
-export const requireUserId = cache(async (): Promise<string> => {
+export const requireUserId = cache(
+  async (): Promise<string> => (await requireAuthenticatedUser()).userId
+);
+
+/** The signed-in user and the `user_settings` row `requireUserId()` bootstrapped for them. */
+export type AuthenticatedUser = {
+  userId: string;
+  settings: Awaited<ReturnType<typeof bootstrapAuthenticatedUser>>;
+};
+
+/**
+ * `requireUserId()`, also handing back the settings row the gate already read.
+ *
+ * Same gate, same errors — `requireUserId()` is this with the row dropped. It exists for
+ * Server Actions and route handlers, where `cache()` is a pass-through: there, a later
+ * `ensureUserSettings(userId)` or `getEntitlements(userId)` is another round trip for the
+ * row this function has just read. Pass `settings` on instead (`entitlementsFromSettings`,
+ * `resolveApolloKey(userId, row)`), as the app pulse does.
+ */
+export const requireAuthenticatedUser = cache(async (): Promise<AuthenticatedUser> => {
   if (isDemoMode()) {
-    await bootstrapAuthenticatedUser("demo-user");
-    return "demo-user";
+    const settings = await bootstrapAuthenticatedUser("demo-user");
+    return { userId: "demo-user", settings };
   }
 
   if (!isClerkConfigured()) {
@@ -122,7 +141,7 @@ export const requireUserId = cache(async (): Promise<string> => {
       throw new AccountSuspendedError(settings.suspendedAt);
     }
     if (await isHeldByStealth(userId, settings)) throw new AccountHeldError();
-    return userId;
+    return { userId, settings };
   }
 
   throw new UnauthorizedError();

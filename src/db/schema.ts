@@ -3955,6 +3955,31 @@ export const constellationSettings = pgTable("constellation_settings", {
  * way its environment says. `stealth_since` is when stealth was last switched ON: accounts
  * created after it need an invitation to get in (`src/lib/site-access.ts`).
  */
+/**
+ * The brand color Orbit learned for a company or school outside the curated table in
+ * `src/lib/brand-colors.ts` — from the organization's own website icon, or the official
+ * color Wikidata records for it. Global rather than per user: an organization's color is a
+ * public fact, and learning Acme's color once serves everyone who knows someone there.
+ *
+ * `name_key` is `normalizeCompanyName` (trimmed, lowercased, whitespace collapsed), which
+ * SQL can compute too, so a user's companies and schools join to it without a round trip.
+ * A lookup that found nothing is still a row (`hex` null), so it is not retried on every
+ * page load; `src/lib/org-brand-learn.ts` retries those after a while.
+ */
+export const orgBrandColors = pgTable(
+  "org_brand_colors",
+  {
+    nameKey: text("name_key").notNull(),
+    kind: text("kind").$type<"company" | "school">().notNull(),
+    name: text("name").notNull(),
+    hex: text("hex"),
+    domain: text("domain"),
+    source: text("source").$type<"wikidata_color" | "icon" | "none">().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("org_brand_colors_key_uidx").on(t.nameKey, t.kind)]
+);
+
 export const siteSettings = pgTable("site_settings", {
   id: integer("id").primaryKey().default(1),
   stealthEnabled: boolean("stealth_enabled"),

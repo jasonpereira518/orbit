@@ -200,7 +200,8 @@ async function buildDataset(
   }
 
   if (dataset === "health") {
-    const health = await getAdminHealth();
+    // Every keyless account, not the page's capped list.
+    const health = await getAdminHealth({ missingKeyLimit: null });
     const rows: Array<Record<string, unknown>> = [
       ...health.missingKeyAccounts.map((r) => ({
         kind: "missing-key",

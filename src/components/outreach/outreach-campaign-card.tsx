@@ -13,8 +13,9 @@ import type { CampaignMetrics } from "@/lib/outreach-types";
 export function OutreachCampaignCard({
   campaign,
 }: {
+  // No prospect list: the outreach list counts them in SQL (`metrics.prospectCount`)
+  // rather than shipping every prospect to the browser to take a `.length`.
   campaign: CampaignEditorInitial & {
-    prospects: Array<{ id: string; status: string }>;
     updatedAt: Date;
     metrics: CampaignMetrics;
   };
@@ -41,7 +42,7 @@ export function OutreachCampaignCard({
           <span>{campaign.metrics.sentCount} sent</span>
           <span>{campaign.metrics.positiveReplyCount} positive</span>
           <span>{campaign.metrics.awaitingReplyCount} awaiting</span>
-          <span>{campaign.prospects.length} prospects</span>
+          <span>{campaign.metrics.prospectCount} prospects</span>
           <span>
             Updated{" "}
             {formatDistanceToNow(new Date(campaign.updatedAt), {

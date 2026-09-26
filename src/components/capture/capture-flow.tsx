@@ -41,7 +41,7 @@ import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import { clearCaptureJob, refreshCaptureJob, seedCaptureJob, useCaptureJob } from "@/lib/capture/job-store";
-import { acceptedPeople, choicesFromOpportunities, countDecisions, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
+import { acceptedPeople, choicesFromOpportunities, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
@@ -299,16 +299,12 @@ export function CaptureFlow({
           void refreshCaptureJob();
           return;
         }
+        // No auto-save, even for a one-person capture: the summary after the last card is
+        // where suggested reminders and opportunities are chosen, and saving straight from
+        // Keep skipped it — the page jumped to "Saved" before the person could look.
         seedCaptureJob(res.job, { force: true });
-        // One person, kept: accept is the save.
-        const items = res.job.result?.items ?? [];
-        const counts = countDecisions(items, res.job.decisions);
-        if (decision?.decision === "accept" && items.length === 1 && counts.pending === 0 && counts.accepted === 1) {
-          void save(res.job.id);
-        }
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [job]
   );
 

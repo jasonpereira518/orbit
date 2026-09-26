@@ -47,7 +47,8 @@ export type ShortformTagParse =
 /**
  * A short-form tag carries the account's OPAQUE tag id, never its user id — a tag lives on
  * in Deepgram's usage records, which their zero-retention flag does not cover. Resolving one
- * to an account is `userIdForSpeechTagId` in `src/lib/speech-tag-id.ts`, one indexed lookup;
+ * to an account is `userIdForSpeechTagId` in `src/lib/speech-tag-id.ts`, one indexed lookup
+ * (the daily reconcile in `/api/ops/speech-usage` resolves every tag it sees in one join);
  * that is deliberately a second step rather than something this parser does, so this file
  * stays a pure shape check the way the meeting half is.
  *

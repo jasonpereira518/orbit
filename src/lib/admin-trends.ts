@@ -725,18 +725,22 @@ export async function activationTrend(
       SELECT s.user_id,
              date_trunc(${grain}, s.created_at) AS bucket_start,
              s.onboarding_completed_at,
-             (SELECT count(*) FROM contacts c WHERE c.user_id = s.user_id) AS contact_count,
-             (SELECT count(*) FROM imports i WHERE i.user_id = s.user_id) AS import_count
+             EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id) AS has_contact,
+             EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id) AS has_import
       FROM user_settings s
+      -- Only cohorts the spine draws: an older signup joins no bucket, so probing its
+      -- contacts was a walk of every account's rows for nothing. EXISTS, not count(*):
+      -- only "any at all" is ever asked, and that is one index probe per account.
+      WHERE s.created_at >= ${SPINE_START}
     )
     SELECT spine.bucket_start,
            count(p.user_id)::int AS signed,
            coalesce(sum(CASE
              WHEN p.onboarding_completed_at IS NOT NULL
-               OR p.contact_count > 0
-               OR p.import_count > 0
+               OR p.has_contact
+               OR p.has_import
              THEN 1 ELSE 0 END), 0)::int AS onboarded,
-           coalesce(sum(CASE WHEN p.contact_count > 0 THEN 1 ELSE 0 END), 0)::int AS first_contact
+           coalesce(sum(CASE WHEN p.has_contact THEN 1 ELSE 0 END), 0)::int AS first_contact
     FROM spine
     LEFT JOIN per_user p ON p.bucket_start = spine.bucket_start
     GROUP BY spine.bucket_start
@@ -809,6 +813,9 @@ export async function aiVolumeTrend(
     FROM spine
     LEFT JOIN usage_events u
       ON date_trunc(${grain}, u.created_at) = spine.bucket_start
+     -- A sargable lower bound, so the scan covers the drawn window rather than every
+     -- retained row (the join condition alone is an expression no index can serve).
+     AND u.created_at >= ${SPINE_START}
     GROUP BY spine.bucket_start
     ORDER BY spine.bucket_start
   `);

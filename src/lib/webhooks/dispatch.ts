@@ -93,6 +93,21 @@ export async function enqueueWebhookEvent(
    */
   opts: { eventId?: string } = {}
 ): Promise<string[]> {
+  return enqueueWebhookEvents(userId, type, [{ object, eventId: opts.eventId }]);
+}
+
+/**
+ * `enqueueWebhookEvent` for several events of one type at once: the endpoints are read once
+ * and every delivery row goes in one multi-row insert, so a sweep queueing N events costs two
+ * statements rather than 2N. Same contract — never throws, returns the endpoint ids to try
+ * inline (empty when nothing is subscribed or the queue write failed).
+ */
+export async function enqueueWebhookEvents(
+  userId: string,
+  type: WebhookEventType,
+  events: Array<{ object: unknown; eventId?: string }>
+): Promise<string[]> {
+  if (events.length === 0) return [];
   try {
     const db = await getDb();
     const endpoints = await db.query.webhookEndpoints.findMany({
@@ -102,24 +117,26 @@ export async function enqueueWebhookEvent(
     const subscribed = endpoints.filter((e) => (e.eventTypes ?? []).includes(type));
     if (subscribed.length === 0) return [];
 
-    const eventId = opts.eventId
-      ? `evt_${opts.eventId}`
-      : `evt_${randomUUID().replace(/-/g, "")}`;
-    const envelope = buildEnvelope({ id: eventId, type, createdAt: new Date(), object });
+    const createdAt = new Date();
+    const rows = events.flatMap(({ object, eventId: chosen }) => {
+      const eventId = chosen
+        ? `evt_${chosen}`
+        : `evt_${randomUUID().replace(/-/g, "")}`;
+      const envelope = buildEnvelope({ id: eventId, type, createdAt, object });
+      return subscribed.map((e) => ({
+        userId,
+        endpointId: e.id,
+        eventId,
+        eventType: type,
+        payload: envelope,
+        status: "pending" as const,
+        nextAttemptAt: createdAt,
+      }));
+    });
 
     await db
       .insert(outboundWebhookDeliveries)
-      .values(
-        subscribed.map((e) => ({
-          userId,
-          endpointId: e.id,
-          eventId,
-          eventType: type,
-          payload: envelope,
-          status: "pending" as const,
-          nextAttemptAt: new Date(),
-        }))
-      )
+      .values(rows)
       // Makes enqueue idempotent: a retried write cannot double-deliver.
       .onConflictDoNothing();
 
@@ -358,12 +375,13 @@ export async function emitDueFollowupEvents(
   let events = 0;
   for (const { user_id: userId } of users) {
     try {
-      const due = await loadDueFollowUps(userId);
-      for (const contact of due.slice(0, 25)) {
-        const queued = await enqueueWebhookEvent(
-          userId,
-          "followup.due",
-          {
+      const due = (await loadDueFollowUps(userId)).slice(0, 25);
+      // One endpoint read and one insert for the whole list, not two statements a contact.
+      const queued = await enqueueWebhookEvents(
+        userId,
+        "followup.due",
+        due.map((contact) => ({
+          object: {
             contactId: contact.id,
             name: contact.fullName,
             company: contact.company ?? null,
@@ -372,10 +390,10 @@ export async function emitDueFollowupEvents(
               ? new Date(contact.nextFollowUpAt).toISOString()
               : null,
           },
-          { eventId: `followup:${contact.id}:${day}` }
-        );
-        if (queued.length > 0) events++;
-      }
+          eventId: `followup:${contact.id}:${day}`,
+        }))
+      );
+      if (queued.length > 0) events += due.length;
     } catch (err) {
       // One user's dashboard failing must not stop the others.
       reportError(err, { where: "job.webhooks.followup-emit", level: "warning" });

@@ -41,7 +41,8 @@ export function buildOpportunityItemHash(
 /**
  * Rewrite `contacts.opportunities` from the live rows.
  *
- * **This is the ONLY writer of that column.** Every path that touches an opportunity calls it
+ * **This is the ONLY writer of that column** (with its set-based form,
+ * `syncContactOpportunityMirrors`). Every path that touches an opportunity calls one of them
  * afterwards — the capture save, undo, and each of the CRUD actions.
  *
  * The column is kept because four readers predate this table and none of them should have to
@@ -86,14 +87,56 @@ export async function syncContactOpportunityMirror(
   return labels;
 }
 
-/** Re-derive the mirror for several contacts. Used after a batch save touches many people. */
+/**
+ * Re-derive the mirror for several contacts. Used after a batch save touches many people.
+ *
+ * The set-based form of `syncContactOpportunityMirror` — same rows, same order, same label
+ * function, same stamp — as one read and one write instead of two statements per contact.
+ * Every contact passed in gets a VALUES row, so one whose last open opportunity just closed
+ * is rewritten to `[]` exactly as the single-contact form would.
+ */
 export async function syncContactOpportunityMirrors(
   userId: string,
   contactIds: readonly string[]
 ): Promise<void> {
-  for (const id of new Set(contactIds)) {
-    await syncContactOpportunityMirror(userId, id);
+  const ids = [...new Set(contactIds)];
+  if (!ids.length) return;
+  const db = await getDb();
+  const rows = await db
+    .select({
+      contactId: contactOpportunities.contactId,
+      kind: contactOpportunities.kind,
+      label: contactOpportunities.label,
+      status: contactOpportunities.status,
+    })
+    .from(contactOpportunities)
+    .where(
+      and(
+        eq(contactOpportunities.userId, userId),
+        inArray(contactOpportunities.contactId, ids),
+        inArray(contactOpportunities.status, [...OPEN_OPPORTUNITY_STATUSES])
+      )
+    )
+    .orderBy(asc(contactOpportunities.createdAt));
+
+  const rowsByContact = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = rowsByContact.get(row.contactId) ?? [];
+    list.push(row);
+    rowsByContact.set(row.contactId, list);
   }
+
+  const values = ids.map(
+    (id) =>
+      sql`(${id}::uuid, ${JSON.stringify(opportunityMirrorLabels(rowsByContact.get(id) ?? []))}::jsonb)`
+  );
+  await db.execute(sql`
+    UPDATE contacts AS c
+       SET opportunities = v.opportunities,
+           embedding_stale_at = ${new Date()}
+      FROM (VALUES ${sql.join(values, sql`, `)}) AS v(id, opportunities)
+     WHERE c.id = v.id AND c.user_id = ${userId}
+  `);
 }
 
 export async function listOpportunitiesForContact(
