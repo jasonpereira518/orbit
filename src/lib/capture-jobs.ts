@@ -8,7 +8,7 @@
  * runner's; the `claim_token` is what makes the second statement safe — only the holder's
  * outcome lands, the other runner's UPDATE matches zero rows.
  */
-import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
 import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
@@ -26,6 +26,7 @@ import {
   type CaptureReminderChoices,
   type CaptureJobSource,
 } from "@/lib/capture/types";
+import { internalFetch } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
 
 export type CaptureJobRow = typeof captureJobs.$inferSelect;
@@ -491,6 +492,18 @@ export async function failCaptureJob(id: string, message: string): Promise<void>
     .where(eq(captureJobs.id, id));
 }
 
+/** Stalled capture jobs picked up per sweep; the same bound as `STALL_SWEEP_LIMIT`. */
+export const CAPTURE_STALL_SWEEP_LIMIT = 50;
+
+/**
+ * Resume a capture job through its internal run route, which has its own 300s invocation,
+ * rather than awaiting it inside the hourly backstop. See `kickImportContinuation`.
+ */
+export async function kickCaptureJob(id: string): Promise<void> {
+  const res = await internalFetch(`/api/capture/jobs/${id}/run`, { method: "POST" });
+  if (!res.ok) throw new Error(`capture job kick answered ${res.status}`);
+}
+
 export type CaptureStallSweepResult = { found: number; resumed: number; resumeFailed: number; gaveUp: number; swept: number };
 
 /**
@@ -501,6 +514,7 @@ export async function resumeStalledCaptureJobs(options: {
   now?: Date;
   thresholdMs?: number;
   maxResumes?: number;
+  limit?: number;
   runner: (id: string) => Promise<unknown>;
 }): Promise<CaptureStallSweepResult> {
   const now = options.now ?? new Date();
@@ -514,6 +528,9 @@ export async function resumeStalledCaptureJobs(options: {
       lt(captureJobs.updatedAt, new Date(now.getTime() - threshold))
     ),
     columns: { id: true },
+    // Oldest first, and bounded: the rest wait for the next sweep.
+    orderBy: [asc(captureJobs.updatedAt)],
+    limit: options.limit ?? CAPTURE_STALL_SWEEP_LIMIT,
   });
 
   const result: CaptureStallSweepResult = { found: stalled.length, resumed: 0, resumeFailed: 0, gaveUp: 0, swept: 0 };
