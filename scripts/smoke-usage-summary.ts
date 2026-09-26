@@ -12,6 +12,7 @@ import { loadUsageSummary, summarizeUsageRows, USAGE_SUMMARY_DAYS } from "../src
 
 const USER = "smoke-usage-summary-user";
 const OTHER = "smoke-usage-summary-other";
+const REPORTED_USER = "smoke-usage-summary-reported";
 const NOW = new Date("2026-09-15T12:00:00.000Z");
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
 
@@ -52,7 +53,7 @@ function summaryFor(rows: { costSource: "estimated" | "reported" }[]) {
 
 run(async () => {
   const db = await getDb();
-  await db.delete(usageEvents).where(inArray(usageEvents.userId, [USER, OTHER]));
+  await db.delete(usageEvents).where(inArray(usageEvents.userId, [USER, OTHER, REPORTED_USER]));
   await db.insert(usageEvents).values([
     { ...base, userId: USER, operation: "capture.parse", inputTokens: 1000, outputTokens: 200, estimatedCostMicros: 800, createdAt: daysAgo(1) },
     { ...base, userId: USER, operation: "capture.parse", inputTokens: 1000, outputTokens: 200, estimatedCostMicros: 800, createdAt: daysAgo(3) },
@@ -63,6 +64,10 @@ run(async () => {
     { ...base, userId: OTHER, operation: "chat.answer", estimatedCostMicros: 123_456, createdAt: daysAgo(1) },
     // A Lifetime call on Orbit's managed key: metered against the allowance, never "your key".
     { ...base, userId: USER, operation: "chat.answer", keyOwner: "orbit", estimatedCostMicros: 77_777, createdAt: daysAgo(1) },
+    // A window where every row is provider-reported: the only DB-backed coverage of the
+    // `bool_or(cost_source = 'estimated')` aggregate's "false" direction.
+    { ...base, userId: REPORTED_USER, operation: "chat.answer", costSource: "reported", estimatedCostMicros: 4000, createdAt: daysAgo(1) },
+    { ...base, userId: REPORTED_USER, operation: "chat.answer", costSource: "reported", estimatedCostMicros: 2000, createdAt: daysAgo(2) },
   ]);
 
   const summary = await loadUsageSummary(USER, { now: NOW });
@@ -83,6 +88,13 @@ run(async () => {
   check("an account with no calls gets an empty summary", empty.rows.length === 0 && empty.totalCalls === 0);
   check("an empty account's window is not claimed as exact", empty.costIsEstimated === true);
 
+  const reported = await loadUsageSummary(REPORTED_USER, { now: NOW });
+  check(
+    "a real query window of only reported rows does not call the cost an estimate",
+    reported.costIsEstimated === false,
+    `${reported.costIsEstimated}`
+  );
+
   check(
     "a window with any estimated row reports the cost as an estimate",
     summaryFor([{ costSource: "estimated" }, { costSource: "reported" }]).costIsEstimated === true
@@ -96,7 +108,7 @@ run(async () => {
     summaryFor([]).costIsEstimated === true
   );
 
-  await db.delete(usageEvents).where(inArray(usageEvents.userId, [USER, OTHER]));
+  await db.delete(usageEvents).where(inArray(usageEvents.userId, [USER, OTHER, REPORTED_USER]));
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
   console.log("\nAll usage-summary checks passed.");
 });

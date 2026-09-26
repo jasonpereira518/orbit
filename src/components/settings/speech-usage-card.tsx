@@ -30,10 +30,14 @@ function formatMinutes(seconds: number): string {
   return `${hours} h ${minutes} min`;
 }
 
-/** What Orbit did: minutes actually transcribed this month, added across both meters. */
+/**
+ * What Orbit did: minutes actually transcribed this month, added across both meters. Rounds
+ * to whole minutes, so anything under 30 seconds would otherwise print "0 min transcribed" —
+ * worded as if nothing happened instead.
+ */
 function activityLine(speech: SpeechAllowances): string {
   const usedSeconds = speech.meeting.used + speech.shortform.used;
-  if (usedSeconds <= 0) return "Nothing transcribed yet this month.";
+  if (usedSeconds < 30) return "Nothing transcribed yet this month.";
   return `${formatMinutes(usedSeconds)} transcribed this month, across meetings and voice notes.`;
 }
 
@@ -42,7 +46,7 @@ function Meter({ label, allowance }: { label: string; allowance: SpeechAllowance
     return (
       <li className="flex min-h-7 items-center justify-between gap-3">
         <span>{label}</span>
-        <span>Not on this plan</span>
+        <span className="text-muted-foreground">Not on this plan</span>
       </li>
     );
   }

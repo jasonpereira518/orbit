@@ -15,8 +15,13 @@ export type GroupedUsageRow = {
   outputTokens: number | string;
   costMicros: number | string;
   unpricedCalls: number | string;
-  /** `bool_or(cost_source = 'estimated')` within the group. */
-  hasEstimatedRow: boolean;
+  /**
+   * `bool_or(cost_source = 'estimated')` within the group. Typed nullable even though the
+   * column is NOT NULL today: a future nullable column or a `filter (where …)` rewrite of
+   * this aggregate should not be able to silently flip an unknown row to "reported", the
+   * one direction this task exists to avoid overstating.
+   */
+  hasEstimatedRow: boolean | null;
 };
 
 /**
@@ -42,7 +47,7 @@ export function summarizeUsageRows(
     unpricedCalls: Number(r.unpricedCalls),
   }));
 
-  const costIsEstimated = rows.length === 0 || rows.some((r) => r.hasEstimatedRow);
+  const costIsEstimated = rows.length === 0 || rows.some((r) => r.hasEstimatedRow ?? true);
 
   return {
     since: since.toISOString(),

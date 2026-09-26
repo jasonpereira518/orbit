@@ -39,9 +39,13 @@ export function AiUsageCard() {
   }, []);
 
   const totalFailures = summary?.rows.reduce((n, r) => n + r.failures, 0) ?? 0;
-  const cost = summary ? formatCostMicros(summary.totalCostMicros) : null;
-  const topRows = summary?.rows.slice(0, TOP_FEATURES) ?? [];
-  const hasMoreRows = (summary?.rows.length ?? 0) > TOP_FEATURES;
+  // `summary.rows` is ordered by cost (loadUsageSummary's own `desc(cost)`), but this
+  // sentence names call VOLUME, so it re-sorts its own slice by calls rather than
+  // inheriting an ordering that would name an arbitrary feature "most of it" whenever
+  // nothing is priced (every managed-key call has costMicros 0).
+  const byCalls = summary ? [...summary.rows].sort((a, b) => b.calls - a.calls) : [];
+  const topRows = byCalls.slice(0, TOP_FEATURES);
+  const hasMoreRows = byCalls.length > TOP_FEATURES;
 
   return (
     <SettingsSection
@@ -76,13 +80,11 @@ export function AiUsageCard() {
               complete.
             </p>
           ) : null}
-          {cost ? (
-            <p className="text-muted-foreground">
-              {summary.costIsEstimated
-                ? `That’s roughly ${cost} at list prices — an estimate. Your provider’s own dashboard has the real number.`
-                : `That’s ${cost}, from your provider’s own reporting.`}
-            </p>
-          ) : null}
+          <p className="text-muted-foreground">
+            {summary.costIsEstimated
+              ? `That’s roughly ${formatCostMicros(summary.totalCostMicros)} at list prices — an estimate. Your provider’s own dashboard has the real number.`
+              : `That’s ${formatCostMicros(summary.totalCostMicros)}, from your provider’s own reporting.`}
+          </p>
           {summary.unpricedCalls > 0 ? (
             <p className="text-xs text-muted-foreground">
               {summary.unpricedCalls.toLocaleString()}{" "}
