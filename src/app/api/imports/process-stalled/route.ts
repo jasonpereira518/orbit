@@ -11,8 +11,7 @@ import { isClerkConfigured } from "@/lib/demo-account";
 import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
 import { sweepExpiredHandoffs } from "@/lib/scan-handoff";
 import { clerkClient } from "@clerk/nextjs/server";
-import { resumeStalledCaptureJobs } from "@/lib/capture-jobs";
-import { runCaptureJobById } from "@/lib/capture-job-runner";
+import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import {
   finishCronRun,
@@ -45,6 +44,14 @@ const USAGE_EVENT_RETENTION_DAYS = 180;
 
 /** Networks recalibrated per run. Bounded so one huge orbit cannot eat the invocation. */
 const RECALIBRATE_BATCH = 25;
+
+/**
+ * Wall-clock ceiling on the recalibration loop. A count alone cannot bound it: one
+ * recalibration rewrites every contact of that user, so 25 users at 50k contacts each can
+ * outlast the route on their own. Users past the budget are still stale and come back
+ * next run.
+ */
+const RECALIBRATE_BUDGET_MS = 60 * 1000;
 
 /** Users listed per run for the embedding backstop — see the try block below. */
 const EMBED_BACKFILL_USERS = 25;
@@ -131,6 +138,10 @@ async function pruneOlderThan(
  * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
  * resumption path is still each job's own self-continuation; this is the last resort.
  *
+ * Resuming means KICKING each job's own internal route, never running it here. A job
+ * can take minutes, and running them inline let two stalled imports kill this 300s route
+ * before any of the housekeeping below it ran.
+ *
  * Housekeeping rides along and every run is recorded in `cron_runs`. A job that loses
  * self-continuation can sit stalled for up to an hour.
  */
@@ -156,6 +167,8 @@ export async function GET(request: Request) {
     captureResumed: 0,
     captureGaveUp: 0,
     captureSwept: 0,
+    /** Uploads sent in parts whose last part never arrived, closed as failed. */
+    captureAbandoned: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
@@ -197,11 +210,12 @@ export async function GET(request: Request) {
     stats.resumeGaveUp = sweep.gaveUp;
 
     try {
-      const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: runCaptureJobById });
+      const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: kickCaptureJob });
       stats.captureStalledFound = captures.found;
       stats.captureResumed = captures.resumed;
       stats.captureGaveUp = captures.gaveUp;
       stats.captureSwept = captures.swept;
+      stats.captureAbandoned = captures.abandoned;
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.captures" });
@@ -281,7 +295,9 @@ export async function GET(request: Request) {
       // full-network scan that materializing closeness exists to remove. This is what
       // eventually settles it. Bounded per run so one enormous orbit cannot use up the
       // whole invocation.
+      const recalibrateDeadline = Date.now() + RECALIBRATE_BUDGET_MS;
       for (const staleUserId of await findStaleCohorts(RECALIBRATE_BATCH)) {
+        if (Date.now() > recalibrateDeadline) break;
         await recalibrateCloseness(staleUserId).catch(
           reportAndContinue({ where: "job.process-stalled.recalibrate-user", userId: staleUserId }, null)
         );

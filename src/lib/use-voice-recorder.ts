@@ -21,7 +21,7 @@ import {
   MIN_RECORDING_MS,
   TARGET_SAMPLE_RATE,
   bytesToBase64,
-  concatInt16,
+  PcmAccumulator,
   downsampleTo16k,
   encodeWav16,
   msToSamples,
@@ -154,8 +154,8 @@ export function useVoiceRecorder(
   const primedCtxRef = useRef<AudioContext | null>(null);
   const nodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const chunksRef = useRef<Int16Array[]>([]);
-  const sampleCountRef = useRef(0);
+  /** The session's audio at 16 kHz, capped at `MAX_RECORDING_MS`. */
+  const pcmRef = useRef<PcmAccumulator | null>(null);
   const startedAtRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const capRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -209,9 +209,8 @@ export function useVoiceRecorder(
   /** Everything a finished session needs: encode, hand over, reset. */
   const finish = useCallback(
     (reason: VoiceRecorderEndReason) => {
-      const chunks = chunksRef.current;
-      chunksRef.current = [];
-      sampleCountRef.current = 0;
+      const pcm = pcmRef.current;
+      pcmRef.current = null;
       teardown();
 
       if (reason === "cancel") {
@@ -224,7 +223,7 @@ export function useVoiceRecorder(
       setState("encoding");
 
       // Already at 16 kHz: the chunks were resampled as they arrived.
-      const samples = concatInt16(chunks);
+      const samples = pcm ? pcm.samples() : new Int16Array(0);
       const durationMs = samplesToMs(samples.length);
 
       if (durationMs < MIN_RECORDING_MS) {
@@ -256,8 +255,7 @@ export function useVoiceRecorder(
 
   const fail = useCallback(
     (code: VoiceRecorderErrorCode) => {
-      chunksRef.current = [];
-      sampleCountRef.current = 0;
+      pcmRef.current = null;
       teardown();
       setState("error");
       setError(code);
@@ -399,7 +397,6 @@ export function useVoiceRecorder(
         // nothing to route, and routing the mic to the speakers would be feedback.
 
         const inputRate = ctx.sampleRate;
-        const capSamples = msToSamples(MAX_RECORDING_MS);
 
         node.port.onmessage = (event: MessageEvent<Float32Array>) => {
           if (session !== sessionRef.current) return;
@@ -419,19 +416,14 @@ export function useVoiceRecorder(
           const resampled = downsampleTo16k(frame, inputRate);
           if (resampled.length === 0) return;
 
-          const remaining = capSamples - sampleCountRef.current;
-          if (remaining <= 0) return;
-          const kept =
-            resampled.length <= remaining ? resampled : resampled.subarray(0, remaining);
-          chunksRef.current.push(kept);
-          sampleCountRef.current += kept.length;
+          // Past the cap `append` keeps nothing; the cap timer ends the session.
+          pcmRef.current?.append(resampled);
         };
 
         nodeRef.current = node;
         sourceRef.current = source;
         startedAtRef.current = Date.now();
-        chunksRef.current = [];
-        sampleCountRef.current = 0;
+        pcmRef.current = new PcmAccumulator(msToSamples(MAX_RECORDING_MS));
         setState("recording");
 
         tickRef.current = setInterval(() => {
@@ -454,8 +446,16 @@ export function useVoiceRecorder(
   }, [fail, finish, level]);
 
   // Release the device if the panel unmounts mid-recording — a route change must not leave
-  // the microphone light on.
-  useEffect(() => teardown, [teardown]);
+  // the microphone light on. The bump strands a start still waiting on the permission
+  // prompt, so the stream it is eventually handed is stopped rather than wired up with
+  // nobody left to tear it down.
+  useEffect(
+    () => () => {
+      sessionRef.current++;
+      teardown();
+    },
+    [teardown]
+  );
 
   return {
     state,

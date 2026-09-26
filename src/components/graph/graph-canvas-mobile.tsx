@@ -333,6 +333,30 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     [cancelDraw, cancelTween]
   );
 
+  /**
+   * Leaving the chart hands its memory back. The sprite and label caches are module-level,
+   * and at 10k contacts they hold a 64KB haze bitmap per cluster and a measured string per
+   * name — tens of MB on a phone that would otherwise outlive the page. Canvas backing
+   * stores are only reclaimed at GC, and iOS caps the total, so they are zeroed now rather
+   * than left for a collector that may run after the next page has asked for its own.
+   * On a StrictMode remount the resize effect rebuilds both canvases and the caches refill
+   * on the next frame.
+   */
+  useEffect(
+    () => () => {
+      clearSpriteCaches();
+      clearTextCache();
+      for (const canvas of [canvasRef.current, backgroundRef.current]) {
+        if (canvas) {
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+      }
+      backgroundRef.current = null;
+    },
+    []
+  );
+
   // --- redraw triggers ----------------------------------------------------
   useEffect(() => {
     requestDraw();

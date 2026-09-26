@@ -86,6 +86,15 @@ function main() {
     prod({ ENCRYPTION_SECRET: "change-me-to-a-long-random-string" }).errors.some((e) => e.includes("ENCRYPTION_SECRET"))
   );
   check("a short CRON_SECRET is an error", prod({ CRON_SECRET: "short" }).errors.some((e) => e.includes("CRON_SECRET")));
+  check("no CLERK_JWT_KEY is allowed (Clerk fetches the JWKS)", !prod({ CLERK_JWT_KEY: undefined }).errors.some((e) => e.includes("CLERK_JWT_KEY")));
+  check(
+    "a PEM CLERK_JWT_KEY is accepted",
+    !prod({ CLERK_JWT_KEY: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBg\n-----END PUBLIC KEY-----" }).errors.some((e) => e.includes("CLERK_JWT_KEY"))
+  );
+  check(
+    "a non-PEM CLERK_JWT_KEY is an error (it would sign everyone out)",
+    prod({ CLERK_JWT_KEY: "sk_live_abc" }).errors.some((e) => e.includes("CLERK_JWT_KEY"))
+  );
   check("an http APP_BASE_URL is an error", prod({ APP_BASE_URL: "http://orbit.test" }).errors.some((e) => e.includes("APP_BASE_URL")));
   check(
     "DEMO_ACCOUNT_USER_ID in production is an error",

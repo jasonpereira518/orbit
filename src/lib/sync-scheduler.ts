@@ -239,6 +239,14 @@ export type SyncRunStats = {
   enrichFetched: number;
   enrichFailed: number;
   budgetExhausted: boolean;
+  /**
+   * Some claim came back FULL (it hit its per-run cap), so more work is probably still due.
+   *
+   * Without this, a run that claimed exactly its cap and finished it quickly never asked
+   * for a continuation, since only a spent time budget did. Throughput was then fixed at
+   * one claim per provider per scheduled tick (~80 syncs an hour), however much sat due.
+   */
+  claimFull: boolean;
   /** How overdue the oldest due connection was when the run started; null when none. */
   oldestDueAgeMs: number | null;
 };
@@ -275,6 +283,7 @@ function emptyRunStats(): SyncRunStats {
     enrichFetched: 0,
     enrichFailed: 0,
     budgetExhausted: false,
+    claimFull: false,
     oldestDueAgeMs: null,
   };
 }
@@ -840,6 +849,7 @@ export async function runSyncPass(
       ? null
       : Math.max(googleLagMs ?? 0, microsoftLagMs ?? 0, appleLagMs ?? 0);
   const claimed = await claimDueConnections("google", CONNECTIONS_PER_RUN, now);
+  if (claimed.length >= CONNECTIONS_PER_RUN) stats.claimFull = true;
   stats.claimed = claimed.length;
 
   // A connection may START only while a full per-connection budget remains, so four lanes
@@ -904,6 +914,7 @@ export async function runSyncPass(
   // Claimed after the Google pool drains, so `startCutoff` (not the claim) is what keeps the
   // combined run inside the function ceiling.
   const claimedMicrosoft = await claimDueConnections("microsoft", CONNECTIONS_PER_RUN, now);
+  if (claimedMicrosoft.length >= CONNECTIONS_PER_RUN) stats.claimFull = true;
   stats.claimed += claimedMicrosoft.length;
 
   await runSettledPool(claimedMicrosoft, SYNC_CONCURRENCY, async (conn) => {
@@ -952,6 +963,7 @@ export async function runSyncPass(
   // grants no scopes for a CalDAV app-specific password, so there is nothing to gate on before
   // calling the sync itself (see `apple_connections.scopes`'s own comment).
   const claimedApple = await claimDueConnections("apple", CONNECTIONS_PER_RUN, now);
+  if (claimedApple.length >= CONNECTIONS_PER_RUN) stats.claimFull = true;
   stats.claimed += claimedApple.length;
 
   await runSettledPool(claimedApple, SYNC_CONCURRENCY, async (conn) => {
@@ -1000,6 +1012,7 @@ export async function runSyncPass(
       reportAndContinue({ where: "job.sync.ics-claim" }, [] as Awaited<ReturnType<typeof claimDueCalendarSubscriptions>>)
     );
     stats.icsClaimed = subs.length;
+    if (subs.length >= ICS_SUBSCRIPTIONS_PER_RUN) stats.claimFull = true;
     for (const sub of subs) {
       if (deadlineReached(deadline)) {
         stats.budgetExhausted = true;
@@ -1054,6 +1067,7 @@ export async function runSyncPass(
       )
     );
     stats.connectorClaimed = connections.length;
+    if (connections.length >= CONNECTIONS_PER_RUN) stats.claimFull = true;
     await runSettledPool(connections, SYNC_CONCURRENCY, async (conn) => {
       if (deadlineReached(deadline - PER_CONNECTION_BUDGET_MS)) {
         stats.budgetExhausted = true;

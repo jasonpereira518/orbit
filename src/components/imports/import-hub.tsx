@@ -297,8 +297,10 @@ export function ImportHub({
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
   /**
-   * Continuous calendar sync is paid. A one-time calendar FILE is not: it only logs meetings
-   * onto people already in the network and never creates anyone, so it is a safe taste.
+   * What is paid on this tab: pasting a calendar’s own link and keeping it in sync.
+   * Connecting Google or Outlook — and the meetings and people that come with it — is free
+   * on every plan now, so is LinkedIn import, and so is a one-time calendar FILE: it only
+   * logs meetings onto people already in the network and never creates anyone.
    */
   canUseSync?: boolean;
   google?: ProviderCalendarInput | null;
@@ -717,14 +719,14 @@ export function ImportHub({
             ) : (
               <LockedFeature
                 title="Calendar sync"
-                description="Point Orbit at your calendar and it turns meetings into logged interactions, so your follow-ups stay current without any typing."
+                description="Connecting Google or Outlook is free and brings in your own calendar. This keeps every calendar syncing — paste a calendar’s private link and Orbit polls it, so networking events and the people in them stay up to date."
                 highlights={[
-                  "Connect Google or Outlook, or paste a calendar link",
+                  "Subscribe to a calendar once and keep it in sync",
+                  "Any calendar you can get a private link to, not only your own",
                   "Networking meetings become logged interactions",
                   "New people from invites land in your contacts",
-                  "Follow-up reminders created automatically",
                 ]}
-                note="Uploading a calendar file, and every LinkedIn import, stay free on every plan."
+                note="Connecting Google and Outlook is free on every plan, and so are LinkedIn imports and one-off calendar files."
               />
             )}
           </ImportSourceRow>

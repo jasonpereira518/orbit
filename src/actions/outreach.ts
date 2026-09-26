@@ -42,6 +42,7 @@ import { sendOutreachMessage } from "@/lib/outreach-send";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   BULK_SEND_LIMIT,
+  OUTREACH_CHANNELS,
   type OutreachChannel,
   type OutreachMessageOutcome,
   type OutreachMessageStatus,
@@ -314,6 +315,47 @@ export async function createCampaign(input: {
   return campaign;
 }
 
+const CAMPAIGN_TEXT_MAX = 4_000;
+const MAX_SEQUENCE_STEPS = 20;
+
+function campaignText(value: unknown, field: string, nullable: boolean): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null && nullable) return null;
+  if (typeof value !== "string") throw new UserFacingError(`Invalid ${field}`);
+  return value.slice(0, CAMPAIGN_TEXT_MAX);
+}
+
+function pickCampaignFields(input: Record<string, unknown>) {
+  const fields: {
+    name?: string;
+    audienceQuery?: string;
+    messageIntent?: string | null;
+    replyCta?: string | null;
+    tone?: string;
+    defaultChannel?: OutreachChannel;
+    status?: string;
+  } = {};
+  const name = campaignText(input.name, "name", false);
+  if (name !== undefined) fields.name = name ?? "";
+  const audienceQuery = campaignText(input.audienceQuery, "audience", false);
+  if (audienceQuery !== undefined) fields.audienceQuery = audienceQuery ?? "";
+  const messageIntent = campaignText(input.messageIntent, "message intent", true);
+  if (messageIntent !== undefined) fields.messageIntent = messageIntent;
+  const replyCta = campaignText(input.replyCta, "call to action", true);
+  if (replyCta !== undefined) fields.replyCta = replyCta;
+  const tone = campaignText(input.tone, "tone", false);
+  if (tone !== undefined) fields.tone = (tone ?? "").slice(0, 64);
+  const status = campaignText(input.status, "status", false);
+  if (status !== undefined) fields.status = (status ?? "").slice(0, 32);
+  if (input.defaultChannel !== undefined) {
+    if (!OUTREACH_CHANNELS.includes(input.defaultChannel as OutreachChannel)) {
+      throw new UserFacingError("Invalid channel");
+    }
+    fields.defaultChannel = input.defaultChannel as OutreachChannel;
+  }
+  return fields;
+}
+
 export async function updateCampaign(
   campaignId: string,
   input: {
@@ -333,13 +375,20 @@ export async function updateCampaign(
   await requireCampaign(userId, campaignId);
   const db = await getDb();
 
-  const { reparseAudience, sequenceSteps, audienceFilters, ...fields } = input;
+  const { reparseAudience, sequenceSteps, audienceFilters } = input;
+  // Allowlisted, never spread: every export here is a public POST endpoint, and spreading
+  // the argument into `.set()` let a caller write any real column — `userId` included,
+  // which moved a campaign and its drafts into another account.
+  const fields = pickCampaignFields(input as Record<string, unknown>);
   const patch: Record<string, unknown> = {
     ...fields,
     updatedAt: new Date(),
   };
 
   if (sequenceSteps !== undefined) {
+    if (!Array.isArray(sequenceSteps) || sequenceSteps.length > MAX_SEQUENCE_STEPS) {
+      throw new UserFacingError(`A sequence can have at most ${MAX_SEQUENCE_STEPS} steps`);
+    }
     patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
   }
 
@@ -354,7 +403,7 @@ export async function updateCampaign(
   const [updated] = await db
     .update(outreachCampaigns)
     .set(patch)
-    .where(eq(outreachCampaigns.id, campaignId))
+    .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)))
     .returning();
 
   revalidatePath("/outreach");

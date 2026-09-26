@@ -9,7 +9,9 @@ import {
 
 const PREF_KEY = "orbit:desktop-notifications";
 const SENT_KEY = "orbit:notified-ids";
-const SW_PATH = "/orbit-sw.js";
+/** Shared with `OfflineSync`, which registers the same worker for its offline page. One
+ *  script URL for both, or each registration would replace the other's. */
+export const SW_PATH = "/orbit-sw.js";
 const MAX_NOTIFIED_IDS = 200;
 
 export type NotificationPermissionState =

@@ -14,6 +14,8 @@ import {
 export { hasGmailReadScope } from "@/lib/google-scopes";
 import { googleFetchWithRetry as gmailFetchWithRetry } from "@/lib/google-fetch";
 
+/** Token exchange and refresh sit on the shared sync path; a hung provider must not hold it. */
+const OAUTH_FETCH_TIMEOUT_MS = 10_000;
 
 /**
  * Sending as the user, rather than through Orbit's own Resend domain, is what makes a
@@ -128,7 +130,7 @@ export function getGmailOAuthConfigSummary(): {
   };
 }
 
-export function buildGmailAuthUrl(state: string, purpose: GooglePurpose) {
+export function buildGmailAuthUrl(state: string, purposes: readonly GooglePurpose[]) {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   if (!clientId) throw new Error("GOOGLE_CLIENT_ID is not configured");
   const redirectUri = getGoogleRedirectUri();
@@ -137,7 +139,7 @@ export function buildGmailAuthUrl(state: string, purpose: GooglePurpose) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: googleScopesFor(purpose).join(" "),
+    scope: googleScopesFor(purposes).join(" "),
     access_type: "offline",
     prompt: "consent",
     // Incremental authorization: the new token also covers what this person granted
@@ -166,6 +168,7 @@ export async function exchangeCodeForTokens(code: string): Promise<TokenResponse
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
@@ -192,6 +195,7 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
+    signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       refresh_token: refreshToken,
@@ -213,11 +217,29 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
   return res.json();
 }
 
+type GmailConnectionRow = typeof gmailConnections.$inferSelect;
+
+/**
+ * Stores a Gmail OAuth grant and decides two things the caller cannot: whether this
+ * connect just armed calendar sync, and whether it just replaced a different Google
+ * account.
+ *
+ * Arming: `nextSyncAt` is only set when the union of old and new scopes covers calendar.
+ * A contacts-only (or mail-only) grant is left unscheduled — arming it unconditionally
+ * used to get the row claimed by the scheduler, disarmed for a missing scope, and the UI
+ * then told someone who never asked for calendar that their sync was paused.
+ *
+ * Inheriting: the row is keyed by `userId` alone, so reconnecting with a *different*
+ * Google account would otherwise keep the previous account's scope union and calendar
+ * cursor. Comparing the normalized previous and incoming email catches that switch here —
+ * the only place it can be noticed — and drops the old scopes and sync cursor instead of
+ * carrying them into the new account.
+ */
 export async function upsertGmailConnection(
   userId: string,
   tokens: TokenResponse,
   emailAddress: string
-) {
+): Promise<{ row: GmailConnectionRow; switchedFrom: string | null }> {
   const db = await getDb();
   const expiresAt = tokens.expires_in
     ? new Date(Date.now() + tokens.expires_in * 1000)
@@ -227,34 +249,57 @@ export async function upsertGmailConnection(
     where: eq(gmailConnections.userId, userId),
   });
 
+  const normalized = emailAddress?.trim().toLowerCase() ?? null;
+  const previous = existing?.emailAddress?.trim().toLowerCase() ?? null;
+  // A different Google account is a different mailbox and a different calendar: its grant
+  // cannot inherit the last account's scopes, and its cursor would resume a sync that never
+  // happened here. The row is keyed by Orbit's user, so this is the only place to notice.
+  const switchedFrom = previous && normalized && previous !== normalized ? existing!.emailAddress : null;
+
   const accessEnc = encrypt(tokens.access_token);
   const refreshEnc = tokens.refresh_token
     ? encrypt(tokens.refresh_token)
-    : existing?.refreshTokenEncrypted || null;
+    : switchedFrom
+      ? // A different account's refresh token would mint access tokens for the OLD
+        // mailbox under a row everyone believes now belongs to the new one.
+        null
+      : existing?.refreshTokenEncrypted || null;
+
+  const scopes = switchedFrom ? unionScopes(null, tokens.scope) : unionScopes(existing?.scopes, tokens.scope);
+  // Only a grant that covers calendar belongs in the sync queue. A grant without calendar is
+  // never queued — arming a contacts-only grant unconditionally used to get the row claimed
+  // by the scheduler, disarmed for a missing scope, and left the UI saying "Calendar sync
+  // paused" to someone who never asked for calendar. A row the old code armed by mistake
+  // heals here on its next connect.
+  const armed = hasCalendarScope(scopes);
+  // The pause is the person's own choice (`pauseSync`) and only they undo it (`resumeSync`,
+  // the Meetings switch) — reconnecting the SAME account to add another feature (mail, say)
+  // must not silently arm meetings back on. A different account already drops `syncStatus`
+  // via `switchedFrom` above, so switching accounts still starts fresh and armed.
+  const pausedByUser = !switchedFrom && existing?.syncStatus === "paused";
 
   if (existing) {
-    const [updated] = await db
+    const [row] = await db
       .update(gmailConnections)
       .set({
         emailAddress,
         accessTokenEncrypted: accessEnc,
         refreshTokenEncrypted: refreshEnc,
         tokenExpiresAt: expiresAt,
-        scopes: unionScopes(existing.scopes, tokens.scope),
+        scopes,
         status: "active",
-        // Re-arm: this is the only path from needs_reauth back to active, so it is also
-        // the only place a disarmed connection can rejoin the sync schedule.
-        nextSyncAt: new Date(),
+        nextSyncAt: armed && !pausedByUser ? new Date() : null,
         syncFailures: 0,
         syncError: null,
+        ...(switchedFrom ? { syncCursor: null, syncStatus: null, syncStartedAt: null, lastSyncedAt: null } : {}),
         updatedAt: new Date(),
       })
       .where(eq(gmailConnections.id, existing.id))
       .returning();
-    return updated;
+    return { row, switchedFrom };
   }
 
-  const [created] = await db
+  const [row] = await db
     .insert(gmailConnections)
     .values({
       userId,
@@ -262,12 +307,12 @@ export async function upsertGmailConnection(
       accessTokenEncrypted: accessEnc,
       refreshTokenEncrypted: refreshEnc,
       tokenExpiresAt: expiresAt,
-      scopes: unionScopes(null, tokens.scope),
+      scopes,
       status: "active",
-      nextSyncAt: new Date(),
+      nextSyncAt: armed ? new Date() : null,
     })
     .returning();
-  return created;
+  return { row, switchedFrom };
 }
 
 /**
@@ -498,6 +543,7 @@ export {
   firmFromEmail,
   looksLikeRecruiter,
 } from "@/lib/recruiter-detect";
+
 
 /**
  * Gmail-side keyword filter. Everything downstream is far more expensive than this —

@@ -109,7 +109,7 @@ export function CalendarFeedSettings() {
 
   return (
     <SettingsSection
-      title="Calendar feed"
+      title="Reminders in calendar"
       description="Subscribe to your reminders in Google Calendar, Apple Calendar, or Outlook so they show up alongside everything else."
     >
 

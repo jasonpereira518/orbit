@@ -182,7 +182,7 @@ export function EventConnectionsCard({
       if (oauth.cancelled) toast.message(oauth.message);
       else toast.error(oauth.message);
     }
-    for (const key of ["google", "gmail", "reason", "purpose"]) params.delete(key);
+    for (const key of ["google", "gmail", "reason", "purpose", "switched"]) params.delete(key);
     const next = params.toString();
     window.history.replaceState(
       null,

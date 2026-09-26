@@ -113,9 +113,9 @@ function Sidebar({ state, dispatch }: { state: DemoState; dispatch: Dispatch<Dem
 }
 
 /**
- * The recreation: a window onto a made-up workspace. It plays `TOUR` and is look-only
- * until the visitor presses "Explore it yourself" — then every button works against
- * `demoReducer`. Nothing else hands over control: a stray click never breaks the tour.
+ * The recreation: a window onto a made-up workspace. It plays `TOUR` until the visitor
+ * interrupts it — pressing anything inside, or the "Explore it yourself" button — and then
+ * every button works against `demoReducer`. "Replay tour" hands control back.
  */
 export function DemoWindow() {
   const reduced = useSyncExternalStore(subscribeReduced, () => window.matchMedia(REDUCED_QUERY).matches, () => false);
@@ -166,6 +166,17 @@ export function DemoWindow() {
   const touring = state.mode === "tour";
   const { cursor, pressing, beat } = useDemoTour({ active: touring, reduced, rootRef, paneRef, pausedRef, stateRef, dispatch });
 
+  /**
+   * Any press or key inside the window — other than the mode button itself — hands the
+   * visitor control. The press that does it still lands, so the first click is never wasted.
+   * Scrolling the page past the widget does not count: only pointer-down and keys do.
+   */
+  const takeOver = (e: { target: EventTarget | null }) => {
+    if (!touring) return;
+    if (e.target instanceof Element && e.target.closest("[data-demo-modectl]")) return;
+    dispatch({ type: "mode", mode: "explore" });
+  };
+
   const Screen = SCREENS[state.screen];
   const fill = FILL.includes(state.screen);
 
@@ -174,8 +185,9 @@ export function DemoWindow() {
       <div
         ref={rootRef}
         style={DEMO_TOKENS}
+        onPointerDownCapture={takeOver}
         onKeyDownCapture={(e) => {
-          if (touring) return;
+          takeOver(e);
           if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
             e.preventDefault();
             dispatch({ type: "overlay", overlay: "palette" });
@@ -201,7 +213,7 @@ export function DemoWindow() {
             <span className="size-3 rounded-full bg-[#28c840]/85" />
           </div>
           <p className="absolute left-1/2 -translate-x-1/2 text-xs text-[var(--d-dim)]">Project: Orbit — preview</p>
-          <div className="ml-auto">
+          <div className="ml-auto" data-demo-modectl>
             {touring ? (
               <button
                 type="button"
@@ -224,9 +236,7 @@ export function DemoWindow() {
           </div>
         </div>
 
-        {/* While the tour plays the app is look-only: `inert` drops clicks, keys, focus and
-            scrolling, so the only way in is the "Explore it yourself" button above. */}
-        <div className="relative flex h-[calc(100%-2.5rem)]" inert={touring}>
+        <div className="relative flex h-[calc(100%-2.5rem)]">
           <Sidebar state={state} dispatch={dispatch} />
           <main ref={paneRef} className="relative min-w-0 flex-1 overflow-y-auto px-6 pb-4 pt-6 pr-7" aria-label="Demo app screen">
             <AnimatePresence mode="wait" initial={false}>

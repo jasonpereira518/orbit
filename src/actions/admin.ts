@@ -29,6 +29,7 @@ import {
   type ConstellationConfig,
 } from "@/lib/constellation-config";
 import { setStealth } from "@/lib/site-access";
+import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   inviteToSite,
   revokeSiteInvite,
@@ -863,6 +864,23 @@ export async function setSiteStealthAction(input: {
   const mode = await setStealth(adminUserId, input.enabled);
   revalidateAccess();
   return { ok: true, stealth: mode.stealth };
+}
+
+/**
+ * Show or hide the waitlist page's "Take it for a spin" product demo. Low stakes and easy to
+ * reverse, so unlike stealth it asks for no reason — the audit log still records who and when.
+ * The public page reads it through a ten-second cache; `/interest` is revalidated so the
+ * instance that made the change shows it at once.
+ */
+export async function setWaitlistDemoAction(input: {
+  enabled: boolean;
+}): Promise<{ ok: true; enabled: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  const enabled = await setWaitlistDemoEnabled(adminUserId, input.enabled === true);
+  revalidatePath("/interest");
+  revalidatePath("/");
+  revalidatePath("/admin/growth/interest-list");
+  return { ok: true, enabled };
 }
 
 /**

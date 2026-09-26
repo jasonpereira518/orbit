@@ -13,7 +13,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { useCameraMoving } from "@/components/graph/camera-motion";
-import { renderSkyBitmap } from "@/components/graph/sky-bitmap-client";
+import { createSkyBitmapLane } from "@/components/graph/sky-bitmap-client";
 import {
   drawSkyBitmap,
   skyBitmapSize,
@@ -512,6 +512,7 @@ function useSkyBitmap() {
   const shown = useRef(false);
   const latest = useRef(0);
   const url = useRef<string | null>(null);
+  const [renderInWorker] = useState(createSkyBitmapLane);
 
   useEffect(
     () => () => {
@@ -544,7 +545,7 @@ function useSkyBitmap() {
       drawSkyBitmap(ctx, job);
     };
     if (!shown.current) drawOnCanvas();
-    void renderSkyBitmap(job).then((blob) => {
+    void renderInWorker(job).then((blob) => {
       if (mine !== latest.current) return;
       if (!blob) {
         // No worker here (or it failed): the canvas it is, as before there was one.
@@ -574,7 +575,7 @@ function useSkyBitmap() {
         () => URL.revokeObjectURL(next)
       );
     });
-  }, []);
+  }, [renderInWorker]);
 
   return { canvasRef, imgRef, imageShown, render };
 }

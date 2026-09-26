@@ -57,6 +57,10 @@ export const EXPECTED_IN_PRODUCTION = [
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REDIRECT_URI",
+  // Outlook contacts, calendar and mail all ride this one OAuth client.
+  "MICROSOFT_CLIENT_ID",
+  "MICROSOFT_CLIENT_SECRET",
+  "MICROSOFT_REDIRECT_URI",
   // Unset, every voice note, meeting and dictation falls back to the user's own OpenAI or
   // Gemini key, and an account with neither cannot transcribe at all.
   "DEEPGRAM_API_KEY",
@@ -128,6 +132,12 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     }
     if (has(env, "CLERK_SECRET_KEY") && !env.CLERK_SECRET_KEY!.startsWith("sk_live_")) {
       errors.push("CLERK_SECRET_KEY must be a live-instance key (sk_live_) in production");
+    }
+    // Optional (it saves a round trip to Clerk per cold instance; src/lib/clerk-jwt-key.ts),
+    // but once set every session is verified against it alone — a pasted secret key or a
+    // truncated value would sign every person out, so a malformed one fails the build.
+    if (has(env, "CLERK_JWT_KEY") && !/-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----/.test(env.CLERK_JWT_KEY!)) {
+      errors.push("CLERK_JWT_KEY must be the instance's PEM public key (-----BEGIN PUBLIC KEY----- … -----END PUBLIC KEY-----)");
     }
     if (has(env, "ENCRYPTION_SECRET")) {
       const secret = env.ENCRYPTION_SECRET!.trim();

@@ -5301,6 +5301,12 @@
         "label": "Anthropic",
         "hasPersonalKey": false,
         "managedAvailable": false
+      },
+      {
+        "id": "openrouter",
+        "label": "OpenRouter",
+        "hasPersonalKey": false,
+        "managedAvailable": false
       }
     ],
     "outreach": {
@@ -5329,61 +5335,97 @@
     "desktopNotificationsEnabled": null
   },
   "action: getIntegrationStatuses": {
-    "ai": {
-      "state": "off",
-      "detail": "No key yet"
+    "pages": {
+      "ai": {
+        "state": "off",
+        "detail": "Not on yet"
+      },
+      "outreach": {
+        "state": "off",
+        "detail": "Not set up"
+      },
+      "reminders": {
+        "state": "off",
+        "detail": "Off"
+      },
+      "api": {
+        "state": "on",
+        "detail": "1 key"
+      },
+      "webhooks": {
+        "state": "off",
+        "detail": "None"
+      },
+      "google": {
+        "state": "off",
+        "detail": "Unavailable"
+      },
+      "microsoft": {
+        "state": "off",
+        "detail": "Unavailable"
+      },
+      "linkedin": {
+        "state": "on",
+        "detail": "Imported 4 months ago"
+      },
+      "assistants": {
+        "state": "none",
+        "detail": "Works on every plan"
+      }
     },
-    "outreach": {
-      "state": "off",
-      "detail": "Not set up"
+    "accounts": {
+      "google": {
+        "state": "not_configured",
+        "email": null,
+        "capabilities": {}
+      },
+      "microsoft": {
+        "state": "not_configured",
+        "email": null,
+        "capabilities": {}
+      }
     },
-    "calendar": {
-      "state": "off",
-      "detail": "Off"
-    },
-    "api": {
-      "state": "on",
-      "detail": "1 key"
-    },
-    "webhooks": {
-      "state": "off",
-      "detail": "None"
-    },
-    "google": {
-      "state": "off",
-      "detail": "Unavailable"
-    },
-    "gmail": {
-      "state": "off",
-      "detail": "Unavailable"
-    },
-    "outlook": {
-      "state": "off",
-      "detail": "Unavailable"
-    },
-    "linkedin": {
-      "state": "off",
-      "detail": "Upload a CSV export"
-    },
-    "calendar_ics": {
-      "state": "off",
-      "detail": "No feeds"
-    },
-    "luma": {
-      "state": "off",
-      "detail": "Not connected"
-    },
-    "eventbrite": {
-      "state": "off",
-      "detail": "Not connected"
-    },
-    "apollo": {
-      "state": "off",
-      "detail": "No key yet"
-    },
-    "zapier": {
-      "state": "on",
-      "detail": "1 key"
+    "attention": [
+      {
+        "id": "ai-off",
+        "tab": "ai",
+        "message": "AI isn’t on yet, so notes and recruiter search can’t use it.",
+        "action": "Turn on AI"
+      }
+    ],
+    "connectors": {
+      "google": {
+        "state": "off",
+        "detail": "Unavailable"
+      },
+      "outlook": {
+        "state": "off",
+        "detail": "Unavailable"
+      },
+      "linkedin": {
+        "state": "on",
+        "detail": "Imported 4 months ago"
+      },
+      "calendar_ics": {
+        "state": "off",
+        "detail": "No feeds"
+      },
+      "luma": {
+        "state": "off",
+        "detail": "Not connected"
+      },
+      "eventbrite": {
+        "state": "off",
+        "detail": "Not connected"
+      },
+      "apollo": {
+        "state": "off",
+        "detail": "No key yet"
+      },
+      "zapier": {
+        "state": "on",
+        "detail": "1 key"
+      }
     }
   },
   "lib: listContactMentions": {

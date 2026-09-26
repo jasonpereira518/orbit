@@ -1054,13 +1054,44 @@ export async function backfillContactAvatars(
   const needsConnectedAccount = candidates.some((c) => c.email);
   const needsApollo = candidates.some((c) => c.linkedinUrl);
 
-  const [googlePhotoByEmail, outlookContactIdByEmail, apolloApiKey] = await Promise.all([
+  /**
+   * Each pre-flight lookup degrades on its own. These three sit outside the per-contact
+   * try/catch inside the batch, so a bare `Promise.all` let one rejection — an expired
+   * Google refresh token, an Outlook hiccup, a failed key read — throw the whole backfill,
+   * and the route turned that into a 500 for a batch where Gravatar and Apollo would have
+   * answered perfectly well. Every per-contact source below is already individually
+   * guarded; this brings the batch-level ones in line.
+   *
+   * A failure is recorded rather than swallowed, because it changes what a miss MEANS: a
+   * contact whose connected-account index never built did not run out of sources, so it is
+   * deferred instead of cooldown-stamped (`sourcesUnavailable`).
+   */
+  const settled = await Promise.allSettled([
     needsConnectedAccount ? buildGooglePhotoIndex(userId) : Promise.resolve(new Map<string, string>()),
     needsConnectedAccount
       ? buildOutlookContactIndex(userId)
       : Promise.resolve(new Map<string, string>()),
     needsApollo ? getApolloApiKey(userId) : Promise.resolve(null),
   ]);
+  const [googleSettled, outlookSettled, apolloSettled] = settled;
+  for (const [name, outcome] of [
+    ["google photo index", googleSettled],
+    ["outlook contact index", outlookSettled],
+    ["apollo key", apolloSettled],
+  ] as const) {
+    if (outcome.status === "rejected") {
+      console.warn(`[avatars] ${name} unavailable for this batch — continuing without it`);
+    }
+  }
+  const googlePhotoByEmail =
+    googleSettled.status === "fulfilled" ? googleSettled.value : new Map<string, string>();
+  const outlookContactIdByEmail =
+    outlookSettled.status === "fulfilled" ? outlookSettled.value : new Map<string, string>();
+  const apolloApiKey = apolloSettled.status === "fulfilled" ? apolloSettled.value : null;
+  const sourcesUnavailable = {
+    connectedAccount: googleSettled.status === "rejected" || outlookSettled.status === "rejected",
+    apollo: apolloSettled.status === "rejected",
+  };
 
   const resolveConnectedAccount = needsConnectedAccount
     ? async (contactId: string, email: string): Promise<string | null> => {
@@ -1103,6 +1134,7 @@ export async function backfillContactAvatars(
         resolveLinkedIn: (contactId, url) => fetchLinkedInPhotoUrl(contactId, url, userId),
         resolveGravatar: fetchGravatarPhotoUrl,
         resolveApollo,
+        sourcesUnavailable,
         save: async (contactId, photoUrl) => {
           await db
             .update(contacts)

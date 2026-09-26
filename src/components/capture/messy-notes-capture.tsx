@@ -198,9 +198,8 @@ export function MessyNotesCapture({
           />
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Type <span className="font-medium text-foreground">@</span> to name someone already
-          in your orbit — the note links to them instead of the name being guessed at. A
-          LinkedIn profile URL on its own is enough to log someone.
+          Type <span className="font-medium text-foreground">@</span> to name someone already in
+          your orbit, or a LinkedIn profile URL on its own is enough to log someone.
         </p>
       </div>
 

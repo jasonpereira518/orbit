@@ -9,6 +9,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { getDb } from "@/db";
 import { contactOpportunities, contacts, type ContactOpportunity } from "@/db/schema";
+import { UserFacingError } from "@/lib/errors";
 import {
   OPEN_OPPORTUNITY_STATUSES,
   looksLikeReferral,
@@ -187,6 +188,14 @@ export async function insertOpportunities(
 ): Promise<ContactOpportunity[]> {
   if (!rows.length) return [];
   const db = await getDb();
+  // Every contactId must be the caller's: they arrive from actions as client input, and a
+  // foreign one would tie this account's opportunity to someone else's contact.
+  const contactIds = [...new Set(rows.map((r) => r.contactId))];
+  const owned = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)));
+  if (owned.length !== contactIds.length) throw new UserFacingError("Contact not found");
   return db
     .insert(contactOpportunities)
     .values(
