@@ -26,7 +26,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { siteSettings, userSettings } from "@/db/schema";
-import { recordAdminAction } from "@/lib/admin-operations";
+import { recordAdminAction } from "@/lib/admin-audit";
 import { resolveStealth } from "@/lib/waitlist-host";
 
 export type SiteMode = {

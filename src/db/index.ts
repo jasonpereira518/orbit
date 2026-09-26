@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  openrouter_api_key_encrypted text,
   typesafe_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
@@ -776,6 +777,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   output_tokens integer,
   cached_input_tokens integer,
   estimated_cost_micros integer,
+  cost_source text NOT NULL DEFAULT 'estimated',
   key_owner text NOT NULL DEFAULT 'user',
   success integer NOT NULL DEFAULT 1,
   error_kind text,
@@ -2004,7 +2006,32 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 103 = page_views.is_internal (traffic analytics accuracy pass). Rescanned every remote ref,
 // every local branch and every worktree's working file on Sep 24 2026: 102 was the highest
 // claimed anywhere.
-export const SCHEMA_VERSION = 103;
+// 104 (this branch, integrations-dialog P3) = user_settings.openrouter_api_key_encrypted —
+// OpenRouter becomes a provider the type system knows about, ahead of the one-click connect
+// flow. Rescanned every local and remote ref on Sep 25 2026: 86 is still this branch's own
+// number, and 87 through 103 have all been claimed elsewhere at one point or another; 104 is
+// the next free integer and is still free.
+//
+// 105 (this branch, integrations-dialog P3, task 4) = usage_events.cost_source — a second,
+// separate DDL change on this same branch, given its own version rather than folded into
+// 104: `smoke-schema-ddl.ts`'s lock file already recorded 104's fingerprint, and changing
+// the DDL again at that version would either fail the guard or force rewriting the lock to
+// match a diff, which is exactly what the guard exists to catch. Rescanned every local
+// worktree and every remote branch on Sep 25 2026 (git refs plus each worktree's own
+// uncommitted src/db/index.ts): the highest SCHEMA_VERSION found anywhere is 104, so 105 is
+// the next free integer and is still free.
+//
+// 107 = merging P2b (which carries main at 103 — apple_connections/calendar_sources at 99,
+// site_settings at 102, page_views.is_internal at 103) into this branch (104, 105). No DDL
+// of its own. Keeping 105 was the plan and is wrong for the reason recorded at 87, 96, 97
+// and 99 above: this branch's preview databases are stamped 105 WITHOUT main's 99/102/103
+// columns, and main's are stamped 103 without 104/105, and `isSchemaCurrent` returns true
+// for any recorded version at or above the running one — so either half would be skipped in
+// silence. `smoke-schema-ddl.ts` caught it: same version 105, different DDL fingerprint.
+// NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62.
+// Scanned every remote ref, every local branch and every worktree's working
+// src/db/index.ts on Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
+export const SCHEMA_VERSION = 107;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3640,6 +3667,16 @@ const alters = [
   // at query time, which covers every row from before this column without the migration
   // having to know ADMIN_USER_IDS. The index lives in the template (step 4 of applySchema).
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS is_internal boolean NOT NULL DEFAULT false`,
+  // Schema v104: user_settings.openrouter_api_key_encrypted — a person's own OpenRouter key,
+  // the BYOK path P3 of the integrations dialog simplification turns into a one-click
+  // connect. OpenRouter is never a managed provider (Orbit holds no key for it), so this
+  // column only ever holds a key the account saved itself.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openrouter_api_key_encrypted text`,
+  // Schema v105: usage_events.cost_source — distinguishes a provider-reported cost
+  // (OpenRouter's `usage.cost`) from Orbit's own `ai-pricing.ts` estimate, since
+  // `ai-pricing.ts` has no OpenRouter slugs at all and blending the two figures in one
+  // column with no source would make that gap invisible.
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cost_source text NOT NULL DEFAULT 'estimated'`,
 ];
 
 /**
@@ -4022,9 +4059,7 @@ export async function reconcileSchema(options: ReconcileOptions = {}): Promise<S
   });
 }
 
-export async function getDb(): Promise<Db> {
-  await ready();
-
+function startSchemaReconcile(): Promise<void> {
   if (!schemaReconciled) {
     schemaReconciled = reconcileSchema({ lockWaitMs: RUNTIME_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "skip" })
       .then(() => undefined)
@@ -4033,7 +4068,34 @@ export async function getDb(): Promise<Db> {
         throw err;
       });
   }
-  await schemaReconciled;
+  return schemaReconciled;
+}
+
+/**
+ * COLD START: begin the schema check the moment this module loads in a production server,
+ * not when the first query asks for it. A new instance evaluates this module partway
+ * through loading the route, and still has the rest of the route's modules and the render
+ * up to its first `getDb()` ahead of it; the check's round trip — on a cold instance also
+ * the TLS handshake to Neon, and a suspended Neon compute waking — overlaps that work
+ * instead of queueing behind it. It is the very promise `getDb()` awaits, so nothing runs
+ * twice, and a failure only clears it for `getDb()` to retry as before.
+ *
+ * Neon only (PGlite is single-writer and opens a directory; it waits for a real caller),
+ * inside a Next server only (scripts import this module and must not touch the network on
+ * import), and never while `next build` collects pages.
+ */
+if (
+  process.env.DATABASE_URL?.trim() &&
+  process.env.NEXT_RUNTIME === "nodejs" &&
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
+  startSchemaReconcile().catch(() => undefined);
+}
+
+export async function getDb(): Promise<Db> {
+  await ready();
+  await startSchemaReconcile();
 
   // In dev the wrapper is rebuilt per call so schema HMR picks up new relations. In
   // production the schema cannot change under us, and `getDb()` is called dozens of times

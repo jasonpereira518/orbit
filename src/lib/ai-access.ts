@@ -8,6 +8,7 @@ import type OpenAI from "openai";
 import { and, eq, gte, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan } from "@/lib/entitlements";
@@ -105,6 +106,9 @@ const MANAGED_ENV: Record<AiProvider, string> = {
   gemini: "ORBIT_MANAGED_GEMINI_API_KEY",
   openai: "ORBIT_MANAGED_OPENAI_API_KEY",
   anthropic: "ORBIT_MANAGED_ANTHROPIC_API_KEY",
+  // Never read: MANAGED_PROVIDER_ORDER excludes openrouter, so managedKey() never looks this
+  // name up. Present only to satisfy the Record — Orbit holds no OpenRouter key.
+  openrouter: "ORBIT_MANAGED_OPENROUTER_API_KEY",
 };
 
 /**
@@ -117,6 +121,9 @@ const LOCAL_ENV: Record<AiProvider, string> = {
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  // Never read as a MANAGED key, for the same reason as MANAGED_ENV.openrouter above — but
+  // named to match anyway, in case something outside the gate ever reads it directly.
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 /**
@@ -161,6 +168,8 @@ export function managedKeysConfigured(): Record<AiProvider, boolean> {
     gemini: Boolean(managedKey("gemini")),
     openai: Boolean(managedKey("openai")),
     anthropic: Boolean(managedKey("anthropic")),
+    // Orbit holds no OpenRouter key — never a managed provider (managed-ai-policy.ts).
+    openrouter: false,
   };
 }
 
@@ -262,6 +271,62 @@ export async function anthropicClient(grant: AiGrant<AiProvider>): Promise<Anthr
   const apiKey = keyFor(grant, "anthropic");
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
   return new Anthropic({ apiKey });
+}
+
+/**
+ * OpenRouter is the OpenAI SDK pointed somewhere else. `keyFor` keeps the invariant that a
+ * grant minted for one provider cannot build another's client.
+ */
+export async function openrouterClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  const apiKey = keyFor(grant, "openrouter");
+  const { default: OpenAI } = await import("openai");
+  return new OpenAI({
+    apiKey,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": getAppBaseUrl(),
+      "X-Title": "Orbit",
+    },
+  });
+}
+
+/** Providers that speak the OpenAI wire format, so `ai.ts` can share one code path. */
+export function isOpenAiShaped(provider: AiProvider): boolean {
+  return provider === "openai" || provider === "openrouter";
+}
+
+export function openAiShapedClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  return grant.provider === "openrouter" ? openrouterClient(grant) : openaiClient(grant);
+}
+
+/**
+ * OpenRouter puts a `cost` field (USD, not micros) on the `usage` object of every response,
+ * with no extra request parameter needed — direct OpenAI's `usage` never carries it. The
+ * OpenAI SDK's own `usage` type has no such field, so this narrow shape exists to read it
+ * without an `as any`.
+ */
+export type OpenAiUsageWithCost = { usage?: { cost?: number } };
+
+/**
+ * USD × 1e6, or `null` when the response carried no `usage.cost` — always true for direct
+ * OpenAI, never true for OpenRouter.
+ */
+export function reportedCostMicros(response: OpenAiUsageWithCost): number | null {
+  const cost = response.usage?.cost;
+  return typeof cost === "number" ? Math.round(cost * 1_000_000) : null;
+}
+
+/**
+ * Orbit's payloads are private relationship notes, so every OpenRouter request constrains
+ * the upstream pool to providers that do not retain or train on what is sent.
+ *
+ * A helper rather than a spread at each call site on purpose: a privacy guarantee that
+ * depends on remembering to spread is one forgotten spread away from being off, and
+ * `smoke-provider-exhaustive` asserts no OpenRouter `.create(` bypasses this.
+ */
+export function withOpenRouterRouting<T extends object>(provider: AiProvider, params: T): T {
+  if (provider !== "openrouter") return params;
+  return { ...params, provider: { data_collection: "deny" } } as T;
 }
 
 /**
@@ -477,6 +542,7 @@ export class AiAccess {
       gemini: decryptOrNull(row?.geminiApiKeyEncrypted),
       openai: decryptOrNull(row?.openaiApiKeyEncrypted),
       anthropic: decryptOrNull(row?.anthropicApiKeyEncrypted),
+      openrouter: decryptOrNull(row?.openrouterApiKeyEncrypted),
     };
     for (const [provider, key] of Object.entries(decrypted)) {
       if (key) personal[provider as AiProvider] = key;
@@ -525,11 +591,14 @@ export class AiAccess {
         gemini: Boolean(this.personal.gemini),
         openai: Boolean(this.personal.openai),
         anthropic: Boolean(this.personal.anthropic),
+        openrouter: Boolean(this.personal.openrouter),
       },
       managed: {
         gemini: Boolean(this.managed.gemini),
         openai: Boolean(this.managed.openai),
         anthropic: Boolean(this.managed.anthropic),
+        // Orbit holds no OpenRouter key — never a managed provider (managed-ai-policy.ts).
+        openrouter: false,
       },
     };
   }
@@ -736,6 +805,7 @@ export function aiReadyFromSettings(
     geminiApiKeyEncrypted?: string | null;
     openaiApiKeyEncrypted?: string | null;
     anthropicApiKeyEncrypted?: string | null;
+    openrouterApiKeyEncrypted?: string | null;
     compedPlan?: "orbit" | "lifetime" | null;
     lifetimePurchasedAt?: Date | null;
     subscriptionPlan?: "orbit" | null;
@@ -754,6 +824,7 @@ export function aiReadyFromSettings(
       gemini: Boolean(row?.geminiApiKeyEncrypted),
       openai: Boolean(row?.openaiApiKeyEncrypted),
       anthropic: Boolean(row?.anthropicApiKeyEncrypted),
+      openrouter: Boolean(row?.openrouterApiKeyEncrypted),
     },
     managed: configured,
   });
