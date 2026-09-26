@@ -2490,6 +2490,12 @@ export const SCALE_DDL: string[] = [
      BEFORE INSERT OR UPDATE OF raw_notes, ai_summary, interaction_date, interaction_type, contact_id
      ON interactions FOR EACH ROW EXECUTE FUNCTION interactions_mark_memory_dirty()`,
   `CREATE INDEX IF NOT EXISTS interactions_memory_dirty_idx ON interactions(user_id) WHERE memory_dirty`,
+
+  // --- v113: one runner per import ------------------------------------------------------
+  //
+  // The runner holding an import, and until when. See imports.runnerToken in schema.ts.
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS runner_token text`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS runner_lease_until timestamptz`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */

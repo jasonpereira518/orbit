@@ -1,5 +1,6 @@
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
+import { randomUUID } from "node:crypto";
+import { eq, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
 import { imports } from "@/db/schema";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
 import { GOOGLE_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/google-contacts";
@@ -66,7 +67,71 @@ export const RESUMABLE_IMPORT_TYPES = [
  * directly; with more than one job kind sharing the `imports` table that would silently
  * run the wrong processor, so the type lives in the row and the dispatch lives here.
  */
-export async function runImportJobById(importId: string): Promise<void> {
+/**
+ * How long one runner holds an import. Longer than any invocation can live (maxDuration
+ * 300s), so a live runner never loses it mid-chunk, and short enough that a runner that died
+ * frees the job well before the hourly stall backstop comes looking.
+ */
+export const IMPORT_LEASE_MS = 330_000;
+
+/**
+ * How long a new runner waits for the lease. A self-continuation is kicked by the runner
+ * before that runner returns and releases, so the successor usually waits a few hundred
+ * milliseconds. Anything still holding it after this is a live runner, and this one leaves.
+ */
+const LEASE_WAIT_MS = 15_000;
+const LEASE_POLL_MS = 500;
+
+/** Take the job if nobody holds it (or their lease ran out). Times are the database's own. */
+async function tryAcquireImportLease(importId: string, token: string): Promise<boolean> {
+  const db = await getDb();
+  const rows = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      UPDATE imports
+         SET runner_token = ${token},
+             runner_lease_until = now() + make_interval(secs => ${IMPORT_LEASE_MS / 1000})
+       WHERE id = ${importId}::uuid
+         AND (runner_lease_until IS NULL OR runner_lease_until < now())
+      RETURNING id
+    `)
+  );
+  return rows.length > 0;
+}
+
+export async function acquireImportLease(importId: string, token: string, waitMs = LEASE_WAIT_MS): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    if (await tryAcquireImportLease(importId, token)) return true;
+    if (Date.now() + LEASE_POLL_MS > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, LEASE_POLL_MS));
+  }
+}
+
+export async function releaseImportLease(importId: string, token: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`
+    UPDATE imports SET runner_token = NULL, runner_lease_until = NULL
+     WHERE id = ${importId}::uuid AND runner_token = ${token}
+  `);
+}
+
+/**
+ * Run an import's processor, as its only runner. Every path in goes through here — the
+ * upload's `after()`, `/api/imports/[id]/continue`, the stall backstop's kick, the admin
+ * retry — so the lease covers all of them. A second runner that cannot get the lease within
+ * `waitMs` returns without touching the job.
+ */
+export async function runImportJobById(importId: string, options: { waitMs?: number } = {}): Promise<void> {
+  const token = randomUUID();
+  if (!(await acquireImportLease(importId, token, options.waitMs))) return;
+  try {
+    await dispatchImportJob(importId);
+  } finally {
+    await releaseImportLease(importId, token).catch(() => undefined);
+  }
+}
+
+async function dispatchImportJob(importId: string): Promise<void> {
   const db = await getDb();
   const row = await db.query.imports.findFirst({
     where: eq(imports.id, importId),
