@@ -1,6 +1,7 @@
 /**
- * Nothing the waitlist hands a visitor or a recipient names the product, describes what it
- * does, or points at the app's domain (src/lib/waitlist-host.ts).
+ * Nothing the waitlist hands a recipient names the product, describes what it does, or
+ * points at the app's domain (src/lib/waitlist-host.ts). The page itself carries exactly
+ * one mark — "Project: Orbit", top left — and nothing else that names it.
  *
  * WHY THIS EXISTS. The waitlist goes to a large audience before the product is public, and
  * emails are the easiest thing in the world to forward. A leak here is one careless string
@@ -15,7 +16,7 @@
  */
 import "./smoke/_env";
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const APP_BASE = "https://app.orbit-example.test";
 const WAITLIST = "join.example";
@@ -124,7 +125,9 @@ async function main() {
     "src/lib/interest-list.ts",
   ];
   for (const file of surface) {
-    const src = code(file);
+    // The page's one sanctioned mark is its "Project: Orbit" header; nothing else may name it.
+    const raw = code(file);
+    const src = file === "src/app/(site)/interest/page.tsx" ? raw.replace(/>\s*Project: Orbit\s*</, "><") : raw;
     // Strings and JSX text only: identifiers are minified away.
     const literals = [...src.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map((m) => m[2]!);
     const jsxText = [...src.matchAll(/>([^<>{}]+)</g)].map((m) => m[1]!);
@@ -132,6 +135,51 @@ async function main() {
     check(`${file} says nothing about the product`, !hit, hit);
     check(`${file} imports no marketing chrome`, !/MarketingFooter|LandingAuthControls|OrbitLogo|BackControl/.test(src));
   }
+
+  console.log("\nThe app demo is self-contained:");
+  const demoDir = "src/components/interest/app-demo";
+  const demoFiles = readdirSync(demoDir, { recursive: true, encoding: "utf8" })
+    .filter((f) => /\.tsx?$/.test(f))
+    .map((f) => `${demoDir}/${f}`);
+  check("the demo has files to check", demoFiles.length >= 10, String(demoFiles.length));
+  for (const file of demoFiles) {
+    const src = code(file);
+    const banned = src.match(/from\s+["'](@\/db[^"']*|@clerk\/[^"']*|@\/actions[^"']*|next\/link|next\/image|next\/navigation|@\/components\/orbit-logo)["']/);
+    check(`${file} imports nothing from the app, auth or database`, !banned, banned?.[1]);
+    check(`${file} links nowhere and fetches nothing`, !/\bhref=|\bfetch\(|\bwindow\.open\(|\blocation\.(href|assign)/.test(src));
+    const assets = [...src.matchAll(/["'](\/[a-z0-9_\-/.]+\.(?:png|jpe?g|svg|webp|gif))["']/gi)].map((m) => m[1]!);
+    check(`${file} loads assets only from /waitlist/`, assets.every((a) => a.startsWith("/waitlist/")), assets.join(", "));
+  }
+
+  console.log("\nThe demo's chat answers from its cast:");
+  const { answerQuestion } = await import("../src/components/interest/app-demo/demo-chat");
+  const promise = answerQuestion("What did I promise Maya?");
+  check("a promise question answers with the promise", promise.kind === "promise" && promise.text.includes("design offsite") && promise.draft?.personId === "maya");
+  check("…citing Gmail or Calendar", promise.sources.some((s) => s.source === "Gmail" || s.source === "Google Calendar"));
+  check("a company question lists the people there", answerQuestion("Who do I know at Stripe?").kind === "company");
+  check("an intro question picks a match", answerQuestion("Who should meet Grace Liu?").text.includes("Elena"));
+  check("a follow-up question ranks suggestions", answerQuestion("Who should I follow up with this week?").kind === "follow-up");
+  check("an unknown company says so", answerQuestion("Who do I know at Acme Rockets?").kind === "company-none");
+  check("anything else still gets an answer", answerQuestion("best pizza near me").text.length > 20);
+  const kinds = promise.steps.map((x) => x.kind).join(",");
+  check("the answer narrates the real chat's stages in order", kinds === "understand,search,rank,read,answer", kinds);
+  const read = promise.steps.find((x) => x.kind === "read");
+  check("…and reads exactly the people it cites", JSON.stringify(read?.refs) === JSON.stringify([...new Set(promise.sources.map((x) => x.personId))]));
+
+  console.log("\nThe demo's actions ripple through it:");
+  const st = await import("../src/components/interest/app-demo/demo-state");
+  let s = st.initialDemoState("explore");
+  const due0 = st.stats(s).due;
+  s = st.demoReducer(s, { type: "setFollowUp", id: "maya", days: 0 });
+  check("setting a follow-up due today raises the Due count", st.stats(s).due === due0 + 1);
+  check("…and answers the engine's nudge", !st.activeSuggestions(s).some((x) => x.personId === "maya"));
+  s = st.demoReducer(s, { type: "ask", q: "What did I promise Maya?" });
+  const turn = s.chat.find((t) => t.role === "assistant")!;
+  s = st.demoReducer(s, { type: "draft", turnId: turn.id });
+  s = st.demoReducer(s, { type: "sendDraft", turnId: turn.id });
+  const maya = (await import("../src/components/interest/app-demo/demo-cast")).personById("maya")!;
+  check("sending a draft logs it to the timeline via Gmail", st.timelineOf(s, maya)[0]?.source === "Gmail" && st.lastTouchOf(s, maya) === 0);
+  check("reset keeps the mode", st.demoReducer({ ...s, mode: "tour" }, { type: "reset" }).mode === "tour");
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

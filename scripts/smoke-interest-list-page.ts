@@ -113,7 +113,10 @@ async function main() {
   const formText = textOf(form).join(" ");
   check("the FAQ keeps the product under wraps", formText.includes("under wraps"));
   check("the front wave is explained", formText.includes("How do I get into the front wave?"));
-  check("the page never names the product", !/orbit/i.test(formText), formText.match(/.{0,40}orbit.{0,40}/i)?.[0]);
+  // Its one sanctioned mark is the "Project: Orbit" header; nothing else names it.
+  const unmarked = formText.replace("Project: Orbit", "");
+  check("the header carries the product mark", formText.includes("Project: Orbit"));
+  check("nothing else names the product", !/orbit/i.test(unmarked), unmarked.match(/.{0,40}orbit.{0,40}/i)?.[0]);
   check(
     "nothing says it is live, free or open for sign-up",
     !/\b(live|sign up|sign-up|start free|free for)\b/i.test(formText),
