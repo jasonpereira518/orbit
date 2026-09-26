@@ -16,6 +16,8 @@ import {
 } from "@/lib/ingest/events";
 import type { ReminderInsert } from "@/lib/import-engine";
 import { reportError } from "@/lib/report-error";
+import { ERROR_SOURCES } from "@/lib/error-events";
+import { EventPageError, guardedFetchText } from "@/lib/events/guarded-fetch";
 
 const SYNC_WINDOW_PAST_MS = 90 * 86400000;
 const SYNC_WINDOW_FUTURE_MS = 60 * 86400000;
@@ -40,20 +42,46 @@ function meetingNote(event: ParsedCalendarEvent) {
     .join("\n");
 }
 
-async function fetchIcs(url: string) {
-  const res = await fetch(url, {
-    headers: {
-      Accept: "text/calendar, text/plain, */*",
-      "User-Agent": "OrbitNetworkingTracker/1.0",
-    },
-    // Avoid Next fetch caching of private calendar feeds
-    cache: "no-store",
-    redirect: "follow",
-  });
-  if (!res.ok) {
-    throw new Error(icsFetchErrorMessage(url, res.status));
+/** A private feed of a busy calendar runs to a few MB; bounded so one cannot exhaust memory. */
+const MAX_ICS_BYTES = 10_000_000;
+
+const ICS_CONTENT_TYPES = [
+  "text/calendar",
+  "text/plain",
+  "text/x-vcalendar",
+  "application/ics",
+  "application/x-ics",
+  "application/octet-stream",
+] as const;
+
+/**
+ * Fetch a subscribed feed. The URL is the user's, and the scheduler re-fetches it with
+ * nobody watching, so it goes through `guardedFetchText`: the SSRF guard on every redirect
+ * hop, a timeout, and a body cap. A plain `fetch` with `redirect: "follow"` let a feed at
+ * `https://attacker/x` 302 to the metadata address or a private host, and echoed the
+ * status back in the error.
+ *
+ * Rows saved before feeds were https-only are upgraded rather than failed.
+ */
+async function fetchIcs(rawUrl: string) {
+  const url = rawUrl.replace(/^(?:webcal|http):\/\//i, "https://");
+  let text: string;
+  try {
+    const page = await guardedFetchText(url, {
+      accept: "text/calendar, text/plain;q=0.9, */*;q=0.1",
+      contentTypes: ICS_CONTENT_TYPES,
+      maxBytes: MAX_ICS_BYTES,
+      onOverflow: "error",
+      timeoutMs: 20_000,
+      wrongTypeMessage: "URL did not return a valid ICS calendar feed",
+      errorSource: ERROR_SOURCES.eventProviderSync,
+    });
+    text = page.text;
+  } catch (error) {
+    const status = error instanceof EventPageError && /returned (\d{3})/.exec(error.message);
+    if (status) throw new Error(icsFetchErrorMessage(url, Number(status[1])));
+    throw error;
   }
-  const text = await res.text();
   if (!/BEGIN:VCALENDAR/i.test(text) && !/BEGIN:VEVENT/i.test(text)) {
     throw new Error("URL did not return a valid ICS calendar feed");
   }

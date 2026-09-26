@@ -123,3 +123,59 @@ export async function assertDeliverable(url: string): Promise<void> {
     }
   }
 }
+
+/**
+ * `fetch` a URL a user influenced, following at most `maxHops` redirects by hand so
+ * `assertDeliverable` runs before EVERY hop. `redirect: "follow"` would check only the
+ * first URL, and a public host answering 302 to `http://169.254.169.254/` walks straight
+ * past it. Throws on a refused address; resolves to null when the chain runs too long or a
+ * redirect has no `Location`.
+ *
+ * For whole documents with retries and content-type rules, `guardedFetchText` in
+ * `src/lib/events/guarded-fetch.ts` builds on the same guard. Never pass credentials in
+ * `init.headers`: they would be replayed to every hop.
+ */
+export async function guardedFetch(
+  startUrl: string,
+  init: Omit<RequestInit, "redirect"> = {},
+  maxHops = 3
+): Promise<Response | null> {
+  let url = startUrl;
+  for (let hop = 0; hop <= maxHops; hop++) {
+    await assertDeliverable(url);
+    const res = await fetch(url, { ...init, redirect: "manual" });
+    if (res.status < 300 || res.status >= 400 || res.status === 304) return res;
+    await res.body?.cancel().catch(() => {});
+    const location = res.headers.get("location");
+    if (!location) return null;
+    url = new URL(location, url).href;
+  }
+  return null;
+}
+
+/**
+ * Read a response body, giving up (null) once it passes `maxBytes`. `arrayBuffer()` buffers
+ * everything a server chooses to send before any size check can run.
+ */
+export async function readBodyCapped(res: Response, maxBytes: number): Promise<Buffer | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!res.body) return Buffer.alloc(0);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
