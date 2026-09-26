@@ -17,6 +17,7 @@ import { webhookEndpointBody } from "@/lib/api/schemas";
 import { encrypt } from "@/lib/crypto";
 import { generateWebhookSecret } from "@/lib/webhooks/sign";
 import { assertDeliverable, verifyEndpoint } from "@/lib/webhooks/dispatch";
+import { hasWebhookEndpointCapacity, WEBHOOK_ENDPOINT_LIMIT_MESSAGE } from "@/lib/webhooks/limits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,6 +56,10 @@ export const POST = apiHandler({ scope: "write", bucket: "apiWrite" }, async (re
       message: err instanceof Error ? err.message : "That URL cannot be used.",
       param: "url",
     });
+  }
+
+  if (!(await hasWebhookEndpointCapacity(caller.userId))) {
+    return apiError({ code: "invalid_request", message: WEBHOOK_ENDPOINT_LIMIT_MESSAGE });
   }
 
   const db = await getDb();

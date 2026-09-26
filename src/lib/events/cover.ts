@@ -20,7 +20,7 @@
  */
 import { put } from "@/lib/blob-lazy";
 import { hasBlobStorage } from "@/lib/contact-avatar";
-import { assertDeliverable } from "@/lib/net-guard";
+import { guardedFetch, readBodyCapped } from "@/lib/net-guard";
 
 /** Covers are hero images, so a larger cap than an avatar's — but still a cap. */
 const MAX_COVER_BYTES = 5 * 1024 * 1024;
@@ -36,26 +36,17 @@ export type CoverResult = {
 };
 
 async function guardedImageFetch(startUrl: string): Promise<Response | null> {
-  let url = startUrl;
-  for (let hop = 0; hop <= MAX_HOPS; hop++) {
-    // Re-checked per hop, exactly as in fetch-page.ts: clearance for one address is not
-    // clearance for wherever it points next.
-    await assertDeliverable(url);
-    const res = await fetch(url, {
-      redirect: "manual",
+  // Re-checked per hop inside `guardedFetch`, exactly as in fetch-page.ts: clearance for one
+  // address is not clearance for wherever it points next.
+  const res = await guardedFetch(
+    startUrl,
+    {
       signal: AbortSignal.timeout(TIMEOUT_MS),
       headers: { accept: "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8" },
-    });
-    if (res.status >= 300 && res.status < 400) {
-      const location = res.headers.get("location");
-      if (!location) return null;
-      await res.body?.cancel().catch(() => {});
-      url = new URL(location, url).href;
-      continue;
-    }
-    return res.ok ? res : null;
-  }
-  return null;
+    },
+    MAX_HOPS
+  );
+  return res?.ok ? res : null;
 }
 
 /**
@@ -89,8 +80,8 @@ export async function persistEventCover(
     return { url: imageUrl, sourceUrl: imageUrl, stored: false };
   }
 
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.byteLength === 0 || buf.byteLength > MAX_COVER_BYTES) {
+  const buf = await readBodyCapped(res, MAX_COVER_BYTES);
+  if (!buf || buf.byteLength === 0) {
     return { url: imageUrl, sourceUrl: imageUrl, stored: false };
   }
 

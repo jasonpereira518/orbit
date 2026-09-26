@@ -30,18 +30,27 @@ export type CreateReminderInput = {
   actionKind?: ReminderActionKind;
 };
 
+/**
+ * The tenant check every contact-scoped reminder write needs. A reminder's contactId is a
+ * client-supplied reference, and a foreign one would pull another account's contact name
+ * into this user's reminders and calendar feed.
+ */
+export async function assertReminderContactOwned(userId: string, contactId: string | null | undefined) {
+  if (!contactId) return;
+  const db = await getDb();
+  const owned = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: { id: true },
+  });
+  if (!owned) throw new Error("Contact not found");
+}
+
 export async function createReminderForUser(userId: string, input: CreateReminderInput) {
   const db = await getDb();
-  // The tenant check every contact-scoped write needs, moved in from the MCP tool's own ad
-  // hoc version of it: a caller that reaches this function some other way — the proposed-
-  // action commit in `chat-actions.ts`, today — must not be able to skip it by construction.
-  if (input.contactId) {
-    const owned = await db.query.contacts.findFirst({
-      where: and(eq(contacts.id, input.contactId), eq(contacts.userId, userId)),
-      columns: { id: true },
-    });
-    if (!owned) throw new Error("Contact not found");
-  }
+  // Moved in from the MCP tool's own ad hoc version of it: a caller that reaches this
+  // function some other way — the proposed-action commit in `chat-actions.ts`, today — must
+  // not be able to skip it by construction.
+  await assertReminderContactOwned(userId, input.contactId);
   const inboxId = await getInboxListId(userId);
 
   let listId = input.listId || inboxId;

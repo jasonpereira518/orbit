@@ -100,7 +100,7 @@ run(async () => {
   try {
     const [sub] = await db
       .insert(calendarSubscriptions)
-      .values({ userId: USER, icsUrl: "https://example.test/feed.ics", enabled: 1 })
+      .values({ userId: USER, icsUrl: "https://93.184.216.34/feed.ics", enabled: 1 })
       .returning();
 
     await syncCalendarSubscription(USER, sub!.id);
@@ -181,7 +181,7 @@ run(async () => {
     try {
       const [dailySub] = await db
         .insert(calendarSubscriptions)
-        .values({ userId: USER, icsUrl: "https://example.test/daily-feed.ics", enabled: 1 })
+        .values({ userId: USER, icsUrl: "https://93.184.216.34/daily-feed.ics", enabled: 1 })
         .returning();
 
       await syncCalendarSubscription(USER, dailySub!.id);
@@ -282,7 +282,7 @@ run(async () => {
     try {
       const [overrideSub] = await db
         .insert(calendarSubscriptions)
-        .values({ userId: USER, icsUrl: "https://example.test/override-feed.ics", enabled: 1 })
+        .values({ userId: USER, icsUrl: "https://93.184.216.34/override-feed.ics", enabled: 1 })
         .returning();
 
       await syncCalendarSubscription(USER, overrideSub!.id);
@@ -394,7 +394,7 @@ run(async () => {
     try {
       const [establishedSub] = await db
         .insert(calendarSubscriptions)
-        .values({ userId: USER, icsUrl: "https://example.test/established-feed.ics", enabled: 1 })
+        .values({ userId: USER, icsUrl: "https://93.184.216.34/established-feed.ics", enabled: 1 })
         .returning();
 
       await syncCalendarSubscription(USER, establishedSub!.id);
@@ -450,7 +450,7 @@ run(async () => {
 
       const [multiSub] = await db
         .insert(calendarSubscriptions)
-        .values({ userId: USER, icsUrl: "https://example.test/established-multi-feed.ics", enabled: 1 })
+        .values({ userId: USER, icsUrl: "https://93.184.216.34/established-multi-feed.ics", enabled: 1 })
         .returning();
 
       await syncCalendarSubscription(USER, multiSub!.id);
@@ -517,7 +517,7 @@ run(async () => {
     try {
       const [clockSub] = await db
         .insert(calendarSubscriptions)
-        .values({ userId: USER, icsUrl: "https://example.test/clock-advance-feed.ics", enabled: 1 })
+        .values({ userId: USER, icsUrl: "https://93.184.216.34/clock-advance-feed.ics", enabled: 1 })
         .returning();
 
       Date.now = () => T0;

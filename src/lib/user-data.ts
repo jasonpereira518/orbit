@@ -698,6 +698,7 @@ const PRESERVED_SETTINGS_COLUMNS = {
   geminiApiKeyEncrypted: true,
   openaiApiKeyEncrypted: true,
   anthropicApiKeyEncrypted: true,
+  openrouterApiKeyEncrypted: true,
   typesafeApiKeyEncrypted: true,
   apolloApiKeyEncrypted: true,
   resendApiKeyEncrypted: true,
