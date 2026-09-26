@@ -23,6 +23,7 @@ import {
   DUPLICATE_MERGE_CONFIDENCE,
   daysAgo,
   matchAgainst,
+  identityKeysFor,
   linkedinSlug,
   normalizeXHandle,
   type DuplicateMatch,
@@ -127,23 +128,37 @@ async function loadCandidates(userId: string, probe: PageProbe) {
   const db = await getDb();
   const clauses = [];
 
+  // Every arm below is served by an index, so Postgres can OR them as bitmap scans. These
+  // were ILIKEs on raw columns — a leading-wildcard one on linkedin_url among them — and one
+  // unindexable arm in an OR sends the whole query to a scan of the user's contacts. That
+  // ran on every profile the extension opened.
+  //
+  // Identifiers go through `contact_identities`, normalised by the same `identityKeysFor`
+  // that writes them, so a lookup can never spell a value differently from how it was stored.
+  const keys = identityKeysFor({
+    email: probe.email,
+    linkedinUrl: probe.linkedinSlugValue ? `https://www.linkedin.com/in/${probe.linkedinSlugValue}` : null,
+    xHandle: probe.xHandle || null,
+  });
+  if (keys.length) {
+    clauses.push(sql`${contacts.id} in (
+      select ci.contact_id from contact_identities ci
+       where ci.user_id = ${userId}
+         and (${sql.join(keys.map((k) => sql`(ci.kind = ${k.kind} and ci.value = ${k.value})`), sql` or `)})
+    )`);
+  }
   if (probe.linkedinSlugValue) {
-    clauses.push(
-      ilike(contacts.linkedinUrl, `%/in/${escapeLike(probe.linkedinSlugValue)}%`)
-    );
-  }
-  if (probe.xHandle) {
-    clauses.push(ilike(contacts.xHandle, escapeLike(probe.xHandle)));
-  }
-  if (probe.email) {
-    clauses.push(ilike(contacts.email, escapeLike(probe.email)));
+    // The generated column too (contacts_slug_idx), for a contact whose identities have not
+    // been claimed yet: the backfill finishes old accounts over successive deploys.
+    clauses.push(eq(contacts.linkedinSlug, probe.linkedinSlugValue.toLowerCase()));
   }
   if (probe.fullName) {
-    clauses.push(ilike(contacts.fullName, escapeLike(probe.fullName)));
+    // lower() LIKE, not ILIKE: the trigram index is on lower(full_name).
+    clauses.push(sql`lower(${contacts.fullName}) like ${escapeLike(probe.fullName.toLowerCase())}`);
     // Widen enough that the fuzzy-name tier has something to score against.
     const firstToken = probe.fullName.trim().split(/\s+/)[0];
     if (firstToken && firstToken.length >= 3) {
-      clauses.push(ilike(contacts.fullName, `%${escapeLike(firstToken)}%`));
+      clauses.push(sql`lower(${contacts.fullName}) like ${`%${escapeLike(firstToken.toLowerCase())}%`}`);
     }
   }
 
