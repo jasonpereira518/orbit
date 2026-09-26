@@ -31,12 +31,15 @@
  * be run again.
  */
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { after } from "next/server";
 import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
 import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
+import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import { scheduleEmbeddingRebuild } from "@/lib/contact-writes";
+import { rebuildContactEmbeddingsBatch } from "@/lib/search";
 
 /**
  * Child tables that move to the winner with a plain UPDATE.
@@ -496,6 +499,70 @@ export async function invalidateAfterMerge(userId: string, winnerId: string) {
 }
 
 /**
+ * Up to this many survivors are rescored one by one against the stored distribution; past it,
+ * the whole network is recalibrated once instead. A rescore is two dependent round trips per
+ * contact, a recalibration a fixed handful plus one write per 500 contacts — so for a bulk
+ * sweep the recalibration is cheaper, and for the usual one or two merges on a page render it
+ * is not.
+ */
+const RESCORE_ONE_BY_ONE_MAX = 5;
+
+/**
+ * `invalidateAfterMerge` for many survivors at once, for bulk callers that deferred it
+ * (`mergeConfidentDuplicates`). The same three effects in a bounded number of statements
+ * rather than a handful per survivor: one UPDATE marks every embedding stale and ONE batched
+ * rebuild is deferred past the response, the cohort is marked dirty once, and closeness is
+ * either rescored per survivor (few) or recalibrated for the network (many).
+ *
+ * The deferred rebuild does not clear `embedding_stale_at`: it cannot tell a provider failure
+ * from success. The backfill clears the marker without an API call once the stored vector's
+ * hash matches, and re-embeds the row if the rebuild never landed.
+ *
+ * Best-effort per step like the loop it replaces: a failed rescore of one survivor does not
+ * skip the others. Recalibration is last and rethrows, after the dirty mark is down, so the
+ * cron still drains a cohort a failed recalibration left behind.
+ */
+export async function invalidateAfterMerges(userId: string, winnerIds: Iterable<string>) {
+  const ids = [...new Set(winnerIds)];
+  if (ids.length === 0) return;
+  if (ids.length === 1) return invalidateAfterMerge(userId, ids[0]);
+
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ embeddingStaleAt: new Date() })
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, ids)));
+  deferEmbeddingRebuilds(userId, ids);
+  await markCohortDirty(userId);
+
+  if (ids.length <= RESCORE_ONE_BY_ONE_MAX) {
+    for (const id of ids) await rescoreContact(userId, id).catch(() => false);
+  } else {
+    await recalibrateCloseness(userId);
+  }
+}
+
+/**
+ * One batched embedding rebuild after the response. Same `after()`-or-macrotask shape as
+ * `deferEmbeddingRebuild` in `contact-writes.ts`, and for the same reasons: `after()` throws
+ * outside a request scope, and a bare call would race the caller's own writes.
+ */
+function deferEmbeddingRebuilds(userId: string, contactIds: string[]) {
+  const task = async () => {
+    try {
+      await rebuildContactEmbeddingsBatch(userId, contactIds);
+    } catch {
+      // Left stale on purpose; the backfill picks it up.
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
+}
+
+/**
  * Follow a merged contact id to the contact that survives.
  *
  * Cheap and safe to call with any id: an id that was never merged returns itself.
@@ -790,6 +857,52 @@ export async function recordDuplicateSuggestion(
         duplicateSuggestions.contactBId,
       ],
     });
+}
+
+export type DuplicateSuggestionPair = {
+  contactIdA: string;
+  contactIdB: string;
+  reason: string;
+  confidence: number;
+};
+
+/** Rows per insert: five parameters each, far under Postgres's 65,535-parameter ceiling. */
+const SUGGESTION_INSERT_CHUNK = 500;
+
+/**
+ * `recordDuplicateSuggestion` for many pairs in one INSERT per chunk rather than one per pair.
+ * Same canonical ordering, same self-pair skip, same DO NOTHING on the pair key. A pair named
+ * twice keeps its FIRST reason and confidence — what calling the single function in order
+ * would have left, since the second insert would have hit the conflict.
+ */
+export async function recordDuplicateSuggestions(
+  userId: string,
+  pairs: ReadonlyArray<DuplicateSuggestionPair>
+) {
+  const rows = new Map<string, typeof duplicateSuggestions.$inferInsert>();
+  for (const { contactIdA, contactIdB, reason, confidence } of pairs) {
+    if (contactIdA === contactIdB) continue;
+    const [a, b] = contactIdA < contactIdB ? [contactIdA, contactIdB] : [contactIdB, contactIdA];
+    const key = `${a}:${b}`;
+    if (!rows.has(key)) rows.set(key, { userId, contactAId: a, contactBId: b, reason, confidence });
+  }
+  if (rows.size === 0) return;
+
+  const values = [...rows.values()];
+  const db = await getDb();
+  for (let i = 0; i < values.length; i += SUGGESTION_INSERT_CHUNK) {
+    await db
+      .insert(duplicateSuggestions)
+      .values(values.slice(i, i + SUGGESTION_INSERT_CHUNK))
+      // See `recordDuplicateSuggestion`: a dismissed pair stays dismissed.
+      .onConflictDoNothing({
+        target: [
+          duplicateSuggestions.userId,
+          duplicateSuggestions.contactAId,
+          duplicateSuggestions.contactBId,
+        ],
+      });
+  }
 }
 
 /**

@@ -371,14 +371,16 @@ export async function getImportDetail(
   if (!isImportId(importId)) return null;
   const db = await getDb();
 
-  const row = await db.query.imports.findFirst({
-    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
-  });
-  if (!row) return null;
-
-  // One grouped count, served by `import_job_rows_import_status_idx`.
-  const grouped = rowsOf<{ status: string; n: number }>(
-    await db
+  // The import row and both row reads go out together: none needs another's result, and
+  // each is scoped to `userId` on its own, so for an import that is missing or someone
+  // else's they read nothing and the answer is still null below. Only the people count waits,
+  // because it needs the import's `created_at`.
+  const [row, groupedResult, problemResult] = await Promise.all([
+    db.query.imports.findFirst({
+      where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+    }),
+    // One grouped count, served by `import_job_rows_import_status_idx`.
+    db
       .select({ status: importJobRows.status, n: sql<number>`count(*)::int` })
       .from(importJobRows)
       .where(
@@ -388,22 +390,7 @@ export async function getImportDetail(
         ),
       )
       .groupBy(importJobRows.status),
-  );
-
-  const counts = { done: 0, skipped: 0, failed: 0, pending: 0 };
-  for (const g of grouped) {
-    if (g.status === "done") counts.done += g.n;
-    else if (g.status === "skipped") counts.skipped += g.n;
-    else if (g.status === "failed") counts.failed += g.n;
-    else counts.pending += g.n;
-  }
-
-  const problemRows = rowsOf<{
-    status: string;
-    payload: unknown;
-    errorMessage: string | null;
-  }>(
-    await db
+    db
       .select({
         status: importJobRows.status,
         payload: importJobRows.payload,
@@ -419,7 +406,24 @@ export async function getImportDetail(
       )
       .orderBy(importJobRows.rowIndex)
       .limit(IMPORT_PROBLEM_SAMPLE),
-  );
+  ]);
+  if (!row) return null;
+
+  const grouped = rowsOf<{ status: string; n: number }>(groupedResult);
+
+  const counts = { done: 0, skipped: 0, failed: 0, pending: 0 };
+  for (const g of grouped) {
+    if (g.status === "done") counts.done += g.n;
+    else if (g.status === "skipped") counts.skipped += g.n;
+    else if (g.status === "failed") counts.failed += g.n;
+    else counts.pending += g.n;
+  }
+
+  const problemRows = rowsOf<{
+    status: string;
+    payload: unknown;
+    errorMessage: string | null;
+  }>(problemResult);
 
   const problems: ImportRowProblem[] = problemRows.map((r) => ({
     status: r.status === "failed" ? "failed" : "skipped",
@@ -1735,6 +1739,9 @@ export type GooglePhotoMatchResult = {
   remaining: number;
 };
 
+/** Contacts per photo UPDATE: two parameters each. */
+const PHOTO_MATCH_CHUNK = 500;
+
 /**
  * Fill missing contact photos from Google Contacts.
  *
@@ -1808,20 +1815,29 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
       ),
     );
 
-  let matched = 0;
+  const matches: Array<{ id: string; photo: string }> = [];
   for (const row of needPhoto) {
     const photo = photoByEmail.get(row.email!.trim().toLowerCase());
-    if (!photo) continue;
-    await db
-      .update(contacts)
-      .set({
-        profileImageUrl: photo,
-        // A photo found here clears any cooldown the backfill set, so it caches promptly.
-        profileImageCheckedAt: null,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(contacts.id, row.id), eq(contacts.userId, userId)));
-    matched += 1;
+    if (photo) matches.push({ id: row.id, photo });
+  }
+  const matched = matches.length;
+
+  // One `UPDATE ... FROM (VALUES ...)` per chunk rather than one UPDATE per contact: on
+  // neon-http each statement is its own HTTPS request. Same columns as a per-row write.
+  const updatedAt = new Date().toISOString();
+  for (let i = 0; i < matches.length; i += PHOTO_MATCH_CHUNK) {
+    const tuples = matches
+      .slice(i, i + PHOTO_MATCH_CHUNK)
+      .map(({ id, photo }) => sql`(${id}::uuid, ${photo}::text)`);
+    await db.execute(sql`
+      UPDATE contacts AS c
+         SET profile_image_url = v.url,
+             -- A photo found here clears any cooldown the backfill set, so it caches promptly.
+             profile_image_checked_at = NULL,
+             updated_at = ${updatedAt}::timestamptz
+        FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, url)
+       WHERE c.id = v.id AND c.user_id = ${userId}
+    `);
   }
 
   if (matched > 0) {

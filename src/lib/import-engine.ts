@@ -19,7 +19,7 @@ import {
 } from "@/lib/contact-writes";
 import { internalFetch } from "@/lib/internal-auth";
 import { createCompanyResolver } from "@/lib/companies";
-import { recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { recordDuplicateSuggestions, type DuplicateSuggestionPair } from "@/lib/contact-merge";
 import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { NO_ENGINES, openEngines, type Engines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
@@ -684,7 +684,7 @@ export async function runImportJob(importId: string): Promise<void> {
               // Only reached once the insert has actually succeeded — a batch whose insert
               // throws is caught by `writeWithNarrowing`, which retries smaller slices of the
               // same `batch`, so nothing here may run for a batch that didn't really write.
-              const suggestions: Array<[string, string, string, number]> = [];
+              const suggestions: DuplicateSuggestionPair[] = [];
               created.forEach((contact, i) => {
                 addToDuplicateIndex(duplicateIndex, contact);
                 contactIdByRowId.set(batch[i].row.id, contact.id);
@@ -705,18 +705,17 @@ export async function runImportJob(importId: string): Promise<void> {
                 touchedContactIds.push(contact.id);
                 const lookalike = batch[i].lookalike;
                 if (lookalike) {
-                  suggestions.push([
-                    contact.id,
-                    lookalike.contactId,
-                    lookalike.reason,
-                    lookalike.confidence,
-                  ]);
+                  suggestions.push({
+                    contactIdA: contact.id,
+                    contactIdB: lookalike.contactId,
+                    reason: lookalike.reason,
+                    confidence: lookalike.confidence,
+                  });
                 }
               });
-              // After the insert, so both sides of the pair exist for the foreign keys.
-              for (const [a, b, reason, confidence] of suggestions) {
-                await recordDuplicateSuggestion(userId, a, b, reason, confidence);
-              }
+              // After the insert, so both sides of the pair exist for the foreign keys. One
+              // statement for the batch, not one per lookalike.
+              await recordDuplicateSuggestions(userId, suggestions);
               contactsCreated += created.length;
               if (headroom !== null) headroom = Math.max(0, headroom - created.length);
 

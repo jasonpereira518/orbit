@@ -51,7 +51,7 @@ import {
   type ContactInput,
 } from "@/lib/contact-writes";
 import { createCompanyResolver, type CompanyResolver } from "@/lib/companies";
-import { recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { recordDuplicateSuggestions, type DuplicateSuggestionPair } from "@/lib/contact-merge";
 import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
@@ -479,7 +479,7 @@ export async function ingestEvents(
       }
     );
     stats.contactsCreated = created.length;
-    const suggestions: Array<[string, string, string, number]> = [];
+    const suggestions: DuplicateSuggestionPair[] = [];
     created.forEach((contact, i) => {
       // Fold new contacts into the index so a LATER batch matches them rather than creating
       // the person again. Within this batch, `createIndexByKey` already did that job.
@@ -489,13 +489,17 @@ export async function ingestEvents(
       }
       const lookalike = toCreate[i]?.lookalike;
       if (lookalike) {
-        suggestions.push([contact.id, lookalike.contactId, lookalike.reason, lookalike.confidence]);
+        suggestions.push({
+          contactIdA: contact.id,
+          contactIdB: lookalike.contactId,
+          reason: lookalike.reason,
+          confidence: lookalike.confidence,
+        });
       }
     });
     // After the insert, so both ids exist: the suggestion has foreign keys to each side.
-    for (const [a, b, reason, confidence] of suggestions) {
-      await recordDuplicateSuggestion(ctx.userId, a, b, reason, confidence);
-    }
+    // 0-1 statements: one insert for every lookalike in the batch, none when there are none.
+    await recordDuplicateSuggestions(ctx.userId, suggestions);
     if (ctx.headroom !== null) ctx.headroom -= created.length;
     // Fewer created than asked for means the cap bit part-way through the batch.
     stats.blockedByPlan += toCreate.length - created.length;
