@@ -171,6 +171,7 @@ export function AppShell({
             />
           </div>
           <main
+            id="app-main-scroll"
             className={cn(
               "relative flex h-full min-h-0 flex-1 flex-col",
               isViewportLocked

@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { randomUUID } from "node:crypto";
 import { friendlyError, isQuietFailureMessage, isUserFacingError, withReference } from "@/lib/errors";
 
@@ -19,6 +18,12 @@ import { friendlyError, isQuietFailureMessage, isUserFacingError, withReference 
  *
  * It never throws — reporting a failure must not become the failure.
  *
+ * Sentry is imported on the first report, not with this module. Nearly every page and
+ * action imports this file, and a static import put the whole server SDK (~1.7 MB, about
+ * a third of a page's server JS) into every route's cold start — to serve a catch block
+ * that usually never runs. The event id is generated here and handed to Sentry, so the
+ * reference is still synchronous and still names the Sentry event.
+ *
  * Server-only in practice (it reads `node:crypto`); nothing in a client bundle imports it.
  */
 
@@ -38,6 +43,36 @@ const SECRET_KEY = /key|token|secret|password|authorization|cookie|signature/i;
 const WARNING_WINDOW_MS = 60_000;
 const lastWarning = new Map<string, number>();
 
+type SentrySdk = typeof import("@sentry/nextjs");
+let sentry: Promise<SentrySdk> | undefined;
+
+/**
+ * `captureContext` rather than top-level `level`/`tags`/…: Sentry reads a hint that has any
+ * of those keys as a bare capture context and drops the rest, `event_id` included.
+ */
+function sendToSentry(err: unknown, eventId: string, level: ReportLevel, ctx: ReportContext, extra?: Record<string, unknown>) {
+  // The bundler hands back the module namespace; plain Node (the tsx scripts) hands back
+  // the CommonJS build's exports under `default`.
+  sentry ??= import("@sentry/nextjs").then((mod) =>
+    "captureException" in mod ? mod : (mod as unknown as { default: SentrySdk }).default
+  );
+  sentry
+    .then((Sentry) => {
+      Sentry.captureException(err, {
+        event_id: eventId,
+        captureContext: {
+          level,
+          tags: { where: ctx.where },
+          user: ctx.userId ? { id: ctx.userId } : undefined,
+          extra,
+        },
+      });
+    })
+    .catch(() => {
+      sentry = undefined;
+    });
+}
+
 function sanitize(extra: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (!extra) return undefined;
   const out: Record<string, unknown> = {};
@@ -51,7 +86,9 @@ function sanitize(extra: Record<string, unknown> | undefined): Record<string, un
 /** Report a caught error. Returns the reference to show the person (8 characters). */
 export function reportError(err: unknown, ctx: ReportContext): string {
   const level: ReportLevel = ctx.level ?? "error";
-  let ref = randomUUID().replace(/-/g, "").slice(0, 8);
+  // 32 hex characters: a valid Sentry event id, whose first 8 are the reference.
+  const eventId = randomUUID().replace(/-/g, "");
+  const ref = eventId.slice(0, 8);
   try {
     if (level === "warning") {
       const now = Date.now();
@@ -60,15 +97,7 @@ export function reportError(err: unknown, ctx: ReportContext): string {
       lastWarning.set(ctx.where, now);
     }
     const extra = sanitize(ctx.extra);
-    if (process.env.SENTRY_DSN) {
-      const eventId = Sentry.captureException(err, {
-        level,
-        tags: { where: ctx.where },
-        user: ctx.userId ? { id: ctx.userId } : undefined,
-        extra,
-      });
-      if (typeof eventId === "string" && eventId.length >= 8) ref = eventId.slice(0, 8);
-    }
+    if (process.env.SENTRY_DSN) sendToSentry(err, eventId, level, ctx, extra);
     const who = ctx.userId ? ` user=${ctx.userId}` : "";
     const log = level === "warning" ? console.warn : console.error;
     log(`[orbit:${ctx.where}] ref=${ref}${who}`, err, extra ?? "");

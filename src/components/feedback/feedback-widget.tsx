@@ -188,9 +188,16 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   useEffect(() => {
     shotsRef.current = shots;
   }, [shots]);
+  // The same for a full-screen capture still waiting on its crop, should the widget
+  // unmount mid-selection.
+  const frameRef = useRef<CapturedFrame | null>(null);
+  useEffect(() => {
+    frameRef.current = frame;
+  }, [frame]);
   useEffect(() => {
     return () => {
       for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
+      if (frameRef.current) releaseFrame(frameRef.current);
     };
   }, []);
 
@@ -435,13 +442,18 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     }
     try {
       const bitmap = await createImageBitmap(shot.blob);
-      const redacted = await cropDownscaleEncode(
-        { source: bitmap, width: bitmap.width, height: bitmap.height, previewUrl: "" },
-        { x: 0, y: 0, w: bitmap.width, h: bitmap.height },
-        shot.redactions,
-        MAX_SCREENSHOT_BYTES
-      );
-      bitmap.close();
+      // A full-resolution decode, often GPU-backed: closed on failure too, not left to GC.
+      let redacted: Awaited<ReturnType<typeof cropDownscaleEncode>>;
+      try {
+        redacted = await cropDownscaleEncode(
+          { source: bitmap, width: bitmap.width, height: bitmap.height, previewUrl: "" },
+          { x: 0, y: 0, w: bitmap.width, h: bitmap.height },
+          shot.redactions,
+          MAX_SCREENSHOT_BYTES
+        );
+      } finally {
+        bitmap.close();
+      }
       URL.revokeObjectURL(shot.previewUrl);
       setShots((prev) =>
         prev.map((s) =>
