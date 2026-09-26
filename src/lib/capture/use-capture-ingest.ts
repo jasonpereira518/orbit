@@ -18,6 +18,7 @@
  * flow is how regressions hide.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { discardCaptureJob } from "@/actions/capture-jobs";
 import { getSettings } from "@/actions/settings";
 import type { CaptureParseHints } from "@/lib/ai";
 import { finishBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
@@ -125,6 +126,22 @@ export function useCaptureIngest({
       cancelled = true;
     };
   }, [hasApiKeyProp]);
+
+  // A transcript is also a server-side capture job, and the page restores from it on reload.
+  // Emptying the box (or Clear) has to discard that job too, or the text the person just
+  // deleted comes straight back. Gated on `!busy`: a transcript still landing is not "empty".
+  useEffect(() => {
+    if (!jobId || busy || notes.trim()) return;
+    let cancelled = false;
+    void discardCaptureJob(jobId)
+      .catch(() => {})
+      .then(() => {
+        if (!cancelled) setJobId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, busy, notes]);
 
   /** Whether the text in the box came from a photograph. */
   const scannedPhotos = sources.some((s) => s.startsWith("photos"));
