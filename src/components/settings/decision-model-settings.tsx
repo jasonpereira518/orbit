@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ExternalLink } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { clearDecisionKey, getSettings, saveDecisionKey } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsSection } from "@/components/settings/settings-section";
-import { Disclosure } from "@/components/settings/disclosure";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -48,22 +48,24 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
         Status: {status}
       </p>
 
-      <Disclosure label="What Jev reads">
-        <p className="text-sm text-muted-foreground">
-          The same material the step itself works from, and nothing more. During a recruiter scan,
-          each sender’s name, address, subject lines and message text. When chat answers, your
-          question and a short card for each candidate contact: name, title, company, school, tags
-          and summary. When two records might be one person, those same two cards. For a calendar
-          event, its title, description, and the domains of the organiser and guests — not their
-          addresses. For a captured note, the note itself, so it can tell a tag it already knows
-          from a new one and a real introduction offer from a turn of phrase. And in front of the
-          slower steps, a yes-or-no on whether there is anything there at all: a note with no
-          dates in it, a LinkedIn thread that is only “thanks for connecting”.
-        </p>
-      </Disclosure>
-
       <div className="space-y-1.5">
-        <Label htmlFor="typesafe-key">TypeSafe API key</Label>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <Label htmlFor="typesafe-key">TypeSafe API key</Label>
+          {/*
+            TypeSafe's own console, the host its homepage signs people in at. Linked at the
+            root rather than a keys page: what sits behind that sign-in cannot be checked from
+            here, and a deep link that has moved is worse than one more click.
+          */}
+          <a
+            href="https://console.typesafe.ai/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 py-1 text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            Get a key
+            <ExternalLink className="size-3.5" aria-hidden />
+          </a>
+        </div>
         <Input
           id="typesafe-key"
           type="password"
