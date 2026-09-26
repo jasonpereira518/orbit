@@ -2,17 +2,28 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypt
 
 const ALGO = "aes-256-gcm";
 
+/**
+ * scrypt is deliberately slow (~40ms of synchronous CPU), and this ran on every encrypt and
+ * decrypt — several per AI call, one per OAuth token use — blocking every other request on
+ * the instance meanwhile. The derived key is cached per secret value, so a rotated secret
+ * (or a test that swaps it) still derives afresh.
+ */
+let cachedKey: { secret: string; key: Buffer } | null = null;
+
 function getKey() {
-  const secret = process.env.ENCRYPTION_SECRET;
+  let secret = process.env.ENCRYPTION_SECRET;
   if (!secret) {
     if (process.env.NODE_ENV === "production") {
       throw new Error(
         "ENCRYPTION_SECRET must be set in production — refusing to encrypt/decrypt with a default key."
       );
     }
-    return scryptSync("orbit-dev-secret-change-me-in-prod", "orbit-salt", 32);
+    secret = "orbit-dev-secret-change-me-in-prod";
   }
-  return scryptSync(secret, "orbit-salt", 32);
+  if (cachedKey?.secret !== secret) {
+    cachedKey = { secret, key: scryptSync(secret, "orbit-salt", 32) };
+  }
+  return cachedKey.key;
 }
 
 export function encrypt(plaintext: string): string {

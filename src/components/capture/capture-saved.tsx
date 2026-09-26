@@ -6,6 +6,7 @@
  * full account, with Undo.
  */
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { motion } from "motion/react";
 import { ArrowUpRight, Check, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -84,9 +85,9 @@ export function CaptureSaved({
               <li key={item.key} className="flex items-center gap-3 rounded-xl bg-card px-3 py-1.5 text-sm">
                 <PlanetBadge index={index} size="xs" />
                 {id ? (
-                  <Link href={`/contacts/${id}`} className="min-w-0 flex-1 truncate font-medium text-primary hover:underline">
+                  <IntentLink href={`/contacts/${id}`} className="min-w-0 flex-1 truncate font-medium text-primary hover:underline">
                     {name}
-                  </Link>
+                  </IntentLink>
                 ) : (
                   <span className="min-w-0 flex-1 truncate font-medium">{name}</span>
                 )}
@@ -104,9 +105,9 @@ export function CaptureSaved({
           <Sparkles className="size-4" /> Capture more
         </Button>
         {single && saved?.contactIdByKey[single.item.key] && (
-          <Link href={`/contacts/${saved.contactIdByKey[single.item.key]}`} className={buttonVariants({ variant: "outline" })}>
+          <IntentLink href={`/contacts/${saved.contactIdByKey[single.item.key]}`} className={buttonVariants({ variant: "outline" })}>
             Open contact <ArrowUpRight className="size-3.5" />
-          </Link>
+          </IntentLink>
         )}
         {saved?.batchId && (
           <Link href={`/capture/${saved.batchId}`} className={buttonVariants({ variant: "ghost", className: "text-muted-foreground" })}>

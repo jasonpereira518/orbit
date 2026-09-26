@@ -48,7 +48,21 @@ export function isUnfetchableImageUrl(url: string | null | undefined): boolean {
 export function isDurableAvatarUrl(url: string | null | undefined): boolean {
   const u = url?.trim();
   if (!u) return false;
-  return u.startsWith("data:image/") || u.includes(BLOB_AVATAR_HOST_SUFFIX);
+  return u.startsWith("data:image/") || isBlobStoreUrl(u);
+}
+
+/**
+ * The Blob store by parsed hostname, never by substring: `/api/avatars/[contactId]`
+ * redirects to a durable URL, and `https://evil.tld/.public.blob.vercel-storage.com`
+ * contains the suffix too.
+ */
+function isBlobStoreUrl(u: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(u);
+    return protocol === "https:" && hostname.endsWith(BLOB_AVATAR_HOST_SUFFIX);
+  } catch {
+    return false;
+  }
 }
 
 /**

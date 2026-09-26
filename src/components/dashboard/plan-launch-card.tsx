@@ -1,4 +1,4 @@
-import { ArrowUpRight, Rocket } from "lucide-react";
+import { ArrowUpRight, Rocket, Sparkles } from "lucide-react";
 import { WarpLink } from "@/components/warp/warp-link";
 import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/plan-limits";
 
@@ -19,12 +19,12 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
   if (plan !== "free") {
     return (
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card/80 px-4 py-3 backdrop-blur">
-        <p className="text-sm text-muted-foreground">
+        <p className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <Sparkles className="size-4 shrink-0 text-primary" aria-hidden="true" />
           You&apos;re on{" "}
           <span className="font-medium text-foreground">
             {plan === "lifetime" ? "Orbit Lifetime" : "Orbit Pro"}
           </span>
-          . Everything below is unlimited.
         </p>
         <WarpLink
           href="/pricing"

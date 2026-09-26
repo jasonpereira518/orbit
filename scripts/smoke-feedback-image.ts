@@ -126,6 +126,37 @@ function main() {
   check("a bare word is rejected", sanitizePath("contacts") === null);
   check("undefined is rejected", sanitizePath(undefined) === null);
   check("an over-long path is rejected", sanitizePath(`/${"a".repeat(MAX_PATH)}`) === null);
+  check("the app root survives", sanitizePath("/") === "/");
+
+  // Open-redirect-shaped bypasses. All of these passed the `startsWith("/")` +
+  // `!startsWith("//")` pair this function used to carry, and all resolve to the host
+  // evil.example, because the WHATWG URL parser folds backslashes to forward slashes and
+  // strips tab/LF/CR from the whole input BEFORE it looks for an authority.
+  //
+  // Nothing in the feedback path resolves the stored route as a URL today — the admin
+  // console renders it as escaped text in a DefinitionRow, never as an href — so these
+  // guard the invariant rather than a live hole. They are asserted against the real parser
+  // as well as against the guard, so this test cannot rot into agreeing with a broken one.
+  for (const value of [
+    "/\\evil.example",
+    "/\\/evil.example",
+    "/\t/evil.example",
+    "/\n/evil.example",
+    "/\r/evil.example",
+  ]) {
+    const shown = JSON.stringify(value);
+    check(`${shown} is rejected`, sanitizePath(value) === null);
+    check(
+      `  ...and really does resolve off-origin`,
+      new URL(value, "https://orbit.test").host === "evil.example"
+    );
+  }
+
+  // The guard must not have turned into a blunt "no punctuation" rule: these are ordinary
+  // routes, and the obvious over-broad version of the check rejects the hyphen.
+  for (const ok of ["/contacts/my-contact", "/settings/integrations", "/a?q=1&r=2", "/x.y"]) {
+    check(`${JSON.stringify(ok)} still survives`, sanitizePath(ok) === ok);
+  }
 
   console.log("");
 

@@ -36,7 +36,7 @@ export async function ensureLocalDemoData(userId: string): Promise<void> {
     // Loaded on demand: the seeder and its data never enter the module graph of a
     // request that does not need them.
     const { seedDemoWorkspace } = await import("@/lib/demo-data/seed");
-    const summary = await seedDemoWorkspace(userId);
+    const summary = await seedDemoWorkspace(userId, { extended: true });
     console.info(`[demo-data] seeded a demo workspace for ${userId}`, summary);
   })()
     .catch((err) => {

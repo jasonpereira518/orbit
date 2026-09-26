@@ -2,7 +2,6 @@
  * The /contact submission, minus the request. `src/actions/contact.ts` reads the IP and
  * hands it in, so a smoke script can drive this with a fake IP and a recording sender.
  */
-import { Resend } from "resend";
 import {
   contactSchema,
   MIN_FILL_MS,
@@ -18,6 +17,8 @@ export type ContactMail = { from: string; to: string; replyTo: string; subject: 
 export type ContactSender = (apiKey: string, mail: ContactMail) => Promise<{ error: unknown }>;
 
 const resendSender: ContactSender = async (apiKey, mail) => {
+  // Loaded on send: the Resend SDK has no business in a cold start that sends nothing.
+  const { Resend } = await import("resend");
   const { error } = await new Resend(apiKey).emails.send(mail);
   return { error: error ?? null };
 };

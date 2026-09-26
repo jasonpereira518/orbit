@@ -72,6 +72,8 @@ export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibil
  * The order Orbit reaches for its own keys when the user's chosen provider has none
  * configured. Cheapest first: the managed path is paid for once, at checkout, forever.
  */
+// OpenRouter is deliberately absent: Orbit holds no OpenRouter key, so it is never a managed
+// provider, and this order is exactly the set of providers Orbit will ever pay for.
 export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["gemini", "openai", "anthropic"];
 
 /**
@@ -85,12 +87,17 @@ export const MANAGED_MODELS: Record<AiProvider, readonly string[]> = {
   gemini: ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
   openai: ["gpt-4o-mini", "gpt-4.1-mini"],
   anthropic: ["claude-haiku-4-5"],
+  // Unreachable: MANAGED_PROVIDER_ORDER excludes openrouter, so this arm exists only to
+  // satisfy the Record — Orbit never selects it as a managed provider.
+  openrouter: [],
 };
 
 export const MANAGED_DEFAULT_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.8-flash",
   openai: "gpt-4o-mini",
   anthropic: "claude-haiku-4-5",
+  // Unreachable for the same reason as MANAGED_MODELS.openrouter above.
+  openrouter: "google/gemini-3.8-flash",
 };
 
 export function managedModel(provider: AiProvider, requested: string | null | undefined): string {
@@ -275,7 +282,18 @@ export function chooseCompletionKey(facts: KeyFacts): KeyChoice {
   };
 }
 
-const EMBEDDING_ORDER: readonly EmbeddingBackend[] = ["openai", "gemini"];
+/**
+ * Personal-key preference for embeddings, cheapest usable first.
+ *
+ * `openrouter` is LAST on purpose, and it is the one member that is not preferred when it
+ * is the selected provider. Stored vectors carry no record of which backend wrote them, and
+ * `saveAiSettings` reacts to a backend change by DELETING every `contact_embeddings` row so
+ * the two spaces are never compared. That is correct, and it is also a full re-index paid
+ * for in the person's own API spend — not something to hand someone for pressing Connect.
+ * So an account that already has a Gemini or OpenAI key keeps embedding with it, and
+ * OpenRouter embeds only for an account that has nothing else.
+ */
+const EMBEDDING_ORDER: readonly EmbeddingBackend[] = ["openai", "gemini", "openrouter"];
 
 /**
  * Search embeddings. Anthropic has none, so an Anthropic user embeds with OpenAI or Gemini.
@@ -285,8 +303,10 @@ const EMBEDDING_ORDER: readonly EmbeddingBackend[] = ["openai", "gemini"];
  */
 export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend> {
   const selected = facts.selectedProvider;
+  // Anthropic has no embeddings API at all, and OpenRouter must not displace an existing
+  // key (see EMBEDDING_ORDER) — so neither is promoted to the front.
   const order: EmbeddingBackend[] =
-    selected === "anthropic"
+    selected === "anthropic" || selected === "openrouter"
       ? [...EMBEDDING_ORDER]
       : [selected, ...EMBEDDING_ORDER.filter((p) => p !== selected)];
 

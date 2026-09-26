@@ -32,7 +32,7 @@ export function ThemeProvider({
   // a nested next-themes provider is a no-op, and `forcedTheme` never overwrites the stored
   // preference, so leaving /admin restores whatever the operator picked for the product.
   const forcedTheme = isAdminPath(pathname) ? "light" : props.forcedTheme;
-  const { storageKey = "theme", defaultTheme = "system" } = props;
+  const { storageKey = "theme", defaultTheme = "light" } = props;
 
   // next-themes applies the class in a passive effect, i.e. after paint, so a client-side
   // navigation between the dark product and /admin painted the new page in the old theme

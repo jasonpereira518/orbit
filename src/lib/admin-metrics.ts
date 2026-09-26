@@ -279,6 +279,7 @@ export async function loadAdminUserRows(
           hasGemini: sql<boolean>`${userSettings.geminiApiKeyEncrypted} is not null`,
           hasOpenai: sql<boolean>`${userSettings.openaiApiKeyEncrypted} is not null`,
           hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
+          hasOpenrouter: sql<boolean>`${userSettings.openrouterApiKeyEncrypted} is not null`,
           suspendedAt: userSettings.suspendedAt,
           compedPlan: userSettings.compedPlan,
           compedNote: userSettings.compedNote,
@@ -328,7 +329,9 @@ export async function loadAdminUserRows(
         ? row.hasOpenai
         : provider === "anthropic"
           ? row.hasAnthropic
-          : row.hasGemini;
+          : provider === "openrouter"
+            ? row.hasOpenrouter
+            : row.hasGemini;
 
     return {
       userId: row.userId,

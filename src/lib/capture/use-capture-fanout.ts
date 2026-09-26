@@ -22,8 +22,8 @@ import {
   DEFAULT_FANOUT_CONCURRENCY,
   applyOutcome,
   markUploading,
-  readyEntries,
   replaceEntry,
+  startableEntries,
   summarize,
   type FanoutEntry,
   type FanoutSummary,
@@ -168,16 +168,27 @@ export function useCaptureFanout(opts?: {
 
   const summary: FanoutSummary = summarize(entries);
 
+  // Outcomes are applied unless the component has gone. NOT a per-run `cancelled` flag: the
+  // pump's own `setEntries(markUploading…)` re-runs this effect, so its cleanup fires straight
+  // after every start, and a flag set there discarded every outcome — each note sat at
+  // "uploading" and the run never finished. An upload outlives the run that started it.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  /** Ids started and not yet settled — see `startableEntries` for why the list alone won't do. */
+  const inFlightRef = useRef(new Set<string>());
+
   // The pump.
   useEffect(() => {
     if (!running) return;
     const batchGroupId = batchIdRef.current;
     if (!batchGroupId) return;
 
-    const ready = readyEntries(entries, Date.now(), concurrency);
-    if (!ready.length) return;
-
-    let cancelled = false;
+    const ready = startableEntries(entries, inFlightRef.current, Date.now(), concurrency);
     for (const entry of ready) {
       const files = filesRef.current.get(entry.id);
       if (!files?.length) {
@@ -186,29 +197,25 @@ export function useCaptureFanout(opts?: {
         );
         continue;
       }
+      inFlightRef.current.add(entry.id);
       setEntries((prev) => replaceEntry(prev, markUploading(entry)));
+      const settle = (outcome: UploadOutcome) => {
+        inFlightRef.current.delete(entry.id);
+        if (!mountedRef.current) return;
+        setEntries((prev) => {
+          const current = prev.find((e) => e.id === entry.id) ?? entry;
+          return replaceEntry(prev, applyOutcome(current, outcome, Date.now()));
+        });
+      };
       void uploader({ files, label: entry.label, batchGroupId, anchorIso: entry.anchorIso })
-        .then((outcome) => {
-          if (cancelled) return;
-          setEntries((prev) => {
-            const current = prev.find((e) => e.id === entry.id) ?? entry;
-            return replaceEntry(prev, applyOutcome(current, outcome, Date.now()));
-          });
-        })
-        .catch((err: unknown) => {
-          if (cancelled) return;
+        // Two-argument `then`, so a throw inside `settle` is not mistaken for a failed upload.
+        .then(settle, (err: unknown) => {
           const message = err instanceof Error ? err.message : "That upload didn’t go through";
-          setEntries((prev) => {
-            const current = prev.find((e) => e.id === entry.id) ?? entry;
-            // Network failure, not a server refusal — treated as a 0 so it is reported
-            // rather than retried forever against a connection that is not coming back.
-            return replaceEntry(prev, applyOutcome(current, { ok: false, error: message, status: 0, retryAfterSec: null }, Date.now()));
-          });
+          // Network failure, not a server refusal — treated as a 0 so it is reported
+          // rather than retried forever against a connection that is not coming back.
+          settle({ ok: false, error: message, status: 0, retryAfterSec: null });
         });
     }
-    return () => {
-      cancelled = true;
-    };
   }, [running, entries, concurrency, uploader]);
 
   // A `waiting` entry has no event of its own to wake it, so the pump needs a nudge when its

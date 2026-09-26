@@ -180,6 +180,16 @@ export type AvatarBatchDeps = {
    * so callers without Apollo access can omit it.
    */
   resolveApollo?: (contactId: string, linkedinUrl: string) => Promise<string | null>;
+  /**
+   * Sources the caller could not stand up for this batch at all — a connected-account
+   * index that failed to build, an Apollo key that could not be read. A contact such a
+   * source would have answered for never got a real look, so it is deferred exactly as a
+   * quota refusal is: kept out of `failedIds` and never cooldown-stamped. Without this the
+   * cooldown would mean "every source was tried and none had a photo" when two of them
+   * never ran, which is the same reasoning `resolveOneAvatarNow` already applies when it
+   * passes a no-op `markChecked`.
+   */
+  sourcesUnavailable?: { connectedAccount?: boolean; apollo?: boolean };
   save: (contactId: string, photoUrl: string) => Promise<void>;
   /** Record that a contact was tried and yielded nothing, starting its cooldown. */
   markChecked: (contactId: string) => Promise<void>;
@@ -297,7 +307,9 @@ export async function runAvatarBackfillBatch(
       // Set when a source refused us for quota rather than answering. Such a contact
       // stays retryable (kept out of failedIds, never cooldown-stamped) so it gets a
       // real look once the source's quota resets.
-      let quotaDeferred = false;
+      let quotaDeferred =
+        (deps.sourcesUnavailable?.connectedAccount === true && Boolean(contact.email)) ||
+        (deps.sourcesUnavailable?.apollo === true && Boolean(contact.linkedinUrl));
 
       if (contact.remoteUrl) {
         photoUrl = await deps.persistRemote(contact.id, contact.remoteUrl);

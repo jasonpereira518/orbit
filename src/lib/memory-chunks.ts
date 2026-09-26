@@ -15,7 +15,8 @@
  * The chunker is pure and the writer is not; `scripts/smoke-memory-chunks.ts` drives the
  * chunker directly, which is where the boundary rules are pinned.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import { memoryChunks } from "@/db/schema";
 import { computeContentHash } from "@/lib/search";
@@ -129,6 +130,72 @@ export function chunkHeader(input: {
   return parts.join(" · ");
 }
 
+/**
+ * What an interaction's passages were built FROM, as one md5.
+ *
+ * This is the staleness signal for content, and it is deliberately not the same thing as
+ * `content_hash` (which is per chunk, over the rendered passage) or `embedded_hash` (which
+ * asks whether the vector is current). It answers: does this chunk set still describe the row
+ * as it stands now?
+ *
+ * It exists because the sweep's claim used to be a pure anti-join — an interaction with no
+ * passages — so a note was indexed once and never looked at again. Editing it left the
+ * original passages quotable forever. A hook on the write path could not fix that: three of
+ * the five paths that change this text are bulk (the import upsert, the calendar ingest
+ * upsert, and `events/connect.ts`), and per-row re-indexing is exactly what those paths pass
+ * `skipEmbedding` to avoid. A hash the CLAIM can compute covers all five, including ones
+ * nobody has written yet.
+ *
+ * Fixed-width fields first, free text last, so a `|` inside a note cannot shift the fields
+ * around it. The date is epoch SECONDS rather than a formatted timestamp: no timezone, no
+ * precision mismatch between `toISOString` and `to_char`. The raw interaction type is hashed
+ * rather than its rendered label, because the label is derived from it and the SQL side
+ * should not have to reproduce a TypeScript lookup table.
+ */
+export function memorySourceHash(input: {
+  text: string | null | undefined;
+  occurredAt: Date | null;
+  interactionType: string | null;
+  contactId: string | null;
+}): string {
+  const seconds =
+    input.occurredAt && !Number.isNaN(input.occurredAt.getTime())
+      ? String(Math.floor(input.occurredAt.getTime() / 1000))
+      : "";
+  const canonical = [
+    seconds,
+    input.interactionType ?? "",
+    input.contactId ?? "",
+    input.text ?? "",
+  ].join("|");
+  return createHash("md5").update(canonical, "utf8").digest("hex");
+}
+
+/**
+ * The same hash, rendered in SQL over an `interactions` row.
+ *
+ * It MUST stay byte-for-byte equivalent to `memorySourceHash` above; the two are next to each
+ * other so a change to one is an obvious omission in the other. Postgres `md5()` is core (not
+ * pgcrypto, so PGlite has it too) and agrees with node's md5 on UTF-8 input, including
+ * multi-byte characters and the empty string — `scripts/smoke-memory-search.ts` pins that,
+ * and pins the consequence too: if the two ever disagree, the sweep re-chunks every
+ * interaction on every run forever, which shows up there as a second sweep doing work.
+ *
+ * `nullif(raw_notes, '')` mirrors the TypeScript `raw_notes || ai_summary`: an empty string
+ * falls through to the summary, exactly as a falsy value does in JavaScript.
+ *
+ * @param alias - the table alias the surrounding query gave `interactions`.
+ */
+export function memorySourceHashSql(alias = "i"): SQL {
+  const t = sql.raw(alias);
+  return sql`md5(
+    coalesce(floor(extract(epoch from ${t}.interaction_date))::bigint::text, '')
+    || '|' || coalesce(${t}.interaction_type, '')
+    || '|' || coalesce(${t}.contact_id::text, '')
+    || '|' || coalesce(nullif(${t}.raw_notes, ''), ${t}.ai_summary, '')
+  )`;
+}
+
 /** Turn one piece of writing into drafts ready to store. Pure. */
 export function buildMemoryChunks(input: {
   text: string | null | undefined;
@@ -178,6 +245,8 @@ export async function syncMemoryChunks(
     sourceKind: MemorySourceKind;
     sourceId: string;
     drafts: MemoryChunkDraft[];
+    /** `memorySourceHash` of the row these drafts came from — the sweep's staleness signal. */
+    sourceHash?: string | null;
   },
   options: { db?: Awaited<ReturnType<typeof getDb>> } = {}
 ): Promise<{ written: number; reused: number }> {
@@ -211,6 +280,7 @@ export async function syncMemoryChunks(
       chunkIndex: draft.chunkIndex,
       content: draft.content,
       contentHash: draft.contentHash,
+      sourceHash: input.sourceHash ?? null,
       embeddedHash: carried?.embeddedHash ?? null,
       embedding: carried?.embedding ?? null,
     };
@@ -233,6 +303,111 @@ export async function syncMemoryChunks(
   });
 
   return { written: values.length, reused };
+}
+
+/**
+ * `syncMemoryChunks` for many sources of one kind at once: one read, one atomic write.
+ *
+ * The sweep claims hundreds of interactions a pass, and on neon-http the single-source
+ * version costs two round trips each (the carry-over read, then the delete+insert group), so
+ * a 200-row claim was 400 sequential HTTPS requests. This is the same work in two.
+ *
+ * Carry-over is keyed exactly as above — per source, by `content_hash`, only from a chunk
+ * whose `embedded_hash` matches and that holds a vector — so an edited note keeps its
+ * untouched paragraphs' embeddings just as it would one source at a time. The read is
+ * narrowed in SQL to chunks that could be carried (a hash some incoming draft has, already
+ * embedded), because the vectors are the wide part of the row and the rest are about to be
+ * deleted anyway; the same filter then runs in TypeScript so the rule stays byte-for-byte
+ * the single version's.
+ *
+ * Every source's delete and insert travel in one `runAtomicWrite`, so the group lands or
+ * fails whole. The caller keeps groups small (see the sweep) and falls back to the
+ * one-source path when a group fails, so one bad row costs its group a retry, not the pass.
+ *
+ * Returns the per-source counts in `sources` order.
+ */
+export async function syncMemoryChunksMany(
+  userId: string,
+  sourceKind: MemorySourceKind,
+  sources: Array<{ sourceId: string; drafts: MemoryChunkDraft[]; sourceHash?: string | null }>,
+  options: { db?: Awaited<ReturnType<typeof getDb>> } = {}
+): Promise<Array<{ written: number; reused: number }>> {
+  if (!sources.length) return [];
+  const db = options.db ?? (await getDb());
+  const sourceIds = [...new Set(sources.map((s) => s.sourceId))];
+  const hashes = [...new Set(sources.flatMap((s) => s.drafts.map((d) => d.contentHash)))];
+
+  const existing = hashes.length
+    ? await db
+        .select({
+          sourceId: memoryChunks.sourceId,
+          contentHash: memoryChunks.contentHash,
+          embeddedHash: memoryChunks.embeddedHash,
+          embedding: memoryChunks.embedding,
+        })
+        .from(memoryChunks)
+        .where(
+          and(
+            eq(memoryChunks.userId, userId),
+            eq(memoryChunks.sourceKind, sourceKind),
+            inArray(memoryChunks.sourceId, sourceIds),
+            inArray(memoryChunks.contentHash, hashes),
+            sql`${memoryChunks.embeddedHash} = ${memoryChunks.contentHash}`,
+            sql`${memoryChunks.embedding} is not null`
+          )
+        )
+    : [];
+  const embeddedBySource = new Map<string, Map<string, (typeof existing)[number]>>();
+  for (const row of existing) {
+    if (!(row.embeddedHash && row.embeddedHash === row.contentHash && row.embedding)) continue;
+    let bySource = embeddedBySource.get(row.sourceId);
+    if (!bySource) embeddedBySource.set(row.sourceId, (bySource = new Map()));
+    bySource.set(row.contentHash, row);
+  }
+
+  const counts: Array<{ written: number; reused: number }> = [];
+  const values = sources.flatMap((source) => {
+    const embedded = embeddedBySource.get(source.sourceId);
+    let reused = 0;
+    const rows = source.drafts.map((draft) => {
+      const carried = embedded?.get(draft.contentHash);
+      if (carried) reused++;
+      return {
+        userId,
+        sourceKind,
+        sourceId: source.sourceId,
+        contactId: draft.contactId,
+        contactIds: draft.contactIds,
+        occurredAt: draft.occurredAt,
+        chunkIndex: draft.chunkIndex,
+        content: draft.content,
+        contentHash: draft.contentHash,
+        sourceHash: source.sourceHash ?? null,
+        embeddedHash: carried?.embeddedHash ?? null,
+        embedding: carried?.embedding ?? null,
+      };
+    });
+    counts.push({ written: rows.length, reused });
+    return rows;
+  });
+
+  await runAtomicWrite(db, (tx) => {
+    const statements: AtomicStatement[] = [
+      tx
+        .delete(memoryChunks)
+        .where(
+          and(
+            eq(memoryChunks.userId, userId),
+            eq(memoryChunks.sourceKind, sourceKind),
+            inArray(memoryChunks.sourceId, sourceIds)
+          )
+        ),
+    ];
+    if (values.length) statements.push(tx.insert(memoryChunks).values(values));
+    return statements;
+  });
+
+  return counts;
 }
 
 /** Drop everything indexed from one source — a deleted note, a merged-away contact. */

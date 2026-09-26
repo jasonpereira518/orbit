@@ -421,12 +421,12 @@ console.log("Refusals and limits");
     /LinkedIn Connections export.*LinkedIn connections card/
   );
   expectError(
-    "a LinkedIn Messages export is sent to the Messages tab",
+    "a LinkedIn Messages export is sent to the LinkedIn messages card",
     () =>
       parseContactsFile(
         "CONVERSATION ID,CONVERSATION TITLE,FROM,SENDER PROFILE URL,TO,DATE,SUBJECT,CONTENT\nc1,Jane,Jane,,Me,2024-01-01,,hi\n"
       ),
-    /Messages tab/
+    /LinkedIn Messages export.*LinkedIn messages card/
   );
   expectError("an empty file", () => parseContactsFile("  \n\n"), /empty/);
   expectError(

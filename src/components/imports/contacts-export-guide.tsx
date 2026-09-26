@@ -29,12 +29,18 @@ const SOURCES: ExportSource[] = [
   {
     title: "Google Contacts",
     body: "Click Export, choose which contacts, then pick vCard or Google CSV — either works here.",
-    link: { href: "https://contacts.google.com", label: "Open Google Contacts" },
+    link: {
+      href: "https://contacts.google.com",
+      label: "Open Google Contacts",
+    },
   },
   {
     title: "iPhone or iCloud",
     body: "On iCloud.com, open Contacts, select everyone (Ctrl+A or ⌘A), then choose Export vCard from the ⋯ menu. Your iPhone's contacts are only there if Contacts is switched on under iCloud in Settings.",
-    link: { href: "https://www.icloud.com/contacts", label: "Open iCloud Contacts" },
+    link: {
+      href: "https://www.icloud.com/contacts",
+      label: "Open iCloud Contacts",
+    },
   },
   {
     title: "Android or Mac",
@@ -64,7 +70,8 @@ export function ContactsExportGuide() {
           <DialogHeader>
             <DialogTitle>Export your contacts</DialogTitle>
             <DialogDescription>
-              Save your address book as a vCard (.vcf) or CSV, then upload it here.
+              Save your address book as a vCard (.vcf) or CSV, then upload it
+              here.
             </DialogDescription>
           </DialogHeader>
 

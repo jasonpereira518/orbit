@@ -86,6 +86,15 @@ function main() {
     prod({ ENCRYPTION_SECRET: "change-me-to-a-long-random-string" }).errors.some((e) => e.includes("ENCRYPTION_SECRET"))
   );
   check("a short CRON_SECRET is an error", prod({ CRON_SECRET: "short" }).errors.some((e) => e.includes("CRON_SECRET")));
+  check("no CLERK_JWT_KEY is allowed (Clerk fetches the JWKS)", !prod({ CLERK_JWT_KEY: undefined }).errors.some((e) => e.includes("CLERK_JWT_KEY")));
+  check(
+    "a PEM CLERK_JWT_KEY is accepted",
+    !prod({ CLERK_JWT_KEY: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBg\n-----END PUBLIC KEY-----" }).errors.some((e) => e.includes("CLERK_JWT_KEY"))
+  );
+  check(
+    "a non-PEM CLERK_JWT_KEY is an error (it would sign everyone out)",
+    prod({ CLERK_JWT_KEY: "sk_live_abc" }).errors.some((e) => e.includes("CLERK_JWT_KEY"))
+  );
   check("an http APP_BASE_URL is an error", prod({ APP_BASE_URL: "http://orbit.test" }).errors.some((e) => e.includes("APP_BASE_URL")));
   check(
     "DEMO_ACCOUNT_USER_ID in production is an error",
@@ -133,6 +142,34 @@ function main() {
   const dev = validateEnv({}, { vercelEnv: undefined });
   check("local dev with nothing set has no errors", dev.errors.length === 0, dev.errors.join("; "));
   check("local dev still warns about what production would need", dev.warnings.length > 0);
+
+  console.log("\nThe waitlist's own domain...");
+  // Optional, but once set its mail must not come from the app's domain: that would print
+  // the app's name in the From line of the one thing that must never show it.
+  check("no waitlist host, no waitlist requirements", prod({}).errors.length === 0);
+  const noSender = prod({ WAITLIST_HOST: "join.example" });
+  check("a waitlist host needs its own sender", noSender.errors.some((e) => e.includes("WAITLIST_FROM_EMAIL")), noSender.errors.join("; "));
+  const own = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "Jason <hello@join.example>" });
+  check("a sender on the waitlist's own domain is fine", own.errors.length === 0, own.errors.join("; "));
+  for (const leaky of ["hello@orbit.jasonpereira.live", "Jason <hi@jasonpereira.live>"]) {
+    const r = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: leaky });
+    check(`a sender on the app's domain is refused (${leaky})`, r.errors.some((e) => e.includes("WAITLIST_FROM_EMAIL")), r.errors.join("; "));
+  }
+  const leakyReply = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_REPLY_TO: "orbit@jasonpereira.live" });
+  check("a reply-to on the app's domain is refused", leakyReply.errors.some((e) => e.includes("WAITLIST_REPLY_TO")));
+  const gmailSender = prod({
+    RESEND_FROM_EMAIL: "someone@gmail.com",
+    WAITLIST_HOST: "join.example",
+    WAITLIST_FROM_EMAIL: "hello@join.example",
+    WAITLIST_REPLY_TO: "someone.else@gmail.com",
+  });
+  check(
+    "a Gmail app sender does not make every Gmail reply-to 'the app's domain'",
+    gmailSender.errors.length === 0,
+    gmailSender.errors.join("; ")
+  );
+  const insecure = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_BASE_URL: "http://join.example" });
+  check("the waitlist base URL must be https", insecure.errors.some((e) => e.includes("WAITLIST_BASE_URL")));
 
   console.log("\nAll env checks passed.");
 }

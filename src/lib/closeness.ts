@@ -502,6 +502,30 @@ export function closenessTierChipClass(tier: ClosenessBreakdown["tier"]) {
   return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 }
 
+/**
+ * A finer color ramp for a raw closeness *percentage*, as opposed to
+ * `closenessTierChipClass` above which only knows the three coarse tiers
+ * (inner/mid/outer) those percentages get bucketed into for filtering.
+ * Banded on the same cutoffs as `closenessToOrbitScore`'s five constellation
+ * rings, so "5 colors" here lines up with the same distinctions the graph
+ * already draws rather than inventing a new scale.
+ */
+export function closenessPercentChipClass(closeness: number) {
+  if (closeness >= ABSOLUTE_RING_CUTOFFS[0].min) {
+    return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  }
+  if (closeness >= ABSOLUTE_RING_CUTOFFS[1].min) {
+    return "bg-teal-500/10 text-teal-700 dark:text-teal-300";
+  }
+  if (closeness >= ABSOLUTE_RING_CUTOFFS[2].min) {
+    return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
+  }
+  if (closeness >= ABSOLUTE_RING_CUTOFFS[3].min) {
+    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+  return "bg-slate-500/10 text-slate-700 dark:text-slate-300";
+}
+
 /** Map continuous closeness onto the five constellation rings. Ring 4 ≈ Inner. */
 export function closenessToOrbitScore(closeness: number) {
   for (const { ring, min } of ABSOLUTE_RING_CUTOFFS) {

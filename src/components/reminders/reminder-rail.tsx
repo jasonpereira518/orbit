@@ -155,7 +155,7 @@ export function ReminderRail({
                   // whenever everything due was overdue.
                   view === "today" && counts.overdue > 0 ? (
                     <span
-                      className="flex items-center gap-1.5 font-medium tabular-nums text-amber-700 dark:text-amber-300"
+                      className="flex items-center gap-1.5 font-medium tabular-nums text-amber-700 dark:text-warning"
                       title={`${counts.overdue} overdue`}
                     >
                       <span aria-hidden className="size-1.5 rounded-full bg-amber-500" />

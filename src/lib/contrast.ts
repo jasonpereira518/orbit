@@ -12,7 +12,7 @@
 /** The four grounds an event accent is ever drawn on — `--card` and `--background`, per theme. */
 export const SURFACES = {
   light: ["#ffffff", "#fbfbf9"],
-  dark: ["#1a2438", "#212c42"],
+  dark: ["#222427", "#292c30"],
 } as const;
 
 /** WCAG AA for normal text. The same floor `check-interaction-contrast.mjs` enforces. */

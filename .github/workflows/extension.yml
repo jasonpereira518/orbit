@@ -1,0 +1,42 @@
+# The Chrome extension's typecheck and build, split out of ci.yml so it runs only on PRs
+# that can break it: the extension itself, the wire contract it type-imports from the app
+# (src/lib/extension/**), and globals.css, which `check:tokens` diffs against the
+# extension's copy of the design tokens. Every other PR gets no extension check at all.
+#
+# Same safety rules as ci.yml: `pull_request` only, no secrets.
+name: extension
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - "extension/**"
+      - "src/lib/extension/**"
+      - "src/app/globals.css"
+      - ".nvmrc"
+      - ".github/workflows/extension.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    name: extension typecheck · build
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm --prefix extension ci --no-audit --no-fund
+      - run: npm --prefix extension run typecheck
+      - run: npm --prefix extension run build

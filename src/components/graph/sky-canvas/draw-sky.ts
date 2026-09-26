@@ -170,6 +170,8 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
 
   // 5. Figure edges, bucketed by appearance so the whole sky is a handful of paths.
   const buckets = new Map<string, { stroke: string; alpha: number; wide: number; segs: number[] }>();
+  // Once per frame, not a copy of the focus state per edge.
+  const edgeFocus = { ...focus, focusCluster: frame.focusCluster };
   for (const e of index.edges) {
     // Cheap segment-vs-viewport reject on the bounding box of the line.
     if (
@@ -180,10 +182,7 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
     ) {
       continue;
     }
-    const { opacity, strokeWidth } = edgeEmphasis(e, {
-      ...focus,
-      focusCluster: frame.focusCluster,
-    });
+    const { opacity, strokeWidth } = edgeEmphasis(e, edgeFocus);
     if (opacity <= 0.01) continue;
 
     const alpha = Math.round(opacity * 20) / 20;
@@ -212,11 +211,10 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
   ctx.globalAlpha = 1;
 
   // 6. Stars. The grid cull is what keeps this proportional to the viewport.
-  const visibleIds = new Set(
-    queryRect(index.grid, world)
-      .filter((t) => t.kind === "contact")
-      .map((t) => t.id)
-    );
+  const visibleIds = new Set<string>();
+  for (const t of queryRect(index.grid, world)) {
+    if (t.kind === "contact") visibleIds.add(t.id);
+  }
   const drawn: StarEntry[] = [];
 
   for (const star of index.stars) {
@@ -224,10 +222,7 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
     drawn.push(star);
 
     const emphasis = starEmphasis(star.id, focus);
-    const visual = starVisual(
-      { ...star.data, spotlight: emphasis.spotlight },
-      emphasis.selected
-    );
+    const visual = starVisual(star.data, emphasis.selected, emphasis.spotlight);
     const sprite = starSprite({
       fill: visual.fill,
       core: visual.core,
@@ -378,10 +373,7 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
 
   for (const star of candidates) {
     const emphasis = starEmphasis(star.id, focus);
-    const visual = starVisual(
-      { ...star.data, spotlight: emphasis.spotlight },
-      emphasis.selected
-    );
+    const visual = starVisual(star.data, emphasis.selected, emphasis.spotlight);
     const p = worldToScreen({ x: star.x, y: star.y }, camera);
     const y = p.y + (visual.disc * camera.k) / 2 + 4;
 

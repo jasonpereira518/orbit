@@ -40,6 +40,24 @@ export type ParsedCalendarEvent = {
    * confirmed event you were only invited to is still `CONFIRMED`); this is the user's.
    */
   selfResponse?: string | null;
+  /**
+   * The raw RRULE value (no `RRULE:` prefix), when the source is a recurring master.
+   * Parsing it is `recurrence.ts`'s job; this type only carries it.
+   */
+  rrule?: string | null;
+  /** EXDATE instants, already resolved against the event's TZID. */
+  exDates?: Date[] | null;
+  /**
+   * The `RECURRENCE-ID` instant, when this VEVENT is an OVERRIDE of one occurrence of a
+   * recurring series sharing its `uid` — the original (pre-override) scheduled instant of the
+   * occurrence being replaced, not this VEVENT's own (possibly moved) `start`. Resolved against
+   * its own `TZID`, falling back to the `DTSTART` zone when the line carries none — exactly as
+   * `exDates` already does.
+   *
+   * `null`/absent means this VEVENT is a plain event or a recurring master, never an override.
+   * `recurrence.ts`'s `expandEvent`/`expandIcsEvents` are what actually consume this.
+   */
+  recurrenceId?: Date | null;
 };
 
 /**
@@ -88,14 +106,23 @@ function unescapeIcs(value: string) {
     .replace(/\\\\/g, "\\");
 }
 
+/**
+ * The `TZID=` parameter off a single property line, e.g. `DTSTART;TZID=America/New_York:2026…`.
+ * Shared by `tzidOf` (looks the line up by property name) and `parseIcsEvents`'s EXDATE
+ * handling (which already has each line in hand), so the two can't drift apart.
+ */
+function tzidOfLine(line: string): string | null {
+  const hit = /;TZID=([^:;]+)/i.exec(line.slice(0, line.indexOf(":") + 1));
+  return hit ? hit[1]!.trim() : null;
+}
+
 /** The `TZID=` parameter off a property line, e.g. `DTSTART;TZID=America/New_York:2026…`. */
 function tzidOf(block: string, name: string): string | null {
   const line = block
     .split(/\r?\n/)
     .find((candidate) => new RegExp(`^${name}[;:]`, "i").test(candidate));
   if (!line) return null;
-  const hit = /;TZID=([^:;]+)/i.exec(line.slice(0, line.indexOf(":") + 1));
-  return hit ? hit[1]!.trim() : null;
+  return tzidOfLine(line);
 }
 
 function parseIcsDate(raw: string, timezone?: string | null): Date | null {
@@ -221,6 +248,27 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       .find((l) => /^ORGANIZER[;:]/i.test(l));
     const organizer = organizerLine ? parsePerson(organizerLine) : null;
 
+    const rrule = getProp(block, "RRULE") || null;
+    const exDates = getAllPropLines(block, "EXDATE")
+      .flatMap((line) => {
+        const zone = tzidOfLine(line) ?? timezone;
+        return line
+          .slice(line.indexOf(":") + 1)
+          .split(",")
+          .map((raw) => parseIcsDate(raw.trim(), zone));
+      })
+      .filter((d): d is Date => d !== null);
+
+    // RECURRENCE-ID marks this VEVENT as an override of one occurrence of a series sharing its
+    // UID — resolved the same TZID-aware way as EXDATE, falling back to DTSTART's zone.
+    const recurrenceIdLine = block.split(/\r?\n/).find((l) => /^RECURRENCE-ID[;:]/i.test(l));
+    const recurrenceId = recurrenceIdLine
+      ? parseIcsDate(
+          recurrenceIdLine.slice(recurrenceIdLine.indexOf(":") + 1).trim(),
+          tzidOfLine(recurrenceIdLine) ?? timezone
+        )
+      : null;
+
     if (!summary && !attendees.length && !start) continue;
 
     events.push({
@@ -239,6 +287,9 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       status: getProp(block, "STATUS") || null,
       timezone,
       selfResponse,
+      rrule,
+      exDates: exDates.length > 0 ? exDates : null,
+      recurrenceId,
     });
   }
 

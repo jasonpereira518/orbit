@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { isClerkConfigured, isDemoMode } from "@/lib/demo-account";
 import { ensureLocalDemoData } from "@/lib/demo-data/ensure";
 import { needsOnboarding } from "@/lib/onboarding";
+import { isHeldByStealth } from "@/lib/site-access";
 import { ensureUserSettings } from "@/lib/user-settings";
 
 export class UnauthorizedError extends Error {
@@ -24,6 +25,19 @@ export class AccountSuspendedError extends Error {
   constructor(public readonly suspendedAt: Date) {
     super("Account suspended");
     this.name = "AccountSuspendedError";
+  }
+}
+
+/**
+ * Thrown by `requireUserId()` for an account stealth is holding: one created while the site
+ * was in stealth, without an admin's invitation (see `src/lib/site-access.ts`). A subclass of
+ * `UnauthorizedError` so every route that already answers 401 for "not signed in" answers
+ * the same for this; `(app)/layout.tsx` sends the person to the waitlist instead.
+ */
+export class AccountHeldError extends UnauthorizedError {
+  constructor() {
+    super("This account is waiting for an invitation");
+    this.name = "AccountHeldError";
   }
 }
 
@@ -78,10 +92,29 @@ export async function redirectIfAuthenticated() {
  *
  * Demo mode is exempt: `demo-user` is a shared local literal, never a real account.
  */
-export const requireUserId = cache(async (): Promise<string> => {
+export const requireUserId = cache(
+  async (): Promise<string> => (await requireAuthenticatedUser()).userId
+);
+
+/** The signed-in user and the `user_settings` row `requireUserId()` bootstrapped for them. */
+export type AuthenticatedUser = {
+  userId: string;
+  settings: Awaited<ReturnType<typeof bootstrapAuthenticatedUser>>;
+};
+
+/**
+ * `requireUserId()`, also handing back the settings row the gate already read.
+ *
+ * Same gate, same errors — `requireUserId()` is this with the row dropped. It exists for
+ * Server Actions and route handlers, where `cache()` is a pass-through: there, a later
+ * `ensureUserSettings(userId)` or `getEntitlements(userId)` is another round trip for the
+ * row this function has just read. Pass `settings` on instead (`entitlementsFromSettings`,
+ * `resolveApolloKey(userId, row)`), as the app pulse does.
+ */
+export const requireAuthenticatedUser = cache(async (): Promise<AuthenticatedUser> => {
   if (isDemoMode()) {
-    await bootstrapAuthenticatedUser("demo-user");
-    return "demo-user";
+    const settings = await bootstrapAuthenticatedUser("demo-user");
+    return { userId: "demo-user", settings };
   }
 
   if (!isClerkConfigured()) {
@@ -107,7 +140,8 @@ export const requireUserId = cache(async (): Promise<string> => {
     if (settings.suspendedAt) {
       throw new AccountSuspendedError(settings.suspendedAt);
     }
-    return userId;
+    if (await isHeldByStealth(userId, settings)) throw new AccountHeldError();
+    return { userId, settings };
   }
 
   throw new UnauthorizedError();

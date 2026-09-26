@@ -18,6 +18,9 @@ import { chatMessages, chatThreads, contacts, interactions, userGoals } from "..
 import { prepareChatContext } from "../src/lib/chat-context";
 import { saveContactProfile } from "../src/lib/contact-profile";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { resolveAiAccess } from "../src/lib/ai-access";
+import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
+import { saveWritingInstructionsFor } from "../src/lib/writing-instructions-store";
 
 const USER = "smoke-chat-context-user";
 
@@ -405,6 +408,39 @@ async function main() {
     none.attentionLite?.includes("No follow-up is overdue") === true,
     String(none.attentionLite)
   );
+
+  // --- one account read per question ---------------------------------------------------
+  // The decider, the query embedding and its cache scope, the parse, the rerank and the
+  // writing notes each used to open the account for themselves — five-plus user_settings
+  // reads per question on neon-http, several in series. Now: one, or none when the caller
+  // (the streaming route) hands over the access it built from its auth gate's row.
+  const settingsReads = async (fn: () => Promise<unknown>) => {
+    startQueryCount();
+    try {
+      await fn();
+    } finally {
+      stopQueryCount();
+    }
+    return capturedQueries().filter((q) => /"user_settings"/.test(q)).length;
+  };
+  await saveWritingInstructionsFor(USER, "Short and plain.");
+  let opened: Awaited<ReturnType<typeof prepareChatContext>> | null = null;
+  const own = await settingsReads(async () => {
+    opened = await prepareChatContext(USER, "Who do I know at Acme?", {});
+  });
+  check("a question opens the account once (was one read per AI helper)", own === 1, String(own));
+  check("…and the writing notes come off that same row", opened!.writingInstructions === "Short and plain.", String(opened!.writingInstructions));
+  check("…which the context hands on for the answer, research and title", opened!.access?.userId === USER);
+  const row = await ensureUserSettings(USER);
+  const access = await resolveAiAccess(USER, { row });
+  let passed: Awaited<ReturnType<typeof prepareChatContext>> | null = null;
+  const handed = await settingsReads(async () => {
+    passed = await prepareChatContext(USER, "Who do I know at Acme?", { access });
+  });
+  check("with the route's access passed in: no user_settings read at all", handed === 0, String(handed));
+  check("…same notes", passed!.writingInstructions === "Short and plain.", String(passed!.writingInstructions));
+  check("…same retrieval", JSON.stringify(passed!.retrieved.map((c) => c.id)) === JSON.stringify(opened!.retrieved.map((c) => c.id)));
+  await saveWritingInstructionsFor(USER, null);
 
   await db.delete(userGoals).where(eq(userGoals.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));

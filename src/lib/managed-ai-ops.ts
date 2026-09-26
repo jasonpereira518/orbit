@@ -1,4 +1,4 @@
-import { and, eq, gt, gte, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, gte, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { billingEvents, errorEvents, usageEvents, userSettings } from "@/db/schema";
 import { managedAiSwitchedOff, managedCostSql, managedKeysConfigured } from "@/lib/ai-access";
@@ -36,6 +36,11 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
   const monthAgo = new Date(now.getTime() - 30 * DAY_MS);
   const { start: monthStart } = managedWindow(now);
   const orbit = eq(usageEvents.keyOwner, "orbit");
+  // Deepgram rows carry keyOwner "orbit" too (Orbit's own key), but they are metered by
+  // `speech_usage`, not the managed-AI budget — without this, voice-note volume would
+  // inflate the spend-spike and runway alerts below with a cost (`UNPRICED_CALL_MICROS`)
+  // nobody watching those alerts can act on, training people to ignore them.
+  const notDeepgram = ne(usageEvents.provider, "deepgram");
 
   const [lifetime, spend, cash, atCap, failing] = await Promise.all([
     // `resolvePlan`'s Lifetime branch: a lifetime comp, or a purchase with no comp over it.
@@ -54,7 +59,7 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
         month: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
       })
       .from(usageEvents)
-      .where(and(orbit, gt(usageEvents.createdAt, monthAgo))),
+      .where(and(orbit, gt(usageEvents.createdAt, monthAgo), notDeepgram)),
     db
       .select({ cents: sql<string>`coalesce(sum(${billingEvents.amountCents}), 0)::bigint` })
       .from(billingEvents)
@@ -64,6 +69,7 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
         SELECT ${usageEvents.userId}
           FROM ${usageEvents}
          WHERE ${usageEvents.keyOwner} = 'orbit' AND ${usageEvents.createdAt} >= ${monthStart}
+           AND ${usageEvents.provider} != 'deepgram'
          GROUP BY ${usageEvents.userId}
         HAVING sum(${managedCostSql()}) >= ${MANAGED_AI_BUDGET.monthlyCostMicros}
             OR count(*) >= ${MANAGED_AI_BUDGET.monthlyCalls}

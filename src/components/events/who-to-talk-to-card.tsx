@@ -15,7 +15,7 @@
  */
 import { useState, useTransition } from "react";
 import { Link2, Loader2, Sparkles, Users } from "lucide-react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
 import { explainAttendee } from "@/actions/events";
@@ -79,9 +79,9 @@ export function WhoToTalkToCard({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-ink">
                     {row.contactId ? (
-                      <Link href={`/contacts/${row.contactId}`} className="hover:underline">
+                      <IntentLink href={`/contacts/${row.contactId}`} className="hover:underline">
                         {row.name}
-                      </Link>
+                      </IntentLink>
                     ) : (
                       row.name
                     )}

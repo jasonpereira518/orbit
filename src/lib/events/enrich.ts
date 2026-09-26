@@ -27,6 +27,7 @@ import {
 } from "@/lib/events/parse-roster";
 import { claimEventAliases } from "@/lib/events/discovery/record";
 import {
+  assertEventOwnedBy,
   getEventForUser,
   listRosterForUser,
   updateEventForUser,
@@ -55,6 +56,9 @@ export async function enrichEvent(
   options: { mode?: EnrichMode; deps?: FetchPageDeps } = {}
 ): Promise<EnrichResult> {
   const mode = options.mode ?? "fill";
+  // Ownership first: the cover below is written to `event-covers/${eventId}` in public
+  // Blob storage, overwriting whatever is there, so a foreign id must stop here.
+  await assertEventOwnedBy(userId, eventId);
   try {
     const details = await fetchEventPage(url, options.deps ?? { fetch });
     const theme = resolveThemeColor({

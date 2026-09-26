@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "@/lib/toast";
 import { saveAiSettings } from "@/actions/settings";
-import { AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
+import { AI_PROVIDERS, SELECTABLE_AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -72,7 +72,9 @@ export function WizardAiKey({
       </p>
 
       <div className="grid gap-2 sm:grid-cols-3">
-        {AI_PROVIDERS.map((p) => (
+        {/* The selectable three only — the grid is sm:grid-cols-3, and a provider with no
+            user-facing surface must not be offered to a brand-new account. */}
+        {SELECTABLE_AI_PROVIDERS.map((p) => (
           <button
             key={p.id}
             type="button"

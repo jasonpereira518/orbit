@@ -84,7 +84,7 @@ export function RemindersPreview({ reducedMotion }: PreviewProps) {
                 className={cn(
                   "text-xs",
                   r.overdue
-                    ? "font-medium text-amber-700 dark:text-amber-300"
+                    ? "font-medium text-amber-700 dark:text-warning"
                     : "text-muted-foreground"
                 )}
               >

@@ -135,9 +135,7 @@ export function CalendarImportSection({
                     `${res.windowedEvents} events in window · ${res.matchedEventCount} with matches`,
                   );
                 } catch (err) {
-                  toast.error(
-                    friendlyError(err, TOAST_COPY.previewFailed),
-                  );
+                  toast.error(friendlyError(err, TOAST_COPY.previewFailed));
                 }
               })
             }

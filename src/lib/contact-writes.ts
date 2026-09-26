@@ -14,8 +14,13 @@
 import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { getDb } from "@/db";
-import { buildMemoryChunks, syncMemoryChunks } from "@/lib/memory-chunks";
+import { getDb, rowsOf } from "@/db";
+import {
+  buildMemoryChunks,
+  deleteMemoryChunks,
+  memorySourceHash,
+  syncMemoryChunks,
+} from "@/lib/memory-chunks";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import {
   contactIdentities,
@@ -25,7 +30,7 @@ import {
   tags,
   type Interaction,
 } from "@/db/schema";
-import { PaywallError, getEntitlements } from "@/lib/entitlements";
+import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
 import { recordGateHit } from "@/lib/gate-events";
 import {
   companyFieldsForWrite,
@@ -63,6 +68,13 @@ export type ContactWriteOptions = {
    * to re-derive a number that has not changed since the previous chunk.
    */
   headroom?: number | null;
+  /**
+   * The account's entitlements, for a caller that already resolved them (from the settings
+   * row it holds, via `entitlementsFromSettings`). In a Server Action or route handler
+   * `getEntitlements` is not deduplicated by `cache()`, so omitting this costs a read of the
+   * settings row the caller may already have. Omitted, they are read as before.
+   */
+  entitlements?: Entitlements;
 };
 
 export type ContactInput = {
@@ -227,10 +239,24 @@ async function syncTags(
 ) {
   const db = await getDb();
   await db.delete(contactTags).where(eq(contactTags.contactId, contactId));
+  await attachTags(userId, contactId, tagNames);
+}
 
+/**
+ * The insert half of `syncTags`, for a contact that provably has no tags: one this call
+ * just inserted. Its id is a fresh database-generated uuid, `contact_tags.contact_id` is a
+ * cascading foreign key (so no orphan row can carry a recycled id), and nothing else knows
+ * the id yet — so `syncTags`' DELETE could only ever match zero rows there.
+ */
+async function attachTags(
+  userId: string,
+  contactId: string,
+  tagNames: string[] = []
+) {
   const names = cleanTagNames(tagNames);
   if (names.length === 0) return;
 
+  const db = await getDb();
   const byLower = await tagsFor(userId, names);
   await db.insert(contactTags).values(
     names.map((name) => ({
@@ -346,8 +372,12 @@ function contactInsertValues(
  * gated, so a lapsed subscriber sitting above the cap keeps full access to everything
  * already in their orbit — nothing is ever hidden behind the paywall.
  */
-export async function contactHeadroomForUser(userId: string) {
-  const { contactLimit } = await getEntitlements(userId);
+export async function contactHeadroomForUser(
+  userId: string,
+  // Optional: a caller already holding the account's entitlements skips re-reading them.
+  entitlements?: Entitlements
+) {
+  const { contactLimit } = entitlements ?? (await getEntitlements(userId));
   if (contactLimit === null) return null;
 
   const db = await getDb();
@@ -382,9 +412,11 @@ export async function createContactForUser(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
-  const headroom = await contactHeadroomForUser(userId);
+  // Resolved once for both the headroom check and the paywall below; each used to read it.
+  const entitlements = options?.entitlements ?? (await getEntitlements(userId));
+  const headroom = await contactHeadroomForUser(userId, entitlements);
   if (headroom !== null && headroom < 1) {
-    const { plan, contactLimit } = await getEntitlements(userId);
+    const { plan, contactLimit } = entitlements;
     // The cap is the most direct pricing lever Orbit has, and until now hitting it left no
     // trace — so "does the 100-contact limit convert, or just annoy?" had no evidence
     // behind it either way.
@@ -427,7 +459,8 @@ export async function createContactForUser(
   // so doing it twice costs a statement and changes nothing.
   await claimIdentities(userId, contact.id, identityKeysFor(input), input.source);
 
-  await syncTags(userId, contact.id, input.tagNames);
+  // Just inserted, so there are no tags to clear first — see `attachTags`.
+  await attachTags(userId, contact.id, input.tagNames);
   if (!options?.skipEmbedding) {
     deferEmbeddingRebuild(userId, contact.id, now);
   }
@@ -947,11 +980,25 @@ export async function logInteractionForUser(
   // Touch the contact first: the userId-scoped WHERE doubles as the ownership
   // check, so an unowned contactId returns no rows and we bail before writing
   // an orphaned interaction. Costs no extra round trip.
-  const [owned] = await db
-    .update(contacts)
-    .set({ lastInteractionAt: when, updatedAt: new Date() })
-    .where(and(eq(contacts.id, input.contactId), eq(contacts.userId, userId)))
-    .returning();
+  //
+  // Only the names come back: they are all that is read below (the passage label), and a
+  // bare `.returning()` shipped the whole row — notes, enrichment blobs, an inline base64
+  // avatar — on every logged note. Raw SQL because an explicit `.returning({ … })` does not
+  // type-check against the union `Db` (see contact-identity.ts); the timestamps are bound
+  // as `toISOString()`, which is exactly what the columns' own mapper sends.
+  const ownedRows = rowsOf<{ preferred_name: string | null; full_name: string }>(
+    await db.execute(sql`
+      update ${contacts}
+         set last_interaction_at = ${when.toISOString()}::timestamptz,
+             updated_at = ${new Date().toISOString()}::timestamptz
+       where ${contacts.id} = ${input.contactId}
+         and ${contacts.userId} = ${userId}
+      returning ${contacts.preferredName}, ${contacts.fullName}
+    `)
+  );
+  const owned = ownedRows[0]
+    ? { preferredName: ownedRows[0].preferred_name, fullName: ownedRows[0].full_name }
+    : undefined;
 
   if (!owned) {
     throw new ContactNotFoundError();
@@ -996,6 +1043,14 @@ export async function logInteractionForUser(
     await syncMemoryChunks(userId, {
       sourceKind: "interaction",
       sourceId: row.id,
+      // Without this the row would read as stale to the next sweep and be re-chunked for
+      // nothing — the hash is what says "these passages describe the text as it stands".
+      sourceHash: memorySourceHash({
+        text: input.rawNotes || input.aiSummary,
+        occurredAt: when,
+        interactionType: row.interactionType,
+        contactId: input.contactId,
+      }),
       drafts: buildMemoryChunks({
         text: input.rawNotes || input.aiSummary,
         occurredAt: when,
@@ -1118,6 +1173,8 @@ export async function deleteInteractionForUser(
 
   const existing = await db.query.interactions.findFirst({
     where: and(eq(interactions.id, interactionId), eq(interactions.userId, userId)),
+    // Existence and the owning contact are all that is read — not the note body.
+    columns: { contactId: true },
   });
   if (!existing) throw new Error("Interaction not found");
   const contactId = existing.contactId;
@@ -1125,6 +1182,17 @@ export async function deleteInteractionForUser(
   await db
     .delete(interactions)
     .where(and(eq(interactions.id, interactionId), eq(interactions.userId, userId)));
+
+  // `memory_chunks.source_id` is a plain uuid with no foreign key — deliberately, so the
+  // table can index things that are not interactions — so nothing cascades here. Left to the
+  // prune, a deleted note stays quotable until the next sweep, which is the one kind of
+  // staleness in this table that is a privacy problem rather than a quality one.
+  await deleteMemoryChunks(userId, {
+    sourceKind: "interaction",
+    sourceIds: [interactionId],
+  }).catch((err) => {
+    console.warn("[memory-chunks] could not drop passages for", interactionId, err);
+  });
 
   const [remaining] = await db
     .select({ latest: sql<Date | null>`max(${interactions.interactionDate})` })

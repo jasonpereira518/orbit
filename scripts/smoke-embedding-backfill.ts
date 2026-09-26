@@ -323,8 +323,49 @@ async function testMeetingEmbeddings() {
     rawNotes: "Meeting: Synced",
   });
 
-  // Three file-imported meetings plus the one written by the live ICS subscription.
-  const SYNCED_MEETINGS = 1;
+  // Outlook and iCloud meetings — the exact gap Task 9 exists to close. Until now
+  // `PENDING_MEETINGS` listed only `calendar_import`, `calendar_sync` and `google_calendar`,
+  // so every Outlook meeting synced since Outlook calendar sync shipped had never been
+  // embedded and had never reached chat or search. Checked against the real exported
+  // `pendingMeetingCount` predicate first — see its own header comment for why a test must
+  // assert against the predicate itself rather than a restated copy of it — then proven
+  // end-to-end by the backfill run below, exactly like `calendar_sync` above.
+  const outlookInteractionId = `cal:evt-outlook:${attendee.id}`;
+  const beforeOutlook = await pendingMeetingCount(MEETING_USER);
+  await db.insert(interactions).values({
+    userId: MEETING_USER,
+    contactId: attendee.id,
+    interactionType: "meeting",
+    interactionDate: new Date("2024-06-15T10:00:00Z"),
+    source: "microsoft_calendar",
+    externalId: outlookInteractionId,
+    rawNotes: "Meeting: Outlook Sync",
+  });
+  check(
+    "outlook meetings are queued for embedding",
+    (await pendingMeetingCount(MEETING_USER)) === beforeOutlook + 1
+  );
+
+  const appleInteractionId = `cal:evt-apple:${attendee.id}`;
+  const beforeApple = await pendingMeetingCount(MEETING_USER);
+  await db.insert(interactions).values({
+    userId: MEETING_USER,
+    contactId: attendee.id,
+    interactionType: "meeting",
+    interactionDate: new Date("2024-07-15T10:00:00Z"),
+    source: "apple_calendar",
+    externalId: appleInteractionId,
+    rawNotes: "Meeting: Apple Sync",
+  });
+  check(
+    "apple meetings are queued for embedding",
+    (await pendingMeetingCount(MEETING_USER)) === beforeApple + 1
+  );
+
+  // Three file-imported meetings plus one each from the live ICS subscription, Outlook and
+  // iCloud — the full backfill run below proves all four extra sources actually get embedded,
+  // not just counted as pending.
+  const SYNCED_MEETINGS = 3;
   const first = await runEmbeddingBackfill(MEETING_USER, stubEmbed);
   check(
     "meeting phase embeds every calendar meeting for one contact",

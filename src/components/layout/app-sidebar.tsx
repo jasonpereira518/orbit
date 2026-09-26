@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
+import { preloadCaptureFlow } from "@/components/capture/capture-flow-lazy";
 import { Plus, Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { UserButton } from "@clerk/nextjs";
@@ -9,7 +11,6 @@ import {
   APP_NAV_CORE,
   APP_NAV_EXTRAS,
   APP_NAV_SETTINGS,
-  fullPrefetch,
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
@@ -43,10 +44,20 @@ function SidebarNavLink({
   // Shown to operators too, who still reach the real page: the tag is how they know what
   // everyone else gets. "Hidden" outranks it, because a hidden page is not even announced.
   const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href);
+  // Hover or focus upgrades a link to a full prefetch, so the click that follows lands
+  // without a skeleton (see `@/lib/intent-prefetch`). Not for the page already open. The
+  // daily routes (`prefetchFull`) are NOT prefetched in full ahead of that here, unlike the
+  // phone nav: a pointer always hovers before it clicks, so the intent prefetch is ready by
+  // the click and fresh, where one taken at page load is usually old enough by then that
+  // the page has to refresh itself on arrival (`FreshOnArrival`).
+  const NavLink = active ? Link : IntentLink;
+  // /capture's form is a lazy client chunk the route prefetch does not include.
+  const warm = item.href === "/capture" && !active ? preloadCaptureFlow : undefined;
   return (
-    <Link
+    <NavLink
       href={item.href}
-      prefetch={fullPrefetch(item, active)}
+      onPointerEnter={warm}
+      onFocus={warm}
       title={
         hiddenFromUsers
           ? `${item.label} — hidden from users`
@@ -91,7 +102,7 @@ function SidebarNavLink({
         </>
       )}
       <NavPendingDot />
-    </Link>
+    </NavLink>
   );
 }
 
@@ -174,8 +185,12 @@ export function AppSidebar({
           live door into a hidden page. */}
       {!captureHidden && (
       <div className="px-2 pb-3 lg:px-3">
-        <Link
+        {/* The most-used door into /capture: hover or focus fetches the whole route and the
+            form's code, so the click lands with neither a skeleton nor a chunk wait. */}
+        <IntentLink
           href="/capture"
+          onPointerEnter={preloadCaptureFlow}
+          onFocus={preloadCaptureFlow}
           title="Log interaction"
           className={cn(
             buttonVariants({ size: "icon" }),
@@ -185,7 +200,7 @@ export function AppSidebar({
         >
           <Plus className="h-4 w-4" />
           <span className="hidden lg:inline">Log interaction</span>
-        </Link>
+        </IntentLink>
       </div>
       )}
 

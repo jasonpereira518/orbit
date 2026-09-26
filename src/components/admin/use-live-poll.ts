@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Generic narrow-polling for an admin screen: seeded from the server so first paint is
@@ -16,24 +16,42 @@ import { useEffect, useState } from "react";
  */
 export function useLivePoll<T>(url: string, initial: T, intervalMs: number): T {
   const [data, setData] = useState<T>(initial);
+  /**
+   * The body behind `data`, so a poll that brings back the same answer keeps the same
+   * object: a screen left open all day would otherwise re-render — and rebuild whatever it
+   * derives, like presence's live Set — on every tick of an unchanged payload.
+   */
+  const lastBody = useRef<string | null>(null);
 
   useEffect(() => {
+    lastBody.current = null;
     setData(initial);
   }, [initial]);
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
+    // One request at a time: a slow endpoint must not stack a fetch per tick, nor let an
+    // older answer land over a newer one. Aborted on hide and unmount.
+    let inFlight: AbortController | null = null;
 
     const poll = async () => {
+      if (inFlight) return;
+      const controller = new AbortController();
+      inFlight = controller;
       try {
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await fetch(url, { cache: "no-store", signal: controller.signal });
         if (!res.ok) return;
-        const json = (await res.json()) as T;
-        if (!cancelled) setData(json);
+        const body = await res.text();
+        if (cancelled || body === lastBody.current) return;
+        const json = JSON.parse(body) as T;
+        lastBody.current = body;
+        setData(json);
       } catch {
         // Keep the last known value — a briefly stale read is better than blanking the
         // screen on one dropped poll.
+      } finally {
+        if (inFlight === controller) inFlight = null;
       }
     };
 
@@ -44,6 +62,8 @@ export function useLivePoll<T>(url: string, initial: T, intervalMs: number): T {
     };
 
     const stop = () => {
+      inFlight?.abort();
+      inFlight = null;
       if (timer === null) return;
       clearInterval(timer);
       timer = null;

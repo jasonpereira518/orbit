@@ -25,7 +25,12 @@ function check(label: string, ok: boolean, detail?: string) {
 }
 
 const withStatus = (message: string, status: number) => Object.assign(new Error(message), { status });
-const all = (probe: KeyProbe): Record<AiProvider, KeyProbe> => ({ gemini: probe, openai: probe, anthropic: probe });
+const all = (probe: KeyProbe): Record<AiProvider, KeyProbe> => ({
+  gemini: probe,
+  openai: probe,
+  anthropic: probe,
+  openrouter: probe,
+});
 
 async function main() {
   console.log("Verdicts");
@@ -81,8 +86,46 @@ async function main() {
   check("house voice: curly apostrophes, no trailing period",
     copy.every((m) => !m.includes("'") && !m.endsWith(".")));
 
-  console.log("\nEvery provider has a real probe");
-  check("gemini, openai and anthropic", ["gemini", "openai", "anthropic"].every((p) => typeof KEY_PROBES[p as AiProvider] === "function"));
+  console.log("\nEvery provider has a probe — all four real now");
+  check("gemini, openai, anthropic and openrouter", ["gemini", "openai", "anthropic", "openrouter"].every((p) => typeof KEY_PROBES[p as AiProvider] === "function"));
+
+  // OpenRouter has no SDK, so its probe (Task 5) is a raw `GET /api/v1/key` with a bearer
+  // token — exercised here against the REAL registry (KEY_PROBES, not an injected stub),
+  // with only `fetch` stubbed, so a later change that quietly weakened it back toward the
+  // old fail-closed stub would be caught.
+  {
+    const realFetch = globalThis.fetch;
+    const captured: { request: { url: string; auth: string | null } | null } = { request: null };
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      captured.request = {
+        url: typeof input === "string" ? input : input.toString(),
+        auth: (init?.headers as Record<string, string> | undefined)?.Authorization ?? null,
+      };
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    try {
+      check(
+        "a 200 from openrouter.ai/api/v1/key → accepted, against the real registry",
+        (await checkAiKey("openrouter", "sk-or-v1-realkey", { probes: KEY_PROBES })) === "accepted"
+      );
+      check("…hitting the key-check endpoint", captured.request?.url === "https://openrouter.ai/api/v1/key");
+      check("…with the key on the bearer header", captured.request?.auth === "Bearer sk-or-v1-realkey");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+  {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(null, { status: 401 })) as typeof fetch;
+    try {
+      check(
+        "a 401 from the real registry's probe → rejected",
+        (await checkAiKey("openrouter", "sk-or-v1-badkey", { probes: KEY_PROBES })) === "rejected"
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

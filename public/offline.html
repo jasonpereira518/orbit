@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Offline · Orbit</title>
+<!--
+  Served by public/orbit-sw.js when a page load cannot reach the network. It is the only
+  thing that worker stores, so it must stand alone: no app CSS, no web fonts, no data.
+  Colours mirror the light/dark tokens in src/app/globals.css. Bump OFFLINE_CACHE in the
+  worker when this file changes.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbf9; --fg: #1a1c1a; --ink: #0f3d3e; --muted: #5f6760;
+    --accent: #c4a35a; --btn-bg: #0f3d3e; --btn-fg: #fbfbf9; --ring: rgba(15, 61, 62, 0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141517; --fg: #e7ecf1; --ink: #e7ecf1; --muted: #99a2aa;
+      --accent: #7cc3e2; --btn-bg: #7cc3e2; --btn-fg: #141517; --ring: rgba(124, 195, 226, 0.18);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; place-items: center; padding: 24px 16px;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 26rem; text-align: center; }
+  .mark {
+    position: relative; width: 72px; height: 72px; margin: 0 auto 28px;
+    border-radius: 50%; border: 1.5px solid var(--ring);
+  }
+  .mark::before {
+    content: ""; position: absolute; inset: 22px; border-radius: 50%; background: var(--ink);
+  }
+  .mark::after {
+    content: ""; position: absolute; top: -5px; left: 50%; width: 10px; height: 10px;
+    margin-left: -5px; border-radius: 50%; background: var(--accent);
+    transform-origin: 5px 41px; animation: orbit 6s linear infinite;
+  }
+  @keyframes orbit { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .mark::after { animation: none; } }
+  .eyebrow { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+  h1 {
+    margin: 0 0 12px; color: var(--ink); font-weight: 500; letter-spacing: -0.02em;
+    font: 500 30px/1.15 ui-serif, "New York", Georgia, serif;
+  }
+  p { margin: 0; color: var(--muted); }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; margin-top: 28px; padding: 0 20px; border: 0; border-radius: 999px;
+    background: var(--btn-bg); color: var(--btn-fg); font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .status { min-height: 1.5em; margin-top: 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="mark" aria-hidden="true"></div>
+  <p class="eyebrow">No connection</p>
+  <h1>You’re offline</h1>
+  <p>Orbit needs a connection to open this page. It’ll load on its own as soon as you’re back.</p>
+  <button class="btn" type="button" id="retry">Try again</button>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+</main>
+<script>
+  (function () {
+    var status = document.getElementById("status");
+    var button = document.getElementById("retry");
+    var checking = false;
+    // Served in place of whatever page failed, so a reload retries THAT page. Opened at its
+    // own address there is nothing to retry — only the button acts, and it goes home.
+    var direct = location.pathname === "/offline.html";
+
+    // Reload only once Orbit itself answers, not merely when an interface comes up: a
+    // captive portal says "online" too, and reloading into it would show its page instead.
+    function check(manual) {
+      if (checking || (direct && !manual)) return;
+      checking = true;
+      if (manual) status.textContent = "Checking…";
+      var ctl = "AbortController" in window ? new AbortController() : null;
+      var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 6000);
+      fetch("/favicon.ico?probe=" + Date.now(), {
+        method: "HEAD", cache: "no-store", credentials: "omit", signal: ctl ? ctl.signal : undefined
+      }).then(function () {
+        status.textContent = "Back online — loading…";
+        if (direct) location.href = "/";
+        else location.reload();
+      }, function () {
+        if (manual) status.textContent = "Still offline — we’ll keep trying";
+      }).then(function () {
+        clearTimeout(timer);
+        checking = false;
+      });
+    }
+
+    button.addEventListener("click", function () { check(true); });
+    window.addEventListener("online", function () { check(false); });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") check(false);
+    });
+    setInterval(function () {
+      if (document.visibilityState === "visible") check(false);
+    }, 10000);
+  })();
+</script>
+</body>
+</html>

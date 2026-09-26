@@ -3,10 +3,14 @@
 import { useEffect, useState, useTransition } from "react";
 import { BookUser } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { previewContactsFile, type ContactsFilePerson } from "@/actions/imports";
+import {
+  previewContactsFile,
+  type ContactsFilePerson,
+} from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ContactsExportGuide } from "@/components/imports/contacts-export-guide";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
+import { contactsFileToReviewPerson } from "@/lib/imports/review-people";
 import {
   BusyHint,
   ImportFilePicker,
@@ -123,9 +127,9 @@ export function ContactsFileImport() {
             <ContactsExportGuide />
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Upload a vCard (.vcf) or contacts CSV from Google Contacts,
-            iPhone, Android or Outlook — no account to connect. Photos
-            aren&apos;t imported.
+            Upload a vCard (.vcf) or contacts CSV from Google Contacts, iPhone,
+            Android or Outlook — no account to connect. Photos aren&apos;t
+            imported.
           </p>
         </div>
       </div>
@@ -212,18 +216,7 @@ export function ContactsFileImport() {
 
       {people.length > 0 && (
         <ImportPeopleReview
-          people={people.map((p) => ({
-            id: p.id,
-            name: p.fullName,
-            // Most address-book entries have no job at all, so the email (or, failing
-            // that, the number) is what tells two same-named people apart in the list.
-            subtitle:
-              [p.title, p.company].filter(Boolean).join(" · ") ||
-              p.email ||
-              p.phone,
-            isRepeat: p.isRepeat,
-            repeatReason: p.duplicate?.reason,
-          }))}
+          people={people.map(contactsFileToReviewPerson)}
           selectedIds={selected}
           onSelectedIdsChange={setSelected}
           onRemove={(id) => {

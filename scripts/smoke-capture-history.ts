@@ -8,6 +8,8 @@
  *   - the history pages newest-first with no repeats or gaps, even across rows that share
  *     a millisecond (the reason its cursor is Postgres text, not a JS Date)
  *   - the daily prune removes unsaved captures' photos and nothing else
+ *   - deleting a capture takes its record and photos, undoes what it scheduled, and
+ *     leaves nothing pointing at it
  *
  * Runs with Blob storage forced off, so every photo is stored inline — the configuration
  * Orbit is in without a provisioned store, and the one a smoke run can check byte for byte.
@@ -37,7 +39,7 @@ import {
   storeCapturePhotos,
 } from "../src/lib/capture-photos";
 import { listCaptureHistoryFor } from "../src/lib/capture-history";
-import { saveNoteBatch } from "../src/lib/note-batch-save";
+import { deleteNoteBatchForUser, saveNoteBatch } from "../src/lib/note-batch-save";
 import {
   captureExcerpt,
   captureHistoryTitle,
@@ -243,6 +245,25 @@ async function main() {
   check("the prune removed exactly the stale unattached photo", pruned === 1 && !left.has(abandoned!.id), String(pruned));
   check("  an old photo that belongs to a capture stays", left.has(stored[0]!.id));
   check("  a fresh unattached photo stays (its save may still be coming)", left.has(fresh!.id));
+
+  console.log("\nDelete");
+  check("someone else cannot delete a capture", (await deleteNoteBatchForUser(OTHER, saved.batchId)) === false);
+  check("  and it is still there", Boolean(await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, saved.batchId) })));
+  check("the owner can", (await deleteNoteBatchForUser(USER, saved.batchId)) === true);
+  check("  the record is gone", !(await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, saved.batchId) })));
+  check(
+    "  its photos went with it",
+    (await db.select({ id: capturePhotos.id }).from(capturePhotos).where(inArray(capturePhotos.id, stored.map((p) => p.id)))).length === 0
+  );
+  check("  a photo not yet claimed by any capture stays", left.has(fresh!.id) && Boolean(await db.query.capturePhotos.findFirst({ where: eq(capturePhotos.id, fresh!.id) })));
+  const [keptReminder] = await db.select().from(reminders).where(eq(reminders.userId, USER));
+  check(
+    "  its reminder is dismissed and detached, not deleted (the hash keeps blocking)",
+    keptReminder?.status === "dismissed" && keptReminder.noteBatchId === null,
+    JSON.stringify({ status: keptReminder?.status, noteBatchId: keptReminder?.noteBatchId })
+  );
+  check("  the history no longer lists it", !(await listCaptureHistoryFor(USER, { limit: 50 })).items.some((i) => i.id === saved.batchId));
+  check("deleting twice is a no-op", (await deleteNoteBatchForUser(USER, saved.batchId)) === false);
 
   await purgeCapturePhotosForUser(USER);
   check("purge leaves the user no photos", (await db.select({ id: capturePhotos.id }).from(capturePhotos).where(eq(capturePhotos.userId, USER))).length === 0);

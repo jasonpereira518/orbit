@@ -73,7 +73,7 @@ run(async () => {
   const { ERROR_SOURCES } = await import("../src/lib/error-events");
   const { ensureUserSettings } = await import("../src/lib/user-settings");
   const { sendOutreachMessage } = await import("../src/lib/outreach-send");
-  const { sendInterestListFollowUpEmail } = await import("../src/lib/interest-list-email");
+  const { sendFrontWaveEmail } = await import("../src/lib/interest-list-email");
 
   const db = await getDb();
   const rejections = async () =>
@@ -116,18 +116,18 @@ run(async () => {
     check("…and used their key", hits.at(-1)?.startsWith("Bearer re_user_own_key") === true, hits.at(-1));
     check("…and does NOT record resend.rejected (it is not Orbit's email)", (await rejections()).length === before);
 
-    console.log("\nInterest-list follow-up (always Orbit's key)");
-    const sent = await sendInterestListFollowUpEmail("someone.waiting@acme-robotics.io", "https://orbit.example/unsubscribe/x", "saturn");
-    check("reports not sent, so the sweep releases the row", sent === false);
-    const followUp = (await rejections()).find((r) => r.kind === "interest.follow-up");
+    console.log("\nWaitlist front-wave notice (always Orbit's key)");
+    const sent = await sendFrontWaveEmail("someone.waiting@acme-robotics.io", "https://waitlist.example/unsubscribe/x", "saturn", { ticketUrl: "https://waitlist.example/?me=x", shareUrl: "https://waitlist.example/?ref=x" });
+    check("reports not sent", sent === false);
+    const followUp = (await rejections()).find((r) => r.kind === "interest.front-wave");
     check("a resend.rejected row is recorded", Boolean(followUp));
     check("…as a rejection, not a thrown call", (followUp?.context as { phase?: string } | null)?.phase === "rejected", JSON.stringify(followUp?.context));
 
     console.log("\nResend unreachable");
     server.close();
     await new Promise((r) => setTimeout(r, 50));
-    const sentDown = await sendInterestListFollowUpEmail("someone.else@acme-robotics.io", "https://orbit.example/unsubscribe/y", "saturn");
-    const thrown = (await rejections()).filter((r) => r.kind === "interest.follow-up");
+    const sentDown = await sendFrontWaveEmail("someone.else@acme-robotics.io", "https://waitlist.example/unsubscribe/y", "saturn", { ticketUrl: "https://waitlist.example/?me=x", shareUrl: "https://waitlist.example/?ref=x" });
+    const thrown = (await rejections()).filter((r) => r.kind === "interest.front-wave");
     check("still reports not sent, and never throws", sentDown === false);
     check("…and records it too", thrown.length === 2, String(thrown.length));
   } finally {

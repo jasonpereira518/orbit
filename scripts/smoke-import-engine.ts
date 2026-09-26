@@ -44,6 +44,7 @@ import {
 } from "../src/lib/import-job-processor";
 import { runImportJobById } from "../src/lib/import-job-dispatch";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { previewUndo } from "../src/lib/imports/import-undo";
 
 const USER = "smoke-import-engine-user";
 
@@ -176,6 +177,25 @@ async function main() {
   check("50 fresh rows none merged", out.updated === 0, JSON.stringify(out));
   check("50 fresh rows none blocked", out.blockedByPlan === 0, JSON.stringify(out));
 
+  // The engine's stamp and undo's recomputation agree, end to end. They are two call sites of
+  // one fingerprint — the engine hashes the persisted row, `decide()` re-hashes the columns it
+  // reads back — and if they ever disagree (a field one of them forgets, a write that
+  // canonicalises a value after it was hashed) every person an import created reads "edited"
+  // and undo quietly removes nobody. A fresh import nobody has touched must be fully removable.
+  {
+    const preview = await previewUndo(USER, id, new Date());
+    check("a fresh engine import is exact", preview?.exact === true, JSON.stringify(preview?.exact));
+    check(
+      "…and everyone it created reads untouched",
+      preview?.removable === 50 && preview?.keeping === 0,
+      JSON.stringify({
+        removable: preview?.removable,
+        keeping: preview?.keeping,
+        reasons: [...new Set(preview?.candidates.map((c) => c.reason))],
+      }),
+    );
+  }
+
   // --- created contacts are flagged for the backfill, not embedded inline ---
   // Embeddings moved off the critical path in Task 9: the bulk create path sets
   // `embedding_stale_at` instead of calling the AI provider, and the backfill (Task 8)
@@ -206,7 +226,9 @@ async function main() {
   }
 
   // --- re-importing the same file merges instead of duplicating ---
+  const createImportId = id;
   id = await seedJob(fixture(50));
+  const mergeImportId = id;
   await runJob(id);
   out = await outcome(id);
   check("re-import merges all 50", out.updated === 50, JSON.stringify(out));
@@ -224,6 +246,43 @@ async function main() {
       "every merged contact is (re-)flagged embedding_stale_at",
       merged.length === 50 && merged.every((c) => c.embeddingStaleAt !== null),
       `flagged ${merged.filter((c) => c.embeddingStaleAt !== null).length}/${merged.length}`
+    );
+  }
+
+  console.log("Rows remember whether they created or merged");
+  {
+    const db = await getDb();
+    // The create run and the re-import run are two separate jobs (createImportId,
+    // mergeImportId) — the first creates all 50 rows, the second merges all 50 — so
+    // together they exercise both branches `markRowsDone` stamps provenance from.
+    const createdJobRows = await db.query.importJobRows.findMany({
+      where: eq(importJobRows.importId, createImportId),
+    });
+    const mergedJobRows = await db.query.importJobRows.findMany({
+      where: eq(importJobRows.importId, mergeImportId),
+    });
+    const done = [...createdJobRows, ...mergedJobRows].filter((r) => r.status === "done");
+    check(
+      "every done row carries provenance",
+      done.every((r) => (r.payload as Record<string, unknown>).importedBy !== undefined)
+    );
+    const created = done.filter(
+      (r) => (r.payload as { importedBy?: { created?: boolean } }).importedBy?.created === true
+    );
+    const merged = done.filter(
+      (r) => (r.payload as { importedBy?: { created?: boolean } }).importedBy?.created === false
+    );
+    check("created rows are marked created", created.length > 0);
+    check("merged rows are marked merged", merged.length > 0);
+    check(
+      "created rows carry a fingerprint",
+      created.every(
+        (r) => typeof (r.payload as { importedBy?: { fp?: string } }).importedBy?.fp === "string"
+      )
+    );
+    check(
+      "merged rows carry no fingerprint",
+      merged.every((r) => (r.payload as { importedBy?: { fp?: string } }).importedBy?.fp === undefined)
     );
   }
 

@@ -32,7 +32,7 @@ import type { MentionPick } from "@/lib/mentions/mention-picks";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { MISSING_AI_API_KEY_MESSAGE, friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
-import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
+import { releaseScanPage, type ScanPage } from "@/lib/scan-page";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import type { VoiceRecording } from "@/lib/use-voice-recorder";
