@@ -92,6 +92,7 @@ export async function requireApiCaller(
       prefix: true,
       scopes: true,
       revokedAt: true,
+      kind: true,
     },
   });
   if (!row) {
@@ -99,6 +100,12 @@ export async function requireApiCaller(
   }
   if (row.revokedAt) {
     throw new ApiAuthError("revoked", "That API key has been revoked.");
+  }
+
+  // A connector key is minted to sit in a URL, where proxies, browser history and logs see
+  // it. It is good for the MCP connector and nothing else — never the REST API or webhooks.
+  if (row.kind === "mcp_url" && opts.surface !== "mcp") {
+    throw new ApiAuthError("unknown", "That key only works as an MCP connector URL.");
   }
 
   const scopes = (row.scopes ?? ["read"]) as ApiKeyScope[];
