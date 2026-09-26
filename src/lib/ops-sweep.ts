@@ -68,6 +68,9 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     disarmedRes,
     budgetAgg,
     managedAi,
+    [stuckPurgeRow],
+    statementTimeout,
+    syncOldestDueAgeMs,
   ] = await Promise.all([
       db
         .select()
@@ -150,12 +153,15 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
           )
         ),
       loadManagedAiOpsFacts(now),
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(dataPurgeRuns)
+        .where(eq(dataPurgeRuns.status, "failed")),
+      // Production only: PGlite and preview branches report Postgres's default of 0, which
+      // would open this condition in every local sweep and smoke run.
+      process.env.VERCEL_ENV === "production" ? probeStatementTimeout().catch(() => null) : null,
+      oldestDueAgeMs("google", now).catch(() => null),
     ]);
-
-  const [stuckPurgeRow] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(dataPurgeRuns)
-    .where(eq(dataPurgeRuns.status, "failed"));
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
   const perfSlow = bySource.get(ERROR_SOURCES.perfSlow) ?? 0;
@@ -174,12 +180,6 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       outages.set(key, { provider: g.provider, errorKind: g.errorKind, accounts: g.accounts });
     }
   }
-
-  // Production only: PGlite and preview branches report Postgres's default of 0, which would
-  // open this condition in every local sweep and smoke run.
-  const statementTimeout =
-    process.env.VERCEL_ENV === "production" ? await probeStatementTimeout().catch(() => null) : null;
-  const syncOldestDueAgeMs = await oldestDueAgeMs("google", now).catch(() => null);
 
   const refusals = rowsOf<{ unembeddable: number; quota_accounts: number }>(refusalRes)[0];
 
@@ -349,13 +349,16 @@ export async function runOpsSweep(options: {
   };
 
   try {
-    let snapshot = await loadOpsSnapshot(now, options.deploy ?? null);
-    if (options.snapshotOverride) snapshot = options.snapshotOverride(snapshot);
+    // Independent reads: nothing between them writes `ops_alert_state`.
+    const [loaded, previous] = await Promise.all([
+      loadOpsSnapshot(now, options.deploy ?? null),
+      loadPreviousRows(),
+    ]);
+    const snapshot = options.snapshotOverride ? options.snapshotOverride(loaded) : loaded;
     const conditions = evaluateOpsConditions(snapshot, now);
     result.evaluated = conditions.length;
     result.active = conditions.map((c) => c.id);
 
-    const previous = await loadPreviousRows();
     const plan = planTransitions(previous, conditions, now);
 
     const prevById = new Map(previous.map((r) => [r.id, r]));

@@ -34,6 +34,8 @@ import {
   MAX_CONSECUTIVE_SENDER_FAILURES,
   SCAN_CONSECUTIVE_FAILURES_COPY,
   SCAN_KEY_PROBLEM_COPY,
+  senderRowPage,
+  type SenderRowEntry,
 } from "@/lib/gmail-scan-processor";
 import { ensureUserLink, isViewerSharing, upsertCanonicalRecruiter } from "@/lib/recruiters";
 import { reportError } from "@/lib/report-error";
@@ -143,7 +145,9 @@ async function runDiscovery(
   const existing = await db.query.importJobRows.findMany({
     where: eq(importJobRows.importId, importId),
   });
-  const byEmail = new Map<string, { id: string; payload: OutlookSenderRowPayload }>();
+  const byEmail = new Map<string, SenderRowEntry<OutlookSenderRowPayload>>();
+  // Writes held per page and flushed after it — see `senderRowPage`.
+  const pageRows = senderRowPage<OutlookSenderRowPayload>(importId, userId);
   for (const row of existing) {
     if (isOutlookSenderRow(row.payload)) {
       byEmail.set(row.payload.email, { id: row.id, payload: row.payload });
@@ -206,10 +210,7 @@ async function runDiscovery(
         if (found) {
           if (found.payload.messageIds.length < MAX_IDS_PER_SENDER) {
             found.payload.messageIds.push(msg.id);
-            await db
-              .update(importJobRows)
-              .set({ payload: found.payload, updatedAt: new Date() })
-              .where(eq(importJobRows.id, found.id));
+            pageRows.touch(found);
           }
           continue;
         }
@@ -223,18 +224,11 @@ async function runDiscovery(
           firm: firmFromEmail(parsed.email),
           messageIds: [msg.id],
         };
-        const [inserted] = await db
-          .insert(importJobRows)
-          .values({
-            importId,
-            userId,
-            rowIndex: byEmail.size,
-            payload,
-            status: "pending",
-          })
-          .returning();
-        byEmail.set(parsed.email, { id: inserted.id, payload });
+        const entry = { id: "", payload };
+        pageRows.insert(entry, byEmail.size);
+        byEmail.set(parsed.email, entry);
       }
+      await pageRows.flush();
     }
 
     nextLink = page.nextLink;

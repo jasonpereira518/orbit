@@ -111,8 +111,15 @@ export function MessyNotesCapture({
   useEffect(() => {
     if (!draftKey || loadedKeyRef.current !== draftKey) return;
     const draft = { notes, sources: ingest.sources, photoIds: [] as string[], mentionPicks };
-    const timer = window.setTimeout(() => writeCaptureDraft(window.localStorage, draftKey, draft), DRAFT_SAVE_DELAY_MS);
     const flush = () => writeCaptureDraft(window.localStorage, draftKey, draft);
+    // Emptying the box removes the draft on the spot. Debouncing that write let a quick
+    // navigation cancel it (`pagehide` does not fire on an in-app route change), so the text
+    // the person had just deleted came back on the next visit.
+    if (!notes.trim()) {
+      flush();
+      return;
+    }
+    const timer = window.setTimeout(flush, DRAFT_SAVE_DELAY_MS);
     window.addEventListener("pagehide", flush);
     return () => {
       window.clearTimeout(timer);

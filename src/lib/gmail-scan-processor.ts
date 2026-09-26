@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { classifyAiError, friendlyError } from "@/lib/errors";
 import { getDb } from "@/db";
 import {
@@ -9,6 +9,7 @@ import {
   isGmailSenderRow,
   type GmailSenderRowPayload,
   type ImportStats,
+  type OutlookSenderRowPayload,
 } from "@/db/schema";
 import { internalFetch } from "@/lib/internal-auth";
 import { failImport, truncateStoredError } from "@/lib/import-job-processor";
@@ -136,6 +137,96 @@ const DEFAULT_SCAN_DEPS: ScanDeps = {
 };
 
 /**
+ * One discovery page's `import_job_rows` writes, held until the page has been walked.
+ *
+ * Discovery used to write a row per admitted message — an insert for a new sender, an update
+ * for another message from a known one — so a 200-message page could be 200 sequential round
+ * trips on neon-http. The in-memory map still changes message by message, exactly as before
+ * (that is what makes a sender's second message on the same page extend the row its first
+ * one created rather than insert a duplicate); only the writes wait, and go out as one
+ * multi-row insert and one `UPDATE ... FROM (VALUES ...)`.
+ *
+ * Flushed before the page's token is saved, so a page is still the unit of resumption: a
+ * continuation never skips a page whose rows did not land.
+ *
+ * Shared with the Outlook scan, whose discovery writes the same rows the same way.
+ */
+export type SenderRowEntry<P extends GmailSenderRowPayload | OutlookSenderRowPayload> = {
+  /** Empty until a pending insert is flushed. */
+  id: string;
+  payload: P;
+};
+
+export function senderRowPage<P extends GmailSenderRowPayload | OutlookSenderRowPayload>(
+  importId: string,
+  userId: string
+) {
+  const inserts = new Map<SenderRowEntry<P>, number>();
+  const updates = new Set<SenderRowEntry<P>>();
+
+  return {
+    /** A new sender's row, at the `rowIndex` the one-at-a-time insert would have given it. */
+    insert(entry: SenderRowEntry<P>, rowIndex: number) {
+      inserts.set(entry, rowIndex);
+    },
+
+    /**
+     * A known sender's payload changed. A row still waiting to be inserted needs nothing
+     * more — its insert carries the payload as it stands at flush time.
+     */
+    touch(entry: SenderRowEntry<P>) {
+      if (!inserts.has(entry)) updates.add(entry);
+    },
+
+    async flush() {
+      const pendingInserts = [...inserts];
+      const pendingUpdates = [...updates];
+      inserts.clear();
+      updates.clear();
+      const db = await getDb();
+
+      if (pendingInserts.length) {
+        const rows = await db
+          .insert(importJobRows)
+          .values(
+            pendingInserts.map(([entry, rowIndex]) => ({
+              importId,
+              userId,
+              rowIndex,
+              payload: entry.payload,
+              status: "pending",
+            }))
+          )
+          // Bare `.returning()`: an explicit field selector defeats Drizzle's overload
+          // resolution against the union `Db` type (the trap noted in action-items.ts).
+          .returning();
+        // Matched back by `row_index` (unique among this page's inserts), not by position:
+        // RETURNING order is not something Postgres promises.
+        const byIndex = new Map(pendingInserts.map(([entry, rowIndex]) => [rowIndex, entry]));
+        for (const row of rows) {
+          const entry = byIndex.get(row.rowIndex);
+          if (entry) entry.id = row.id;
+        }
+      }
+
+      if (pendingUpdates.length) {
+        const updatedAt = new Date();
+        const tuples = pendingUpdates.map(
+          (entry) => sql`(${entry.id}::uuid, ${JSON.stringify(entry.payload)}::jsonb)`
+        );
+        await db.execute(sql`
+          UPDATE import_job_rows AS r
+          SET payload = v.payload,
+              updated_at = ${updatedAt}
+          FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, payload)
+          WHERE r.id = v.id AND r.import_id = ${importId}
+        `);
+      }
+    },
+  };
+}
+
+/**
  * Phase A: walk the mailbox and turn recruiter-ish senders into work rows.
  *
  * Resumable at page granularity. Grouping happens against rows already in the DB rather
@@ -158,7 +249,9 @@ async function runDiscovery(
   const existing = await db.query.importJobRows.findMany({
     where: eq(importJobRows.importId, importId),
   });
-  const byEmail = new Map<string, { id: string; payload: GmailSenderRowPayload }>();
+  const byEmail = new Map<string, SenderRowEntry<GmailSenderRowPayload>>();
+  // Writes held per page and flushed after it — see `senderRowPage`.
+  const pageRows = senderRowPage<GmailSenderRowPayload>(importId, userId);
   for (const row of existing) {
     if (isGmailSenderRow(row.payload)) {
       byEmail.set(row.payload.email, { id: row.id, payload: row.payload });
@@ -207,10 +300,7 @@ async function runDiscovery(
         if (found) {
           if (found.payload.messageIds.length < MAX_IDS_PER_SENDER) {
             found.payload.messageIds.push(msg.id);
-            await db
-              .update(importJobRows)
-              .set({ payload: found.payload, updatedAt: new Date() })
-              .where(eq(importJobRows.id, found.id));
+            pageRows.touch(found);
           }
           continue;
         }
@@ -224,18 +314,11 @@ async function runDiscovery(
           firm: firmFromEmail(parsed.email),
           messageIds: [msg.id],
         };
-        const [inserted] = await db
-          .insert(importJobRows)
-          .values({
-            importId,
-            userId,
-            rowIndex: byEmail.size,
-            payload,
-            status: "pending",
-          })
-          .returning();
-        byEmail.set(parsed.email, { id: inserted.id, payload });
+        const entry = { id: "", payload };
+        pageRows.insert(entry, byEmail.size);
+        byEmail.set(parsed.email, entry);
       }
+      await pageRows.flush();
     }
 
     pageToken = page.nextPageToken;

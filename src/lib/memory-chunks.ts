@@ -305,6 +305,111 @@ export async function syncMemoryChunks(
   return { written: values.length, reused };
 }
 
+/**
+ * `syncMemoryChunks` for many sources of one kind at once: one read, one atomic write.
+ *
+ * The sweep claims hundreds of interactions a pass, and on neon-http the single-source
+ * version costs two round trips each (the carry-over read, then the delete+insert group), so
+ * a 200-row claim was 400 sequential HTTPS requests. This is the same work in two.
+ *
+ * Carry-over is keyed exactly as above — per source, by `content_hash`, only from a chunk
+ * whose `embedded_hash` matches and that holds a vector — so an edited note keeps its
+ * untouched paragraphs' embeddings just as it would one source at a time. The read is
+ * narrowed in SQL to chunks that could be carried (a hash some incoming draft has, already
+ * embedded), because the vectors are the wide part of the row and the rest are about to be
+ * deleted anyway; the same filter then runs in TypeScript so the rule stays byte-for-byte
+ * the single version's.
+ *
+ * Every source's delete and insert travel in one `runAtomicWrite`, so the group lands or
+ * fails whole. The caller keeps groups small (see the sweep) and falls back to the
+ * one-source path when a group fails, so one bad row costs its group a retry, not the pass.
+ *
+ * Returns the per-source counts in `sources` order.
+ */
+export async function syncMemoryChunksMany(
+  userId: string,
+  sourceKind: MemorySourceKind,
+  sources: Array<{ sourceId: string; drafts: MemoryChunkDraft[]; sourceHash?: string | null }>,
+  options: { db?: Awaited<ReturnType<typeof getDb>> } = {}
+): Promise<Array<{ written: number; reused: number }>> {
+  if (!sources.length) return [];
+  const db = options.db ?? (await getDb());
+  const sourceIds = [...new Set(sources.map((s) => s.sourceId))];
+  const hashes = [...new Set(sources.flatMap((s) => s.drafts.map((d) => d.contentHash)))];
+
+  const existing = hashes.length
+    ? await db
+        .select({
+          sourceId: memoryChunks.sourceId,
+          contentHash: memoryChunks.contentHash,
+          embeddedHash: memoryChunks.embeddedHash,
+          embedding: memoryChunks.embedding,
+        })
+        .from(memoryChunks)
+        .where(
+          and(
+            eq(memoryChunks.userId, userId),
+            eq(memoryChunks.sourceKind, sourceKind),
+            inArray(memoryChunks.sourceId, sourceIds),
+            inArray(memoryChunks.contentHash, hashes),
+            sql`${memoryChunks.embeddedHash} = ${memoryChunks.contentHash}`,
+            sql`${memoryChunks.embedding} is not null`
+          )
+        )
+    : [];
+  const embeddedBySource = new Map<string, Map<string, (typeof existing)[number]>>();
+  for (const row of existing) {
+    if (!(row.embeddedHash && row.embeddedHash === row.contentHash && row.embedding)) continue;
+    let bySource = embeddedBySource.get(row.sourceId);
+    if (!bySource) embeddedBySource.set(row.sourceId, (bySource = new Map()));
+    bySource.set(row.contentHash, row);
+  }
+
+  const counts: Array<{ written: number; reused: number }> = [];
+  const values = sources.flatMap((source) => {
+    const embedded = embeddedBySource.get(source.sourceId);
+    let reused = 0;
+    const rows = source.drafts.map((draft) => {
+      const carried = embedded?.get(draft.contentHash);
+      if (carried) reused++;
+      return {
+        userId,
+        sourceKind,
+        sourceId: source.sourceId,
+        contactId: draft.contactId,
+        contactIds: draft.contactIds,
+        occurredAt: draft.occurredAt,
+        chunkIndex: draft.chunkIndex,
+        content: draft.content,
+        contentHash: draft.contentHash,
+        sourceHash: source.sourceHash ?? null,
+        embeddedHash: carried?.embeddedHash ?? null,
+        embedding: carried?.embedding ?? null,
+      };
+    });
+    counts.push({ written: rows.length, reused });
+    return rows;
+  });
+
+  await runAtomicWrite(db, (tx) => {
+    const statements: AtomicStatement[] = [
+      tx
+        .delete(memoryChunks)
+        .where(
+          and(
+            eq(memoryChunks.userId, userId),
+            eq(memoryChunks.sourceKind, sourceKind),
+            inArray(memoryChunks.sourceId, sourceIds)
+          )
+        ),
+    ];
+    if (values.length) statements.push(tx.insert(memoryChunks).values(values));
+    return statements;
+  });
+
+  return counts;
+}
+
 /** Drop everything indexed from one source — a deleted note, a merged-away contact. */
 export async function deleteMemoryChunks(
   userId: string,

@@ -279,6 +279,8 @@ export async function gatherEvidence(
         system: GATHER_SYSTEM,
         user: digest(ctx, today),
         tools: modelTools,
+        // The account read retrieval already made; the grant is still this driver's own.
+        access: ctx.access,
       }));
     outcome = await runToolLoop(driver, executorFor(userId, tools), {
       maxRounds: MAX_ROUNDS,

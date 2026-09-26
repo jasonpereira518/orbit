@@ -14,7 +14,7 @@ import {
 } from "@/components/admin/primitives";
 import { MoneyTabs } from "@/components/admin/money-tabs";
 import { formatCents } from "@/lib/format-money";
-import { loadAdminUserRows } from "@/lib/admin-metrics";
+import { ADMIN_AGGREGATES_TTL_MS, loadAdminUserRows } from "@/lib/admin-metrics";
 import { MONTHLY_CENTS } from "@/lib/billing-events";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import { compedForegoneCents, mrrMovementSeries } from "@/lib/money-metrics";
@@ -39,7 +39,8 @@ export default async function MoneyMovementPage() {
     mrrMovementSeries("month", 6),
     lifetimeOffer(),
     compedForegoneCents(MONTHLY_CENTS),
-    loadAdminUserRows(),
+    // Only user_settings columns are read here, and those are always live.
+    loadAdminUserRows({ aggregatesMaxAgeMs: ADMIN_AGGREGATES_TTL_MS }),
   ]);
 
   const comped = rows.filter((r) => r.planSource === "comp");

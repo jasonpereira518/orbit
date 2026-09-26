@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { speechUsage } from "@/db/schema";
+import { speechUsage, userSettings } from "@/db/schema";
 import { fetchDeepgramUsage } from "@/lib/deepgram";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { notifySlack } from "@/lib/ops-notify";
-import { userIdForSpeechTagId } from "@/lib/speech-tag-id";
 import { parseMeetingTag, parseShortformTag } from "@/lib/speech-usage-tag";
 import { reportError } from "@/lib/report-error";
 
@@ -44,7 +43,11 @@ const MIN_SHORTFORM_GAP_SECONDS = 120;
  *
  * That id is opaque and per-account (`src/lib/speech-tag-id.ts`), not the Clerk user id — a
  * tag persists in Deepgram's usage records, which zero retention does not cover — so this job
- * resolves it back to an account with one indexed lookup before reading any meter.
+ * resolves it back to an account (`user_settings_speech_tag_uidx`) before reading any meter.
+ *
+ * Every meter is read up front, in two set-based statements — one for all the short-form
+ * tags (resolved and summed together), one for all the meetings — rather than one or two
+ * round trips per tag. Only the Slack alerts go out one tag at a time.
  *
  * Returns `{checked, overreported, shortformChecked, shortformOverreported, pagesRead,
  * requestsSeen, invalidTags}`. The last three exist so a run that silently checked nothing is
@@ -91,7 +94,63 @@ export async function POST(request: Request) {
       });
     }
 
+    // Both parsers only accept a well-formed id (`isSpeechTagId`, `isUuid`), so nothing that
+    // reaches the two reads below is raw echoed input.
+    const speechTagIds = new Set<string>();
+    const sessionIds = new Set<string>();
+    for (const { tag } of usage.totals) {
+      const shortform = parseShortformTag(tag);
+      if (shortform.kind === "ok") speechTagIds.add(shortform.speechTagId);
+      if (shortform.kind !== "not-a-shortform-tag") continue;
+      const parsed = parseMeetingTag(tag);
+      if (parsed.kind === "ok") sessionIds.add(parsed.sessionId.toLowerCase());
+    }
+
     const db = await getDb();
+    const [shortformRows, meetingRows] = await Promise.all([
+      // Each tag's account, and that account's short-form seconds in the window — summed,
+      // not read from one row: short-form usage is one row per voice note and one per
+      // dictation session, unlike a meeting's single growing row. A tag no account claims
+      // simply has no row here.
+      speechTagIds.size
+        ? db
+            .select({
+              speechTagId: userSettings.speechTagId,
+              userId: userSettings.userId,
+              seconds: sql<number>`coalesce(sum(${speechUsage.seconds}), 0)`,
+            })
+            .from(userSettings)
+            .leftJoin(
+              speechUsage,
+              and(
+                eq(speechUsage.userId, userSettings.userId),
+                eq(speechUsage.kind, "shortform"),
+                gte(speechUsage.createdAt, since),
+                lt(speechUsage.createdAt, until),
+              ),
+            )
+            .where(inArray(userSettings.speechTagId, [...speechTagIds]))
+            .groupBy(userSettings.speechTagId, userSettings.userId)
+        : [],
+      // One row per session (`speech_usage_session_uidx`).
+      sessionIds.size
+        ? db
+            .select({
+              sessionId: speechUsage.sessionId,
+              userId: speechUsage.userId,
+              seconds: speechUsage.seconds,
+            })
+            .from(speechUsage)
+            .where(inArray(speechUsage.sessionId, [...sessionIds]))
+        : [],
+    ]);
+    const shortformByTag = new Map(
+      shortformRows.map((r) => [r.speechTagId, { userId: r.userId, seconds: Number(r.seconds ?? 0) }]),
+    );
+    // Keyed in lower case: the parser accepts either case, Postgres hands a uuid back in
+    // lower case, and the per-tag `=` this replaced matched regardless.
+    const meetingBySession = new Map(meetingRows.map((r) => [r.sessionId?.toLowerCase(), r]));
+
     let checked = 0;
     let overreported = 0;
     let invalidTags = 0;
@@ -110,14 +169,13 @@ export async function POST(request: Request) {
         continue;
       }
       if (shortform.kind === "ok") {
-        // The tag carries the account's opaque id, so the account is one indexed lookup away
-        // (`user_settings_speech_tag_uidx`). Nobody claiming it is an ordinary outcome, not a
-        // malformed tag: an account that deleted its data dropped the column and minted a new
-        // value, so yesterday's tags no longer point anywhere. Counted with the invalid ones
-        // — both mean "this spend could not be attributed" — but reported under its own
-        // `where` so the two are separable in Sentry.
-        const userId = await userIdForSpeechTagId(shortform.speechTagId);
-        if (!userId) {
+        // The tag carries the account's opaque id, resolved above. Nobody claiming it is an
+        // ordinary outcome, not a malformed tag: an account that deleted its data dropped the
+        // column and minted a new value, so yesterday's tags no longer point anywhere.
+        // Counted with the invalid ones — both mean "this spend could not be attributed" —
+        // but reported under its own `where` so the two are separable in Sentry.
+        const claimed = shortformByTag.get(shortform.speechTagId);
+        if (!claimed) {
           invalidTags += 1;
           reportError(new Error("Deepgram usage: unknown shortform tag id"), {
             where: "job.speech-usage.unknown-tag",
@@ -127,20 +185,7 @@ export async function POST(request: Request) {
           continue;
         }
         shortformChecked += 1;
-        // Summed over the window, not read from one row: short-form usage is one row per
-        // voice note and one per dictation session, unlike a meeting's single growing row.
-        const [row] = await db
-          .select({ seconds: sql<number>`coalesce(sum(${speechUsage.seconds}), 0)` })
-          .from(speechUsage)
-          .where(
-            and(
-              eq(speechUsage.userId, userId),
-              eq(speechUsage.kind, "shortform"),
-              gte(speechUsage.createdAt, since),
-              lt(speechUsage.createdAt, until),
-            ),
-          );
-        const recordedSeconds = Number(row?.seconds ?? 0);
+        const { userId, seconds: recordedSeconds } = claimed;
         const gap = deepgramSeconds - recordedSeconds;
         if (gap <= MIN_SHORTFORM_GAP_SECONDS) continue;
         if (deepgramSeconds <= recordedSeconds * OVERREPORT_THRESHOLD) continue;
@@ -174,11 +219,7 @@ export async function POST(request: Request) {
       const sessionId = parsed.sessionId;
       checked += 1;
 
-      const [row] = await db
-        .select({ userId: speechUsage.userId, seconds: speechUsage.seconds })
-        .from(speechUsage)
-        .where(eq(speechUsage.sessionId, sessionId))
-        .limit(1);
+      const row = meetingBySession.get(sessionId.toLowerCase());
 
       const recordedSeconds = row?.seconds ?? 0;
       if (deepgramSeconds <= recordedSeconds * OVERREPORT_THRESHOLD) continue;

@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { aiSuggestions, contacts, interactions } from "@/db/schema";
+import { aiSuggestions, contacts } from "@/db/schema";
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { upsertContactEmbedding } from "@/lib/search";
 import { MAX_BATCH_REQUESTS, submitAiBatch, type BatchRequest } from "@/lib/ai-batch";
@@ -10,6 +10,7 @@ import { SKIP_GATE_TUNING } from "@/lib/decisions/catalog";
 import { mapPool } from "@/lib/decisions/jev";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { reportUnlessQuiet } from "@/lib/report-error";
+import { loadLinkedInThreads, type LinkedInThreadMessage } from "@/lib/linkedin-timeline-backfill";
 
 const threadEnrichSchema = z.object({
   summary: z.string(),
@@ -65,26 +66,35 @@ function mergeUnique(existing: string[] | null | undefined, incoming: string[]) 
 type ContactRow = typeof contacts.$inferSelect;
 type ThreadContext = {
   contact: ContactRow;
-  chronological: Array<typeof interactions.$inferSelect>;
+  chronological: LinkedInThreadMessage[];
   transcript: string;
 };
 
+/** Messages read per thread, newest first — a summary is about where things stand now. */
+const THREAD_MESSAGE_LIMIT = 80;
+
 /**
- * One contact's LinkedIn thread as the model reads it, or null when there is nothing to
- * read. Shared by the inline path and by batch results, which re-read rather than carry a
- * transcript around: what gets written back should reflect the thread as it is now.
+ * Many contacts' LinkedIn threads as the model reads them, in one query — the most recent
+ * 80 messages each, the same rows the one-contact read took. A contact with nothing to read
+ * is absent. Shared by the inline path and by batch results, which re-read rather than carry
+ * a transcript around: what gets written back should reflect the thread as it is now.
  */
-async function loadThreadContext(userId: string, contact: ContactRow): Promise<ThreadContext | null> {
-  const db = await getDb();
-  const msgs = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.contactId, contact.id),
-      eq(interactions.interactionType, "linkedin_message")
-    ),
-    orderBy: [desc(interactions.interactionDate)],
-    limit: 80,
-  });
+async function loadThreadContexts(userId: string, contacts: ContactRow[]): Promise<Map<string, ThreadContext>> {
+  const threads = await loadLinkedInThreads(
+    userId,
+    contacts.map((c) => c.id),
+    { order: "desc", limit: THREAD_MESSAGE_LIMIT }
+  );
+  const out = new Map<string, ThreadContext>();
+  for (const contact of contacts) {
+    const thread = threadContext(contact, threads.get(contact.id) ?? []);
+    if (thread) out.set(contact.id, thread);
+  }
+  return out;
+}
+
+/** One contact's thread, from its messages newest first, or null when there is nothing to read. */
+function threadContext(contact: ContactRow, msgs: LinkedInThreadMessage[]): ThreadContext | null {
   if (msgs.length < 1) return null;
 
   const chronological = [...msgs].reverse();
@@ -219,9 +229,10 @@ export async function enrichContactsFromMessages(
   });
 
   const engines = options?.engines ?? (await openEngines(userId));
+  const threads = await loadThreadContexts(userId, contactRows);
 
   for (const contact of contactRows) {
-    const thread = await loadThreadContext(userId, contact);
+    const thread = threads.get(contact.id);
     if (!thread) {
       skipped++;
       continue;
@@ -284,9 +295,11 @@ export async function enrichContactsFromMessagesBatched(
   });
 
   const engines = options?.engines ?? (await openEngines(userId));
+  // Every thread in one read, then kept in `contactRows` order, as the one-at-a-time loop did.
+  const contexts = await loadThreadContexts(userId, contactRows);
   const threads: Array<{ contact: (typeof contactRows)[number]; transcript: string }> = [];
   for (const contact of contactRows) {
-    const thread = await loadThreadContext(userId, contact);
+    const thread = contexts.get(contact.id);
     if (thread) threads.push({ contact, transcript: thread.transcript });
   }
   // Gated together rather than one at a time: nobody is waiting on this, but a batch of 40
@@ -338,7 +351,7 @@ export async function applyEnrichmentOutcome(
     where: and(eq(contacts.userId, userId), eq(contacts.id, contactId)),
   });
   if (!contact) return "skipped";
-  const thread = await loadThreadContext(userId, contact);
+  const thread = (await loadThreadContexts(userId, [contact])).get(contact.id);
   if (!thread) return "skipped";
 
   const parsed = threadEnrichSchema.safeParse(parseAiJson(raw));
