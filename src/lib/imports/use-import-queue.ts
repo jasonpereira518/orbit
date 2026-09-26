@@ -369,6 +369,9 @@ export async function runQueue(): Promise<RunResult> {
     if (!item) break;
 
     const input = inputFor(item);
+    // The runner holds the text from here on, and nothing re-runs a step, so the queue's
+    // copy (a LinkedIn export can be tens of MB) must not outlive the job it fed.
+    state.payloads.delete(item.id);
     if (!input) {
       setState({ items: advance(state.items, item.id, { status: "skipped" }) });
       continue;
@@ -433,7 +436,9 @@ export async function runQueue(): Promise<RunResult> {
     }
   }
 
-  setState({ phase: "done", stopping: false });
+  // Steps a Stop skipped never reached `inputFor`. The done card outlives the page — the
+  // store is module-level and only its dismiss clears it — so drop their text now.
+  setState({ phase: "done", stopping: false, payloads: new Map() });
   return { message: summaryMessage(state.items) };
 }
 

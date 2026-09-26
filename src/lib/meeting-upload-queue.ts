@@ -33,6 +33,24 @@ export type OutboxChunk = {
   wav: ArrayBuffer | null;
 };
 
+/**
+ * A chunk waiting to be acknowledged. Its bytes stay in memory only when the outbox write
+ * failed: once IndexedDB has them, `send` reads them back one chunk at a time. Holding
+ * every unsent chunk here as well cost ~115MB an hour of stalled uploads (an offline
+ * laptop, a failing server), up to ~345MB at the three-hour cap.
+ */
+type PendingChunk = Omit<OutboxChunk, "wav"> & {
+  /** In-memory bytes — only when the outbox could not take them. */
+  wav: ArrayBuffer | null;
+  /** The bytes are in the outbox under `[sessionId, seq]`. */
+  wavInOutbox: boolean;
+};
+
+function pendingFrom(chunk: OutboxChunk, persisted: boolean): PendingChunk {
+  const wavInOutbox = persisted && chunk.wav !== null;
+  return { ...chunk, wav: wavInOutbox ? null : chunk.wav, wavInOutbox };
+}
+
 export type ChunkResult = { seq: number; text: string; engine: string; duplicate: boolean };
 
 export type QueueFatal =
@@ -67,7 +85,7 @@ const MAX_ATTEMPTS = 6;
 
 export class MeetingUploadQueue {
   private readonly opts: MeetingUploadQueueOptions;
-  private readonly pending = new Map<number, OutboxChunk>();
+  private readonly pending = new Map<number, PendingChunk>();
   private readonly writes = new Set<Promise<void>>();
   private readonly attempts = new Map<number, number>();
   private readonly failed = new Set<number>();
@@ -99,18 +117,20 @@ export class MeetingUploadQueue {
     // Tracked so `drain` can wait for it: Stop enqueues the final chunk and drains in the
     // same breath, and a drain that ran before this write landed would find the queue
     // empty and let the analysis start without the last minute of the meeting.
-    const write: Promise<void> = outboxPut(chunk).then(
-      () => undefined,
-      // Memory still has it; losing crash-safety is better than losing the chunk.
-      () => undefined
+    const write: Promise<boolean> = outboxPut(chunk).then(
+      () => true,
+      // Memory keeps it; losing crash-safety is better than losing the chunk.
+      () => false
     );
-    this.writes.add(write);
+    const tracked = write.then(() => undefined);
+    this.writes.add(tracked);
+    let persisted = false;
     try {
-      await write;
+      persisted = await write;
     } finally {
-      this.writes.delete(write);
+      this.writes.delete(tracked);
     }
-    this.pending.set(chunk.seq, chunk);
+    this.pending.set(chunk.seq, pendingFrom(chunk, persisted));
     this.opts.onStatus(chunk.seq, "queued");
     this.kick();
   }
@@ -121,7 +141,7 @@ export class MeetingUploadQueue {
    * recorder numbers its chunks after them rather than on top of them.
    */
   async restore(): Promise<number> {
-    const saved = await outboxList(this.opts.sessionId).catch(() => [] as OutboxChunk[]);
+    const saved = await outboxMeta(this.opts.sessionId).catch(() => [] as PendingChunk[]);
     let maxSeq = -1;
     for (const chunk of saved) {
       if (!this.pending.has(chunk.seq)) {
@@ -184,7 +204,7 @@ export class MeetingUploadQueue {
    * after these, and the click that starts it cannot wait on IndexedDB.
    */
   static async peek(sessionId: string): Promise<{ count: number; maxSeq: number; maxEndMs: number }> {
-    const saved = await outboxList(sessionId).catch(() => [] as OutboxChunk[]);
+    const saved = await outboxMeta(sessionId).catch(() => [] as PendingChunk[]);
     return {
       count: saved.length,
       maxSeq: saved.reduce((m, c) => Math.max(m, c.seq), -1),
@@ -217,8 +237,8 @@ export class MeetingUploadQueue {
     void this.pump();
   }
 
-  private next(): OutboxChunk | null {
-    let best: OutboxChunk | null = null;
+  private next(): PendingChunk | null {
+    let best: PendingChunk | null = null;
     for (const chunk of this.pending.values()) {
       if (this.failed.has(chunk.seq)) continue;
       if (!best || chunk.seq < best.seq) best = chunk;
@@ -243,14 +263,33 @@ export class MeetingUploadQueue {
     else this.kick();
   }
 
-  private async send(chunk: OutboxChunk) {
+  private async send(chunk: PendingChunk) {
     this.opts.onStatus(chunk.seq, "uploading");
+    const silent = chunk.silent || (!chunk.wav && !chunk.wavInOutbox);
+    let wav = chunk.wav;
+    if (!silent && !wav) {
+      let saved: OutboxChunk | undefined;
+      try {
+        saved = await outboxGet(chunk.sessionId, chunk.seq);
+      } catch {
+        this.backoff(chunk, "Couldn’t read the saved audio — will retry");
+        return;
+      }
+      if (!saved?.wav) {
+        // Gone from the outbox under us: this meeting was saved, discarded or taken over
+        // elsewhere, and whoever did that has the chunk. Nothing is left here to send.
+        await this.acknowledge(chunk);
+        this.opts.onStatus(chunk.seq, "failed", "This part was already handled elsewhere");
+        return;
+      }
+      wav = saved.wav;
+    }
     const params = new URLSearchParams({
       seq: String(chunk.seq),
       startMs: String(chunk.startMs),
       endMs: String(chunk.endMs),
     });
-    if (chunk.silent || !chunk.wav) params.set("silent", "1");
+    if (silent) params.set("silent", "1");
 
     let res: Response;
     try {
@@ -259,7 +298,7 @@ export class MeetingUploadQueue {
         {
           method: "POST",
           headers: { "content-type": "audio/wav", "x-orbit-recorder": this.opts.recorderId },
-          body: chunk.silent || !chunk.wav ? null : chunk.wav,
+          body: silent ? null : wav,
         }
       );
     } catch {
@@ -311,7 +350,7 @@ export class MeetingUploadQueue {
     }
   }
 
-  private backoff(chunk: OutboxChunk, detail: string) {
+  private backoff(chunk: PendingChunk, detail: string) {
     const n = (this.attempts.get(chunk.seq) ?? 0) + 1;
     this.attempts.set(chunk.seq, n);
     if (n >= MAX_ATTEMPTS) {
@@ -330,7 +369,7 @@ export class MeetingUploadQueue {
     this.resolveIdle();
   }
 
-  private async acknowledge(chunk: OutboxChunk) {
+  private async acknowledge(chunk: PendingChunk) {
     this.pending.delete(chunk.seq);
     this.attempts.delete(chunk.seq);
     this.failed.delete(chunk.seq);
@@ -393,8 +432,33 @@ function outboxDelete(sessionId: string, seq: number) {
   return tx("readwrite", (s) => s.delete([sessionId, seq]));
 }
 
-function outboxList(sessionId: string): Promise<OutboxChunk[]> {
-  return tx("readonly", (s) => s.index("session").getAll(sessionId) as IDBRequest<OutboxChunk[]>);
+function outboxGet(sessionId: string, seq: number): Promise<OutboxChunk | undefined> {
+  return tx("readonly", (s) => s.get([sessionId, seq]) as IDBRequest<OutboxChunk | undefined>);
+}
+
+/**
+ * A meeting's saved chunks without their audio. A cursor rather than `getAll`, so only one
+ * chunk's WAV is ever materialized at a time: a resume after a long outage — exactly when
+ * the outbox is largest — would otherwise load every minute of it at once to count them.
+ */
+function outboxMeta(sessionId: string): Promise<PendingChunk[]> {
+  return openOutbox().then(
+    (db) =>
+      new Promise<PendingChunk[]>((resolve, reject) => {
+        const out: PendingChunk[] = [];
+        const t = db.transaction(STORE, "readonly");
+        const req = t.objectStore(STORE).index("session").openCursor(sessionId);
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) return;
+          out.push(pendingFrom(cursor.value as OutboxChunk, true));
+          cursor.continue();
+        };
+        t.oncomplete = () => resolve(out);
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
+      })
+  );
 }
 
 function outboxClear(sessionId: string) {

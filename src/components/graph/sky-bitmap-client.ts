@@ -62,3 +62,38 @@ export function renderSkyBitmap(job: SkyBitmapJob): Promise<Blob | null> {
     w.postMessage({ id, job } satisfies SkyBitmapRequest);
   });
 }
+
+type Pending = { job: SkyBitmapJob; resolve: (blob: Blob | null) => void };
+
+/**
+ * One consumer's jobs, latest-wins: at most one in the worker and one waiting behind it.
+ *
+ * Every job the worker takes costs an `OffscreenCanvas` of up to 2048² (16MB) and a PNG
+ * encode, and its handler is async — so posting each job as it comes let a burst (a search
+ * keystroke per re-post) stack several canvases in the worker at once, all but the last
+ * thrown away on arrival. A job overtaken while it waits resolves null without ever being
+ * posted; `useSkyBitmap` has already moved on to the newer one by then.
+ */
+export function createSkyBitmapLane() {
+  let busy = false;
+  let next: Pending | null = null;
+
+  const pump = () => {
+    if (busy || !next) return;
+    const { job, resolve } = next;
+    next = null;
+    busy = true;
+    void renderSkyBitmap(job).then((blob) => {
+      busy = false;
+      resolve(blob);
+      pump();
+    });
+  };
+
+  return (job: SkyBitmapJob): Promise<Blob | null> =>
+    new Promise((resolve) => {
+      next?.resolve(null);
+      next = { job, resolve };
+      pump();
+    });
+}

@@ -321,21 +321,13 @@ export function ContactsList({
   // inline inside the render `.map()` below — that recomputed all of them (four date-math
   // calls + a join per row) on every render, including ones triggered by unrelated
   // sibling state (a dialog opening, a popover, the alphabet scrubber dragging).
+  //
+  // Reused per contact OBJECT (see `rowMetaFor`): a fresh meta for every row whenever
+  // `contacts` changed defeated `ContactRow`'s memo, so each 50-row page — and each avatar
+  // backfill batch, every second or two after an import — re-rendered every loaded row.
   const rowMeta = useMemo(() => {
     const map = new Map<string, ContactRowMeta>();
-    for (const c of contacts) {
-      const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
-      const lastTouch = lastTouchLabel(c.lastInteractionAt);
-      map.set(c.id, {
-        overdue: isOverdue(c.nextFollowUpAt),
-        scheduledLabel: dueLabel(c.nextFollowUpAt),
-        overdueText,
-        lastTouch,
-        details: [detailLine(c.school, c.location), overdueText, lastTouch]
-          .filter(Boolean)
-          .join(" · "),
-      });
-    }
+    for (const c of contacts) map.set(c.id, rowMetaFor(c));
     return map;
   }, [contacts]);
 
@@ -574,6 +566,32 @@ type ContactRowMeta = {
  * change that belongs to the list (the scrubber's active letter, the delete dialog, the draft
  * sheet, a page loading) no longer re-renders every row.
  */
+/**
+ * A row's derived labels, cached against the contact object itself. Rows that did not
+ * change keep their object across page loads and avatar updates (`[...prev, ...next]`, and
+ * a `map` that replaces only the updated rows), so they keep their meta too and their
+ * memoized row skips the render. Weak, so a row dropped from the list takes its entry with it.
+ */
+const rowMetaCache = new WeakMap<ContactListItem, ContactRowMeta>();
+
+function rowMetaFor(c: ContactListItem): ContactRowMeta {
+  const cached = rowMetaCache.get(c);
+  if (cached) return cached;
+  const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
+  const lastTouch = lastTouchLabel(c.lastInteractionAt);
+  const meta: ContactRowMeta = {
+    overdue: isOverdue(c.nextFollowUpAt),
+    scheduledLabel: dueLabel(c.nextFollowUpAt),
+    overdueText,
+    lastTouch,
+    details: [detailLine(c.school, c.location), overdueText, lastTouch]
+      .filter(Boolean)
+      .join(" · "),
+  };
+  rowMetaCache.set(c, meta);
+  return meta;
+}
+
 const ContactRow = memo(function ContactRow({
   c,
   meta,
