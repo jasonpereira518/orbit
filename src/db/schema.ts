@@ -856,6 +856,14 @@ export const interactions = pgTable(
      * a real two-sided exchange" — see `src/lib/constellation-eligibility.ts`.
      */
     direction: text("direction").$type<"in" | "out">(),
+    /**
+     * Whether this note's passages (`memory_chunks`) may be out of date. Set by a trigger
+     * (`interactions_memory_dirty`, in SCALE_DDL) on insert and on any update to a column the
+     * passage source hash reads, so no write path has to remember it. Cleared by
+     * `backfillMemoryChunks` once the passages match. A hint that narrows the sweep's scan,
+     * never the truth: the sweep still checks the hash before trusting a clean row.
+     */
+    memoryDirty: boolean("memory_dirty").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

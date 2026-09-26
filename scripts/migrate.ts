@@ -24,6 +24,7 @@ import { checkMigrationTarget, type VercelEnv } from "../src/lib/env";
 import { schemaCoverage } from "./lib/schema-coverage";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
 import { mergeConfidentDuplicates } from "../src/lib/duplicate-sweep";
+import { prebuildIndexesConcurrently } from "./lib/concurrent-indexes";
 
 async function main() {
   const target = process.env.DATABASE_URL?.trim() ? "DATABASE_URL" : "local PGlite";
@@ -44,6 +45,17 @@ async function main() {
   }
   if (verdict.unarmed) console.warn(`migrate: warn  ${verdict.reason}`);
   console.log(`migrate: reconciling schema version ${SCHEMA_VERSION} on ${target}…`);
+
+  // Big-table indexes first, CONCURRENTLY, so the sweep below finds them built instead of
+  // blocking writes to contacts or interactions while it builds them. Neon only: PGlite is
+  // one local writer with nothing to block.
+  if (process.env.DATABASE_URL?.trim()) {
+    const pre = await prebuildIndexesConcurrently(process.env.DATABASE_URL.trim()).catch((err) => {
+      console.warn("migrate: concurrent index prebuild skipped\n", err);
+      return { built: [], skipped: [] };
+    });
+    if (pre.built.length) console.log(`migrate: built ${pre.built.length} index(es) concurrently: ${pre.built.join(", ")}`);
+  }
 
   const result = await reconcileSchema({ lockWaitMs: BUILD_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "sweep" });
   if (result.failed.length > 0) {

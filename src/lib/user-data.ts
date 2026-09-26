@@ -232,6 +232,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // Passages of the person's own notes. Derived, but derived from the most personal text
       // in the product — leaving these behind after a deletion would leave the notes behind.
       await db.delete(memoryChunks).where(eq(memoryChunks.userId, userId));
+      // The notes themselves may stay (a partial deletion), and their passages are rebuilt
+      // on the next sweep. The sweep only looks at rows marked dirty, and deleting chunks
+      // changes no column the trigger watches, so mark them here.
+      await db.update(interactions).set({ memoryDirty: true }).where(eq(interactions.userId, userId));
       await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
     },
   },
