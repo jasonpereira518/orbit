@@ -169,6 +169,28 @@ async function main() {
   const loaded = await getChatThread(thread!.id);
   check("a reloaded thread shows it as sent", Boolean(loaded.sent[msg!.id]?.[contact!.id]), JSON.stringify(loaded.sent));
 
+  // The lookup used to take the first 500 of the user's sends, in no order, from every
+  // thread. 600 sends from other messages must neither hide this one nor leak into it.
+  await db.insert(interactions).values(
+    Array.from({ length: 600 }, () => ({
+      userId: USER,
+      contactId: contact!.id,
+      interactionType: "email" as const,
+      source: "chat_send",
+      direction: "out" as const,
+      externalId: chatSendExternalId(crypto.randomUUID(), contact!.id),
+      interactionDate: new Date(),
+    }))
+  );
+  // Re-insert the real claim so it sits physically AFTER the 600: an unordered scan with a
+  // row cap (what PGlite does) would then miss it, which is the bug this pins.
+  const [real] = await claims();
+  await db.delete(interactions).where(eq(interactions.id, real!.id));
+  await db.insert(interactions).values({ ...real!, id: undefined });
+  const crowded = await getChatThread(thread!.id);
+  check("past 500 sends elsewhere, the thread still shows its own", Boolean(crowded.sent[msg!.id]?.[contact!.id]), JSON.stringify(crowded.sent));
+  check("and only its own", Object.keys(crowded.sent).length === 1, `${Object.keys(crowded.sent).length} messages`);
+
   console.log("a double click");
   await reset();
   const [a, b] = await Promise.all([send(), send()]);

@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   chatMessages,
@@ -81,14 +81,23 @@ export async function getChatThread(threadId: string) {
   // Which drafts in this thread have already been emailed. Derived, not stored: the send
   // claims an interaction row keyed `chat-send:<messageId>:<contactId>`, so that row IS the
   // record, and a reloaded card cannot offer to send again what the timeline says was sent.
+  //
+  // Filtered to THIS thread's messages, with no row cap. It used to take the first 500 of
+  // the user's sends in no particular order, so past 500 sends a thread's markers dropped
+  // out at random and a reloaded card offered to email someone a second time.
   const messageIds = new Set(messages.filter((m) => m.role === "assistant").map((m) => m.id));
   const sent: Record<string, Record<string, string>> = {};
   if (messageIds.size > 0) {
     const claims = await db
       .select({ externalId: interactions.externalId, at: interactions.interactionDate })
       .from(interactions)
-      .where(and(eq(interactions.userId, userId), eq(interactions.source, "chat_send")))
-      .limit(500);
+      .where(
+        and(
+          eq(interactions.userId, userId),
+          eq(interactions.source, "chat_send"),
+          inArray(sql`split_part(${interactions.externalId}, ':', 2)`, [...messageIds])
+        )
+      );
     for (const claim of claims) {
       const match = /^chat-send:([^:]+):([^:]+)$/.exec(claim.externalId ?? "");
       if (!match || !messageIds.has(match[1]!)) continue;
