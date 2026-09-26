@@ -81,7 +81,8 @@ async function main() {
   await seed();
 
   console.log("accountsMissingProviderKey agrees with the per-provider rule");
-  const missing = await accountsMissingProviderKey();
+  // Uncapped: this checks the rule, not the admin list's 50-row display cap.
+  const { rows: missing } = await accountsMissingProviderKey(null);
   const missingIds = new Set(missing.filter((r) => IDS.includes(r.userId)).map((r) => r.userId));
 
   check("the check is not vacuous — some seeded account is reported missing", missingIds.size > 0);

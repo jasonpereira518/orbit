@@ -1,8 +1,12 @@
 import { and, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiSuggestions, captureJobs, contacts, reminders, suggestedReminders } from "@/db/schema";
-import { getEntitlements } from "@/lib/entitlements";
-import { getAccountAlerts, hasErrorAlert } from "@/lib/account-health";
+import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
+import {
+  getAccountAlerts,
+  hasErrorAlert,
+  type AccountHealthContext,
+} from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
 
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
@@ -17,13 +21,23 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
  *
  * `withAlerts` exists so the desktop-notification watcher, which polls this every 90
  * seconds — faster than the panel itself — pays nothing for account alerts it discards.
+ *
+ * `settings` (and `entitlements`, resolved from it when omitted) is for a caller that already
+ * holds the account's row — a Server Action that went through `requireAuthenticatedUser()`,
+ * where `cache()` cannot stop `getEntitlements` and the alerts from reading it again.
  */
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean } = { withAlerts: true }
+  opts: { withAlerts: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
+  const context: AccountHealthContext | undefined = opts.settings
+    ? {
+        settings: opts.settings,
+        entitlements: opts.entitlements ?? entitlementsFromSettings(userId, opts.settings),
+      }
+    : undefined;
 
   const [
     pendingReminders,
@@ -75,9 +89,9 @@ export async function loadNotificationPanel(
       orderBy: (s, { asc: ascOrder }) => [ascOrder(s.dueDate)],
       limit: 25,
     }),
-    getEntitlements(userId),
+    context?.entitlements ?? getEntitlements(userId),
     opts.withAlerts
-      ? getAccountAlerts(userId)
+      ? getAccountAlerts(userId, new Date(), context)
       : Promise.resolve<AccountAlert[]>([]),
     // A capture waiting on the person: extracted but not reviewed, or failed recently.
     // One indexed read, so the 90-second watcher can afford it.

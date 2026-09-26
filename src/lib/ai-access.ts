@@ -438,41 +438,44 @@ export function managedCostSql() {
 export async function managedUsageThisMonth(userId: string, now = new Date()): Promise<ManagedUsage> {
   const { start } = managedWindow(now);
   const db = await getDb();
-  const [row] = await db
-    .select({
-      spent: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
-      calls: sql<number>`count(*)::int`,
-    })
-    .from(usageEvents)
-    .where(
-      and(
-        eq(usageEvents.userId, userId),
-        eq(usageEvents.keyOwner, "orbit"),
-        gte(usageEvents.createdAt, start),
-        // Deepgram rows carry keyOwner "orbit" too — it's Orbit's own key, but it is a hosted
-        // service metered by `speech_usage`, not an LLM call against the managed allowance.
-        // Without this exclusion, `UNPRICED_CALL_MICROS.transcription` (managedCostSql's
-        // fallback for a null-cost transcription row, which Deepgram rows always are — see
-        // the note in ai.ts) would charge every voice note against the same monthly cap that
-        // gates a Lifetime account's chat and capture calls, so recording a few voice notes
-        // could throttle that account out of its own AI completions.
-        ne(usageEvents.provider, "deepgram"),
+  // Independent sums over two tables, so they go out together.
+  const [[row], [reserved]] = await Promise.all([
+    db
+      .select({
+        spent: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
+        calls: sql<number>`count(*)::int`,
+      })
+      .from(usageEvents)
+      .where(
+        and(
+          eq(usageEvents.userId, userId),
+          eq(usageEvents.keyOwner, "orbit"),
+          gte(usageEvents.createdAt, start),
+          // Deepgram rows carry keyOwner "orbit" too — it's Orbit's own key, but it is a hosted
+          // service metered by `speech_usage`, not an LLM call against the managed allowance.
+          // Without this exclusion, `UNPRICED_CALL_MICROS.transcription` (managedCostSql's
+          // fallback for a null-cost transcription row, which Deepgram rows always are — see
+          // the note in ai.ts) would charge every voice note against the same monthly cap that
+          // gates a Lifetime account's chat and capture calls, so recording a few voice notes
+          // could throttle that account out of its own AI completions.
+          ne(usageEvents.provider, "deepgram"),
+        ),
       ),
-    );
-  const [reserved] = await db
-    .select({
-      micros: sql<string>`coalesce(sum(${aiBatchJobs.estCostMicros}), 0)::bigint`,
-      calls: sql<string>`coalesce(sum(${aiBatchJobs.requestCount}), 0)::bigint`,
-    })
-    .from(aiBatchJobs)
-    .where(
-      and(
-        eq(aiBatchJobs.userId, userId),
-        eq(aiBatchJobs.keyOwner, "orbit"),
-        eq(aiBatchJobs.status, "submitted"),
-        gte(aiBatchJobs.createdAt, start),
+    db
+      .select({
+        micros: sql<string>`coalesce(sum(${aiBatchJobs.estCostMicros}), 0)::bigint`,
+        calls: sql<string>`coalesce(sum(${aiBatchJobs.requestCount}), 0)::bigint`,
+      })
+      .from(aiBatchJobs)
+      .where(
+        and(
+          eq(aiBatchJobs.userId, userId),
+          eq(aiBatchJobs.keyOwner, "orbit"),
+          eq(aiBatchJobs.status, "submitted"),
+          gte(aiBatchJobs.createdAt, start),
+        ),
       ),
-    );
+  ]);
   return {
     spentMicros: Number(row?.spent ?? 0) + Number(reserved?.micros ?? 0),
     calls: Number(row?.calls ?? 0) + Number(reserved?.calls ?? 0),
@@ -491,7 +494,12 @@ export function allowanceFrom(usage: ManagedUsage, now = new Date()): ManagedAll
 /* -------------------------------------------------------------------- the gate ------- */
 
 /**
- * One account's AI access, resolved once per AI call.
+ * One account's AI access: the settings read, plan and keys, resolved once per AI call — or
+ * once per request, when a request that makes several calls opens it once and passes it
+ * down (`/api/chat`; see `forUser`). Only the account READ is shared that way: the managed
+ * allowance is checked in `grant()`, so every `completion()` / `embedding()` on a shared
+ * access still sums this month's usage afresh, including what earlier calls in the same
+ * request spent.
  *
  * Built by `resolveAiAccess`. Decrypts only what exists and holds the plaintext privately;
  * callers only ever see grants.
@@ -512,7 +520,10 @@ export class AiAccess {
   ) {}
 
   static async open(userId: string, opts: AiAccessOptions = {}): Promise<AiAccess> {
-    let row = await loadAccount(userId);
+    if (opts.row && opts.row.userId !== userId) {
+      throw new Error("AiAccess.open was handed another account's settings row");
+    }
+    let row = opts.row !== undefined ? (opts.row ?? undefined) : await loadAccount(userId);
     let plan = resolvePlan(row).plan;
     let upgradePending = false;
 
@@ -572,6 +583,16 @@ export class AiAccess {
         : null;
 
     return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed, decisionKey);
+  }
+
+  /**
+   * This access, for a call made on behalf of `userId` — the idiom every `access?` parameter
+   * uses: `access?.forUser(userId) ?? (await resolveAiAccess(userId))`. An access opened for
+   * another account is a programming error, never something to bill: it throws.
+   */
+  forUser(userId: string): AiAccess {
+    if (this.userId !== userId) throw new Error("AiAccess was opened for another account");
+    return this;
   }
 
   get selectedProvider(): AiProvider {
@@ -715,6 +736,14 @@ export type AiAccessOptions = {
    * test passes a stand-in so the "just paid" states can be exercised without it.
    */
   retrieveSession?: SessionRetriever;
+  /**
+   * The account's whole `user_settings` row, when the caller already holds it — the one
+   * `requireAuthenticatedUser()` returns is the same full-row read. Skips the gate's own
+   * read; `null` means "no row". Only pass a row read in the same request: the plan is
+   * resolved from it. The re-read after a just-granted Lifetime checkout still happens, so
+   * that write is always what the grants are built from.
+   */
+  row?: AccountRow | null;
 };
 
 /** The one entry point. Every AI call in `ai.ts` starts here. */
@@ -759,10 +788,15 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   const choice = chooseCompletionKey(facts);
   const now = new Date();
 
-  const allowance =
-    access.eligibility && MANAGED_AI_ENABLED
-      ? allowanceFrom(await managedUsageThisMonth(userId, now), now)
-      : null;
+  // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
+  // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
+  // callers rely on. Read alongside the managed allowance, but only once `resolveAiAccess`
+  // has settled: that can grant a just-paid Lifetime plan, and the speech limit is per plan.
+  const [usage, speech] = await Promise.all([
+    access.eligibility && MANAGED_AI_ENABLED ? managedUsageThisMonth(userId, now) : null,
+    deepgramEnabled() ? speechAllowance(userId, "shortform") : null,
+  ]);
+  const allowance = usage ? allowanceFrom(usage, now) : null;
 
   let reason: AiAccessDenial | null = null;
   if (!choice.ok) {
@@ -771,10 +805,7 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
     reason = "managed_limit";
   }
 
-  // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
-  // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
-  // callers rely on.
-  const deepgram = deepgramEnabled() ? !(await speechAllowance(userId, "shortform")).exhausted : false;
+  const deepgram = speech ? !speech.exhausted : false;
 
   return {
     ready: reason === null,

@@ -14,6 +14,7 @@ import {
 import { MoneyTabs } from "@/components/admin/money-tabs";
 import { formatCents } from "@/lib/format-money";
 import {
+  ADMIN_AGGREGATES_TTL_MS,
   buildPlanBreakdown,
   loadAdminUserRows,
   subscriptionsNeedingAttention,
@@ -54,7 +55,9 @@ export default async function AdminMoneyPage() {
     comps,
     recent,
   ] = await Promise.all([
-    loadAdminUserRows(),
+    // Plans and billing columns come from user_settings and are always live; only the
+    // per-account counts may lag, by the same TTL the overview uses.
+    loadAdminUserRows({ aggregatesMaxAgeMs: ADMIN_AGGREGATES_TTL_MS }),
     countLifetimePurchases().catch(() => 0),
     mrrReconciliation(),
     mrrMovementSeries("month", 6),

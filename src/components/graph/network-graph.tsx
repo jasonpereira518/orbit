@@ -707,11 +707,20 @@ export function NetworkGraph({
     );
 
     try {
-      let offset = 0;
+      // Keyset paging: each batch hands back the cursor to resume after, and the first
+      // batch's total is carried forward so later ones need not count again.
+      let cursor: string | null = null;
+      let processed = 0;
+      let total: number | undefined;
       let done = false;
       while (!done) {
         if (operationsStoppedRef.current || refreshStoppedRef.current) return;
-        const result = await refreshConstellationBatch({ offset, limit: 8 });
+        const result = await refreshConstellationBatch({
+          after: cursor,
+          processed,
+          total,
+          limit: 8,
+        });
         setRefreshProgress({
           processed: result.processed,
           total: result.total,
@@ -720,7 +729,9 @@ export function NetworkGraph({
           done: result.processed,
           total: result.total,
         });
-        offset = result.processed;
+        cursor = result.cursor;
+        processed = result.processed;
+        total = result.total;
         done = result.done;
         // Hand the app back to whatever else it was doing before asking for the next batch.
         // Server actions are issued one at a time, and each batch holds a 20s budget, so a

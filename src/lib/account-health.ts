@@ -23,7 +23,7 @@ import {
   type ConnectionFacts,
   type HealthInput,
 } from "@/lib/account-alerts";
-import { getEntitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings, type Entitlements } from "@/lib/entitlements";
 import { deriveConnectionHealth } from "@/lib/connection-status";
 import { getGmailOAuthConfigSummary, hasCalendarScope } from "@/lib/gmail";
 import {
@@ -39,18 +39,18 @@ import { ensureUserSettings } from "@/lib/user-settings";
  *
  * COST. This runs on the notifications panel's 120-second poll, so every fact it needs is
  * either already in hand or folded into one statement. Provider, key presence, onboarding,
- * subscription state, plan and `contactLimit` come from `ensureUserSettings` and
- * `getEntitlements`, which are React `cache()` memos — `getEntitlements` reads nothing of
- * its own, and the panel's `Promise.all` awaits both anyway. Surface visibility is a third
- * memo the app shell already uses. Everything else is scalar subqueries in a SINGLE
+ * subscription state, plan and `contactLimit` come from the settings row — the caller's
+ * (`AccountHealthContext`), or else `ensureUserSettings`, a React `cache()` memo — and
+ * `entitlementsFromSettings` on that same row, which reads nothing. Surface visibility is a
+ * second memo the app shell already uses. Everything else is scalar subqueries in a SINGLE
  * `select`, the pattern `admin-user-detail.ts` uses and for the reason it gives there: on
  * Neon HTTP every separate query is its own round trip, and one statement the planner runs
  * as a handful of index lookups is the same work at a fraction of the latency.
  *
- * Measured (`scripts/smoke-account-alerts.ts`, case 19): 4 statements called standalone
- * with no request context, where the `cache()` memos cannot help. Inside a request that
- * has already resolved settings and surface visibility, the marginal cost is the one
- * combined select. A paid account never pays for the contact count.
+ * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 4 statements called
+ * standalone with no request context, where the `cache()` memos cannot help. Inside a
+ * request that has already resolved settings and surface visibility (or passes the row in),
+ * the marginal cost is the one combined select. A paid account never pays for the contact count.
  *
  * FRESHNESS. Alerts clear on the next poll, on panel open, or after any panel mutation —
  * so the bell's dot can outlive the fix by up to 120 seconds. That is deliberate and is
@@ -174,15 +174,29 @@ function appleCalendarFacts(
   };
 }
 
+/**
+ * The account's settings row and entitlements, for a caller that already holds them.
+ *
+ * Optional everywhere it is accepted. The app pulse is a Server Action, where `cache()` is a
+ * pass-through: without this, `ensureUserSettings` and `getEntitlements` would each re-read
+ * the row `requireAuthenticatedUser()` had just read, on a 90-second poll per tab.
+ */
+export type AccountHealthContext = {
+  settings: typeof userSettings.$inferSelect;
+  /** Resolved from `settings` when omitted — the same computation `getEntitlements` runs. */
+  entitlements?: Entitlements;
+};
+
 export async function loadAccountHealthInput(
   userId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  context?: AccountHealthContext
 ): Promise<HealthInput | null> {
-  const [settings, entitlements] = await Promise.all([
-    ensureUserSettings(userId),
-    getEntitlements(userId),
-  ]);
+  // `getEntitlements(userId)` is exactly `entitlementsFromSettings(userId, ensureUserSettings(userId))`,
+  // so resolving from the row in hand is the same answer without a second read of it.
+  const settings = context?.settings ?? (await ensureUserSettings(userId));
   if (!settings) return null;
+  const entitlements = context?.entitlements ?? entitlementsFromSettings(userId, settings);
 
   const provider = resolveAiProvider(settings.aiProvider);
   const stalledBefore = new Date(now.getTime() - STALLED_IMPORT_MS);
@@ -384,10 +398,11 @@ export async function loadAccountHealthInput(
  */
 export async function getAccountAlerts(
   userId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  context?: AccountHealthContext
 ): Promise<AccountAlert[]> {
   try {
-    const input = await loadAccountHealthInput(userId, now);
+    const input = await loadAccountHealthInput(userId, now, context);
     if (!input) return [];
 
     const alerts = sortAccountAlerts(toAccountAlerts(evaluateAccountHealth(input, now)));

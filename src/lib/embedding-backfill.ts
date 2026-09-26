@@ -283,22 +283,24 @@ export async function runEmbeddingBackfill(
     ? await runMemoryChunkPhase(userId, embed, start, budgetMs)
     : 0;
 
-  const [row] = await db
-    .select({ value: sql<number>`count(*)::int` })
-    .from(contacts)
-    .where(and(eq(contacts.userId, userId), isNotNull(contacts.embeddingStaleAt)));
+  // Four independent counts, read together rather than one after another.
+  const [[row], meetings, chunks, sources] = await Promise.all([
+    db
+      .select({ value: sql<number>`count(*)::int` })
+      .from(contacts)
+      .where(and(eq(contacts.userId, userId), isNotNull(contacts.embeddingStaleAt))),
+    pendingMeetingCount(userId),
+    // Only work that CAN be done counts as remaining. Passages an account can never embed
+    // are not a backlog; counting them would re-kick this route for them every day.
+    canEmbedPassages ? pendingMemoryChunkCount(userId) : 0,
+    pendingMemorySourceCount(userId),
+  ]);
 
   return {
     embedded,
     passages,
     indexed,
-    remaining:
-      Number(row?.value ?? 0) +
-      (await pendingMeetingCount(userId)) +
-      // Only work that CAN be done counts as remaining. Passages an account can never embed
-      // are not a backlog; counting them would re-kick this route for them every day.
-      (canEmbedPassages ? await pendingMemoryChunkCount(userId) : 0) +
-      (await pendingMemorySourceCount(userId)),
+    remaining: Number(row?.value ?? 0) + meetings + chunks + sources,
   };
 }
 

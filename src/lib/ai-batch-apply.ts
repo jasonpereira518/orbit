@@ -7,7 +7,7 @@ import {
   type BatchOutcome,
 } from "@/lib/ai-batch";
 import { applyEnrichmentOutcome, type EnrichBatchPayload } from "@/lib/message-enrichment";
-import { applyTimelineOutcome, type TimelineBatchPayload } from "@/lib/linkedin-timeline-backfill";
+import { applyTimelineOutcomes, type TimelineBatchPayload } from "@/lib/linkedin-timeline-backfill";
 import {
   applyRecruiterScanOutcome,
   finalizeRecruiterScanIfDone,
@@ -72,29 +72,34 @@ const APPLIERS: Partial<Record<AiOperationId, Applier>> = {
     apply: async (job, outcomes) => {
       const payload = job.payload as unknown as TimelineBatchPayload;
       const contactByCustomId = new Map(payload.items?.map((i) => [i.customId, i.contactId]) ?? []);
+      const answered: Array<{ contactId: string; content: string | null }> = [];
       for (const outcome of outcomes) {
         const contactId = contactByCustomId.get(outcome.customId);
         if (!contactId) continue;
-        // The answer alone is not enough: events are dated against the thread's own
-        // messages, so the thread is read again and prepared exactly as it was at submit.
-        await applyTimelineOutcome(job.userId, contactId, outcome.text).catch((err) =>
-          reportError(err, {
-            where: "job.ai-batch.apply.timeline",
-            userId: job.userId,
-            level: "warning",
-            extra: { contactId },
-          })
-        );
+        answered.push({ contactId, content: outcome.text });
       }
+      // The answer alone is not enough: events are dated against the thread's own
+      // messages, so the threads are read again and prepared exactly as they were at
+      // submit — together, not one contact at a time, and still one failure per contact.
+      await applyTimelineOutcomes(job.userId, answered, (contactId, err) =>
+        reportError(err, {
+          where: "job.ai-batch.apply.timeline",
+          userId: job.userId,
+          level: "warning",
+          extra: { contactId },
+        })
+      );
     },
     release: async (job) => {
       // The rule-based reach-out was written when the batch was submitted, which is also
       // what takes a contact out of the pending set — so nothing will claim these threads
       // again. Give them the keyword-matched events the inline path falls back to.
       const payload = job.payload as unknown as TimelineBatchPayload;
-      for (const contactId of payload.contactIds ?? []) {
-        await applyTimelineOutcome(job.userId, contactId, null).catch(() => null);
-      }
+      await applyTimelineOutcomes(
+        job.userId,
+        (payload.contactIds ?? []).map((contactId) => ({ contactId, content: null })),
+        () => {}
+      );
     },
   },
 

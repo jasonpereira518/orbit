@@ -2062,7 +2062,17 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // does not know), merged onto main at 113. This branch first shipped it as 110, which was
 // then claimed elsewhere. NOT 114–116: scanned every remote ref and every worktree's working
 // src/db/index.ts on Sep 26 2026 — 116 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 117;
+//
+// 118 = foreign-key, sweep and admin-window indexes (database performance pass, first stamped
+// 111 on its branch) merged with main at 113. Keeping either number is the failure recorded
+// above: main's databases are stamped 113 without these indexes. NOT 114-117, all claimed
+// elsewhere. Scanned every remote ref on Sep 26 2026: 117 was the highest claimed anywhere.
+//
+// Still 118 after merging main at 117 (org_brand_colors): 118 is above main's number, so main's
+// databases take this pass, and a database this branch stamped 118 without org_brand_colors
+// re-sweeps on the fingerprint mismatch (isSchemaCurrent compares it at an equal version).
+// Scanned every remote ref on Sep 26 2026: 118 is claimed only here.
+export const SCHEMA_VERSION = 118;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2439,6 +2449,98 @@ export const SCALE_DDL: string[] = [
   // Here rather than only in the CREATE TABLE above, which never adds a column to a
   // note_batches table that already exists.
   `ALTER TABLE note_batches ADD COLUMN IF NOT EXISTS input_sources jsonb NOT NULL DEFAULT '[]'`,
+
+  // --- v118: foreign-key and sweep indexes -------------------------------------------
+  //
+  // Postgres enforces ON DELETE CASCADE / SET NULL by running "WHERE fk_col = $1" against
+  // the child table once per parent row deleted, and it never adds user_id to that probe.
+  // Every child below had only indexes LEADING with user_id, which that probe cannot use,
+  // so deleting one contact (a delete, a merge, an import undo, an account purge) or one
+  // interaction seq-scanned each of these tables across every tenant. Partial where the
+  // column is nullable and mostly null: the probe's equality implies NOT NULL, so the
+  // planner still uses the smaller index.
+  //
+  // Contact children.
+  `CREATE INDEX IF NOT EXISTS reminders_contact_idx
+     ON reminders(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS memory_chunks_contact_idx
+     ON memory_chunks(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS interaction_mentions_contact_idx
+     ON interaction_mentions(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS action_items_contact_idx ON action_items(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_opportunities_contact_idx
+     ON contact_opportunities(contact_id)`,
+  // Also the contact page's job-match list, which filters on (user_id, contact_id) and
+  // could only use the user_id prefix of the (user_id, posting_id, contact_id) key.
+  `CREATE INDEX IF NOT EXISTS job_posting_matches_contact_idx
+     ON job_posting_matches(contact_id)`,
+  // Merge relies on this cascade on purpose, and dismissed pairs are kept forever.
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_contact_a_idx
+     ON duplicate_suggestions(contact_a_id)`,
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_contact_b_idx
+     ON duplicate_suggestions(contact_b_id)`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_contact_idx
+     ON suggested_reminders(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS outreach_prospects_contact_idx
+     ON outreach_prospects(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS contact_experiences_contact_fk_idx
+     ON contact_experiences(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_profiles_contact_fk_idx
+     ON contact_profiles(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS user_recruiter_links_contact_idx
+     ON user_recruiter_links(contact_id) WHERE contact_id IS NOT NULL`,
+  // Interaction children. action_items also serves syncActionItems and the note-save
+  // reads, which filter on interaction_id and order by position.
+  `CREATE INDEX IF NOT EXISTS reminders_source_interaction_idx
+     ON reminders(source_interaction_id) WHERE source_interaction_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS action_items_interaction_idx
+     ON action_items(interaction_id, position)`,
+  `CREATE INDEX IF NOT EXISTS contact_opportunities_source_interaction_idx
+     ON contact_opportunities(source_interaction_id) WHERE source_interaction_id IS NOT NULL`,
+  // Reminder children. action_items also serves completeReminder, which looks up the open
+  // items behind the reminder being completed.
+  `CREATE INDEX IF NOT EXISTS action_items_reminder_idx
+     ON action_items(reminder_id) WHERE reminder_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_reminder_idx
+     ON suggested_reminders(reminder_id) WHERE reminder_id IS NOT NULL`,
+  // Deleting a reminder list nulls list_id on its reminders.
+  `CREATE INDEX IF NOT EXISTS reminders_list_id_idx
+     ON reminders(list_id) WHERE list_id IS NOT NULL`,
+  // Company children, fired once per company by an account purge.
+  `CREATE INDEX IF NOT EXISTS event_companies_company_idx ON event_companies(company_id)`,
+  `CREATE INDEX IF NOT EXISTS target_companies_company_idx ON target_companies(company_id)`,
+
+  // Chat sends are a sliver of interactions, but opening a thread (its sent claims) and
+  // the daily send cap both filter on source = 'chat_send', which no interactions index
+  // carries: each walked every interaction the account has, imports included.
+  `CREATE INDEX IF NOT EXISTS interactions_user_chat_send_idx
+     ON interactions(user_id, interaction_date) WHERE source = 'chat_send'`,
+
+  // Sweeps that ran a full scan on every tick to find nothing once they had caught up:
+  // the person-key backfill (every sync pass), the unattached capture-photo purge and the
+  // idempotency-key purge (every drain). The partial ones are near-empty in steady state.
+  `CREATE INDEX IF NOT EXISTS event_attendees_person_key_pending_idx
+     ON event_attendees(id) WHERE person_key_kind IS NULL`,
+  `CREATE INDEX IF NOT EXISTS capture_photos_unattached_created_idx
+     ON capture_photos(created_at) WHERE note_batch_id IS NULL`,
+  `CREATE INDEX IF NOT EXISTS api_idempotency_created_idx
+     ON api_idempotency_keys(created_at)`,
+
+  // Admin reads. The growth charts window every table by created_at across all accounts,
+  // which the (user_id, created_at) indexes cannot serve; with user_id second these are
+  // index-only scans of just the window. created_at never changes after insert, so they
+  // cost an insert-time write and leave HOT updates alone. The chat-feedback page reads
+  // only rated messages, newest first. page_views had no user_id index at all, which the
+  // admin account-traffic panel, the data export and the account purge all filter on.
+  `CREATE INDEX IF NOT EXISTS contacts_created_user_idx ON contacts(created_at, user_id)`,
+  `CREATE INDEX IF NOT EXISTS interactions_created_user_idx
+     ON interactions(created_at, user_id)`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_created_user_idx
+     ON chat_messages(created_at, user_id)`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_feedback_created_idx
+     ON chat_messages(created_at DESC) WHERE feedback IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS page_views_user_created_idx
+     ON page_views(user_id, created_at) WHERE user_id IS NOT NULL`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */

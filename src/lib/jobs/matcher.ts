@@ -69,6 +69,8 @@ export const JOB_SIGNAL_SUGGESTION_TYPE = "job_posting_signal";
 
 export const MAX_MATCHES_PER_USER_PER_RUN = 10;
 export const MAX_OPEN_JOB_SUGGESTIONS = 5;
+/** Rows per UPDATE ... FROM (VALUES) when linking matches to their suggestions. */
+const MATCH_LINK_CHUNK = 1000;
 /** The opportunity scan's ceiling. Far above any plausible real total; a bound, not a policy. */
 export const MAX_WATCHED_OPPORTUNITIES = 5_000;
 /** Postings read per run, newest first. Bounds the run when a feed lands a large batch. */
@@ -388,13 +390,31 @@ export async function matchJobPostings(opts: { now?: Date } = {}): Promise<Match
       )
       .returning();
 
-    for (let i = 0; i < created.length; i++) {
-      const suggestion = created[i]!;
-      const source = suggestionRows[i]!;
-      await db
-        .update(jobPostingMatches)
-        .set({ status: "notified", suggestionId: suggestion.id })
-        .where(inArray(jobPostingMatches.id, source.matchIds));
+    // Point every match at its suggestion in one UPDATE ... FROM (VALUES) per chunk rather
+    // than one statement per suggestion. Paired by (user, contact) — unique across
+    // `suggestionRows`, one suggestion per contact per run — so nothing hangs on the order
+    // RETURNING hands the rows back in.
+    const suggestionIdByUserContact = new Map(
+      created.map((row) => [`${row.userId}|${row.relatedContactIds?.[0] ?? ""}`, row.id])
+    );
+    const links: SQL[] = [];
+    for (const source of suggestionRows) {
+      const suggestionId = suggestionIdByUserContact.get(
+        `${source.userId}|${source.relatedContactIds[0] ?? ""}`
+      );
+      if (!suggestionId) continue;
+      for (const matchId of source.matchIds) {
+        links.push(sql`(${matchId}::uuid, ${source.userId}::text, ${suggestionId}::uuid)`);
+      }
+    }
+    for (let i = 0; i < links.length; i += MATCH_LINK_CHUNK) {
+      await db.execute(sql`
+        UPDATE job_posting_matches AS m
+           SET status = 'notified', suggestion_id = v.suggestion_id
+          FROM (VALUES ${sql.join(links.slice(i, i + MATCH_LINK_CHUNK), sql`, `)})
+            AS v(id, user_id, suggestion_id)
+         WHERE m.id = v.id AND m.user_id = v.user_id
+      `);
     }
     stats.suggestionsCreated = created.length;
     stats.usersNotified = new Set(suggestionRows.map((s) => s.userId)).size;

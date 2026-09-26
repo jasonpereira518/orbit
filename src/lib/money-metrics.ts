@@ -92,8 +92,10 @@ export async function cashFlowSeries(
   months = 6,
   now = new Date()
 ): Promise<CashFlowPoint[]> {
-  const costs = await monthlyCostSeries(months);
-  const movements = await mrrMovementSeries("month", months, now);
+  const [costs, movements] = await Promise.all([
+    monthlyCostSeries(months),
+    mrrMovementSeries("month", months, now),
+  ]);
 
   return costs.map((cost, i) => {
     const movement = movements[i];

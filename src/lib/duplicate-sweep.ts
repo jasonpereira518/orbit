@@ -22,7 +22,12 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { duplicateSuggestions } from "@/db/schema";
-import { invalidateAfterMerge, mergeContacts, recordDuplicateSuggestion } from "@/lib/contact-merge";
+import {
+  invalidateAfterMerges,
+  mergeContacts,
+  recordDuplicateSuggestions,
+  type DuplicateSuggestionPair,
+} from "@/lib/contact-merge";
 import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { canAct, NO_ENGINES, type Engines } from "@/lib/decisions/engine";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
@@ -221,20 +226,22 @@ export async function mergeConfidentDuplicates(
         withCards.map((p) => [cards.get(p.keepId)!, cards.get(p.mergeId)!] as const),
         remaining
       );
+      const held: DuplicateSuggestionPair[] = [];
       for (const [i, pair] of withCards.entries()) {
         if (!vetoes[i]) continue;
         keptApart.add(`${pair.keepId}:${pair.mergeId}`);
         vetoed += 1;
         // Recorded just BELOW the confidence line: the review queue only lists pairs under it
         // (`findPendingSuggestions`), and at 0.90 this one would vanish instead of being asked.
-        await recordDuplicateSuggestion(
-          userId,
-          pair.keepId,
-          pair.mergeId,
-          `${pair.reason} — held for review`,
-          Math.min(pair.confidence, DUPLICATE_MERGE_CONFIDENCE - 0.01)
-        ).catch(() => null);
+        held.push({
+          contactIdA: pair.keepId,
+          contactIdB: pair.mergeId,
+          reason: `${pair.reason} — held for review`,
+          confidence: Math.min(pair.confidence, DUPLICATE_MERGE_CONFIDENCE - 0.01),
+        });
       }
+      // One insert for the pass. Best-effort as before: a failed write must not stop the sweep.
+      await recordDuplicateSuggestions(userId, held).catch(() => null);
     }
 
     let mergedThisPass = 0;
@@ -295,12 +302,11 @@ export async function mergeConfidentDuplicates(
     }
   }
 
-  // Deferred through the loop, done once here: `invalidateAfterMerge` marks the closeness
-  // cohort dirty and rescores, and doing that per merge would recompute the same account
-  // dozens of times during a bulk cleanup.
-  for (const winnerId of survivors) {
-    await invalidateAfterMerge(userId, winnerId).catch(() => null);
-  }
+  // Deferred through the loop, done once here: invalidation marks the closeness cohort dirty
+  // and rescores, and doing that per merge would recompute the same account dozens of times
+  // during a bulk cleanup. Batched across survivors too (see `invalidateAfterMerges`), rather
+  // than a handful of statements per survivor for up to `maxMerges` of them.
+  await invalidateAfterMerges(userId, survivors).catch(() => null);
 
   const db = await getDb();
   const [remaining] = await db

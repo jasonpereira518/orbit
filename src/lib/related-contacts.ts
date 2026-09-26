@@ -77,7 +77,8 @@ function contactCorpus(c: RelatedContactCandidate) {
     .toLowerCase();
 }
 
-function nameAliases(c: RelatedContactCandidate) {
+/** The lowercased names a corpus is searched for when deciding "mentioned together". */
+export function nameAliases(c: RelatedContactCandidate) {
   const names = new Set<string>();
   const full = c.fullName.trim();
   const preferred = (c.preferredName || "").trim();
@@ -90,6 +91,55 @@ function nameAliases(c: RelatedContactCandidate) {
   }
   return [...names];
 }
+
+/**
+ * SQL `LIKE` patterns that match every text in which `contactCorpus` could contain one of
+ * `aliases` — a SUPERSET prefilter, so a caller can fetch the wide text columns
+ * (`notes`, `aiSummary`, `keyFacts`) only for the rows that could possibly mention the
+ * source, and still get exactly what `findRelatedContacts` would have computed from every
+ * row. The exact test still runs in JS on the rows the prefilter lets through.
+ *
+ * Why it is a superset, given a text piece `p` (a text column or one jsonb string element)
+ * and the SQL side lowering `p` with {@link RELATED_SQL_LOWER}:
+ *   - The corpus joins its pieces with U+0020, and a pattern is built from one
+ *     U+0020-free segment of the alias, so any occurrence of that segment lies inside one
+ *     piece — a match across a join boundary still leaves every segment whole in a piece.
+ *   - `String#toLowerCase` maps each code point to exactly one code point except U+0130
+ *     (to "i" + U+0307), and sends a non-ASCII code point to ASCII only for U+0130 and
+ *     U+212A (KELVIN SIGN, to "k"); verified over every code point. The SQL lowering does
+ *     A-Z, U+212A and U+0130 exactly that way and leaves every other character alone, so
+ *     the two lowered strings are code-point aligned and agree at every position where the
+ *     JS one is ASCII. Locale-independent on purpose: `lower()`/`ILIKE` follow the
+ *     database collation, which the JS side does not.
+ *   - So the pattern keeps ASCII characters (with `\`, `%`, `_` escaped) and turns every
+ *     non-ASCII code point into `_` (exactly one character).
+ */
+export function mentionLikePatterns(aliases: string[]): string[] {
+  const patterns = new Set<string>();
+  for (const alias of aliases) {
+    // `mentionsOtherSignals` skips these, so they can never produce a mention.
+    if (alias.length < 3) continue;
+    const segment = alias
+      .split(" ")
+      .reduce((best, s) => (s.length > best.length ? s : best), "");
+    if (!segment) continue;
+    let body = "";
+    for (const ch of segment) {
+      const cp = ch.codePointAt(0)!;
+      if (cp >= 0x80) body += "_";
+      else if (ch === "\\" || ch === "%" || ch === "_") body += `\\${ch}`;
+      else body += ch;
+    }
+    patterns.add(`%${body}%`);
+  }
+  return [...patterns];
+}
+
+/** `from`/`to` for SQL `translate()`: A-Z and U+212A lowered the way JS lowers them. */
+export const RELATED_SQL_LOWER = {
+  from: "ABCDEFGHIJKLMNOPQRSTUVWXYZ\u212A",
+  to: "abcdefghijklmnopqrstuvwxyzk",
+} as const;
 
 /**
  * Per-contact text/alias/tag data, built once per contact instead of

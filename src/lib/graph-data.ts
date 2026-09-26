@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, userGoals, userSettings } from "@/db/schema";
+import { contacts, userGoals } from "@/db/schema";
 import type { UserProfile } from "@/lib/auth";
 import { closenessTier } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
@@ -13,6 +13,7 @@ import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
+import { ensureUserSettings } from "@/lib/user-settings";
 
 /**
  * The constellation payload, as a plain function of `userId`.
@@ -116,13 +117,15 @@ export async function loadGraphData(
       where: eq(userGoals.userId, userId),
       orderBy: [desc(userGoals.createdAt)],
     }),
-    db.query.userSettings.findFirst({
-      where: eq(userSettings.userId, userId),
-    }),
+    // The request-cached row `requireUserForSurface` already read on the page render — a
+    // round trip saved there. In the Server Action refetches `cache()` is a pass-through and
+    // this is the same single read the old `findFirst` was.
+    ensureUserSettings(userId),
     // Donates the scan above rather than repeating it.
     getClosenessCohort(userId, contactRowsPromise),
-    // The one statement this feature adds. A one-row select on a singleton table, and the
-    // reason `smoke-page-budgets` allows the graph 9 statements rather than 8.
+    // The one statement this feature adds — a one-row select on a singleton table, and the
+    // reason `smoke-page-budgets` allows the graph 9 statements rather than 8. Memoised per
+    // instance for a few seconds, so most renders skip it.
     getConstellationConfig(),
   ]);
 

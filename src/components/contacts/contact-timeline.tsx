@@ -6,7 +6,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { CircleDashed, FileText, Plus, Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { reorderSameDayInteractions } from "@/actions/contacts";
+import {
+  listContactTimelineInteractions,
+  reorderSameDayInteractions,
+} from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -73,10 +76,14 @@ const STAGGER_STEP_MS = 30;
 /**
  * Rows rendered before "show older" appears.
  *
- * This bounds the RENDER, not the query. Every interaction is already on the client, so
- * expanding is instant and — more importantly — a deep link can always reach its target.
- * Windowing the query instead would have quietly broken `formatInteractionFrequency`, which
- * counts rows in a 90-day window from the same array.
+ * This bounds the RENDER. The page loads a little more than this (its newest 60 rows), so
+ * the first screen never waits on anything; a contact with a longer history also gets
+ * `totalCount`/`typeCounts` for the whole of it, and the rest of the rows are read through
+ * `listContactTimelineInteractions` the moment anything reaches past what is loaded —
+ * "Show N older", a deep link or "recent discussion" naming an older row, a filter whose
+ * rows are older, or reordering the oldest loaded day (whose siblings may not all be here).
+ * The page derives `formatInteractionFrequency` and the last touch from whole-history
+ * aggregates, not from this array.
  */
 const WINDOW_SIZE = 40;
 
@@ -100,13 +107,20 @@ export function ContactTimeline({
   contactId,
   contactName,
   interactions,
+  totalCount,
+  typeCounts,
   openActionItems,
   hasApiKey,
   aiReason = null,
 }: {
   contactId: string;
   contactName: string;
+  /** Newest first; the whole history unless `totalCount` says there is more. */
   interactions: TimelineInteraction[];
+  /** The whole history's size, when `interactions` is only its newest page. */
+  totalCount?: number;
+  /** interaction_type → count over the whole history, alongside `totalCount`. */
+  typeCounts?: Record<string, number>;
   /** Open items for this contact, from the same query the brief card's next steps use. */
   openActionItems: { id: string; interactionId: string }[];
   hasApiKey: boolean;
@@ -143,14 +157,79 @@ export function ContactTimeline({
   >(null);
   const reducedMotion = useReducedMotion();
 
+  /**
+   * The whole history once something has asked for it, with the `interactions` it was read
+   * against. A refresh (`useRefreshOnVisible`, a save) replaces `interactions`; until the
+   * history is re-read, the fresh page wins for everything it covers and the older rows
+   * come from the last read.
+   */
+  const [fullHistory, setFullHistory] = useState<{
+    rows: TimelineInteraction[];
+    readFor: TimelineInteraction[];
+  } | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const historyInFlight = useRef<TimelineInteraction[] | null>(null);
+  /** A reveal (a "recent discussion", a `?interaction=` link) that named a row older than
+      the loaded page, carried out once the rest of the history arrives. */
+  const revealAfterLoad = useRef<string | null>(null);
+  const partial = totalCount != null && totalCount > interactions.length;
+  const complete = !partial || fullHistory !== null;
+
+  const loadFullHistory = useCallback(() => {
+    if (historyInFlight.current === interactions) return;
+    historyInFlight.current = interactions;
+    const readFor = interactions;
+    setLoadingHistory(true);
+    listContactTimelineInteractions(contactId)
+      .then((rows) => {
+        if (historyInFlight.current !== readFor) return;
+        setFullHistory({ rows, readFor });
+        const reveal = revealAfterLoad.current;
+        revealAfterLoad.current = null;
+        if (reveal && rows.some((i) => i.id === reveal)) {
+          setFilter("all");
+          setExpanded(true);
+          setPendingReveal(reveal);
+        }
+      })
+      .catch((err) => {
+        toast.error(friendlyError(err, "Couldn’t load the older interactions — try again?"));
+      })
+      .finally(() => {
+        if (historyInFlight.current === readFor) {
+          historyInFlight.current = null;
+          setLoadingHistory(false);
+        }
+      });
+  }, [contactId, interactions]);
+
+  // A refresh arrived after the history was read: read it again, so a row deleted or
+  // re-dated elsewhere does not linger.
+  useEffect(() => {
+    if (partial && fullHistory && fullHistory.readFor !== interactions) loadFullHistory();
+  }, [partial, fullHistory, interactions, loadFullHistory]);
+
+  const rows = useMemo(() => {
+    if (!partial || !fullHistory) return interactions;
+    if (fullHistory.readFor === interactions) return fullHistory.rows;
+    const fresh = new Set(interactions.map((i) => i.id));
+    const oldest = Math.min(...interactions.map((i) => new Date(i.interactionDate).getTime()));
+    return [
+      ...interactions,
+      ...fullHistory.rows.filter(
+        (i) => !fresh.has(i.id) && new Date(i.interactionDate).getTime() < oldest
+      ),
+    ];
+  }, [partial, fullHistory, interactions]);
+
   const sorted = useMemo(() => {
-    return [...interactions].sort((a, b) => {
+    return [...rows].sort((a, b) => {
       const da = new Date(a.interactionDate).getTime();
       const db = new Date(b.interactionDate).getTime();
       if (db !== da) return db - da;
       return (a.sameDayOrder ?? 0) - (b.sameDayOrder ?? 0);
     });
-  }, [interactions]);
+  }, [rows]);
 
   /** interactionId → count of still-open action items, grouped from data the page already has. */
   const openByInteraction = useMemo(() => {
@@ -164,12 +243,20 @@ export function ContactTimeline({
   /** Counts come from the whole history, so the chips never offer an empty filter. */
   const familyCounts = useMemo(() => {
     const map = new Map<InteractionFamilyValue, number>();
+    if (!complete && typeCounts) {
+      for (const [type, n] of Object.entries(typeCounts)) {
+        const f = interactionTypeFamily(type);
+        map.set(f, (map.get(f) ?? 0) + n);
+      }
+      return map;
+    }
     for (const i of sorted) {
       const f = interactionTypeFamily(i.interactionType);
       map.set(f, (map.get(f) ?? 0) + 1);
     }
     return map;
-  }, [sorted]);
+  }, [sorted, complete, typeCounts]);
+  const allCount = complete ? sorted.length : (totalCount ?? sorted.length);
 
   const filtered = useMemo(
     () =>
@@ -183,7 +270,22 @@ export function ContactTimeline({
     () => (expanded ? filtered : filtered.slice(0, WINDOW_SIZE)),
     [filtered, expanded]
   );
-  const hiddenCount = filtered.length - visible.length;
+  // Against the whole history: rows not loaded yet are still "older".
+  const filteredTotal = complete
+    ? filtered.length
+    : filter === "all"
+      ? allCount
+      : (familyCounts.get(filter) ?? filtered.length);
+  const hiddenCount = Math.max(0, filteredTotal - visible.length);
+
+  // Expanded means "everything" (the button, a reveal, a just-logged flight), and a filter
+  // whose loaded rows cannot fill the window has older ones on the server.
+  const needsHistory =
+    !complete &&
+    (expanded || filtered.length < Math.min(WINDOW_SIZE, filteredTotal));
+  useEffect(() => {
+    if (needsHistory) loadFullHistory();
+  }, [needsHistory, loadFullHistory]);
 
   const monthGroups = useMemo(() => {
     const groups: Array<{
@@ -264,7 +366,15 @@ export function ContactTimeline({
   useEffect(() => {
     function onReveal(event: Event) {
       const id = (event as CustomEvent<RevealInteractionDetail>).detail?.interactionId;
-      if (!id || !sorted.some((i) => i.id === id)) return;
+      if (!id) return;
+      if (!sorted.some((i) => i.id === id)) {
+        // Possibly older than the loaded page: read the rest, then reveal it from there.
+        if (!complete) {
+          revealAfterLoad.current = id;
+          loadFullHistory();
+        }
+        return;
+      }
       // Already rendered: the caller's own smooth scroll has it, and starting a second one
       // here only makes the two fight. This path exists for the rows it CANNOT reach.
       if (document.getElementById(`interaction-${id}`)) return;
@@ -274,7 +384,8 @@ export function ContactTimeline({
     }
     window.addEventListener(REVEAL_INTERACTION_EVENT, onReveal);
     return () => window.removeEventListener(REVEAL_INTERACTION_EVENT, onReveal);
-  }, [sorted]);
+  }, [sorted, complete, loadFullHistory]);
+
 
   /**
    * A `?interaction=<id>` link — a chat citation's "Open in profile", today — reveals the same
@@ -291,6 +402,14 @@ export function ContactTimeline({
     setExpanded(true);
     setPendingReveal(dest);
   }, [dest, sorted]);
+  // Possibly older than the loaded page: read the rest, and reveal it from there.
+  useEffect(() => {
+    if (!dest || revealedFromUrl.current || complete) return;
+    if (sorted.some((i) => i.id === dest)) return;
+    revealedFromUrl.current = true;
+    revealAfterLoad.current = dest;
+    loadFullHistory();
+  }, [dest, sorted, complete, loadFullHistory]);
 
   /**
    * A just-logged interaction flies from the button that saved it onto its node on the spine.
@@ -439,6 +558,17 @@ export function ContactTimeline({
   const selectedSiblings = openId
     ? sameDaySiblings(openId)
     : { list: [], index: -1 };
+  // The oldest loaded day may continue in rows not read yet, and a reorder has to send the
+  // day's complete set — so on that day, reordering waits for the rest of the history.
+  const oldestLoadedDay =
+    !complete && sorted.length ? dayKey(sorted[sorted.length - 1].interactionDate) : null;
+  const siblingsIncomplete =
+    oldestLoadedDay !== null &&
+    selectedSiblings.list.length > 0 &&
+    dayKey(selectedSiblings.list[0].interactionDate) === oldestLoadedDay;
+  useEffect(() => {
+    if (siblingsIncomplete) loadFullHistory();
+  }, [siblingsIncomplete, loadFullHistory]);
 
   // Position within the VISIBLE list, so stepping never lands on a row the spine behind the
   // sheet is not showing. -1 is newer, 1 is older — the direction the eye moves on the spine.
@@ -513,7 +643,7 @@ export function ContactTimeline({
     {
       value: "all",
       label: "All",
-      count: sorted.length,
+      count: allCount,
       active: "border-ink/25 bg-muted text-ink",
       dot: "bg-muted-foreground",
     },
@@ -624,7 +754,11 @@ export function ContactTimeline({
               </div>
             ) : null}
 
-            {visible.length === 0 ? (
+            {visible.length === 0 && loadingHistory ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Loading older interactions…
+              </p>
+            ) : visible.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-8 text-center">
                 <p className="text-sm text-ink">Nothing of that kind yet</p>
                 <Button
@@ -811,7 +945,11 @@ export function ContactTimeline({
                           size="sm"
                           variant="ghost"
                           className="h-8 text-xs text-muted-foreground"
-                          onClick={() => setExpanded(true)}
+                          onClick={() => {
+                            setExpanded(true);
+                            // Also a retry after a failed read; a no-op when complete.
+                            if (!complete) loadFullHistory();
+                          }}
                         >
                           Show {hiddenCount} older
                         </Button>
@@ -839,9 +977,10 @@ export function ContactTimeline({
           // Reordering writes the whole day at once, so it is only offered on the unfiltered
           // list — under a filter the sibling being swapped with is often not on screen, and
           // the arrows would appear to do nothing.
-          up: filter === "all" && selectedSiblings.index > 0,
+          up: filter === "all" && !siblingsIncomplete && selectedSiblings.index > 0,
           down:
             filter === "all" &&
+            !siblingsIncomplete &&
             selectedSiblings.index >= 0 &&
             selectedSiblings.index < selectedSiblings.list.length - 1,
         }}

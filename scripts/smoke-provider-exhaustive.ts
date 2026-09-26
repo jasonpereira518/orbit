@@ -170,7 +170,7 @@ const OPENROUTER_ROUTED_AWAY =
   "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
-  "src/lib/ai-access.ts:666": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts:687": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
@@ -191,7 +191,7 @@ const ALLOWLIST: Record<string, string> = {
   // openrouter grant, throwing `No gemini grant` — fails closed, but breaks every chat
   // tool call for an OpenRouter user. Widened to isOpenAiShaped, same shape as ai.ts, so
   // only the anthropic arm's own literal is left for check 1 to find.
-  "src/lib/ai-tools.ts:124": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
+  "src/lib/ai-tools.ts:131": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
     "openai and openrouter both now take the isOpenAiShaped branch below, leaving only " +
     "Gemini as this arm's fallthrough.)",
   "src/lib/admin-metrics.ts:328": "the \"openai\" arm of the four-way ternary that now also " +
@@ -206,22 +206,22 @@ const ALLOWLIST: Record<string, string> = {
   // comparison left for check 1 to find, and each one's implicit fallback (openai or
   // openrouter now both routed away from it, leaving only anthropic reachable below) is
   // exhaustive without an explicit openrouter arm of its own.
-  "src/lib/ai.ts:563": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
+  "src/lib/ai.ts:574": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
     "openrouter both now take the isOpenAiShaped branch above the implicit Anthropic " +
     "fallback, which is what's unreachable for openrouter.)",
-  "src/lib/ai.ts:691": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
-    "see ai.ts:563.)",
+  "src/lib/ai.ts:712": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
+    "see ai.ts:574.)",
   // Fix round 1 reverted transcribeAudioWithAI's isOpenAiShaped widening: the SDK encodes
   // this call's params as multipart form data, where withOpenRouterRouting's nested
   // `provider: {...}` would serialise as "[object Object]" rather than a real field, and
   // "whisper-1" is not a valid OpenRouter model slug regardless — so this is back to a
   // bare openai literal, and openrouter is never granted here (access.transcription()
   // only ever returns openai/gemini), same reasoning as the original Task 2 allowlisting.
-  "src/lib/ai.ts:965": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
+  "src/lib/ai.ts:986": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
     "\"gemini\" — Anthropic has no speech-to-text and OpenRouter transcription is " +
     "deliberately not wired up (multipart body, no valid model slug); the two are " +
     "exhaustive for every grant transcribeAudioWithAI can receive today.",
-  "src/lib/ai.ts:2126": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:563.)",
+  "src/lib/ai.ts:2152": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:574.)",
   "src/lib/errors.ts:36": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
   "src/lib/errors.ts:38": "same function as line 36 — see that entry.",
@@ -233,10 +233,10 @@ const ALLOWLIST: Record<string, string> = {
     "\"gemini\": Orbit holds no managed OpenRouter key (facts.managed.openrouter is " +
     "hardcoded false and MANAGED_PROVIDER_ORDER excludes it), so no selected provider — " +
     "openrouter included — ever needs a third slot here.",
-  "src/lib/admin-user-detail.ts:576": "the \"openai\" arm of the four-way ternary that now " +
+  "src/lib/admin-user-detail.ts:577": "the \"openai\" arm of the four-way ternary that now " +
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
-  "src/lib/admin-user-detail.ts:578": "the \"anthropic\" arm of the same ternary — see line 576.",
+  "src/lib/admin-user-detail.ts:579": "the \"anthropic\" arm of the same ternary — see line 577.",
   "src/actions/settings.ts:109": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
