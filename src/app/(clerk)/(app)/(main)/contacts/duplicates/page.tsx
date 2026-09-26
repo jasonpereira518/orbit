@@ -71,17 +71,24 @@ export default async function DuplicatesPage() {
 const recentEmptySweeps = new Map<string, number>();
 const EMPTY_SWEEP_QUIET_MS = 60_000;
 
+function sweptEmptyRecently(userId: string): boolean {
+  return Date.now() < (recentEmptySweeps.get(userId) ?? 0);
+}
+
+function recordSweep(userId: string, merged: number): void {
+  if (merged === 0) recentEmptySweeps.set(userId, Date.now() + EMPTY_SWEEP_QUIET_MS);
+  else recentEmptySweeps.delete(userId);
+  if (recentEmptySweeps.size > 5_000) recentEmptySweeps.clear();
+}
+
 async function DuplicatesList({ userId }: { userId: string }) {
   // Same order as before: settle whatever can be merged automatically, THEN read what is
   // left — reading first would list pairs the sweep is about to merge. With a decision
   // model, a merge that rests only on a name is checked first (Jev only — the sweep never
   // waits on a chat model; see duplicate-sweep.ts).
-  const quietUntil = recentEmptySweeps.get(userId) ?? 0;
-  if (Date.now() >= quietUntil) {
+  if (!sweptEmptyRecently(userId)) {
     const swept = await mergeConfidentDuplicates(userId, { engines: await openEngines(userId) });
-    if (swept.merged === 0) recentEmptySweeps.set(userId, Date.now() + EMPTY_SWEEP_QUIET_MS);
-    else recentEmptySweeps.delete(userId);
-    if (recentEmptySweeps.size > 5_000) recentEmptySweeps.clear();
+    recordSweep(userId, swept.merged);
   }
 
   const [{ proposed }, recentMerges] = await Promise.all([
