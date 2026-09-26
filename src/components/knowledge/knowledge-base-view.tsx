@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { format } from "date-fns";
 import {
   BookOpen,
@@ -16,7 +17,7 @@ import type {
   KnowledgeEntry,
   KnowledgeKind,
   KnowledgeStats,
-} from "@/actions/knowledge";
+} from "@/lib/knowledge-base-types";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -115,7 +116,7 @@ export function KnowledgeBaseView({
         <Link href="/chat" className="underline-offset-2 hover:underline">
           Chat
         </Link>{" "}
-        or ⌘K.
+        or ⌘J.
       </p>
 
       {empty ? (
@@ -186,7 +187,7 @@ export function KnowledgeBaseView({
             ) : (
               filtered.map((entry) => (
                 <li key={entry.id}>
-                  <Link
+                  <IntentLink
                     href={`/contacts/${entry.contactId}`}
                     className="flex gap-3 px-4 py-3.5 transition-colors hover:bg-muted/40"
                   >
@@ -218,7 +219,7 @@ export function KnowledgeBaseView({
                         {entry.snippet}
                       </p>
                     </div>
-                  </Link>
+                  </IntentLink>
                 </li>
               ))
             )}

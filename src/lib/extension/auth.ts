@@ -16,6 +16,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { auth } from "@clerk/nextjs/server";
 import { bootstrapAuthenticatedUser, isClerkConfigured } from "@/lib/auth";
+import { isHeldByStealth } from "@/lib/site-access";
 
 export class ExtensionUnauthorizedError extends Error {
   constructor(message = "Not signed in to Orbit") {
@@ -82,6 +83,14 @@ export async function requireExtensionUserId(req: Request): Promise<string> {
 
   if (!userId) throw new ExtensionUnauthorizedError();
 
-  await bootstrapAuthenticatedUser(userId);
+  // The same two account gates `requireUserId` applies. Without them a suspended account, or
+  // one stealth is holding, kept full read/write access through the extension.
+  const settings = await bootstrapAuthenticatedUser(userId);
+  if (settings.suspendedAt) {
+    throw new ExtensionUnauthorizedError("This Orbit account is suspended.");
+  }
+  if (await isHeldByStealth(userId, settings)) {
+    throw new ExtensionUnauthorizedError("This account is waiting for an invitation.");
+  }
   return userId;
 }

@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { HEARTBEAT_INTERVAL_MS } from "@/lib/presence-window";
+import { isOffline, reportRequestError, reportRequestOk } from "@/lib/connectivity-store";
 
 /**
  * Tells the server this tab is still open and being used.
@@ -25,11 +26,13 @@ export function PresenceHeartbeat() {
     let timer: ReturnType<typeof setInterval> | null = null;
 
     const beat = () => {
+      // Offline, a beat cannot land; the next one after reconnecting will.
+      if (isOffline()) return;
       void fetch("/api/presence", {
         method: "POST",
         keepalive: true,
         cache: "no-store",
-      }).catch(() => {});
+      }).then(reportRequestOk, reportRequestError);
     };
 
     const start = () => {

@@ -125,6 +125,7 @@ const HAS_PROVIDER_KEY_SQL = `
   CASE coalesce(s.ai_provider, 'gemini')
     WHEN 'openai' THEN s.openai_api_key_encrypted IS NOT NULL
     WHEN 'anthropic' THEN s.anthropic_api_key_encrypted IS NOT NULL
+    WHEN 'openrouter' THEN s.openrouter_api_key_encrypted IS NOT NULL
     ELSE s.gemini_api_key_encrypted IS NOT NULL
   END`;
 

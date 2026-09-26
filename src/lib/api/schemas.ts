@@ -112,6 +112,46 @@ export const followupsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
+/**
+ * A note from outside the app — an Apple Note shared in, an Obsidian daily note, a Zap.
+ *
+ * Text only. The parse that turns it into people and commitments is the app's, and running
+ * it here would mean duplicating the whole capture pipeline behind a second door.
+ */
+export const noteBody = z.object({
+  text: z.string().trim().min(1, "A note needs some text").max(50_000),
+  /** Shown on the capture card so a user can tell where it came from. */
+  sourceLabel: z.string().trim().max(200).optional(),
+  contactId: z.string().uuid().optional(),
+});
+
+export const interactionsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  /**
+   * ISO 8601, named for what it actually filters: `interactions.interactionDate` — when the
+   * thing happened, not when the row last changed (there is no `updatedAt` on interactions,
+   * so this can never be a true change-cursor; see the route for what that would need).
+   * `{ offset: true }` because Apple Shortcuts' ISO8601 formatter emits an offset
+   * (`+02:00`) rather than `Z` by default, same as `eventInput.occurredAt` below.
+   */
+  occurred_since: z.string().datetime({ offset: true }).optional(),
+  contactId: z.string().uuid().optional(),
+});
+
+export const followupPatchBody = z
+  .object({
+    status: z.enum(["complete", "snoozed"]),
+    /** `{ offset: true }` — see `interactionsQuery.occurred_since`. */
+    dueAt: z.string().datetime({ offset: true }).optional(),
+  })
+  .refine((v) => v.status !== "snoozed" || Boolean(v.dueAt), {
+    message: "Snoozing needs a dueAt",
+    path: ["dueAt"],
+  });
+
+export type NoteBody = z.infer<typeof noteBody>;
+export type FollowupPatchBody = z.infer<typeof followupPatchBody>;
+
 export const webhookEndpointBody = z.object({
   url: httpsUrl,
   eventTypes: z

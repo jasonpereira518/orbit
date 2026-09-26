@@ -153,7 +153,14 @@ const TIER_PERCENTILE_CUTOFFS = { inner: 0.78, mid: 0.44 } as const;
  * than the pre-cohort thresholds because raw scores renormalize to reach 1.0
  * and the recency curve no longer collapses to near-zero.
  */
-const ABSOLUTE_TIER_CUTOFFS = { inner: 0.6, mid: 0.4 } as const;
+/**
+ * Exported so the SQL that counts tiers can be built FROM these numbers rather than
+ * repeating them. `dashboard-aggregates.ts` groups by the same thresholds in Postgres to
+ * avoid reading every contact's breakdown into JavaScript just to bucket it; two copies of
+ * "0.6" would be two places to change and one to forget, and the failure is silent — a
+ * dashboard reporting a different number of strong ties than the contact list does.
+ */
+export const ABSOLUTE_TIER_CUTOFFS = { inner: 0.6, mid: 0.4 } as const;
 const ABSOLUTE_RING_CUTOFFS: Array<{ ring: number; min: number }> = [
   { ring: 5, min: 0.75 },
   { ring: 4, min: 0.6 },
@@ -493,6 +500,30 @@ export function closenessTierChipClass(tier: ClosenessBreakdown["tier"]) {
     return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
   }
   return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+}
+
+/**
+ * A finer color ramp for a raw closeness *percentage*, as opposed to
+ * `closenessTierChipClass` above which only knows the three coarse tiers
+ * (inner/mid/outer) those percentages get bucketed into for filtering.
+ * Banded on the same cutoffs as `closenessToOrbitScore`'s five constellation
+ * rings, so "5 colors" here lines up with the same distinctions the graph
+ * already draws rather than inventing a new scale.
+ */
+export function closenessPercentChipClass(closeness: number) {
+  if (closeness >= ABSOLUTE_RING_CUTOFFS[0].min) {
+    return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  }
+  if (closeness >= ABSOLUTE_RING_CUTOFFS[1].min) {
+    return "bg-teal-500/10 text-teal-700 dark:text-teal-300";
+  }
+  if (closeness >= ABSOLUTE_RING_CUTOFFS[2].min) {
+    return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
+  }
+  if (closeness >= ABSOLUTE_RING_CUTOFFS[3].min) {
+    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+  return "bg-slate-500/10 text-slate-700 dark:text-slate-300";
 }
 
 /** Map continuous closeness onto the five constellation rings. Ring 4 ≈ Inner. */

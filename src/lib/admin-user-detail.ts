@@ -25,6 +25,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
+import { managedKeysConfigured } from "@/lib/ai-access";
 import type { Entitlements, Plan, PlanSource } from "@/lib/entitlements";
 import { assertRevealable } from "@/lib/admin-redaction";
 
@@ -44,7 +45,7 @@ import { assertRevealable } from "@/lib/admin-redaction";
  * never sent. That list is enforced at runtime by `assertRevealable()` against
  * `NEVER_REVEALABLE` in `src/lib/admin-redaction.ts`:
  *   - *_api_key_encrypted, twilio_auth_token_encrypted  (never decrypt a foreign user's key)
- *   - calendar_feed_token                               (a live plaintext bearer credential)
+ *   - calendar_feed_token                               (the SHA-256 of a bearer credential)
  *   - gmail/outlook access + refresh tokens             (same class)
  *   - chat_messages.content                             (the most private data in the app,
  *                                                        and no support question needs it)
@@ -101,6 +102,7 @@ export type AdminConfiguration = {
     gemini: boolean;
     openai: boolean;
     anthropic: boolean;
+    openrouter: boolean;
     apollo: boolean;
     resend: boolean;
     twilio: boolean;
@@ -425,6 +427,7 @@ export async function getAdminUserDetail(
     gemini: Boolean(settings.geminiApiKeyEncrypted),
     openai: Boolean(settings.openaiApiKeyEncrypted),
     anthropic: Boolean(settings.anthropicApiKeyEncrypted),
+    openrouter: Boolean(settings.openrouterApiKeyEncrypted),
     apollo: Boolean(settings.apolloApiKeyEncrypted),
     resend: Boolean(settings.resendApiKeyEncrypted),
     twilio: Boolean(settings.twilioAuthTokenEncrypted),
@@ -574,15 +577,23 @@ export async function getAdminUserDetail(
       ? keys.openai
       : provider === "anthropic"
         ? keys.anthropic
-        : keys.gemini;
+        : provider === "openrouter"
+          ? keys.openrouter
+          : keys.gemini;
 
-  if (!hasSelectedProviderKey) {
+  // The AI gate's rule (`managed-ai-policy.ts`): no key is only a failure off Lifetime, or
+  // on Lifetime when this deployment holds no managed key to fall back on.
+  const onManagedAi =
+    plan === "lifetime" && Object.values(managedKeysConfigured()).some(Boolean);
+  if (!hasSelectedProviderKey && !onManagedAi) {
     health.push({
       kind: "ai",
       severity: "error",
       label: `No ${provider} API key configured`,
       detail:
-        "Production is BYOK — every AI feature fails for this account until they add a key in Settings.",
+        plan === "lifetime"
+          ? "On Lifetime but this deployment has no managed AI key — every AI feature fails until one is set (ORBIT_MANAGED_*_API_KEY) or they add their own."
+          : "AI is bring-your-own-key off Lifetime — every AI feature fails for this account until they add a key in Settings.",
       at: null,
     });
   }

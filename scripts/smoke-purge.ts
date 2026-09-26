@@ -13,6 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-purge.ts
  */
+import { randomUUID } from "node:crypto";
 import "./smoke/_env";
 
 import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
@@ -148,12 +149,62 @@ async function seed() {
   // The pasted text a note was parsed out of. Nothing cascades this — both
   // `note_batch_id` columns are plain uuids with no foreign key — so it only leaves with
   // the explicit delete in `purgeUserData`.
-  await db.insert(schema.noteBatches).values({
+  const [noteBatch] = await db
+    .insert(schema.noteBatches)
+    .values({
+      userId: USER,
+      sourceHash: "note-batch-hash",
+      sourceText: "the raw notes the user pasted, about named people",
+      anchorDate: now,
+      result: {} as never,
+    })
+    .returning();
+
+  // A photo of the user's notes, one attached and one from a capture never saved. The
+  // unattached one is the case a cascade from `note_batches` cannot reach.
+  await db.insert(schema.capturePhotos).values([
+    {
+      userId: USER,
+      noteBatchId: noteBatch.id,
+      storage: "inline",
+      inlineData: "aGVsbG8=",
+      contentType: "image/jpeg",
+      byteSize: 5,
+    },
+    {
+      userId: USER,
+      noteBatchId: null,
+      storage: "inline",
+      inlineData: "aGVsbG8=",
+      contentType: "image/jpeg",
+      byteSize: 5,
+    },
+  ]);
+
+  // A recorded call and one line of it. The segment carries its own `user_id` and is
+  // deleted explicitly, though it would also cascade from the session.
+  const [meetingRow] = await db
+    .insert(schema.meetingSessions)
+    .values({ userId: USER, title: "Weekly sync" })
+    .returning();
+  await db.insert(schema.meetingTranscriptSegments).values({
+    sessionId: meetingRow.id,
     userId: USER,
-    sourceHash: "note-batch-hash",
-    sourceText: "the raw notes the user pasted, about named people",
-    anchorDate: now,
-    result: {} as never,
+    seq: 0,
+    startMs: 0,
+    endMs: 60_000,
+    text: "what everyone on the call said, verbatim",
+    engine: "whisper",
+  });
+
+  // The Deepgram usage meter (v89). Tied to the same session id as the segment above —
+  // the unique index on `session_id` is what makes a meeting's usage one row that grows.
+  await db.insert(schema.speechUsage).values({
+    userId: USER,
+    kind: "meeting",
+    seconds: 60,
+    source: "stream",
+    sessionId: meetingRow.id,
   });
 
   // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
@@ -200,6 +251,56 @@ async function seed() {
     mentionText: "Ada",
     confidence: 0.9,
     matchedBy: "exact_name",
+  });
+
+  // Cascade-covered (from `contacts`), seeded anyway, same reasoning as `contactBriefs`.
+  // A typed opportunity carries a verbatim sentence out of someone's notes, so it is at
+  // least as sensitive as the interaction it came from and must leave with the account.
+  await db.insert(schema.contactOpportunities).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "internship",
+    label: "summer internship on the infra team",
+    sourceInteractionId: interaction.id,
+    sourceExcerpt: "she said they open summer internship applications in October",
+    createdBy: "ai",
+    itemHash: "opportunity-hash",
+  });
+
+  // `job_feed_sources` and `job_postings` are global, so `userScopedTables()` skips them —
+  // but a MATCH names one of this user's contacts, carries a `user_id`, and is therefore
+  // account data. Seeded from a real posting row so the cascade from `contacts` is what is
+  // actually under test, not an orphan insert.
+  const [feedSource] = await db
+    .insert(schema.jobFeedSources)
+    .values({
+      id: "smoke.purge.feed",
+      label: "Smoke feed",
+      url: "https://example.com/listings.json",
+      season: "Summer 2027",
+    })
+    .returning();
+  const [posting] = await db
+    .insert(schema.jobPostings)
+    .values({
+      sourceId: feedSource.id,
+      externalId: "smoke-posting-1",
+      companyName: "Acme",
+      companyKey: "acme",
+      title: "Software Engineer Intern",
+      url: "https://example.com/jobs/1",
+      terms: ["Summer 2027"],
+      locations: ["Remote"],
+      datePosted: new Date(),
+      dateUpdated: new Date(),
+    })
+    .returning();
+  await db.insert(schema.jobPostingMatches).values({
+    userId: USER,
+    postingId: posting.id,
+    contactId: contact.id,
+    companyKey: "acme",
+    matchKind: "internship",
   });
 
   const [list] = await db
@@ -249,10 +350,54 @@ async function seed() {
     icsUrl: "https://example.test/feed.ics",
   });
 
+  // A scan handoff in flight when the account is deleted: a live grant, and a transcript
+  // of the user's notes sitting behind it.
+  await db.insert(schema.captureHandoffs).values({
+    userId: USER,
+    tokenHash: "0".repeat(64),
+    expiresAt: new Date(Date.now() + 600_000),
+    transcript: "Ada Lovelace — Analytical Engines",
+  });
+
+  // A capture mid-review, and the name it set aside.
+  await db.insert(schema.captureJobs).values({
+    userId: USER,
+    sourceKind: "messy",
+    status: "reviewing",
+    inputText: "Met Ada Lovelace at the engine demo",
+  });
+  await db.insert(schema.ignoredPeople).values({
+    userId: USER,
+    nameKey: "charles babbage",
+    displayName: "Charles Babbage",
+    reason: "mentioned",
+  });
+
   await db.insert(schema.aiSuggestions).values({
     userId: USER,
     suggestionType: "reconnect",
     title: "Reach out",
+  });
+
+  // Background AI still in flight at a provider when the account went.
+  await db.insert(schema.aiBatchJobs).values({
+    userId: USER,
+    operation: "import.enrich",
+    provider: "gemini",
+    model: "gemini-3.5-flash",
+    keyOwner: "user",
+    providerBatchId: "batches/smoke-purge",
+    requestCount: 1,
+    payload: { items: [] },
+  });
+
+  // A remembered AI answer: a recruiter verdict, a profile read or a draft — prose derived
+  // from this person's mail and contacts, so it goes with their data.
+  await db.insert(schema.aiResultCache).values({
+    userId: USER,
+    operation: "followup.draft",
+    inputHash: "smoke-purge-hash",
+    result: { v: "Great catching up last week — here is the deck I promised." },
   });
 
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
@@ -263,6 +408,27 @@ async function seed() {
     sourceType: "note",
     embedding: [0.1, 0.2],
     content: "embedded note content",
+  });
+
+  // A passage of the user's own note. Derived data, but derived from the most personal text
+  // in the product — a deletion that left these behind would leave the notes behind.
+  await db.insert(schema.memoryChunks).values({
+    userId: USER,
+    sourceKind: "interaction",
+    sourceId: interaction.id,
+    contactId: contact.id,
+    contactIds: [contact.id],
+    occurredAt: new Date(),
+    chunkIndex: 0,
+    content: "2026-03-12 · Note · Ada Lovelace\nShe is raising a Series A.",
+    contentHash: "smoke-purge-memory-chunk-hash",
+  });
+
+  await db.insert(schema.embeddingFailures).values({
+    userId: USER,
+    sourceType: "meeting",
+    sourceId: `cal:evt-unembeddable:${contact.id}`,
+    errorKind: "other",
   });
 
   const [recruiter] = await db
@@ -282,6 +448,10 @@ async function seed() {
     subject: "Following up on the role",
     body: "prose the user wrote about a real person",
   });
+
+  // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
+  // no less user data than anything else here.
+  await db.insert(schema.recruiterScanState).values({ userId: USER });
 
   // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
   // no foreign key to either contact (the losing contact's row is deleted by design), so
@@ -327,12 +497,68 @@ async function seed() {
     contactId: contact.id,
     identityKey: "em:ada@analytical.io",
   });
+  // Two aliases: one live, one a TOMBSTONE (`event_id` null), which is the row that would
+  // outlive the account if purge left it to the `ON DELETE SET NULL` cascade. It holds the
+  // user's calendar UIDs and event links.
+  await db.insert(schema.eventAliases).values([
+    {
+      userId: USER,
+      kind: "url",
+      value: "luma.com/deep-learning-summit",
+      eventId: eventRow.id,
+      source: "gcal",
+    },
+    { userId: USER, kind: "source_ref", value: "gcal:dismissed-uid", eventId: null, source: "gcal" },
+  ]);
+  // A company at the event, and the same company on the user's target list — a statement
+  // about where they want to work, which must not outlive the account.
+  const [exhibitor] = await db
+    .insert(schema.companies)
+    .values({ userId: USER, name: "Stripe", nameNormalized: "stripe" })
+    .returning();
+  await db.insert(schema.eventCompanies).values({
+    userId: USER,
+    eventId: eventRow.id,
+    companyId: exhibitor.id,
+    role: "exhibitor",
+    source: "paste",
+  });
+  await db.insert(schema.targetCompanies).values({
+    userId: USER,
+    companyId: exhibitor.id,
+    priority: 1,
+  });
   // Same class of secret as the Gmail/Outlook rows below.
   await db.insert(schema.eventProviderConnections).values({
     userId: USER,
     provider: "luma",
     authKind: "api_key",
     apiKeyEncrypted: "ciphertext-luma-key",
+  });
+  // Same class of secret as the rows above, for a connector that is not Gmail or Outlook.
+  await db.insert(schema.connectorConnections).values({
+    userId: USER,
+    connectorId: "hubspot",
+    authKind: "oauth2",
+    accessTokenEncrypted: "ciphertext-hubspot-access",
+    refreshTokenEncrypted: "ciphertext-hubspot-refresh",
+  });
+  // Maps this user's rows into someone else's system; must not outlive the connection.
+  await db.insert(schema.externalLinks).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    entityType: "reminder",
+    entityId: "rem-1",
+    remoteId: "remote-1",
+  });
+  // A pending write, possibly still carrying an unsent payload.
+  await db.insert(schema.connectorOutbox).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-1",
+    payload: { title: "Follow up" },
   });
 
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
@@ -343,6 +569,24 @@ async function seed() {
       refreshTokenEncrypted: "ciphertext-refresh",
     });
   }
+
+  // An iCloud connection: an app-specific password rather than OAuth tokens.
+  await db.insert(schema.appleConnections).values({
+    userId: USER,
+    emailAddress: `${USER}@icloud.test`,
+    appPasswordEncrypted: "ciphertext-app-password",
+    principalUrl: "https://caldav.icloud.com/1/principal/",
+    calendarHomeUrl: "https://caldav.icloud.com/1/calendars/",
+  });
+
+  // A calendar picked off one of the connections above. No FK to any of the three connection
+  // tables by design (they are separate — see provider-connections.ts), so any uuid does.
+  await db.insert(schema.calendarSources).values({
+    userId: USER,
+    provider: "google",
+    connectionId: randomUUID(),
+    calendarId: "primary",
+  });
 
   const [thread] = await db
     .insert(schema.chatThreads)
@@ -375,6 +619,14 @@ async function seed() {
   // else, so it is easy to forget it is personal data at all — which is how it became the
   // fourth user-scoped table to ship unpurged (found the first time this suite ran on a
   // fresh database instead of one that happened to hold a leftover row).
+  // The account's own upgrade-celebration queue — deleted outright on purge.
+  await db.insert(schema.planUpgradeEvents).values({
+    userId: USER,
+    plan: "orbit",
+    source: "subscription",
+    eventKey: `${USER}-upgrade`,
+  });
+
   await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
 
   // The connector platform. `api_keys` is the one that would matter most if it survived a
@@ -385,6 +637,14 @@ async function seed() {
     prefix: "orb_live_deadbeef",
     keyHash: "0".repeat(64),
     scopes: ["read"],
+  });
+  // A message an assistant drafted. It holds a body the user never sent, which is exactly
+  // the kind of content a deletion has to take with it.
+  await db.insert(schema.agentSendRequests).values({
+    userId: USER,
+    toEmail: "someone@example.org",
+    body: "purge fixture",
+    expiresAt: new Date(Date.now() + 86_400_000),
   });
   await db.insert(schema.apiIdempotencyKeys).values({
     userId: USER,
@@ -411,7 +671,26 @@ async function seed() {
     payload: {},
   });
 
-  return { recruiterId: recruiter.id };
+  // A page view from a signed-in session. Purge ANONYMISES this rather than deleting it,
+  // the same way it treats billing_events — so like that row, it survives its own cleanup.
+  await db.insert(schema.pageViews).values({
+    id: randomUUID(),
+    visitorHash: "purge-fixture-visitor",
+    sessionId: randomUUID(),
+    userId: USER,
+    route: "/dashboard",
+    device: "desktop",
+  });
+
+  // A second user's link keeps the shared row alive; a row only USER links must go.
+  await db.insert(schema.userRecruiterLinks).values({ userId: "smoke-purge-other-linker", recruiterId: recruiter.id });
+  const [soleRecruiter] = await db
+    .insert(schema.recruiters)
+    .values({ fullName: "Solo Recruiter", nameNormalized: "solo recruiter", email: "solo@example.test" })
+    .returning();
+  await db.insert(schema.userRecruiterLinks).values({ userId: USER, recruiterId: soleRecruiter.id, email: "solo@example.test" });
+
+  return { recruiterId: recruiter.id, soleRecruiterId: soleRecruiter.id };
 }
 
 async function main() {
@@ -426,7 +705,7 @@ async function main() {
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
     .catch(() => {});
-  const { recruiterId } = await seed();
+  const { recruiterId, soleRecruiterId } = await seed();
 
   console.log("\nSeeded");
   const seededCounts = new Map<string, number>();
@@ -528,6 +807,8 @@ async function main() {
     where: eq(schema.recruiters.id, recruiterId),
   });
   check("the shared recruiters directory survives", Boolean(survivor));
+  const sole = await db.query.recruiters.findFirst({ where: eq(schema.recruiters.id, soleRecruiterId) });
+  check("a recruiter only this user linked is deleted with them", !sole);
   await db.delete(schema.recruiters).where(eq(schema.recruiters.id, recruiterId));
 
   console.log("\nAll purge checks passed.");

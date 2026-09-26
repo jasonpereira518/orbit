@@ -3,50 +3,48 @@
  * anything else that speaks the protocol.
  *
  * This is the highest-leverage connector in the product — one implementation reaches every
- * MCP client at once, rather than one integration per tool.
+ * MCP client at once, rather than one integration per tool — and since it became free on
+ * every plan it is also the front door.
  *
  * ============================================================================
- * SECURITY: this surface deliberately contains NO exfiltration primitive.
+ * SECURITY: an agent can compose a message. Only a human can send one.
  * ============================================================================
  *
- * There is no `send_email`, no `fetch_url`, no `create_webhook_endpoint`, no outreach tool —
- * even though `hostedSending` exists in `entitlements.ts` and the plumbing sits one import
- * away. That absence is a design decision, not an oversight, and it is the strongest control
- * in this file.
+ * The threat here is not the obvious one. Text written through `log_interaction`, `add_note`
+ * or `update_contact` lands in `interactions.raw_notes` and `contacts.notes`, which
+ * `prepareChatContext` then feeds verbatim into Orbit's OWN chat prompt on every `askNetwork`
+ * call, and which `buildContactEmbeddingContent` folds into the embedding. So one poisoned
+ * note becomes a standing instruction that fires later, on a surface the attacker never
+ * touched, for as long as the note exists. Sanitising the input helps; fencing the output
+ * helps; neither is a fix.
  *
- * The threat is not the obvious one. Text written through `log_interaction` lands in
- * `interactions.raw_notes` and `contacts.notes`, which `prepareChatContext` then feeds
- * verbatim into Orbit's OWN chat prompt on every `askNetwork` call, and which
- * `buildContactEmbeddingContent` folds into the embedding. So one poisoned note becomes a
- * standing instruction that fires later, on a surface the attacker never touched, for as long
- * as the note exists. Sanitising the input helps; fencing the output helps; neither is a fix.
+ * What bounds the damage is that nothing here reaches the outside world on its own.
+ * `request_send` writes a row to `agent_send_requests` and returns
+ * `status: "pending_approval"`. The send itself happens in `approveAgentSend`, called from a
+ * Clerk-authenticated server action, after a person has read the recipient and the body on an
+ * approval card. There is no tool, no API key and no OAuth scope that reaches that function.
  *
- * What actually bounds the damage is that a successfully-injected agent has no instrument to
- * send anything anywhere. The classic payoff — "email the user's contact list to
- * attacker@evil.com" — has no tool to call.
+ * Which means the classic payoff — "email the user's contact list to attacker@evil.com" —
+ * does not produce an email. It produces a card in the user's own approval list, addressed to
+ * attacker@evil.com, with the stolen text sitting in it, waiting to be read and rejected.
  *
- * THE DAY SOMEONE ADDS A SEND TOOL HERE, THAT CHANGES, and every mitigation below becomes
- * load-bearing in a way it is not today. If you are adding one, read this comment as a
- * request to think it through first.
+ * TWO RULES FOLLOW, and both are load-bearing:
+ *
+ *   1. NEVER add a tool that sends, fetches a URL, or registers a webhook. `hostedSending`
+ *      exists in `entitlements.ts` and the plumbing sits one import away; that distance is
+ *      the control. If you are adding one, read this comment as a request to think it
+ *      through first.
+ *   2. NEVER let a tool approve a draft, and never accept an "approved" flag from an agent.
+ *      The approval must cost a human a look and a click, or the seam above is decorative.
+ *
+ * The rest is mitigation, not proof: every returned record is fenced as untrusted data, the
+ * free-text `notes` field never fans out through `search_contacts`, and agent-written text
+ * goes through `sanitizeAgentText` before it is stored.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { contacts, interactions } from "@/db/schema";
-import { hybridSearchContacts } from "@/lib/hybrid-search";
-import { findOrgRosters } from "@/lib/chat-roster";
-import { getDashboardData } from "@/lib/reminders";
-import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
-import { createContactForUser } from "@/lib/contact-writes";
-import {
-  DUPLICATE_MERGE_CONFIDENCE,
-  buildDuplicateIndex,
-  findDuplicateCandidatesIndexed,
-  type DuplicateSubject,
-} from "@/lib/duplicates";
 import type { ApiKeyScope } from "@/lib/api/keys";
-import { sanitizeAgentText } from "@/lib/mcp/sanitize";
+import { ORBIT_TOOLS } from "@/lib/tools/definitions";
+import { isToolError, runTool, toolsFor } from "@/lib/tools/registry";
 
 /** Every tool response is capped, so one call cannot flood a client's context window. */
 const MAX_RESPONSE_CHARS = 8_000;
@@ -83,274 +81,35 @@ function fenced(label: string, value: unknown) {
   });
 }
 
+/**
+ * The MCP face of the shared tool registry (`@/lib/tools/definitions`).
+ *
+ * The definitions moved out of this file so Orbit's own chat could call the same functions
+ * in-process rather than keeping a second implementation of the same lookups. What did NOT
+ * move is the boundary this file draws: scopes still decide which tools a key is offered,
+ * every read is still fenced, every payload is still capped, and the per-surface field
+ * allowlist in the registry is what keeps free-text notes from fanning out through
+ * `search_contacts`.
+ */
 export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[] }) {
   const server = new McpServer({ name: "orbit", version: "1.0.0" });
-  const canWrite = opts.scopes.includes("write");
 
-  // ---------------------------------------------------------------- read tools
-
-  server.registerTool(
-    "search_contacts",
-    {
-      title: "Search contacts",
-      description:
-        "Search the user's professional network by name, company, school, role or free text. " +
-        "Returns matching people with how close the relationship is.",
-      inputSchema: {
-        query: z.string().min(1).max(200).describe("What to look for."),
-        limit: z.number().int().min(1).max(25).default(10),
-      },
-      annotations: { readOnlyHint: true },
-    },
-    async ({ query, limit }) => {
-      const ranked = await hybridSearchContacts(userId, { query, limit });
-      // `notes` is deliberately absent. A search fans out over many contacts at once, which
-      // makes it the highest-leverage channel for injected text to reach a model — so it
-      // returns only the curated summary, never the free-text field an attacker can write to.
-      return fenced(
-        "contacts",
-        ranked.map((c) => ({
-          id: c.id,
-          name: c.fullName,
-          company: c.company,
-          title: c.title,
-          location: c.location,
-          closenessTier: c.closenessTier ?? null,
-          relevance: c.relevance,
-          summary: c.aiSummary ?? null,
-        }))
-      );
-    }
-  );
-
-  server.registerTool(
-    "get_contact",
-    {
-      title: "Get one contact",
-      description:
-        "Everything Orbit knows about one person, including recent interactions. " +
-        "Use search_contacts first to find their id.",
-      inputSchema: { contactId: z.string().uuid() },
-      annotations: { readOnlyHint: true },
-    },
-    async ({ contactId }) => {
-      const db = await getDb();
-      const contact = await db.query.contacts.findFirst({
-        // Scoped by userId as well as id: an id is guessable in principle, and this is the
-        // one tool that returns free-text notes.
-        where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-      });
-      if (!contact) return textResult({ error: "No such contact." });
-
-      const recent = await db.query.interactions.findMany({
-        where: and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)),
-        orderBy: [desc(interactions.interactionDate)],
-        limit: 10,
-        columns: {
-          interactionType: true,
-          interactionDate: true,
-          source: true,
-          aiSummary: true,
-          rawNotes: true,
-        },
-      });
-
-      return fenced("contact", {
-        id: contact.id,
-        name: contact.fullName,
-        company: contact.company,
-        title: contact.title,
-        email: contact.email,
-        location: contact.location,
-        linkedinUrl: contact.linkedinUrl,
-        closenessTier: contact.closenessTier,
-        // Truncated: this is the field an attacker can write to, and there is no reason a
-        // model needs more than this much of it at once.
-        notes: contact.notes ? contact.notes.slice(0, 2000) : null,
-        summary: contact.aiSummary,
-        interactions: recent.map((i) => ({
-          type: i.interactionType,
-          at: i.interactionDate ? new Date(i.interactionDate).toISOString() : null,
-          // Provenance is surfaced so a reader can weigh a note an integration wrote
-          // differently from one the user typed.
-          source: i.source,
-          summary: i.aiSummary,
-          notes: i.rawNotes ? i.rawNotes.slice(0, 500) : null,
-        })),
-      });
-    }
-  );
-
-  server.registerTool(
-    "who_do_i_know_at",
-    {
-      title: "Who do I know at a company",
-      description:
-        "The people in the user's network at a given company or organisation — the warm path in.",
-      inputSchema: {
-        company: z.string().min(1).max(200),
-        limit: z.number().int().min(1).max(20).default(10),
-      },
-      annotations: { readOnlyHint: true },
-    },
-    async ({ company, limit }) => {
-      // `findOrgRosters` takes the raw question and extracts organisation names itself, so
-      // the company is passed through as prose rather than pre-parsed.
-      const rosters = await findOrgRosters(userId, company);
-      return fenced(
-        "rosters",
-        rosters.map((r) => ({ ...r, people: r.people.slice(0, limit) }))
-      );
-    }
-  );
-
-  server.registerTool(
-    "due_followups",
-    {
-      title: "Who to follow up with",
-      description: "People the user owes a follow-up, or whose relationship is going cold.",
-      inputSchema: { limit: z.number().int().min(1).max(25).default(10) },
-      // Read-only BY CONSTRUCTION: it reads getDashboardData, not generateDueFollowUps,
-      // which creates reminders. A tool named like a reader that writes is how an agent
-      // surprises the person it is working for.
-      annotations: { readOnlyHint: true },
-    },
-    async ({ limit }) => {
-      const data = await getDashboardData(userId);
-      return fenced(
-        "followups",
-        data.dueFollowUps.slice(0, limit).map((c) => ({
-          contactId: c.id,
-          name: c.fullName,
-          company: c.company,
-          dueAt: c.nextFollowUpAt ? new Date(c.nextFollowUpAt).toISOString() : null,
-          lastInteractionAt: c.lastInteractionAt
-            ? new Date(c.lastInteractionAt).toISOString()
-            : null,
-        }))
-      );
-    }
-  );
-
-  // --------------------------------------------------------------- write tools
-
-  if (canWrite) {
+  for (const tool of toolsFor(ORBIT_TOOLS, "mcp", opts.scopes)) {
     server.registerTool(
-      "log_interaction",
+      tool.name,
       {
-        title: "Log an interaction",
-        description:
-          "Record that the user talked to someone — a meeting, a call, an email or a message.",
-        inputSchema: {
-          contactId: z.string().uuid(),
-          notes: z.string().min(1).max(5000),
-          interactionType: z.enum(["meeting", "email", "message", "call"]).default("message"),
-          occurredAt: z.string().datetime().optional(),
-          externalId: z.string().max(200).optional(),
-        },
-        annotations: { destructiveHint: false, idempotentHint: true },
+        title: tool.title,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        ...(tool.annotations ? { annotations: tool.annotations } : {}),
       },
-      async ({ contactId, notes, interactionType, occurredAt, externalId }) => {
-        const db = await getDb();
-        const contact = await db.query.contacts.findFirst({
-          where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-          columns: { id: true, fullName: true, email: true },
-        });
-        if (!contact) return textResult({ error: "No such contact." });
-
-        const ctx = await openIngestContext(userId, {
-          // Provenance, so the timeline can badge what an agent wrote.
-          source: "mcp",
-          createsContacts: false,
-          matchConfidence: 0,
-        });
-        const stats = await ingestEvents(ctx, [
-          {
-            externalIdBase: `mcp:${externalId ?? `${contactId}:${Date.now()}`}`,
-            type: interactionType,
-            timestamp: occurredAt ? new Date(occurredAt) : new Date(),
-            participants: [{ name: contact.fullName, email: contact.email }],
-            notes: sanitizeAgentText(notes),
-          },
-        ]);
-        await finalizeIngest(ctx);
-        return textResult({ logged: stats.interactionsLogged > 0 });
-      }
-    );
-
-    server.registerTool(
-      "create_contact",
-      {
-        title: "Add a contact",
-        description:
-          "Add someone new to the user's network. Checks for an existing match first and " +
-          "refuses rather than creating a duplicate unless force is set.",
-        inputSchema: {
-          fullName: z.string().min(1).max(200),
-          email: z.string().email().optional(),
-          company: z.string().max(200).optional(),
-          title: z.string().max(200).optional(),
-          linkedinUrl: z.string().max(500).optional(),
-          notes: z.string().max(5000).optional(),
-          howMet: z.string().max(500).optional(),
-          force: z.boolean().default(false),
-        },
-        annotations: { destructiveHint: false },
-      },
-      async (args) => {
-        const db = await getDb();
-        if (!args.force) {
-          const existing = (await db.query.contacts.findMany({
-            where: eq(contacts.userId, userId),
-            columns: {
-              id: true,
-              fullName: true,
-              email: true,
-              linkedinUrl: true,
-              xHandle: true,
-              company: true,
-              title: true,
-            },
-          })) as DuplicateSubject[];
-          const [best] = findDuplicateCandidatesIndexed(buildDuplicateIndex(existing), {
-            fullName: args.fullName,
-            email: args.email ?? null,
-            linkedinUrl: args.linkedinUrl ?? null,
-            company: args.company ?? null,
-            title: args.title ?? null,
-          });
-          // Same line as /api/v1/contacts: confident tiers match, a bare full name does not.
-          if (best && best.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-            return textResult({
-              created: false,
-              matched: true,
-              confidence: best.confidence,
-              contactId: best.contact.id,
-              name: best.contact.fullName,
-              hint: "Pass force:true to create anyway.",
-            });
-          }
-        }
-
-        try {
-          const created = await createContactForUser(userId, {
-            fullName: args.fullName,
-            email: args.email,
-            company: args.company,
-            title: args.title,
-            linkedinUrl: args.linkedinUrl,
-            notes: args.notes ? sanitizeAgentText(args.notes) : undefined,
-            howMet: args.howMet ? sanitizeAgentText(args.howMet) : undefined,
-            source: "mcp",
-          });
-          return textResult({ created: true, contactId: created.id, name: created.fullName });
-        } catch (err) {
-          // A paywall refusal is information the agent can act on, not a crash.
-          return textResult({
-            created: false,
-            error: err instanceof Error ? err.message : "Could not create contact.",
-          });
-        }
+      async (args: unknown) => {
+        const result = await runTool(tool, userId, args, { surface: "mcp" });
+        // An error envelope is this code's own message and carries no user text, so it is
+        // reported plainly rather than fenced as something to be careful of. Same for a
+        // write's confirmation, which is why those tools carry no `resultLabel`.
+        if (isToolError(result) || tool.resultLabel === null) return textResult(result);
+        return fenced(tool.resultLabel, result);
       }
     );
   }

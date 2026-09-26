@@ -10,32 +10,57 @@
  * freely. "Which columns are off-limits" is no longer a short set a reader holds in their
  * head while writing a query, so the machine checks it.
  *
- * Two classes live here, for two different reasons:
+ * Three classes live here, for three different reasons:
  *
- *   Credentials. Encrypted API keys, the calendar feed token, and OAuth access/refresh
- *   tokens are live bearer secrets. The admin console reads their *presence* as a boolean
- *   and nothing else; `decryptOrNull()` is never called from any admin module, including into
- *   a log line.
+ *   Credentials. Encrypted API keys, OAuth tokens, webhook signing secrets and the calendar
+ *   feed token are live bearer secrets. The admin console reads their *presence* as a
+ *   boolean and nothing else; `decryptOrNull()` is never called from any admin module,
+ *   including into a log line. `scripts/smoke-admin-redaction.ts` fails when a new
+ *   `*_encrypted` column is added to the schema without being listed here.
  *
  *   Chat transcripts. `chat_messages.content` is the most private store in the app — an
  *   unstructured record of what the user asked about their own network, in their own
  *   words. Unlike a contact note it has no operational use: no support question is
  *   answered by reading it.
+ *
+ *   Raw capture material. The verbatim text of a capture (`note_batches.source_text`), a
+ *   meeting's transcript, and the photos a capture was read from. The privacy policy tells
+ *   users the console never shows them; the structured result (contacts, interactions) is
+ *   what support reads.
  */
 export const NEVER_REVEALABLE: readonly string[] = [
   "chat_messages.content",
+  // Free text the user wrote about how they write — a chat note and style notes are the same
+  // kind of thing as a chat message, so the console never shows them either.
+  "chat_threads.context_note",
+  "user_settings.writing_instructions",
   "user_settings.gemini_api_key_encrypted",
   "user_settings.openai_api_key_encrypted",
   "user_settings.anthropic_api_key_encrypted",
+  "user_settings.openrouter_api_key_encrypted",
+  "user_settings.typesafe_api_key_encrypted",
   "user_settings.apollo_api_key_encrypted",
   "user_settings.resend_api_key_encrypted",
   "user_settings.twilio_account_sid_encrypted",
   "user_settings.twilio_auth_token_encrypted",
   "user_settings.calendar_feed_token",
+  "user_settings.inbound_log_token",
   "gmail_connections.access_token_encrypted",
   "gmail_connections.refresh_token_encrypted",
   "outlook_connections.access_token_encrypted",
   "outlook_connections.refresh_token_encrypted",
+  "apple_connections.app_password_encrypted",
+  "event_provider_connections.api_key_encrypted",
+  "event_provider_connections.access_token_encrypted",
+  "event_provider_connections.refresh_token_encrypted",
+  "connector_connections.api_key_encrypted",
+  "connector_connections.access_token_encrypted",
+  "connector_connections.refresh_token_encrypted",
+  "webhook_endpoints.secret_encrypted",
+  "note_batches.source_text",
+  "meeting_transcript_segments.text",
+  "capture_photos.inline_data",
+  "capture_photos.blob_url",
 ];
 
 const DENIED = new Set(NEVER_REVEALABLE);

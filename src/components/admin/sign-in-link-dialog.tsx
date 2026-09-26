@@ -12,8 +12,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { mintSignInLinkAction } from "@/actions/admin";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
+
+/** Mirrors `requireReason(input.reason, 8)` in `mintSignInLink`; the server enforces it regardless. */
+const MIN_REASON = 8;
 
 /**
  * Mints a one-click sign-in link for this account and hands it to the operator to open.
@@ -38,16 +44,18 @@ export function SignInLinkButton({
 }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [reason, setReason] = useState("");
   const [link, setLink] = useState<{ url: string; expiresInSeconds: number } | null>(null);
+  const reasonOk = reason.trim().length >= MIN_REASON;
 
   const mint = () => {
+    if (!reasonOk) return;
     setPending(true);
     setLink(null);
-    mintSignInLinkAction({ targetUserId })
+    mintSignInLinkAction({ targetUserId, reason: reason.trim() })
       .then((result) => setLink(result))
       .catch((err) => {
-        toast.error(err instanceof Error ? err.message : "Could not create a sign-in link.");
-        setOpen(false);
+        toast.error(friendlyError(err, "Couldn’t create a sign-in link — try again?"));
       })
       .finally(() => setPending(false));
   };
@@ -58,8 +66,9 @@ export function SignInLinkButton({
         variant="outline"
         size="sm"
         onClick={() => {
+          setReason("");
+          setLink(null);
           setOpen(true);
-          mint();
         }}
       >
         <KeyRound className="size-3.5" aria-hidden />
@@ -71,13 +80,26 @@ export function SignInLinkButton({
           <DialogHeader>
             <DialogTitle>Sign-in link</DialogTitle>
             <DialogDescription>
-              {email ?? targetUserId} — no password, no emailed code.
+              {email ?? targetUserId} — no password, no emailed code. Minting one is recorded in
+              the audit log with your reason.
             </DialogDescription>
           </DialogHeader>
 
-          {pending && (
-            <p className="text-sm text-muted-foreground">Minting a link…</p>
+          {!link && (
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium">Reason</span>
+              <Textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={2}
+                disabled={pending}
+                placeholder="Which support request or demo is this for? Goes in the audit log."
+                className="text-sm"
+              />
+            </label>
           )}
+
+          {pending && <p className="text-sm text-muted-foreground">Minting a link…</p>}
 
           {link && (
             <div className="space-y-3">
@@ -90,7 +112,7 @@ export function SignInLinkButton({
                   aria-label="Copy link"
                   onClick={() => {
                     void navigator.clipboard.writeText(link.url);
-                    toast.success("Copied.");
+                    toast.success(TOAST_COPY.copied);
                   }}
                 >
                   <Copy className="size-4" aria-hidden />
@@ -134,9 +156,13 @@ export function SignInLinkButton({
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Close
             </Button>
-            {link && (
+            {link ? (
               <Button variant="outline" onClick={mint} disabled={pending}>
                 New link
+              </Button>
+            ) : (
+              <Button onClick={mint} disabled={pending || !reasonOk}>
+                Create link
               </Button>
             )}
           </DialogFooter>

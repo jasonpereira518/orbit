@@ -2,9 +2,15 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
-import { clearApiKey, getSettings, saveAiSettings } from "@/actions/settings";
+import {
+  clearApiKey,
+  getSettings,
+  saveAiSettings,
+} from "@/actions/settings";
 import {
   AI_PROVIDERS,
+  SELECTABLE_AI_PROVIDERS,
+  isSelectableAiProvider,
   DEFAULT_MODELS,
   PROVIDER_MODELS,
   type AiProvider,
@@ -12,14 +18,54 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import {
+  AI_NOTICE_COPY,
+  allowancePercentUsed,
+  formatAllowanceReset,
+} from "@/lib/ai-access-copy";
+import { MANAGED_AI_ENABLED, managedModel } from "@/lib/managed-ai-policy";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
+const CUSTOM_MODEL = "__custom__";
+
+// SELECTABLE_AI_PROVIDERS, not AI_PROVIDERS: the full table also carries providers whose
+// plumbing exists but which no surface offers (OpenRouter). `providerMeta` below still
+// looks up the full table, so an account already on one keeps its real name in the copy.
+const PROVIDER_ITEMS = SELECTABLE_AI_PROVIDERS.map((p) => ({ value: p.id, label: p.label }));
+
+function modelLabel(provider: AiProvider, id: string) {
+  return PROVIDER_MODELS[provider].find((m) => m.value === id)?.label ?? id;
+}
+
 export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [settings, setSettings] = useState<Settings>(initialSettings);
+  // A router refresh (the plan changed — Lifetime bought or revoked) hands down fresh
+  // settings; adopt them rather than keep describing the old plan.
+  const [seenInitial, setSeenInitial] = useState(initialSettings);
+  if (seenInitial !== initialSettings) {
+    setSeenInitial(initialSettings);
+    setSettings(initialSettings);
+  }
   const [provider, setProvider] = useState<AiProvider>(initialSettings.aiProvider);
   const [apiKey, setApiKey] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [model, setModel] = useState(initialSettings.aiModel);
+  /**
+   * Set when a default changed under this account (`ai_model_migrated_from`). Shown once,
+   * beside the model it moved to; saving anything clears it server-side.
+   */
+  const movedFrom = initialSettings.aiModelMigratedFrom;
   const [customModel, setCustomModel] = useState(
     !PROVIDER_MODELS[initialSettings.aiProvider].some(
       (m) => m.value === initialSettings.aiModel
@@ -29,49 +75,98 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
 
   const providerMeta = AI_PROVIDERS.find((p) => p.id === provider)!;
   const models = PROVIDER_MODELS[provider];
+  // `items` so each trigger shows the label ("Gemini 3.5 Flash"), not the stored id.
+  const modelItems = [
+    ...models.map((m) => ({ value: m.value, label: m.label })),
+    { value: CUSTOM_MODEL, label: "Custom model ID…" },
+  ];
   const activeProviderStatus = settings.providers.find((p) => p.id === provider);
+  const { ai } = settings;
+  // Managed AI is off, and this is a dev server running on the keys in `.env.local`. The
+  // same machinery as Lifetime's included AI, but it is the developer's own key, so it says
+  // so rather than promising something no deployment does.
+  const onLocalDevKeys = !MANAGED_AI_ENABLED && ai.eligibility === "demo" && ai.managedConfigured;
+  // Lifetime, or a demo account that actually has a (local) managed key to run on.
+  const onLifetime =
+    ai.eligibility === "lifetime" || (ai.eligibility === "demo" && ai.managedConfigured);
+  // What Orbit's key would run for the provider on screen, when it is the one paying.
+  const managedRuns = activeProviderStatus?.managedAvailable
+    ? managedModel(provider, model)
+    : null;
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">AI provider</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys
-          are encrypted at rest and only used for your account.
-        </p>
-      </div>
-
+    <SettingsSection
+      title="AI provider"
+      description={
+        onLocalDevKeys
+          ? "This dev server runs AI on the keys in your .env.local — nothing to set up. Save a key here and it is used instead, which is also how you see what a deployed account sees. Keys are encrypted at rest and only used for your account."
+          : onLifetime
+            ? "Orbit Lifetime includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key: whenever one is saved, Orbit uses yours instead. Keys are encrypted at rest and only used for your account."
+            : `Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Orbit Lifetime includes AI, so no key is needed there." : ""}`
+      }
+    >
       <div className="space-y-1.5">
-        <Label htmlFor="provider">Provider</Label>
-        <select
-          id="provider"
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        <Label id="provider-label">Provider</Label>
+        <Select
           value={provider}
-          onChange={(e) => {
-            const next = e.target.value as AiProvider;
+          onValueChange={(value) => {
+            if (!value) return;
+            const next = value as AiProvider;
             setProvider(next);
             setApiKey("");
+            setKeyError(null);
             setModel(DEFAULT_MODELS[next]);
             setCustomModel(false);
           }}
+          items={PROVIDER_ITEMS}
         >
-          {AI_PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger aria-labelledby="provider-label" className="h-9 w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false} className="p-1">
+            {PROVIDER_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value} className="py-1.5 pl-2">
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {activeProviderStatus && (
-        <p className="text-sm text-muted-foreground">
-          Status:{" "}
-          {activeProviderStatus.hasPersonalKey
-            ? "Your key is saved"
-            : activeProviderStatus.usingEnv
-              ? `Using local ${activeProviderStatus.envVar} (dev only)`
-              : "No key yet — paste one below to enable AI features"}
-        </p>
+        <div className="space-y-1 text-sm text-muted-foreground" role="status">
+          <p>
+            Status:{" "}
+            {activeProviderStatus.hasPersonalKey
+              ? onLocalDevKeys
+                ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to fall back to .env.local`
+                : onLifetime
+                  ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to switch to Orbit’s included AI`
+                  : `Your ${providerMeta.label} key is saved`
+              : provider === ai.selectedProvider && ai.reason
+                ? AI_NOTICE_COPY[ai.reason].title("use AI")
+                : managedRuns
+                  ? onLocalDevKeys
+                    ? `Using your .env.local ${providerMeta.label} key — ${modelLabel(provider, managedRuns)}`
+                    : `Using Orbit’s included AI — ${modelLabel(provider, managedRuns)} on Orbit’s key`
+                  : onLifetime && ai.source === "managed"
+                    ? `No ${providerMeta.label} key — Orbit’s included AI runs on ${modelLabel(ai.provider, ai.model)} instead`
+                    : "No key yet — paste one below to turn on AI features"}
+          </p>
+          {onLifetime && ai.allowance && (
+            <p>
+              Included AI this month: {allowancePercentUsed(ai.allowance)}% used · resets{" "}
+              {formatAllowanceReset(ai.allowance.resetsAt)}
+              {activeProviderStatus.hasPersonalKey ? " · not in use while your key is saved" : ""}
+            </p>
+          )}
+          {managedRuns && !activeProviderStatus.hasPersonalKey && managedRuns !== model && (
+            <p>
+              On Orbit’s key, AI runs on {modelLabel(provider, managedRuns)}; the model you
+              pick below applies once you add your own key.
+            </p>
+          )}
+        </div>
       )}
 
       {provider === "anthropic" && (
@@ -92,32 +187,48 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
               : providerMeta.keyPlaceholder
           }
           value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
+          aria-invalid={keyError ? true : undefined}
+          aria-describedby={keyError ? "key-error" : undefined}
+          onChange={(e) => {
+            setApiKey(e.target.value);
+            setKeyError(null);
+          }}
         />
+        {keyError && (
+          <p id="key-error" role="alert" className="text-sm text-destructive">
+            {keyError}
+          </p>
+        )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="model">Model</Label>
+        <Label id="model-label" htmlFor={customModel ? "model" : undefined}>
+          Model
+        </Label>
         {!customModel ? (
-          <select
-            id="model"
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          <Select
             value={model}
-            onChange={(e) => {
-              if (e.target.value === "__custom__") {
+            onValueChange={(value) => {
+              if (!value) return;
+              if (value === CUSTOM_MODEL) {
                 setCustomModel(true);
                 return;
               }
-              setModel(e.target.value);
+              setModel(value);
             }}
+            items={modelItems}
           >
-            {models.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-            <option value="__custom__">Custom model ID…</option>
-          </select>
+            <SelectTrigger aria-labelledby="model-label" className="h-9 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false} className="p-1">
+              {modelItems.map((item) => (
+                <SelectItem key={item.value} value={item.value} className="py-1.5 pl-2">
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : (
           <div className="flex gap-2">
             <Input
@@ -138,6 +249,19 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             </Button>
           </div>
         )}
+        {movedFrom && model === DEFAULT_MODELS[provider] ? (
+          <p className="text-xs text-muted-foreground">
+            Moved from {modelLabel(provider, movedFrom)} to {modelLabel(provider, model)}: newer, and
+            about half the price per token.{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-ink"
+              onClick={() => setModel(movedFrom)}
+            >
+              Switch back
+            </button>
+          </p>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -146,7 +270,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             pending ||
             (!apiKey.trim() &&
               !activeProviderStatus?.hasPersonalKey &&
-              !activeProviderStatus?.usingEnv)
+              !activeProviderStatus?.managedAvailable)
           }
           className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() =>
@@ -157,16 +281,22 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                   model,
                   apiKey: apiKey.trim() || undefined,
                 });
+                if (!res.ok) {
+                  setKeyError(res.error);
+                  return;
+                }
+                setKeyError(null);
                 setApiKey("");
                 setSettings(await getSettings());
                 toast.success(
-                  res.embeddingReset
-                    ? "Settings saved. Search embeddings reset for the new provider."
-                    : "AI settings saved"
+                  res.keyNote ??
+                    (res.embeddingReset
+                      ? "Saved — search will re-index for the new provider"
+                      : "AI settings saved")
                 );
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Failed to save"
+                  friendlyError(err, TOAST_COPY.saveFailed)
                 );
               }
             })
@@ -179,9 +309,13 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           disabled={pending || !activeProviderStatus?.hasPersonalKey}
           onClick={() =>
             start(async () => {
-              await clearApiKey(provider);
-              setSettings(await getSettings());
-              toast.success(`${providerMeta.label} key cleared`);
+              try {
+                await clearApiKey(provider);
+                setSettings(await getSettings());
+                toast.success(`${providerMeta.label} key cleared`);
+              } catch (err) {
+                toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+              }
             })
           }
         >
@@ -189,17 +323,57 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         </Button>
       </div>
 
-      <div className="border-t border-border/60 pt-4">
-        <p className="mb-2 text-sm font-medium text-ink">Saved keys</p>
+      <SettingsRow title="Saved keys">
         <ul className="space-y-1 text-sm text-muted-foreground">
-          {settings.providers.map((p) => (
-            <li key={p.id}>
-              {p.label}:{" "}
-              {p.hasPersonalKey ? "saved" : p.usingEnv ? "local env" : "none"}
-            </li>
-          ))}
+          {/* Same rule as the picker: a provider with no user-facing surface is not listed
+              — unless this account actually holds a key for it, in which case the row is
+              the only way to clear that key. */}
+          {settings.providers
+            .filter((p) => isSelectableAiProvider(p.id) || p.hasPersonalKey)
+            .map((p) => (
+              <li key={p.id} className="flex min-h-9 items-center justify-between gap-3">
+                <span>
+                  {p.label}:{" "}
+                  {p.hasPersonalKey
+                    ? "saved"
+                    : p.managedAvailable
+                      ? onLocalDevKeys
+                        ? "none — .env.local"
+                        : "none — Orbit’s key"
+                      : "none"}
+                </span>
+                {/* Per key, not per selected provider: switching provider used to leave the
+                    old key live for embeddings and transcription with no way to remove it. */}
+                {p.hasPersonalKey ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={pending}
+                    aria-label={`Clear saved ${p.label} key`}
+                    onClick={() =>
+                      start(async () => {
+                        try {
+                          const res = await clearApiKey(p.id);
+                          setSettings(await getSettings());
+                          toast.success(
+                            res.embeddingReset
+                              ? `${p.label} key cleared — search will re-index`
+                              : `${p.label} key cleared`
+                          );
+                        } catch (err) {
+                          toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+                        }
+                      })
+                    }
+                  >
+                    Clear
+                  </Button>
+                ) : null}
+              </li>
+            ))}
         </ul>
-      </div>
-    </section>
+      </SettingsRow>
+    </SettingsSection>
   );
 }

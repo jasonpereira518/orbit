@@ -52,7 +52,13 @@ export async function ensureReminderLists(userId: string) {
 }
 
 export async function getInboxListId(userId: string) {
-  const lists = await ensureReminderLists(userId);
+  return inboxIdFromLists(await ensureReminderLists(userId));
+}
+
+/** `getInboxListId` for a caller already holding `ensureReminderLists`' result. */
+export function inboxIdFromLists(
+  lists: Awaited<ReturnType<typeof ensureReminderLists>>
+) {
   const inbox = lists.find((l) => l.isInbox === 1) ?? lists[0];
   if (!inbox) throw new Error("Could not create Inbox list");
   return inbox.id;

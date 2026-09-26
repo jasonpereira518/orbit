@@ -2,16 +2,22 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
-import { dismissNoteReminder, undoNoteBatch } from "@/actions/note-batches";
+import { deleteNoteBatch, dismissNoteReminder, undoNoteBatch } from "@/actions/note-batches";
+import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import type { NoteBatchResult } from "@/lib/note-batches";
 import type { ReminderActionKind } from "@/db/schema";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
+import { MeetingSummaryCard } from "@/components/capture/meeting-summary-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 
 export type NoteBatchReminderDetail = {
   description: string | null;
@@ -55,6 +61,20 @@ export function NoteBatchResultView({
   const [local, setLocal] = useState(reminderStatus);
   const [editingId, setEditingId] = useState<string | null>(null);
   const undone = status === "undone";
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const deleteFocus = useConfirmFocus(confirmingDelete ? "delete" : null);
+
+  function deleteCapture() {
+    start(async () => {
+      try {
+        await deleteNoteBatch(batchId);
+        toast.success("Capture deleted");
+        router.push("/capture");
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t delete that capture — try again?"));
+      }
+    });
+  }
 
   function dismiss(id: string) {
     start(async () => {
@@ -62,7 +82,7 @@ export function NoteBatchResultView({
         await dismissNoteReminder(id);
         setLocal((s) => ({ ...s, [id]: "dismissed" }));
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not dismiss");
+        toast.error(friendlyError(err, "Couldn’t dismiss that — try again?"));
       }
     });
   }
@@ -82,20 +102,20 @@ export function NoteBatchResultView({
         toast.success(`Undone: ${out.remindersDismissed} reminders dismissed`);
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Undo failed");
+        toast.error(friendlyError(err, TOAST_COPY.undoFailed));
       }
     });
   }
 
   function removeContact(contactId: string) {
-    if (!confirm("Delete this contact and its notes?")) return;
+    if (!confirm(`Delete this contact? ${CONTACT_DELETE_EXPLAINER}`)) return;
     start(async () => {
       try {
         await deleteContact(contactId);
         toast.success("Contact deleted");
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Delete failed");
+        toast.error(friendlyError(err, TOAST_COPY.deleteFailed));
       }
     });
   }
@@ -109,21 +129,54 @@ export function NoteBatchResultView({
         <span className="text-muted-foreground">
           Relative dates counted from <strong className="text-ink">{anchorIso}</strong> ({ANCHOR_LABEL[anchorBasis]}).
         </span>
-        {undone ? (
-          <Badge variant="secondary">Undone</Badge>
+        {confirmingDelete ? (
+          <span className="flex flex-wrap items-center gap-2">
+            <span role="status" className="text-xs text-muted-foreground">
+              Delete this capture and its photos? The people and notes it saved stay.
+            </span>
+            <Button ref={deleteFocus.confirmRef("delete")} variant="destructive" size="sm" disabled={pending} onClick={deleteCapture}>
+              {pending ? "Deleting…" : "Delete"}
+            </Button>
+            <Button variant="ghost" size="sm" disabled={pending} onClick={() => setConfirmingDelete(false)}>
+              Cancel
+            </Button>
+          </span>
         ) : (
-          <Button variant="outline" size="sm" disabled={pending} onClick={undo}>Undo this batch</Button>
+          <span className="flex flex-wrap items-center gap-2">
+            {undone ? (
+              <Badge variant="secondary">Undone</Badge>
+            ) : (
+              <Button variant="outline" size="sm" disabled={pending} onClick={undo}>Undo this batch</Button>
+            )}
+            <Button
+              ref={deleteFocus.triggerRef("delete")}
+              variant="ghost"
+              size="sm"
+              disabled={pending}
+              className="text-muted-foreground hover:text-destructive"
+              onClick={() => setConfirmingDelete(true)}
+            >
+              Delete capture
+            </Button>
+          </span>
         )}
       </div>
+
+      {result.meeting && (
+        <MeetingSummaryCard meeting={result.meeting} sessionId={result.meeting.sessionId} />
+      )}
 
       <Card className="border-border/70 shadow-none">
         <CardHeader><CardTitle as="h2">People you spoke to</CardTitle></CardHeader>
         <CardContent>
+          {result.participants.length === 0 && (
+            <p className="text-sm text-muted-foreground">No one was saved as a contact from this batch.</p>
+          )}
           <ul className="space-y-2">
             {result.participants.map((p) => (
               <li key={p.contactId} className="flex items-center justify-between gap-2 text-sm">
                 <span>
-                  <Link href={`/contacts/${p.contactId}`} className="text-primary underline">{p.name}</Link>
+                  <IntentLink href={`/contacts/${p.contactId}`} className="text-primary underline">{p.name}</IntentLink>
                   {p.created && <Badge variant="secondary" className="ml-2 text-[10px]">New</Badge>}
                   {p.duplicate && <Badge variant="secondary" className="ml-2 text-[10px]">Already logged</Badge>}
                 </span>
@@ -142,7 +195,7 @@ export function NoteBatchResultView({
           <CardContent className="space-y-2 text-sm">
             {result.mentions.map((m) => (
               <p key={`${m.interactionId}-${m.contactId}`}>
-                &ldquo;{m.text}&rdquo; → <Link href={`/contacts/${m.contactId}`} className="text-primary underline">{name(m.contactId)}</Link>
+                &ldquo;{m.text}&rdquo; → <IntentLink href={`/contacts/${m.contactId}`} className="text-primary underline">{name(m.contactId)}</IntentLink>
                 <span className="text-muted-foreground"> · {Math.round(m.confidence * 100)}%</span>
               </p>
             ))}
@@ -244,7 +297,9 @@ export function NoteBatchResultView({
       )}
 
       <div className="flex gap-2">
-        <Link href="/capture"><Button variant="outline" size="sm">Paste more notes</Button></Link>
+        <Link href={result.meeting ? "/capture?mode=meeting" : "/capture"}>
+          <Button variant="outline" size="sm">{result.meeting ? "Record another meeting" : "Paste more notes"}</Button>
+        </Link>
         <Link href="/reminders"><Button variant="ghost" size="sm">Open reminders</Button></Link>
       </div>
     </div>

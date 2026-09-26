@@ -34,6 +34,39 @@ export const CAPTURE_BODY_SIZE_LIMIT = "32mb";
  */
 export const CAPTURE_MAX_UPLOAD_BYTES = 22 * 1024 * 1024;
 
+/**
+ * The largest request body Vercel lets reach a function: 4.5MB, on every plan.
+ *
+ * It sits UNDER both limits above, and it is enforced first: Vercel refuses the request
+ * (a plain-text 413) before any of our code runs. So `CAPTURE_MAX_UPLOAD_BYTES` is the
+ * size of one capture, never one request. A capture bigger than a request goes up in
+ * parts; see `planUploadBatches` in `src/lib/capture/upload-batches.ts`.
+ */
+export const PLATFORM_REQUEST_BODY_MAX_BYTES = 4.5 * 1024 * 1024;
+
+/**
+ * Raw file bytes per multipart request (`/api/capture/jobs`). Half a megabyte under the
+ * platform cap leaves room for the form fields and the multipart framing.
+ */
+export const CAPTURE_REQUEST_FILE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Raw file bytes per request when the files travel base64 inside JSON or a server action
+ * (the phone scan and the bulk notes panel). Base64 costs 4 bytes per 3, so 3MB of files
+ * is 4MB on the wire, with the same headroom for the rest of the body.
+ */
+export const CAPTURE_BASE64_REQUEST_FILE_BYTES = 3 * 1024 * 1024;
+
+/**
+ * The largest single meeting chunk the chunk route accepts, in raw WAV bytes.
+ *
+ * Bound by Vercel, not by Next: a serverless function refuses request bodies over 4.5MB
+ * before any of our code runs, and the route sends raw bytes (no base64), so this is the
+ * wire size too. The recorder's 90-second hard cut is ~2.9MB at 16 kHz mono int16, and
+ * `scripts/smoke-meeting-chunking.ts` pins that it stays under this.
+ */
+export const MEETING_CHUNK_MAX_BYTES = 4 * 1024 * 1024;
+
 /** Format bytes for an error message — "24.6 MB". */
 export function formatUploadSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

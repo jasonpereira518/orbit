@@ -25,6 +25,12 @@ export type AppPulse = {
   /** Due items not yet shown as a desktop notification, in the shape the OS notification needs. */
   dueItems: Array<{ id: string; title: string; body?: string; url: string }>;
   plan: Plan;
+  /**
+   * The account's desktop-notification preference; null if it has never been recorded.
+   * Carried here so every open tab converges on it within one pulse — see
+   * `syncDesktopNotificationsPreference`.
+   */
+  desktopNotificationsEnabled: boolean | null;
 };
 
 const DESKTOP_BATCH = 12;
@@ -42,5 +48,10 @@ export async function loadAppPulse(userId: string, now: Date): Promise<AppPulse>
     .filter((i) => i.urgency === "due" && !notified.has(i.id))
     .slice(0, DESKTOP_BATCH)
     .map((i) => ({ id: i.id, title: i.title, body: i.body || undefined, url: i.url }));
-  return { panel, dueItems, plan: entitlements.plan };
+  return {
+    panel,
+    dueItems,
+    plan: entitlements.plan,
+    desktopNotificationsEnabled: settings.desktopNotificationsEnabled ?? null,
+  };
 }

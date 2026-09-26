@@ -13,11 +13,13 @@
  * submit button.
  */
 
-import { put } from "@vercel/blob";
+import { put } from "@/lib/blob-lazy";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { feedback, feedbackScreenshots } from "@/db/schema";
 import { hasBlobStorage } from "@/lib/contact-avatar";
+import { notifyFeedbackSubmitted } from "@/lib/feedback-notify";
+import { safeReturnPath } from "@/lib/safe-return-path";
 import {
   FEEDBACK_AREAS,
   FEEDBACK_CATEGORIES,
@@ -158,16 +160,24 @@ export function decodeScreenshot(dataUrl: string): DecodedScreenshot | null {
  * somewhere else — `javascript:alert(1)`, `https://evil.test/x`, protocol-relative
  * `//evil.test` — has to become null here rather than being cleaned up at render time by
  * everyone who touches it.
+ *
+ * `safeReturnPath` decides the "is this app-relative" half, and it is the same function the
+ * Gmail and Outlook OAuth starts use. This function used to carry its own copy of that
+ * check, and the copy was weaker: `startsWith("/")` plus `!startsWith("//")` misses
+ * everything the WHATWG URL parser folds into an authority BEFORE it parses one, so
+ * `/\evil.example` (backslash folds to slash) and `/<TAB>/evil.example` (tab is stripped
+ * outright) both survived it and both resolve to `evil.example`.
+ *
+ * The fragment strip and the length cap stay here: they are this feature's policy, not a
+ * general fact about paths.
  */
 export function sanitizePath(raw: string | undefined | null): string | null {
   if (typeof raw !== "string") return null;
 
-  const hashless = raw.split("#")[0].trim();
-  if (!hashless.startsWith("/")) return null;
-  if (hashless.startsWith("//")) return null;
-  if (hashless.length > MAX_PATH) return null;
+  const path = safeReturnPath(raw.split("#")[0].trim());
+  if (path === null || path.length > MAX_PATH) return null;
 
-  return hashless;
+  return path;
 }
 
 /** File extension for the types `decodeScreenshot` admits. */
@@ -251,6 +261,13 @@ export async function createFeedbackSubmission(input: {
     // overload resolution in this TS version, the same way it does in `interest-list.ts`
     // and `import-engine.ts`.
     .returning();
+
+  notifyFeedbackSubmitted({
+    id: entry.id,
+    category: entry.category,
+    area: entry.area,
+    text: entry.text,
+  }).catch(() => {});
 
   if (input.screenshots.length === 0) return { id: entry.id, screenshotCount: 0 };
 

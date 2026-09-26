@@ -27,6 +27,7 @@
   --color-import-connections: var(--import-connections);
   --color-import-messages: var(--import-messages);
   --color-import-calendar: var(--import-calendar);
+  --color-import-scan: var(--import-scan);
   --color-interaction-together: var(--interaction-together);
   --color-interaction-live: var(--interaction-live);
   --color-interaction-written: var(--interaction-written);
@@ -37,6 +38,8 @@
   --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-warning-border: var(--warning-border);
   --color-info: var(--info);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -74,6 +77,10 @@
   --transition-duration-celestial: 700ms; /* landing + constellation set-pieces */
 
   --ease-house: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Strong ease-in-out, for something travelling across the screen rather than arriving
+   * (the mobile nav's pill). Not named `--ease-in-out`: Tailwind v4 owns that variable,
+   * and overriding it would retune every `ease-in-out` utility in the app. */
+  --ease-glide: cubic-bezier(0.77, 0, 0.175, 1);
 
   /* Retime every bare `transition-*` utility (~100 call sites) onto the
    * interaction tier in one place. */
@@ -112,8 +119,13 @@
   --success: #047857; /* emerald-700 — 5.0:1 on #ffffff */
   --warning: #b45309; /* amber-700   — 4.8:1 on #ffffff */
   --info: #1d4ed8; /* blue-700    — 7.0:1 on #ffffff */
+  /* The warning callout box (AI-key notice, capture caveats). Light values are
+     the exact amber-50/70 fill and amber-200/80 edge the boxes always used, as
+     oklch literals because Tailwind only emits palette vars that a class uses. */
+  --warning-surface: color-mix(in oklab, oklch(98.7% 0.022 95.277) 70%, transparent);
+  --warning-border: color-mix(in oklab, oklch(92.4% 0.12 95.746) 80%, transparent);
   /* The toast icon chip is its accent at a wash. Light surfaces need less of it
-     than dark ones, where the accent is pale and 12% vanishes into #212c42. */
+     than dark ones, where the accent is pale and 12% vanishes into #292c30. */
   --toast-chip-strength: 12%;
   --border: #e4e7e1;
   --input: #e4e7e1;
@@ -123,9 +135,21 @@
   --chart-3: #7aa896;
   --chart-4: #c4a35a;
   --chart-5: #8b5e3c;
+  /* Categorical series for multi-line admin charts (Growth). Separate from --chart-*,
+     which is a tonal teal ramp: fine for one or two series, but as a categorical set it
+     fails the chroma floor and two steps sit under 3:1 on the card. These five pass the
+     dataviz validator in both themes on both --card and --background — lightness band,
+     chroma, adjacent CVD separation, normal-vision floor, 3:1 contrast. Re-run it before
+     changing any value. Order is fixed; a series keeps its slot when others are hidden. */
+  --series-1: #008c7c;
+  --series-2: #e0662f;
+  --series-3: #2a6fd6;
+  --series-4: #b38200;
+  --series-5: #7a52c7;
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  --import-scan: #3f8a63;
   /* Timeline interaction families. Four groups over the ten interaction types, ordered by
      how much of the person was actually present: together (met them) -> live (spoke to them)
      -> written (exchanged text) -> yours (your own record, nothing confirmed). See
@@ -187,11 +211,15 @@
   color-scheme: light;
 }
 .dark {
-  /* ── Night sky ──
-   * The app chrome paints the same space the Constellation canvas and the
-   * landing page already live in (see lib/sky-palette.ts), rather than the
-   * neutral gray it used to be. Every neutral carries hue 220-222°, close
-   * enough to the sky's 227° to read as one continuous product.
+  /* ── Blue graphite ──
+   * The neutrals are graphite with a faint cool cast (b > g > r, hue ~215°), at
+   * a fraction of the old navy's chroma. The cast is just enough to sit with the
+   * sky-blue accent (`--primary`). A strong tint competes with the accents (navy
+   * read as too blue, teal as green). The only other colour is the gold ambient
+   * light (the body glow and the glass glint), and gold never becomes a control.
+   * The Constellation canvas and the landing page are still navy deep space
+   * (lib/sky-palette.ts). Moving from the app chrome into /graph is meant to
+   * read as stepping out into space.
    *
    * The surface ladder below is spaced by PERCEPTUAL lightness (L*), not by
    * WCAG contrast ratio: the ratio formula's +0.05 flare term compresses hard
@@ -200,39 +228,44 @@
    * ladder is monotonic — `--muted` used to sit ABOVE `--card`, which is why
    * recessed wells read as raised.
    *
-   *   sidebar     #080d18   L*  3.7
-   *   background  #0e1524   L*  6.8
-   *   muted       #151d2f   L* 10.9
-   *   card        #1a2438   L* 14.2
-   *   popover     #212c42   L* 18.0
-   *   border      #333f5a   L* 26.7
+   *   sidebar     #0c0d0e   L*  3.6
+   *   background  #141517   L*  6.7
+   *   muted       #1c1d20   L* 10.8
+   *   card        #222427   L* 14.1
+   *   popover     #292c30   L* 17.9
+   *   border      #3b3f45   L* 26.5
    */
-  --background: #0e1524;
-  --foreground: #e4ebf6;
-  --card: #1a2438;
-  --card-foreground: #e4ebf6;
-  --popover: #212c42;
-  --popover-foreground: #e4ebf6;
+  --background: #141517;
+  --foreground: #e7ecf1;
+  --card: #222427;
+  --card-foreground: #e7ecf1;
+  --popover: #292c30;
+  --popover-foreground: #e7ecf1;
   --primary: #7cc3e2;
   --primary-foreground: #04121b;
-  --secondary: #212c42;
-  --secondary-foreground: #e4ebf6;
-  --muted: #151d2f;
-  --muted-foreground: #96a8c4;
-  --accent: #20374f;
+  --secondary: #292c30;
+  --secondary-foreground: #e7ecf1;
+  --muted: #1c1d20;
+  --muted-foreground: #99a2aa; /* 6.0:1 on card, 5.4:1 on popover */
+  /* A dim slate-blue: the sky accent's own family, so accent text on it (9.5:1)
+     reads as one piece, but dark enough to sit in the graphite without going navy. */
+  --accent: #242e36;
   --accent-foreground: #aeddf0;
   --destructive: #ff6b6b;
-  /* Inverted for the dark ladder: `--popover` is #212c42 (L* 18), so the accents
+  /* Inverted for the dark ladder: `--popover` is #292c30 (L* 18), so the accents
      go pale — the same 300-weights the app already pairs with the light 700s. */
-  --success: #6ee7b7; /* emerald-300 — 8.9:1 on #212c42 */
-  --warning: #fcd34d; /* amber-300   — 10.3:1 on #212c42 */
-  --info: #93c5fd; /* blue-300    — 8.1:1 on #212c42 */
+  --success: #6ee7b7; /* emerald-300 — 9.2:1 on #292c30 */
+  --warning: #fcd34d; /* amber-300   — 9.7:1 on #292c30 */
+  --info: #93c5fd; /* blue-300    — 7.7:1 on #292c30 */
+  /* amber-500 at a wash, the same fill as the app's other amber notices. */
+  --warning-surface: rgb(245 158 11 / 0.1);
+  --warning-border: rgb(245 158 11 / 0.3);
   --toast-chip-strength: 18%;
-  --border: #333f5a;
+  --border: #3b3f45;
   /* Light enough to clear 3:1 against `--card` — this is a control boundary
-     (WCAG 1.4.11), not decoration. The old #3d3d3d managed 1.22:1, so text
-     fields had effectively no edge. */
-  --input: #626f90;
+     (WCAG 1.4.11), not decoration: 3.4:1 on card, 3.1:1 on popover. The old
+     #3d3d3d managed 1.22:1, so text fields had effectively no edge. */
+  --input: #70767f;
   --ring: #7cc3e2;
   /* Five distinct HUES with staggered lightness, so series stay separable in
      grayscale and under red-green colour blindness. The old dark ramp was five
@@ -245,9 +278,16 @@
   --chart-3: #7d8ee8;
   --chart-4: #f7d071;
   --chart-5: #f08a63;
+  /* Same five hues, stepped for the dark surface — validated as their own set. */
+  --series-1: #1a9e90;
+  --series-2: #d9612b;
+  --series-3: #4f86e3;
+  --series-4: #b8860b;
+  --series-5: #8e76e6;
   --import-connections: #9b9ff5;
   --import-messages: #f0956f;
   --import-calendar: #e2b45f;
+  --import-scan: #6fd39d;
   /* Same ladder inverted: brighter means more present on a dark card. */
   --interaction-together: #f5cd7a;
   --interaction-live: #f5a3c0;
@@ -257,18 +297,18 @@
      read as near-black here). */
   --tier-lifetime: #f2c14e;
   --tier-pro: #599de7;
-  --ink: #e4ebf6;
+  --ink: #e7ecf1;
   --admin-nav-hover: rgb(124 195 226 / 0.16);
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
-     black — a pure-black shadow over navy reads as a dead hole. */
-  --shadow-color: 218deg 60% 3%;
-  --sidebar: #080d18;
-  --sidebar-foreground: #e4ebf6;
+     black — a pure-black shadow over a tinted ground reads as a dead hole. */
+  --shadow-color: 215deg 20% 3%;
+  --sidebar: #0c0d0e;
+  --sidebar-foreground: #e7ecf1;
   --sidebar-primary: #7cc3e2;
   --sidebar-primary-foreground: #04121b;
-  --sidebar-accent: #1a2438;
+  --sidebar-accent: #222427;
   --sidebar-accent-foreground: #aeddf0;
-  --sidebar-border: #333f5a;
+  --sidebar-border: #3b3f45;
   --sidebar-ring: #7cc3e2;
   color-scheme: dark;
 }

@@ -39,13 +39,14 @@ async function insertKey(opts: {
   scopes?: Array<"read" | "write">;
   revoked?: boolean;
   userId?: string;
+  kind?: "api" | "mcp_url";
 }): Promise<string> {
   const db = await getDb();
-  const key = generateApiKey();
+  const key = generateApiKey(opts.kind ?? "api");
   await db.execute(sql`
     INSERT INTO api_keys (user_id, name, kind, prefix, key_hash, scopes, revoked_at)
     VALUES (
-      ${opts.userId ?? USER}, 'smoke key', 'api', ${key.prefix}, ${key.keyHash},
+      ${opts.userId ?? USER}, 'smoke key', ${opts.kind ?? "api"}, ${key.prefix}, ${key.keyHash},
       ${JSON.stringify(opts.scopes ?? ["read", "write"])}::jsonb,
       ${opts.revoked ? new Date() : null}
     )
@@ -111,7 +112,14 @@ run(async () => {
       SELECT to_jsonb(api_keys)::text AS row FROM api_keys WHERE user_id = ${USER} LIMIT 1
     `)
   )[0];
-  const secret = token.split("_").pop() as string;
+  // NOT `token.split("_").pop()`: the secret is base64url, whose own alphabet includes `_`,
+  // so about half the time that grabs only the tail after the LAST `_` inside the secret —
+  // and when the secret happens to END in `_`, the tail is "", and `"anything".includes("")`
+  // is always true, failing this check on a perfectly safe row. `prefix` is the one thing
+  // here guaranteed free of a `_` planted by the secret (hex + known namespace strings), and
+  // exactly one `_` separates it from the secret, so slicing past it is exact either way.
+  const storedPrefix = (JSON.parse(stored.row) as { prefix: string }).prefix;
+  const secret = token.slice(storedPrefix.length + 1);
   check(
     "the row contains no part of the secret",
     !stored.row.includes(secret),
@@ -141,6 +149,14 @@ run(async () => {
   const caller = await requireApiCaller(req(token), { scope: "read" });
   check("the caller resolves to the owning user", caller.userId === USER, caller.userId);
   check("the caller carries the key id for attribution", Boolean(caller.keyId));
+
+  // --- A connector key lives in a URL, so it is good for MCP and nothing else ---------------------
+  const connector = await insertKey({ kind: "mcp_url" });
+  check("an MCP connector key is refused by the REST API", (await reason(connector)) === "unknown");
+  const viaMcp = await requireApiCaller(req(null), { scope: "read", token: connector, surface: "mcp" })
+    .then(() => "allowed")
+    .catch((err) => (err instanceof ApiAuthError ? err.reason : String(err)));
+  check("but it works on the MCP surface", viaMcp === "allowed", viaMcp);
 
   // --- Revocation is immediate -------------------------------------------------------------------
   const revoked = await insertKey({ revoked: true });

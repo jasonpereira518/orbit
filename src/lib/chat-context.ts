@@ -1,21 +1,41 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   chatMessages,
   chatThreads,
   contacts,
   interactions,
-  userGoals,
   type ChatRecommendation,
 } from "@/db/schema";
-import { getAttentionBrief, isAttentionQuestion, type AttentionBrief } from "@/lib/chat-attention";
+import {
+  loadAttachedPeople,
+  renderAttachedPeople,
+  type AttachedPerson,
+} from "@/lib/chat-attached";
+import {
+  getAttentionBrief,
+  renderAttentionLite,
+  type AttentionBrief,
+} from "@/lib/chat-attention";
 import {
   budgetContactsContext,
   CANDIDATE_POOL,
-  rerankCandidates,
+  rerankCandidatesWithEngine,
+  type RankEngine,
   understandQuery,
+  type ChatTimelineEntry,
 } from "@/lib/chat-retrieval";
+import { openDecider, type Decider } from "@/lib/decisions/jev";
+import {
+  gateRosters,
+  routeChatQuestion,
+  rulesRoute,
+  type ChatRoute,
+  type ParsedIntent,
+} from "@/lib/decisions/chat-route";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
+import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
+import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { getCareerLines, getContactProfile } from "@/lib/contact-profile";
 import {
@@ -23,10 +43,15 @@ import {
   sanitizeProfileLine,
   sanitizeProfileText,
 } from "@/lib/contact-profile-format";
+import { embeddingFailureNotice } from "@/lib/chat-search-notice";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
+import { interactionTypeLabel } from "@/lib/interaction-types";
+import { isoDay } from "@/lib/suggested-reminder-utils";
 import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
-import { isRecruiterIntent } from "@/lib/recruiters";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { sanitizeDraft } from "@/lib/chat-draft";
 
 /**
  * Everything the model is shown for one question, assembled with the independent lookups
@@ -46,6 +71,8 @@ const PRIOR_TURN_LIMIT = 8;
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
+export type { ChatTimelineEntry };
+
 type Recruiters = Awaited<ReturnType<typeof loadRecruitersForChat>>;
 type BudgetedContact = ReturnType<typeof budgetContactsContext>[number];
 
@@ -54,13 +81,54 @@ export type ChatContext = {
   thread: { id: string; title: string | null } | null;
   priorTurns: ChatTurn[];
   retrieved: RankedContact[];
-  snippets: Map<string, { recentMessages: string[] }>;
+  /** Recent interactions per retrieved contact, as dated lines. */
+  snippets: Map<string, { timeline: ChatTimelineEntry[] }>;
   scopedQuestion: string;
+  /** Freeform context the user typed for this conversation, if any — never extracted into contacts. */
+  userContext: string | null;
+  /** One line to show under the answer when the semantic arm was unavailable. */
+  searchNotice: string | null;
+  /**
+   * The user's active networking goals, newest first.
+   *
+   * Trusted text: the user typed these into their own settings, so unlike notes and profile
+   * prose they are not fenced as untrusted in the prompt. The `goals` argument of
+   * `chatWithNetwork`.
+   */
+  goals: string[];
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
+  /**
+   * The overdue queue as one line, present for every question.
+   *
+   * Distinct from `attention`, which is the full brief and only loads for questions that ask
+   * — the full brief comes with an instruction to answer FROM it, and that instruction has
+   * to stay behind a narrow gate. This is the same facts with no instruction attached, so
+   * the model can answer a differently-worded question about who is slipping instead of
+   * pleading ignorance. Null only if the read failed.
+   */
+  attentionLite: string | null;
   recruitersForChat: Recruiters;
+  /**
+   * People the user attached with the composer's `+`, with their role and timeline.
+   *
+   * Deliberately not folded into `retrieved`: an attachment is the user naming someone
+   * outright, not a guess, so it carries a fuller record than a relevance-ranked row can
+   * afford and is exempt from the retrieval budget.
+   */
+  attachedPeople: AttachedPerson[];
+  /** The `attachedContext` argument of `chatWithNetwork` — the block above, as text. */
+  attachedContext: string | null;
+  /**
+   * How this question was routed — depth (one lookup or research), whether the attention
+   * brief and the recruiter list loaded — and which engine decided. `maybeGather` reads the
+   * depth from here instead of re-deciding it. Optional so hand-built contexts in tests work.
+   */
+  route?: ChatRoute;
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
+  /** A name for every id in `allowedContacts` — see `validateProposedActions`'s `contactNames`. */
+  contactNames: Map<string, string>;
   allowedRecruiters: Set<string>;
   /** The `contactsContext` argument of `chatWithNetwork`. */
   modelContacts: BudgetedContact[];
@@ -88,65 +156,144 @@ export type ChatContext = {
    * retrieved people. Rationing the subject of the question is the wrong trade.
    */
   focusProfile: string | null;
+  /**
+   * The user's own notes on how answers should read (`user_settings.writing_instructions`),
+   * or null. Read here, beside the rest of the request's context, so the streaming route and
+   * `askNetwork` cannot disagree about whether it applies. The client never sends it.
+   */
+  writingInstructions: string | null;
 };
 
-async function loadKnowledgeSnippets(
+/** Per contact, before the rank tiers trim it further. */
+const TIMELINE_FETCH_PER_CONTACT = 8;
+
+/**
+ * What has actually happened with each retrieved contact.
+ *
+ * This used to filter to `interaction_type = 'linkedin_message'`, which meant the coffee
+ * you logged on Tuesday never reached the model: unless a contact was explicitly attached,
+ * every answer about them was written from a free-text notes blob. That was a quality
+ * ceiling on the whole feature, not a gap in one corner of it. Lines are shaped like the
+ * attached block's (`renderAttachedPeople`) so a contact reads the same however they got
+ * into the prompt.
+ *
+ * The `row_number()` window is what makes it fair. A flat `LIMIT contactIds.length * N`
+ * ordered by date takes the most recent rows across everyone, so one contact you message
+ * daily can fill the whole allowance and leave eleven others with nothing. Partitioning
+ * gives each contact their own N.
+ */
+async function loadRecentInteractions(
   userId: string,
   contactIds: string[]
-): Promise<Map<string, { recentMessages: string[] }>> {
-  const result = new Map<string, { recentMessages: string[] }>();
+): Promise<Map<string, { timeline: ChatTimelineEntry[] }>> {
+  const result = new Map<string, { timeline: ChatTimelineEntry[] }>();
   if (!contactIds.length) return result;
 
   const db = await getDb();
-  const msgs = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      inArray(interactions.contactId, contactIds),
-      eq(interactions.interactionType, "linkedin_message")
-    ),
-    orderBy: [desc(interactions.interactionDate)],
-    limit: contactIds.length * 8,
-  });
+  const ranked = db
+    .select({
+      id: interactions.id,
+      contactId: interactions.contactId,
+      interactionDate: interactions.interactionDate,
+      interactionType: interactions.interactionType,
+      aiSummary: interactions.aiSummary,
+      rawNotes: interactions.rawNotes,
+      rn: sql<number>`row_number() over (
+        partition by ${interactions.contactId}
+        order by ${interactions.interactionDate} desc, ${interactions.sameDayOrder} desc
+      )`.as("rn"),
+    })
+    .from(interactions)
+    .where(
+      and(eq(interactions.userId, userId), inArray(interactions.contactId, contactIds))
+    )
+    .as("ranked");
 
-  const byContact = new Map<string, string[]>();
-  for (const m of msgs) {
-    const list = byContact.get(m.contactId) || [];
-    if (list.length >= 6) continue;
-    const text = (m.aiSummary || m.rawNotes || "").trim();
+  const rows = await db
+    .select({
+      id: ranked.id,
+      contactId: ranked.contactId,
+      interactionDate: ranked.interactionDate,
+      interactionType: ranked.interactionType,
+      aiSummary: ranked.aiSummary,
+      rawNotes: ranked.rawNotes,
+    })
+    .from(ranked)
+    .where(sql`${ranked.rn} <= ${TIMELINE_FETCH_PER_CONTACT}`)
+    .orderBy(desc(ranked.interactionDate));
+
+  const byContact = new Map<string, ChatTimelineEntry[]>();
+  for (const row of rows) {
+    const text = (row.aiSummary || row.rawNotes || "").trim();
     if (!text) continue;
-    list.push(text.slice(0, 280));
-    byContact.set(m.contactId, list);
+    const list = byContact.get(row.contactId) || [];
+    // Sanitized for the same reason the attached block sanitizes: a newline inside a note
+    // would otherwise forge a row of its own inside the fenced contacts list.
+    const date = isoDay(new Date(row.interactionDate));
+    const line = `${date} · ${interactionTypeLabel(
+      row.interactionType
+    )}: ${sanitizeProfileLine(text)}`;
+    list.push({ id: row.id, date, line });
+    byContact.set(row.contactId, list);
   }
 
   for (const id of contactIds) {
-    result.set(id, { recentMessages: byContact.get(id) || [] });
+    result.set(id, { timeline: byContact.get(id) || [] });
   }
   return result;
 }
 
+/** How many active goals reach a prompt. Newest first; the rest are still the user's, just not steering this answer. */
+const GOAL_LIMIT = 5;
+
 async function loadActiveGoalTexts(userId: string): Promise<string[]> {
-  const db = await getDb();
-  const rows = await db.query.userGoals
-    .findMany({
-      where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
-      columns: { text: true },
-      orderBy: [desc(userGoals.createdAt)],
-      limit: 5,
-    })
-    .catch(() => []);
-  return rows.map((g) => g.text);
+  return listActiveGoalTextsForUser(userId, { limit: GOAL_LIMIT }).catch(() => []);
 }
 
 /** Stage 0-3: query embedding + parse (parallel), wide hybrid retrieval, flash rerank. */
+/** The rank step's detail line: which engine put these contacts in this order. */
+const RANK_ENGINE_DETAIL: Record<RankEngine, string> = {
+  jev: "Ranked by the decision model",
+  llm: "Ranked by your AI model",
+  search: "In search order",
+};
+
 async function retrieveRankedContacts(
   userId: string,
-  q: string
-): Promise<RankedContact[]> {
+  q: string,
+  steps: StepEmitter = NULL_STEPS,
+  photos: PhotoCache = createPhotoCache(),
+  /**
+   * Shared with the router (`prepareChatContext`): the decider it already opened, and a hook
+   * that hands it the parser's intent flags the moment they exist.
+   */
+  routing?: { decider: Promise<Decider | null>; onIntent: (intent: ParsedIntent | null) => void }
+): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
   const activeGoals = await loadActiveGoalTexts(userId);
-  const [queryEmbedding, parsedQuery] = await Promise.all([
-    getQueryEmbedding(userId, q).catch(() => null),
-    understandQuery(userId, q, activeGoals),
+  let searchNotice: string | null = null;
+  steps.start("understand", "Working out what you're asking for");
+  // The embedding still degrades to keywords — but now says so, instead of letting the
+  // model conclude the user knows nobody like that. (The comment lives above the call:
+  // smoke-chat-pipeline asserts these two run in one Promise.all by source shape.)
+  const [queryEmbedding, parsedQuery, decider] = await Promise.all([
+    getQueryEmbedding(userId, q).catch((err) => {
+      searchNotice = embeddingFailureNotice(err);
+      return null;
+    }),
+    understandQuery(userId, q, activeGoals).then((parsed) => {
+      routing?.onIntent(parsed.intent ?? null);
+      return parsed;
+    }),
+    // Beside the two above, so an account read costs the question no time. Null (no
+    // TypeSafe key) for most accounts, and the rank step then runs the LLM rerank.
+    routing?.decider ?? openDecider(userId),
   ]);
+  steps.done("understand", {
+    label: "Worked out what you're asking for",
+    detail: describeParsedQuery(parsedQuery),
+  });
+
+  steps.start("search", "Searching your network");
   const candidates = await hybridSearchContacts(userId, {
     query: q,
     embedding: queryEmbedding,
@@ -154,7 +301,69 @@ async function retrieveRankedContacts(
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
   });
-  return rerankCandidates(userId, q, candidates);
+  // The strongest few candidates, so the activity scene can show who is in play the moment
+  // they are found rather than waiting for the rerank. They are candidates, not answers —
+  // the rank step below replaces them with whoever survives — so the summary and the
+  // finished view deliberately ignore this step's refs.
+  const candidateRefs = toRefs(
+    candidates.map((c) => ({ id: c.id, name: c.fullName })),
+    "contact"
+  );
+  steps.done("search", {
+    label: `Searched your network, found ${plural(candidates.length, "candidate")}`,
+    detail: describeArms(candidates.flatMap((c) => c.matchedArms ?? [])),
+    refs: candidateRefs,
+  });
+  attachPhotos(steps, "search", candidateRefs, userId, photos);
+
+  steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
+  const { contacts: ranked, engine: rankEngine } = await rerankCandidatesWithEngine(
+    userId,
+    q,
+    candidates,
+    undefined,
+    parsedQuery.semanticQuery,
+    decider
+  );
+  const keptRefs = toRefs(
+    ranked.map((c) => ({ id: c.id, name: c.fullName })),
+    "contact"
+  );
+  steps.done("rank", {
+    label: `Kept the ${plural(ranked.length, "closest match", "closest matches")}`,
+    // Which engine ranked, so a surprising order can be traced to it.
+    ...(rankEngine ? { detail: RANK_ENGINE_DETAIL[rankEngine] } : {}),
+    refs: keptRefs,
+  });
+  attachPhotos(steps, "rank", keptRefs, userId, photos);
+  // The goals come back out because they belong in the ANSWER prompt too, not just in the
+  // query parse. They were loaded here and used only to help `understandQuery` read the
+  // question, so the model that actually wrote the answer never learned what the user was
+  // trying to accomplish — every other AI surface in the product (outreach, starters,
+  // follow-up drafts) has been given them for months.
+  return { ranked, searchNotice, goals: activeGoals };
+}
+
+/** What the query parser actually understood, as a line a person can check. */
+function describeParsedQuery(parsed: {
+  filters?: Record<string, unknown> | null;
+  expansionTerms?: readonly string[] | null;
+}): string | undefined {
+  const parts: string[] = [];
+  const filters = parsed.filters ?? {};
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === null || value === undefined) continue;
+    if (Array.isArray(value)) {
+      if (value.length) parts.push(`${key}: ${value.join(", ")}`);
+    } else if (typeof value === "string" && value.trim()) {
+      parts.push(`${key}: ${value}`);
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      parts.push(`${key}: ${String(value)}`);
+    }
+  }
+  const expansions = parsed.expansionTerms ?? [];
+  if (expansions.length) parts.push(`also: ${expansions.slice(0, 5).join(", ")}`);
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 // Every field below is written by the profile's owner, so it is exactly as
@@ -266,47 +475,191 @@ export function renderFocusProfile(profile: Awaited<ReturnType<typeof getContact
 export async function prepareChatContext(
   userId: string,
   question: string,
-  options: { threadId?: string | null; focusContactId?: string | null }
+  options: {
+    threadId?: string | null;
+    focusContactId?: string | null;
+    /** Contact ids the user attached with the composer's `+`. See `@/lib/chat-attached`. */
+    contextContactIds?: readonly string[] | null;
+    /**
+     * Narrates each stage as it runs. Supplied by the streaming route; omitted by
+     * `askNetwork`, which has no channel to report on. See `@/lib/chat-steps`.
+     */
+    steps?: StepEmitter;
+    /**
+     * Prior-turn history omits every row in this slot — both the version being replaced and
+     * the not-yet-committed one being written. Set only on a version request; otherwise the
+     * turn being asked about is not in history anyway (it has not been sent yet).
+     */
+    excludeSlot?: string | null;
+  }
 ): Promise<ChatContext> {
   const db = await getDb();
   const q = question.trim();
   if (!q) throw new Error("Question is required");
   const threadId = options.threadId ?? null;
   const focusContactId = options.focusContactId?.trim() || null;
+  const attachedIds = (options.contextContactIds ?? []).filter(
+    (id): id is string => typeof id === "string" && id.trim().length > 0
+  );
+  const steps = options.steps ?? NULL_STEPS;
+  const photos = createPhotoCache();
+
+  // ROUTING (decisions/chat-route.ts). Decided beside retrieval, never in front of it: the
+  // decision model answers in ~200ms and retrieval takes 1–5s, so the branches it gates
+  // (attention brief, recruiter list) chain off it without adding to the question's time.
+  // Without a decision model it waits for the parser's intent flags (the call retrieval
+  // already makes), and without those, the keyword rules route as they always did.
+  const priorRowsP = threadId
+    ? db.query.chatMessages
+        .findMany({
+          where: and(
+            eq(chatMessages.threadId, threadId),
+            eq(chatMessages.userId, userId),
+            eq(chatMessages.isActive, true),
+            options.excludeSlot ? sql`${chatMessages.slot} is distinct from ${options.excludeSlot}` : undefined
+          ),
+          orderBy: [desc(chatMessages.createdAt)],
+          limit: PRIOR_TURN_LIMIT,
+          columns: { role: true, content: true },
+        })
+        .then((rows) =>
+          // A stopped turn persists its question with no reply. Newest-first, so that is
+          // only ever the first row — never orphan it into history as an unanswered ask.
+          // The router reads these too: an unanswered question is not a turn to follow up on.
+          rows.length && rows[0]!.role === "user" ? rows.slice(1) : rows
+        )
+    : Promise.resolve([] as Array<{ role: string; content: string }>);
+  const deciderP = openDecider(userId);
+  let settleIntent: (intent: ParsedIntent | null) => void = () => {};
+  const intentP = new Promise<ParsedIntent | null>((resolve) => {
+    settleIntent = resolve;
+  });
+  const routeP: Promise<ChatRoute> = Promise.all([deciderP, priorRowsP])
+    .then(([decider, rows]) =>
+      routeChatQuestion({
+        decider,
+        question: q,
+        priorTurns: rows.slice().reverse(),
+        intent: () => intentP,
+      })
+    )
+    .catch(() => rulesRoute(q, false));
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
-  const [thread, priorRows, retrieved, orgRosters, attention, recruitersForChat] =
-    await Promise.all([
+  const [
+    thread,
+    priorRows,
+    retrieval,
+    orgRosters,
+    attention,
+    attentionLite,
+    recruitersForChat,
+    attachedPeople,
+    writingInstructions,
+  ] = await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
             where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
-            columns: { id: true, title: true },
+            columns: { id: true, title: true, contextNote: true },
           })
         : Promise.resolve(null),
-      threadId
-        ? db.query.chatMessages.findMany({
-            where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
-            orderBy: [desc(chatMessages.createdAt)],
-            limit: PRIOR_TURN_LIMIT,
-            columns: { role: true, content: true },
-          })
-        : Promise.resolve([]),
-      retrieveRankedContacts(userId, q),
+      priorRowsP,
+      // Whatever happens to retrieval, the router is never left waiting on the parser.
+      retrieveRankedContacts(userId, q, steps, photos, { decider: deciderP, onIntent: settleIntent }).finally(
+        () => settleIntent(null)
+      ),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.
-      findOrgRosters(userId, q).catch(() => [] as OrgRoster[]),
+      // Runs for every question, but only worth reporting when it actually names an org.
+      findOrgRosters(userId, q)
+        .catch(() => [] as OrgRoster[])
+        // Only rosters the question is ABOUT — an org name used as an ordinary word, or
+        // named in passing, no longer attaches an "authoritative" roster (decision model).
+        .then((matched) => deciderP.then((decider) => gateRosters(decider, q, matched)))
+        .then(({ rosters }) => {
+          const named = rosters[0];
+          if (named) {
+            steps.done("roster", {
+              label: `You know ${plural(named.total, "person", "people")} at ${named.name}`,
+              refs: toRefs([{ id: named.name, name: named.name }], "org"),
+            });
+          }
+          return rosters;
+        }),
       // Who the dashboard would say needs attention, only for questions that ask.
-      isAttentionQuestion(q)
-        ? getClosenessCohort(userId)
-            .catch(() => null)
-            .then((cohort) => getAttentionBrief(userId, cohort?.interactedIds))
-            .catch(() => null)
-        : Promise.resolve(null),
-      isRecruiterIntent(q) ? loadRecruitersForChat(q, 8) : Promise.resolve([] as Recruiters),
+      routeP.then((route) =>
+      route.attention
+        ? (() => {
+            steps.start("attention", "Checking who is overdue");
+            return getClosenessCohort(userId)
+              .catch(() => null)
+              .then((cohort) => getAttentionBrief(userId, cohort?.interactedIds))
+              .catch(() => null)
+              .then((brief) => {
+                const overdueRefs = brief
+                  ? toRefs(
+                      brief.overdue.map((c) => ({ id: c.id, name: c.name })),
+                      "contact"
+                    )
+                  : undefined;
+                steps.done("attention", {
+                  label: brief
+                    ? `Checked ${plural(brief.overdue.length, "overdue follow-up")}`
+                    : "Checked overdue follow-ups",
+                  refs: overdueRefs,
+                });
+                attachPhotos(steps, "attention", overdueRefs, userId, photos);
+                return brief;
+              });
+          })()
+        : Promise.resolve(null)),
+      // The same queue as one line, for every other question — see `renderAttentionLite`.
+      // Never fatal, and never carries an instruction to act on it.
+      renderAttentionLite(userId).catch(() => null),
+      routeP.then((route) =>
+      route.recruiters
+        ? (() => {
+            steps.start("recruiters", "Checking your recruiter list");
+            return loadRecruitersForChat(q, 8).then((list) => {
+              steps.done("recruiters", {
+                label: `Checked ${plural(list.length, "recruiter")}`,
+                refs: toRefs(
+                  list.map((r) => ({ id: r.id, name: r.fullName })),
+                  "recruiter"
+                ),
+              });
+              return list;
+            });
+          })()
+        : Promise.resolve([] as Recruiters)),
+      // Depends on ids the client already resolved, so it needs neither the question nor
+      // the search. Never fatal: a question with a dead attachment is still a question.
+      attachedIds.length
+        ? (() => {
+            steps.start("attached", `Reading ${plural(attachedIds.length, "person", "people")} you named`);
+            return loadAttachedPeople(userId, attachedIds)
+              .catch(() => [] as AttachedPerson[])
+              .then((people) => {
+                const namedRefs = toRefs(
+                  people.map((p) => ({ id: p.id, name: p.name })),
+                  "contact"
+                );
+                steps.done("attached", {
+                  label: `Read ${plural(people.length, "person", "people")} you named`,
+                  refs: namedRefs,
+                });
+                attachPhotos(steps, "attached", namedRefs, userId, photos);
+                return people;
+              });
+          })()
+        : Promise.resolve([] as AttachedPerson[]),
+      // Style notes never block an answer: a failed read is "no preferences".
+      loadWritingInstructions(userId).catch(() => null),
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
+  const retrieved = retrieval.ranked;
 
   const priorTurns: ChatTurn[] = priorRows
     .slice()
@@ -314,9 +667,31 @@ export async function prepareChatContext(
     .map((m) => ({ role: m.role as ChatTurn["role"], content: m.content }));
 
   if (focusContactId) {
+    // Exactly the fields the RankedContact entry below is built from — not the whole row
+    // (inline avatar, enrichment blobs) and whole tag rows, to read these.
     const focused = await db.query.contacts.findFirst({
       where: and(eq(contacts.id, focusContactId), eq(contacts.userId, userId)),
-      with: { contactTags: { with: { tag: true } } },
+      columns: {
+        id: true,
+        fullName: true,
+        preferredName: true,
+        company: true,
+        school: true,
+        title: true,
+        location: true,
+        email: true,
+        industry: true,
+        notes: true,
+        aiSummary: true,
+        keyFacts: true,
+        opportunities: true,
+        relationshipScore: true,
+        priorityLevel: true,
+        closenessTier: true,
+      },
+      with: {
+        contactTags: { columns: { tagId: true }, with: { tag: { columns: { name: true } } } },
+      },
     });
     if (focused) {
       const focusEntry: RankedContact = {
@@ -332,6 +707,7 @@ export async function prepareChatContext(
         notes: focused.notes,
         aiSummary: focused.aiSummary,
         keyFacts: focused.keyFacts || [],
+        opportunities: focused.opportunities || [],
         relationshipScore: focused.relationshipScore,
         priorityLevel: focused.priorityLevel,
         closenessTier: focused.closenessTier,
@@ -353,12 +729,23 @@ export async function prepareChatContext(
   // contactId and simply returns null for a contact the user does not own — so it belongs
   // in this parallel batch rather than a serial await gated on that lookup.
   const retrievedIds = retrieved.map((c) => c.id);
+  if (retrievedIds.length) {
+    steps.start("read", `Reading notes on ${plural(retrievedIds.length, "person", "people")}`);
+  }
   const [snippets, careerLines, focusMsgs, focusProfileData] = await Promise.all([
-    loadKnowledgeSnippets(userId, retrievedIds),
+    loadRecentInteractions(userId, retrievedIds),
     getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     focusContactId
       ? db.query.interactions.findMany({
           where: and(eq(interactions.userId, userId), eq(interactions.contactId, focusContactId)),
+          // What the timeline lines below read.
+          columns: {
+            id: true,
+            interactionDate: true,
+            interactionType: true,
+            aiSummary: true,
+            rawNotes: true,
+          },
           orderBy: [desc(interactions.interactionDate)],
           limit: 16,
         })
@@ -367,25 +754,56 @@ export async function prepareChatContext(
       ? getContactProfile(userId, focusContactId).catch(() => null)
       : Promise.resolve(null),
   ]);
+  if (retrievedIds.length) {
+    // Count the people who actually had something written about them, not the page size —
+    // "read notes on 9 people" when six of them are blank would be a lie.
+    const withNotes = retrieved.filter((c) => (snippets.get(c.id)?.timeline?.length ?? 0) > 0);
+    steps.done("read", {
+      label: withNotes.length
+        ? `Read notes on ${plural(withNotes.length, "person", "people")}`
+        : "No notes written on these people yet",
+      detail: careerLines.size ? `${plural(careerLines.size, "career history", "career histories")}` : undefined,
+      refs: toRefs(
+        withNotes.map((c) => ({ id: c.id, name: c.fullName })),
+        "contact"
+      ),
+    });
+  }
   const focusProfile = renderFocusProfile(focusProfileData);
   if (focusContactId) {
+    // The focused contact still gets a deeper slice than the tiers would allow, and now in
+    // the same dated shape as everyone else.
     snippets.set(focusContactId, {
-      recentMessages: focusMsgs
-        .map((m) => (m.aiSummary || m.rawNotes || "").trim())
-        .filter(Boolean)
-        .slice(0, 12)
-        .map((t) => t.slice(0, 320)),
+      timeline: focusMsgs
+        .map((m): ChatTimelineEntry | null => {
+          const text = (m.aiSummary || m.rawNotes || "").trim();
+          if (!text) return null;
+          const date = isoDay(new Date(m.interactionDate));
+          const line = `${date} · ${interactionTypeLabel(
+            m.interactionType
+          )}: ${sanitizeProfileLine(text).slice(0, 320)}`;
+          return { id: m.id, date, line };
+        })
+        .filter((entry): entry is ChatTimelineEntry => entry !== null)
+        .slice(0, 12),
     });
   }
 
-  const scopedQuestion = focusContactId
-    ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]\n\n${q}`
-    : q;
+  const userContext = thread?.contextNote?.trim() || null;
+  const scopedQuestion = [
+    focusContactId
+      ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]`
+      : null,
+    userContext ? `[Context provided by the user for this conversation: ${userContext}]` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .concat(q)
+    .join("\n\n");
 
   // Sized by rank under a total char budget — a later, cheaper contact must not be
   // appended out of rank order once the budget runs dry, so this can be a strict prefix
   // of `retrieved`.
-  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines);
+  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines, q);
 
   // Roster and attention contacts are as legitimate a recommendation as retrieved ones —
   // they came from the same user's own rows — so they must not be filtered out for being
@@ -394,9 +812,22 @@ export async function prepareChatContext(
   // trailing contacts once the char budget runs out.
   const allowedContacts = new Set([
     ...modelContacts.map((c) => c.id),
+    // An attached person is in the prompt whether or not retrieval found them, so they
+    // must be recommendable — otherwise the model names them and the filter drops the card.
+    ...attachedPeople.map((p) => p.id),
     ...orgRosters.flatMap((r) => r.people.map((p) => p.id)),
     ...(attention?.overdue.map((c) => c.id) ?? []),
     ...(attention?.suggestions.map((c) => c.id) ?? []),
+  ]);
+  // Every name paired with an id in `allowedContacts`, for a proposed action's preview text
+  // ("Log a note on Ada Lovelace…") — same sources, same order, so a name is never missing
+  // for an id the allowlist itself accepts.
+  const contactNames = new Map<string, string>([
+    ...modelContacts.map((c): [string, string] => [c.id, c.fullName]),
+    ...attachedPeople.map((p): [string, string] => [p.id, p.name]),
+    ...orgRosters.flatMap((r) => r.people.map((p): [string, string] => [p.id, p.name])),
+    ...(attention?.overdue.map((c): [string, string] => [c.id, c.name]) ?? []),
+    ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
   ]);
   const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
   const maxScore = Math.max(1, ...recruitersForChat.map((r) => r.score));
@@ -405,16 +836,25 @@ export async function prepareChatContext(
     q,
     thread: thread ?? null,
     priorTurns,
+    route: await routeP,
     retrieved,
     snippets,
     scopedQuestion,
+    userContext,
+    searchNotice: retrieval.searchNotice,
+    goals: retrieval.goals,
     orgRosters,
     attention,
+    attentionLite,
     recruitersForChat,
+    attachedPeople,
+    attachedContext: renderAttachedPeople(attachedPeople),
     allowedContacts,
+    contactNames,
     allowedRecruiters,
     modelContacts,
     focusProfile,
+    writingInstructions,
     modelRecruiters: recruitersForChat.map((r) => ({
       id: r.id,
       fullName: r.fullName,
@@ -429,10 +869,18 @@ export async function prepareChatContext(
       relevance: r.score / maxScore,
     })),
     filterRecommendations: (raw) =>
-      (raw || []).filter((r) => {
-        if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
-        if (r.contact_id) return allowedContacts.has(r.contact_id);
-        return false;
-      }),
+      (raw || [])
+        .filter((r) => {
+          if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
+          if (r.contact_id) return allowedContacts.has(r.contact_id);
+          return false;
+        })
+        // The draft is text a model wrote from records that can carry text someone else typed,
+        // and it becomes an editable, sendable message. Strip what a reader cannot see.
+        .map((r) =>
+          typeof r.draft_message === "string"
+            ? { ...r, draft_message: sanitizeDraft(r.draft_message) }
+            : r
+        ),
   };
 }

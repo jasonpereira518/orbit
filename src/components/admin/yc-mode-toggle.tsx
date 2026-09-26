@@ -22,7 +22,7 @@ export function YCModeToggle({ active }: { active: boolean }) {
       disabled={pending}
       onClick={() => start(() => setYcModeAction({ on: !active }))}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors duration-fast disabled:opacity-60",
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs transition-colors duration-fast disabled:opacity-60",
         active
           ? "border-primary/40 bg-primary/10 text-primary"
           : "border-border/70 text-muted-foreground hover:text-foreground"

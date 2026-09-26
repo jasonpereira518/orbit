@@ -1,11 +1,13 @@
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { closenessCohorts, contacts, interactions, userGoals } from "@/db/schema";
+import { countsAsTouch } from "@/lib/interaction-provenance";
 import type {
   ClosenessCohortSnapshot,
   StoredClosenessBreakdown,
 } from "@/db/schema";
 import { isCoveredByConnectedSource } from "@/lib/closeness-evidence";
+import { settle, unwrap } from "@/lib/settled";
 import {
   applyClosenessCohort,
   computeRawCloseness,
@@ -267,19 +269,6 @@ export async function countUnscoredContacts(userId: string): Promise<number> {
 }
 
 /**
- * Whether reading stored scores would be misleading right now.
- *
- * Dirtiness alone does not qualify: a stale *ranking* is the tradeoff this design accepts.
- * What does qualify is having no distribution at all, or contacts that have never been
- * scored — those would render as a closeness of zero, which is wrong rather than stale.
- */
-export async function needsRecalibration(userId: string): Promise<boolean> {
-  const row = await readCohortRow(userId);
-  if (!row || !isUsableSnapshot(row.snapshot)) return true;
-  return (await countUnscoredContacts(userId)) > 0;
-}
-
-/**
  * Score one contact against the stored distribution and write just that row.
  *
  * This is what keeps ordinary writes off the expensive path. Without it a newly created
@@ -298,16 +287,18 @@ export async function rescoreContact(
   userId: string,
   contactId: string
 ): Promise<boolean> {
-  const cohortRow = await readCohortRow(userId);
-  if (!cohortRow || !isUsableSnapshot(cohortRow.snapshot)) return false;
-
-  const snapshot = cohortRow.snapshot;
+  // The stored distribution and the contact need nothing from each other, so they start
+  // together; then goals, touch counts and the two concentration counts (which need the
+  // contact's company/school) go out as one batch. Two round trips where there were three.
+  // Outcomes are still consumed in the old order: an unusable distribution returns false
+  // before the contact is looked at (a failed contact read included, exactly as when it was
+  // never issued), then the contact's error or not-found. `settle` holds the contact's
+  // outcome so an early return never leaves an unhandled rejection behind. Goals and touch
+  // counts are still only read once both gates pass — a network with no usable
+  // distribution yet pays one extra read, not three.
   const db = await getDb();
-  const since = new Date(
-    Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
-  );
-
-  const contact = await db.query.contacts.findFirst({
+  const cohortRead = settle(readCohortRow(userId));
+  const contactRead = settle(db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: {
       id: true,
@@ -328,7 +319,17 @@ export async function rescoreContact(
       sharedInterests: true,
     },
     with: { contactTags: { with: { tag: true } } },
-  });
+  }));
+
+  const cohortRow = unwrap(await cohortRead);
+  if (!cohortRow || !isUsableSnapshot(cohortRow.snapshot)) return false;
+
+  const snapshot = cohortRow.snapshot;
+  const since = new Date(
+    Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+
+  const contact = unwrap(await contactRead);
   if (!contact) return false;
 
   const [goalRows, touchRows, companyRows, schoolRows] = await Promise.all([
@@ -345,7 +346,8 @@ export async function rescoreContact(
       .where(
         and(
           eq(interactions.userId, userId),
-          eq(interactions.contactId, contactId)
+          eq(interactions.contactId, contactId),
+          countsAsTouch()
         )
       ),
     // Concentration for this contact's employer only — not a scan of the network to

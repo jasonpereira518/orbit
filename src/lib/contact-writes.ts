@@ -14,7 +14,14 @@
 import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
+import {
+  buildMemoryChunks,
+  deleteMemoryChunks,
+  memorySourceHash,
+  syncMemoryChunks,
+} from "@/lib/memory-chunks";
+import { interactionTypeLabel } from "@/lib/interaction-types";
 import {
   contactIdentities,
   contactTags,
@@ -120,7 +127,18 @@ export type ContactInput = {
   aiSummary?: string;
   keyFacts?: string[];
   sharedInterests?: string[];
+  /**
+   * LEGACY. `contacts.opportunities` is now a mirror derived from `contact_opportunities`
+   * by `syncContactOpportunityMirror`, which is its only writer. This field has no caller
+   * left; it is kept so the removal is its own change rather than noise in this one, and
+   * so an out-of-tree caller fails loudly at review rather than silently overwriting.
+   */
   opportunities?: string[];
+  /** A rhythm the notes stated ("check in monthly"), resolved to days. */
+  cadenceDays?: number | null;
+  cadencePhrase?: string | null;
+  cadenceSource?: "note" | "user" | null;
+  cadenceSetAt?: Date | null;
   nextFollowUpAt?: string | null;
   tagNames?: string[];
 };
@@ -172,6 +190,41 @@ export function safeTimestamp(value?: string | Date | null): Date | null {
   return date;
 }
 
+/** Trimmed, blank-free, and de-duplicated case-insensitively (the first spelling wins). */
+function cleanTagNames(tagNames: readonly string[] = []): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of tagNames) {
+    const name = raw.trim();
+    if (name && !seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * The account's tags for these names, creating the missing ones — matched CASE-
+ * INSENSITIVELY. An exact match made "Fintech", "fintech" and "FinTech" three tags, because
+ * every capture writes whatever casing the model happened to produce. Keyed by lowercase.
+ */
+async function tagsFor(userId: string, names: readonly string[]) {
+  const db = await getDb();
+  const byLower = new Map<string, typeof tags.$inferSelect>();
+  if (names.length === 0) return byLower;
+  const existing = await db.query.tags.findMany({
+    where: and(eq(tags.userId, userId), inArray(sql`lower(${tags.name})`, names.map((n) => n.toLowerCase()))),
+  });
+  for (const tag of existing) if (!byLower.has(tag.name.toLowerCase())) byLower.set(tag.name.toLowerCase(), tag);
+
+  const missing = names.filter((name) => !byLower.has(name.toLowerCase()));
+  if (missing.length > 0) {
+    const created = await db
+      .insert(tags)
+      .values(missing.map((name) => ({ userId, name })))
+      .returning();
+    for (const tag of created) byLower.set(tag.name.toLowerCase(), tag);
+  }
+  return byLower;
+}
+
 async function syncTags(
   userId: string,
   contactId: string,
@@ -179,34 +232,51 @@ async function syncTags(
 ) {
   const db = await getDb();
   await db.delete(contactTags).where(eq(contactTags.contactId, contactId));
+  await attachTags(userId, contactId, tagNames);
+}
 
-  const names = [
-    ...new Set(tagNames.map((raw) => raw.trim()).filter(Boolean)),
-  ];
+/**
+ * The insert half of `syncTags`, for a contact that provably has no tags: one this call
+ * just inserted. Its id is a fresh database-generated uuid, `contact_tags.contact_id` is a
+ * cascading foreign key (so no orphan row can carry a recycled id), and nothing else knows
+ * the id yet — so `syncTags`' DELETE could only ever match zero rows there.
+ */
+async function attachTags(
+  userId: string,
+  contactId: string,
+  tagNames: string[] = []
+) {
+  const names = cleanTagNames(tagNames);
   if (names.length === 0) return;
 
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, names)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = names.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
+  const db = await getDb();
+  const byLower = await tagsFor(userId, names);
   await db.insert(contactTags).values(
     names.map((name) => ({
       contactId,
-      tagId: byName.get(name)!.id,
+      tagId: byLower.get(name.toLowerCase())!.id,
     }))
   );
+}
+
+/**
+ * A contact's current tag names plus `adding` — for writes that ADD tags rather than set
+ * the full list. Saving a capture onto an existing contact used to pass only the note's tags
+ * into a write that replaces the list, so the contact's other tags were deleted, and a note
+ * with no tags wiped them all.
+ */
+export async function withExistingTagNames(
+  userId: string,
+  contactId: string,
+  adding: readonly string[]
+): Promise<string[]> {
+  const db = await getDb();
+  const current = await db
+    .select({ name: tags.name })
+    .from(contactTags)
+    .innerJoin(tags, eq(tags.id, contactTags.tagId))
+    .where(and(eq(contactTags.contactId, contactId), eq(tags.userId, userId)));
+  return cleanTagNames([...current.map((t) => t.name), ...adding]);
 }
 
 /** Bulk variant of `syncTags` for freshly-created contacts (no existing tags to delete). */
@@ -214,33 +284,16 @@ async function syncTagsBulk(
   userId: string,
   items: { contactId: string; tagNames?: string[] }[]
 ) {
-  const perContactNames = items.map((item) => [
-    ...new Set((item.tagNames || []).map((raw) => raw.trim()).filter(Boolean)),
-  ]);
-  const allNames = [...new Set(perContactNames.flat())];
+  const perContactNames = items.map((item) => cleanTagNames(item.tagNames));
+  const allNames = cleanTagNames(perContactNames.flat());
   if (allNames.length === 0) return;
 
   const db = await getDb();
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, allNames)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = allNames.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
+  const byLower = await tagsFor(userId, allNames);
   const rows = items.flatMap((item, i) =>
     perContactNames[i].map((name) => ({
       contactId: item.contactId,
-      tagId: byName.get(name)!.id,
+      tagId: byLower.get(name.toLowerCase())!.id,
     }))
   );
   if (rows.length > 0) {
@@ -295,6 +348,10 @@ function contactInsertValues(
     keyFacts: input.keyFacts ?? [],
     sharedInterests: input.sharedInterests ?? [],
     opportunities: input.opportunities ?? [],
+    cadenceDays: input.cadenceDays ?? null,
+    cadencePhrase: input.cadencePhrase ?? null,
+    cadenceSource: input.cadenceSource ?? null,
+    cadenceSetAt: input.cadenceSetAt ?? null,
     firstInteractionAt: firstInteractionAt ?? now,
     lastInteractionAt: metAt ?? now,
     nextFollowUpAt: safeTimestamp(input.nextFollowUpAt),
@@ -389,7 +446,8 @@ export async function createContactForUser(
   // so doing it twice costs a statement and changes nothing.
   await claimIdentities(userId, contact.id, identityKeysFor(input), input.source);
 
-  await syncTags(userId, contact.id, input.tagNames);
+  // Just inserted, so there are no tags to clear first — see `attachTags`.
+  await attachTags(userId, contact.id, input.tagNames);
   if (!options?.skipEmbedding) {
     deferEmbeddingRebuild(userId, contact.id, now);
   }
@@ -416,6 +474,25 @@ export async function createContactForUser(
  * Failure here is not worth failing a write over. An unscored contact is picked up by the
  * next recalibration either way, which is exactly what the dirty flag is asking for.
  */
+/**
+ * Refresh a contact's stored brief after the response.
+ *
+ * `after()` rather than a bare floating promise: on Vercel the function can be suspended the
+ * moment the response is sent, which would cut an unawaited summary request off partway
+ * through. And wrapped, because `after()` THROWS outside a request scope — so an unguarded
+ * call turns an already-committed write into a failed one for every caller that has no
+ * request: a tsx script, a background job, an MCP tool call. Same shape as
+ * `deferEmbeddingRebuild`.
+ */
+function deferBriefRefresh(userId: string, contactId: string) {
+  const task = () => generateAndStoreContactBrief(userId, contactId).catch(() => null);
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
+}
+
 /**
  * Rebuild a contact's semantic embedding AFTER the response, not before it.
  *
@@ -793,6 +870,10 @@ export async function updateContactForUser(
       ...(input.opportunities !== undefined
         ? { opportunities: input.opportunities }
         : {}),
+      ...(input.cadenceDays !== undefined ? { cadenceDays: input.cadenceDays } : {}),
+      ...(input.cadencePhrase !== undefined ? { cadencePhrase: input.cadencePhrase } : {}),
+      ...(input.cadenceSource !== undefined ? { cadenceSource: input.cadenceSource } : {}),
+      ...(input.cadenceSetAt !== undefined ? { cadenceSetAt: input.cadenceSetAt } : {}),
       ...(input.nextFollowUpAt !== undefined
         ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
         : {}),
@@ -840,10 +921,7 @@ export async function updateContactForUser(
     input.sharedInterests !== undefined;
 
   if (significant && !options?.skipRevalidate && !options?.skipSummary) {
-    // `after()` rather than a bare floating promise: on Vercel the function can be
-    // suspended the moment the response is sent, which would cut an unawaited summary
-    // request off partway through.
-    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
+    deferBriefRefresh(userId, id);
   }
 
   await scoreAfterWrite(userId, id, options);
@@ -864,19 +942,19 @@ export async function logInteractionForUser(
   options?: ContactWriteOptions
 ) {
   const db = await getDb();
-  const { parseInteractionDateFromNotes } = await import(
+  const { clampSameDayToNow, parseInteractionDateFromNotes } = await import(
     "@/lib/interaction-date"
   );
 
+  // A date-only value is a day, stored at noon — except today, which must not be stored
+  // in the future (see `clampSameDayToNow`).
   const parsedDate =
     input.interactionDate instanceof Date
       ? input.interactionDate
       : input.interactionDate
-        ? new Date(
-            input.interactionDate.length <= 10
-              ? `${input.interactionDate}T12:00:00`
-              : input.interactionDate
-          )
+        ? input.interactionDate.length <= 10
+          ? clampSameDayToNow(input.interactionDate, new Date(`${input.interactionDate}T12:00:00`))
+          : new Date(input.interactionDate)
         : null;
   let when =
     parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
@@ -889,11 +967,25 @@ export async function logInteractionForUser(
   // Touch the contact first: the userId-scoped WHERE doubles as the ownership
   // check, so an unowned contactId returns no rows and we bail before writing
   // an orphaned interaction. Costs no extra round trip.
-  const [owned] = await db
-    .update(contacts)
-    .set({ lastInteractionAt: when, updatedAt: new Date() })
-    .where(and(eq(contacts.id, input.contactId), eq(contacts.userId, userId)))
-    .returning();
+  //
+  // Only the names come back: they are all that is read below (the passage label), and a
+  // bare `.returning()` shipped the whole row — notes, enrichment blobs, an inline base64
+  // avatar — on every logged note. Raw SQL because an explicit `.returning({ … })` does not
+  // type-check against the union `Db` (see contact-identity.ts); the timestamps are bound
+  // as `toISOString()`, which is exactly what the columns' own mapper sends.
+  const ownedRows = rowsOf<{ preferred_name: string | null; full_name: string }>(
+    await db.execute(sql`
+      update ${contacts}
+         set last_interaction_at = ${when.toISOString()}::timestamptz,
+             updated_at = ${new Date().toISOString()}::timestamptz
+       where ${contacts.id} = ${input.contactId}
+         and ${contacts.userId} = ${userId}
+      returning ${contacts.preferredName}, ${contacts.fullName}
+    `)
+  );
+  const owned = ownedRows[0]
+    ? { preferredName: ownedRows[0].preferred_name, fullName: ownedRows[0].full_name }
+    : undefined;
 
   if (!owned) {
     throw new ContactNotFoundError();
@@ -925,13 +1017,47 @@ export async function logInteractionForUser(
 
   if ((input.rawNotes || input.aiSummary) && !options?.skipEmbedding) {
     await scheduleEmbeddingRebuild(userId, input.contactId);
+    // Index the note as passages, now, using the row and contact already in hand — no extra
+    // reads. Inline rather than left to the sweep because this is the path a person is
+    // waiting on (a typed note, a capture, an assistant's add_note), and a note that is not
+    // searchable until tomorrow's cron is not searchable when they ask about it tonight.
+    //
+    // Bulk paths pass `skipEmbedding` and are deliberately not indexed here: an import
+    // writing thousands of rows should not pay per row. `backfillMemoryChunks` sweeps them,
+    // along with all the history that predates this table.
+    //
+    // Never fatal. Failing to index a note must not fail writing it.
+    await syncMemoryChunks(userId, {
+      sourceKind: "interaction",
+      sourceId: row.id,
+      // Without this the row would read as stale to the next sweep and be re-chunked for
+      // nothing — the hash is what says "these passages describe the text as it stands".
+      sourceHash: memorySourceHash({
+        text: input.rawNotes || input.aiSummary,
+        occurredAt: when,
+        interactionType: row.interactionType,
+        contactId: input.contactId,
+      }),
+      drafts: buildMemoryChunks({
+        text: input.rawNotes || input.aiSummary,
+        occurredAt: when,
+        kindLabel: interactionTypeLabel(row.interactionType),
+        contactId: input.contactId,
+        contactName: owned.preferredName || owned.fullName,
+        // No mentions to fold in: `interaction_mentions` hangs off the row that was just
+        // inserted, so nothing can name it yet. The paths that DO write mentions widen the
+        // array themselves (`syncMemoryChunkMentions`, called from `note-batch-save`), and
+        // the sweep reads them for everything it indexes.
+        contactIds: [],
+      }),
+    }).catch((err) => {
+      console.warn("[memory-chunks] could not index interaction", row.id, err);
+    });
   }
 
   // Significant change: refresh stored person summary
   if (!options?.skipSummary) {
-    after(() =>
-      generateAndStoreContactBrief(userId, input.contactId).catch(() => null)
-    );
+    deferBriefRefresh(userId, input.contactId);
   }
 
   // Recency and cadence are the two components an interaction actually moves, so this is
@@ -946,6 +1072,38 @@ export async function logInteractionForUser(
   }
 
   return row;
+}
+
+/**
+ * The consequences of an interaction row that was written some other way.
+ *
+ * `logInteractionForUser` inserts the row and THEN does everything a new touch implies. A send
+ * cannot work in that order: the row has to exist first, as the claim that stops a second click
+ * emailing the same person, and the touch only really happened once the mail went. So the claim
+ * inserts the row itself and calls this after a confirmed send — the same last-touch stamp,
+ * embedding and brief refresh, closeness re-score and revalidation, in the same order, so a
+ * sent email moves a contact's ring exactly as a logged one does.
+ */
+export async function settleWrittenInteraction(
+  userId: string,
+  contactId: string,
+  when: Date,
+  options?: ContactWriteOptions
+) {
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ lastInteractionAt: when, updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+  if (!options?.skipEmbedding) await scheduleEmbeddingRebuild(userId, contactId);
+  if (!options?.skipSummary) deferBriefRefresh(userId, contactId);
+  await scoreAfterWrite(userId, contactId, options);
+  if (!options?.skipRevalidate) {
+    revalidatePath(`/contacts/${contactId}`);
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/graph");
+  }
 }
 
 /**
@@ -1002,6 +1160,8 @@ export async function deleteInteractionForUser(
 
   const existing = await db.query.interactions.findFirst({
     where: and(eq(interactions.id, interactionId), eq(interactions.userId, userId)),
+    // Existence and the owning contact are all that is read — not the note body.
+    columns: { contactId: true },
   });
   if (!existing) throw new Error("Interaction not found");
   const contactId = existing.contactId;
@@ -1009,6 +1169,17 @@ export async function deleteInteractionForUser(
   await db
     .delete(interactions)
     .where(and(eq(interactions.id, interactionId), eq(interactions.userId, userId)));
+
+  // `memory_chunks.source_id` is a plain uuid with no foreign key — deliberately, so the
+  // table can index things that are not interactions — so nothing cascades here. Left to the
+  // prune, a deleted note stays quotable until the next sweep, which is the one kind of
+  // staleness in this table that is a privacy problem rather than a quality one.
+  await deleteMemoryChunks(userId, {
+    sourceKind: "interaction",
+    sourceIds: [interactionId],
+  }).catch((err) => {
+    console.warn("[memory-chunks] could not drop passages for", interactionId, err);
+  });
 
   const [remaining] = await db
     .select({ latest: sql<Date | null>`max(${interactions.interactionDate})` })
@@ -1025,7 +1196,7 @@ export async function deleteInteractionForUser(
     await scheduleEmbeddingRebuild(userId, contactId);
   }
   if (!options?.skipSummary) {
-    after(() => generateAndStoreContactBrief(userId, contactId).catch(() => null));
+    deferBriefRefresh(userId, contactId);
   }
   await scoreAfterWrite(userId, contactId, options);
 

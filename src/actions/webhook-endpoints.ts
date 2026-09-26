@@ -19,6 +19,8 @@ import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { encrypt } from "@/lib/crypto";
 import { generateWebhookSecret } from "@/lib/webhooks/sign";
 import { assertDeliverable, verifyEndpoint } from "@/lib/webhooks/dispatch";
+import { hasWebhookEndpointCapacity, WEBHOOK_ENDPOINT_LIMIT_MESSAGE } from "@/lib/webhooks/limits";
+import { webhookEndpointBody } from "@/lib/api/schemas";
 
 export type WebhookEndpointSummary = {
   id: string;
@@ -72,8 +74,17 @@ export async function createWebhookEndpoint(
     throw err;
   }
 
-  if (eventTypes.length === 0) {
-    return { ok: false, message: "Choose at least one event to send." };
+  if (!Array.isArray(eventTypes) || eventTypes.length === 0) {
+    return { ok: false, message: "Choose at least one event to send" };
+  }
+  // The same contract the REST route enforces: an action is a public endpoint too, and the
+  // event list is stored and matched against on every delivery.
+  const parsed = webhookEndpointBody.safeParse({ url, eventTypes });
+  if (!parsed.success) {
+    return { ok: false, message: "Use an https:// URL and choose from the listed events" };
+  }
+  if (!(await hasWebhookEndpointCapacity(userId))) {
+    return { ok: false, message: WEBHOOK_ENDPOINT_LIMIT_MESSAGE };
   }
   try {
     await assertDeliverable(url);
@@ -135,7 +146,7 @@ export async function retryWebhookEndpoint(
     where: and(eq(webhookEndpoints.id, id), eq(webhookEndpoints.userId, userId)),
     columns: { id: true },
   });
-  if (!owned) return { ok: false, error: "No such endpoint." };
+  if (!owned) return { ok: false, error: "No such endpoint" };
   const result = await verifyEndpoint(id);
   revalidatePath("/settings");
   return result;

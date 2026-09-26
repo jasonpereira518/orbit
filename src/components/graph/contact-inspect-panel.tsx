@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { format, formatDistanceToNow } from "date-fns";
@@ -28,9 +29,11 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatHowMetSummary } from "@/lib/met-context";
-import { closenessTierChipClass } from "@/lib/closeness";
+import { closenessPercentChipClass, closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
 import type { UserSocialLinks } from "@/actions/graph";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type InspectSelection =
   | { type: "contact"; id: string; data: GraphNodeData }
@@ -70,7 +73,11 @@ function formatMaybeRelative(value: string | null | undefined) {
   }
 }
 
-function closenessChipClass(tier: "inner" | "mid" | "outer" | undefined) {
+function closenessChipClass(
+  closeness: number | undefined,
+  tier: "inner" | "mid" | "outer" | undefined
+) {
+  if (typeof closeness === "number") return closenessPercentChipClass(closeness);
   if (!tier) return "bg-muted text-muted-foreground";
   return closenessTierChipClass(tier);
 }
@@ -382,10 +389,33 @@ function ContactPanelBody({
   onRefresh: () => void;
 }) {
   const [summaryText, setSummaryText] = useState(data.aiSummary ?? null);
+  // Keyed by contact, not a bare boolean: the panel is reused across stars, and an effect
+  // that reset a flag would still render one frame with the previous person's failure —
+  // a visible flash of initials over someone who does have a photo.
+  const [failedPhotoId, setFailedPhotoId] = useState<string | null>(null);
+  const photoFailed = failedPhotoId === id;
 
   useEffect(() => {
     setSummaryText(data.aiSummary ?? null);
   }, [id, data.aiSummary]);
+
+  /**
+   * Always the same-origin avatar route, never the stored URL directly: it serves inline
+   * photos as bytes and proxies remote ones, so LinkedIn CDN images (which refuse
+   * hotlinking) and `data:` URLs both load. Opening a star is a deliberate single-contact
+   * view, so it is also the right place to resolve a missing photo on demand.
+   */
+  const canResolvePhoto = Boolean(data.linkedinUrl?.trim() || data.email?.trim());
+  /** Their profile when we have it; otherwise the LinkedIn search you would have typed. */
+  const linkedinHref =
+    data.linkedinUrl?.trim() ||
+    `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(
+      [data.fullName || data.label, data.company].filter(Boolean).join(" ")
+    )}`;
+  const photoSrc =
+    !photoFailed && (Boolean(data.profileImageUrl?.trim()) || canResolvePhoto)
+      ? `/api/avatars/${id}`
+      : null;
 
   const howMet = formatHowMetSummary({
     metContext: data.metContext,
@@ -397,16 +427,28 @@ function ContactPanelBody({
     <>
       <SheetHeader className="border-b border-border/50 pb-4">
         <div className="flex items-start gap-3 pr-8">
-          <div
-            className={cn(
-              "flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-ink-foreground",
-              "bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,0.35),transparent_42%)] bg-primary",
-              data.comet && "bg-[#c4452d] ring-2 ring-[#ff6b4a]/60",
-              data.overdue && !data.comet && "ring-2 ring-[#c4a35a]"
-            )}
-          >
-            {data.initials}
-          </div>
+          {photoSrc ? (
+            // The photo stands on its own: comet and overdue state is already spelled out
+            // in words by the chips directly below, so a ring here would only repeat it.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={photoSrc}
+              alt=""
+              onError={() => setFailedPhotoId(id)}
+              className="h-14 w-14 shrink-0 rounded-full border border-border/60 object-cover"
+            />
+          ) : (
+            <div
+              className={cn(
+                "flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-ink-foreground",
+                "bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,0.35),transparent_42%)] bg-primary",
+                data.comet && "bg-[#c4452d] ring-2 ring-[#ff6b4a]/60",
+                data.overdue && !data.comet && "ring-2 ring-[#c4a35a]"
+              )}
+            >
+              {data.initials}
+            </div>
+          )}
           <div className="min-w-0">
             <SheetTitle className="font-[family-name:var(--font-display)] text-2xl text-ink">
               {data.label}
@@ -434,7 +476,7 @@ function ContactPanelBody({
           <span
             className={cn(
               "rounded-full px-2.5 py-1 text-xs font-medium",
-              closenessChipClass(data.closenessTier)
+              closenessChipClass(data.closeness, data.closenessTier)
             )}
           >
             {RING_LABELS[data.score || 2] || "Orbit"}
@@ -561,14 +603,12 @@ function ContactPanelBody({
                       onContactPatch?.(id, { aiSummary: res.summary });
                       toast.success("Summary updated");
                     } else {
-                      toast.error("Could not generate summary");
+                      toast.error(TOAST_COPY.summaryFailed);
                     }
                     onRefresh();
                   } catch (err) {
                     toast.error(
-                      err instanceof Error
-                        ? err.message
-                        : "Could not generate summary"
+                      friendlyError(err, TOAST_COPY.summaryFailed)
                     );
                   }
                 })
@@ -617,15 +657,46 @@ function ContactPanelBody({
             onRefresh();
           }}
         />
-        <Link
-          href={`/contacts/${id}`}
-          className={cn(
-            buttonVariants(),
-            "w-full bg-primary text-primary-foreground hover:bg-primary/90"
-          )}
-        >
-          Open full profile
-        </Link>
+        <div className="flex w-full items-stretch gap-2">
+          <IntentLink
+            href={`/contacts/${id}`}
+            className={cn(
+              buttonVariants(),
+              "flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+            )}
+          >
+            Open full profile
+          </IntentLink>
+          {/*
+            Straight to LinkedIn, the logo alone: their saved profile when there is one, and a
+            LinkedIn search for their name and company when there is not.
+          */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <a
+                  href={linkedinHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={
+                    data.linkedinUrl
+                      ? `Open ${data.label}'s LinkedIn profile`
+                      : `Search LinkedIn for ${data.label}`
+                  }
+                  className={cn(
+                    buttonVariants({ variant: "outline", size: "icon" }),
+                    "shrink-0"
+                  )}
+                />
+              }
+            >
+              <LinkedInGlyph className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {data.linkedinUrl ? "LinkedIn profile" : "Search on LinkedIn"}
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <Link
           href={`/capture?contactId=${id}`}
           className={cn(buttonVariants({ variant: "outline" }), "w-full")}

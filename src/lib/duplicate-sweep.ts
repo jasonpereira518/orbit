@@ -21,14 +21,53 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, duplicateSuggestions } from "@/db/schema";
-import { invalidateAfterMerge, mergeContacts } from "@/lib/contact-merge";
+import { duplicateSuggestions } from "@/db/schema";
+import { invalidateAfterMerge, mergeContacts, recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
+import { canAct, NO_ENGINES, type Engines } from "@/lib/decisions/engine";
+import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
+import { loadPersonCards, nameMergeVetoes, samePersonProbabilities } from "@/lib/decisions/duplicates";
 
 export type SweepResult = {
   merged: number;
   /** Pairs the sweep looked at and deliberately did not merge. */
   leftForReview: number;
+  /** Name-evidence merges the decision model stopped (kept apart, queued for review). */
+  vetoed?: number;
 };
+
+/**
+ * Bare shared-name pairs (0.60), for the decision model's autonomous merge. Only read when
+ * that merge is enabled (`DUPLICATE_TUNING.jev.act`), which it ships not to be.
+ */
+async function bareNamePairs(userId: string, limit: number): Promise<Pair[]> {
+  const db = await getDb();
+  const rows = await db.execute(sql`
+    SELECT a.id::text AS a, b.id::text AS b, a.created_at AS a_created, b.created_at AS b_created
+      FROM contacts a
+      JOIN contacts b
+        ON b.user_id = a.user_id AND a.id < b.id
+       AND lower(btrim(b.full_name)) = lower(btrim(a.full_name))
+     WHERE a.user_id = ${userId}
+       AND btrim(coalesce(a.full_name, '')) <> ''
+       AND NOT EXISTS (
+         SELECT 1 FROM duplicate_suggestions s
+          WHERE s.user_id = ${userId} AND s.status = 'dismissed'
+            AND s.contact_a_id = a.id AND s.contact_b_id = b.id)
+     LIMIT ${limit}
+  `);
+  const raw = (Array.isArray(rows) ? rows : rows.rows) as {
+    a: string;
+    b: string;
+    a_created: Date | string | null;
+    b_created: Date | string | null;
+  }[];
+  const time = (v: Date | string | null) => (v ? new Date(v).getTime() : 0);
+  return raw.map((r) => {
+    const aFirst = time(r.a_created) !== time(r.b_created) ? time(r.a_created) < time(r.b_created) : r.a < r.b;
+    return { keepId: aFirst ? r.a : r.b, mergeId: aFirst ? r.b : r.a, reason: "Same full name", confidence: 0.6 };
+  });
+}
 
 type Pair = { keepId: string; mergeId: string; reason: string; confidence: number };
 
@@ -144,20 +183,63 @@ async function confidentPairs(userId: string, limit: number): Promise<Pair[]> {
  */
 export async function mergeConfidentDuplicates(
   userId: string,
-  options?: { maxMerges?: number }
+  options?: {
+    maxMerges?: number;
+    /**
+     * The account's decision engines (`openEngines`). With Jev, every merge that rests on a
+     * NAME — same name + company or title — is checked first, and a confident "different
+     * people" keeps the two apart and queues the pair for review instead. Scripts pass none
+     * and sweep exactly as before.
+     */
+    engines?: Engines;
+  }
 ): Promise<SweepResult> {
   const maxMerges = options?.maxMerges ?? 200;
+  const engines = options?.engines ?? NO_ENGINES;
+  const deadline = Date.now() + DUPLICATE_TUNING.sweepBudgetMs;
   let merged = 0;
+  let vetoed = 0;
+  const keptApart = new Set<string>();
   const survivors = new Set<string>();
 
   // Re-read between passes rather than merging a whole snapshot: each merge deletes a
   // contact, so a three-way duplicate's second pair names a row that no longer exists.
   for (let pass = 0; pass < 25 && merged < maxMerges; pass++) {
-    const pairs = await confidentPairs(userId, Math.min(50, maxMerges - merged));
+    const pairs = (await confidentPairs(userId, Math.min(50, maxMerges - merged))).filter(
+      (p) => !keptApart.has(`${p.keepId}:${p.mergeId}`)
+    );
     if (!pairs.length) break;
+
+    // Name evidence is checked before it merges anything; identifier evidence never is.
+    const byName = pairs.filter((p) => p.reason.startsWith("Same name"));
+    const remaining = deadline - Date.now();
+    if (engines.jev && byName.length && remaining > 150) {
+      const cards = await loadPersonCards(userId, byName.flatMap((p) => [p.keepId, p.mergeId]));
+      const withCards = byName.filter((p) => cards.has(p.keepId) && cards.has(p.mergeId));
+      const vetoes = await nameMergeVetoes(
+        engines,
+        withCards.map((p) => [cards.get(p.keepId)!, cards.get(p.mergeId)!] as const),
+        remaining
+      );
+      for (const [i, pair] of withCards.entries()) {
+        if (!vetoes[i]) continue;
+        keptApart.add(`${pair.keepId}:${pair.mergeId}`);
+        vetoed += 1;
+        // Recorded just BELOW the confidence line: the review queue only lists pairs under it
+        // (`findPendingSuggestions`), and at 0.90 this one would vanish instead of being asked.
+        await recordDuplicateSuggestion(
+          userId,
+          pair.keepId,
+          pair.mergeId,
+          `${pair.reason} — held for review`,
+          Math.min(pair.confidence, DUPLICATE_MERGE_CONFIDENCE - 0.01)
+        ).catch(() => null);
+      }
+    }
 
     let mergedThisPass = 0;
     for (const pair of pairs) {
+      if (keptApart.has(`${pair.keepId}:${pair.mergeId}`)) continue;
       if (merged >= maxMerges) break;
       try {
         await mergeContacts(userId, pair.keepId, pair.mergeId, {
@@ -181,6 +263,38 @@ export async function mergeConfidentDuplicates(
     if (mergedThisPass === 0) break;
   }
 
+  // The decision model's own merges: bare shared-name pairs it is confident about. Off until
+  // `DUPLICATE_TUNING.jev.act` is set from the calibration bins; every one is archived,
+  // listed with its reason, and undoable (and an undo is remembered — see unmergeContacts).
+  const actAbove = DUPLICATE_TUNING.jev.act;
+  if (actAbove !== null && engines.jev && merged < maxMerges && deadline - Date.now() > 150) {
+    const bare = await bareNamePairs(userId, Math.min(20, maxMerges - merged));
+    const cards = await loadPersonCards(userId, bare.flatMap((p) => [p.keepId, p.mergeId]));
+    const withCards = bare.filter((p) => cards.has(p.keepId) && cards.has(p.mergeId));
+    const answers = await samePersonProbabilities(
+      engines,
+      withCards.map((p) => [cards.get(p.keepId)!, cards.get(p.mergeId)!] as const),
+      { engines: ["jev"], budgetMs: deadline - Date.now() }
+    );
+    for (const [i, pair] of withCards.entries()) {
+      const a = answers[i];
+      const p = a?.engine === "jev" ? a.answer.probability : null;
+      if (!canAct(a?.engine ?? "rules", p, actAbove)) continue;
+      try {
+        await mergeContacts(userId, pair.keepId, pair.mergeId, {
+          reason: `Decision model: same person (${p!.toFixed(2)})`,
+          confidence: p!,
+          deferInvalidation: true,
+        });
+        merged += 1;
+        survivors.add(pair.keepId);
+        survivors.delete(pair.mergeId);
+      } catch {
+        // Already merged by an earlier pair.
+      }
+    }
+  }
+
   // Deferred through the loop, done once here: `invalidateAfterMerge` marks the closeness
   // cohort dirty and rescores, and doing that per merge would recompute the same account
   // dozens of times during a bulk cleanup.
@@ -196,43 +310,5 @@ export async function mergeConfidentDuplicates(
       and(eq(duplicateSuggestions.userId, userId), eq(duplicateSuggestions.status, "pending"))
     );
 
-  return { merged, leftForReview: Number(remaining?.n ?? 0) };
-}
-
-/**
- * The same sweep, narrowed to one contact.
- *
- * For the path a full sweep would be wasteful on: someone edits a contact's email to one
- * another contact already holds. `updateContactForUser` cannot merge (it would be an import
- * cycle), so it claims best-effort and the claim silently fails — leaving exactly the kind
- * of certain duplicate this feature is not supposed to leave sitting around.
- */
-export async function mergeConfidentDuplicatesFor(
-  userId: string,
-  contactId: string
-): Promise<string> {
-  const db = await getDb();
-  const [row] = await db
-    .select({ id: contacts.id })
-    .from(contacts)
-    .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
-    .limit(1);
-  if (!row) return contactId;
-
-  const pairs = await confidentPairs(userId, 50);
-  let surviving = contactId;
-  for (const pair of pairs) {
-    if (pair.keepId !== surviving && pair.mergeId !== surviving) continue;
-    try {
-      await mergeContacts(userId, pair.keepId, pair.mergeId, {
-        reason: pair.reason,
-        confidence: pair.confidence,
-      });
-      // Hand back whichever id survives — the caller may be about to redirect to it.
-      surviving = pair.keepId;
-    } catch {
-      // Already resolved by something else; nothing to do.
-    }
-  }
-  return surviving;
+  return { merged, leftForReview: Number(remaining?.n ?? 0), ...(vetoed ? { vetoed } : {}) };
 }

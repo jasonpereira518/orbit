@@ -22,23 +22,29 @@ export function AdminPageHeader({
   title,
   subtitle,
   action,
+  leading,
 }: {
-  title: string;
+  title: React.ReactNode;
   subtitle?: React.ReactNode;
   action?: React.ReactNode;
+  /** Sits left of the title block, e.g. an account avatar. */
+  leading?: React.ReactNode;
 }) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div>
-        {/* The only Fraunces on the page. */}
-        <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
-          {title}
-        </h1>
-        {subtitle && (
-          <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
-        )}
+      <div className="flex min-w-0 items-start gap-3">
+        {leading && <div className="shrink-0">{leading}</div>}
+        <div className="min-w-0">
+          {/* The only Fraunces on the page. */}
+          <h1 className="break-words font-[family-name:var(--font-display)] text-2xl text-ink">
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+          )}
+        </div>
       </div>
-      {action}
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }
@@ -204,6 +210,8 @@ export function MiniBars({
 export function TrendBars({
   rows,
   emptyLabel = "Nothing in this window yet.",
+  secondaryTone = "failure",
+  headings,
 }: {
   rows: Array<{
     label: string;
@@ -211,31 +219,62 @@ export function TrendBars({
     secondary?: number;
     secondaryLabel?: string;
     href?: string;
+    /** The period is only partly covered (still running, or the window starts inside it). */
+    partial?: boolean;
   }>;
   emptyLabel?: string;
+  /**
+   * `failure` (the default) draws the second series as failures within the first — red,
+   * because that is what it meant for the call charts this was built for. `neutral` is for
+   * a second series that is just another measure, like visitor-days beside views.
+   */
+  secondaryTone?: "failure" | "neutral";
+  /** Column headings, printed above the rows so the two numbers are not left unnamed. */
+  headings?: { count: string; secondary?: string };
 }) {
   if (rows.length === 0) return <EmptyState>{emptyLabel}</EmptyState>;
 
   // Against the max rather than the sum: the question is "which period was busiest",
   // and a zero-height bar for an empty period is the honest answer for that period.
   const max = Math.max(1, ...rows.map((r) => r.count));
+  const neutral = secondaryTone === "neutral";
+  const hasSecondary = rows.some((r) => r.secondary != null);
 
   return (
     <ol className="space-y-1">
+      {headings && (
+        <li
+          aria-hidden
+          className="flex items-center gap-3 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground/70"
+        >
+          <span className="w-24 shrink-0" />
+          <span className="w-10 shrink-0 text-right">{headings.count}</span>
+          {hasSecondary && (
+            <span className="w-10 shrink-0 text-right">{headings.secondary ?? ""}</span>
+          )}
+          <span className="flex-1" />
+        </li>
+      )}
       {rows.map((row) => {
         const pct = (row.count / max) * 100;
         const secondaryPct = row.secondary ? (row.secondary / max) * 100 : 0;
         return (
-          <li key={row.label} className="flex items-center gap-3 text-sm">
+          <li
+            key={row.label}
+            className="flex items-center gap-3 text-sm"
+            title={row.partial ? "Partial period" : undefined}
+          >
             <span className="w-24 shrink-0 truncate text-xs text-muted-foreground tabular-nums">
               {row.label}
+              {row.partial && <span className="text-muted-foreground/60"> ·&nbsp;partial</span>}
             </span>
             <span className="w-10 shrink-0 text-right tabular-nums">{row.count}</span>
             {row.secondary != null && (
               <span
                 className={cn(
                   "w-10 shrink-0 text-right text-xs tabular-nums",
-                  row.secondary > 0 ? "text-destructive" : "text-muted-foreground/50"
+                  row.secondary > 0 && !neutral ? "text-destructive" : "text-muted-foreground",
+                  row.secondary === 0 && "text-muted-foreground/50"
                 )}
                 title={row.secondaryLabel}
               >
@@ -247,12 +286,18 @@ export function TrendBars({
               className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
             >
               <span
-                className="absolute inset-y-0 left-0 rounded-full bg-primary/70 transition-[width] duration-slow ease-house"
+                className={cn(
+                  "absolute inset-y-0 left-0 rounded-full transition-[width] duration-slow ease-house",
+                  row.partial ? "bg-primary/35" : "bg-primary/70"
+                )}
                 style={{ width: `${pct}%` }}
               />
               {secondaryPct > 0 && (
                 <span
-                  className="absolute inset-y-0 left-0 rounded-full bg-destructive/80"
+                  className={cn(
+                    "absolute inset-y-0 left-0 rounded-full",
+                    neutral ? "bg-foreground/25" : "bg-destructive/80"
+                  )}
                   style={{ width: `${secondaryPct}%` }}
                 />
               )}
@@ -348,17 +393,30 @@ export function DefinitionRow({
 
 /* ---------------------------------------------------------------- table ------------- */
 
+const TABLE_MIN_WIDTH = {
+  none: "",
+  sm: "min-w-[32rem]",
+  lg: "min-w-[52rem]",
+} as const;
+
 export function AdminTable({
   head,
   children,
+  minWidth = "lg",
 }: {
   head: React.ReactNode;
   children: React.ReactNode;
+  /**
+   * The width below which the table scrolls instead of squeezing its columns. `lg` suits a
+   * full-width roster; a two- or three-column table in a half-width panel wants `none`, or
+   * it scrolls sideways even on a desktop.
+   */
+  minWidth?: keyof typeof TABLE_MIN_WIDTH;
 }) {
   return (
     // Wide tables scroll inside their own container so the page body never does.
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[52rem] border-collapse text-sm">
+      <table className={cn("w-full border-collapse text-sm", TABLE_MIN_WIDTH[minWidth])}>
         <thead>
           <tr className="border-b border-border/60 text-left text-xs uppercase tracking-wider text-muted-foreground">
             {head}
@@ -367,6 +425,21 @@ export function AdminTable({
         <tbody>{children}</tbody>
       </table>
     </div>
+  );
+}
+
+/** A body row with the console's divider, minus the one under the last row. */
+export function AdminTr({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <tr className={cn("border-b border-border/40 last:border-b-0", className)}>
+      {children}
+    </tr>
   );
 }
 
@@ -454,6 +527,7 @@ export function TrendTable({
 }) {
   return (
     <AdminTable
+      minWidth={columns.length <= 2 ? "none" : "sm"}
       head={
         <>
           <Th>Period</Th>
@@ -466,14 +540,14 @@ export function TrendTable({
       }
     >
       {rows.map((row) => (
-        <tr key={row.period} className="border-b border-border/40 last:border-b-0">
+        <AdminTr key={row.period}>
           <Td className="text-muted-foreground">{row.period}</Td>
           {row.values.map((v, i) => (
             <Td key={i} numeric className={v === 0 ? "text-muted-foreground" : undefined}>
               {v}
             </Td>
           ))}
-        </tr>
+        </AdminTr>
       ))}
     </AdminTable>
   );

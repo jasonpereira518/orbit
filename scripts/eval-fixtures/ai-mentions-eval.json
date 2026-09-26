@@ -1,0 +1,401 @@
+{
+ "$comment": "Which contact a name in a note means (decisions/capture.ts). expect is the candidate index, or 'none'. m-veto/m-keep cases have ONE candidate: the rules link it blind (unique first name); m-amb cases have several and the rules link none.",
+ "cases": [
+  {
+   "id": "m-veto-01",
+   "sentence": "Ran into Sam at the gym, he's training for a marathon.",
+   "mention": "Sam",
+   "candidates": [
+    {
+     "fullName": "Sam Altman",
+     "title": "CEO",
+     "company": "OpenAI"
+    }
+   ],
+   "expect": "none",
+   "nearPerson": "the one Sam in contacts is not the gym friend"
+  },
+  {
+   "id": "m-veto-02",
+   "sentence": "Ada's daughter Lily just started kindergarten.",
+   "mention": "Lily",
+   "candidates": [
+    {
+     "fullName": "Lily Chen",
+     "title": "Partner",
+     "company": "Accel"
+    }
+   ],
+   "expect": "none"
+  },
+  {
+   "id": "m-veto-03",
+   "sentence": "My landlord Frank said the rent goes up in March.",
+   "mention": "Frank",
+   "candidates": [
+    {
+     "fullName": "Frank Slootman",
+     "title": "Chairman",
+     "company": "Snowflake"
+    }
+   ],
+   "expect": "none"
+  },
+  {
+   "id": "m-veto-04",
+   "sentence": "Maya, the barista, recommended the new place on 5th.",
+   "mention": "Maya",
+   "candidates": [
+    {
+     "fullName": "Maya Patel",
+     "title": "Engineering Manager",
+     "company": "Stripe"
+    }
+   ],
+   "expect": "none"
+  },
+  {
+   "id": "m-keep-01",
+   "sentence": "Priya said she'd intro me to her team at Stripe.",
+   "mention": "Priya",
+   "candidates": [
+    {
+     "fullName": "Priya Natarajan",
+     "title": "Product Manager",
+     "company": "Stripe"
+    }
+   ],
+   "expect": 0,
+   "nearPerson": "the rules' guess is right"
+  },
+  {
+   "id": "m-keep-02",
+   "sentence": "Leo from Notion walked me through their new API.",
+   "mention": "Leo",
+   "candidates": [
+    {
+     "fullName": "Leo Chen",
+     "title": "Engineer",
+     "company": "Notion"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-keep-03",
+   "sentence": "Dana mentioned the recruiter role at TalentBridge again.",
+   "mention": "Dana",
+   "candidates": [
+    {
+     "fullName": "Dana Holt",
+     "title": "Recruiter",
+     "company": "TalentBridge"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-keep-04",
+   "sentence": "Marcus is hiring two engineers for Ramp's card team.",
+   "mention": "Marcus",
+   "candidates": [
+    {
+     "fullName": "Marcus Webb",
+     "title": "VP Engineering",
+     "company": "Ramp"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-01",
+   "sentence": "Alex from Figma sent over the design system docs.",
+   "mention": "Alex",
+   "candidates": [
+    {
+     "fullName": "Alex Chen",
+     "title": "Designer",
+     "company": "Figma"
+    },
+    {
+     "fullName": "Alex Rivera",
+     "title": "Sales",
+     "company": "Oracle"
+    }
+   ],
+   "expect": 0,
+   "nearPerson": "company in the sentence disambiguates"
+  },
+  {
+   "id": "m-amb-02",
+   "sentence": "Talked to Chris about his Series A at Loop Labs.",
+   "mention": "Chris",
+   "candidates": [
+    {
+     "fullName": "Chris Lee",
+     "title": "Engineer",
+     "company": "Google"
+    },
+    {
+     "fullName": "Chris Ahmed",
+     "title": "Founder",
+     "company": "Loop Labs"
+    }
+   ],
+   "expect": 1
+  },
+  {
+   "id": "m-amb-03",
+   "sentence": "Jen, my old manager at Snowflake, wants to catch up.",
+   "mention": "Jen",
+   "candidates": [
+    {
+     "fullName": "Jen Wu",
+     "title": "Engineering Manager",
+     "company": "Snowflake"
+    },
+    {
+     "fullName": "Jen Park",
+     "title": "Student",
+     "company": "UCLA"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-04",
+   "sentence": "Sarah the product lead at Shopify liked the demo.",
+   "mention": "Sarah",
+   "candidates": [
+    {
+     "fullName": "Sarah Johnson",
+     "title": "Product Manager",
+     "company": "Stripe"
+    },
+    {
+     "fullName": "Sarah Kim",
+     "title": "Product Lead",
+     "company": "Shopify"
+    }
+   ],
+   "expect": 1
+  },
+  {
+   "id": "m-amb-05",
+   "sentence": "David Kim the Amazon recruiter pinged me on LinkedIn.",
+   "mention": "David Kim",
+   "candidates": [
+    {
+     "fullName": "David Kim",
+     "title": "Recruiter",
+     "company": "Amazon"
+    },
+    {
+     "fullName": "David Kim",
+     "title": "Recruiter",
+     "company": "Robert Half"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-06",
+   "sentence": "Emily from my book club is moving to Denver.",
+   "mention": "Emily",
+   "candidates": [
+    {
+     "fullName": "Emily Davis",
+     "title": "Designer",
+     "company": "Figma"
+    },
+    {
+     "fullName": "Emily Stone",
+     "title": "CFO",
+     "company": "Brex"
+    }
+   ],
+   "expect": "none",
+   "nearPerson": "neither contact fits"
+  },
+  {
+   "id": "m-amb-07",
+   "sentence": "Tom from the Apple Pay team in Austin reviewed my PR.",
+   "mention": "Tom Nguyen",
+   "candidates": [
+    {
+     "fullName": "Tom Nguyen",
+     "title": "Software Engineer",
+     "company": "Apple",
+     "location": "Cupertino"
+    },
+    {
+     "fullName": "Tom Nguyen",
+     "title": "Software Engineer",
+     "company": "Apple",
+     "location": "Austin"
+    }
+   ],
+   "expect": 1
+  },
+  {
+   "id": "m-amb-08",
+   "sentence": "Coffee with Nora, she's loving Klarna so far.",
+   "mention": "Nora",
+   "candidates": [
+    {
+     "fullName": "Nora Lindqvist",
+     "title": "Director of Product",
+     "company": "Klarna"
+    },
+    {
+     "fullName": "Nora Ali",
+     "title": "Nurse",
+     "company": "Kaiser"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-09",
+   "sentence": "Mohammed from U of T asked about internships.",
+   "mention": "Mohammed",
+   "candidates": [
+    {
+     "fullName": "Mohammed Ali",
+     "title": "Student",
+     "company": "University of Toronto"
+    },
+    {
+     "fullName": "Mohammed Hassan",
+     "title": "Surgeon",
+     "company": "Mayo Clinic"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-10",
+   "sentence": "Kevin said Intercom's growth team is reorganizing.",
+   "mention": "Kevin",
+   "candidates": [
+    {
+     "fullName": "Kevin O'Brien",
+     "title": "Head of Growth",
+     "company": "Intercom"
+    },
+    {
+     "fullName": "Kevin Diaz",
+     "title": "Plumber"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-11",
+   "sentence": "My cousin Daniel is visiting from Seoul next week.",
+   "mention": "Daniel",
+   "candidates": [
+    {
+     "fullName": "Daniel Park",
+     "title": "VP Sales",
+     "company": "Salesforce"
+    },
+    {
+     "fullName": "Daniel Cho",
+     "title": "Engineer",
+     "company": "Naver"
+    }
+   ],
+   "expect": "none",
+   "nearPerson": "family, not a contact"
+  },
+  {
+   "id": "m-amb-12",
+   "sentence": "Grace (the Hopper PM) shared their pricing experiments.",
+   "mention": "Grace",
+   "candidates": [
+    {
+     "fullName": "Grace Hopper",
+     "title": "Product Manager",
+     "company": "Hopper"
+    },
+    {
+     "fullName": "Grace Liu",
+     "title": "Investor",
+     "company": "Sequoia"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-13",
+   "sentence": "Lucas at Loop Studio is looking for a designer.",
+   "mention": "Lucas",
+   "candidates": [
+    {
+     "fullName": "Lucas Silva",
+     "title": "Founder",
+     "company": "Loop Studio"
+    },
+    {
+     "fullName": "Lucas Meyer",
+     "title": "Teacher"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-14",
+   "sentence": "Sophie mentioned Clifford Chance is hiring associates.",
+   "mention": "Sophie",
+   "candidates": [
+    {
+     "fullName": "Sophie Martin",
+     "title": "Lawyer",
+     "company": "Clifford Chance"
+    },
+    {
+     "fullName": "Sophie Turner",
+     "title": "Actor"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-15",
+   "sentence": "Olivia's new job at Airbnb starts Monday.",
+   "mention": "Olivia",
+   "candidates": [
+    {
+     "fullName": "Olivia Brooks",
+     "title": "Designer",
+     "company": "Airbnb"
+    },
+    {
+     "fullName": "Olivia Grant",
+     "title": "Analyst",
+     "company": "Goldman Sachs"
+    }
+   ],
+   "expect": 0
+  },
+  {
+   "id": "m-amb-16",
+   "sentence": "Met a guy named Ravi at the bus stop, no idea what he does.",
+   "mention": "Ravi",
+   "candidates": [
+    {
+     "fullName": "Ravi Menon",
+     "title": "Staff Engineer",
+     "company": "Datadog"
+    },
+    {
+     "fullName": "Ravi Shah",
+     "title": "Founder",
+     "company": "Kite"
+    }
+   ],
+   "expect": "none"
+  }
+ ]
+}

@@ -8,6 +8,7 @@ import { after } from "next/server";
 import { getDb } from "@/db";
 import { adminAuditLog, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
+import { loadProviderStatuses } from "@/lib/admin-providers";
 import * as ops from "@/lib/admin-operations";
 import * as interestList from "@/lib/admin-interest-list";
 import * as adminFeedback from "@/lib/admin-feedback";
@@ -17,7 +18,9 @@ import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
+import { sendSlackDM } from "@/lib/slack-dm";
 import {
+  PREVIEW_UNRELEASED_COOKIE,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
@@ -25,6 +28,14 @@ import {
   setConstellationConfig,
   type ConstellationConfig,
 } from "@/lib/constellation-config";
+import { setStealth } from "@/lib/site-access";
+import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
+import {
+  inviteToSite,
+  revokeSiteInvite,
+  SiteInviteError,
+  type SiteInviteResult,
+} from "@/lib/site-invites";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -96,6 +107,7 @@ export async function setCompAction(input: {
  */
 export async function mintSignInLinkAction(input: {
   targetUserId: string;
+  reason: string;
 }): Promise<{ url: string; expiresInSeconds: number }> {
   const adminUserId = await requireAdminUserId();
   return ops.mintSignInLink(adminUserId, input);
@@ -338,6 +350,47 @@ export async function setViewAsUserAction(input: {
   if (input.on) {
     redirect("/dashboard");
   }
+  return { ok: true };
+}
+
+/**
+ * Toggle whether the calling admin sees real pages behind a coming-soon screen.
+ *
+ * The mirror image of `setViewAsUserAction`: that one takes access AWAY from an operator's
+ * own session, this one GRANTS it. A coming-soon page (`comingSoon` in `src/lib/surfaces.ts`)
+ * is closed to admins by default — this is the explicit, audited opt-in past that default,
+ * not a general admin exemption, so a forgotten toggle cannot ship an unfinished feature to
+ * the operator's own eyes only by accident.
+ *
+ * No redirect on entry (unlike `setViewAsUserAction`): there is nowhere it needs to send the
+ * caller, since turning this on does not change what the caller could already reach, only
+ * what an unreleased page shows them once they are there.
+ */
+export async function setPreviewUnreleasedAction(input: {
+  on: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const store = await cookies();
+
+  if (input.on) {
+    store.set(PREVIEW_UNRELEASED_COOKIE, "1", {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+    });
+  } else {
+    store.delete(PREVIEW_UNRELEASED_COOKIE);
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: input.on
+      ? "product.preview_unreleased.enter"
+      : "product.preview_unreleased.exit",
+  });
+
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -660,6 +713,19 @@ export async function sendTestAlertAction(): Promise<{ ok: true }> {
   return { ok: true };
 }
 
+/** Prove the Slack bot can DM you specifically, from the console. */
+export async function sendTestSlackDMAction(): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_ALERT_USER_ID) {
+    throw new Error("SLACK_BOT_TOKEN / SLACK_ALERT_USER_ID is not set");
+  }
+  await sendSlackDM(
+    `:wave: Test DM from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, critical-error and feedback alerts will reach you here.`
+  );
+  await recordAdminAction({ adminUserId, action: "ops.test_dm" });
+  return { ok: true };
+}
+
 /**
  * Both paths the feedback console can change, plus the nav badge.
  *
@@ -758,4 +824,94 @@ export async function deleteFeedbackScreenshotAction(input: {
 
   revalidateFeedback();
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------- provider status */
+
+/**
+ * Re-checks all four providers now, bypassing the snapshot cache.
+ *
+ * `/admin/health` reads the cached snapshot so a page load never fans out to four APIs;
+ * this is the "I am looking at it right now" path. Nothing is passed in, so there is
+ * nothing to validate — but the gate still comes first, because a route that hits four
+ * third-party APIs on demand is one an unauthenticated caller should not be able to ring.
+ */
+export async function refreshProvidersAction(): Promise<{ ok: true }> {
+  await requireAdminUserId();
+  await loadProviderStatuses({ force: true });
+  revalidatePath("/admin/health");
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------------ site access */
+
+function revalidateAccess() {
+  revalidatePath("/admin/access");
+  revalidatePath("/admin/growth/interest-list");
+}
+
+/**
+ * Switch stealth on or off for the whole site. Takes effect within the proxy's cache window
+ * (seconds), on every instance, with no deploy. Confirmed and reasoned in the UI because
+ * turning it off opens every page to the public.
+ */
+export async function setSiteStealthAction(input: {
+  enabled: boolean;
+  reason: string;
+}): Promise<{ ok: true; stealth: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  ops.requireReason(input.reason);
+  const mode = await setStealth(adminUserId, input.enabled);
+  revalidateAccess();
+  return { ok: true, stealth: mode.stealth };
+}
+
+/**
+ * Show or hide the waitlist page's "Take it for a spin" product demo. Low stakes and easy to
+ * reverse, so unlike stealth it asks for no reason — the audit log still records who and when.
+ * The public page reads it through a ten-second cache; `/interest` is revalidated so the
+ * instance that made the change shows it at once.
+ */
+export async function setWaitlistDemoAction(input: {
+  enabled: boolean;
+}): Promise<{ ok: true; enabled: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  const enabled = await setWaitlistDemoEnabled(adminUserId, input.enabled === true);
+  revalidatePath("/interest");
+  revalidatePath("/");
+  revalidatePath("/admin/growth/interest-list");
+  return { ok: true, enabled };
+}
+
+/**
+ * Invite someone to create an account, stealth or not. Returns the result rather than
+ * throwing for a bad address, so the form can say what was wrong in place; Clerk and
+ * database failures still throw.
+ */
+export async function inviteToSiteAction(input: {
+  email: string;
+  notify: boolean;
+  firstName?: string | null;
+}): Promise<SiteInviteResult | { kind: "error"; message: string }> {
+  const adminUserId = await requireAdminUserId();
+  const firstName = input.firstName?.trim().slice(0, 60) || null;
+  try {
+    const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify, firstName });
+    revalidateAccess();
+    return result;
+  } catch (err) {
+    if (err instanceof SiteInviteError) return { kind: "error", message: err.message };
+    throw err;
+  }
+}
+
+export async function revokeSiteInviteAction(input: {
+  invitationId: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  ops.requireReason(input.reason);
+  const { email } = await revokeSiteInvite({ adminUserId, invitationId: input.invitationId });
+  revalidateAccess();
+  return { ok: true, email };
 }

@@ -58,3 +58,11 @@ extension/*.zip
 # Intermediate build output: the injected IIFE is emitted into public/ so the
 # main build copies it into dist as a static asset.
 extension/public/inject/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+
+# constellation bench fixtures (scripts/bench/constellation-fixtures.ts)
+/.bench-data/

@@ -206,6 +206,34 @@ export function interactionFamilySpec(
   return BY_FAMILY.get(interactionTypeFamily(raw)) as InteractionFamilySpec;
 }
 
+/**
+ * The type as a noun that reads inside a sentence — "my meeting with Ada", "after our coffee".
+ *
+ * `label` is adjectival and written for a picker ("In person", "1:1 Meeting"), which does not
+ * survive being dropped into prose. Keyed on the canonical `value`, deliberately: the map this
+ * replaces lived in `composer-tools-menu.tsx` and was keyed on labels, four of which
+ * ("Coffee", "Video call", "LinkedIn message", "Intro") no longer exist in INTERACTION_TYPES
+ * and so never hit, while "LinkedIn" fell through to a lowercased label and rendered
+ * "my linkedin with Ada". Keying on `value` cannot rot that way — a renamed label is a display
+ * change, but a renamed value would fail `normalizeInteractionType` loudly.
+ */
+const NOUN_BY_VALUE: Record<InteractionTypeValue, string> = {
+  meeting: "meeting",
+  in_person: "catch-up",
+  event: "event",
+  intro: "introduction",
+  call: "call",
+  email: "email",
+  linkedin_message: "LinkedIn message",
+  reach_out: "note",
+  note: "note",
+  message: "message",
+};
+
+export function interactionTypeNoun(raw: string | null | undefined): string {
+  return NOUN_BY_VALUE[normalizeInteractionType(raw)];
+}
+
 /** True for types that represent time spent together rather than a message or a filed note. */
 export function isWarmInteractionType(raw: string | null | undefined): boolean {
   return interactionTypeFamily(raw) === "together";

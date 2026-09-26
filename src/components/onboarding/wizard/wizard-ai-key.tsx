@@ -4,20 +4,24 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "@/lib/toast";
 import { saveAiSettings } from "@/actions/settings";
-import { AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
+import { AI_PROVIDERS, SELECTABLE_AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { integrationHref } from "@/components/settings/sections";
+import { useLifetimeIncludesAi } from "@/components/lifetime-ai-offer";
 
 /**
- * The setup wizard's "connect your AI key" step, shown before the capture path when the
- * account has no provider key yet.
+ * The setup wizard's "connect your AI key" step, shown before the capture path when AI
+ * would not run for the account yet (`getSettings().hasApiKey`, the AI gate's verdict).
  *
- * Production is strictly bring-your-own-key, and the capture path is the first thing a new
- * user tries — so without this step the guided setup led straight into a hard error with a
- * link back to Settings. Deliberately skippable: importing or adding people by hand needs
- * no key at all.
+ * AI is bring-your-own-key on every plan but Lifetime, and the capture path is the first
+ * thing a new user tries — so without this step the guided setup led straight into a hard
+ * error with a link back to Settings. A Lifetime account never sees it: Orbit's managed key
+ * makes `hasApiKey` true with no key saved. Deliberately skippable: importing or adding
+ * people by hand needs no key at all.
  */
 export function WizardAiKey({
   onSaved,
@@ -30,17 +34,22 @@ export function WizardAiKey({
   const [apiKey, setApiKey] = useState("");
   const [pending, start] = useTransition();
   const meta = AI_PROVIDERS.find((p) => p.id === provider);
+  const lifetimeIncludesAi = useLifetimeIncludesAi();
 
   function save() {
     const key = apiKey.trim();
     if (!key) return;
     start(async () => {
       try {
-        await saveAiSettings({ provider, apiKey: key });
-        toast.success(`${meta?.label ?? "AI"} key saved`);
+        const res = await saveAiSettings({ provider, apiKey: key });
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        toast.success(res.keyNote ?? `${meta?.label ?? "AI"} key saved`);
         onSaved();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not save the key");
+        toast.error(friendlyError(err, "That key didn’t save — try again?"));
       }
     });
   }
@@ -51,10 +60,21 @@ export function WizardAiKey({
         Orbit reads your notes and answers questions about your network with an AI model
         that runs on your own key — at cost, never marked up, and never shared. You can
         change it any time under Settings.
+        {lifetimeIncludesAi && (
+          <>
+            {" "}With{" "}
+            <Link href="/pricing" className="font-medium text-primary underline-offset-2 hover:underline">
+              Orbit Lifetime
+            </Link>
+            , AI is included and no key is needed.
+          </>
+        )}
       </p>
 
       <div className="grid gap-2 sm:grid-cols-3">
-        {AI_PROVIDERS.map((p) => (
+        {/* The selectable three only — the grid is sm:grid-cols-3, and a provider with no
+            user-facing surface must not be offered to a brand-new account. */}
+        {SELECTABLE_AI_PROVIDERS.map((p) => (
           <button
             key={p.id}
             type="button"
@@ -101,7 +121,7 @@ export function WizardAiKey({
           Skip for now
         </Button>
         <Link
-          href="/settings#settings-ai"
+          href={integrationHref("ai")}
           className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
         >
           More options in Settings

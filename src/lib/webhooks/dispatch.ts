@@ -69,6 +69,7 @@ function backoffFor(attempt: number): number {
  * `scripts/smoke-webhook-delivery.ts` all import it from this module.
  */
 import { assertDeliverable, isBlockedAddress } from "@/lib/net-guard";
+import { reportError } from "@/lib/report-error";
 
 export { isBlockedAddress, assertDeliverable };
 
@@ -123,8 +124,10 @@ export async function enqueueWebhookEvent(
       .onConflictDoNothing();
 
     return subscribed.slice(0, INLINE_ENDPOINT_LIMIT).map((e) => e.id);
-  } catch {
-    // The sweep is the safety net; a queue failure must never surface to the caller.
+  } catch (err) {
+    // The sweep is the safety net; a queue failure must never surface to the caller — but
+    // an event that was never queued is an integration that silently missed it, so report.
+    reportError(err, { where: "job.webhooks.enqueue", userId, extra: { type } });
     return [];
   }
 }
@@ -304,6 +307,19 @@ export async function verifyEndpoint(
   return { ok: true };
 }
 
+/** The drain sweep's cadence; the follow-up window advances once per slot. */
+const FOLLOWUP_SWEEP_SLOT_MS = 10 * 60 * 1000;
+
+/**
+ * `size` items starting at a slot-dependent offset, wrapping around. Consecutive slots take
+ * consecutive windows, so over ceil(n / size) sweeps every item is served once.
+ */
+export function rotatingWindow<T>(items: readonly T[], size: number, slot: number): T[] {
+  if (items.length <= size) return [...items];
+  const start = (((slot * size) % items.length) + items.length) % items.length;
+  return Array.from({ length: size }, (_, i) => items[(start + i) % items.length]!);
+}
+
 /**
  * Emit `followup.due` for anyone with a subscribed endpoint.
  *
@@ -321,22 +337,29 @@ export async function emitDueFollowupEvents(
   now: Date = new Date()
 ): Promise<{ users: number; events: number }> {
   const db = await getDb();
-  const users = rowsOf<{ user_id: string }>(
+  // Every subscriber, ordered, then a window that rotates with the ten-minute slot. The
+  // query used to be `DISTINCT … LIMIT 20` with no order, so past 20 subscribers the same
+  // ones could be served on every sweep and the rest never. The list is one row per
+  // subscribed account (normally none), small enough to read whole.
+  const subscribers = rowsOf<{ user_id: string }>(
     await db.execute(sql`
       SELECT DISTINCT user_id FROM webhook_endpoints
        WHERE status = 'active' AND event_types ? 'followup.due'
-       LIMIT ${limitUsers}
+       ORDER BY user_id
     `)
   );
+  const users = rotatingWindow(subscribers, limitUsers, Math.floor(now.getTime() / FOLLOWUP_SWEEP_SLOT_MS));
   if (users.length === 0) return { users: 0, events: 0 };
 
   const day = now.toISOString().slice(0, 10);
-  const { getDashboardData } = await import("@/lib/reminders");
+  // The dashboard's due list without the rest of the dashboard: this runs every ten minutes
+  // for every subscribed account.
+  const { loadDueFollowUps } = await import("@/lib/due-follow-ups");
   let events = 0;
   for (const { user_id: userId } of users) {
     try {
-      const data = await getDashboardData(userId);
-      for (const contact of data.dueFollowUps.slice(0, 25)) {
+      const due = await loadDueFollowUps(userId);
+      for (const contact of due.slice(0, 25)) {
         const queued = await enqueueWebhookEvent(
           userId,
           "followup.due",
@@ -353,8 +376,9 @@ export async function emitDueFollowupEvents(
         );
         if (queued.length > 0) events++;
       }
-    } catch {
+    } catch (err) {
       // One user's dashboard failing must not stop the others.
+      reportError(err, { where: "job.webhooks.followup-emit", level: "warning" });
     }
   }
   return { users: users.length, events };

@@ -7,11 +7,12 @@
  * every export in it, and tsc cannot see the problem.
  */
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contactMerges, contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { openEngines } from "@/lib/decisions/engine";
 import {
   dismissDuplicatePair as dismissPair,
   mergeContacts,
@@ -32,14 +33,23 @@ function revalidateContactSurfaces() {
 }
 
 export async function listDuplicates(): Promise<DuplicateReview> {
-  return getDuplicateReview(await requireUserId());
+  const userId = await requireUserId();
+  // Jev when the account has a TypeSafe key, else the person's own model — only to order the
+  // queue and hint at each pair (cached per pair, so a revisit is free).
+  return getDuplicateReview(userId, { engines: await openEngines(userId, { llm: true }) });
 }
 
 export async function countDuplicates(): Promise<number> {
   return countDuplicatesAwaitingReview(await requireUserId());
 }
 
-/** Merge one pair. `keepId` survives; `mergeId` is archived and disappears from every view. */
+/**
+ * Merge one pair. `keepId` survives; `mergeId` is archived and disappears from every view.
+ *
+ * Passes NO `confidence`, and that is load-bearing: a merge row with a null confidence is how
+ * the admin engagement report (`engagementDepth`) tells a person-confirmed merge from the
+ * automatic sweep and import-time resolution, which always record one.
+ */
 export async function mergeDuplicatePair(keepId: string, mergeId: string, reason?: string) {
   const userId = await requireUserId();
   const result = await mergeContacts(userId, keepId, mergeId, { reason });
@@ -68,8 +78,18 @@ export type RecentMerge = {
 export async function listRecentMerges(limit = 20): Promise<RecentMerge[]> {
   const userId = await requireUserId();
   const db = await getDb();
+  // Only what the list shows. `select()` pulled every merge's whole archive — the loser's
+  // full row snapshot (inline avatar included) plus every deleted child row — to read one
+  // name out of it. The name is extracted in SQL with the same rule the JS applied: the
+  // snapshot's `full_name` when it is a JSON string, otherwise null.
   const rows = await db
-    .select()
+    .select({
+      id: contactMerges.id,
+      reason: contactMerges.reason,
+      mergedAt: contactMerges.mergedAt,
+      winnerContactId: contactMerges.winnerContactId,
+      loserName: sql<string | null>`case when jsonb_typeof(${contactMerges.loserSnapshot} -> 'full_name') = 'string' then ${contactMerges.loserSnapshot} ->> 'full_name' end`,
+    })
     .from(contactMerges)
     .where(eq(contactMerges.userId, userId))
     .orderBy(desc(contactMerges.mergedAt))
@@ -94,10 +114,7 @@ export async function listRecentMerges(limit = 20): Promise<RecentMerge[]> {
     winnerId: row.winnerContactId,
     winnerName: nameById.get(row.winnerContactId) ?? null,
     // The archived row is the only place this name still exists.
-    loserName:
-      typeof (row.loserSnapshot as Record<string, unknown>)?.full_name === "string"
-        ? ((row.loserSnapshot as Record<string, unknown>).full_name as string)
-        : null,
+    loserName: row.loserName ?? null,
   }));
 }
 

@@ -71,7 +71,7 @@ export function CopyId({
         <Check className="size-3 shrink-0 text-primary" aria-hidden />
       ) : (
         <Copy
-          className="size-3 shrink-0 opacity-0 transition-opacity duration-fast group-hover:opacity-100"
+          className="size-3 shrink-0 opacity-100 transition-opacity duration-fast sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
           aria-hidden
         />
       )}

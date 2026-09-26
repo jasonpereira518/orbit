@@ -12,7 +12,7 @@
 /** The four grounds an event accent is ever drawn on — `--card` and `--background`, per theme. */
 export const SURFACES = {
   light: ["#ffffff", "#fbfbf9"],
-  dark: ["#1a2438", "#212c42"],
+  dark: ["#222427", "#292c30"],
 } as const;
 
 /** WCAG AA for normal text. The same floor `check-interaction-contrast.mjs` enforces. */
@@ -45,12 +45,6 @@ export function contrastRatio(a: string, b: string): number {
   const x = relativeLuminance(a);
   const y = relativeLuminance(b);
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
-}
-
-/** Perceptual lightness. Used to move a colour without disturbing its hue. */
-export function lstar(hex: string): number {
-  const y = relativeLuminance(hex);
-  return y <= 216 / 24389 ? y * (24389 / 27) : Math.cbrt(y) * 116 - 16;
 }
 
 /** The worst ratio against every surface in a theme — the number that has to clear the floor. */

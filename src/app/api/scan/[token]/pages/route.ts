@@ -1,0 +1,143 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { captureImageFiles, normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
+import { discardCapturePhotos, storeCapturePhotos } from "@/lib/capture-photos";
+import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { MAX_SCAN_PAGES, estimateDecodedBytes } from "@/lib/scan-image";
+import {
+  findScanHandoff,
+  markHandoffUploading,
+  recordHandoffError,
+  recordHandoffTranscript,
+} from "@/lib/scan-handoff";
+import { reportAndContinue, reportedFailure } from "@/lib/report-error";
+
+/**
+ * Pages photographed on a phone, posted against a scan handoff token.
+ *
+ * The phone carries no Clerk session — that is the entire point of the handoff — so this
+ * route is exempted in `PUBLIC_ROUTES` and authenticated solely by the opaque token in its
+ * path, the same arrangement as the calendar feed. Transcription runs here, as the minting
+ * user, so their configured provider and their key are what read the photos.
+ *
+ * The images are transcribed and dropped. Nothing about them is written down.
+ */
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+// OCR of a full note (`MAX_SCAN_PAGES` pages), three at a time, against whichever
+// provider the user configured.
+export const maxDuration = 300;
+
+/** 404 for every refusal. A 401 would confirm the route gates by token. */
+function notFound() {
+  return NextResponse.json({ error: "Not found" }, { status: 404 });
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ token: string }> }
+) {
+  const { token } = await params;
+
+  // Shape-checked inside, before any query, so malformed traffic costs no database work.
+  const handoff = await findScanHandoff(token);
+  if (!handoff) return notFound();
+
+  let files: CaptureMediaFile[];
+  let remainingPages = 0;
+  try {
+    const body = (await request.json()) as { files?: CaptureMediaFile[]; remainingPages?: unknown };
+    files = Array.isArray(body?.files) ? body.files : [];
+    // The phone sends a scan in batches under Vercel's 4.5MB request cap. It says how many
+    // pages are still to come (this batch included) so pages are numbered within the note.
+    remainingPages = Number.isInteger(body?.remainingPages) ? Math.min(Number(body.remainingPages), 10 * MAX_SCAN_PAGES) : 0;
+  } catch {
+    return NextResponse.json({ error: "Malformed request body" }, { status: 400 });
+  }
+
+  if (!files.length) {
+    return NextResponse.json({ error: "Add a photo first" }, { status: 400 });
+  }
+  if (files.length > MAX_SCAN_PAGES) {
+    return NextResponse.json(
+      { error: `That’s more than ${MAX_SCAN_PAGES} pages — send them in two goes` },
+      { status: 400 }
+    );
+  }
+
+  // Measured on decoded bytes so the number matches the photos the phone actually took.
+  const uploadBytes = files.reduce(
+    (sum, file) => sum + estimateDecodedBytes(file.base64.length),
+    0
+  );
+  if (uploadBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+    return NextResponse.json(
+      {
+        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(
+          CAPTURE_MAX_UPLOAD_BYTES
+        )}, so try fewer pages`,
+      },
+      { status: 413 }
+    );
+  }
+
+  try {
+    // Keyed on the owner, not the token: the budget being protected is the account's AI
+    // spend, and a leaked token must not get a fresh allowance by being re-minted.
+    await consumeBucket("captureHandoff", handoff.userId, RATE_LIMITS.captureHandoff);
+  } catch (err) {
+    if (isRateLimitedError(err)) {
+      return NextResponse.json(
+        { error: err.message },
+        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
+      );
+    }
+    throw err;
+  }
+
+  await markHandoffUploading(handoff.id);
+
+  // The pages are kept for the capture history the same way a desktop upload's are —
+  // shrunk and re-encoded server-side, unattached until the job saves. Text is still what
+  // crosses to the desktop; the photo rows live behind the owner-checked photo route.
+  const [normalizedResult, storedResult] = await Promise.allSettled([
+    normalizeCaptureInput(handoff.userId, {
+      files,
+      pageNumbering: {
+        offset: handoff.pageCount ?? 0,
+        total: (handoff.pageCount ?? 0) + Math.max(remainingPages, files.length),
+      },
+    }),
+    storeCapturePhotos(handoff.userId, captureImageFiles(files).map((img) => ({ filename: img.filename, base64: img.base64 }))),
+  ]);
+  const photos = storedResult.status === "fulfilled" ? storedResult.value : [];
+  try {
+    if (normalizedResult.status === "rejected") {
+      await discardCapturePhotos(handoff.userId, photos.map((p) => p.id)).catch(() => {});
+      throw normalizedResult.reason;
+    }
+    const normalized = normalizedResult.value;
+    await recordHandoffTranscript(handoff.id, {
+      transcript: normalized.text,
+      pageCount: files.length,
+      sources: normalized.sources.join(", "),
+      photoIds: photos.map((p) => p.id),
+    });
+    return NextResponse.json({ ok: true, pageCount: files.length });
+  } catch (err) {
+    // Recorded rather than only returned, so the desktop stops waiting and says why. The
+    // grant stays redeemable: the usual cause is one bad photo, and walking back to the
+    // laptop for a fresh QR code just to retake it would be a poor trade.
+    // `friendlyError`, never `err.message`: this reaches the phone verbatim, and a raw
+    // provider body is no more readable there than it is anywhere else.
+    const message = reportedFailure(err, "Couldn’t read those pages — try again?", {
+      where: "route.scan-pages",
+      userId: handoff.userId,
+      extra: { handoffId: handoff.id, pages: files.length },
+    }).error;
+    await recordHandoffError(handoff.id, message).catch(
+      reportAndContinue({ where: "route.scan-pages.record", userId: handoff.userId }, undefined)
+    );
+    return NextResponse.json({ error: message }, { status: 422 });
+  }
+}

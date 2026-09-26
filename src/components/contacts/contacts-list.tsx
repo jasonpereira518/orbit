@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -25,7 +26,7 @@ import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
-import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
+import { FollowUpDraftSheetLazy } from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import {
   Dialog,
   DialogContent,
@@ -46,10 +47,17 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  closenessPercentChipClass,
   closenessTierChipClass,
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import { LIST_INTENT_DELAY_MS, useIntentPrefetchHandlers } from "@/lib/intent-prefetch";
+import {
+  markImportPersonSeen,
+  useImportPeopleSeen,
+} from "@/lib/import-highlight-seen";
+import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 import {
   AVATARS_UPDATED_EVENT,
   type AvatarsUpdatedDetail,
@@ -67,6 +75,8 @@ export type ContactListItem = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl?: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar?: boolean;
   relationshipScore: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
@@ -74,6 +84,9 @@ export type ContactListItem = {
   nextFollowUpAt?: string | Date | null;
   lastInteractionAt?: string | Date | null;
   tags: string[];
+  matchReason?: string | null;
+  /** One of the people the import in `?importId=` added — marked until it has been seen. */
+  fromImport?: boolean;
 };
 
 const ALPHABET = [
@@ -151,6 +164,8 @@ export type ContactsListFilters = {
   followUp?: "due";
   sort?: ContactSort;
   letter?: string;
+  /** Narrows the list to one import's people — see `/contacts/page.tsx`'s banner. */
+  importId?: string;
 };
 
 export function ContactsList({
@@ -180,6 +195,10 @@ export function ContactsList({
   const router = useRouter();
   const exitTimer = useRef<number | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  // The import this list was opened from ("Meet your N new people"), whose new people are
+  // marked until each one is hovered, focused or opened.
+  const importKey = filters.importId?.trim() ?? "";
+  const importSeen = useImportPeopleSeen(importKey);
 
   // Resync when the server sends a different first page — a filter change, or a refresh
   // after a mutation. Adjusted during render rather than in an effect: React re-runs the
@@ -271,8 +290,17 @@ export function ContactsList({
   // Grouping only, no sorting: the rows arrive in the order Postgres produced, and re-sorting
   // them here would both waste a pass of `localeCompare` and risk disagreeing with the
   // cursor — which would silently drop contacts at page boundaries.
+  //
+  // Contiguous-run grouping assumes the rows already arrive in alphabetical order, which
+  // only holds for `sort === "name"`. Under any other order (closeness, recent, relevance)
+  // the same letter can recur non-contiguously — grouping it anyway would scatter several
+  // same-lettered sticky headers through the list and give two of them the same React key.
+  // So outside "name" order every row sits in one ungrouped section instead.
   const sections = useMemo(() => {
-    const groups: Array<{ letter: string; contacts: ContactListItem[] }> = [];
+    if (filters.sort && filters.sort !== "name") {
+      return contacts.length ? [{ letter: null, contacts }] : [];
+    }
+    const groups: Array<{ letter: string | null; contacts: ContactListItem[] }> = [];
     for (const c of contacts) {
       const letter = letterOf(lastNameOf(c));
       const last = groups[groups.length - 1];
@@ -280,7 +308,7 @@ export function ContactsList({
       else groups.push({ letter, contacts: [c] });
     }
     return groups;
-  }, [contacts]);
+  }, [contacts, filters.sort]);
 
   // Which letters exist across the *whole* network, not just the pages loaded so far. The
   // client can no longer answer that from the rows it holds.
@@ -288,6 +316,20 @@ export function ContactsList({
     () => new Set(serverLetters),
     [serverLetters]
   );
+
+  // Per-row derived labels, computed once for every currently-loaded contact rather than
+  // inline inside the render `.map()` below — that recomputed all of them (four date-math
+  // calls + a join per row) on every render, including ones triggered by unrelated
+  // sibling state (a dialog opening, a popover, the alphabet scrubber dragging).
+  //
+  // Reused per contact OBJECT (see `rowMetaFor`): a fresh meta for every row whenever
+  // `contacts` changed defeated `ContactRow`'s memo, so each 50-row page — and each avatar
+  // backfill batch, every second or two after an import — re-rendered every loaded row.
+  const rowMeta = useMemo(() => {
+    const map = new Map<string, ContactRowMeta>();
+    for (const c of contacts) map.set(c.id, rowMetaFor(c));
+    return map;
+  }, [contacts]);
 
   /**
    * Jump the list to a letter.
@@ -301,7 +343,10 @@ export function ContactsList({
     setActiveLetter(letter);
     const target =
       document.getElementById(`contact-letter-${letter}`) ??
-      nearestSectionEl(letter, new Set(sections.map((s) => s.letter)));
+      nearestSectionEl(
+        letter,
+        new Set(sections.flatMap((s) => (s.letter !== null ? [s.letter] : [])))
+      );
     target?.scrollIntoView({ behavior: "auto", block: "start" });
   }
 
@@ -314,15 +359,16 @@ export function ContactsList({
     if (filters.minScore) params.set("minScore", String(filters.minScore));
     if (filters.followUp) params.set("followUp", filters.followUp);
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
+    if (filters.importId) params.set("importId", filters.importId);
     params.set("letter", letter);
     router.replace(`/contacts?${params.toString()}`);
   }
 
   const confirmContact = contacts.find((c) => c.id === confirmId);
 
-  function requestDelete(id: string) {
-    setConfirmId(id);
-  }
+  // Stable, so `ContactRow`'s memo holds across unrelated list state (the scrubber's letter,
+  // the delete dialog, the draft sheet, a page loading).
+  const openContactPage = useCallback((id: string) => router.push(`/contacts/${id}`), [router]);
 
   function confirmDelete() {
     if (!confirmId) return;
@@ -354,7 +400,7 @@ export function ContactsList({
           toast.success(`${name} deleted`);
           router.refresh();
         } catch {
-          toast.error("Could not delete contact");
+          toast.error("Couldn’t delete that contact — try again?");
           setContacts(restore);
           router.refresh();
         }
@@ -383,184 +429,32 @@ export function ContactsList({
       <>
         <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl">
           {sections.map((section) => (
-            <li key={section.letter} className="list-none">
-              <div
-                id={`contact-letter-${section.letter}`}
-                className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
-              >
-                <p className="text-xs font-semibold tracking-wide text-muted-foreground">
-                  {section.letter}
-                </p>
-              </div>
+            <li key={section.letter ?? "all"} className="list-none">
+              {section.letter !== null && (
+                <div
+                  id={`contact-letter-${section.letter}`}
+                  className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
+                >
+                  <p className="text-xs font-semibold tracking-wide text-muted-foreground">
+                    {section.letter}
+                  </p>
+                </div>
+              )}
               <ul className="divide-y divide-border/60">
-                {section.contacts.map((c) => {
-                  const exiting = exitingId === c.id;
-                  const overdue = isOverdue(c.nextFollowUpAt);
-                  const scheduledLabel = dueLabel(c.nextFollowUpAt);
-                  const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
-                  const lastTouch = lastTouchLabel(c.lastInteractionAt);
-                  const details = [
-                    detailLine(c.school, c.location),
-                    overdueText,
-                    lastTouch,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ");
-
-                  function openContact() {
-                    if (exiting) return;
-                    router.push(`/contacts/${c.id}`);
-                  }
-
-                  function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openContact();
-                    }
-                  }
-
-                  return (
-                    <li
-                      key={c.id}
-                      role="link"
-                      tabIndex={0}
-                      onClick={openContact}
-                      onKeyDown={onRowKeyDown}
-                      className={cn(
-                        // content-visibility skips layout/paint for offscreen
-                        // rows — the browser remembers real heights after
-                        // first render (`auto` keyword), 74px is the estimate.
-                        "contact-row grid cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
-                        "transition-[grid-template-rows,opacity] duration-slow ease-house",
-                        "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
-                        exiting
-                          ? "grid-rows-[0fr] opacity-0"
-                          : "grid-rows-[1fr] opacity-100"
-                      )}
-                    >
-                      <div className="overflow-hidden">
-                        <div
-                          className={cn(
-                            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
-                            exiting && "-translate-x-8"
-                          )}
-                        >
-                          <ContactAvatarPreview contact={c}>
-                            <ContactAvatar
-                              contactId={c.id}
-                              firstName={c.firstName}
-                              fullName={c.fullName}
-                              linkedinUrl={c.linkedinUrl}
-                              profileImageUrl={c.profileImageUrl}
-                              size="lg"
-                            />
-                          </ContactAvatarPreview>
-
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate font-medium text-ink">
-                              {c.preferredName || c.fullName}
-                            </p>
-                            <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                              <p className="min-w-0 truncate text-sm">
-                                <CompanyRoleLine
-                                  title={c.title}
-                                  company={c.company}
-                                />
-                              </p>
-                              {c.closenessTier && (
-                                <>
-                                  {/* On a phone the word badge ("INNER ORBIT") took ~90px
-                                      of a 375px row and cut the role to "VP Engin…". The
-                                      colour is the part that scans at a glance, and the
-                                      percentage chip on the right already carries the
-                                      number, so below sm the tier is just its dot. */}
-                                  <ClosenessTierBadge
-                                    tier={c.closenessTier}
-                                    dotOnly
-                                    className="sm:hidden"
-                                  />
-                                  <ClosenessTierBadge
-                                    tier={c.closenessTier}
-                                    className="hidden shrink-0 sm:inline-flex"
-                                  />
-                                </>
-                              )}
-                            </div>
-                            {details && (
-                              <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
-                                {overdueText ? (
-                                  <>
-                                    {detailLine(c.school, c.location) && (
-                                      <>
-                                        {detailLine(c.school, c.location)}
-                                        <span className="mx-1.5">·</span>
-                                      </>
-                                    )}
-                                    <span className="font-medium text-amber-700 dark:text-amber-300">
-                                      {overdueText}
-                                    </span>
-                                    {lastTouch && (
-                                      <>
-                                        <span className="mx-1.5">·</span>
-                                        {lastTouch}
-                                      </>
-                                    )}
-                                  </>
-                                ) : (
-                                  details
-                                )}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="flex shrink-0 items-center gap-1">
-                            <ClosenessChip
-                              closeness={c.closeness}
-                              relationshipScore={c.relationshipScore}
-                              closenessTier={c.closenessTier}
-                            />
-
-                            {c.linkedinUrl ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label={`Open ${c.fullName} on LinkedIn`}
-                                className="shrink-0 text-muted-foreground"
-                                onClick={(e: MouseEvent<HTMLButtonElement>) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  window.open(
-                                    buildLinkedInUrl(c.linkedinUrl!),
-                                    "_blank",
-                                    "noopener,noreferrer"
-                                  );
-                                }}
-                              >
-                                <LinkedInIcon className="size-4" />
-                              </Button>
-                            ) : null}
-
-                            <FollowUpRowButton
-                              contactId={c.id}
-                              contactName={c.preferredName || c.fullName}
-                              nextFollowUpAt={c.nextFollowUpAt}
-                              overdue={overdue}
-                              scheduledLabel={scheduledLabel}
-                              onOpenDraft={setDraftContact}
-                            />
-
-                            <DeleteRowButton
-                              name={c.fullName}
-                              disabled={pending || exiting}
-                              onClick={() => requestDelete(c.id)}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
+                {section.contacts.map((c) => (
+                  <ContactRow
+                    key={c.id}
+                    c={c}
+                    meta={rowMeta.get(c.id)!}
+                    exiting={exitingId === c.id}
+                    marked={Boolean(c.fromImport && !importSeen.has(c.id))}
+                    importKey={importKey}
+                    deleteDisabled={pending || exitingId === c.id}
+                    onOpen={openContactPage}
+                    onOpenDraft={setDraftContact}
+                    onRequestDelete={setConfirmId}
+                  />
+                ))}
               </ul>
             </li>
           ))}
@@ -600,7 +494,7 @@ export function ContactsList({
         )}
 
         {/* One draft sheet for the whole list — see FollowUpRowButton. */}
-        <FollowUpDraftSheet
+        <FollowUpDraftSheetLazy
           open={draftContact !== null}
           onOpenChange={(open) => {
             if (!open) setDraftContact(null);
@@ -631,8 +525,7 @@ export function ContactsList({
             <DialogHeader>
               <DialogTitle>Delete {confirmContact?.fullName}?</DialogTitle>
               <DialogDescription>
-                This removes the contact and their interaction history. This
-                cannot be undone.
+                {CONTACT_DELETE_EXPLAINER}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2 sm:gap-2">
@@ -659,6 +552,259 @@ export function ContactsList({
     </TooltipProvider>
   );
 }
+
+type ContactRowMeta = {
+  overdue: boolean;
+  scheduledLabel: string | null;
+  overdueText: string | null;
+  lastTouch: string | null;
+  details: string;
+};
+
+/**
+ * One contact row. Memoized with only per-row values and stable callbacks as props, so a
+ * change that belongs to the list (the scrubber's active letter, the delete dialog, the draft
+ * sheet, a page loading) no longer re-renders every row.
+ */
+/**
+ * A row's derived labels, cached against the contact object itself. Rows that did not
+ * change keep their object across page loads and avatar updates (`[...prev, ...next]`, and
+ * a `map` that replaces only the updated rows), so they keep their meta too and their
+ * memoized row skips the render. Weak, so a row dropped from the list takes its entry with it.
+ */
+const rowMetaCache = new WeakMap<ContactListItem, ContactRowMeta>();
+
+function rowMetaFor(c: ContactListItem): ContactRowMeta {
+  const cached = rowMetaCache.get(c);
+  if (cached) return cached;
+  const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
+  const lastTouch = lastTouchLabel(c.lastInteractionAt);
+  const meta: ContactRowMeta = {
+    overdue: isOverdue(c.nextFollowUpAt),
+    scheduledLabel: dueLabel(c.nextFollowUpAt),
+    overdueText,
+    lastTouch,
+    details: [detailLine(c.school, c.location), overdueText, lastTouch]
+      .filter(Boolean)
+      .join(" · "),
+  };
+  rowMetaCache.set(c, meta);
+  return meta;
+}
+
+const ContactRow = memo(function ContactRow({
+  c,
+  meta,
+  exiting,
+  marked,
+  importKey,
+  deleteDisabled,
+  onOpen,
+  onOpenDraft,
+  onRequestDelete,
+}: {
+  c: ContactListItem;
+  meta: ContactRowMeta;
+  exiting: boolean;
+  /** New from the import the list was opened from, and not yet seen. */
+  marked: boolean;
+  importKey: string;
+  deleteDisabled: boolean;
+  onOpen: (id: string) => void;
+  onOpenDraft: (contact: { id: string; name: string }) => void;
+  onRequestDelete: (id: string) => void;
+}) {
+  const { overdue, scheduledLabel, overdueText, lastTouch, details } = meta;
+
+  function seeMarked() {
+    if (marked) markImportPersonSeen(importKey, c.id);
+  }
+
+  function openContact() {
+    if (exiting) return;
+    seeMarked();
+    onOpen(c.id);
+  }
+
+  // Rows are not <Link>s, so nothing prefetched the profile: every open started cold, behind
+  // a skeleton React holds for ≥300 ms. Resting on a row (or focusing it) fetches the whole
+  // profile, so the click usually renders straight from the router cache.
+  const intent = useIntentPrefetchHandlers(`/contacts/${c.id}`, LIST_INTENT_DELAY_MS);
+
+  function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openContact();
+    }
+  }
+
+  return (
+    <li
+      role="link"
+      tabIndex={0}
+      onClick={openContact}
+      onKeyDown={onRowKeyDown}
+      // Hover or keyboard focus counts as having seen them: the mark fades.
+      onMouseEnter={seeMarked}
+      onPointerEnter={intent.onPointerEnter}
+      onPointerLeave={intent.onPointerLeave}
+      onTouchStart={intent.onTouchStart}
+      onFocus={() => {
+        seeMarked();
+        intent.onFocus();
+      }}
+      data-new-from-import={marked ? "" : undefined}
+      className={cn(
+        // content-visibility skips layout/paint for offscreen
+        // rows — the browser remembers real heights after
+        // first render (`auto` keyword), 74px is the estimate.
+        "contact-row grid cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
+        "transition-[grid-template-rows,opacity] duration-slow ease-house",
+        "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
+        exiting
+          ? "grid-rows-[0fr] opacity-0"
+          : "grid-rows-[1fr] opacity-100"
+      )}
+    >
+      <div className="overflow-hidden">
+        <div
+          className={cn(
+            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
+            // New from the import the list was opened from: a light yellow
+            // that fades out once the row is hovered, focused or opened.
+            marked && "bg-amber-100/45 dark:bg-amber-300/10",
+            exiting && "-translate-x-8"
+          )}
+        >
+          <ContactAvatarPreview contact={c}>
+            <ContactAvatar
+              contactId={c.id}
+              firstName={c.firstName}
+              fullName={c.fullName}
+              profileImageUrl={c.profileImageUrl}
+              size="lg"
+              // Rows you are actually looking at fill in first, instead of
+              // waiting for the background backfill to reach them in id
+              // order. `loading="lazy"` on the underlying <img> means only
+              // near-viewport rows ever issue a request, and the route
+              // caches its misses so scrolling back does not re-ask.
+              resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
+            />
+          </ContactAvatarPreview>
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-medium text-ink">
+              {c.preferredName || c.fullName}
+            </p>
+            <div className="mt-0.5 flex min-w-0 items-center gap-2">
+              <p className="min-w-0 truncate text-sm">
+                <CompanyRoleLine
+                  title={c.title}
+                  company={c.company}
+                />
+              </p>
+              {c.closenessTier && (
+                <>
+                  {/* On a phone the word badge ("INNER ORBIT") took ~90px
+                      of a 375px row and cut the role to "VP Engin…". The
+                      colour is the part that scans at a glance, and the
+                      percentage chip on the right already carries the
+                      number, so below sm the tier is just its dot. */}
+                  <ClosenessTierBadge
+                    tier={c.closenessTier}
+                    dotOnly
+                    className="sm:hidden"
+                  />
+                  <ClosenessTierBadge
+                    tier={c.closenessTier}
+                    className="hidden shrink-0 sm:inline-flex"
+                  />
+                </>
+              )}
+            </div>
+            {details && (
+              <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
+                {overdueText ? (
+                  <>
+                    {detailLine(c.school, c.location) && (
+                      <>
+                        {detailLine(c.school, c.location)}
+                        <span className="mx-1.5">·</span>
+                      </>
+                    )}
+                    <span className="font-medium text-amber-700 dark:text-warning">
+                      {overdueText}
+                    </span>
+                    {lastTouch && (
+                      <>
+                        <span className="mx-1.5">·</span>
+                        {lastTouch}
+                      </>
+                    )}
+                  </>
+                ) : (
+                  details
+                )}
+              </p>
+            )}
+            {c.matchReason && (
+              // Only set for the "non-obvious" hits — a past role, or a
+              // semantic match with no literal keyword overlap — so this
+              // line is rare, not a fixture of every search result.
+              <p className="mt-0.5 truncate text-[11px] font-medium text-primary/70">
+                {c.matchReason}
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-4">
+            <ClosenessChip
+              closeness={c.closeness}
+              relationshipScore={c.relationshipScore}
+              closenessTier={c.closenessTier}
+            />
+
+            {c.linkedinUrl ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Open ${c.fullName} on LinkedIn`}
+                className="tap-target relative shrink-0 text-muted-foreground"
+                onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.open(
+                    buildLinkedInUrl(c.linkedinUrl!),
+                    "_blank",
+                    "noopener,noreferrer"
+                  );
+                }}
+              >
+                <LinkedInIcon className="size-4" />
+              </Button>
+            ) : null}
+
+            <FollowUpRowButton
+              contactId={c.id}
+              contactName={c.preferredName || c.fullName}
+              nextFollowUpAt={c.nextFollowUpAt}
+              overdue={overdue}
+              scheduledLabel={scheduledLabel}
+              onOpenDraft={onOpenDraft}
+            />
+
+            <DeleteRowButton
+              name={c.fullName}
+              disabled={deleteDisabled}
+              onClick={() => onRequestDelete(c.id)}
+            />
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+});
 
 function nearestSectionEl(letter: string, available: Set<string>) {
   const idx = ALPHABET.indexOf(letter as (typeof ALPHABET)[number]);
@@ -696,6 +842,40 @@ function AlphabetScrubber({
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  /**
+   * Reserve the rail's width in the page, rather than floating over it.
+   *
+   * The rail is portalled to `<body>` and fixed to the right edge, so nothing in the
+   * page knows it is there. It is also an opaque card, so everything it covers is not
+   * dimmed but gone: the "Add contact" button, the Recruiters tab, the plan notice, and
+   * a row's own delete button were all being clipped by it on a phone.
+   *
+   * Publishing the footprint as a variable — rather than hard-coding padding on each
+   * page — keeps the gutter tied to the rail's actual presence: it is only paid while
+   * the rail is mounted, and it disappears with it.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    /**
+     * The gutter only makes up what the content column's own padding doesn't cover,
+     * plus a little air — publishing the rail's full footprint would double-count the
+     * padding and squeeze the header hard enough to change how its buttons wrap.
+     *
+     *  - Below `md` the rail is thinner: `right-1.5` (0.375rem) + `w-7` (1.75rem) =
+     *    2.125rem. The column carries 1rem of padding, so 1.625rem stops the content
+     *    0.5rem clear.
+     *  - From `md` it is the desktop rail: `right-4` (1rem) + `w-9` (2.25rem) = 3.25rem,
+     *    against 2.5rem of padding, so 2.25rem leaves 1.5rem of air.
+     *
+     * An inline style can't vary by breakpoint, so this publishes a reference and
+     * globals.css (`--content-rail-gutter-size`) holds the per-breakpoint values.
+     */
+    root.style.setProperty("--content-rail-gutter", "var(--content-rail-gutter-size)");
+    return () => {
+      root.style.removeProperty("--content-rail-gutter");
+    };
   }, []);
 
   function letterFromClientY(clientY: number) {
@@ -740,7 +920,12 @@ function AlphabetScrubber({
   return createPortal(
     <div
       className={cn(
-        "pointer-events-none fixed top-1/2 right-2 z-40 -translate-y-1/2 sm:right-4",
+        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-4",
+        // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
+        // viewport it rose into the header and covered the notification bell, and its
+        // 27 letters had about 6pt each between the header and the nav. The gutter it
+        // reserves is dropped at the same height in globals.css.
+        "[@media(max-height:500px)]:hidden",
         "pb-[env(safe-area-inset-bottom)]"
       )}
     >
@@ -749,7 +934,10 @@ function AlphabetScrubber({
         role="navigation"
         aria-label="Jump to letter"
         className={cn(
-          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-9 cursor-ns-resize select-none flex-col items-center justify-between rounded-2xl border border-border/70 bg-card/95 py-2.5 shadow-md backdrop-blur",
+          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
+          // Thinner on phones, where every pixel of width is the list's; the desktop rail
+          // keeps its original size and card shape.
+          "md:w-9 md:rounded-2xl md:py-2.5 md:shadow-md",
           "touch-none ring-1 ring-foreground/5"
         )}
         onPointerDown={onPointerDown}
@@ -814,9 +1002,12 @@ function ClosenessChip({
       ? `${Math.round(closeness * 100)}%`
       : `Score ${relationshipScore}`;
 
-  const chipClass = closenessTier
-    ? closenessTierChipClass(closenessTier)
-    : "bg-muted text-muted-foreground";
+  const chipClass =
+    typeof closeness === "number"
+      ? closenessPercentChipClass(closeness)
+      : closenessTier
+        ? closenessTierChipClass(closenessTier)
+        : "bg-muted text-muted-foreground";
 
   const tierHint = closenessTier ? ` (${TIER_TOOLTIP[closenessTier]})` : "";
 
@@ -885,7 +1076,7 @@ function FollowUpRowButton({
           }
           className={cn(
             buttonVariants({ variant: "ghost", size: "icon-sm" }),
-            "relative shrink-0 text-muted-foreground",
+            "tap-target relative shrink-0 text-muted-foreground",
             overdue && "text-chart-4 hover:text-chart-4"
           )}
           onClick={(e) => {
@@ -958,7 +1149,7 @@ function DeleteRowButton({
         onClick();
       }}
       className={cn(
-        "shrink-0 text-muted-foreground",
+        "tap-target relative shrink-0 text-muted-foreground",
         "hover:bg-destructive/10 hover:text-destructive",
         "focus-visible:bg-destructive/10 focus-visible:text-destructive"
       )}

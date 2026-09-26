@@ -50,6 +50,18 @@ const STAR_AREA = 5300;
 /** Bounds the per-frame arc count on ultrawide and 4K displays, where the
  * area-derived count would otherwise run into four figures. */
 const STAR_CAP = 700;
+/**
+ * The loop repaints at most this often. The slowest-breathing star takes ~2.6s per
+ * twinkle, so 30fps is indistinguishable from the display's 60-120 — at half the work or
+ * less, for a loop that runs as long as the app is open in dark mode.
+ */
+const FRAME_MS = 33;
+
+// Opaque fills with the alpha on `globalAlpha`, rather than an `rgba(…, alpha)` string per
+// star per frame for the canvas to allocate and parse.
+const WHITE_FILL = `rgb(${STAR_WHITE})`;
+const GOLD_FILL = `rgb(${STAR_GOLD})`;
+const BLOOM_SHADOW = `rgba(${STAR_GOLD}, 0.8)`;
 
 /**
  * The app's ambient sky.
@@ -75,9 +87,13 @@ const STAR_CAP = 700;
  * Everything load-bearing IS carried over: the DPR cap, the viewport-sized
  * canvas, the hidden-tab pause and the reduced-motion path.
  */
-export function AppStarfield() {
+export function AppStarfield({ still = false }: { still?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const reduced = usePrefersReducedMotion();
+  // `still` paints one frame and runs no loop, exactly as reduced motion does. The
+  // constellation asks for it: a full-viewport canvas repainting 700 arcs every frame
+  // underneath a chart holding thousands of layers was part of the GPU pressure that
+  // made the sidebar's tiles drop out and flash blank.
+  const reduced = usePrefersReducedMotion() || still;
   const active = useSyncExternalStore(
     subscribeToTheme,
     isDarkNow,
@@ -93,6 +109,7 @@ export function AppStarfield() {
     if (!ctx) return;
 
     let raf = 0;
+    let lastFrame = 0;
     let stars: Star[] = [];
     let width = 0;
     let height = 0;
@@ -131,6 +148,11 @@ export function AppStarfield() {
     }
 
     function draw(now: number) {
+      if (!reduced && lastFrame && now - lastFrame < FRAME_MS) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      lastFrame = now;
       ctx!.clearRect(0, 0, width, height);
 
       for (const s of stars) {
@@ -140,16 +162,16 @@ export function AppStarfield() {
 
         if (s.bloom) {
           ctx!.shadowBlur = 6;
-          ctx!.shadowColor = `rgba(${STAR_GOLD}, 0.8)`;
+          ctx!.shadowColor = BLOOM_SHADOW;
         }
         ctx!.beginPath();
-        ctx!.fillStyle = s.gold
-          ? `rgba(${STAR_GOLD}, ${alpha})`
-          : `rgba(${STAR_WHITE}, ${alpha})`;
+        ctx!.fillStyle = s.gold ? GOLD_FILL : WHITE_FILL;
+        ctx!.globalAlpha = alpha;
         ctx!.arc(s.x, s.y, s.r, 0, Math.PI * 2);
         ctx!.fill();
         if (s.bloom) ctx!.shadowBlur = 0;
       }
+      ctx!.globalAlpha = 1;
 
       if (!reduced) raf = requestAnimationFrame(draw);
     }
@@ -163,14 +185,25 @@ export function AppStarfield() {
     // Listeners attach before the first draw so a zero-sized viewport at mount
     // (prerender, or a hidden tab being restored) can still be repaired by the
     // resize event that gives it real dimensions.
-    window.addEventListener("resize", resize);
+    // At most one rebuild per frame, however many resize events a window drag delivers.
+    let resizeFrame = 0;
+    function onResize() {
+      if (resizeFrame) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = 0;
+        resize();
+      });
+    }
+
+    window.addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", onVisibility);
 
     resize();
     draw(performance.now());
 
     return () => {
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", onResize);
+      cancelAnimationFrame(resizeFrame);
       document.removeEventListener("visibilitychange", onVisibility);
       cancelAnimationFrame(raf);
     };

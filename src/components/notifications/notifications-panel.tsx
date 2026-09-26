@@ -5,6 +5,7 @@ import type { AppPulse } from "@/lib/app-pulse";
 import Link from "next/link";
 import {
   useEffect,
+  useMemo,
   useState,
   useTransition,
 } from "react";
@@ -15,16 +16,19 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  NotebookPen,
   Shield,
   UserRound,
   X,
   XCircle,
 } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction } from "@/lib/toast";
 import {
   clearContactFollowUp,
   markReminderDone,
+  reopenReminderAction,
   snoozeReminderAction,
+  unsnoozeReminderAction,
 } from "@/actions/reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -111,30 +115,80 @@ export function NotificationsPanelButton({
   const jobs = useBackgroundJobs();
   const activeJobCount = useActiveBackgroundJobCount();
   const kept = useKeptNotifications();
-  const unreadKeptCount = kept.filter((entry) => !entry.read).length;
+  const unreadKeptCount = useMemo(
+    () => kept.filter((entry) => !entry.read).length,
+    [kept]
+  );
   const dueCount = data?.dueCount ?? 0;
   // Unread missed notifications count toward the badge — that is the whole
   // point of keeping them; a failure nobody saw should say so on the bell.
   // They stop counting once the panel has been opened, but stay in the list.
   const badgeCount = dueCount + activeJobCount + unreadKeptCount;
-  const dueItems = data?.items.filter((i) => i.urgency === "due") ?? [];
+  const [lastCount, setLastCount] = useState(badgeCount);
+  if (badgeCount > 0 && badgeCount !== lastCount) setLastCount(badgeCount);
+  const shownCount = badgeCount > 0 ? badgeCount : lastCount;
+  const dueItems = useMemo(
+    () => data?.items.filter((i) => i.urgency === "due") ?? [],
+    [data]
+  );
+  // Captured notes waiting for review (or that failed) are the one "info" item worth a
+  // slot here: the user has to act on them, and nothing else will surface them.
+  const captureItems = useMemo(
+    () => data?.items.filter((i) => i.kind === "capture_review") ?? [],
+    [data]
+  );
   const alerts = data?.alerts ?? [];
   // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
   // alert-only account should still see the scroll area say there is nothing due rather
   // than render an empty region with no explanation.
   const hasAnything =
-    dueItems.length > 0 || jobs.length > 0 || kept.length > 0;
+    dueItems.length > 0 ||
+    captureItems.length > 0 ||
+    jobs.length > 0 ||
+    kept.length > 0;
 
-  function runAction(label: string, action: () => Promise<unknown>) {
-    start(async () => {
-      try {
-        await action();
-        toast.success(label);
-        await refreshPanel(true);
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Action failed");
-      }
-    });
+  const refresh = () => refreshPanel(true);
+
+  function markDone(reminderId: string) {
+    start(() =>
+      runToastAction({
+        run: () => markReminderDone(reminderId),
+        success: "Marked done",
+        failure: "Couldn’t mark that done — try again?",
+        refresh,
+        undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
+        offline: { kind: "reminder.done", args: [reminderId], subject: reminderId },
+      }).then(() => undefined)
+    );
+  }
+
+  function snooze(reminderId: string) {
+    start(() =>
+      runToastAction({
+        run: () => snoozeReminderAction(reminderId, 7),
+        success: "Snoozed for a week",
+        failure: "Couldn’t snooze that — try again?",
+        refresh,
+        undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
+        offline: { kind: "reminder.snooze", args: [reminderId, 7], subject: reminderId },
+      }).then(() => undefined)
+    );
+  }
+
+  // No Undo: this closes an unbounded set of the contact's reminders and returns only
+  // how many, not which. It can say the count honestly, which it could not before.
+  function clearFollowUp(contactId: string) {
+    start(() =>
+      runToastAction({
+        run: () => clearContactFollowUp(contactId),
+        success: (res) =>
+          res.remindersClosed > 0
+            ? `Follow-up cleared — ${res.remindersClosed} ${res.remindersClosed === 1 ? "reminder" : "reminders"} closed too`
+            : "Follow-up cleared",
+        failure: "Couldn’t clear that follow-up — try again?",
+        refresh,
+      }).then(() => undefined)
+    );
   }
 
   const button = (
@@ -176,11 +230,18 @@ export function NotificationsPanelButton({
         }}
       >
         <Bell className="h-4 w-4" />
-        {badgeCount > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
-            {badgeCount > 99 ? "99+" : badgeCount}
+        {/* Always mounted so the count can pop OUT as well as in (`.t-badge` in
+            globals.css). `shownCount` holds the last non-zero value through the exit, or
+            the number would blank to nothing while the badge is still shrinking. */}
+        <span
+          aria-hidden
+          className="t-badge absolute -right-1 -top-1"
+          data-open={badgeCount > 0}
+        >
+          <span className="t-badge-dot flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+            {shownCount > 99 ? "99+" : shownCount}
           </span>
-        )}
+        </span>
         {/* Opposite corner from the count on purpose: alerts never add to the badge, and a
             dot sharing a corner with a two-digit number would collide with it. */}
         {data?.alertDot && (
@@ -244,23 +305,17 @@ export function NotificationsPanelButton({
                       pending={pending}
                       onDone={() => {
                         if (item.kind === "reminder" && item.reminderId) {
-                          runAction("Marked done", () =>
-                            markReminderDone(item.reminderId!)
-                          );
+                          markDone(item.reminderId);
                         } else if (
                           item.kind === "follow_up" &&
                           item.contactId
                         ) {
-                          runAction("Follow-up cleared", () =>
-                            clearContactFollowUp(item.contactId!)
-                          );
+                          clearFollowUp(item.contactId);
                         }
                       }}
                       onSnooze={() => {
                         if (item.kind === "reminder" && item.reminderId) {
-                          runAction("Snoozed 7 days", () =>
-                            snoozeReminderAction(item.reminderId!, 7)
-                          );
+                          snooze(item.reminderId);
                         }
                       }}
                       onNavigate={() => setOpen(false)}
@@ -275,6 +330,17 @@ export function NotificationsPanelButton({
                       See all {dueItems.length} in Reminders
                     </Link>
                   )}
+                </Section>
+
+                <Section title="Waiting on you" count={captureItems.length}>
+                  {captureItems.map((item) => (
+                    <NotificationRow
+                      key={item.id}
+                      item={item}
+                      pending={pending}
+                      onNavigate={() => setOpen(false)}
+                    />
+                  ))}
                 </Section>
 
                 {/* Background work, below the things the user is actually being asked to
@@ -552,10 +618,17 @@ function NotificationRow({
   onSnooze?: () => void;
   onNavigate: () => void;
 }) {
-  const Icon = item.kind === "follow_up" ? UserRound : Bell;
+  const Icon =
+    item.kind === "follow_up"
+      ? UserRound
+      : item.kind === "capture_review"
+        ? NotebookPen
+        : Bell;
   const when = item.dueAt
     ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
-    : "No due date";
+    : item.kind === "capture_review"
+      ? "Waiting on you"
+      : "No due date";
 
   return (
     <div className={cn(ROW, "border-primary/15 bg-popover")}>

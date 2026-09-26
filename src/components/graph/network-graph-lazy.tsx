@@ -1,40 +1,22 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect } from "react";
 import type { getGraphData } from "@/actions/graph";
 import { predictSlowIntro } from "@/lib/graph/intro-choreography";
 import { beginIntro } from "@/lib/graph/intro-signal";
+import { markOpenStage } from "@/lib/graph/open-marks";
+import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
 import {
   ConstellationLoading,
   CONSTELLATION_STAGE_HEIGHT,
 } from "@/components/graph/constellation-loading";
+import {
+  preloadConstellation,
+  useNetworkGraphModule,
+  useSkyLayoutReady,
+} from "@/components/graph/constellation-modules";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
-
-const NetworkGraphFull = dynamic(
-  () =>
-    import("@/components/graph/network-graph").then((m) => ({
-      default: m.NetworkGraph,
-    })),
-  {
-    ssr: false,
-    loading: () => (
-      <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
-    ),
-  }
-);
-
-const NetworkGraphCompact = dynamic(
-  () =>
-    import("@/components/graph/network-graph").then((m) => ({
-      default: m.NetworkGraph,
-    })),
-  {
-    ssr: false,
-    loading: () => <ConstellationLoading className="h-[300px]" />,
-  }
-);
 
 /**
  * Decision two: the payload has arrived, so the layout cost is finally knowable.
@@ -48,6 +30,16 @@ const NetworkGraphCompact = dynamic(
  * would have nowhere to draw. The bus refuses it anyway; this just avoids asking.
  */
 function decideFromPayload(contactCount: number | null) {
+  // The canvas renderer has no mount cost worth covering, and `ConstellationIntro` has
+  // already suppressed the run for these devices. Asking again would be harmless but
+  // misleading — this is the second of the two decision points, and both must agree.
+  if (
+    typeof window !== "undefined" &&
+    window.matchMedia(SMALL_SKY_QUERY).matches
+  ) {
+    return;
+  }
+
   const reduced =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -77,12 +69,18 @@ export function NetworkGraphLazy({
   // `beginIntro` is idempotent, so StrictMode's double-invoke is a no-op.
   useEffect(() => {
     if (compact) return;
+    if (contactCount !== null) markOpenStage("data-received");
     decideFromPayload(contactCount);
   }, [compact, contactCount]);
 
-  if (compact) {
-    return <NetworkGraphCompact initialData={initialData} compact />;
-  }
+  // Usually already under way (see `ConstellationIntro`); this covers any other host.
+  useEffect(() => preloadConstellation(), []);
 
-  return <NetworkGraphFull initialData={initialData} />;
+  // Loaded without a Suspense boundary — see constellation-modules.ts for why that matters.
+  const graph = useNetworkGraphModule();
+  const layoutReady = useSkyLayoutReady(initialData);
+  if (!graph || !layoutReady) {
+    return <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />;
+  }
+  return <graph.NetworkGraph initialData={initialData} />;
 }

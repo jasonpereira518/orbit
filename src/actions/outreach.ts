@@ -31,15 +31,25 @@ import {
   generateOutreachDraft,
   generateOutreachDraftsBatch,
 } from "@/lib/outreach-drafts";
-import { assessOutreachQuality } from "@/lib/outreach-quality";
+import {
+  assessOutreachQuality,
+  DEMO_PROSPECT_SEND_MESSAGE,
+  isDemoProspect,
+  prospectSearchStatus,
+} from "@/lib/outreach-quality";
 import { sendOutreachMessage } from "@/lib/outreach-send";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   BULK_SEND_LIMIT,
+  OUTREACH_CHANNELS,
   type OutreachChannel,
   type OutreachMessageOutcome,
   type OutreachMessageStatus,
   type SequenceStep,
 } from "@/lib/outreach-types";
+import { asActionResult, UserFacingError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { actionFailure } from "@/lib/action-failure";
 
 async function requireCampaign(userId: string, campaignId: string) {
   const db = await getDb();
@@ -89,6 +99,39 @@ async function priorNotesForContact(contactId: string | null) {
     .filter(Boolean)
     .join(" | ")
     .slice(0, 500);
+}
+
+/**
+ * Batched form of `priorNotesForContact` for draft generation over a whole prospect
+ * list — one `interactions` query instead of one per prospect. Returns a map whose
+ * values match `priorNotesForContact`'s per-contact string shape exactly (a contact
+ * with no interaction rows simply has no entry, so callers fall back with `?? null`).
+ */
+async function priorNotesForContacts(contactIds: string[]) {
+  const byContact = new Map<string, string>();
+  if (!contactIds.length) return byContact;
+  const db = await getDb();
+  const rows = await db.query.interactions.findMany({
+    where: inArray(interactions.contactId, contactIds),
+    orderBy: [desc(interactions.interactionDate)],
+  });
+  const grouped = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = grouped.get(row.contactId) ?? [];
+    if (list.length < 3) list.push(row);
+    grouped.set(row.contactId, list);
+  }
+  for (const [contactId, list] of grouped) {
+    byContact.set(
+      contactId,
+      list
+        .map((row) => row.aiSummary || row.rawNotes)
+        .filter(Boolean)
+        .join(" | ")
+        .slice(0, 500)
+    );
+  }
+  return byContact;
 }
 
 export async function listCampaigns() {
@@ -268,6 +311,47 @@ export async function createCampaign(input: {
   return campaign;
 }
 
+const CAMPAIGN_TEXT_MAX = 4_000;
+const MAX_SEQUENCE_STEPS = 20;
+
+function campaignText(value: unknown, field: string, nullable: boolean): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null && nullable) return null;
+  if (typeof value !== "string") throw new UserFacingError(`Invalid ${field}`);
+  return value.slice(0, CAMPAIGN_TEXT_MAX);
+}
+
+function pickCampaignFields(input: Record<string, unknown>) {
+  const fields: {
+    name?: string;
+    audienceQuery?: string;
+    messageIntent?: string | null;
+    replyCta?: string | null;
+    tone?: string;
+    defaultChannel?: OutreachChannel;
+    status?: string;
+  } = {};
+  const name = campaignText(input.name, "name", false);
+  if (name !== undefined) fields.name = name ?? "";
+  const audienceQuery = campaignText(input.audienceQuery, "audience", false);
+  if (audienceQuery !== undefined) fields.audienceQuery = audienceQuery ?? "";
+  const messageIntent = campaignText(input.messageIntent, "message intent", true);
+  if (messageIntent !== undefined) fields.messageIntent = messageIntent;
+  const replyCta = campaignText(input.replyCta, "call to action", true);
+  if (replyCta !== undefined) fields.replyCta = replyCta;
+  const tone = campaignText(input.tone, "tone", false);
+  if (tone !== undefined) fields.tone = (tone ?? "").slice(0, 64);
+  const status = campaignText(input.status, "status", false);
+  if (status !== undefined) fields.status = (status ?? "").slice(0, 32);
+  if (input.defaultChannel !== undefined) {
+    if (!OUTREACH_CHANNELS.includes(input.defaultChannel as OutreachChannel)) {
+      throw new UserFacingError("Invalid channel");
+    }
+    fields.defaultChannel = input.defaultChannel as OutreachChannel;
+  }
+  return fields;
+}
+
 export async function updateCampaign(
   campaignId: string,
   input: {
@@ -287,13 +371,20 @@ export async function updateCampaign(
   await requireCampaign(userId, campaignId);
   const db = await getDb();
 
-  const { reparseAudience, sequenceSteps, audienceFilters, ...fields } = input;
+  const { reparseAudience, sequenceSteps, audienceFilters } = input;
+  // Allowlisted, never spread: every export here is a public POST endpoint, and spreading
+  // the argument into `.set()` let a caller write any real column — `userId` included,
+  // which moved a campaign and its drafts into another account.
+  const fields = pickCampaignFields(input as Record<string, unknown>);
   const patch: Record<string, unknown> = {
     ...fields,
     updatedAt: new Date(),
   };
 
   if (sequenceSteps !== undefined) {
+    if (!Array.isArray(sequenceSteps) || sequenceSteps.length > MAX_SEQUENCE_STEPS) {
+      throw new UserFacingError(`A sequence can have at most ${MAX_SEQUENCE_STEPS} steps`);
+    }
     patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
   }
 
@@ -308,7 +399,7 @@ export async function updateCampaign(
   const [updated] = await db
     .update(outreachCampaigns)
     .set(patch)
-    .where(eq(outreachCampaigns.id, campaignId))
+    .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)))
     .returning();
 
   revalidatePath("/outreach");
@@ -316,7 +407,12 @@ export async function updateCampaign(
   return updated;
 }
 
+/** Returned as data so the hosted-Apollo daily cap copy survives the action boundary. */
 export async function searchProspects(campaignId: string, page = 1) {
+  return asActionResult(() => searchProspectsCore(campaignId, page));
+}
+
+async function searchProspectsCore(campaignId: string, page = 1) {
   const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
@@ -332,7 +428,8 @@ export async function searchProspects(campaignId: string, page = 1) {
       prospect.company,
       filters.organizationNames
     );
-    const status = matchesOrg ? "selected" : "excluded";
+    const isDemo = source === "demo" || Boolean(prospect.enrichment?.demo);
+    const status = prospectSearchStatus({ matchesOrg, isDemo });
     if (matchesOrg) matched += 1;
     else mismatched += 1;
 
@@ -350,7 +447,7 @@ export async function searchProspects(campaignId: string, page = 1) {
         location: prospect.location,
         enrichment: {
           ...prospect.enrichment,
-          demo: source === "demo" || Boolean(prospect.enrichment?.demo),
+          demo: isDemo,
           companyMismatch: !matchesOrg,
         },
         status,
@@ -367,7 +464,7 @@ export async function searchProspects(campaignId: string, page = 1) {
           location: prospect.location,
           enrichment: {
             ...prospect.enrichment,
-            demo: source === "demo" || Boolean(prospect.enrichment?.demo),
+            demo: isDemo,
             companyMismatch: !matchesOrg,
           },
           status,
@@ -505,6 +602,7 @@ export async function generateOutreachDrafts(input: {
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
+  const writingInstructions = await loadWritingInstructions(userId);
 
   const channel = (input.channel ||
     campaign.defaultChannel ||
@@ -539,6 +637,12 @@ export async function generateOutreachDrafts(input: {
     throw new Error("No prospects selected for draft generation.");
   }
 
+  const priorNotesByContact = await priorNotesForContacts(
+    targetProspects
+      .map((p) => p.contactId)
+      .filter((id): id is string => Boolean(id))
+  );
+
   const draftInputs = await Promise.all(
     targetProspects.map(async (prospect, index) => ({
       channel,
@@ -554,10 +658,13 @@ export async function generateOutreachDrafts(input: {
         company: prospect.company,
         location: prospect.location,
         enrichmentSummary: enrichmentSummary(prospect.enrichment),
-        priorNotes: await priorNotesForContact(prospect.contactId),
+        priorNotes: prospect.contactId
+          ? (priorNotesByContact.get(prospect.contactId) ?? null)
+          : null,
       },
       templateSeed: input.templateSeed,
       variationHint: `Variant ${index + 1} of ${targetProspects.length}`,
+      writingInstructions,
     }))
   );
 
@@ -589,6 +696,7 @@ export async function regenerateOutreachDraft(input: {
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
+  const writingInstructions = await loadWritingInstructions(userId);
 
   const prospect = await db.query.outreachProspects.findFirst({
     where: and(
@@ -629,6 +737,7 @@ export async function regenerateOutreachDraft(input: {
     },
     stepIndex,
     previousBody: previous?.body,
+    writingInstructions,
   });
 
   const message = await upsertMessageForProspect(prospect.id, channel, draft, {
@@ -891,18 +1000,32 @@ export async function generateDueFollowUps(campaignId: string) {
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
+  const writingInstructions = await loadWritingInstructions(userId);
   const now = new Date();
 
-  const due = await db.query.outreachMessages.findMany({
-    where: and(
-      eq(outreachMessages.status, "scheduled"),
-      lte(outreachMessages.scheduledFor, now)
-    ),
-    with: {
-      prospect: true,
-    },
+  const campaignProspectIds = await db.query.outreachProspects.findMany({
+    where: eq(outreachProspects.campaignId, campaignId),
+    columns: { id: true },
   });
 
+  const due = campaignProspectIds.length
+    ? await db.query.outreachMessages.findMany({
+        where: and(
+          eq(outreachMessages.status, "scheduled"),
+          lte(outreachMessages.scheduledFor, now),
+          inArray(
+            outreachMessages.prospectId,
+            campaignProspectIds.map((p) => p.id)
+          )
+        ),
+        with: {
+          prospect: true,
+        },
+      })
+    : [];
+
+  // Kept as a defensive no-op check, cheap insurance against the `with: { prospect }`
+  // join ever returning a row outside the campaign-scoped prospect id set above.
   const dueForCampaign = due.filter((m) => m.prospect.campaignId === campaignId);
   let generated = 0;
 
@@ -960,6 +1083,7 @@ export async function generateDueFollowUps(campaignId: string) {
       },
       stepIndex: message.stepIndex ?? 1,
       previousBody: parent?.body,
+      writingInstructions,
     });
 
     await db
@@ -978,7 +1102,16 @@ export async function generateDueFollowUps(campaignId: string) {
   return { generated };
 }
 
+/**
+ * Returns the refusal as data: a thrown message is a digest in production, and "this is a
+ * sample prospect" is exactly the sentence the person needs to read.
+ */
 export async function sendOutreachMessageAction(messageId: string) {
+  return asActionResult(() => sendOutreachMessageNow(messageId));
+}
+
+/** The send itself. Throws; `bulkSendOutreach` catches per message. */
+async function sendOutreachMessageNow(messageId: string) {
   const userId = await requireOutreachUser();
   const db = await getDb();
 
@@ -995,6 +1128,12 @@ export async function sendOutreachMessageAction(messageId: string) {
     throw new Error("Message not found");
   }
 
+  // Before anything else, and outside the try below: a refusal is not a failed send, so
+  // the draft must not be marked "failed".
+  if (isDemoProspect(message.prospect.enrichment)) {
+    throw new UserFacingError(DEMO_PROSPECT_SEND_MESSAGE);
+  }
+
   const quality = assessOutreachQuality([
     {
       messageId: message.id,
@@ -1003,10 +1142,13 @@ export async function sendOutreachMessageAction(messageId: string) {
       channel: message.channel as OutreachChannel,
       subject: message.subject,
       body: message.body,
+      isDemo: false,
     },
   ]);
   if (quality.blocking.length) {
-    throw new Error(quality.blocking[0].message);
+    // Deliberate wording, so `friendlyError` lets it through where it is caught on the
+    // server — the per-message loop in `bulkSendOutreach`.
+    throw new UserFacingError(quality.blocking[0].message);
   }
 
   const channel = message.channel as OutreachChannel;
@@ -1074,18 +1216,37 @@ export async function sendOutreachMessageAction(messageId: string) {
   }
 }
 
+/**
+ * The requested messages that belong to this campaign — and so, because the campaign was
+ * already checked against the caller, to this user. An id from anywhere else is dropped
+ * silently rather than refused, so the answer cannot confirm that a guessed id exists.
+ */
+async function campaignMessages(campaignId: string, messageIds: string[]) {
+  if (messageIds.length === 0) return [];
+  const db = await getDb();
+  return db.query.outreachMessages.findMany({
+    where: and(
+      inArray(outreachMessages.id, messageIds),
+      inArray(
+        outreachMessages.prospectId,
+        db
+          .select({ id: outreachProspects.id })
+          .from(outreachProspects)
+          .where(eq(outreachProspects.campaignId, campaignId))
+      )
+    ),
+    with: { prospect: true },
+  });
+}
+
 export async function previewBulkSendQuality(input: {
   campaignId: string;
   messageIds: string[];
 }) {
   const userId = await requireOutreachUser();
   await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
 
-  const messages = await db.query.outreachMessages.findMany({
-    where: inArray(outreachMessages.id, input.messageIds),
-    with: { prospect: true },
-  });
+  const messages = await campaignMessages(input.campaignId, input.messageIds);
 
   return assessOutreachQuality(
     messages.map((m) => ({
@@ -1095,6 +1256,7 @@ export async function previewBulkSendQuality(input: {
       channel: m.channel as OutreachChannel,
       subject: m.subject,
       body: m.body,
+      isDemo: isDemoProspect(m.prospect.enrichment),
     }))
   );
 }
@@ -1111,33 +1273,42 @@ export async function bulkSendOutreach(input: {
     campaignId: input.campaignId,
     messageIds: input.messageIds,
   });
+  // Both outcomes come back as data. They used to be thrown, and a thrown message is a
+  // digest in production — so the client's `startsWith("Quality warnings:")` check could
+  // never match there, and a blocked send never said why. The dialog pre-checks quality
+  // through `previewBulkSendQuality`, so these are the safety net for drafts that
+  // changed in between; a safety net that says nothing is not one.
   if (quality.blocking.length) {
-    throw new Error(
-      `Cannot send: ${quality.blocking[0].message}${
-        quality.blocking.length > 1
-          ? ` (+${quality.blocking.length - 1} more)`
-          : ""
-      }`
-    );
+    const more =
+      quality.blocking.length > 1 ? ` (and ${quality.blocking.length - 1} more)` : "";
+    return {
+      status: "blocked" as const,
+      reason: `Can’t send yet — ${quality.blocking[0].message}${more}`,
+    };
   }
   if (!input.ignoreWarnings && quality.warnings.length) {
-    throw new Error(
-      `Quality warnings: ${quality.warnings[0].message}. Confirm to send anyway.`
-    );
+    return {
+      status: "needs_confirmation" as const,
+      warning: quality.warnings[0].message,
+    };
   }
 
-  const ids = input.messageIds.slice(0, BULK_SEND_LIMIT);
+  // Same scope as the preview above: only this campaign's messages are ever sent from here.
+  const inCampaign = new Set(
+    (await campaignMessages(input.campaignId, input.messageIds)).map((m) => m.id)
+  );
+  const ids = input.messageIds.filter((id) => inCampaign.has(id)).slice(0, BULK_SEND_LIMIT);
   const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];
 
   for (const messageId of ids) {
     try {
-      await sendOutreachMessageAction(messageId);
+      await sendOutreachMessageNow(messageId);
       results.push({ messageId, ok: true });
     } catch (err) {
       results.push({
         messageId,
         ok: false,
-        error: err instanceof Error ? err.message : "Send failed",
+        error: await actionFailure(err, TOAST_COPY.sendFailed, "outreach.bulk-send", { messageId }),
       });
     }
   }
@@ -1145,6 +1316,7 @@ export async function bulkSendOutreach(input: {
   revalidatePath(`/outreach/${input.campaignId}`);
   revalidatePath("/outreach");
   return {
+    status: "sent" as const,
     sent: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
     results,
@@ -1169,10 +1341,12 @@ export async function saveProspectAsContact(input: {
   if (!prospect) throw new Error("Prospect not found");
   if (prospect.contactId) return { contactId: prospect.contactId, created: false };
 
-  let email = prospect.email;
-  let phone = prospect.phone;
+  // A sample's email, phone and profile URL were made up: never copy them into the network.
+  const demo = isDemoProspect(prospect.enrichment);
+  let email = demo ? null : prospect.email;
+  let phone = demo ? null : prospect.phone;
 
-  if (!email || !phone) {
+  if (!demo && (!email || !phone)) {
     const enriched = await enrichPerson(userId, prospect.externalId, {
       email: prospect.email ?? undefined,
       linkedinUrl: prospect.linkedinUrl ?? undefined,
@@ -1192,7 +1366,7 @@ export async function saveProspectAsContact(input: {
       location: prospect.location ?? undefined,
       email: email ?? undefined,
       phone: phone ?? undefined,
-      linkedinUrl: prospect.linkedinUrl ?? undefined,
+      linkedinUrl: demo ? undefined : (prospect.linkedinUrl ?? undefined),
       source: "outreach",
       notes: `Added from outreach campaign ${input.campaignId}`,
     },

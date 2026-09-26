@@ -90,6 +90,29 @@ function main() {
   check("shows Stopping, not Importing", cancelling.includes("Stopping"));
   check("...and not a live countdown", !cancelling.includes("left"));
 
+  console.log("\nqueued step");
+  const base = {
+    done: 3,
+    total: 10,
+    label: "people",
+    startedAt: Date.now() - 2_000,
+    imported: 1,
+    importedLabel: "contacts imported",
+  };
+  const stepped = textOf(
+    React.createElement(ImportProgress, { ...base, step: { index: 2, total: 3 } })
+  );
+  check("says which step is running", stepped.includes("Step 2 of 3"), stepped);
+  check("...alongside the usual progress", stepped.includes("3 of 10 people"));
+
+  const lone = textOf(
+    React.createElement(ImportProgress, { ...base, step: { index: 1, total: 1 } })
+  );
+  check("a one-file drop says nothing about steps", !lone.includes("Step"), lone);
+
+  const unstepped = textOf(React.createElement(ImportProgress, base));
+  check("...and neither does a plain import", !unstepped.includes("Step"));
+
   console.log("\nAll import progress card checks passed.");
 }
 

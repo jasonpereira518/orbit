@@ -1,0 +1,1248 @@
+/**
+ * Guards the traffic analytics pipeline: `page_views`, its ingest helpers, and the
+ * aggregates behind `/admin/analytics`.
+ *
+ * Five of these assertions exist because the failure they catch is SILENT. A route with no
+ * pattern lands in "/unknown" and just stops being reported. A contact id reaching `route`
+ * poisons a table nobody reads row-by-row. A dwell of NULL summed as zero drags every
+ * median down without ever looking wrong. None of it shows up in a rendered page.
+ *
+ * Run: npx tsx scripts/smoke-admin-analytics.ts
+ */
+import "./smoke/_env";
+
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { eq, inArray, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "../src/db";
+import {
+  billingEvents,
+  captureJobs,
+  chatMessages,
+  chatThreads,
+  contactMerges,
+  contacts,
+  imports,
+  outreachCampaigns,
+  outreachMessages,
+  outreachProspects,
+  pageViews,
+  userSettings,
+} from "../src/db/schema";
+import {
+  ROUTE_PATTERNS,
+  UNKNOWN_ROUTE,
+  isTrackedPath,
+  normalizeRoute,
+} from "../src/lib/analytics-routes";
+import { isIdSegment, redactUrlForVendor } from "../src/lib/analytics-redact";
+import { isBotUserAgent } from "../src/lib/analytics-bots";
+import {
+  analyticsEnabled,
+  deviceFromUserAgent,
+  hashVisitor,
+} from "../src/lib/analytics-visitor";
+import { MAX_DWELL_MS, prunePageViews, recordDwell, recordPageView } from "../src/lib/page-views";
+import {
+  deviceBreakdown,
+  geoBreakdown,
+  sourceBreakdown,
+  topRoutes,
+  trafficTotals,
+  trafficTrend,
+  acquisitionFunnel,
+  formatRate,
+  accountTraffic,
+  topAccountsByTraffic,
+  importsByProvider,
+  capturesBySource,
+  outreachByChannel,
+  engagementDepth,
+} from "../src/lib/admin-analytics";
+import { startQueryCount, stopQueryCount, capturedQueries } from "../src/lib/query-counter";
+import { isDemoMode } from "../src/lib/auth";
+import type { CaptureJobResult } from "../src/lib/capture/types";
+
+let failures = 0;
+function check(label: string, ok: boolean, detail?: string) {
+  if (ok) console.log(`  ok   ${label}`);
+  else {
+    failures++;
+    console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`);
+  }
+}
+
+// --- 1. Route coverage --------------------------------------------------------------
+//
+// Walks src/app the way smoke-public-routes.ts does. A page added without a pattern in
+// ROUTE_PATTERNS disappears from the traffic report and nothing else complains.
+
+const APP_DIR = "src/app";
+
+function appRoutes(dir = APP_DIR, prefix = ""): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      if (entry.startsWith("_") || entry === "api") continue;
+      const segment = entry.startsWith("(") && entry.endsWith(")") ? "" : `/${entry}`;
+      out.push(...appRoutes(full, prefix + segment));
+    } else if (entry === "page.tsx") {
+      out.push(prefix === "" ? "/" : prefix);
+    }
+  }
+  return out;
+}
+
+console.log("route coverage");
+const routes = appRoutes();
+check("found pages under src/app", routes.length > 20, `saw ${routes.length}`);
+
+for (const route of routes) {
+  // Admin is deliberately untracked; it must not need a pattern.
+  if (!isTrackedPath(route.replace(/\[\[?\.{3}[^\]]+\]?\]/g, "x").replace(/\[[^\]]+\]/g, "x"))) continue;
+  // Substitute a plausible value for each dynamic segment, as a real request would carry.
+  const concrete = route
+    .replace(/\[\[?\.{3}[^\]]+\]?\]/g, "factor-one")
+    .replace(/\[[^\]]+\]/g, randomUUID());
+  const got = normalizeRoute(concrete);
+  // EXACT, not merely "not /unknown". A static page added beside a dynamic sibling —
+  // /contacts/duplicates next to /contacts/[id] — matches the dynamic pattern and would be
+  // counted as somebody's contact page forever. The weaker check passed on exactly that.
+  check(
+    `${route} -> its own pattern`,
+    got === route,
+    `normalizeRoute(${concrete}) = ${got}; add "${route}" to ROUTE_PATTERNS`
+  );
+}
+
+// --- 1b. Every /admin page sits under the admin gate ---------------------------------
+//
+// The gate is `requireAdminPage()` in the admin group's layout, not in each page. When #158
+// moved every route group ((admin) -> (clerk)/(admin)), git carried existing admin pages
+// along but left this branch's NEW pages in the old folder — which no longer had a layout.
+// They still served /admin/analytics, to any signed-in user, emails and all, and nothing
+// failed: the route resolved, the build passed, every other check here was green.
+
+console.log("\nadmin gate coverage");
+
+function adminPages(dir = APP_DIR, prefix = "", gated = false): Array<{ route: string; gated: boolean; file: string }> {
+  const out: Array<{ route: string; gated: boolean; file: string }> = [];
+  const entries = readdirSync(dir);
+  const layout = entries.includes("layout.tsx") ? readFileSync(join(dir, "layout.tsx"), "utf8") : "";
+  const here = gated || layout.includes("requireAdminPage(");
+  for (const entry of entries) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      if (entry === "api") continue;
+      const segment = entry.startsWith("(") && entry.endsWith(")") ? "" : `/${entry}`;
+      out.push(...adminPages(full, prefix + segment, here));
+    } else if (entry === "page.tsx" && (prefix === "/admin" || prefix.startsWith("/admin/"))) {
+      out.push({ route: prefix, gated: here, file: full });
+    }
+  }
+  return out;
+}
+
+const admin = adminPages();
+check("found the admin console's pages", admin.length > 10, `saw ${admin.length}`);
+for (const page of admin) {
+  check(`${page.route} is behind requireAdminPage()`, page.gated, `${page.file} has no gated ancestor layout`);
+}
+
+// --- 2. No raw identifiers ever reach the column ------------------------------------
+
+console.log("\nidentifier containment");
+const uuid = randomUUID();
+for (const path of [
+  `/contacts/${uuid}`,
+  `/events/${uuid}`,
+  `/outreach/${uuid}`,
+  `/recruiters/${uuid}`,
+  `/capture/${uuid}`,
+]) {
+  const got = normalizeRoute(path);
+  check(`${path} carries no id through`, !got.includes(uuid), `got ${got}`);
+}
+check(
+  "static beats dynamic at the same depth",
+  normalizeRoute("/contacts/new") === "/contacts/new" &&
+    normalizeRoute("/recruiters/compose") === "/recruiters/compose",
+  `${normalizeRoute("/contacts/new")} / ${normalizeRoute("/recruiters/compose")}`
+);
+check("unrecognised paths collapse to one bucket", normalizeRoute("/nope/x") === UNKNOWN_ROUTE);
+check("admin is not tracked", !isTrackedPath("/admin") && !isTrackedPath("/admin/analytics"));
+check("api is not tracked", !isTrackedPath("/api/track"));
+check("marketing is tracked", isTrackedPath("/") && isTrackedPath("/pricing"));
+check(
+  "every pattern is itself a tracked path",
+  ROUTE_PATTERNS.every((p) => isTrackedPath(p.replace(/\[.*$/, "")) || p === "/")
+);
+
+// --- 2b. What Vercel's scripts are allowed to see --------------------------------------
+//
+// <Analytics /> and <SpeedInsights /> send the full page URL by default. Orbit's own table
+// held patterns while Vercel received /scan/<one-time token> and /admin/users/<Clerk id>.
+
+console.log("\nvendor URL redaction");
+const token = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+check(
+  "a scan handoff token never reaches Vercel",
+  redactUrlForVendor(`https://orbit.example/scan/${token}`) === "https://orbit.example/scan/[id]",
+  String(redactUrlForVendor(`https://orbit.example/scan/${token}`))
+);
+check(
+  "a contact id never reaches Vercel",
+  redactUrlForVendor(`https://orbit.example/contacts/${uuid}`) === "https://orbit.example/contacts/[id]"
+);
+check(
+  "admin console views are dropped, not rewritten",
+  redactUrlForVendor("https://orbit.example/admin/users/user_2abcXYZ") === null &&
+    redactUrlForVendor("https://orbit.example/admin") === null
+);
+check(
+  "query strings lose everything but campaign tags",
+  redactUrlForVendor(
+    "https://orbit.example/sign-in?redirect_url=%2Fcontacts%2Fabc&__clerk_ticket=secret&utm_campaign=launch"
+  ) === "https://orbit.example/sign-in?utm_campaign=launch",
+  String(
+    redactUrlForVendor(
+      "https://orbit.example/sign-in?redirect_url=%2Fcontacts%2Fabc&__clerk_ticket=secret&utm_campaign=launch"
+    )
+  )
+);
+check("a plain page passes through as itself", redactUrlForVendor("https://orbit.example/pricing") === "https://orbit.example/pricing");
+check("garbage is dropped", redactUrlForVendor("not a url") === null);
+check(
+  "page names are never mistaken for ids",
+  ROUTE_PATTERNS.flatMap((p) => p.split("/")).filter((seg) => seg && !seg.startsWith("[")).every((seg) => !isIdSegment(seg))
+);
+check(
+  "a share token and a Clerk user id are ids",
+  isIdSegment("Zq3kP9xW2mR7vT1yB5nC8dF4gH6jK0lA2sD9fG7hJ3k") && isIdSegment("user_2abcXYZ1234567890")
+);
+// The redaction ships to every page, the waitlist's own domain included. It must not be
+// the route list: that is the one place the app's page names would be in client JS.
+const redactSource = readFileSync("src/lib/analytics-redact.ts", "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, " ")
+  .replace(/^\s*\/\/.*$/gm, " ");
+check(
+  "the client-side redaction module knows no app routes",
+  !/["'`]\/(contacts|capture|outreach|recruiters|graph|knowledge|reminders|dashboard|chat)\b/.test(redactSource) &&
+    !/from\s+["'][^"']*analytics-routes["']/.test(redactSource)
+);
+for (const file of ["src/components/analytics/pageview-beacon.tsx", "src/components/analytics/vercel-telemetry.tsx"]) {
+  check(`${file} does not import the route list`, !readFileSync(file, "utf8").includes("analytics-routes"));
+}
+
+// --- 3. Visitor hashing --------------------------------------------------------------
+
+console.log("\nvisitor identity");
+const savedSalt = process.env.ANALYTICS_SALT;
+delete process.env.ANALYTICS_SALT;
+check("disabled without a salt", !analyticsEnabled());
+let threw = false;
+try {
+  hashVisitor("1.2.3.4", "Mozilla/5.0");
+} catch {
+  threw = true;
+}
+check("refuses to hash unsalted rather than degrading", threw);
+
+process.env.ANALYTICS_SALT = "smoke-salt-at-least-16-chars";
+check("enabled with a salt", analyticsEnabled());
+
+const day1 = new Date("2026-09-06T10:00:00Z");
+const day1Late = new Date("2026-09-06T23:59:00Z");
+const day2 = new Date("2026-09-07T00:01:00Z");
+const h1 = hashVisitor("1.2.3.4", "UA", day1);
+check("stable within a UTC day", h1 === hashVisitor("1.2.3.4", "UA", day1Late));
+check("rotates across the UTC day boundary", h1 !== hashVisitor("1.2.3.4", "UA", day2));
+check("differs by ip", h1 !== hashVisitor("5.6.7.8", "UA", day1));
+check("differs by user agent", h1 !== hashVisitor("1.2.3.4", "OTHER", day1));
+check("stores no ip in the digest", !h1.includes("1.2.3.4") && /^[0-9a-f]{64}$/.test(h1));
+
+// --- 4. Bots and devices -------------------------------------------------------------
+
+console.log("\nbot + device classification");
+for (const ua of [
+  "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  "HeadlessChrome/120.0.0.0",
+  "python-requests/2.31.0",
+  "curl/8.4.0",
+  "Mozilla/5.0 AppleWebKit Chrome-Lighthouse",
+  "Mozilla/5.0 (compatible; Google-InspectionTool/1.0)",
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ChatGPT-User/1.0; +https://openai.com/bot)",
+  "Mozilla/5.0 (compatible; AhrefsSiteAudit/6.1)",
+  "Mozilla/5.0 DatadogSynthetics",
+  "meta-externalagent/1.1",
+]) {
+  check(`bot: ${ua.slice(0, 32)}`, isBotUserAgent(ua));
+}
+check(
+  "the CUBOT phone brand is not a crawler",
+  !isBotUserAgent("Mozilla/5.0 (Linux; Android 11; CUBOT X30) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
+);
+check("empty agent counts as a bot", isBotUserAgent("") && isBotUserAgent(null));
+const realChrome =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+const realIphone =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+check("a real browser is not a bot", !isBotUserAgent(realChrome) && !isBotUserAgent(realIphone));
+check("desktop detected", deviceFromUserAgent(realChrome) === "desktop");
+check("mobile detected", deviceFromUserAgent(realIphone) === "mobile");
+check(
+  "tablet detected",
+  deviceFromUserAgent(
+    "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1"
+  ) === "tablet"
+);
+
+async function main() {
+  // --- 5. Aggregates against real rows -------------------------------------------------
+
+  console.log("\naggregates");
+
+  const db = await getDb();
+
+  /**
+   * The fixture clock, nudged clear of the database's midnight.
+   *
+   * Every row below is `now` minus 0-40 minutes, and `date_trunc('day', created_at)` buckets
+   * in the DATABASE SESSION's timezone — not UTC, and not Node's. So a run inside the first
+   * three quarters of an hour of that day puts one visitor's two sessions on two different
+   * days, and every visitor-DAY count reads one too many.
+   *
+   * This is not hypothetical: CI hit it at 00:04 UTC, and the fix at the time moved the two
+   * rows that had been noticed rather than the clock they all hang off. It came back on a
+   * machine whose PGlite session runs at UTC-5, where the window is 05:00-05:45 UTC.
+   *
+   * Moving the whole fixture forward past the boundary keeps every row on one day while
+   * staying within an hour of real time — which the 30-day retention edges further down
+   * still depend on. Nothing filters on an upper time bound, so a fixture slightly in the
+   * future is not observable.
+   */
+  const FIXTURE_SPAN_MS = 45 * 60_000;
+  const dayStart = rowsOf<{ day_start: Date }>(
+    await db.execute(sql`SELECT date_trunc('day', now()) AS day_start`)
+  )[0]?.day_start;
+  const realNow = new Date();
+  const sinceDayStart = dayStart ? realNow.getTime() - new Date(dayStart).getTime() : Infinity;
+  const now =
+    sinceDayStart < FIXTURE_SPAN_MS
+      ? new Date(new Date(dayStart!).getTime() + FIXTURE_SPAN_MS)
+      : realNow;
+  const ago = (mins: number) => new Date(now.getTime() - mins * 60_000);
+
+  // `scripts/run-smoke.ts` gives the WHOLE SUITE one shared PGlite directory, so this
+  // script sees whatever ran before it. No other script writes page_views, so clearing it
+  // makes the traffic assertions exact; the account-based funnel stages below cannot do
+  // the same — half the suite creates users — and are asserted as deltas instead.
+  await db.delete(pageViews);
+
+  /**
+   * Three sessions, hand-built so every derived number has a known answer:
+   *   s1  visitor A, anonymous, 3 views over 10 minutes, last dwelt 30s -> 630s, not a bounce
+   *   s2  visitor B, anonymous, 1 view, no dwell recorded                -> unknown, a bounce
+   *   s3  visitor A (same day), SIGNED IN, 2 views over 4 minutes         -> 240s, never a bounce
+   * Plus one bot row that must never appear in any total.
+   */
+  const s1 = randomUUID();
+  const s2 = randomUUID();
+  const s3 = randomUUID();
+  const visitorA = hashVisitor("10.0.0.1", "UA-A", now);
+  const visitorB = hashVisitor("10.0.0.2", "UA-B", now);
+  const lastOfS1 = randomUUID();
+
+  const base = {
+    userId: null,
+    referrerHost: null,
+    utmSource: null,
+    utmMedium: null,
+    utmCampaign: null,
+    country: null,
+    region: null,
+    city: null,
+    device: "desktop" as const,
+    isBot: false,
+  };
+
+  await db.insert(pageViews).values([
+    { ...base, id: randomUUID(), visitorHash: visitorA, sessionId: s1, route: "/", createdAt: ago(20), country: "US", region: "California", city: "San Francisco", referrerHost: "news.ycombinator.com" },
+    { ...base, id: randomUUID(), visitorHash: visitorA, sessionId: s1, route: "/pricing", createdAt: ago(15), country: "US", region: "California", city: "San Francisco" },
+    { ...base, id: lastOfS1, visitorHash: visitorA, sessionId: s1, route: "/interest", createdAt: ago(10), country: "US", region: "California", city: "San Francisco" },
+    { ...base, id: randomUUID(), visitorHash: visitorB, sessionId: s2, route: "/", createdAt: ago(30), country: "GB", region: "England", city: "London", utmCampaign: "launch", utmSource: "twitter" },
+    { ...base, id: randomUUID(), visitorHash: visitorA, sessionId: s3, route: "/dashboard", createdAt: ago(9), userId: "user_x", device: "mobile" },
+    { ...base, id: randomUUID(), visitorHash: visitorA, sessionId: s3, route: "/contacts/[id]", createdAt: ago(5), userId: "user_x", device: "mobile" },
+    { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.9", "bot", now), sessionId: randomUUID(), route: "/", createdAt: ago(2), isBot: true },
+  ]);
+
+  // The exit beacon landing on the last view of s1.
+  await recordDwell(lastOfS1, 30_000);
+
+  const totals = await trafficTotals("30d");
+  check("views exclude bots", totals.views === 6, `got ${totals.views}`);
+  check("bot views are counted separately", totals.botViews === 1, `got ${totals.botViews}`);
+  check("sessions counted", totals.sessions === 3, `got ${totals.sessions}`);
+  check(
+    "visitor-days collapse one visitor's two sessions",
+    totals.visitorDays === 2,
+    `got ${totals.visitorDays} (visitor A twice in a day is ONE visitor-day)`
+  );
+  check("signed-in views split out", totals.signedInViews === 2, `got ${totals.signedInViews}`);
+  check(
+    "an anonymous one-view session is a bounce",
+    totals.bouncedSessions === 1,
+    `got ${totals.bouncedSessions}`
+  );
+  check(
+    "only anonymous sessions are in the bounce denominator",
+    totals.anonymousSessions === 2,
+    `got ${totals.anonymousSessions}; s3 is signed in`
+  );
+  // s1 = 600s span + 30s dwell = 630; s3 = 240; s2 has one view and no dwell, so its length
+  // is UNKNOWN and it is left out rather than counted as zero. Median of [240, 630] is 435.
+  check(
+    "median session leaves out sessions of unknown length",
+    totals.medianSessionSeconds === 435 && totals.measuredSessions === 2,
+    `got ${totals.medianSessionSeconds} over ${totals.measuredSessions}, expected 435 over 2`
+  );
+  check(
+    "the window is clamped to when tracking began",
+    totals.window.clamped && totals.window.days === 1,
+    JSON.stringify(totals.window)
+  );
+  check(
+    "visitor-days per day divide by the measured days, not the range",
+    totals.avgDailyVisitors === 2,
+    `got ${totals.avgDailyVisitors}; 2 visitor-days over 1 measured day, not over 30`
+  );
+
+  // A one-page visit that was READ is not a bounce.
+  const readId = randomUUID();
+  await db.insert(pageViews).values({ ...base, id: readId, visitorHash: visitorB, sessionId: randomUUID(), route: "/pricing", createdAt: ago(25), dwellMs: 45_000 });
+  const withRead = await trafficTotals("30d");
+  check(
+    "one page read for 45s is engaged, not a bounce",
+    withRead.bouncedSessions === 1 && withRead.anonymousSessions === 3,
+    `bounced ${withRead.bouncedSessions} of ${withRead.anonymousSessions}`
+  );
+  await db.delete(pageViews).where(eq(pageViews.id, readId));
+
+  // Orbit's own traffic: flagged at ingest, or from an admin account, whenever it was written.
+  const internalIds = [randomUUID(), randomUUID()];
+  const savedAdmins = process.env.ADMIN_USER_IDS;
+  process.env.ADMIN_USER_IDS = "user_admin_smoke";
+  await db.insert(pageViews).values([
+    { ...base, id: internalIds[0], visitorHash: visitorB, sessionId: randomUUID(), route: "/", createdAt: ago(7), isInternal: true },
+    { ...base, id: internalIds[1], visitorHash: visitorB, sessionId: randomUUID(), route: "/dashboard", createdAt: ago(7), userId: "user_admin_smoke" },
+  ]);
+  const withInternal = await trafficTotals("30d");
+  // Demo mode treats everyone as an admin, so the by-account half is off there by design.
+  const expectInternal = isDemoMode() ? 1 : 2;
+  check(
+    "Orbit's own traffic is excluded from every total",
+    withInternal.views === totals.views,
+    `got ${withInternal.views}, expected ${totals.views}`
+  );
+  check(
+    "and counted beside them, like bots",
+    withInternal.internalViews === expectInternal,
+    `got ${withInternal.internalViews}, expected ${expectInternal}`
+  );
+  check(
+    "the trend excludes it too",
+    (await trafficTrend("30d")).reduce((a, p) => a + p.views, 0) === totals.views
+  );
+  await db.delete(pageViews).where(inArray(pageViews.id, internalIds));
+  if (savedAdmins === undefined) delete process.env.ADMIN_USER_IDS;
+  else process.env.ADMIN_USER_IDS = savedAdmins;
+
+  const trend = await trafficTrend("30d");
+  check(
+    "the trend starts where tracking began, not thirty empty days earlier",
+    trend.length === 1,
+    `got ${trend.length}; every row was written in the last hour`
+  );
+  check(
+    "the running bucket is marked partial",
+    trend[trend.length - 1]?.partial === true
+  );
+  check(
+    "trend totals agree with the headline",
+    trend.reduce((a, p) => a + p.views, 0) === totals.views,
+    `${trend.reduce((a, p) => a + p.views, 0)} vs ${totals.views}`
+  );
+
+  // The edge that used to disagree: a view inside the rolling window but on its partial
+  // first day (or, for 90 days, in the week the weekly spine used to start after). The
+  // headline counted it; no bar did.
+  const edgeIds = [randomUUID(), randomUUID()];
+  await db.insert(pageViews).values([
+    { ...base, id: edgeIds[0], visitorHash: visitorB, sessionId: randomUUID(), route: "/", createdAt: new Date(now.getTime() - (30 * 86_400_000 - 3_600_000)) },
+    { ...base, id: edgeIds[1], visitorHash: visitorB, sessionId: randomUUID(), route: "/", createdAt: new Date(now.getTime() - 89 * 86_400_000) },
+  ]);
+  for (const r of ["7d", "30d", "90d"] as const) {
+    const [t, tr] = await Promise.all([trafficTotals(r), trafficTrend(r)]);
+    const summed = tr.reduce((a, p) => a + p.views, 0);
+    check(`${r} bars sum to the ${r} headline, window edge included`, summed === t.views, `${summed} vs ${t.views}`);
+  }
+  // With tracking reaching back past the window, the full spine returns.
+  const fullTrend = await trafficTrend("30d");
+  check(
+    "trend reaches one bucket past the window so its first bar covers the window start",
+    fullTrend.length === 31 && fullTrend[0]?.partial === true,
+    `got ${fullTrend.length}`
+  );
+  check("a window inside tracking is not clamped", !(await trafficTotals("30d")).window.clamped);
+  await db.delete(pageViews).where(inArray(pageViews.id, edgeIds));
+
+  const routesOut = await topRoutes("30d");
+  const home = routesOut.find((r) => r.route === "/");
+  check("top routes ranks by views", routesOut[0]?.views === 2, `got ${routesOut[0]?.views}`);
+  check("home counted twice, bot excluded", home?.views === 2, `got ${home?.views}`);
+  const interest = routesOut.find((r) => r.route === "/interest");
+  check(
+    "median dwell reported in seconds",
+    interest?.medianDwellSeconds === 30,
+    `got ${interest?.medianDwellSeconds}`
+  );
+  const pricing = routesOut.find((r) => r.route === "/pricing");
+  check(
+    "a route with no dwell reports null, not zero",
+    pricing?.medianDwellSeconds === null,
+    `got ${pricing?.medianDwellSeconds}`
+  );
+
+  // Vercel knew the country but not the city — common for mobile carriers.
+  const noCityId = randomUUID();
+  await db.insert(pageViews).values({ ...base, id: noCityId, visitorHash: visitorB, sessionId: randomUUID(), route: "/", createdAt: ago(3), country: "DE" });
+  const geo = await geoBreakdown("30d");
+  check(
+    "a country with no city does not appear in the cities list",
+    geo.cities.every((c) => c.city != null) && geo.regions.every((r) => r.region != null),
+    JSON.stringify(geo.cities.map((c) => [c.city, c.country]))
+  );
+  check("but it still counts toward its country", geo.countries.some((c) => c.country === "DE"));
+  await db.delete(pageViews).where(eq(pageViews.id, noCityId));
+  check(
+    "countries rolled up",
+    geo.countries.filter((c) => c.country != null).length === 3,
+    `got ${geo.countries.length}; US, GB and the city-less DE`
+  );
+  check(
+    "views with no country are an Unknown bar, so the bars add up",
+    geo.countries.reduce((a, c) => a + c.views, 0) === totals.views + 1,
+    `${geo.countries.reduce((a, c) => a + c.views, 0)} vs ${totals.views} + the DE row`
+  );
+  check(
+    "US country total sums its cities",
+    geo.countries.find((c) => c.country === "US")?.views === 3
+  );
+  check("cities broken out", geo.cities.some((c) => c.city === "San Francisco"));
+  check("regions broken out", geo.regions.some((r) => r.region === "England"));
+
+  const sources = await sourceBreakdown("30d");
+  check("referrer captured", sources.referrers[0]?.label === "news.ycombinator.com");
+  check("campaign captured", sources.campaigns[0]?.label === "launch");
+  check(
+    "a source is its own list, not ranked against campaigns",
+    sources.sources[0]?.label === "twitter" && !sources.campaigns.some((c) => c.label === "twitter"),
+    JSON.stringify(sources)
+  );
+
+  const devices = await deviceBreakdown("30d");
+  check(
+    "devices split",
+    devices.find((d) => d.device === "mobile")?.views === 2 &&
+      devices.find((d) => d.device === "desktop")?.views === 4,
+    JSON.stringify(devices)
+  );
+
+  // --- 6. Dwell clamping ---------------------------------------------------------------
+
+  console.log("\ndwell handling");
+  const clampId = randomUUID();
+  await recordPageView({ ...base, id: clampId, visitorHash: visitorA, sessionId: randomUUID(), route: "/graph" });
+  await recordDwell(clampId, 99 * 60 * 60_000);
+  const clamped = await db.query.pageViews.findFirst({ where: (t, { eq }) => eq(t.id, clampId) });
+  check("absurd dwell is clamped", clamped?.dwellMs === MAX_DWELL_MS, `got ${clamped?.dwellMs}`);
+
+  await recordDwell(clampId, 5_000);
+  const notShrunk = await db.query.pageViews.findFirst({ where: (t, { eq }) => eq(t.id, clampId) });
+  check(
+    "a smaller later beacon cannot shrink a recorded dwell",
+    notShrunk?.dwellMs === MAX_DWELL_MS,
+    `got ${notShrunk?.dwellMs}`
+  );
+
+  // The tab-switch case, and the reason dwell is monotonic rather than write-once. The
+  // beacon reports its running total on every departure: 10s when they switch away, then
+  // 45s when they finally leave. Keeping the first would record 10s for a 45-second read.
+  const resumeId = randomUUID();
+  await recordPageView({ ...base, id: resumeId, visitorHash: visitorA, sessionId: randomUUID(), route: "/pricing" });
+  await recordDwell(resumeId, 10_000);
+  await recordDwell(resumeId, 45_000);
+  const resumed = await db.query.pageViews.findFirst({ where: (t, { eq }) => eq(t.id, resumeId) });
+  check(
+    "time resumed after a tab switch extends the dwell",
+    resumed?.dwellMs === 45_000,
+    `got ${resumed?.dwellMs}, expected 45000 — a visitor who came back and kept reading`
+  );
+
+  // Beacons are fire-and-forget over the network and can land out of order.
+  const raceId = randomUUID();
+  await recordPageView({ ...base, id: raceId, visitorHash: visitorA, sessionId: randomUUID(), route: "/pricing" });
+  await recordDwell(raceId, 60_000);
+  await recordDwell(raceId, 20_000);
+  const raced = await db.query.pageViews.findFirst({ where: (t, { eq }) => eq(t.id, raceId) });
+  check(
+    "an out-of-order beacon cannot truncate the measurement",
+    raced?.dwellMs === 60_000,
+    `got ${raced?.dwellMs}`
+  );
+
+  // Back onto the fixture's clock. `recordPageView` stamps the database's real `now()`,
+  // which is not the fixture's `now` — so without this the rows it wrote would sit apart
+  // from every other visitor-A row and, near the database's midnight, on a different day.
+  // The clock itself is nudged clear of that boundary where it is defined above; this is
+  // the separate matter of rows the library timestamped rather than the test.
+  await db
+    .update(pageViews)
+    .set({ createdAt: ago(10) })
+    .where(inArray(pageViews.id, [resumeId, raceId]));
+
+  const dupeId = randomUUID();
+  await recordPageView({ ...base, id: dupeId, visitorHash: visitorA, sessionId: s1, route: "/chat" });
+  await recordPageView({ ...base, id: dupeId, visitorHash: visitorA, sessionId: s1, route: "/chat" });
+  const afterDupe = await trafficTotals("30d");
+  check(
+    "a retried beacon does not double-count",
+    afterDupe.views === 10,
+    `got ${afterDupe.views}, expected 10 (6 + /graph + 2 dwell fixtures + one /chat)`
+  );
+
+  // --- 7. Retention ---------------------------------------------------------------------
+
+  console.log("\nretention");
+  await db.insert(pageViews).values({
+    ...base,
+    id: randomUUID(),
+    visitorHash: visitorA,
+    sessionId: randomUUID(),
+    route: "/",
+    createdAt: new Date(now.getTime() - 200 * 86_400_000),
+  });
+  const pruned = await prunePageViews(now);
+  check("prunes past the retention window", pruned === 1, `got ${pruned}`);
+  const afterPrune = await trafficTotals("90d");
+  check("recent rows survive the prune", afterPrune.views === 10, `got ${afterPrune.views}`);
+
+  // --- 7b. The funnel ------------------------------------------------------------------
+
+  console.log("\nacquisition funnel");
+  // Tracking "began" nine days ago, so accounts created eight days ago are both inside the
+  // measured window and old enough (FUNNEL_MATURITY_DAYS) to be scored on activation.
+  await db.insert(pageViews).values({ ...base, id: randomUUID(), visitorHash: hashVisitor("10.7.7.7", "UA-EARLY", now), sessionId: randomUUID(), route: "/terms", createdAt: new Date(now.getTime() - 9 * 86_400_000) });
+  const savedFunnelAdmins = process.env.ADMIN_USER_IDS;
+  process.env.ADMIN_USER_IDS = "fun_admin";
+  const before = await acquisitionFunnel("30d");
+  const nowIso = new Date(now.getTime() - 8 * 86_400_000);
+  await db.insert(userSettings).values([
+    // Signed up, did nothing.
+    { userId: "fun_idle", email: "idle@example.com", createdAt: nowIso },
+    // Signed up and added a contact -> activated, never paid.
+    { userId: "fun_active", email: "active@example.com", createdAt: nowIso },
+    // Bought Lifetime. This is the trap: a lifetime purchase moves NO recurring revenue,
+    // so a paid test written only as `mrr_delta_cents > 0` scores it zero.
+    {
+      userId: "fun_lifetime",
+      email: "lifetime@example.com",
+      createdAt: nowIso,
+      lifetimePurchasedAt: nowIso,
+      onboardingCompletedAt: nowIso,
+    },
+    // Ordinary subscriber, visible through the ledger.
+    { userId: "fun_sub", email: "sub@example.com", createdAt: nowIso, onboardingCompletedAt: nowIso },
+    // Bought Lifetime and was refunded in full: not paid.
+    { userId: "fun_refunded", email: "refunded@example.com", createdAt: nowIso, onboardingCompletedAt: nowIso },
+    // Signed up an hour ago and already onboarded — too new to be scored either way.
+    { userId: "fun_fresh", email: "fresh@example.com", createdAt: new Date(), onboardingCompletedAt: new Date() },
+    // The operator's own account: in no stage at all.
+    { userId: "fun_admin", email: "admin@example.com", createdAt: nowIso, onboardingCompletedAt: nowIso },
+  ]);
+  await db.insert(contacts).values({
+    userId: "fun_active",
+    fullName: "Someone",
+  });
+  await db.insert(billingEvents).values({
+    source: "stripe",
+    eventId: `evt_${randomUUID()}`,
+    kind: "new",
+    userId: "fun_sub",
+    amountCents: 500,
+    mrrDeltaCents: 500,
+    effectiveAt: nowIso,
+  });
+  await db.insert(billingEvents).values([
+    { source: "stripe", eventId: `evt_${randomUUID()}`, kind: "lifetime", userId: "fun_refunded", amountCents: 4900, mrrDeltaCents: 0, effectiveAt: nowIso },
+    { source: "stripe", eventId: `evt_${randomUUID()}`, kind: "refund", userId: "fun_refunded", amountCents: 4900, mrrDeltaCents: 0, effectiveAt: nowIso },
+  ]);
+
+  // An existing customer reading /pricing while signed in — not a prospect.
+  await db.insert(pageViews).values({ ...base, id: randomUUID(), visitorHash: hashVisitor("10.9.9.9", "UA-CUSTOMER", now), sessionId: randomUUID(), userId: "fun_customer", route: "/pricing", createdAt: ago(4) });
+  // An account created long before tracking began. Counting it against a few days of
+  // traffic is how "Created an account: 14 of 3" happened.
+  await db.insert(userSettings).values({ userId: "fun_old", email: "old@example.com", createdAt: new Date(now.getTime() - 10 * 86_400_000) });
+
+  const funnel = await acquisitionFunnel("30d");
+  const stage = (label: string) => funnel.find((s) => s.label === label);
+  const delta = (label: string) =>
+    (stage(label)?.count ?? 0) - (before.find((s) => s.label === label)?.count ?? 0);
+
+  check("funnel starts from traffic", (stage("Visitor-days")?.count ?? 0) > 0);
+  // Visitor A hit BOTH /pricing and /interest on the same day; visitor B hit neither.
+  // One, not two: the stage counts visitor-days with intent, not pages with intent. If
+  // this ever reads 2, the funnel has started counting views and every rate below it is
+  // inflated.
+  check(
+    "intent stage de-duplicates a visitor across intent pages",
+    stage("Reached pricing or interest")?.count === 1,
+    `got ${stage("Reached pricing or interest")?.count}`
+  );
+  const adminCounted = isDemoMode() ? 1 : 0;
+  check(
+    "accounts counted, Orbit's own left out",
+    delta("Created an account") === 6 + adminCounted,
+    `delta ${delta("Created an account")}; six fixture accounts plus fun_admin only in demo mode`
+  );
+  check(
+    "activation is scored on mature accounts only",
+    stage("Activated")?.ofLabel?.includes("7+ days") === true,
+    stage("Activated")?.ofLabel ?? "no label"
+  );
+  check(
+    "activation mirrors isOnboarded, not the bare column",
+    delta("Activated") === 4 + adminCounted,
+    `delta ${delta("Activated")}; fun_active has a contact but no timestamp, fun_fresh is too new`
+  );
+  check(
+    "paid counts a Lifetime purchase as well as MRR, and not a full refund",
+    delta("Paid") === 2,
+    `delta ${delta("Paid")}; a mrr_delta_cents-only test would say 1, ignoring refunds 3`
+  );
+  check(
+    "an account older than the first recorded view is not counted",
+    delta("Created an account") === 6 + adminCounted,
+    `delta ${delta("Created an account")}; fun_old predates tracking and must not be`
+  );
+  check(
+    "the funnel says when its window was shortened",
+    (stage("Visitor-days")?.note ?? "").includes("when tracking began"),
+    stage("Visitor-days")?.note
+  );
+  check(
+    "a signed-in customer is not a visitor in the acquisition funnel",
+    stage("Reached pricing or interest")?.count === 1,
+    `got ${stage("Reached pricing or interest")?.count}; fun_customer's signed-in /pricing view must not count`
+  );
+  check(
+    "every stage after the first carries a named denominator",
+    funnel.slice(1).every((s) => s.of != null && s.ofLabel != null)
+  );
+  if (savedFunnelAdmins === undefined) delete process.env.ADMIN_USER_IDS;
+  else process.env.ADMIN_USER_IDS = savedFunnelAdmins;
+
+  check("a small denominator withholds the percentage", formatRate(9, 14) === "9 of 14");
+  check(
+    "a usable denominator shows one",
+    formatRate(30, 100) === "30 of 100 (30%)",
+    formatRate(30, 100)
+  );
+  check("the first stage is a bare count", formatRate(412, null) === "412");
+
+  // --- 7bb. Per-account traffic ----------------------------------------------------------
+
+  console.log("\nper-account traffic");
+
+  const acctSession = randomUUID();
+  const acctVisitor = hashVisitor("10.0.0.7", "UA-ACCT", now);
+  const acctLast = randomUUID();
+  await db.insert(pageViews).values([
+    { ...base, id: randomUUID(), visitorHash: acctVisitor, sessionId: acctSession, userId: "acct_user", route: "/dashboard", createdAt: ago(40) },
+    { ...base, id: randomUUID(), visitorHash: acctVisitor, sessionId: acctSession, userId: "acct_user", route: "/graph", createdAt: ago(38) },
+    { ...base, id: acctLast, visitorHash: acctVisitor, sessionId: acctSession, userId: "acct_user", route: "/graph", createdAt: ago(35) },
+    // A second account, quieter, so the ranking has something to order.
+    { ...base, id: randomUUID(), visitorHash: acctVisitor, sessionId: randomUUID(), userId: "acct_other", route: "/dashboard", createdAt: ago(20) },
+    // Anonymous traffic must not be attributed to anybody.
+    { ...base, id: randomUUID(), visitorHash: visitorB, sessionId: randomUUID(), route: "/pricing", createdAt: ago(18) },
+  ]);
+  await recordDwell(acctLast, 60_000);
+
+  const acct = await accountTraffic("acct_user", "30d");
+  check("counts only that account's views", acct.views === 3, `got ${acct.views}`);
+  check("groups them into one session", acct.sessions === 1, `got ${acct.sessions}`);
+  check("counts distinct days seen", acct.activeDays === 1, `got ${acct.activeDays}`);
+  check(
+    "session duration spans first to last plus the exit dwell",
+    acct.medianSessionSeconds === 360,
+    `got ${acct.medianSessionSeconds}, expected 300s span + 60s dwell`
+  );
+  check("sums measured time on page", acct.totalDwellSeconds === 60, `got ${acct.totalDwellSeconds}`);
+  check(
+    "reports how thin the dwell sample is",
+    Math.abs(acct.dwellCoverage - 1 / 3) < 0.001,
+    `got ${acct.dwellCoverage}; 1 of 3 views has a measurement`
+  );
+  check("ranks their most-opened route first", acct.routes[0]?.route === "/graph", acct.routes[0]?.route);
+  check("first and last seen are populated", acct.firstSeen != null && acct.lastSeen != null);
+
+  const empty = await accountTraffic("acct_nobody", "30d");
+  check(
+    "an account with no traffic reads as zero, not as a crash",
+    empty.views === 0 && empty.sessions === 0 && empty.medianSessionSeconds === null && empty.routes.length === 0
+  );
+
+  const ranked = await topAccountsByTraffic("30d");
+  check("ranks accounts by views", ranked[0]?.userId === "acct_user", ranked[0]?.userId);
+  check("includes the quieter account", ranked.some((r) => r.userId === "acct_other"));
+  // Derived rather than hardcoded: the ranking must account for exactly the signed-in
+  // rows and no others. A literal total here would only be re-asserting the fixture.
+  const attributed = rowsOf<{ n: number }>(
+    await db.execute(
+      `SELECT count(*)::int AS n FROM page_views WHERE user_id IS NOT NULL AND is_bot = false` as never
+    )
+  )[0]?.n;
+  check(
+    "anonymous traffic is never attributed to an account",
+    ranked.every((r) => r.userId != null) &&
+      ranked.reduce((a, r) => a + r.views, 0) === attributed,
+    `ranked ${ranked.reduce((a, r) => a + r.views, 0)} vs ${attributed} signed-in rows: ${JSON.stringify(ranked.map((r) => [r.userId, r.views]))}`
+  );
+
+  // --- 7bc. Product activity (engagement) -----------------------------------------------
+  //
+  // None of these four are new tracking — they read tables other features already write.
+  // The point of testing them here is the same as everywhere else in this file: a wrong
+  // status filter, a wrong jsonb path, or a wrong FK join fails SILENTLY (an empty table
+  // that looks identical to "nobody did this"), so each assertion pins an exact count.
+
+  console.log("\nproduct activity");
+
+  // `page_views` is shared with the per-account traffic fixtures above (acct_user's two
+  // /graph views are still sitting in it), so graphViews/upgradePageViews are asserted as
+  // deltas rather than exact counts — the same reason the acquisition funnel above does.
+  const depthBefore = await engagementDepth("30d");
+
+  await db.insert(imports).values([
+    { userId: "eng_user", importType: "linkedin_connections", status: "completed", contactsCreated: 3, contactsUpdated: 1 },
+    { userId: "eng_user", importType: "google_contacts", status: "completed", contactsCreated: 2, contactsUpdated: 0 },
+    // Still running — must not be counted as completed.
+    { userId: "eng_user", importType: "outlook_contacts", status: "processing", contactsCreated: 0, contactsUpdated: 0 },
+  ]);
+  const importsOut = await importsByProvider("30d");
+  check(
+    "counts only completed imports, by provider",
+    importsOut.find((r) => r.provider === "linkedin_connections")?.count === 1 &&
+      importsOut.find((r) => r.provider === "google_contacts")?.count === 1 &&
+      !importsOut.some((r) => r.provider === "outlook_contacts"),
+    JSON.stringify(importsOut)
+  );
+  check(
+    "sums created/updated per provider",
+    importsOut.find((r) => r.provider === "linkedin_connections")?.created === 3 &&
+      importsOut.find((r) => r.provider === "linkedin_connections")?.updated === 1,
+    JSON.stringify(importsOut)
+  );
+
+  // Only `result.saved.{created,updated}` matters to the query under test, so the rest
+  // of `CaptureJobResult`'s shape is elided rather than filled in field by field.
+  const fixtureResult = (saved: { created: number; updated: number }) =>
+    ({
+      items: [],
+      saved: { batchId: randomUUID(), remindersCreated: 0, contactIds: [], contactIdByKey: {}, ...saved },
+    }) as unknown as CaptureJobResult;
+  await db.insert(captureJobs).values([
+    { userId: "eng_user", sourceKind: "messy", status: "saved", result: fixtureResult({ created: 2, updated: 1 }) },
+    { userId: "eng_user", sourceKind: "voice", status: "saved", result: fixtureResult({ created: 1, updated: 0 }) },
+    // Never saved — must not be counted.
+    { userId: "eng_user", sourceKind: "messy", status: "ready", result: { items: [] } as unknown as CaptureJobResult },
+  ]);
+  const capturesOut = await capturesBySource("30d");
+  check(
+    "counts only saved captures, by source",
+    capturesOut.find((r) => r.source === "messy")?.count === 1 &&
+      capturesOut.find((r) => r.source === "voice")?.count === 1,
+    JSON.stringify(capturesOut)
+  );
+  check(
+    "reads created/updated out of result.saved",
+    capturesOut.find((r) => r.source === "messy")?.created === 2 &&
+      capturesOut.find((r) => r.source === "messy")?.updated === 1,
+    JSON.stringify(capturesOut)
+  );
+
+  // outreachByChannel counts every user's messages, and the database is shared with the other
+  // smokes (a seeded demo workspace sends some), so check what these rows add, not the totals.
+  const outreachBefore = await outreachByChannel("30d");
+  const [campaign] = await db
+    .insert(outreachCampaigns)
+    .values({ userId: "eng_user", name: "Smoke campaign" })
+    .returning();
+  const prospects = await db
+    .insert(outreachProspects)
+    .values([
+      { campaignId: campaign.id, externalId: "p1", fullName: "Prospect One" },
+      { campaignId: campaign.id, externalId: "p2", fullName: "Prospect Two" },
+    ])
+    .returning();
+  await db.insert(outreachMessages).values([
+    { prospectId: prospects[0].id, channel: "email", status: "sent", sentAt: nowIso },
+    { prospectId: prospects[1].id, channel: "linkedin", status: "sent", sentAt: nowIso },
+    // Drafted, never sent — must not be counted.
+    { prospectId: prospects[0].id, channel: "sms", status: "draft" },
+  ]);
+  const outreachOut = await outreachByChannel("30d");
+  const added = (channel: string) =>
+    (outreachOut.find((r) => r.channel === channel)?.count ?? 0) -
+    (outreachBefore.find((r) => r.channel === channel)?.count ?? 0);
+  check(
+    "counts only sent messages, by channel",
+    added("email") === 1 && added("linkedin") === 1 && added("sms") === 0,
+    JSON.stringify({ before: outreachBefore, after: outreachOut })
+  );
+
+  const [thread] = await db
+    .insert(chatThreads)
+    .values({ userId: "eng_user" })
+    .returning();
+  await db.insert(chatMessages).values([
+    { threadId: thread.id, userId: "eng_user", role: "user", content: "who works at Acme?" },
+    { threadId: thread.id, userId: "eng_user", role: "user", content: "and their title?" },
+    // The model's own reply — not a question asked, must not be counted.
+    { threadId: thread.id, userId: "eng_user", role: "assistant", content: "…" },
+  ]);
+  await db.insert(contactMerges).values([
+    {
+      userId: "eng_user",
+      winnerContactId: randomUUID(),
+      loserContactId: randomUUID(),
+      loserSnapshot: {},
+      status: "done",
+      reason: "Merged by hand",
+    },
+    // Confirmed from the duplicate-review queue: the matcher's reason, but a person's
+    // decision — `mergeDuplicatePair` records no confidence. Counted.
+    {
+      userId: "eng_user",
+      winnerContactId: randomUUID(),
+      loserContactId: randomUUID(),
+      loserSnapshot: {},
+      status: "done",
+      reason: "Same full name",
+    },
+    // The automatic sweep, same reason, with the confidence it always records. Not counted.
+    {
+      userId: "eng_user",
+      winnerContactId: randomUUID(),
+      loserContactId: randomUUID(),
+      loserSnapshot: {},
+      status: "done",
+      reason: "Same full name",
+      confidence: 0.6,
+    },
+  ]);
+  await db.insert(pageViews).values([
+    { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/graph", createdAt: ago(1) },
+    { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/upgrade", createdAt: ago(1) },
+    // A reload of the same page by the same account: intent once, not twice.
+    { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/upgrade", createdAt: ago(1) },
+  ]);
+  const depth = await engagementDepth("30d");
+  // Deltas against `depthBefore`, not absolute counts: both metrics are genuinely global
+  // (unscoped by user), so an absolute assertion silently assumed this was the only script
+  // in the whole suite ever inserting a matching row — true when this was written, but not
+  // once `smoke-chat-versions` started inserting its own `role: "user"` turns into the same
+  // shared PGlite database (`run-smoke.ts` gives the whole run one directory). The other two
+  // engagementDepth checks below already use this pattern; these two just hadn't caught up.
+  check(
+    "counts only user-asked chat messages",
+    depth.chatQueries - depthBefore.chatQueries === 2,
+    `delta ${depth.chatQueries - depthBefore.chatQueries}`
+  );
+  check(
+    "counts person-confirmed merges from the button and the queue, not the sweep",
+    depth.manualMerges - depthBefore.manualMerges === 2,
+    `delta ${depth.manualMerges - depthBefore.manualMerges}`
+  );
+  check(
+    "counts a signed-in /graph view",
+    depth.graphViews - depthBefore.graphViews === 1,
+    `delta ${depth.graphViews - depthBefore.graphViews}`
+  );
+  check(
+    "counts an account reaching /upgrade once, however many views",
+    depth.upgradePageViews - depthBefore.upgradePageViews === 1,
+    `delta ${depth.upgradePageViews - depthBefore.upgradePageViews}`
+  );
+
+  // --- 7c. The pages actually render ----------------------------------------------------
+  //
+  // The console is unreachable in a browser without Clerk keys and an ADMIN_USER_IDS entry
+  // (proxy.ts 404s /admin outright in demo mode), so calling the page functions directly is
+  // the only local way to prove the element trees build. Same technique, and the same
+  // limits, as scripts/smoke-admin-render.ts: client components appear as elements rather
+  // than DOM, so this catches a throwing loader or a bad prop shape, not a broken hover.
+  //
+  // Both pages are callable here precisely because neither gates itself — the gate lives in
+  // (admin)/layout.tsx, and smoke-admin-gate.ts owns that half.
+
+  console.log("\npage render");
+
+  function textOf(node: unknown, out: string[] = []): string[] {
+    if (node == null || typeof node === "boolean") return out;
+    if (typeof node === "string" || typeof node === "number") {
+      out.push(String(node));
+      return out;
+    }
+    if (Array.isArray(node)) {
+      for (const child of node) textOf(child, out);
+      return out;
+    }
+    const el = node as { props?: Record<string, unknown>; label?: unknown };
+    // A row object handed to MiniBars/TrendBars, not a React element. Without this the
+    // walk stops at the panel title and every data-bearing assertion below passes
+    // vacuously.
+    if (!el.props && typeof el.label === "string") {
+      out.push(el.label);
+      return out;
+    }
+    if (el.props) {
+      for (const [key, value] of Object.entries(el.props)) {
+        if (["children", "value", "label", "title", "subtitle", "hint", "rows"].includes(key)) {
+          textOf(value, out);
+        }
+      }
+    }
+    return out;
+  }
+
+  const { default: TrafficPage } = await import(
+    "../src/app/(clerk)/(admin)/admin/analytics/page"
+  );
+  const { default: FunnelPage } = await import(
+    "../src/app/(clerk)/(admin)/admin/analytics/funnel/page"
+  );
+  const { default: EngagementPage } = await import(
+    "../src/app/(clerk)/(admin)/admin/analytics/engagement/page"
+  );
+
+  // Some traffic to render, since the fixtures above were cleaned up by the funnel block.
+  await db.insert(pageViews).values([
+    { ...base, id: randomUUID(), visitorHash: visitorA, sessionId: s1, route: "/pricing", createdAt: ago(12), country: "US", region: "California", city: "San Francisco", referrerHost: "news.ycombinator.com" },
+    { ...base, id: randomUUID(), visitorHash: visitorB, sessionId: s2, route: "/", createdAt: ago(8), country: "GB", region: "England", city: "London" },
+    // Signed in, so the "most active accounts" panel has a row to draw.
+    { ...base, id: randomUUID(), visitorHash: visitorA, sessionId: s1, route: "/dashboard", createdAt: ago(6), userId: "render_acct" },
+  ]);
+
+  const traffic = await TrafficPage({ searchParams: Promise.resolve({}) });
+  const trafficText = textOf(traffic).join(" | ");
+  check("the traffic page renders without throwing", traffic != null);
+  check("it labels the count as visitor-days, never as people", trafficText.includes("Visitor-days"), trafficText.slice(0, 400));
+  check(
+    "it says the visitor figure is not a headcount",
+    trafficText.includes("not a headcount"),
+    trafficText.slice(0, 400)
+  );
+  check("it names the session measure honestly", trafficText.includes("first view to last"));
+  check("it says bounces are marketing bounces", trafficText.includes("Marketing bounce"));
+  check("it lists a country", trafficText.includes("US"), trafficText.slice(0, 600));
+  check("it lists a referrer", trafficText.includes("news.ycombinator.com"));
+
+  check(
+    "it lists the most active accounts by name",
+    trafficText.includes("Most active accounts"),
+    trafficText.slice(-400)
+  );
+
+  const ranged = await TrafficPage({ searchParams: Promise.resolve({ range: "7d" }) });
+  check("an explicit range renders", ranged != null);
+  const bogus = await TrafficPage({ searchParams: Promise.resolve({ range: "../../etc" }) });
+  check("an unrecognised range falls back rather than reaching SQL", bogus != null);
+
+  const funnelPage = await FunnelPage({ searchParams: Promise.resolve({}) });
+  const funnelText = textOf(funnelPage).join(" | ");
+  check("the funnel page renders without throwing", funnelPage != null);
+  check("it names every stage", funnelText.includes("Visitor-days") && funnelText.includes("Paid"));
+  check("it names what each rate is a fraction of", funnelText.includes("Conversion"));
+  check(
+    "it warns these are not one group of people",
+    funnelText.includes("These are not one group of people."),
+    funnelText.slice(0, 400)
+  );
+  check("it explains the Lifetime caveat", funnelText.includes("Paid includes Lifetime, net of refunds."));
+
+  const engagementPage = await EngagementPage({ searchParams: Promise.resolve({}) });
+  const engagementText = textOf(engagementPage).join(" | ");
+  check("the engagement page renders without throwing", engagementPage != null);
+  check(
+    "it labels imports by their friendly provider name",
+    engagementText.includes("LinkedIn connections") && engagementText.includes("Google contacts"),
+    engagementText.slice(0, 600)
+  );
+  check(
+    "it labels captures by their friendly source name",
+    engagementText.includes("Notes") && engagementText.includes("Voice"),
+    engagementText.slice(0, 600)
+  );
+  check(
+    "it says reaching /upgrade is intent, not revenue",
+    engagementText.includes("Reached /upgrade") && engagementText.includes("intent"),
+    engagementText.slice(-400)
+  );
+
+  // With the salt removed the page must say so, rather than showing an empty table that
+  // looks identical to "nobody visited".
+  delete process.env.ANALYTICS_SALT;
+  const offPage = await TrafficPage({ searchParams: Promise.resolve({}) });
+  const offText = textOf(offPage).join(" | ");
+  check(
+    "with no salt the page says tracking is off, not that traffic is zero",
+    offText.includes("ANALYTICS_SALT is not set"),
+    offText.slice(0, 300)
+  );
+  process.env.ANALYTICS_SALT = "smoke-salt-at-least-16-chars";
+
+  // --- 7d. The ingest route, called for real ---------------------------------------------
+  //
+  // `referrerHost()` parses a host and nothing more, and the comments used to claim it
+  // dropped same-origin. It never did: a full-page load from one Orbit page to another
+  // recorded Orbit as its own referrer. This drives POST /api/track itself.
+
+  console.log("\ningest route");
+  const { POST: track } = await import("../src/app/api/track/route");
+  const beacon = (body: Record<string, unknown>, host = "orbit.example") =>
+    track(
+      new Request(`https://${host}/api/track`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          host,
+          "user-agent": realChrome,
+          "x-forwarded-for": "203.0.113.7",
+        },
+        body: JSON.stringify(body),
+      })
+    );
+  const viewOf = async (id: string) =>
+    db.query.pageViews.findFirst({ where: (t, { eq }) => eq(t.id, id) });
+
+  const selfRef = randomUUID();
+  const res = await beacon({ kind: "view", id: selfRef, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", referrer: "https://www.orbit.example/" });
+  check("the route answers 204", res.status === 204, `got ${res.status}`);
+  const selfRow = await viewOf(selfRef);
+  check("the view was recorded", selfRow != null);
+  check(
+    "a referrer from Orbit's own host is not recorded as a referral",
+    selfRow?.referrerHost == null,
+    `got ${selfRow?.referrerHost}`
+  );
+
+  const extRef = randomUUID();
+  await beacon({ kind: "view", id: extRef, sessionId: randomUUID(), path: "/", url: "https://orbit.example/?utm_campaign=launch", referrer: "https://news.ycombinator.com/item?id=1" });
+  const extRow = await viewOf(extRef);
+  check("an external referrer is kept", extRow?.referrerHost === "news.ycombinator.com", `got ${extRow?.referrerHost}`);
+  check("UTMs are read from the URL", extRow?.utmCampaign === "launch", `got ${extRow?.utmCampaign}`);
+
+  const portRef = randomUUID();
+  await beacon({ kind: "view", id: portRef, sessionId: randomUUID(), path: "/", url: "http://localhost:3001/", referrer: "http://localhost:3001/pricing" }, "localhost:3001");
+  check("same-origin is recognised across a port", (await viewOf(portRef))?.referrerHost == null, `got ${(await viewOf(portRef))?.referrerHost}`);
+
+  await beacon({ kind: "dwell", id: extRef, dwellMs: 12_000 });
+  check("a dwell beacon through the route lands", (await viewOf(extRef))?.dwellMs === 12_000);
+
+  for (const roundTrip of ["https://checkout.stripe.com/c/pay/cs_x", "https://accounts.google.com/o/oauth2"]) {
+    const rtId = randomUUID();
+    await beacon({ kind: "view", id: rtId, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", referrer: roundTrip });
+    check(
+      `a round trip through ${new URL(roundTrip).host} is not a referral`,
+      (await viewOf(rtId))?.referrerHost == null,
+      `got ${(await viewOf(rtId))?.referrerHost}`
+    );
+    await db.delete(pageViews).where(eq(pageViews.id, rtId));
+  }
+
+  const optedOut = randomUUID();
+  await beacon({ kind: "view", id: optedOut, sessionId: randomUUID(), path: "/", url: "https://orbit.example/", referrer: null, internal: true });
+  check("an opted-out browser's view is recorded as internal", (await viewOf(optedOut))?.isInternal === true);
+
+  const scripted = randomUUID();
+  await beacon({ kind: "view", id: scripted, sessionId: randomUUID(), path: "/", url: "https://orbit.example/", referrer: null, automated: true });
+  check("a webdriver-driven browser is flagged as a bot", (await viewOf(scripted))?.isBot === true);
+  await db.delete(pageViews).where(inArray(pageViews.id, [optedOut, scripted]));
+
+  const savedVercelEnv = process.env.VERCEL_ENV;
+  process.env.VERCEL_ENV = "preview";
+  const previewId = randomUUID();
+  await beacon({ kind: "view", id: previewId, sessionId: randomUUID(), path: "/", url: "https://orbit.example/", referrer: null });
+  check("a preview deployment records nothing", (await viewOf(previewId)) == null);
+  if (savedVercelEnv === undefined) delete process.env.VERCEL_ENV;
+  else process.env.VERCEL_ENV = savedVercelEnv;
+
+  const adminId = randomUUID();
+  await beacon({ kind: "view", id: adminId, sessionId: randomUUID(), path: "/admin/analytics", url: "https://orbit.example/admin/analytics", referrer: null });
+  check("the admin console is never recorded", (await viewOf(adminId)) == null);
+
+  await db.delete(pageViews).where(inArray(pageViews.id, [selfRef, extRef, portRef]));
+
+  // --- 8. Query budget -------------------------------------------------------------------
+  //
+  // The overview issues these together. No admin page is budgeted today; this is the first,
+  // so a future panel added carelessly shows up here rather than in a slow page.
+
+  console.log("\nquery budget");
+  startQueryCount();
+  await Promise.all([
+    trafficTotals("30d"),
+    trafficTrend("30d"),
+    topRoutes("30d"),
+    geoBreakdown("30d"),
+    sourceBreakdown("30d"),
+    deviceBreakdown("30d"),
+  ]);
+  stopQueryCount();
+  const statements = capturedQueries().length;
+  check(
+    `overview aggregates stay within budget (${statements} statements)`,
+    statements <= 10,
+    `${statements} statements; the page loads them in one Promise.all`
+  );
+
+  // Leave the shared database as we found it. 111 other scripts run against this same
+  // PGlite directory, and several of them count users.
+  const fixtureUsers = ["fun_idle", "fun_active", "fun_lifetime", "fun_sub", "fun_old", "fun_refunded", "fun_fresh", "fun_admin"];
+  await db.delete(pageViews);
+  await db.delete(contacts).where(inArray(contacts.userId, fixtureUsers));
+  await db.delete(billingEvents).where(inArray(billingEvents.userId, fixtureUsers));
+  await db.delete(userSettings).where(inArray(userSettings.userId, fixtureUsers));
+  await db.delete(imports).where(eq(imports.userId, "eng_user"));
+  await db.delete(captureJobs).where(eq(captureJobs.userId, "eng_user"));
+  // Cascades to outreach_prospects, then to outreach_messages.
+  await db.delete(outreachCampaigns).where(eq(outreachCampaigns.id, campaign.id));
+  // Cascades to chat_messages.
+  await db.delete(chatThreads).where(eq(chatThreads.id, thread.id));
+  await db.delete(contactMerges).where(eq(contactMerges.userId, "eng_user"));
+
+  if (savedSalt === undefined) delete process.env.ANALYTICS_SALT;
+  else process.env.ANALYTICS_SALT = savedSalt;
+
+  console.log(failures === 0 ? "\nall checks passed" : `\n${failures} check(s) failed`);
+  process.exit(failures === 0 ? 0 : 1);
+
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

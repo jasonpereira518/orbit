@@ -4,7 +4,7 @@
  * Run: npx tsx scripts/smoke-dashboard-search.ts
  */
 import { readFileSync } from "node:fs";
-import { shouldUseSemanticArm, toKeywordHits } from "../src/actions/search-adapter";
+import { shouldUseSemanticArm, toKeywordHits } from "../src/lib/search-adapter";
 import type { RankedContact } from "../src/lib/hybrid-search";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -15,7 +15,7 @@ function check(label: string, condition: boolean, detail?: string) {
 const ranked: RankedContact = {
   id: "c1", fullName: "Ada Lovelace", preferredName: null, company: "Analytical Engines",
   school: null, title: "Engineer", location: null, email: null, industry: null,
-  notes: null, aiSummary: null, keyFacts: [], relationshipScore: 7, priorityLevel: 2,
+  notes: null, aiSummary: null, keyFacts: [], opportunities: [], relationshipScore: 7, priorityLevel: 2,
   closenessTier: "inner", tags: ["mentor"], rrfScore: 0.03, relevance: 1,
   matchedArms: ["fts", "semantic"], filterMatched: true,
 };

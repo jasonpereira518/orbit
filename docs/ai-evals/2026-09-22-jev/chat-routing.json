@@ -1,0 +1,67 @@
+{
+  "label": "jev",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T16:22:25.323Z",
+  "commit": "595662cb",
+  "fixtures": "6da15618150c",
+  "runs": 1,
+  "decisions": "jev",
+  "tasks": {
+    "chat-routing": {
+      "cases": 123,
+      "metrics": {
+        "depthAccuracy": 0.943089430894309,
+        "researchPrecision": 0.8936170212765957,
+        "researchRecall": 0.9545454545454546,
+        "attentionAccuracy": 1,
+        "attentionPrecision": 1,
+        "attentionRecall": 1,
+        "recruiterAccuracy": 0.991869918699187,
+        "rosterAccuracy": 0.9090909090909091
+      },
+      "misses": [
+        "lookup-17",
+        "lookup-19",
+        "lookup-20",
+        "lookup-31",
+        "lookup-40",
+        "path-03",
+        "path-10",
+        "attn-14",
+        "attn-15",
+        "rec-04"
+      ],
+      "p50LatencyMs": 212,
+      "costMicros": 5044,
+      "costPerCaseMicros": 41.00813008130081,
+      "usage": [
+        {
+          "operation": "chat.roster",
+          "model": "jev-1.13.0",
+          "calls": 22,
+          "failures": 0,
+          "inputTokens": 8827,
+          "outputTokens": 484,
+          "cachedInputTokens": 0,
+          "costMicros": 374,
+          "unpriced": 0,
+          "p50Ms": 204
+        },
+        {
+          "operation": "chat.route",
+          "model": "jev-1.13.0",
+          "calls": 122,
+          "failures": 0,
+          "inputTokens": 111943,
+          "outputTokens": 12932,
+          "cachedInputTokens": 0,
+          "costMicros": 4670,
+          "unpriced": 0,
+          "p50Ms": 207
+        }
+      ],
+      "decisionCostMicros": 5044
+    }
+  }
+}
