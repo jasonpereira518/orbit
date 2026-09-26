@@ -61,6 +61,14 @@ async function seed() {
     userId: USER,
     email: `${USER}@example.test`,
     geminiApiKeyEncrypted: "ciphertext",
+    // Every BYO provider key column, not just the one the account happens to use:
+    // PRESERVED_SETTINGS_COLUMNS is what `purgeUserSettings` re-inserts, and a column left
+    // off it is silently revoked by every delete, partial ones included. `aiProvider` IS
+    // preserved, so a dropped key column leaves the account pointed at a provider whose
+    // key is gone — AI silently dead, with nothing in the UI to say why.
+    openaiApiKeyEncrypted: "ciphertext",
+    anthropicApiKeyEncrypted: "ciphertext",
+    openrouterApiKeyEncrypted: "ciphertext",
     calendarFeedToken: "feed-token",
     // User-written content, not a setting: a preferences delete must clear it.
     writingInstructions: "Keep it short.",
@@ -417,6 +425,12 @@ async function main() {
   check(
     "...keeping the BYO provider key",
     settingsReset?.geminiApiKeyEncrypted === "ciphertext"
+  );
+  check(
+    "...and EVERY provider's key column, since aiProvider survives the reset",
+    settingsReset?.openaiApiKeyEncrypted === "ciphertext" &&
+      settingsReset?.anthropicApiKeyEncrypted === "ciphertext" &&
+      settingsReset?.openrouterApiKeyEncrypted === "ciphertext"
   );
   check(
     "...and the contacts it was not asked to delete",

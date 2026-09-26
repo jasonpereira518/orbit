@@ -42,11 +42,44 @@ function normalize(payload: unknown): { directive: string; blockedUri: string; d
   } catch {
     documentPath = "";
   }
+  const cleanDirective = directive.trim().toLowerCase();
+  if (!/^[a-z-]{1,40}$/.test(cleanDirective)) return null;
   return {
-    directive: directive.trim().slice(0, 64),
-    blockedUri: (typeof blockedUri === "string" ? blockedUri : "").slice(0, 300),
+    directive: cleanDirective,
+    blockedUri: blockedSource(typeof blockedUri === "string" ? blockedUri : ""),
     documentPath: documentPath.slice(0, 200),
   };
+}
+
+/**
+ * The blocked resource reduced to what a policy decision needs: an origin, or a keyword
+ * (`inline`, `eval`, `data`, `blob`). The full URL was part of the throttle key, so every
+ * distinct path an anonymous script invented was a fresh key and a fresh row.
+ */
+function blockedSource(raw: string): string {
+  const value = raw.trim();
+  try {
+    const url = new URL(value);
+    if (/^(https?|wss?):$/.test(url.protocol)) return url.origin.slice(0, 200);
+    return url.protocol.replace(/:$/, "").slice(0, 32);
+  } catch {
+    return (/^[a-z-]{1,32}/i.exec(value)?.[0] ?? "").toLowerCase();
+  }
+}
+
+/**
+ * A ceiling on rows per instance per hour, whatever the keys. Normalising the URI bounds a
+ * real browser's reports; it cannot bound a script inventing origins, and `error_events` is
+ * shared with every real failure signal the ops sweep reads.
+ */
+const MAX_ROWS_PER_HOUR = 100;
+let budget = { windowStart: 0, used: 0 };
+
+function takeRowBudget(now = Date.now()): boolean {
+  if (now - budget.windowStart >= 60 * 60 * 1000) budget = { windowStart: now, used: 0 };
+  if (budget.used >= MAX_ROWS_PER_HOUR) return false;
+  budget.used++;
+  return true;
 }
 
 export async function POST(request: Request) {
@@ -64,7 +97,7 @@ export async function POST(request: Request) {
   const report = normalize(payload);
   if (!report) return new Response(null, { status: 204 });
 
-  if (shouldRecordThrottled(`csp:${report.directive}:${report.blockedUri}`)) {
+  if (shouldRecordThrottled(`csp:${report.directive}:${report.blockedUri}`) && takeRowBudget()) {
     await recordErrorEvent({
       source: ERROR_SOURCES.cspReport,
       kind: report.directive,
