@@ -1,5 +1,6 @@
 "use client";
 
+import { mergeRefreshedFirstPage } from "@/lib/paged-list";
 import { usePathname, useRouter } from "next/navigation";
 import {
   useCallback,
@@ -153,10 +154,20 @@ export function RemindersStage({
   const [syncedFrom, setSyncedFrom] = useState(page);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  // The same queue re-sent (a refresh, not a filter change) keeps the pages already loaded:
+  // see `mergeRefreshedFirstPage`.
+  const queueKey = JSON.stringify(urlFilters);
+  const [syncedKey, setSyncedKey] = useState(queueKey);
   if (syncedFrom !== page) {
+    const sameQueue = syncedKey === queueKey && items.length > syncedFrom.items.length;
     setSyncedFrom(page);
-    setItems(page.items);
-    setCursor(page.nextCursor);
+    setSyncedKey(queueKey);
+    if (sameQueue) {
+      setItems(mergeRefreshedFirstPage(items, syncedFrom.items.length, page.items));
+    } else {
+      setItems(page.items);
+      setCursor(page.nextCursor);
+    }
     setLoadError(false);
   }
   const today = page.today;

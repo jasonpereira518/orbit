@@ -128,7 +128,6 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
             ? "All data deleted"
             : `Deleted ${deleted.length} ${deleted.length === 1 ? "category" : "categories"}`
         );
-        router.refresh();
       } catch (e) {
         toast.error(friendlyError(e, TOAST_COPY.deleteFailed));
       }

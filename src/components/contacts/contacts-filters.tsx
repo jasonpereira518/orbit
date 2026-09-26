@@ -84,8 +84,10 @@ export function ContactsFilters({
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
+    // No router.refresh() after it: that rendered the whole tree a second time on every
+    // debounced keystroke. A URL not in the router cache is fetched fresh by the replace, and
+    // one that is (a query typed again) is re-rendered by FreshOnArrival once it is >2s old.
     router.replace(href);
-    router.refresh();
   }
 
   function scheduleSearch(value: string) {

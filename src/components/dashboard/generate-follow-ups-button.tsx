@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -15,7 +14,6 @@ export function GenerateFollowUpsButton({
   limit?: number;
   label?: string;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   return (
@@ -39,7 +37,6 @@ export function GenerateFollowUpsButton({
                 `Added ${res.created} due follow-up${res.created === 1 ? "" : "s"}`
               );
             }
-            router.refresh();
           } catch (err) {
             toast.error(
               friendlyError(err, "Couldn’t generate follow-ups — try again?")

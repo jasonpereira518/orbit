@@ -27,7 +27,6 @@
  * chunking error naming neither file.
  */
 import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { IntentLink } from "@/components/ui/intent-link";
 import { Check, Loader2, MoreHorizontal, Pencil, Search, UserPlus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -97,7 +96,6 @@ export function AttendeeRoster({
   /** How many events each person has shared with the user, where that is more than one. */
   history?: Array<{ attendeeId: string; eventsTogether: number }>;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [busyRow, setBusyRow] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -202,7 +200,6 @@ export function AttendeeRoster({
             ? "No new connections to add"
             : `${result.created} added — ${result.matched} already in your network`
         );
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t add those people — try again?"));
       }
@@ -218,7 +215,6 @@ export function AttendeeRoster({
       try {
         await removeSpokenToConnection(eventId, attendeeId);
         toast.success("Unlinked from this event — they’re still in your network");
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t unlink that person — try again?"));
       } finally {

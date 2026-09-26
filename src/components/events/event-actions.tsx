@@ -18,7 +18,6 @@
  * than trusting a diff that has been round-tripped through a browser.
  */
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Loader2, Pencil, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,7 +36,6 @@ import { EditEventDialog, type EditableEvent } from "./edit-event-dialog";
 type Change = { field: string; label: string; from: string | null; to: string };
 
 export function EventActions({ event }: { event: EditableEvent }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [editing, setEditing] = useState(false);
   const [changes, setChanges] = useState<Change[] | null>(null);
@@ -72,7 +70,6 @@ export function EventActions({ event }: { event: EditableEvent }) {
           return;
         }
         toast.success("Refreshed from the event page");
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t refresh from that page — try again?"));
       }

@@ -125,7 +125,6 @@ export function EditAttendeeDialog({
             : "Removed from this roster"
         );
         onClose();
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t remove that person — try again?"));
       }

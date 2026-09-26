@@ -165,7 +165,6 @@ export function ContactOpportunitiesSection({
         toast.error(res.error);
         return;
       }
-      router.refresh();
     });
   }
 
@@ -193,7 +192,6 @@ export function ContactOpportunitiesSection({
           },
         },
       });
-      router.refresh();
     });
   }
 

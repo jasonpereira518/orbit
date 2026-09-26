@@ -116,7 +116,6 @@ export function SetupWizard({
     start(async () => {
       const res = await completeWizard();
       router.push(res.redirectTo);
-      router.refresh();
     });
   }, [router]);
 

@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { setLinkShared, updateMyLink } from "@/actions/recruiters";
 import { Button } from "@/components/ui/button";
@@ -34,7 +33,6 @@ export function RecruiterLinkEditor({
   /** Global opt-in. When false the per-link control is inert and stays hidden. */
   sharingEnabled: boolean;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [shared, setShared] = useState(sharedToPool);
   const [form, setForm] = useState({
@@ -116,7 +114,6 @@ export function RecruiterLinkEditor({
                       ? "Shared with the pool"
                       : "Kept out of the pool"
                   );
-                  router.refresh();
                 } catch (err) {
                   setShared(previous);
                   toast.error(
@@ -152,7 +149,6 @@ export function RecruiterLinkEditor({
                     : null,
                 });
                 toast.success("Recruiter updated");
-                router.refresh();
               } catch (err) {
                 toast.error(
                   friendlyError(err, "That didn’t update — try again?")

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { AlertTriangle, Gift, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -166,7 +165,6 @@ function CompPlanDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const router = useRouter();
   const [choice, setChoice] = useState<Choice>(
     currentSource === "comp" ? "none" : "lifetime"
   );
@@ -193,7 +191,6 @@ function CompPlanDialog({
             : `Comped ${PLAN_LABELS[result.plan]}`
         );
         onOpenChange(false);
-        router.refresh();
       } catch (err) {
         toast.error(
           friendlyError(err, "Couldn’t change the plan — try again?")

@@ -122,7 +122,6 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
                     toast.success(res.created ? `${p.displayName} added to your network` : `${p.displayName} was already here — updated`, {
                       action: { label: "Open", onClick: () => router.push(`/contacts/${res.contactId}`) },
                     });
-                    router.refresh();
                   });
                 }}
               >

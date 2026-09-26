@@ -26,7 +26,6 @@ function SurfaceRow({
   surface: Surface;
   hidden: boolean;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [optimistic, setOptimistic] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +40,6 @@ function SurfaceRow({
     start(async () => {
       try {
         await setSurfaceHiddenAction({ surfaceKey: surface.key, hidden: next });
-        router.refresh();
       } catch (err) {
         setOptimistic(null);
         setError(err instanceof Error ? err.message : "Could not save that.");
@@ -176,7 +174,6 @@ export function ViewAsUserButton({ active }: { active: boolean }) {
  * there — so both directions just refresh in place.
  */
 export function PreviewUnreleasedButton({ active }: { active: boolean }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   return (
@@ -186,7 +183,6 @@ export function PreviewUnreleasedButton({ active }: { active: boolean }) {
       onClick={() =>
         start(async () => {
           await setPreviewUnreleasedAction({ on: !active });
-          router.refresh();
         })
       }
       className={cn(

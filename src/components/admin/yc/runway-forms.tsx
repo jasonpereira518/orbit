@@ -1,14 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { addStartupExpenseAction, setCashSnapshotAction } from "@/actions/admin-yc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export function LogExpenseForm() {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [category, setCategory] = useState("");
   const [amountUsd, setAmountUsd] = useState("");
@@ -27,7 +25,6 @@ export function LogExpenseForm() {
       setCategory("");
       setAmountUsd("");
       setNote("");
-      router.refresh();
     });
   }
 
@@ -72,7 +69,6 @@ export function LogExpenseForm() {
 }
 
 export function UpdateCashForm() {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [balanceUsd, setBalanceUsd] = useState("");
 
@@ -82,7 +78,6 @@ export function UpdateCashForm() {
     start(async () => {
       await setCashSnapshotAction({ balanceUsd: balance, asOf: new Date().toISOString() });
       setBalanceUsd("");
-      router.refresh();
     });
   }
 

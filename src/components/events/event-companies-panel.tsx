@@ -12,7 +12,6 @@
  * people from there were in this room.
  */
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { IntentLink } from "@/components/ui/intent-link";
 import { Building2, Loader2, Plus, Star, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -42,7 +41,6 @@ export function EventCompaniesPanel({
   eventId: string;
   rows: EventCompanyRow[];
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -59,7 +57,6 @@ export function EventCompaniesPanel({
             : `Added ${result.added} compan${result.added === 1 ? "y" : "ies"}` +
                 (result.skipped > 0 ? ` · ${result.skipped} line(s) skipped` : "")
         );
-        router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t read that list — try again?"));
       }
@@ -74,14 +71,12 @@ export function EventCompaniesPanel({
         return;
       }
       toast.success(`${name} is on your target list`);
-      router.refresh();
     });
   }
 
   function dismiss(id: string) {
     start(async () => {
       await dismissEventCompanyRow(eventId, id);
-      router.refresh();
     });
   }
 

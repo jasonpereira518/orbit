@@ -2,7 +2,6 @@
 
 import { format } from "date-fns";
 import { RefreshCw } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { toast } from "@/lib/toast";
 import { regenerateContactSummary } from "@/actions/contacts";
@@ -35,7 +34,6 @@ function revealInteraction(interactionId: string) {
 export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussions, nextSteps, stale }: {
   contactId: string; standing: string | null; nextStep: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   return (
     <Card className="border-border/70 shadow-none">
@@ -44,7 +42,7 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
         <CardAction>
           <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
             onClick={() => start(async () => {
-              try { await regenerateContactSummary(contactId); router.refresh(); }
+              try { await regenerateContactSummary(contactId); }
               catch (err) { toast.error(friendlyError(err, "Couldn’t refresh that — try again?")); }
             })}>
             <RefreshCw className="size-3.5" /> {stale ? "Updating…" : "Refresh"}

@@ -100,7 +100,6 @@ export function SuggestionRow({
                     try {
                       await acceptScoreBump(id);
                       toast.success("Relationship score updated");
-                      router.refresh();
                     } catch (err) {
                       toast.error(
                         friendlyError(err, "Couldn’t accept that — try again?")
@@ -123,7 +122,6 @@ export function SuggestionRow({
                     try {
                       await scheduleFromSuggestion(id, 7);
                       toast.success("Follow-up set for a week from now");
-                      router.refresh();
                     } catch (err) {
                       toast.error(
                         friendlyError(err, "Couldn’t schedule that follow-up — try again?")

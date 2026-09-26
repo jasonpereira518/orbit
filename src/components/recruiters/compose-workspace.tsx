@@ -230,7 +230,6 @@ export function ComposeWorkspace({
                 setDrafts([]);
                 setSelectedDrafts(new Set());
                 toast.success("Drafts discarded");
-                router.refresh();
               })
             }
           >

@@ -414,11 +414,14 @@ export function CommandPaletteDialog({
 
   // Fetch the highlighted person's whole profile while they stay highlighted, so Enter lands
   // with no skeleton. Debounced: arrowing through the list should not render every profile.
+  // 250ms, not 100: stepping through results with the arrow keys lands on each one for longer
+  // than 100ms, so the shorter wait full-rendered nearly every profile passed on the way.
+  // A person who stops on someone and reads the row takes longer than 250ms to press Enter.
   const prefetchFull = useFullPrefetch();
   const activePrefetch = active?.prefetchHref;
   useEffect(() => {
     if (!open || !activePrefetch) return;
-    const t = window.setTimeout(() => prefetchFull(activePrefetch), 100);
+    const t = window.setTimeout(() => prefetchFull(activePrefetch), 250);
     return () => window.clearTimeout(t);
   }, [open, activePrefetch, prefetchFull]);
 

@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { MonitorPlay, MonitorOff } from "lucide-react";
 import { setWaitlistDemoAction } from "@/actions/admin";
 import { friendlyError } from "@/lib/errors";
@@ -13,7 +12,6 @@ import { cn } from "@/lib/utils";
  * cosmetic and reversible, and the admin audit log still records who flipped it.
  */
 export function WaitlistDemoSwitch({ enabled }: { enabled: boolean }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   function flip() {
@@ -21,7 +19,6 @@ export function WaitlistDemoSwitch({ enabled }: { enabled: boolean }) {
       try {
         const res = await setWaitlistDemoAction({ enabled: !enabled });
         toast.success(res.enabled ? "The demo is back on the waitlist page" : "The demo is hidden from the waitlist page");
-        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t change the demo — try again?"));
       }
