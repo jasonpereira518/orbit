@@ -15,6 +15,8 @@ test("a pasted note becomes a review card, and keeping it adds the contact", asy
 
   await expect(page.getByRole("group", { name: "1 of 1: Ada Lovelace" })).toBeVisible({ timeout: 90_000 });
   await page.getByRole("button", { name: "Keep this person" }).click();
+  // Keeping the only person stops at the summary (suggested reminders live there); saving is its own step.
+  await page.getByRole("button", { name: "Save 1 contact" }).click();
   await expect(page.getByRole("heading", { name: "Ada Lovelace is in your orbit" })).toBeVisible({ timeout: 60_000 });
 
   await page.goto("/contacts");
