@@ -221,7 +221,7 @@ const ALLOWLIST: Record<string, string> = {
     "\"gemini\" — Anthropic has no speech-to-text and OpenRouter transcription is " +
     "deliberately not wired up (multipart body, no valid model slug); the two are " +
     "exhaustive for every grant transcribeAudioWithAI can receive today.",
-  "src/lib/ai.ts:2119": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:563.)",
+  "src/lib/ai.ts:2126": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:563.)",
   "src/lib/errors.ts:36": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
   "src/lib/errors.ts:38": "same function as line 36 — see that entry.",
