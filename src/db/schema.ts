@@ -98,6 +98,7 @@ export const userSettings = pgTable("user_settings", {
   geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
   openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
   anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
+  openrouterApiKeyEncrypted: text("openrouter_api_key_encrypted"),
   /**
    * The account's own TypeSafe key, for Jev — the decision model behind classification and
    * ranking steps (`src/lib/decisions/`). Optional and BYOK only: with none saved, those
@@ -2758,7 +2759,7 @@ export const usageEvents = pgTable(
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
     /** "typesafe" is the decision model (Jev), which is not a selectable chat provider. */
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "typesafe" | "deepgram">().notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "openrouter" | "typesafe" | "deepgram">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
       .$type<"completion" | "multimodal" | "embedding" | "transcription" | "decision">()
@@ -2777,6 +2778,14 @@ export const usageEvents = pgTable(
      * blank cell beats a confidently wrong dollar figure.
      */
     estimatedCostMicros: integer("estimated_cost_micros"),
+    /**
+     * Whether `estimated_cost_micros` is Orbit's own estimate from `ai-pricing.ts` or a
+     * figure the provider reported. OpenRouter returns `usage.cost` on every response;
+     * `ai-pricing.ts` has no OpenRouter slugs at all and is known to run about 5× low for
+     * the ones it does have, so blending the two in one column without a source would make
+     * that error invisible.
+     */
+    costSource: text("cost_source").$type<"estimated" | "reported">().default("estimated").notNull(),
     /**
      * Whose key paid for it. "orbit" = one of Orbit's managed keys, which the AI gate issues
      * only to Lifetime and demo accounts; every row of it counts against the account's

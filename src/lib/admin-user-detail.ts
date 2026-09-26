@@ -102,6 +102,7 @@ export type AdminConfiguration = {
     gemini: boolean;
     openai: boolean;
     anthropic: boolean;
+    openrouter: boolean;
     apollo: boolean;
     resend: boolean;
     twilio: boolean;
@@ -426,6 +427,7 @@ export async function getAdminUserDetail(
     gemini: Boolean(settings.geminiApiKeyEncrypted),
     openai: Boolean(settings.openaiApiKeyEncrypted),
     anthropic: Boolean(settings.anthropicApiKeyEncrypted),
+    openrouter: Boolean(settings.openrouterApiKeyEncrypted),
     apollo: Boolean(settings.apolloApiKeyEncrypted),
     resend: Boolean(settings.resendApiKeyEncrypted),
     twilio: Boolean(settings.twilioAuthTokenEncrypted),
@@ -575,7 +577,9 @@ export async function getAdminUserDetail(
       ? keys.openai
       : provider === "anthropic"
         ? keys.anthropic
-        : keys.gemini;
+        : provider === "openrouter"
+          ? keys.openrouter
+          : keys.gemini;
 
   // The AI gate's rule (`managed-ai-policy.ts`): no key is only a failure off Lifetime, or
   // on Lifetime when this deployment holds no managed key to fall back on.

@@ -104,8 +104,9 @@ const nextConfig: NextConfig = {
     serverFunctions: false,
   },
   experimental: {
-    // Route navigations animate via React's <ViewTransition> (route-transition.tsx).
-    viewTransition: true,
+    // Route navigations animate via React's <ViewTransition> (route-transition.tsx). Since
+    // Next 16.3 the App Router enables it with no flag, and `viewTransition` is no longer a
+    // valid experimental key (it fails the build's type check).
     // Client router cache for dynamic pages. The default (0) re-renders a page on the
     // server on every visit, so going back to a tab you left seconds ago showed its
     // skeleton again for ~350ms minimum — React holds a Suspense reveal for 300ms once a
