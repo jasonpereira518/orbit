@@ -259,6 +259,7 @@ export async function getAdminUserDetail(
     usageByModel,
     usageErrors,
     contactRows,
+    [extra],
   ] = await Promise.all([
     db
       .select({
@@ -404,12 +405,66 @@ export async function getAdminUserDetail(
     // The summary read — identity and affiliation, no notes, summaries, key facts or
     // opportunities. Those live behind `getAdminContactDetail`, one contact at a time,
     // because a page listing twenty contacts has nowhere useful to put them.
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      orderBy: [desc(contacts.createdAt)],
-      limit: 20,
-      columns: CONTACT_BASE_COLUMNS,
-    }),
+    //
+    // Each row's interaction count rides along as a correlated count — twenty index
+    // lookups — instead of a second, dependent round trip keyed on these ids. Never a
+    // full `GROUP BY` over the user's interactions: on a heavy account that is the largest
+    // table on the screen, scanned to decorate twenty rows.
+    //
+    // The correlation is spelled out by hand, on purpose. Drizzle prints a single-table
+    // select's columns unqualified, so `${contacts.id}` in here would become a bare `"id"`
+    // that binds to `interactions.id` and silently counts nothing — the same trap
+    // `db.query…extras` sets with its aliasing (see `src/lib/reminders.ts`).
+    db
+      .select({
+        id: contacts.id,
+        fullName: contacts.fullName,
+        email: contacts.email,
+        company: contacts.company,
+        title: contacts.title,
+        createdAt: contacts.createdAt,
+        interactionCount: sql<number>`(
+          SELECT count(*)::int FROM interactions i
+          WHERE i.user_id = ${userId} AND i.contact_id = "contacts"."id")`,
+      })
+      .from(contacts)
+      .where(eq(contacts.userId, userId))
+      .orderBy(desc(contacts.createdAt))
+      .limit(20),
+
+    /**
+     * The rest of the footprint, as scalar subqueries in one statement.
+     *
+     * Deliberately not six more entries in this `Promise.all`: on Neon HTTP every entry
+     * is its own round trip, and this page already makes nineteen. One statement that the
+     * planner runs as six index lookups is the same work with a fraction of the latency.
+     */
+    db
+      .select({
+        remindersPending: sql<number>`(
+          SELECT count(*)::int FROM ${reminders}
+          WHERE ${reminders.userId} = ${userId} AND ${reminders.status} = 'pending')`,
+        suggestedReminders: sql<number>`(
+          SELECT count(*)::int FROM ${suggestedReminders}
+          WHERE ${suggestedReminders.userId} = ${userId})`,
+        outreachCampaigns: sql<number>`(
+          SELECT count(*)::int FROM ${outreachCampaigns}
+          WHERE ${outreachCampaigns.userId} = ${userId})`,
+        outreachProspects: sql<number>`(
+          SELECT count(*)::int FROM ${outreachProspects} p
+          JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
+          WHERE c.user_id = ${userId})`,
+        outreachMessagesSent: sql<number>`(
+          SELECT count(*)::int FROM ${outreachMessages} m
+          JOIN ${outreachProspects} p ON p.id = m.prospect_id
+          JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
+          WHERE c.user_id = ${userId} AND m.status = 'sent')`,
+        recruiterLinks: sql<number>`(
+          SELECT count(*)::int FROM ${userRecruiterLinks}
+          WHERE ${userRecruiterLinks.userId} = ${userId})`,
+      })
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId)),
   ]);
 
   const { plan, source } = resolvePlan(settings);
@@ -431,61 +486,7 @@ export async function getAdminUserDetail(
     twilio: Boolean(settings.twilioAuthTokenEncrypted),
   };
 
-  // Interaction counts for the visible contact page only.
-  //
-  // The `inArray` is load-bearing: without it this grouped over every interaction the user
-  // had and then looked up twenty of them, so decorating one page cost a full scan of the
-  // largest table on a heavy account.
-  const visibleIds = contactRows.map((c) => c.id);
-  const interactionCounts = visibleIds.length
-    ? await db
-        .select({ contactId: interactions.contactId, n: countInt })
-        .from(interactions)
-        .where(
-          and(
-            eq(interactions.userId, userId),
-            inArray(interactions.contactId, visibleIds)
-          )
-        )
-        .groupBy(interactions.contactId)
-    : [];
-  const interactionsByContact = new Map(
-    interactionCounts.map((r) => [r.contactId, r.n])
-  );
 
-  /**
-   * The rest of the footprint, as scalar subqueries in one statement.
-   *
-   * Deliberately not eight more entries in the `Promise.all` above: on Neon HTTP every
-   * entry is its own round trip, and this page already makes nineteen. One statement that
-   * the planner runs as eight index lookups is the same work with a tenth of the latency.
-   */
-  const [extra] = await db
-    .select({
-      remindersPending: sql<number>`(
-        SELECT count(*)::int FROM ${reminders}
-        WHERE ${reminders.userId} = ${userId} AND ${reminders.status} = 'pending')`,
-      suggestedReminders: sql<number>`(
-        SELECT count(*)::int FROM ${suggestedReminders}
-        WHERE ${suggestedReminders.userId} = ${userId})`,
-      outreachCampaigns: sql<number>`(
-        SELECT count(*)::int FROM ${outreachCampaigns}
-        WHERE ${outreachCampaigns.userId} = ${userId})`,
-      outreachProspects: sql<number>`(
-        SELECT count(*)::int FROM ${outreachProspects} p
-        JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
-        WHERE c.user_id = ${userId})`,
-      outreachMessagesSent: sql<number>`(
-        SELECT count(*)::int FROM ${outreachMessages} m
-        JOIN ${outreachProspects} p ON p.id = m.prospect_id
-        JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
-        WHERE c.user_id = ${userId} AND m.status = 'sent')`,
-      recruiterLinks: sql<number>`(
-        SELECT count(*)::int FROM ${userRecruiterLinks}
-        WHERE ${userRecruiterLinks.userId} = ${userId})`,
-    })
-    .from(userSettings)
-    .where(eq(userSettings.userId, userId));
 
   /**
    * Operator-facing account health.
@@ -699,8 +700,8 @@ export async function getAdminUserDetail(
     timeline,
     // `detail: null` here reflects the narrower query above, not a permission — the full
     // record is one click away at `/admin/users/[userId]/contacts/[contactId]`.
-    contacts: contactRows.map((c) =>
-      toContactRow(c as ContactRecord, interactionsByContact.get(c.id) ?? 0, false)
+    contacts: contactRows.map(({ interactionCount, ...c }) =>
+      toContactRow(c, num(interactionCount), false)
     ),
     contactTotal: contactAgg[0]?.n ?? 0,
   };

@@ -89,9 +89,23 @@ export type AdminHealth = {
   aiFailureTotal: number;
   aiAccountsAffected: number;
   windowDays: number;
-  /** Accounts with no key for the provider they selected — every AI feature fails for them. */
-  missingKeyAccounts: Array<{ userId: string; email: string | null; provider: string }>;
+  /**
+   * Accounts with no key for the provider they selected — every AI feature fails for them.
+   * Newest first, at most `MISSING_KEY_LIST_LIMIT` unless the caller asked for all of them;
+   * `missingKeyTotal` is the real count.
+   */
+  missingKeyAccounts: MissingKeyAccount[];
+  missingKeyTotal: number;
 };
+
+export type MissingKeyAccount = { userId: string; email: string | null; provider: string };
+
+/**
+ * How many keyless accounts `/admin/health` lists. The page polls every twenty seconds, and
+ * on a BYOK product this set grows with every signup that never pastes a key; the tile
+ * carries the full count, and the CSV export asks for every row.
+ */
+export const MISSING_KEY_LIST_LIMIT = 50;
 
 function toDate(value: Date | string | null | undefined): Date | null {
   if (value == null) return null;
@@ -278,9 +292,9 @@ export async function aiErrorBreakdown(
  * capture. The inspector calls this the highest-value signal in the console; it belongs on
  * a cross-account screen for the same reason.
  */
-export async function accountsMissingProviderKey(): Promise<
-  Array<{ userId: string; email: string | null; provider: string }>
-> {
+export async function accountsMissingProviderKey(
+  limit: number | null = MISSING_KEY_LIST_LIMIT
+): Promise<{ rows: MissingKeyAccount[]; total: number }> {
   const db = await getDb();
   // Presence only. The encrypted blobs are never selected into an admin surface.
   const hasKey = sql`
@@ -291,12 +305,15 @@ export async function accountsMissingProviderKey(): Promise<
     END`;
 
   // Filtered in SQL rather than pulled into JS and filtered there — this used to select
-  // every account on every `/admin/health` load just to throw most rows away.
-  return db
+  // every account on every `/admin/health` load just to throw most rows away. The total
+  // rides along on each row (the window runs before LIMIT), so the capped list and its
+  // count stay one statement.
+  const query = db
     .select({
       userId: userSettings.userId,
       email: userSettings.email,
       provider: sql<string>`coalesce(${userSettings.aiProvider}, 'gemini')`,
+      total: sql<number>`(count(*) over ())::int`,
     })
     .from(userSettings)
     .where(
@@ -304,11 +321,23 @@ export async function accountsMissingProviderKey(): Promise<
       Object.values(managedKeysConfigured()).some(Boolean)
         ? sql`NOT (${hasKey}) AND NOT (${userSettings.compedPlan} = 'lifetime' OR (${userSettings.compedPlan} IS NULL AND ${userSettings.lifetimePurchasedAt} IS NOT NULL))`
         : sql`NOT (${hasKey})`
-    );
+    )
+    .orderBy(desc(userSettings.createdAt), userSettings.userId);
+  const rows = await (limit == null ? query : query.limit(limit));
+
+  return {
+    rows: rows.map((r) => ({ userId: r.userId, email: r.email, provider: r.provider })),
+    total: num(rows[0]?.total),
+  };
 }
 
 export async function getAdminHealth(
-  opts: { now?: Date; windowDays?: number } = {}
+  opts: {
+    now?: Date;
+    windowDays?: number;
+    /** Null lists every keyless account (the CSV export); the page keeps the default. */
+    missingKeyLimit?: number | null;
+  } = {}
 ): Promise<AdminHealth> {
   const now = opts.now ?? new Date();
   const windowDays = Math.min(
@@ -316,13 +345,15 @@ export async function getAdminHealth(
     USAGE_EVENT_RETENTION_DAYS
   );
 
-  const [connections, calendars, importRows, aiErrors, missingKeyAccounts] =
+  const [connections, calendars, importRows, aiErrors, missingKey] =
     await Promise.all([
       failingConnections(now),
       failingCalendarFeeds(),
       troubledImports(now),
       aiErrorBreakdown(windowDays, now),
-      accountsMissingProviderKey(),
+      accountsMissingProviderKey(
+        opts.missingKeyLimit === undefined ? MISSING_KEY_LIST_LIMIT : opts.missingKeyLimit
+      ),
     ]);
 
   return {
@@ -334,6 +365,7 @@ export async function getAdminHealth(
     // Groups overlap on accounts, so this is a floor, not a sum. Named accordingly in the UI.
     aiAccountsAffected: aiErrors.reduce((acc, g) => Math.max(acc, g.accounts), 0),
     windowDays,
-    missingKeyAccounts,
+    missingKeyAccounts: missingKey.rows,
+    missingKeyTotal: missingKey.total,
   };
 }

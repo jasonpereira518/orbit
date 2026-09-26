@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import {
   cronRuns,
@@ -113,42 +113,34 @@ export async function getOutreachQueueHealth(now = new Date()): Promise<Outreach
   const db = await getDb();
 
   // outreach_messages has no user_id: it joins message → prospect → campaign.user_id.
-  // Only ids and timestamps are selected — prospect and message bodies are third-party
-  // prose and must never reach an admin surface.
-  const rows = await db
+  // Only counts and a timestamp come back — prospect and message bodies are third-party
+  // prose and must never reach an admin surface. Counted in SQL: a backed-up queue is
+  // exactly when pulling one row per message into JS to count it would hurt most.
+  const isOverdue = lt(outreachMessages.scheduledFor, now);
+  const [row] = await db
     .select({
-      userId: outreachCampaigns.userId,
-      scheduledFor: outreachMessages.scheduledFor,
+      overdue: sql<number>`(count(*) filter (where ${isOverdue}))::int`,
+      total: countInt,
+      oldest: sql<string | null>`min(${outreachMessages.scheduledFor}) filter (where ${isOverdue})`,
+      accounts: sql<number>`(count(distinct ${outreachCampaigns.userId}) filter (where ${isOverdue}))::int`,
     })
     .from(outreachMessages)
     .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
     .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
     .where(eq(outreachMessages.status, "scheduled"));
 
-  let overdue = 0;
-  let notYetDue = 0;
-  let oldest: Date | null = null;
-  const accounts = new Set<string>();
-
-  for (const row of rows) {
-    const due = toDate(row.scheduledFor);
-    if (due && due.getTime() < now.getTime()) {
-      overdue += 1;
-      accounts.add(row.userId);
-      if (!oldest || due.getTime() < oldest.getTime()) oldest = due;
-    } else {
-      notYetDue += 1;
-    }
-  }
+  const overdue = num(row?.overdue);
+  const oldest = toDate(row?.oldest);
 
   return {
     overdue,
-    notYetDue,
+    // Everything not yet overdue, including a message with no send time at all.
+    notYetDue: num(row?.total) - overdue,
     oldestOverdue: oldest,
     oldestOverdueDays: oldest
       ? Math.round((now.getTime() - oldest.getTime()) / DAY_MS)
       : null,
-    accounts: accounts.size,
+    accounts: num(row?.accounts),
   };
 }
 
@@ -240,7 +232,7 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
   const db = await getDb();
   const since = new Date(now.getTime() - days * DAY_MS);
 
-  const [bySource, byOutcome, ignored, retried, recentInvalid] = await Promise.all([
+  const [bySource, ignored, retried, recentInvalid] = await Promise.all([
     db
       .select({
         source: webhookDeliveries.source,
@@ -250,11 +242,6 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
       .from(webhookDeliveries)
       .where(gt(webhookDeliveries.createdAt, since))
       .groupBy(webhookDeliveries.source, webhookDeliveries.outcome),
-    db
-      .select({ outcome: webhookDeliveries.outcome, n: countInt })
-      .from(webhookDeliveries)
-      .where(gt(webhookDeliveries.createdAt, since))
-      .groupBy(webhookDeliveries.outcome),
     db
       .select({
         eventType: webhookDeliveries.eventType,
@@ -285,11 +272,16 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
       .limit(10),
   ]);
 
+  // The per-outcome totals are the per-source rows summed: same window, coarser grouping,
+  // so there is no need to scan the window a second time for them.
+  const byOutcome = new Map<string, number>();
+  for (const r of bySource) byOutcome.set(r.outcome, (byOutcome.get(r.outcome) ?? 0) + r.n);
+
   return {
     bySource: bySource
       .map((r) => ({ source: r.source, outcome: r.outcome, count: r.n }))
       .sort((a, b) => b.count - a.count),
-    byOutcome: byOutcome.map((r) => ({ outcome: r.outcome, count: r.n })),
+    byOutcome: [...byOutcome].map(([outcome, count]) => ({ outcome, count })),
     ignored: ignored.map((r) => ({
       eventType: r.eventType,
       reason: r.reason,
@@ -319,8 +311,11 @@ export async function getBugSignatures(): Promise<BugSignatures> {
       ),
     // Measures the harm of an unconfigured Blob store directly, instead of logging the
     // config fact once per cold start: these are base64 images living in Postgres.
+    // `substr(…, 1, 5)` is exactly `LIKE 'data:%'` but detoasts one chunk of each image
+    // rather than all of it. The same figure is on the page's data-quality panel; that one
+    // is a separate server component, so the two cannot share a read.
     db.execute(
-      sql`SELECT count(*)::int AS n FROM contacts WHERE profile_image_url LIKE 'data:%'`
+      sql`SELECT count(*)::int AS n FROM contacts WHERE substr(profile_image_url, 1, 5) = 'data:'`
     ),
   ]);
 

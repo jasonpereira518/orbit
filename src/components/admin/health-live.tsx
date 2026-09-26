@@ -248,8 +248,8 @@ export function HealthLiveBody({
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <MetricTile
             label="No AI key"
-            value={health.missingKeyAccounts.length}
-            tone={health.missingKeyAccounts.length > 0 ? "accent" : "muted"}
+            value={health.missingKeyTotal}
+            tone={health.missingKeyTotal > 0 ? "accent" : "muted"}
             hint="every AI feature fails"
           />
           <MetricTile
@@ -293,6 +293,12 @@ export function HealthLiveBody({
                   </span>
                 </li>
               ))}
+              {health.missingKeyTotal > health.missingKeyAccounts.length && (
+                <li className="py-2 text-xs text-muted-foreground">
+                  and {health.missingKeyTotal - health.missingKeyAccounts.length} older — the
+                  CSV export lists every one
+                </li>
+              )}
             </ul>
           )}
         </AdminPanel>

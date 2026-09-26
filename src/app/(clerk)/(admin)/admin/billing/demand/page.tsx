@@ -5,7 +5,7 @@ import {
 } from "@/components/admin/primitives";
 import { MoneyTabs } from "@/components/admin/money-tabs";
 import { RankedBars } from "@/components/admin/charts";
-import { loadAdminUserRows } from "@/lib/admin-metrics";
+import { ADMIN_AGGREGATES_TTL_MS, loadAdminUserRows } from "@/lib/admin-metrics";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 import { KNOWN_GATES, gateDemand } from "@/lib/money-metrics";
 
@@ -32,7 +32,11 @@ const GATE_LABELS: Record<string, string> = {
  * existed — so unlike the revenue ledger, there is real history here from day one.
  */
 export default async function MoneyDemandPage() {
-  const [demand, rows] = await Promise.all([gateDemand(30), loadAdminUserRows()]);
+  // Near-cap contact counts may lag by the overview's TTL; plans never do.
+  const [demand, rows] = await Promise.all([
+    gateDemand(30),
+    loadAdminUserRows({ aggregatesMaxAgeMs: ADMIN_AGGREGATES_TTL_MS }),
+  ]);
 
   const byFeature = new Map(demand.map((d) => [d.feature, d]));
 

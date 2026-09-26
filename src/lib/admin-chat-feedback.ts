@@ -66,26 +66,36 @@ export async function loadChatFeedbackList(options: {
   const db = await getDb();
   const where = and(sql`${chatMessages.feedback} is not null`);
 
-  const [counted] = await db.select({ n: countInt }).from(chatMessages).where(where);
+  const pageOf = (page: number) =>
+    db
+      .select({
+        id: chatMessages.id,
+        userId: chatMessages.userId,
+        feedback: chatMessages.feedback,
+        feedbackNote: chatMessages.feedbackNote,
+        createdAt: chatMessages.createdAt,
+        submitterEmail: userSettings.email,
+      })
+      .from(chatMessages)
+      .leftJoin(userSettings, eq(userSettings.userId, chatMessages.userId))
+      .where(where)
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(CHAT_FEEDBACK_PAGE_SIZE)
+      .offset((page - 1) * CHAT_FEEDBACK_PAGE_SIZE);
+
+  // The count and the requested page in parallel rather than one after the other. The
+  // page is only clamped from above when someone asks past the end (a stale link after a
+  // purge), and only then is it read again. Not `count(*) over ()` on the page query: that
+  // has to sort every rated row before it can LIMIT, where this one reads fifty off an index.
+  const requested = Math.max(1, options.page);
+  const [[counted], firstRead] = await Promise.all([
+    db.select({ n: countInt }).from(chatMessages).where(where),
+    pageOf(requested),
+  ]);
   const total = counted?.n ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / CHAT_FEEDBACK_PAGE_SIZE));
-  const page = Math.min(Math.max(1, options.page), pageCount);
-
-  const rows = await db
-    .select({
-      id: chatMessages.id,
-      userId: chatMessages.userId,
-      feedback: chatMessages.feedback,
-      feedbackNote: chatMessages.feedbackNote,
-      createdAt: chatMessages.createdAt,
-      submitterEmail: userSettings.email,
-    })
-    .from(chatMessages)
-    .leftJoin(userSettings, eq(userSettings.userId, chatMessages.userId))
-    .where(where)
-    .orderBy(desc(chatMessages.createdAt))
-    .limit(CHAT_FEEDBACK_PAGE_SIZE)
-    .offset((page - 1) * CHAT_FEEDBACK_PAGE_SIZE);
+  const page = Math.min(requested, pageCount);
+  const rows = page === requested ? firstRead : await pageOf(page);
 
   return { rows: rows as ChatFeedbackRow[], total, page, pageCount };
 }

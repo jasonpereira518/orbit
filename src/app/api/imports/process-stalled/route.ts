@@ -1,6 +1,6 @@
-import { count, isNotNull, lt } from "drizzle-orm";
+import { isNotNull, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
@@ -30,6 +30,7 @@ import {
 import { backfillEmbeddingVectors, neonClient } from "@/db";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
+import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 
 export const maxDuration = 300;
 
@@ -82,20 +83,47 @@ const EMBED_SWEEP_BUDGET_MS = 90 * 1000;
  */
 const ERROR_EVENT_RETENTION_DAYS = 30;
 
+/** Rows deleted per statement by `pruneOlderThan`. */
+const PRUNE_BATCH = 5_000;
+
+/**
+ * Wall-clock ceiling on pruning one table. A backlog still there when it runs out is the
+ * next hour's; the resumption work below is what this route exists for.
+ */
+const PRUNE_BUDGET_MS = 20 * 1000;
+
+/**
+ * Deletes rows past the retention window in bounded batches, the way `prunePageViews`
+ * does and for its reasons: one unbounded DELETE over a neglected table holds its locks
+ * for as long as it takes inside a function with a timeout.
+ *
+ * Each batch counts itself (`RETURNING 1` into `count(*)`) rather than trusting a
+ * driver-specific `rowCount` — neon-http and pglite disagree about the shape of a delete
+ * result — so there is no separate count scan, and no deleted row leaves Postgres. Both
+ * tables are indexed on created_at.
+ */
 async function pruneOlderThan(
   table: typeof usageEvents | typeof errorEvents,
   days: number
 ): Promise<number> {
   const db = await getDb();
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  // Count first rather than trusting a driver-specific `rowCount` — neon-http and pglite
-  // disagree about the shape of a delete result. Both tables are indexed on created_at.
-  const [row] = await db
-    .select({ value: count() })
-    .from(table)
-    .where(lt(table.createdAt, cutoff));
-  await db.delete(table).where(lt(table.createdAt, cutoff));
-  return row?.value ?? 0;
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const deadline = deadlineAfter(PRUNE_BUDGET_MS);
+  let pruned = 0;
+  for (;;) {
+    const res = await db.execute(sql`
+      WITH d AS (
+        DELETE FROM ${table} WHERE ${table.id} IN (
+          SELECT ${table.id} FROM ${table} WHERE ${table.createdAt} < ${cutoff} LIMIT ${PRUNE_BATCH}
+        )
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM d
+    `);
+    const n = Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
+    pruned += n;
+    if (n < PRUNE_BATCH || deadlineReached(deadline)) return pruned;
+  }
 }
 
 /**
@@ -279,17 +307,19 @@ export async function GET(request: Request) {
     try {
       // Backstop only — imports kick the backfill directly on completion. This catches
       // users whose kick was lost along with the invocation that sent it.
-      const staleContactUsers = await db
-        .selectDistinct({ userId: contacts.userId })
-        .from(contacts)
-        .where(isNotNull(contacts.embeddingStaleAt))
-        .limit(EMBED_BACKFILL_USERS);
-      // Stale contacts used to be the only way onto this list, so an account whose only
-      // outstanding work was passages of its notes — every existing account, the day those
-      // shipped — would never have been swept unless it happened to import something.
-      const memoryUsers = await usersWithPendingMemoryWork(EMBED_BACKFILL_USERS, accountCanEmbed).catch(
-        reportAndContinue({ where: "job.process-stalled.memory-users" }, [] as string[])
-      );
+      const [staleContactUsers, memoryUsers] = await Promise.all([
+        db
+          .selectDistinct({ userId: contacts.userId })
+          .from(contacts)
+          .where(isNotNull(contacts.embeddingStaleAt))
+          .limit(EMBED_BACKFILL_USERS),
+        // Stale contacts used to be the only way onto this list, so an account whose only
+        // outstanding work was passages of its notes — every existing account, the day those
+        // shipped — would never have been swept unless it happened to import something.
+        usersWithPendingMemoryWork(EMBED_BACKFILL_USERS, accountCanEmbed).catch(
+          reportAndContinue({ where: "job.process-stalled.memory-users" }, [] as string[])
+        ),
+      ]);
       const staleUsers = [
         ...new Set([...staleContactUsers.map((u) => u.userId), ...memoryUsers]),
       ]
