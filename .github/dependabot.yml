@@ -1,0 +1,34 @@
+# Dependency updates. Nothing watched the lockfiles before this, which is how a Next.js with
+# two critical advisories (and a Proxy bypass) sat in production until an audit found it.
+#
+# Minor and patch bumps are grouped into one PR per ecosystem per week so this stays a
+# weekly review rather than a daily stream; majors come one at a time, as they need reading.
+# Security updates are separate: turn on "Dependabot security updates" in
+# Settings → Code security so an advisory opens a PR without waiting for the schedule.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /extension
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

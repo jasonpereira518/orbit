@@ -27,17 +27,19 @@ export const TIMEOUT_MESSAGE = "That took too long — try again in a moment";
 export const AI_INCOMPLETE_MESSAGE = "The AI’s answer got cut off — try again";
 
 /** The labels `lib/ai.ts` passes to `aiProviderErrorMessage`. */
-export const AI_PROVIDER_LABELS = ["Gemini", "OpenAI", "Anthropic"] as const;
+export const AI_PROVIDER_LABELS = ["Gemini", "OpenAI", "Anthropic", "OpenRouter"] as const;
 export type AiProviderLabel = (typeof AI_PROVIDER_LABELS)[number];
 
 export function aiProviderLabel(
-  provider: "gemini" | "openai" | "anthropic"
+  provider: "gemini" | "openai" | "anthropic" | "openrouter"
 ): AiProviderLabel {
   return provider === "gemini"
     ? "Gemini"
     : provider === "openai"
       ? "OpenAI"
-      : "Anthropic";
+      : provider === "openrouter"
+        ? "OpenRouter"
+        : "Anthropic";
 }
 
 /** Orbit's own no-key errors, thrown from `lib/ai.ts` before any provider is called. */
@@ -174,8 +176,14 @@ const AI_FAILURE_COPY = {
   auth: (p: string) => `${p} didn’t accept your API key — check it in Settings`,
   rate_limit: (p: string) =>
     `${p} hit its rate limit — give it a moment and try again`,
+  // OpenRouter's balance sits with OpenRouter itself, never with the underlying model
+  // provider it routed to — so unlike every other provider here, "top up with them" would
+  // send a person to the wrong place. It still keeps the words "out of credit" that
+  // `classifyAiError` keys on.
   quota: (p: string) =>
-    `${p} says your account is out of credit — top up with them, then try again`,
+    p === "OpenRouter"
+      ? "OpenRouter says your account is out of credit — add more at https://openrouter.ai/settings/credits, then try again"
+      : `${p} says your account is out of credit — top up with them, then try again`,
   timeout: (p: string) => `${p} timed out — try again, or ask something shorter`,
   model_unavailable: (p: string) =>
     `That ${p} model isn’t available — pick another in Settings`,
@@ -236,6 +244,18 @@ const QUOTA_SHORT_TERM = /per.?minute|retry in \d|retrydelay/i;
 const QUOTA_EXHAUSTED =
   /insufficient_quota|exceeded your current quota|credit balance is too low|out of credit/i;
 
+/**
+ * OpenRouter answers 402 for an exhausted balance, worded nothing like the other three
+ * providers' quota errors — none of them says "402" or "payment required".
+ *
+ * The bare `\b402\b` this started as also matched a completely unrelated "402" — e.g.
+ * `max_tokens: 402 is too large`, a parameter-validation error whose only fault is that
+ * 402 happens to be a token count — and told the person their OpenRouter credit ran out.
+ * The `(?!\s+(?:is|was)\b)` excludes that shape: a real status-code 402 is never
+ * immediately followed by "is"/"was" the way a quoted numeric value is.
+ */
+const OPENROUTER_PAYMENT_REQUIRED = /\b402\b(?!\s+(?:is|was)\b)|insufficient (credits|balance)|payment required/i;
+
 export function isQuotaExhaustion(text: string): boolean {
   if (QUOTA_DAILY.test(text) && /quota|resource.?exhausted|429/i.test(text)) return true;
   if (QUOTA_SHORT_TERM.test(text)) return false;
@@ -249,9 +269,10 @@ export function aiProviderErrorMessage(err: unknown, provider: string): string {
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) {
     return AI_FAILURE_COPY.auth(provider);
   }
-  // Before auth and rate limit: an empty balance can arrive as a 429 (OpenAI) or a 400
-  // (Anthropic), and either earlier branch would send the person to the wrong fix.
-  if (isQuotaExhaustion(base)) {
+  // After auth, but before rate limit: an empty balance can arrive as a 429 (OpenAI), a
+  // 400 (Anthropic) or a 402 (OpenRouter), and the rate-limit branch below would send the
+  // person to the wrong fix.
+  if (OPENROUTER_PAYMENT_REQUIRED.test(base) || isQuotaExhaustion(base)) {
     return AI_FAILURE_COPY.quota(provider);
   }
   if (/rate limit|429|quota|resource.?exhausted/i.test(base)) {
@@ -495,6 +516,7 @@ export function classifyAiError(err: unknown): AiErrorKind {
   if (/^Empty AI response$/i.test(message)) return "empty_response";
   const base = withErrorName(err, message);
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) return "auth";
+  if (OPENROUTER_PAYMENT_REQUIRED.test(base)) return "quota";
   if (isQuotaExhaustion(base)) return "quota";
   if (/rate limit|429|quota|resource.?exhausted/i.test(base)) return "rate_limit";
   if (/timeout|timed out|ETIMEDOUT|AbortError/i.test(base)) return "timeout";

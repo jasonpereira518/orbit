@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { scrubSentryEvent } from "@/lib/sentry-scrub";
 import { markNavStart } from "@/lib/nav-timing";
 
 /**
@@ -15,6 +16,10 @@ Sentry.init({
   replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 0,
   sendDefaultPii: false,
+  // Calendar, scan and MCP URLs carry their credential in the path (src/lib/sentry-scrub.ts).
+  beforeSend: scrubSentryEvent,
+  beforeSendTransaction: scrubSentryEvent,
+  beforeBreadcrumb: (crumb) => scrubSentryEvent({ breadcrumbs: [crumb] }).breadcrumbs![0]!,
 });
 
 /**

@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { scrubSentryEvent } from "./src/lib/sentry-scrub";
 
 /**
  * Server-side Sentry. Loaded from `src/instrumentation.ts` on the Node runtime.
@@ -16,4 +17,8 @@ Sentry.init({
   // Errors are the point; a light trace sample keeps the free tier's quota for them.
   tracesSampleRate: 0.1,
   sendDefaultPii: false,
+  // Calendar, scan and MCP URLs carry their credential in the path (src/lib/sentry-scrub.ts).
+  beforeSend: scrubSentryEvent,
+  beforeSendTransaction: scrubSentryEvent,
+  beforeBreadcrumb: (crumb) => scrubSentryEvent({ breadcrumbs: [crumb] }).breadcrumbs![0]!,
 });

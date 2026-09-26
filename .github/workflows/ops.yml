@@ -54,7 +54,10 @@ permissions:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Above the longest step's own ceiling (curl --max-time 300) plus checkout and the health
+    # probe. At 5 minutes a slow-but-healthy sync or feed sweep was killed and reported as a
+    # failure before its own timeout could answer.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:

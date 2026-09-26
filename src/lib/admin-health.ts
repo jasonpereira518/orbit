@@ -287,6 +287,7 @@ export async function accountsMissingProviderKey(): Promise<
     CASE coalesce(${userSettings.aiProvider}, 'gemini')
       WHEN 'openai' THEN ${userSettings.openaiApiKeyEncrypted} IS NOT NULL
       WHEN 'anthropic' THEN ${userSettings.anthropicApiKeyEncrypted} IS NOT NULL
+      WHEN 'openrouter' THEN ${userSettings.openrouterApiKeyEncrypted} IS NOT NULL
       ELSE ${userSettings.geminiApiKeyEncrypted} IS NOT NULL
     END`;
 

@@ -34,6 +34,10 @@ async function main() {
   check("the Opus preset is claude-opus-4-5", PROVIDER_MODELS.anthropic.some((m) => m.value === "claude-opus-4-5"));
   check("a stored claude-opus-4 migrates on read", resolveAiModel("anthropic", "claude-opus-4") === "claude-opus-4-5", resolveAiModel("anthropic", "claude-opus-4"));
   for (const p of AI_PROVIDERS) {
+    // OpenRouter reports its own real cost (a later task adds `reportedCostMicros`); it is
+    // deliberately absent from the static `ai-pricing.ts` table, which would otherwise be a
+    // second, always-stale guess at what OpenRouter itself already tells Orbit precisely.
+    if (p.id === "openrouter") continue;
     for (const m of PROVIDER_MODELS[p.id]) {
       check(`${m.value} has a price row`, priceFor(m.value) !== null);
     }

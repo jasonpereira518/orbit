@@ -111,6 +111,9 @@ async function main() {
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const photoUrl = `${origin}/photo.jpg`;
   const noiseUrl = `${origin}/noise.jpg`;
+  // The fixture server is on loopback, which the production SSRF guard refuses, so photos
+  // are fetched through the unguarded seam (still `globalThis.fetch`, so the stubs apply).
+  const loopback = { fetch: (url: string, init: RequestInit) => fetch(url, init) };
 
   try {
   await withEnv({ CRON_SECRET: SECRET, NODE_ENV: "production" }, async () => {
@@ -152,7 +155,7 @@ async function main() {
     async () => {
       const up: EncoderStub = { calls: [], mode: "route" };
       await withEncoderStub(up, async () => {
-        const stored = await downloadAndPersistAvatar("c1", photoUrl);
+        const stored = await downloadAndPersistAvatar("c1", photoUrl, loopback);
         assert(stored, "a photo is stored");
         assert(up.calls.length === 1, "one call to the encoder route");
         assert(up.calls[0].headers.get("authorization") === `Bearer ${SECRET}`, "it presents the bearer");
@@ -165,7 +168,7 @@ async function main() {
       for (const mode of ["500", "422", "network"] as const) {
         const down: EncoderStub = { calls: [], mode };
         await withEncoderStub(down, async () => {
-          const stored = await downloadAndPersistAvatar("c2", photoUrl);
+          const stored = await downloadAndPersistAvatar("c2", photoUrl, loopback);
           assert(stored, `encoder ${mode}: the photo is still stored`);
           const d = await dimensions(stored!);
           assert(d.width === 600 && d.height === 400, `encoder ${mode}: stored unresized`);
@@ -175,7 +178,7 @@ async function main() {
       // ...but only while the raw photo is small enough to keep.
       const down: EncoderStub = { calls: [], mode: "500" };
       await withEncoderStub(down, async () => {
-        const stored = await downloadAndPersistAvatar("c3", noiseUrl);
+        const stored = await downloadAndPersistAvatar("c3", noiseUrl, loopback);
         assert(stored === null, "encoder down + an oversized photo: no photo, not a crash");
       });
     }
@@ -185,7 +188,7 @@ async function main() {
   await withEnv({ VERCEL: undefined, BLOB_READ_WRITE_TOKEN: undefined, BLOB_STORE_ID: undefined }, async () => {
     const local: EncoderStub = { calls: [], mode: "route" };
     await withEncoderStub(local, async () => {
-      const stored = await downloadAndPersistAvatar("c4", photoUrl);
+      const stored = await downloadAndPersistAvatar("c4", photoUrl, loopback);
       assert(stored, "a photo is stored");
       assert(local.calls.length === 0, "off Vercel there is no HTTP hop: sharp is called directly");
       const d = await dimensions(stored!);
