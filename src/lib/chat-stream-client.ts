@@ -2,6 +2,8 @@ import type { ChatRecommendation } from "@/db/schema";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { parseSseChunk, type ChatStep, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
+import { reportRequestError, reportRequestOk } from "@/lib/connectivity-store";
+import { friendlyError } from "@/lib/errors";
 
 /**
  * Browser side of `/api/chat`: POST the question, read the event stream, dispatch.
@@ -31,6 +33,22 @@ export type ChatStreamHandlers = {
 };
 
 export const CHAT_SIGNED_OUT_MESSAGE = "You’re signed out — sign in again to keep chatting";
+
+/** A non-2xx with no message of its own. */
+export const CHAT_FAILED_MESSAGE = "Couldn’t get an answer — try again";
+
+/**
+ * The connection died after the answer had started. Distinct from "couldn't reach Orbit":
+ * the question DID arrive, so the remedy is to ask again, not to check the Wi-Fi first.
+ */
+export const CHAT_DROPPED_MESSAGE = "The connection dropped before the answer finished — ask again";
+
+/**
+ * The stream closed cleanly but never said it was finished — no `done`, no `error`. A proxy
+ * or the platform cut it (a function timeout ends the response without a word). It used to
+ * pass silently, leaving a half-answer that looked whole.
+ */
+export const CHAT_CUT_OFF_MESSAGE = "The answer got cut off — ask again";
 
 export type ChatResponseKind = "stream" | "signed_out" | "error";
 
@@ -76,9 +94,14 @@ export async function streamChat(
       signal,
     });
   } catch (err) {
-    handlers.onError(err instanceof Error ? err.message : "Could not reach Orbit");
+    reportRequestError(err);
+    // `friendlyError` says "couldn't reach Orbit" for a network failure, and turns a Stop
+    // (an abort) into the timeout line — which callers never show, since they ignore any
+    // error after their own abort.
+    handlers.onError(friendlyError(err, CHAT_FAILED_MESSAGE));
     return;
   }
+  reportRequestOk();
 
   const kind = classifyChatResponse({
     status: res.status,
@@ -90,7 +113,7 @@ export async function streamChat(
     return;
   }
   if (kind === "error" || !res.body) {
-    let message = `Chat failed (${res.status})`;
+    let message = CHAT_FAILED_MESSAGE;
     try {
       const data = (await res.json()) as { error?: string };
       if (data?.error) message = data.error;
@@ -105,6 +128,12 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let carry = "";
   let done = false;
+  // Whether the server said how it ended. Anything else is a stream that was cut.
+  let settled = false;
+  const send = (event: ChatStreamEvent) => {
+    if (event.type === "done" || event.type === "error") settled = true;
+    dispatch(event, handlers);
+  };
   try {
     while (!done) {
       const { value, done: finished } = await reader.read();
@@ -112,16 +141,20 @@ export async function streamChat(
       const chunk = value ? decoder.decode(value, { stream: !finished }) : "";
       const parsed = parseSseChunk(chunk, carry);
       carry = parsed.carry;
-      for (const event of parsed.events) dispatch(event, handlers);
+      for (const event of parsed.events) send(event);
     }
     // A final frame without a trailing blank line.
     if (carry.trim()) {
       const parsed = parseSseChunk("\n\n", carry);
-      for (const event of parsed.events) dispatch(event, handlers);
+      for (const event of parsed.events) send(event);
     }
   } catch (err) {
-    handlers.onError(err instanceof Error ? err.message : "The connection dropped");
+    if (settled) return;
+    const network = reportRequestError(err);
+    handlers.onError(network ? CHAT_DROPPED_MESSAGE : friendlyError(err, CHAT_DROPPED_MESSAGE));
+    return;
   }
+  if (!settled && !signal?.aborted) handlers.onError(CHAT_CUT_OFF_MESSAGE);
 }
 
 function dispatch(event: ChatStreamEvent, handlers: ChatStreamHandlers) {

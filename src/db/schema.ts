@@ -3981,6 +3981,11 @@ export const siteSettings = pgTable("site_settings", {
   id: integer("id").primaryKey().default(1),
   stealthEnabled: boolean("stealth_enabled"),
   stealthSince: timestamp("stealth_since", { withTimezone: true }),
+  /**
+   * Whether the waitlist page shows its "Take it for a spin" product demo. Null means never
+   * set, which reads as ON: the switch exists to take the demo down, not to put it up.
+   */
+  waitlistDemoEnabled: boolean("waitlist_demo_enabled"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
   updatedBy: text("updated_by"),

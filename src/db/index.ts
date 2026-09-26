@@ -1200,6 +1200,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
   stealth_since timestamptz,
+  waitlist_demo_enabled boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -2053,7 +2054,40 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // Rescanned every local ref, every remote ref, and every sibling worktree's working
 // src/db/index.ts (including uncommitted changes) on Sep 26 2026: 107 (this branch) is the
 // highest claimed anywhere, so 108 is the next free integer and is still free.
-export const SCHEMA_VERSION = 108;
+// of its own. Keeping 105 was the plan and is wrong for the reason recorded at 87, 96, 97
+// and 99 above: this branch's preview databases are stamped 105 WITHOUT main's 99/102/103
+// columns, and main's are stamped 103 without 104/105, and `isSchemaCurrent` returns true
+// for any recorded version at or above the running one — so either half would be skipped in
+// silence. `smoke-schema-ddl.ts` caught it: same version 105, different DDL fingerprint.
+// NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62.
+// Scanned every remote ref, every local branch and every worktree's working
+// src/db/index.ts on Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
+//
+// 109 = site_settings.waitlist_demo_enabled (the admin console's switch for the waitlist page's
+// product demo). NOT 104: rescanned every remote ref and every worktree's working file on Sep 26
+// 2026 — 108 (claude/integrations-ui-pass, and a worktree) was the highest claimed anywhere.
+//
+// 113 = merging main (109 — site_settings.waitlist_demo_enabled, on top of the 99/102/103
+// columns this branch already carried) into this branch (104, 105, 107). No DDL of its own.
+// Keeping either side's number is the failure recorded at 87, 96, 97, 99 and 107 above: this
+// branch's databases are stamped 107 WITHOUT main's waitlist_demo_enabled, main's are stamped
+// 109 without openrouter_api_key_encrypted and cost_source, and `isSchemaCurrent` returns true
+// for any recorded version at or above the running one — so whichever half lost would be
+// skipped in silence. Both sides' `alters` are kept; only the version is new.
+// NOT 110, 111 or 112, all of which are claimed elsewhere. Scanned every local and remote ref
+// and every worktree's working src/db/index.ts on Sep 26 2026: 112 is the highest claimed
+// anywhere, so 113 is the next free integer.
+//
+// 114 = merging the P3 branch at 113 (which carries main's 109 waitlist_demo_enabled plus
+// 104/105) into this branch at 108 (timeline_backfill_enabled defaulting on, and its
+// timeline_backfill_forced_on marker). No DDL of its own. Same reasoning as 107 and 113
+// above: databases stamped 108 would never get waitlist_demo_enabled, databases stamped 113
+// would never get the timeline marker, and `isSchemaCurrent` returns true for any recorded
+// version at or above the running one, so the losing half would be skipped in silence. Both
+// sides' `alters` are kept; only the version is new. Scanned every local and remote ref and
+// every worktree's working src/db/index.ts on Sep 26 2026: 113 is the highest claimed
+// anywhere, so 114 is the next free integer.
+export const SCHEMA_VERSION = 114;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3724,6 +3758,9 @@ const alters = [
   `UPDATE user_settings SET timeline_backfill_enabled = 1, timeline_backfill_forced_on = 1 WHERE timeline_backfill_forced_on = 0`,
   `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_forced_on SET DEFAULT 1`,
   `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_enabled SET DEFAULT 1`,
+  // Schema v109: `site_settings.waitlist_demo_enabled`. Null (never set) reads as on, so no
+  // backfill: the demo stays up until an admin takes it down from the waitlist admin page.
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS waitlist_demo_enabled boolean`,
 ];
 
 /**
