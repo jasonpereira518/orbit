@@ -1,6 +1,8 @@
 /**
- * The numbers the LinkedIn import card shows before anyone opts in to timeline events, and
- * the rule that keeps one-message threads away from the model (audit A6).
+ * The cost arithmetic behind deriving LinkedIn timeline events, and the rule that keeps
+ * one-message threads away from the model (audit A6). Nothing shows these numbers to anyone
+ * any more — the opt-in card is gone (schema v108, task 9) — so this smoke is the only
+ * remaining reader of `timelineEstimateLabel` and `TimelineBackfillStatus`.
  * Run: npx tsx scripts/smoke-timeline-cost.ts
  */
 import {

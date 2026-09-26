@@ -406,8 +406,9 @@ export const userSettings = pgTable("user_settings", {
    * `timeline_backfill_enabled = 1` by the v108 migration? Exists only so that migration's
    * `UPDATE` runs exactly once per row rather than every time `alters` re-runs (every future
    * SCHEMA_VERSION bump or fingerprint change), which would otherwise silently undo an
-   * operator's deliberate kill switch on its next sweep. Same shape as `ai_model_migrated_
-   * from` above it: a row created after v108 is born with this DEFAULT 1, so the migration's
+   * operator's deliberate kill switch on its next sweep. Same shape as the
+   * `ai_model_migrated_from` marker above it: a row created after v108 is born with this
+   * column at its DEFAULT of 1, so the migration's
    * `WHERE timeline_backfill_forced_on = 0` never matches it either. Not in
    * `PRESERVED_SETTINGS_COLUMNS` on purpose: `purgeUserSettings` re-inserts unpreserved
    * columns at their column default, which is 1, so an unpreserved marker still lands on a
