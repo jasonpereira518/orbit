@@ -255,21 +255,28 @@ export async function openIngestContext(
 ): Promise<IngestContext> {
   const db = await getDb();
 
-  // The same seven narrow columns the import engine reads. Deliberately not `select *`:
-  // `DuplicateSubject` is kept small so a batch never drags notes and summaries across the
-  // wire for people it is not going to touch.
-  const existing = (await db.query.contacts.findMany({
-    where: (c, { eq }) => eq(c.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      xHandle: true,
-      company: true,
-      title: true,
-    },
-  })) as DuplicateSubject[];
+  // None of the four reads depends on another, so they go out together: one round trip
+  // deep instead of four (more, since the headroom check is two of its own).
+  const [existing, companyResolve, headroom, engines] = await Promise.all([
+    // The same seven narrow columns the import engine reads. Deliberately not `select *`:
+    // `DuplicateSubject` is kept small so a batch never drags notes and summaries across the
+    // wire for people it is not going to touch.
+    db.query.contacts.findMany({
+      where: (c, { eq }) => eq(c.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        xHandle: true,
+        company: true,
+        title: true,
+      },
+    }) as Promise<DuplicateSubject[]>,
+    createCompanyResolver(userId),
+    options.createsContacts ? contactHeadroomForUser(userId) : null,
+    openEngines(userId),
+  ]);
 
   return {
     userId,
@@ -280,10 +287,10 @@ export async function openIngestContext(
       createsContacts: options.createsContacts,
     },
     index: buildDuplicateIndex(existing),
-    companyResolve: await createCompanyResolver(userId),
-    headroom: options.createsContacts ? await contactHeadroomForUser(userId) : null,
+    companyResolve,
+    headroom,
     touchedContactIds: new Set(),
-    engines: await openEngines(userId),
+    engines,
   };
 }
 
