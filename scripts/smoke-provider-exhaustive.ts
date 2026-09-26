@@ -178,15 +178,15 @@ const ALLOWLIST: Record<string, string> = {
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
-  "src/lib/ai-providers.ts:165": "one statement, `value === \"openai\" || value === " +
+  "src/lib/ai-providers.ts:209": "one statement, `value === \"openai\" || value === " +
     "\"anthropic\" || value === \"gemini\" || value === \"openrouter\"` — the fourth arm is " +
     "the literal \"openrouter\" itself, which this checker does not flag because it isn't " +
     "one of the three narrowed literals; together the four are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:174": "modelBelongsToProvider has a fourth `if (provider === " +
+  "src/lib/ai-providers.ts:218": "modelBelongsToProvider has a fourth `if (provider === " +
     "\"openrouter\") return model.includes(\"/\")` right after this one; the four checks " +
     "together are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:175": "same function as line 174 — see that entry.",
-  "src/lib/ai-providers.ts:178": "same function as line 174 — see that entry.",
+  "src/lib/ai-providers.ts:219": "same function as line 218 — see that entry.",
+  "src/lib/ai-providers.ts:222": "same function as line 218 — see that entry.",
   // Fix round 1: the old openai-literal arm here fell through to the Gemini branch for an
   // openrouter grant, throwing `No gemini grant` — fails closed, but breaks every chat
   // tool call for an OpenRouter user. Widened to isOpenAiShaped, same shape as ai.ts, so
@@ -262,7 +262,7 @@ const ALLOWLIST: Record<string, string> = {
   "src/actions/settings.ts:227": "same ternary as line 223 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:172": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx:201": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +
