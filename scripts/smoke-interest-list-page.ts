@@ -183,6 +183,24 @@ async function main() {
   check("plain metadata is the default", plain.title === "Early access — the future of networking");
   check("plain metadata still previews with the generic card", JSON.stringify(plain.openGraph ?? "").includes("ticket-image"));
 
+  // --- the admin's switch for the product demo
+  const demo = await import("../src/lib/waitlist-demo");
+  const { siteSettings } = await import("../src/db/schema");
+  const { eq } = await import("drizzle-orm");
+  const shows = (tree: unknown) => textOf(tree).join(" ").includes("Take it for a spin");
+  check("the demo shows by default (never set reads as on)", shows(form) && (await demo.getWaitlistDemoEnabled({ fresh: true })) === true);
+  await demo.setWaitlistDemoEnabled("smoke-admin", false);
+  check("turning it off hides the section", !shows(await Page(sp({}))));
+  check("…and the rest of the page is untouched", textOf(await Page(sp({}))).join(" ").includes("How early access works"));
+  await demo.setWaitlistDemoEnabled("smoke-admin", true);
+  check("turning it back on shows it again", shows(await Page(sp({}))));
+  const [row] = await (await getDb()).select().from(siteSettings).where(eq(siteSettings.id, 1));
+  check("the switch leaves the stealth switch alone", row?.stealthEnabled === null && row?.stealthSince === null, JSON.stringify(row));
+  const { adminAuditLog } = await import("../src/db/schema");
+  const audited = await (await getDb()).select().from(adminAuditLog).where(like(adminAuditLog.action, "site.waitlist_demo.%"));
+  check("every flip is in the audit log", audited.length === 2 && audited.every((a) => a.adminUserId === "smoke-admin"), String(audited.length));
+  await (await getDb()).delete(adminAuditLog).where(like(adminAuditLog.action, "site.waitlist_demo.%"));
+
   // --- the privacy notice
   const privacy = await (await import("../src/app/(site)/interest/privacy/page")).default();
   const privacyText = textOf(privacy).join(" ");

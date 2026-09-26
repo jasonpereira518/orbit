@@ -11,6 +11,8 @@ import {
   TrendBars,
 } from "@/components/admin/primitives";
 import { Pager } from "@/components/admin/pager";
+import { WaitlistDemoSwitch } from "@/components/admin/waitlist-demo-switch";
+import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   InterestListTable,
   type InterestListTableRow,
@@ -81,7 +83,7 @@ export default async function AdminInterestListPage({
   const q = (params.q ?? "").trim();
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
 
-  const [summary, listing, trend, sources] = await Promise.all([
+  const [summary, listing, trend, sources, demoEnabled] = await Promise.all([
     getInterestListSummary(),
     loadInterestList({
       page: Number.isFinite(requestedPage) ? requestedPage : 1,
@@ -91,6 +93,8 @@ export default async function AdminInterestListPage({
     }),
     interestListTrend("week", 12),
     interestListSources(),
+    // Fresh: the console must show what is stored, not a ten-second-old copy.
+    getWaitlistDemoEnabled({ fresh: true }).catch(() => true),
   ]);
 
   const query = (over: Record<string, string | number>) => {
@@ -189,6 +193,10 @@ export default async function AdminInterestListPage({
           tone={summary.unsubscribed > 0 ? "danger" : "muted"}
         />
       </div>
+
+      <AdminPanel title="Product demo" className="mb-6 p-4">
+        <WaitlistDemoSwitch enabled={demoEnabled} />
+      </AdminPanel>
 
       <div className="mb-6 grid gap-6 lg:grid-cols-2">
         <AdminPanel title="Signups by week">
