@@ -20,7 +20,9 @@ import {
   tokensFromAnthropic,
   tokensFromGemini,
   tokensFromOpenAi,
+  usageRow,
   withUsage,
+  type UsageRecord,
 } from "../src/lib/usage-events";
 import { estimateCostMicros, priceFor } from "../src/lib/ai-pricing";
 
@@ -55,6 +57,19 @@ const META = {
   kind: "completion" as const,
   keyOwner: "user" as const,
 };
+
+/** The row `recordUsage` would insert, built from a `UsageRecord` with sensible defaults. */
+function rowFor(overrides: Partial<UsageRecord> & { model: string }) {
+  return usageRow({
+    userId: USER,
+    operation: "smoke.row",
+    provider: "openai",
+    kind: "completion",
+    keyOwner: "user",
+    success: true,
+    ...overrides,
+  });
+}
 
 async function main() {
   await cleanup();
@@ -220,6 +235,27 @@ async function main() {
     check(
       "claude-opus-4-6 is not priced as retired Opus 4",
       priceFor("claude-opus-4-6")?.input === 5
+    );
+  }
+
+  console.log("\nReported cost (OpenRouter's usage.cost) vs. the estimate");
+  {
+    check(
+      "a reported cost wins over the estimate",
+      rowFor({ model: "google/gemini-3.8-flash", inputTokens: 1000, outputTokens: 100, reportedCostMicros: 4242 })
+        .estimatedCostMicros === 4242
+    );
+    check(
+      "a reported cost is stamped as reported",
+      rowFor({ model: "google/gemini-3.8-flash", reportedCostMicros: 4242 }).costSource === "reported"
+    );
+    check(
+      "no reported cost still estimates, and says so",
+      rowFor({ model: "gemini-3.8-flash", inputTokens: 1000, outputTokens: 100 }).costSource === "estimated"
+    );
+    check(
+      "a reported cost of zero is honoured, not treated as missing",
+      rowFor({ model: "google/gemini-3.8-flash", reportedCostMicros: 0 }).estimatedCostMicros === 0
     );
   }
 

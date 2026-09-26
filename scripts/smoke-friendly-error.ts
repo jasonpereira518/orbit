@@ -184,6 +184,23 @@ check(
   aiProviderErrorMessage(new Error(quotaCases[0][1]), "OpenAI")
 );
 
+console.log("OpenRouter's 402 is quota, but not every 402-shaped substring is");
+const openrouter402 = new Error('402 Payment Required: {"error":{"message":"Insufficient credits to complete this request"}}');
+check("a real 402 balance error → quota", classifyAiError(openrouter402) === "quota", classifyAiError(openrouter402));
+check(
+  "…and the copy names OpenRouter's credits page",
+  aiProviderErrorMessage(openrouter402, "OpenRouter") === "OpenRouter says your account is out of credit — add more at https://openrouter.ai/settings/credits, then try again",
+  aiProviderErrorMessage(openrouter402, "OpenRouter")
+);
+// A demonstrated false positive from fix round 1: 402 here is a token-count value inside a
+// max_tokens validation error, not a status code — this must NOT read as "out of credit".
+const maxTokens402 = new Error('BadRequestError: 400 {"error":{"message":"max_tokens: 402 is too large"}}');
+check(
+  "a 402 that is just a number in an unrelated message → not quota",
+  classifyAiError(maxTokens402) !== "quota",
+  classifyAiError(maxTokens402)
+);
+
 console.log("house voice");
 const all = [MISSING_AI_API_KEY_MESSAGE, OFFLINE_MESSAGE, TIMEOUT_MESSAGE, ...kinds.map(([, raw]) => aiProviderErrorMessage(raw, "Gemini"))];
 check("no straight apostrophes", all.every((m) => !m.includes("'")), all.filter((m) => m.includes("'")));
