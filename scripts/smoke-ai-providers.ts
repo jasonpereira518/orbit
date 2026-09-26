@@ -34,20 +34,31 @@ check("AI_PROVIDERS lists every provider", PROVIDERS.every((p) => AI_PROVIDERS.s
 /**
  * The user-facing list, pinned exactly.
  *
- * `AI_PROVIDERS` is a UI registry, not just a data table: the Settings provider `<Select>`
- * and the onboarding provider tiles both render straight off a list derived from it, so
- * adding the OpenRouter entry shipped a selectable "OpenRouter" option — with an
- * `sk-or-v1-…` paste field — into Settings AND into onboarding with no change to either
- * file. OpenRouter's plumbing is deliberately code-only. The AI page is being redesigned
- * around these three; this check is what stops that pass reintroducing a fourth by
- * accident.
+ * `AI_PROVIDERS` is a UI registry, not just a data table: the Settings provider cards and
+ * the onboarding provider tiles both render straight off a list derived from it, so adding
+ * the OpenRouter entry once shipped a selectable "OpenRouter" option — with an `sk-or-v1-…`
+ * paste field — into Settings AND into onboarding with no change to either file. That is
+ * why this list is pinned: not because four is wrong, but so its membership is always a
+ * decision someone made on purpose.
+ *
+ * OpenRouter is now selectable, because the AI page gives it a card with a key field. The
+ * onboarding wizard still offers only the first-party three, and the check below is what
+ * holds that line — flipping `selectable` alone must not put a fourth tile in front of a
+ * brand-new account.
  */
 const SELECTABLE_IDS = SELECTABLE_AI_PROVIDERS.map((p) => p.id);
 check(
-  "the user-selectable provider list is exactly gemini, openai, anthropic",
-  JSON.stringify(SELECTABLE_IDS) === JSON.stringify(["gemini", "openai", "anthropic"])
+  "the user-selectable provider list is exactly gemini, openai, anthropic, openrouter",
+  JSON.stringify(SELECTABLE_IDS) === JSON.stringify(["gemini", "openai", "anthropic", "openrouter"])
 );
-check("openrouter is not selectable", !isSelectableAiProvider("openrouter"));
+check("openrouter is selectable", isSelectableAiProvider("openrouter"));
+{
+  const wizard = readFileSync("src/components/onboarding/wizard/wizard-ai-key.tsx", "utf8");
+  check(
+    "the onboarding wizard still excludes openrouter from its tiles",
+    /SELECTABLE_AI_PROVIDERS\s*\.filter\(\s*\(p\)\s*=>\s*p\.id\s*!==\s*"openrouter"\s*\)/.test(wizard)
+  );
+}
 check(
   "every selectable provider is a real AI_PROVIDERS entry",
   SELECTABLE_IDS.every((id) => AI_PROVIDERS.some((e) => e.id === id))
@@ -96,7 +107,22 @@ check(
 // worse results per docs/ai-evals/2026-09-19-gemini-*, so Gemini stops at `balanced`). At
 // most one of each tier, and cheapest + balanced are mandatory; the AI page renders however
 // many tiers a provider declares.
+//
+// OpenRouter is exempt, and exempt BY NAME rather than by "declares no tiers" — the latter
+// would let any provider silently lose its whole tier set and still pass, which is the one
+// thing this loop exists to catch. Its catalogue is other vendors' models routed through
+// one account, so a cheapest/balanced/best ladder across three vendors would be a claim
+// about their relative quality that nothing here measures. Its card offers no tier chooser;
+// the model is picked in Advanced.
+const TIERLESS_BY_DESIGN = new Set(["openrouter"]);
 for (const p of SELECTABLE_AI_PROVIDERS) {
+  if (TIERLESS_BY_DESIGN.has(p.id)) {
+    check(
+      `${p.id} declares no tiers, as its card expects`,
+      PROVIDER_MODELS[p.id].every((m) => !m.tier)
+    );
+    continue;
+  }
   const tiers = PROVIDER_MODELS[p.id].filter((m) => m.tier);
   const tierValues = tiers.map((m) => m.tier);
   check(`${p.id} tags at most one of each tier`, new Set(tierValues).size === tierValues.length);

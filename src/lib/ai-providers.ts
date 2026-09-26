@@ -39,14 +39,17 @@ export const AI_PROVIDERS: Array<{
     label: "OpenRouter",
     keyPlaceholder: "sk-or-v1-...",
     envVar: "OPENROUTER_API_KEY",
-    selectable: false,
   },
 ];
 
 /**
  * The providers a person may choose, in display order — the ONLY list a user-facing
- * provider picker may render. Exactly gemini/openai/anthropic today, pinned by
- * `scripts/smoke-ai-providers.ts` so a UI pass cannot put OpenRouter back by accident.
+ * provider picker may render. All four today, pinned by `scripts/smoke-ai-providers.ts`
+ * so the membership of this list stays a deliberate decision rather than a side effect.
+ * OpenRouter was held out of it while it was plumbing with no card; the AI page now gives
+ * it one, so it is selectable here. The ONBOARDING wizard still offers only the first-party
+ * three — see `wizard-ai-key.tsx` — because a brand-new account should not be asked to go
+ * and mint a key at a fourth service before it can start.
  * Lookups by id (labels, placeholders) still use `AI_PROVIDERS`: an account already on a
  * non-selectable provider must still get its real name in status copy.
  */

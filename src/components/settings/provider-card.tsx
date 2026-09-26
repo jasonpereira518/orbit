@@ -8,6 +8,7 @@ import {
   ClaudeMark,
   GeminiMark,
   OpenAiMark,
+  OpenRouterMark,
 } from "@/components/settings/provider-marks";
 import { PROVIDER_MODELS, tieredModels, type AiProvider, type ModelTier } from "@/lib/ai-providers";
 import { cn } from "@/lib/utils";
@@ -21,12 +22,13 @@ export const TIER_LABELS: Record<ModelTier, string> = {
 
 /**
  * Decorative — the provider's name sits beside the mark either way. Partial on purpose:
- * OpenRouter has no card, because it is not selectable.
+ * All four selectable providers carry a mark.
  */
 const MARKS: Partial<Record<AiProvider, (props: { className?: string }) => React.ReactElement>> = {
   gemini: GeminiMark,
   openai: OpenAiMark,
   anthropic: ClaudeMark,
+  openrouter: OpenRouterMark,
 };
 
 export type ProviderCardStatus = {
@@ -155,7 +157,7 @@ export function ProviderCard({
 
       <p className="text-sm text-muted-foreground">{stateLine}</p>
 
-      {usable ? (
+      {usable && tiers.length > 0 ? (
         <div
           role="radiogroup"
           aria-label={`${provider.label} model`}

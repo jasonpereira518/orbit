@@ -178,15 +178,15 @@ const ALLOWLIST: Record<string, string> = {
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
-  "src/lib/ai-providers.ts:209": "one statement, `value === \"openai\" || value === " +
+  "src/lib/ai-providers.ts:212": "one statement, `value === \"openai\" || value === " +
     "\"anthropic\" || value === \"gemini\" || value === \"openrouter\"` — the fourth arm is " +
     "the literal \"openrouter\" itself, which this checker does not flag because it isn't " +
     "one of the three narrowed literals; together the four are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:218": "modelBelongsToProvider has a fourth `if (provider === " +
+  "src/lib/ai-providers.ts:221": "modelBelongsToProvider has a fourth `if (provider === " +
     "\"openrouter\") return model.includes(\"/\")` right after this one; the four checks " +
     "together are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:219": "same function as line 218 — see that entry.",
-  "src/lib/ai-providers.ts:222": "same function as line 218 — see that entry.",
+  "src/lib/ai-providers.ts:222": "same function as line 221 — see that entry.",
+  "src/lib/ai-providers.ts:225": "same function as line 221 — see that entry.",
   // Fix round 1: the old openai-literal arm here fell through to the Gemini branch for an
   // openrouter grant, throwing `No gemini grant` — fails closed, but breaks every chat
   // tool call for an OpenRouter user. Widened to isOpenAiShaped, same shape as ai.ts, so
