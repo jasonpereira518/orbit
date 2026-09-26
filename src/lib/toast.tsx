@@ -9,6 +9,12 @@ import { cn } from "@/lib/utils";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { keepNotification } from "@/lib/kept-notifications";
 import { friendlyError } from "@/lib/errors";
+import { isOffline, reportRequestError, reportRequestOk } from "@/lib/connectivity-store";
+import { canQueueOffline, queueOfflineAction } from "@/lib/offline-queue-store";
+import type { OfflineIntent } from "@/lib/offline-queue";
+
+/** Said when a change is held for later instead of sent. */
+export const QUEUED_OFFLINE_COPY = "You’re offline — this will sync when you reconnect";
 
 const EXPAND_THRESHOLD = 100;
 
@@ -338,11 +344,31 @@ export async function runToastAction<T>(opts: {
   /** Return the inverse for this result, or nothing to offer no Undo. */
   undo?: (result: T) => (() => Promise<unknown>) | null | undefined;
   undone?: string;
+  /**
+   * The same change as a replayable intent (see `offline-queue.ts`). When given, a click
+   * made offline — or one whose request dies on the network — is queued and sent on
+   * reconnect instead of failing. Only for changes that are safe to send twice.
+   */
+  offline?: OfflineIntent;
 }): Promise<T | undefined> {
+  const queue = () => {
+    if (!opts.offline || !queueOfflineAction(opts.offline)) return false;
+    // No Undo: the change has not happened yet, and there is nothing to invert.
+    toast.message(QUEUED_OFFLINE_COPY, { keep: false });
+    return true;
+  };
+
+  if (opts.offline && canQueueOffline() && isOffline()) {
+    queue();
+    return undefined;
+  }
+
   let result: T;
   try {
     result = await opts.run();
+    reportRequestOk();
   } catch (err) {
+    if (reportRequestError(err) && queue()) return undefined;
     toast.error(friendlyError(err, opts.failure));
     return undefined;
   }
