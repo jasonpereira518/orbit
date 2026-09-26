@@ -1,5 +1,5 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import {
   actionItems,
   aiSuggestions,
@@ -157,42 +157,58 @@ export function refreshOutreachSuggestions(userId: string): Promise<void> {
 
 async function buildOutreachSuggestions(userId: string) {
   const db = await getDb();
-  // Only what the candidate predicates below read. This ran unprojected — every column,
-  // notes and inline avatars included — on a first dashboard visit.
-  const all = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      priorityLevel: true,
-      relationshipScore: true,
-      lastInteractionAt: true,
-      firstInteractionAt: true,
-      nextFollowUpAt: true,
-      // A rhythm the person stated in a note. Projected explicitly — this query lists its
-      // columns, so a threshold that reads `cadenceDays` without this line gets `undefined`
-      // and silently falls back to the default for everybody.
-      cadenceDays: true,
-      cadencePhrase: true,
-      // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
-      // an optional field here would let a caller forget the column and quietly never
-      // suppress anything, with nothing failing to say so.
-      constellationPin: true,
-    },
-  });
-
-  // Clear pending auto suggestions so we regenerate fresh ones
-  // (preserve user-facing AI suggestions like score_bump from enrichment)
-  await db
-    .delete(aiSuggestions)
-    .where(
-      and(
-        eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending"),
-        inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
+  // The two reads are independent of each other and of the suggestion rows, so they go
+  // out together; the delete and the insert follow as one atomic write at the end.
+  const [all, messageStatRows] = await Promise.all([
+    // Only what the candidate predicates below read. This ran unprojected — every column,
+    // notes and inline avatars included — on a first dashboard visit.
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        preferredName: true,
+        priorityLevel: true,
+        relationshipScore: true,
+        lastInteractionAt: true,
+        firstInteractionAt: true,
+        nextFollowUpAt: true,
+        // A rhythm the person stated in a note. Projected explicitly — this query lists its
+        // columns, so a threshold that reads `cadenceDays` without this line gets `undefined`
+        // and silently falls back to the default for everybody.
+        cadenceDays: true,
+        cadencePhrase: true,
+        // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
+        // an optional field here would let a caller forget the column and quietly never
+        // suppress anything, with nothing failing to say so.
+        constellationPin: true,
+      },
+    }),
+    // Per-contact count / latest / earliest LinkedIn message, aggregated in Postgres. This
+    // used to pull every linkedin_message row with every column (raw_notes included) just to
+    // fold them into these three figures in JS. `interaction_date` is NOT NULL, so the old
+    // `interactionDate || createdAt` fallback never reached createdAt; mapWith runs the
+    // column's own driver mapper, so max/min come back as the same Date values.
+    db
+      .select({
+        contactId: interactions.contactId,
+        count: sql<number>`count(*)::int`,
+        last: sql<Date>`max(${interactions.interactionDate})`.mapWith(
+          interactions.interactionDate
+        ),
+        first: sql<Date>`min(${interactions.interactionDate})`.mapWith(
+          interactions.interactionDate
+        ),
+      })
+      .from(interactions)
+      .where(
+        and(
+          eq(interactions.userId, userId),
+          eq(interactions.interactionType, "linkedin_message")
+        )
       )
-    );
+      .groupBy(interactions.contactId),
+  ]);
 
   type Candidate = {
     suggestionType: (typeof AUTO_SUGGESTION_TYPES)[number];
@@ -244,30 +260,6 @@ async function buildOutreachSuggestions(userId: string) {
     });
   }
 
-  // Per-contact count / latest / earliest LinkedIn message, aggregated in Postgres. This
-  // used to pull every linkedin_message row with every column (raw_notes included) just to
-  // fold them into these three figures in JS. `interaction_date` is NOT NULL, so the old
-  // `interactionDate || createdAt` fallback never reached createdAt; mapWith runs the
-  // column's own driver mapper, so max/min come back as the same Date values.
-  const messageStatRows = await db
-    .select({
-      contactId: interactions.contactId,
-      count: sql<number>`count(*)::int`,
-      last: sql<Date>`max(${interactions.interactionDate})`.mapWith(
-        interactions.interactionDate
-      ),
-      first: sql<Date>`min(${interactions.interactionDate})`.mapWith(
-        interactions.interactionDate
-      ),
-    })
-    .from(interactions)
-    .where(
-      and(
-        eq(interactions.userId, userId),
-        eq(interactions.interactionType, "linkedin_message")
-      )
-    )
-    .groupBy(interactions.contactId);
   const messageStats = new Map<
     string,
     { count: number; last: Date; first: Date }
@@ -324,15 +316,34 @@ async function buildOutreachSuggestions(userId: string) {
     .sort((a, b) => b.confidenceScore - a.confidenceScore)
     .slice(0, MAX_AUTO_SUGGESTIONS);
 
-  if (suggestions.length) {
-    await db.insert(aiSuggestions).values(
-      suggestions.map((s) => ({
-        userId,
-        ...s,
-        status: "pending",
-      }))
-    );
-  }
+  // Clear pending auto suggestions and write the fresh ones in one atomic write (one
+  // request on neon-http), so a reader never lands between the two and sees none.
+  // (preserve user-facing AI suggestions like score_bump from enrichment)
+  await runAtomicWrite(db, (tx) => {
+    const statements: AtomicStatement[] = [
+      tx
+        .delete(aiSuggestions)
+        .where(
+          and(
+            eq(aiSuggestions.userId, userId),
+            eq(aiSuggestions.status, "pending"),
+            inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
+          )
+        ),
+    ];
+    if (suggestions.length) {
+      statements.push(
+        tx.insert(aiSuggestions).values(
+          suggestions.map((s) => ({
+            userId,
+            ...s,
+            status: "pending",
+          }))
+        )
+      );
+    }
+    return statements;
+  });
 
   return suggestions;
 }
@@ -425,6 +436,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
     );
 
     const rowsToInsert: (typeof reminders.$inferInsert)[] = [];
+    const reminderRetitles: SQL[] = [];
 
     for (const contact of candidates) {
       const name = contact.preferredName || contact.fullName;
@@ -432,16 +444,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
       const existingReminderId = reminderIdByContact.get(contact.id);
 
       if (existingReminderId) {
-        await db
-          .update(reminders)
-          .set({
-            title,
-            dueDate: now,
-            reminderType: "generated",
-            actionKind: "follow_up",
-            createdBy: "system",
-          })
-          .where(eq(reminders.id, existingReminderId));
+        reminderRetitles.push(sql`(${existingReminderId}::uuid, ${title}::text)`);
       } else {
         rowsToInsert.push({
           userId,
@@ -455,6 +458,21 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
           status: "pending",
         });
       }
+    }
+
+    // Every existing reminder in one statement rather than one per candidate. Candidates
+    // are distinct contacts and the map holds one reminder per contact, so no id repeats.
+    if (reminderRetitles.length) {
+      await db.execute(sql`
+        UPDATE reminders AS r
+           SET title = v.title,
+               due_date = ${now},
+               reminder_type = 'generated',
+               action_kind = 'follow_up',
+               created_by = 'system'
+          FROM (VALUES ${sql.join(reminderRetitles, sql`, `)}) AS v(id, title)
+         WHERE r.id = v.id AND r.user_id = ${userId}
+      `);
     }
 
     if (rowsToInsert.length) {

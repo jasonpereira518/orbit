@@ -56,44 +56,49 @@ export async function getChatThread(threadId: string) {
   const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
 
-  const thread = await db.query.chatThreads.findFirst({
-    where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
-  });
+  // The thread and its messages together, ownership checked after. Safe because each read
+  // carries its own `user_id = caller` predicate: for a thread that is missing or someone
+  // else's, the messages read finds nothing of theirs and the throw below is unchanged.
+  const [thread, messages] = await Promise.all([
+    db.query.chatThreads.findFirst({
+      where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
+    }),
+    db.query.chatMessages.findMany({
+      where: and(
+        eq(chatMessages.threadId, threadId),
+        eq(chatMessages.userId, userId),
+        eq(chatMessages.isActive, true)
+      ),
+      orderBy: [asc(chatMessages.createdAt)],
+    }),
+  ]);
   if (!thread) throw new Error("Chat not found");
-
-  const messages = await db.query.chatMessages.findMany({
-    where: and(
-      eq(chatMessages.threadId, threadId),
-      eq(chatMessages.userId, userId),
-      eq(chatMessages.isActive, true)
-    ),
-    orderBy: [asc(chatMessages.createdAt)],
-  });
 
   // Every version of the LAST turn, for the switcher — only the last turn ever has more than
   // one. `versions` is empty for a thread with no messages or whose last turn was never
   // versioned, which is the common case and costs nothing extra to detect.
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-  const versions = lastAssistant?.slot
-    ? await loadVersions(db, userId, threadId, lastAssistant.slot)
-    : [];
 
   // Which drafts in this thread have already been emailed. Derived, not stored: the send
   // claims an interaction row keyed `chat-send:<messageId>:<contactId>`, so that row IS the
   // record, and a reloaded card cannot offer to send again what the timeline says was sent.
+  // Read alongside the versions — both depend only on the messages above.
   const messageIds = new Set(messages.filter((m) => m.role === "assistant").map((m) => m.id));
+  const [versions, claims] = await Promise.all([
+    lastAssistant?.slot ? loadVersions(db, userId, threadId, lastAssistant.slot) : [],
+    messageIds.size > 0
+      ? db
+          .select({ externalId: interactions.externalId, at: interactions.interactionDate })
+          .from(interactions)
+          .where(and(eq(interactions.userId, userId), eq(interactions.source, "chat_send")))
+          .limit(500)
+      : [],
+  ]);
   const sent: Record<string, Record<string, string>> = {};
-  if (messageIds.size > 0) {
-    const claims = await db
-      .select({ externalId: interactions.externalId, at: interactions.interactionDate })
-      .from(interactions)
-      .where(and(eq(interactions.userId, userId), eq(interactions.source, "chat_send")))
-      .limit(500);
-    for (const claim of claims) {
-      const match = /^chat-send:([^:]+):([^:]+)$/.exec(claim.externalId ?? "");
-      if (!match || !messageIds.has(match[1]!)) continue;
-      (sent[match[1]!] ??= {})[match[2]!] = claim.at.toISOString();
-    }
+  for (const claim of claims) {
+    const match = /^chat-send:([^:]+):([^:]+)$/.exec(claim.externalId ?? "");
+    if (!match || !messageIds.has(match[1]!)) continue;
+    (sent[match[1]!] ??= {})[match[2]!] = claim.at.toISOString();
   }
 
   return { thread, messages, sent, versions, versionSlot: lastAssistant?.slot ?? null };

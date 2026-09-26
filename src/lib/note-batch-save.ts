@@ -8,7 +8,7 @@
  *   reminders     — `itemHash = sha256(sourceHash|dueIso|title)` (unique per user, NULLs allowed)
  *   undo          — marks reminders `dismissed`, never deletes, so the hash keeps blocking
  */
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionItems, contacts, interactionMentions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
@@ -530,6 +530,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         .onConflictDoNothing({ target: [reminders.userId, reminders.itemHash] })
         .returning();
       remindersCreated = inserted.length;
+      const reminderByActionItem = new Map<string, string>();
       for (const r of inserted) {
         result.reminders.push({
           id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
@@ -537,10 +538,24 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
         });
         if (r.actionItemId) {
-          await db.update(actionItems).set({ reminderId: r.id }).where(eq(actionItems.id, r.actionItemId));
+          reminderByActionItem.set(r.actionItemId, r.id);
           const entry = result.actionItems.find((a) => a.id === r.actionItemId);
           if (entry) entry.reminderId = r.id;
         }
+      }
+      // Back-link every action item to its reminder in one statement rather than one per
+      // reminder. Keyed by item id (last reminder wins, as the per-row updates left it):
+      // UPDATE ... FROM would pick an arbitrary match if an id appeared twice.
+      if (reminderByActionItem.size) {
+        const links = [...reminderByActionItem].map(
+          ([actionItemId, reminderId]) => sql`(${actionItemId}::uuid, ${reminderId}::uuid)`
+        );
+        await db.execute(sql`
+          UPDATE action_items AS a
+             SET reminder_id = v.reminder_id
+            FROM (VALUES ${sql.join(links, sql`, `)}) AS v(id, reminder_id)
+           WHERE a.id = v.id AND a.user_id = ${userId}
+        `);
       }
     }
   } catch (err) {
