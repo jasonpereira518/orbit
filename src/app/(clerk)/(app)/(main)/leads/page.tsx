@@ -1,5 +1,6 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { LeadsHeader } from "@/components/leads/leads-header";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function LeadsPage() {
   // First, before anything else: a click straight from a sibling route skips the
@@ -11,6 +12,7 @@ export default async function LeadsPage() {
   // The real page lands in later phases (see docs/superpowers/specs/2026-09-22-leads-design.md).
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      <RenderStamp />
       <LeadsHeader />
       <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
         <p className="text-sm text-muted-foreground">Nothing here yet.</p>
