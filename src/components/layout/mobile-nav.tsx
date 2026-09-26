@@ -8,7 +8,6 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMotionValue } from "motion/react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { MessageSquarePlus, Sparkles } from "lucide-react";
-import { UserButton } from "@clerk/nextjs";
 import {
   APP_NAV,
   MOBILE_BOTTOM_NAV,
@@ -24,7 +23,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { clerkAppearance } from "@/lib/clerk-appearance";
+import { AccountMenu, type AccountMenuProfile } from "@/components/account/account-menu";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { usePrefersReducedTransparency } from "@/lib/use-prefers-reduced-transparency";
 import { FEEDBACK_SURFACE_KEY, isHrefComingSoon, isHrefHidden } from "@/lib/surfaces";
@@ -54,10 +53,13 @@ const NavLens = dynamic(() => import("@/components/layout/nav-lens"), { ssr: fal
 export function MobileNav({
   clerkOn,
   demoMode,
+  profile,
   hidden,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
+  /** The viewer's name, email and picture for the account menu. Null without a session. */
+  profile: AccountMenuProfile | null;
   /** Surfaces hidden from this viewer. Empty for an exempt operator. */
   hidden: ReadonlySet<string>;
 }) {
@@ -669,7 +671,12 @@ export function MobileNav({
             <div className="flex items-center gap-3">
               {clerkOn ? (
                 <>
-                  <UserButton appearance={clerkAppearance} />
+                  {/* Every other destination in this sheet closes it on click, and nothing
+                      closes it on a pathname change — so without this the account links
+                      navigate underneath a sheet that is still covering the page they
+                      land on. Clerk's `UserButton` never had the problem: it opened a
+                      modal instead of navigating. */}
+                  <AccountMenu profile={profile} onNavigate={() => setMoreOpen(false)} />
                   <span className="text-sm text-muted-foreground">Account</span>
                 </>
               ) : demoMode ? (

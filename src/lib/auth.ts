@@ -149,28 +149,57 @@ export type UserProfile = {
  * which is also what backfills it. Anything where a stale value would be WRONG rather than
  * merely out of date — a Stripe customer's email, a From line — keeps calling
  * `getCurrentUserProfile()` directly.
+ *
+ * Request-`cache()`d because /settings asks for it twice in one render. The wrapper changes
+ * nothing about the answer: it takes no arguments and reads only request-scoped state.
  */
-export async function getDisplayProfile(): Promise<UserProfile | null> {
+export const getDisplayProfile = cache(async (): Promise<UserProfile | null> => {
   if (isDemoMode() || !isClerkConfigured()) return getCurrentUserProfile();
 
   try {
     const { userId } = await auth();
     if (userId) {
-      const settings = await ensureUserSettings(userId);
-      const name = [settings?.firstName, settings?.lastName].filter(Boolean).join(" ");
-      if (settings?.email && name) {
-        return {
-          id: userId,
-          name,
-          email: settings.email,
-          imageUrl: settings.profileImageUrl ?? undefined,
-        };
-      }
+      const mirrored = displayProfileFromSettings(userId, await ensureUserSettings(userId));
+      if (mirrored) return mirrored;
     }
   } catch {
     // Fall through to Clerk: a missing mirror is a slower page, never a broken one.
   }
   return getCurrentUserProfile();
+});
+
+/**
+ * The mirror's answer, or `null` when it cannot give a whole one — the same predicate
+ * `getDisplayProfile()` uses, exported so a caller that is ALREADY holding the
+ * `user_settings` row can skip the call instead of re-deriving the rule and risking drift.
+ *
+ * `(app)/layout.tsx` is that caller. It holds `settings` from `bootstrapAuthenticatedUser`,
+ * and its only use for a profile is the nav's account menu — but `getDisplayProfile()` falls
+ * through to `getCurrentUserProfile()` whenever the mirror lacks BOTH names, which is the
+ * permanent state of an account created without name collection. That fall-through is a
+ * Clerk Backend API round trip plus an identity write, on the critical path of every
+ * authenticated navigation, for the life of that account. Deciding from the row already in
+ * hand costs nothing, and the slow path is left to the accounts that genuinely need it.
+ *
+ * Pure and synchronous on purpose: no `auth()`, no database, nothing to cache.
+ */
+export function displayProfileFromSettings(
+  userId: string,
+  settings: {
+    firstName?: string | null;
+    lastName?: string | null;
+    email?: string | null;
+    profileImageUrl?: string | null;
+  } | null
+): UserProfile | null {
+  const name = [settings?.firstName, settings?.lastName].filter(Boolean).join(" ");
+  if (!settings?.email || !name) return null;
+  return {
+    id: userId,
+    name,
+    email: settings.email,
+    imageUrl: settings.profileImageUrl ?? undefined,
+  };
 }
 
 export async function getCurrentUserProfile(): Promise<UserProfile | null> {
