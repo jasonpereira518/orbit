@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
       subject: draft?.subject ?? "A sample subject line",
       body:
         draft?.body ??
-        "This is what a broadcast looks like.\n\nThe first paragraph is set larger, as the opening line. Everything after it is body copy.\n\nWrite plain prose — the shell, the planet and the leave-the-waitlist footer are added for you.",
+        "This is what a broadcast looks like.\n\nThe first paragraph is set larger, as the opening line. Everything after it is body copy.\n\nWrite plain prose. The letter, the sign-off and the leave-the-waitlist footer are added for you.",
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
     });
   } else if (template === "front-wave") {

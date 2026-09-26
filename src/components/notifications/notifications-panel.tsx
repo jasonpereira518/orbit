@@ -159,6 +159,7 @@ export function NotificationsPanelButton({
         failure: "Couldn’t mark that done — try again?",
         refresh,
         undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
+        offline: { kind: "reminder.done", args: [reminderId], subject: reminderId },
       }).then(() => undefined)
     );
   }
@@ -171,6 +172,7 @@ export function NotificationsPanelButton({
         failure: "Couldn’t snooze that — try again?",
         refresh,
         undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
+        offline: { kind: "reminder.snooze", args: [reminderId, 7], subject: reminderId },
       }).then(() => undefined)
     );
   }

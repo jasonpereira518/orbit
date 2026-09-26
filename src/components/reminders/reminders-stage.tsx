@@ -52,6 +52,7 @@ import type {
   ReminderRow as ReminderRowData,
   RemindersPage,
 } from "@/lib/reminders-page";
+import { isQueuedOffline } from "@/lib/offline-queue-store";
 import { runToastAction } from "@/lib/toast";
 import type { TriageCommand } from "@/lib/triage-keys";
 import { cn } from "@/lib/utils";
@@ -388,9 +389,12 @@ export function RemindersStage({
           failure: "Couldn’t mark that done — try again?",
           refresh,
           undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
+          offline: { kind: "reminder.done", args: [id], subject: id },
         });
         refresh();
-        return res !== undefined;
+        // Queued offline counts as done here: the row stays gone, and the sync on
+        // reconnect makes it true.
+        return res !== undefined || isQueuedOffline(id);
       })
     );
   }
@@ -418,9 +422,10 @@ export function RemindersStage({
           failure: "Couldn’t snooze that — try again?",
           refresh,
           undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
+          offline: { kind: "reminder.reschedule", args: [id, ymd], subject: id },
         });
         refresh();
-        return res !== undefined;
+        return res !== undefined || isQueuedOffline(id);
       })
     );
   }

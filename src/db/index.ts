@@ -1199,6 +1199,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
   stealth_since timestamptz,
+  waitlist_demo_enabled boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -2031,7 +2032,22 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62.
 // Scanned every remote ref, every local branch and every worktree's working
 // src/db/index.ts on Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
-export const SCHEMA_VERSION = 107;
+//
+// 109 = site_settings.waitlist_demo_enabled (the admin console's switch for the waitlist page's
+// product demo). NOT 104: rescanned every remote ref and every worktree's working file on Sep 26
+// 2026 — 108 (claude/integrations-ui-pass, and a worktree) was the highest claimed anywhere.
+//
+// 113 = merging main (109 — site_settings.waitlist_demo_enabled, on top of the 99/102/103
+// columns this branch already carried) into this branch (104, 105, 107). No DDL of its own.
+// Keeping either side's number is the failure recorded at 87, 96, 97, 99 and 107 above: this
+// branch's databases are stamped 107 WITHOUT main's waitlist_demo_enabled, main's are stamped
+// 109 without openrouter_api_key_encrypted and cost_source, and `isSchemaCurrent` returns true
+// for any recorded version at or above the running one — so whichever half lost would be
+// skipped in silence. Both sides' `alters` are kept; only the version is new.
+// NOT 110, 111 or 112, all of which are claimed elsewhere. Scanned every local and remote ref
+// and every worktree's working src/db/index.ts on Sep 26 2026: 112 is the highest claimed
+// anywhere, so 113 is the next free integer.
+export const SCHEMA_VERSION = 113;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3677,6 +3693,9 @@ const alters = [
   // `ai-pricing.ts` has no OpenRouter slugs at all and blending the two figures in one
   // column with no source would make that gap invisible.
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cost_source text NOT NULL DEFAULT 'estimated'`,
+  // Schema v109: `site_settings.waitlist_demo_enabled`. Null (never set) reads as on, so no
+  // backfill: the demo stays up until an admin takes it down from the waitlist admin page.
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS waitlist_demo_enabled boolean`,
 ];
 
 /**
