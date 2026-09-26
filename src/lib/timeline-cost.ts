@@ -2,8 +2,10 @@ import { estimateCostMicros, formatCostMicros } from "@/lib/ai-pricing";
 
 /**
  * What deriving LinkedIn timeline events costs, and the rules that bound it (audit A6).
- * DB-free: the import card, the server action, the runner and the privacy policy all read
- * these, so the number a person is shown is the number the code enforces.
+ * DB-free: the runner and the privacy/terms pages read these, so the number a person is
+ * shown is the number the code enforces. `TimelineBackfillStatus`/`timelineEstimateLabel`
+ * below no longer have a production reader — the opt-in checkbox they served is gone
+ * (schema v108, task 9) — but stay for their own smoke coverage (smoke-timeline-cost.ts).
  */
 
 /** Threads with fewer usable messages get only the rule-based reach-out, never a model call. */
@@ -16,7 +18,9 @@ export const TIMELINE_DAILY_CONTACT_CAP = 300;
  * Per-conversation estimate for the fast tier: the extractor sends at most 14,000 characters
  * of transcript (about 3,500 tokens) plus a short system prompt, and most threads are far
  * shorter; it returns at most eight short events. Deliberately a round, slightly generous
- * figure — this is shown before consent, so it should not undersell.
+ * figure — it used to be shown before consent, so it should not undersell; nothing shows it
+ * any more (schema v108 made the backfill automatic), but `timelineEstimateLabel` below
+ * still uses it and is still exercised by smoke-timeline-cost.ts.
  */
 export const TIMELINE_EST_INPUT_TOKENS = 2_500;
 export const TIMELINE_EST_OUTPUT_TOKENS = 150;

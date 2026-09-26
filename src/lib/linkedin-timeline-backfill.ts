@@ -373,7 +373,7 @@ export async function runLinkedInTimelineBackfill(
       }));
 
       // A thread that needs the model is queued for a batch instead of asked one at a time:
-      // half price, and nobody is waiting on an opt-in backfill. Threads that need no model
+      // half price, and nobody is waiting on this backfill interactively. Threads that need no model
       // (a lone reach-out) are finished here and now.
       const prepared = prepareTimelineExtraction(contactId, asMessages);
       if (prepared.prompt) {

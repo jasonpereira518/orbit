@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   terms_accepted_at timestamptz,
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
+  timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
@@ -2839,6 +2840,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "terms_accepted_at", "timestamptz");
   await ensureColumn(client, "user_settings", "terms_version", "text");
   await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "timeline_backfill_forced_on", "integer NOT NULL DEFAULT 1");
   await ensureColumn(
     client,
     "user_recruiter_links",
@@ -3702,13 +3704,26 @@ const alters = [
   // Deriving LinkedIn timeline events used to be opt-in (audit A6, a checkbox on the import
   // card); the owner decided it should just happen, so the checkbox is gone
   // (src/components/imports/timeline-backfill-toggle.tsx deleted) and the column is now an
-  // operator-only kill switch with no UI. `ALTER COLUMN ... SET DEFAULT` only changes what
-  // new rows get; the `UPDATE` below flips every existing account on, same as v73's
-  // ai_model migration above. This DOES start spending each account's own AI budget (one
-  // model call per qualifying conversation, capped at RATE_LIMITS.timelineBackfillDaily a
-  // day) without asking — that is the point, not a bug to revert.
+  // operator-only kill switch with no UI. This DOES start spending each account's own AI
+  // budget (one model call per qualifying conversation, capped at
+  // RATE_LIMITS.timelineBackfillDaily a day) without asking — that is the point, not a bug
+  // to revert.
+  //
+  // `alters` runs in FULL on every sweep — every future SCHEMA_VERSION bump or fingerprint
+  // change re-runs this same list — so a bare `UPDATE ... WHERE timeline_backfill_enabled =
+  // 0` would silently re-flip an operator's deliberate kill switch back to 1 the next time
+  // anyone bumps the schema, resuming that account's AI spend behind their back. That is
+  // exactly the failure v73's `ai_model` migration above guards against with
+  // `ai_model_migrated_from IS NULL`, so this follows the same marker-column shape:
+  // `timeline_backfill_forced_on` records "this row has already been force-flipped once"
+  // and is born DEFAULT 1 for every row created from here on, so the one-shot UPDATE below
+  // can never match a fresh row either. Re-running this block is then a genuine no-op: the
+  // ADD COLUMN no-ops (column exists), the UPDATE matches nothing (every row is marked),
+  // and the SET DEFAULT no-ops (already 1).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timeline_backfill_forced_on integer NOT NULL DEFAULT 0`,
+  `UPDATE user_settings SET timeline_backfill_enabled = 1, timeline_backfill_forced_on = 1 WHERE timeline_backfill_forced_on = 0`,
+  `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_forced_on SET DEFAULT 1`,
   `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_enabled SET DEFAULT 1`,
-  `UPDATE user_settings SET timeline_backfill_enabled = 1 WHERE timeline_backfill_enabled = 0`,
 ];
 
 /**

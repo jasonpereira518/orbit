@@ -377,20 +377,20 @@ async function testSingleMessageSkipsModel() {
   check("and makes no AI call", calls.length === 0, `${calls.length} usage rows`);
 }
 
-/** Section 6: nothing runs, and nothing is kicked, for an account that has not opted in. */
-async function testOptIn() {
+/** Section 6: nothing runs, and nothing is kicked, for an account the kill switch has turned off. */
+async function testKillSwitch() {
   await reset(OFF_USER);
   const db = await getDb();
   await db.update(userSettings).set({ timelineBackfillEnabled: 0 }).where(eq(userSettings.userId, OFF_USER));
   seen.length = 0;
-  await seedThread(OFF_USER, "Opted Out", [
+  await seedThread(OFF_USER, "Switched Off", [
     { body: "Hi, loved the panel.", sentAt: new Date(Date.UTC(2024, 7, 1)) },
     { body: "Coffee next week?", sentAt: new Date(Date.UTC(2024, 7, 2)) },
   ]);
 
   const off = await runLinkedInTimelineBackfill(OFF_USER, stubExtract);
   check(
-    "an account that has not opted in derives nothing",
+    "an account the kill switch turned off derives nothing",
     off.enabled === false && off.contactsProcessed === 0 && off.remaining === 1 && seen.length === 0,
     JSON.stringify(off)
   );
@@ -398,7 +398,7 @@ async function testOptIn() {
 
   await db.update(userSettings).set({ timelineBackfillEnabled: 1 }).where(eq(userSettings.userId, OFF_USER));
   const on = await runLinkedInTimelineBackfill(OFF_USER, stubExtract);
-  check("opting in lets the same work run", on.enabled && on.contactsProcessed === 1 && on.remaining === 0, JSON.stringify(on));
+  check("flipping the switch back on lets the same work run", on.enabled && on.contactsProcessed === 1 && on.remaining === 0, JSON.stringify(on));
 }
 
 /**
@@ -481,8 +481,8 @@ async function main() {
   console.log("\n-- one-message threads skip the model --");
   await testSingleMessageSkipsModel();
 
-  console.log("\n-- opt-in --");
-  await testOptIn();
+  console.log("\n-- kill switch --");
+  await testKillSwitch();
 
   console.log("\n-- the daily cap --");
   await testDailyCap();

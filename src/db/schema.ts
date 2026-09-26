@@ -397,10 +397,23 @@ export const userSettings = pgTable("user_settings", {
    * left to flip it — the column survives only as an operator kill switch (set it to 0
    * directly in the database to stop the spend for one account) and cannot distinguish
    * "never touched" from "an account that explicitly declined it under the old opt-in", so
-   * there is no way to honour a past decline. The runner, the cron sweep and the import
-   * card all read it — see src/lib/linkedin-timeline-backfill.ts.
+   * there is no way to honour a past decline. Read at the cron sweep's pending-users query
+   * and the runner's own gate — see src/lib/linkedin-timeline-backfill.ts:212 and :300.
    */
   timelineBackfillEnabled: integer("timeline_backfill_enabled").default(1).notNull(),
+  /**
+   * One-shot marker: has this row already been force-flipped to
+   * `timeline_backfill_enabled = 1` by the v108 migration? Exists only so that migration's
+   * `UPDATE` runs exactly once per row rather than every time `alters` re-runs (every future
+   * SCHEMA_VERSION bump or fingerprint change), which would otherwise silently undo an
+   * operator's deliberate kill switch on its next sweep. Same shape as `ai_model_migrated_
+   * from` above it: a row created after v108 is born with this DEFAULT 1, so the migration's
+   * `WHERE timeline_backfill_forced_on = 0` never matches it either. Not in
+   * `PRESERVED_SETTINGS_COLUMNS` on purpose: `purgeUserSettings` re-inserts unpreserved
+   * columns at their column default, which is 1, so an unpreserved marker still lands on a
+   * value the migration will never touch again — the flip still never re-runs.
+   */
+  timelineBackfillForcedOn: integer("timeline_backfill_forced_on").default(1).notNull(),
   /**
    * Operator suspension. Enforced in `requireUserId()` (`src/lib/auth.ts`) rather than in a
    * layout: actions are reachable by direct POST, so the gate has to sit at the one function

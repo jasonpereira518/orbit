@@ -26,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key", body: "AI features are opt-in and you choose the provider. Every call, on every plan, bills to a key you supply. Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key", body: "You choose the provider and supply the key. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on that same key. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -354,10 +354,11 @@ export default function PrivacyPage() {
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
             the people you talked with most. Deriving timeline events from imported LinkedIn
-            conversations happens automatically, on your own AI key, skips threads with a single
-            message, and processes at most {TIMELINE_DAILY_CONTACT_CAP} conversations a day.
-            Settings → Integrations → AI provider shows every call from the last 30 days and its
-            estimated cost.
+            conversations happens automatically, on your own AI key: a thread with a single message
+            gets a rule-based note and no AI call, and the cap of {TIMELINE_DAILY_CONTACT_CAP} conversations
+            a day only counts the conversations that reach the model. Without an AI key connected,
+            Orbit falls back to simple keyword matching instead. Settings → Integrations → AI
+            provider shows every call from the last 30 days and its estimated cost.
           </p>
           <p>
             <strong>
