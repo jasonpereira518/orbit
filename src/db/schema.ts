@@ -3317,6 +3317,17 @@ export const rateLimitBuckets = pgTable("rate_limit_buckets", {
 });
 
 /**
+ * Who is running a keyed background job, and until when (v113). One row per key, e.g.
+ * `embedding-backfill:<userId>`. See `src/lib/job-lease.ts`: a lease is taken only when the
+ * row is absent or expired, so a job that died frees its key on its own.
+ */
+export const jobLeases = pgTable("job_leases", {
+  key: text("key").primaryKey(),
+  holder: text("holder").notNull(),
+  until: timestamp("until", { withTimezone: true }).notNull(),
+});
+
+/**
  * One row per known ops condition (`src/lib/ops-alerts.ts`), keyed by condition id.
  *
  * This is what turns a ten-minute sweep into something a human can stand to have in Slack:

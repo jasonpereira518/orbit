@@ -43,6 +43,7 @@ import { sql } from "drizzle-orm";
   "cron_runs",
   "ops_alert_state",
   "rate_limit_buckets",
+  "job_leases",
   "webhook_deliveries",
   "error_events",
   "app_surface_flags",

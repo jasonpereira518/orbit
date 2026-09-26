@@ -954,6 +954,11 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS job_leases (
+  key text PRIMARY KEY,
+  holder text NOT NULL,
+  until timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS job_feed_sources (
   id text PRIMARY KEY,
   label text NOT NULL,

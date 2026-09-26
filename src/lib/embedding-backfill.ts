@@ -24,6 +24,8 @@ import { createEmbeddingsBatch } from "@/lib/ai";
 import { embedWithBisect, planEmbeddingBatches } from "@/lib/embedding-batches";
 import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
 import { internalFetch } from "@/lib/internal-auth";
+import { acquireJobLease, releaseJobLease } from "@/lib/job-lease";
+import { randomUUID } from "node:crypto";
 import {
   buildContactEmbeddingContent,
   computeContentHash,
@@ -106,6 +108,34 @@ export async function recordEmbeddingFailures(
  * cron sweeps many users inside one 300s function and cannot hand the full 4.5 minutes to
  * whichever user happens to be first in the list.
  */
+/** One backfill chain per user holds this long at most; longer than any invocation lives. */
+export const EMBEDDING_BACKFILL_LEASE_MS = 330_000;
+
+/**
+ * `runEmbeddingBackfill`, but only if no other chain is working this user right now. Null
+ * when one is.
+ *
+ * Kicks arrive from three places (an import finishing, the chain's own continuation, the
+ * hourly sweep), and nothing stopped two chains from running for one user at once: both
+ * claimed the same stale contacts and paid the user's provider twice for the same vectors,
+ * meeting its rate limits sooner. The lease is released before the caller kicks the next
+ * link, so the chain's own continuation always finds it free.
+ */
+export async function runEmbeddingBackfillExclusive(
+  userId: string,
+  embed: typeof createEmbeddingsBatch = createEmbeddingsBatch,
+  budgetMs: number = TIME_BUDGET_MS
+): Promise<Awaited<ReturnType<typeof runEmbeddingBackfill>> | null> {
+  const key = `embedding-backfill:${userId}`;
+  const holder = randomUUID();
+  if (!(await acquireJobLease(key, holder, EMBEDDING_BACKFILL_LEASE_MS))) return null;
+  try {
+    return await runEmbeddingBackfill(userId, embed, budgetMs);
+  } finally {
+    await releaseJobLease(key, holder).catch(() => undefined);
+  }
+}
+
 export async function runEmbeddingBackfill(
   userId: string,
   embed: typeof createEmbeddingsBatch = createEmbeddingsBatch,

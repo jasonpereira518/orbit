@@ -21,7 +21,7 @@ import {
 } from "@/lib/cron-runs";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
-import { accountCanEmbed, kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { accountCanEmbed, kickEmbeddingBackfill, runEmbeddingBackfillExclusive } from "@/lib/embedding-backfill";
 import { usersWithPendingMemoryWork } from "@/lib/memory-backfill";
 import {
   kickLinkedInTimelineBackfill,
@@ -301,7 +301,9 @@ export async function GET(request: Request) {
         }
         // The per-user slice is whatever is left of the sweep, so the sum across users
         // cannot exceed the budget no matter how the backlog is distributed.
-        const res = await runEmbeddingBackfill(staleUser, undefined, left).catch(
+        // Null when a chain is already working this user: it continues itself, so neither
+        // run it here nor kick it again.
+        const res = await runEmbeddingBackfillExclusive(staleUser, undefined, left).catch(
           reportAndContinue({ where: "job.process-stalled.embedding-user", userId: staleUser }, null)
         );
         stats.embeddingsGenerated += res?.embedded ?? 0;
