@@ -1195,6 +1195,16 @@ CREATE TABLE IF NOT EXISTS constellation_settings (
   updated_by text,
   CONSTRAINT constellation_settings_single_row CHECK (id = 1)
 );
+CREATE TABLE IF NOT EXISTS org_brand_colors (
+  name_key text NOT NULL,
+  kind text NOT NULL,
+  name text NOT NULL,
+  hex text,
+  domain text,
+  source text NOT NULL,
+  resolved_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind);
 CREATE TABLE IF NOT EXISTS site_settings (
   id integer PRIMARY KEY DEFAULT 1,
   stealth_enabled boolean,
@@ -2047,7 +2057,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // NOT 110, 111 or 112, all of which are claimed elsewhere. Scanned every local and remote ref
 // and every worktree's working src/db/index.ts on Sep 26 2026: 112 is the highest claimed
 // anywhere, so 113 is the next free integer.
-export const SCHEMA_VERSION = 113;
+//
+// 117 = org_brand_colors (learned brand colors for companies and schools the curated table
+// does not know), merged onto main at 113. This branch first shipped it as 110, which was
+// then claimed elsewhere. NOT 114–116: scanned every remote ref and every worktree's working
+// src/db/index.ts on Sep 26 2026 — 116 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 117;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3696,6 +3711,9 @@ const alters = [
   // Schema v109: `site_settings.waitlist_demo_enabled`. Null (never set) reads as on, so no
   // backfill: the demo stays up until an admin takes it down from the waitlist admin page.
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS waitlist_demo_enabled boolean`,
+  // Schema v117: learned brand colors for companies and schools outside the curated table.
+  `CREATE TABLE IF NOT EXISTS org_brand_colors (name_key text NOT NULL, kind text NOT NULL, name text NOT NULL, hex text, domain text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,
 ];
 
 /**

@@ -229,6 +229,9 @@ const MEMO_MAX = 5000;
 /**
  * Resolve a company or school name to its brand, or null when it is not one we know.
  *
+ * The curated table below wins; after it, a color Orbit learned for this exact name (see
+ * `registerLearnedBrands`); after that, null, and each surface falls back to its hashed tint.
+ *
  * 1. Exact alias match in either table — so a contact whose *company* is "UNC Chapel Hill"
  *    still gets Carolina blue. When both tables hold the alias, `prefer` picks.
  * 2. Otherwise the longest alias that appears in the name as whole words ("IBM Watson" →
@@ -247,6 +250,19 @@ export function lookupBrand(
 ): Brand | null {
   const key = brandKey(name);
   if (!key) return null;
+  return lookupCuratedBrand(key, prefer) ?? lookupLearnedBrand(key, prefer);
+}
+
+/** `lookupBrand` without learned colors: is this an organization the curated table knows? */
+export function lookupCuratedBrandByName(
+  name: string | null | undefined,
+  prefer?: BrandKind
+): Brand | null {
+  const key = brandKey(name);
+  return key ? lookupCuratedBrand(key, prefer) : null;
+}
+
+function lookupCuratedBrand(key: string, prefer?: BrandKind): Brand | null {
   const memoKey = `${prefer ?? ""}|${key}`;
   const cached = memo.get(memoKey);
   if (cached !== undefined) return cached;
@@ -301,3 +317,35 @@ export function brandLuma(hex: string): number {
  */
 export const FALLBACK_SATURATION = 0.58;
 export const FALLBACK_LIGHTNESS = 0.42;
+
+/** A brand color learned at runtime for an organization the curated table does not know. */
+export type LearnedBrand = { name: string; kind: BrandKind; hex: string };
+
+/** Learned brands by `brandKey`, exact names only — no partial matching on learned names. */
+const LEARNED = new Map<string, Brand[]>();
+
+/**
+ * Make learned colors visible to `lookupBrand` in this JS realm. Called with the viewer's
+ * learned colors by `LearnedBrandColors` (the client and SSR realms) and by the app layout
+ * (the server-component realm) — each realm holds its own copy of this module.
+ *
+ * Process-wide rather than per request, deliberately: an organization's color is a public
+ * fact, not the viewer's data, so a server that has seen Acme's color for one user may
+ * serve it to the next. Idempotent, and the curated table always wins over a learned color.
+ */
+export function registerLearnedBrands(entries: readonly LearnedBrand[]): void {
+  for (const entry of entries) {
+    if (!/^#[0-9a-f]{6}$/i.test(entry.hex)) continue;
+    const key = brandKey(entry.name);
+    if (!key) continue;
+    const list = (LEARNED.get(key) ?? []).filter((b) => b.kind !== entry.kind);
+    list.push({ name: entry.name, kind: entry.kind, hex: entry.hex });
+    LEARNED.set(key, list);
+  }
+}
+
+function lookupLearnedBrand(key: string, prefer?: BrandKind): Brand | null {
+  const list = LEARNED.get(key);
+  if (!list?.length) return null;
+  return list.find((b) => b.kind === prefer) ?? list[0]!;
+}

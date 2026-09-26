@@ -181,6 +181,21 @@ export async function discardCapturePhotos(userId: string, ids: string[]) {
 }
 
 /**
+ * Every photo a saved capture owns, rows and Blob objects both — for deleting the capture.
+ * The rows would go with the batch anyway (`ON DELETE CASCADE`), but the Blob objects
+ * would not, so they are read and removed here first.
+ */
+export async function deleteCapturePhotosForBatch(userId: string, batchId: string) {
+  const db = await getDb();
+  const where = and(eq(capturePhotos.userId, userId), eq(capturePhotos.noteBatchId, batchId));
+  const rows = await db.select({ blobUrl: capturePhotos.blobUrl }).from(capturePhotos).where(where);
+  if (!rows.length) return 0;
+  await db.delete(capturePhotos).where(where);
+  await deleteBlobs(rows.map((r) => r.blobUrl));
+  return rows.length;
+}
+
+/**
  * Claim a saved capture's photos. Scoped to the user AND to rows no batch owns yet, so a
  * forged id can neither steal someone else's photo nor move one between captures. Returns
  * how many were claimed.
