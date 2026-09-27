@@ -140,12 +140,19 @@ function main() {
       check(`${file} exists and is a client component`, existsSync(path) && /^\s*"use client";/.test(readFileSync(path, "utf8")));
     }
 
-    for (const crmDir of ["src/lib/crm", "src/lib/crm/hubspot"]) {
-      for (const file of readdirSync(crmDir).filter((f) => /\.ts$/.test(f))) {
-        const bytes = readFileSync(`${crmDir}/${file}`);
-        check(`${file} has no mis-encoded characters`, !/\xc3\xa2\xc2[\x80-\xbf]|\xc2[\x80-\x9f]/.test(bytes.toString("latin1")));
-        check(`${file} uses curly apostrophes`, !/[A-Za-z]'[A-Za-z]/.test(code(`${crmDir}/${file}`)));
+    function tsFilesRecursive(dir: string): string[] {
+      const out: string[] = [];
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) out.push(...tsFilesRecursive(full));
+        else if (/\.ts$/.test(entry.name)) out.push(full);
       }
+      return out;
+    }
+    for (const file of tsFilesRecursive("src/lib/crm")) {
+      const bytes = readFileSync(file);
+      check(`${file} has no mis-encoded characters`, !/\xc3\xa2\xc2[\x80-\xbf]|\xc2[\x80-\x9f]/.test(bytes.toString("latin1")));
+      check(`${file} uses curly apostrophes`, !/[A-Za-z]'[A-Za-z]/.test(code(file)));
     }
   }
 
