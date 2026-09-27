@@ -1311,6 +1311,18 @@
   backdrop-filter: blur(12px);
 }
 
+/* Feature poll panel — the same surface as `.landing-glass`, just less transparent: six rows
+ * of option copy read better against the starfield than the plain glass does. Scoped to this
+ * one panel (compound selector beats `.landing-glass` alone) rather than raising the shared
+ * class's opacity, which every other landing/waitlist card also uses. */
+.landing-glass.feature-poll-panel {
+  background: linear-gradient(
+    180deg,
+    rgba(232, 243, 241, 0.11) 0%,
+    rgba(232, 243, 241, 0.05) 100%
+  );
+}
+
 /* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
  * doesn't bleed through as much behind logo + auth controls. */
 .landing-header-glass {
