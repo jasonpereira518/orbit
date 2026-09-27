@@ -1,30 +1,40 @@
 /**
- * The CRM card's server half: what it shows, "Sync now", and disconnect. The Server Actions in
- * src/actions/crm.ts are thin shells over these, so this runs in a smoke.
+ * The CRM card's server half, for either CRM: the status it shows, "Sync now", and disconnect.
+ * The Server Actions in src/actions/crm.ts are thin shells over these, so this runs in a smoke.
  */
 import { formatDistanceToNow } from "date-fns";
 import {
   claimConnectorConnectionForUser,
   deleteConnectorConnection,
-  getConnectorConnection,
   getConnectorRefreshToken,
+  listConnectorConnections,
   markConnectorSyncResult,
   markConnectorSyncSucceeded,
   type ClaimedConnectorConnection,
+  type ConnectorConnectionSummary,
 } from "@/lib/connectors/connections";
 import { isOAuthConfigured } from "@/lib/connectors/oauth";
-import type { CrmConnectorId } from "@/lib/crm/connect";
 import { revokeHubspotToken } from "@/lib/crm/hubspot/api";
-import { syncHubspot, type HubspotSyncResult } from "@/lib/crm/hubspot/sync";
+import { syncHubspot } from "@/lib/crm/hubspot/sync";
 import { crmCounts, deleteCrmRecordsForConnector } from "@/lib/crm/records";
-import { DEMO_CRM_ACCOUNT_REF, crmErrorLine, type CrmStatus, type CrmSyncNowResult } from "@/lib/crm/types";
+import { revokeSalesforceToken } from "@/lib/crm/salesforce/api";
+import { syncSalesforce } from "@/lib/crm/salesforce/sync";
+import {
+  CRM_PROVIDERS,
+  DEMO_CRM_ACCOUNT_REF,
+  crmErrorLine,
+  crmProviderLabel,
+  type CrmConnectionView,
+  type CrmConnectorId,
+  type CrmStatus,
+  type CrmSyncNowResult,
+  type CrmSyncResult,
+} from "@/lib/crm/types";
 import { getEntitlements } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { SYNC_LEASE_MS } from "@/lib/provider-connections";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
-
-const DIDNT_ANSWER = "HubSpot didn’t answer — the next automatic sync will try again";
 
 /**
  * A person is waiting on the button: shorter than the scheduler's share, and resumable. The
@@ -34,55 +44,71 @@ const DIDNT_ANSWER = "HubSpot didn’t answer — the next automatic sync will t
  */
 export const SYNC_NOW_BUDGET_MS = 30_000;
 
-export async function crmStatusFor(userId: string): Promise<CrmStatus> {
-  const [entitlements, connection] = await Promise.all([
-    getEntitlements(userId),
-    getConnectorConnection(userId, "hubspot"),
-  ]);
-  const counts = connection ? await crmCounts(userId, "hubspot") : null;
-  const leaseCutoff = Date.now() - SYNC_LEASE_MS;
-  // TODO(Task 7): this stopgap keeps the branch compiling with the new multi-provider
-  // `CrmStatus` shape; Task 7 replaces it with a real per-provider status build.
-  return {
-    entitled: entitlements.canUseCrm,
-    providers: [
-      {
-        id: "hubspot" as const,
-        label: "HubSpot",
-        configured: isOAuthConfigured("hubspot"),
-        connection: connection
-          ? {
-              connectorId: "hubspot" as const,
-              label: connection.label,
-              status: connection.status,
-              syncing: connection.syncStatus === "syncing" && (connection.syncStartedAt?.getTime() ?? 0) > leaseCutoff,
-              lastSyncedAgo: connection.lastSyncedAt ? formatDistanceToNow(connection.lastSyncedAt, { addSuffix: true }) : null,
-              error: crmErrorLine(connection.syncError),
-              demo: connection.accountRef === DEMO_CRM_ACCOUNT_REF,
-              paused: connection.status === "active" && connection.nextSyncAt === null && connection.syncError !== null,
-            }
-          : null,
-        counts,
-      },
-    ],
+const SYNCS: Record<
+  CrmConnectorId,
+  (conn: ClaimedConnectorConnection, opts: { budgetMs: number }) => Promise<CrmSyncResult>
+> = {
+  hubspot: (conn, opts) => syncHubspot(conn, opts),
+  salesforce: (conn, opts) => syncSalesforce(conn, opts),
+};
+
+function defaultRevoke(connectorId: CrmConnectorId): (refreshToken: string, instanceUrl: string | null) => Promise<boolean> {
+  return async (token, instanceUrl) => {
+    if (!isOAuthConfigured(connectorId)) return false;
+    if (connectorId === "hubspot") return revokeHubspotToken(token);
+    return instanceUrl ? revokeSalesforceToken(instanceUrl, token) : false;
   };
+}
+
+function viewOf(id: CrmConnectorId, connection: ConnectorConnectionSummary, leaseCutoff: number): CrmConnectionView {
+  return {
+    connectorId: id,
+    label: connection.label,
+    status: connection.status,
+    syncing: connection.syncStatus === "syncing" && (connection.syncStartedAt?.getTime() ?? 0) > leaseCutoff,
+    lastSyncedAgo: connection.lastSyncedAt ? formatDistanceToNow(connection.lastSyncedAt, { addSuffix: true }) : null,
+    error: crmErrorLine(connection.syncError),
+    demo: connection.accountRef === DEMO_CRM_ACCOUNT_REF,
+    paused: connection.status === "active" && connection.nextSyncAt === null && connection.syncError !== null,
+  };
+}
+
+export async function crmStatusFor(userId: string): Promise<CrmStatus> {
+  const [entitlements, connections] = await Promise.all([getEntitlements(userId), listConnectorConnections(userId)]);
+  const leaseCutoff = Date.now() - SYNC_LEASE_MS;
+  const providers = await Promise.all(
+    CRM_PROVIDERS.map(async ({ id, label }): Promise<CrmStatus["providers"][number]> => {
+      const connection = connections.find((c) => c.connectorId === id) ?? null;
+      return {
+        id,
+        label,
+        configured: isOAuthConfigured(id),
+        connection: connection ? viewOf(id, connection, leaseCutoff) : null,
+        counts: connection ? await crmCounts(userId, id) : null,
+      };
+    })
+  );
+  return { entitled: entitlements.canUseCrm, providers };
 }
 
 export async function runCrmSyncNow(
   userId: string,
   connectorId: CrmConnectorId,
   deps: {
-    sync?: (conn: ClaimedConnectorConnection, opts: { budgetMs: number }) => Promise<HubspotSyncResult>;
+    sync?: (conn: ClaimedConnectorConnection, opts: { budgetMs: number }) => Promise<CrmSyncResult>;
     consume?: () => Promise<unknown>;
   } = {}
 ): Promise<CrmSyncNowResult> {
-  const summary = await getConnectorConnection(userId, connectorId);
-  if (!summary) throw new UserFacingError("Connect HubSpot first");
+  const label = crmProviderLabel(connectorId);
+  const didntAnswer = `${label} didn’t answer — the next automatic sync will try again`;
+  const connections = await listConnectorConnections(userId);
+  const summary = connections.find((c) => c.connectorId === connectorId) ?? null;
+  if (!summary) throw new UserFacingError(`Connect ${label} first`);
   if (summary.accountRef === DEMO_CRM_ACCOUNT_REF) {
-    throw new UserFacingError("The demo’s HubSpot data is sample data — there’s nothing to sync");
+    throw new UserFacingError(`The demo’s ${label} data is sample data — there’s nothing to sync`);
   }
   if (summary.status === "needs_reauth") {
-    throw new UserFacingError("HubSpot needs you to reconnect — use Reconnect, then sync");
+    throw new UserFacingError(`${label} needs you to reconnect — use Reconnect, then sync`);
   }
   try {
     await (deps.consume ?? (() => consumeBucket("providerSync", userId, RATE_LIMITS.providerSync)))();
@@ -95,8 +121,8 @@ export async function runCrmSyncNow(
   const conn = await claimConnectorConnectionForUser(userId, connectorId);
   if (!conn) throw new UserFacingError("A sync is already running — give it a minute");
 
-  const sync = deps.sync ?? ((c, opts) => syncHubspot(c, opts));
-  let result: HubspotSyncResult;
+  const sync = deps.sync ?? SYNCS[connectorId];
+  let result: CrmSyncResult;
   try {
     result = await sync(conn, { budgetMs: SYNC_NOW_BUDGET_MS });
   } catch (err) {
@@ -105,15 +131,21 @@ export async function runCrmSyncNow(
     reportError(err, { where: "crm.sync-now", userId, level: "warning", extra: { connectorId } });
     await markConnectorSyncResult(
       conn.id,
-      { ok: false, error: DIDNT_ANSWER, retryable: true },
+      { ok: false, error: didntAnswer, retryable: true },
       undefined,
       { leaseStartedAt: conn.leaseStartedAt }
     );
-    throw new UserFacingError(DIDNT_ANSWER);
+    throw new UserFacingError(didntAnswer);
   }
-  // The backstop: a no-op when the sync recorded its own outcome, which HubSpot's always does.
+  // The backstop: a no-op when the sync recorded its own outcome, which both CRM syncs always do.
   await markConnectorSyncSucceeded(conn.id, undefined, { leaseStartedAt: conn.leaseStartedAt });
-  return { outcome: result.outcome, pages: result.pages, records: result.records, message: result.message ?? null };
+  const message =
+    result.outcome === "needs_reauth"
+      ? `${label} needs you to reconnect — use Reconnect, then sync`
+      : result.outcome === "stopped"
+        ? crmErrorLine(result.message ?? null)
+        : (result.message ?? null);
+  return { outcome: result.outcome, pages: result.pages, records: result.records, message };
 }
 
 /**
@@ -128,9 +160,9 @@ export async function runCrmSyncNow(
  * and the records the disconnect dialog promised to forget come back. Claiming the lease
  * through the same predicate the scheduler and "Sync now" both claim through guarantees no
  * sync can start once this holds it. The claim also writes a new `sync_started_at`, which is
- * how this and a run that outlived its lease term meet: `syncHubspot` checks
- * `connectorLeaseHeld` before every page it persists and before it records its end, sees the
- * lease it claimed is gone, and stops writing. A purge or a reconnect, which take no claim, end
+ * how this and a run that outlived its lease term meet: both CRM syncs check
+ * `connectorLeaseHeld` before every page they persist and before they record their end, see the
+ * lease it claimed is gone, and stop writing. A purge or a reconnect, which take no claim, end
  * a run the same way — the row is gone, or its lease reset.
  *
  * A `needs_reauth` connection skips the claim: both claims require `status = 'active'`, so
@@ -139,20 +171,22 @@ export async function runCrmSyncNow(
 export async function disconnectCrm(
   userId: string,
   connectorId: CrmConnectorId,
-  deps: { revoke?: (refreshToken: string) => Promise<boolean> } = {}
+  deps: { revoke?: (refreshToken: string, instanceUrl: string | null) => Promise<boolean> } = {}
 ): Promise<void> {
-  const summary = await getConnectorConnection(userId, connectorId);
+  const label = crmProviderLabel(connectorId);
+  const connections = await listConnectorConnections(userId);
+  const summary = connections.find((c) => c.connectorId === connectorId) ?? null;
   if (summary && summary.status === "active") {
     const held = await claimConnectorConnectionForUser(userId, connectorId);
-    if (!held) throw new UserFacingError("HubSpot is syncing right now — disconnect again in a minute");
+    if (!held) throw new UserFacingError(`${label} is syncing right now — disconnect again in a minute`);
   }
   if (summary && summary.accountRef !== DEMO_CRM_ACCOUNT_REF) {
     const refresh = await getConnectorRefreshToken(userId, connectorId);
-    const revoke = deps.revoke ?? ((token: string) => (isOAuthConfigured(connectorId) ? revokeHubspotToken(token) : Promise.resolve(false)));
+    const revoke = deps.revoke ?? defaultRevoke(connectorId);
     // Best effort: a refused revoke still disconnects, but leaves a trace — the grant may live
-    // on at HubSpot until the person removes the app there.
-    if (refresh && !(await revoke(refresh))) {
-      reportError(new Error("HubSpot did not accept the token revoke"), {
+    // on at the provider until the person removes the app there.
+    if (refresh && !(await revoke(refresh, summary.instanceUrl))) {
+      reportError(new Error(`${label} did not accept the token revoke`), {
         where: "crm.disconnect.revoke",
         userId,
         level: "warning",
