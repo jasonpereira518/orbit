@@ -11,6 +11,8 @@ import { sql } from "drizzle-orm";
 
   const EXPECTED_TABLES = [
   "user_settings",
+  "stripe_processed_events",
+  "data_purge_runs",
   "companies",
   "contacts",
   "user_goals",
@@ -22,6 +24,7 @@ import { sql } from "drizzle-orm";
   "imports",
   "ai_suggestions",
   "contact_embeddings",
+  "embedding_failures",
   "calendar_subscriptions",
   "outreach_campaigns",
   "outreach_prospects",
@@ -110,7 +113,11 @@ async function main() {
   console.log("✓ Schema ready and read/write OK");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Explicit exits: PGlite keeps handles open, so without one a successful run never returns.
+main().then(
+  () => process.exit(0),
+  (e) => {
+    console.error(e);
+    process.exit(1);
+  }
+);

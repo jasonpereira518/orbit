@@ -1,8 +1,8 @@
-import { formatDistanceToNow } from "date-fns";
+import { formatLastTouch } from "@/lib/relative-date";
 import { ConstellationPinButton } from "@/components/contacts/constellation-pin-button";
 import { Badge } from "@/components/ui/badge";
 import {
-  closenessTierChipClass,
+  closenessPercentChipClass,
   type ClosenessBreakdown,
 } from "@/lib/closeness";
 import { cn } from "@/lib/utils";
@@ -33,9 +33,7 @@ export function ContactStatPills({
   };
 }) {
   const pct = Math.round(closeness.closeness * 100);
-  const since = lastTouchAt
-    ? formatDistanceToNow(new Date(lastTouchAt), { addSuffix: true })
-    : null;
+  const since = lastTouchAt ? formatLastTouch(new Date(lastTouchAt)) : null;
   const lastLabel = !since
     ? "No interactions yet"
     : hasLoggedInteraction
@@ -50,7 +48,7 @@ export function ContactStatPills({
         variant="secondary"
         className={cn(
           "rounded-full px-3 py-1 text-xs font-medium",
-          closenessTierChipClass(closeness.tier)
+          closenessPercentChipClass(closeness.closeness)
         )}
       >
         Closeness {pct}%

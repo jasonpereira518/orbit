@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import { Fraunces, Outfit } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
-import { AuthProvider } from "@/components/auth-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { WarpProvider } from "@/components/warp/warp-provider";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
+import { PageviewBeacon } from "@/components/analytics/pageview-beacon";
+import { VercelTelemetry } from "@/components/analytics/vercel-telemetry";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -34,6 +33,20 @@ export const metadata: Metadata = {
     ],
     apple: "/apple-icon.png",
   },
+  /**
+   * Stop iOS Safari rewriting the server HTML before React hydrates.
+   *
+   * Its data detectors wrap anything that looks like a phone number (and sometimes an
+   * address or email) in a link, so the markup React finds is not the markup it sent.
+   * Every page that shows one — a recruiter's contact card, say — failed hydration on
+   * an iPhone and had that tree thrown away and re-rendered on the client. Nothing is
+   * lost by switching it off: the link Safari added never survived that re-render.
+   */
+  formatDetection: {
+    telephone: false,
+    email: false,
+    address: false,
+  },
 };
 
 export default function RootLayout({
@@ -54,16 +67,22 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <AuthProvider>
-            {/* Owns the app <-> /pricing lift-off. Must sit at the ROOT: those
-                two live in different route groups, so anything lower unmounts
-                mid-flight when the group swaps. */}
-            <WarpProvider>{children}</WarpProvider>
-            <Toaster />
-          </AuthProvider>
+          {/* No ClerkProvider here: it lives in (clerk)/layout.tsx, so the
+              pages in (site) — the landing page, /interest and the docs — ship
+              no Clerk JS at all. */}
+          {/* Owns the app <-> /pricing lift-off. Must sit at the ROOT: those
+              two live in different route groups, so anything lower unmounts
+              mid-flight when the group swaps. */}
+          <WarpProvider>{children}</WarpProvider>
+          <Toaster />
         </ThemeProvider>
-        <Analytics />
-        <SpeedInsights />
+        {/* Orbit's own traffic pipeline: page views, sessions and geography, read by
+            /admin/analytics. Vercel's Web Analytics counts page views too, and Speed
+            Insights measures load performance, but neither can be joined to the users and
+            billing tables — so conversion has to be measured here. */}
+        <PageviewBeacon />
+        {/* Redacted: Vercel sees route patterns, never ids, tokens or admin URLs. */}
+        <VercelTelemetry />
       </body>
     </html>
   );

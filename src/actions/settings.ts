@@ -2,20 +2,23 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
 import {
-  aiSuggestions,
   contactEmbeddings,
-  contacts,
-  imports,
-  interactions,
-  reminders,
-  tags,
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
-import { purgeUserData } from "@/lib/user-data";
+import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
+import {
+  DATA_CATEGORY_IDS,
+  deletionOutcome,
+  getDataFootprint,
+  purgeUserData,
+  type DataCategory,
+} from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
 import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
@@ -27,24 +30,33 @@ import {
   AI_PROVIDERS,
   resolveAiModel,
   resolveAiProvider,
-  usingEnvKey,
   type AiProvider,
 } from "@/lib/ai";
+import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-check";
+import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
+import { demoAccountReason } from "@/lib/demo-account";
+import {
+  applyAiKeyChange,
+  embeddingBackendFor,
+  managedEligibilityFor,
+} from "@/lib/ai-settings-write";
 
 export async function getSettings() {
   const userId = await requireUserId();
-  const db = await getDb();
-  const settings = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
+  // The row `requireUserId()` just loaded (request-cached), not a second read of it. That
+  // read sat in sequence in front of everything below, so it was a full round trip on
+  // every page that shows a settings-dependent notice (chat, capture, settings, a contact).
+  // Safe because no action writes settings and then calls this in the same request.
+  const settings = await ensureUserSettings(userId);
 
   const provider = resolveAiProvider(settings?.aiProvider);
-  // Run alongside entitlements rather than after: neither depends on the other, and
-  // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
-  // check, so serializing them would only add latency.
-  const [entitlements, hasApolloKey] = await Promise.all([
+  // Run alongside entitlements rather than after: neither depends on the other. The Apollo
+  // check is handed the row loaded above, so it neither re-reads user_settings nor
+  // re-derives entitlements from a second copy of it. (The AI half deliberately re-reads.)
+  const [entitlements, hasApolloKey, ai] = await Promise.all([
     getEntitlements(userId),
-    userHasApolloKey(userId),
+    userHasApolloKey(userId, settings),
+    getAiAccessStatus(userId),
   ]);
   // Mirrors the two runtime resolvers so this card states what would actually be used:
   // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
@@ -55,36 +67,54 @@ export async function getSettings() {
   return {
     aiProvider: provider,
     aiModel: resolveAiModel(provider, settings?.aiModel),
+    /**
+     * The model this account was moved off when a default changed under it. Settings says
+     * so once, and offers the old model back; saving anything clears it.
+     */
+    aiModelMigratedFrom: settings?.aiModelMigratedFrom ?? null,
     theme: resolveThemePreference(settings?.theme),
     keys: {
       gemini: Boolean(settings?.geminiApiKeyEncrypted),
       openai: Boolean(settings?.openaiApiKeyEncrypted),
       anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
     },
-    usingEnvKey: usingEnvKey(provider, settings),
+    /**
+     * The optional decision model (TypeSafe's Jev) behind the recruiter scan's filters and
+     * the chat rerank. Presence only; `switchedOff` is the `ORBIT_JEV=off` kill switch.
+     */
+    decisionModel: {
+      keySaved: Boolean(settings?.typesafeApiKeyEncrypted),
+      switchedOff: jevSwitchedOff(),
+    },
+    /**
+     * The AI gate's view of this account — plan-aware, allowance-aware. Everything that says
+     * "add your key" or "Orbit covers AI" renders from this, never from key presence alone.
+     */
+    ai,
     // Whether "Fill from Apollo" on the contact page has anything to call — computed via
     // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
     hasApolloKey,
-    hasApiKey:
-      provider === "gemini"
-        ? Boolean(settings?.geminiApiKeyEncrypted) ||
-          usingEnvKey("gemini", settings)
-        : provider === "openai"
-          ? Boolean(settings?.openaiApiKeyEncrypted) ||
-            usingEnvKey("openai", settings)
-          : Boolean(settings?.anthropicApiKeyEncrypted) ||
-            usingEnvKey("anthropic", settings),
+    /**
+     * Whether AI features will run — NOT whether a key is saved. A Lifetime account on
+     * Orbit's managed key is `true` with no key at all; a Lifetime account that has used its
+     * month's allowance is `false` even with none missing. The name predates plans; ~20
+     * components read it to decide between the feature and the "add your key" notice, and
+     * that is exactly the question `ai.ready` answers.
+     */
+    hasApiKey: ai.ready,
     providers: AI_PROVIDERS.map((p) => ({
       id: p.id,
       label: p.label,
-      envVar: p.envVar,
       hasPersonalKey:
         p.id === "gemini"
           ? Boolean(settings?.geminiApiKeyEncrypted)
           : p.id === "openai"
             ? Boolean(settings?.openaiApiKeyEncrypted)
-            : Boolean(settings?.anthropicApiKeyEncrypted),
-      usingEnv: usingEnvKey(p.id, settings),
+            : p.id === "anthropic"
+              ? Boolean(settings?.anthropicApiKeyEncrypted)
+              : Boolean(settings?.openrouterApiKeyEncrypted),
+      /** Orbit holds a managed key for this provider AND this account may use it. */
+      managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id],
     })),
     // Mirrors the plan gate in `getOutreachSendConfig` / `getApolloApiKey`: Orbit's shared
     // keys only count as configured when the plan actually permits hosted sends, so the
@@ -127,6 +157,8 @@ export async function getSettings() {
       github: settings?.socialLinks?.github || "",
       website: settings?.socialLinks?.website || "",
     },
+    /** Null until the account has recorded a choice — see the column in schema.ts. */
+    desktopNotificationsEnabled: settings?.desktopNotificationsEnabled ?? null,
   };
 }
 
@@ -143,105 +175,40 @@ export async function saveThemePreference(theme: ThemePreference) {
     });
 }
 
-async function embeddingBackendFor(
-  provider: AiProvider,
-  settings: {
-    geminiApiKeyEncrypted: string | null;
-    openaiApiKeyEncrypted: string | null;
-    anthropicApiKeyEncrypted: string | null;
-  } | null
-) {
-  if (provider === "openai") {
-    if (settings?.openaiApiKeyEncrypted || usingEnvKey("openai", settings)) {
-      return "openai";
-    }
-    return null;
-  }
-  if (provider === "gemini") {
-    if (settings?.geminiApiKeyEncrypted || usingEnvKey("gemini", settings)) {
-      return "gemini";
-    }
-    return null;
-  }
-  if (settings?.openaiApiKeyEncrypted || usingEnvKey("openai", settings)) {
-    return "openai";
-  }
-  if (settings?.geminiApiKeyEncrypted || usingEnvKey("gemini", settings)) {
-    return "gemini";
-  }
-  return null;
-}
-
 export async function saveAiSettings(input: {
   provider: AiProvider;
   model?: string;
   apiKey?: string;
 }) {
   const userId = await requireUserId();
-  const db = await getDb();
-  const existing = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
 
   const provider = resolveAiProvider(input.provider);
-  const aiModel = resolveAiModel(provider, input.model);
-  const encrypted = input.apiKey?.trim()
-    ? encrypt(input.apiKey.trim())
-    : null;
-
-  const previousBackend = existing
-    ? await embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing)
-    : null;
-
-  const nextKeyState = {
-    geminiApiKeyEncrypted:
-      provider === "gemini" && encrypted
-        ? encrypted
-        : (existing?.geminiApiKeyEncrypted ?? null),
-    openaiApiKeyEncrypted:
-      provider === "openai" && encrypted
-        ? encrypted
-        : (existing?.openaiApiKeyEncrypted ?? null),
-    anthropicApiKeyEncrypted:
-      provider === "anthropic" && encrypted
-        ? encrypted
-        : (existing?.anthropicApiKeyEncrypted ?? null),
-  };
-
-  if (existing) {
-    await db
-      .update(userSettings)
-      .set({
-        aiProvider: provider,
-        aiModel,
-        ...nextKeyState,
-        updatedAt: new Date(),
-      })
-      .where(eq(userSettings.userId, userId));
-  } else {
-    await db.insert(userSettings).values({
-      userId,
-      aiProvider: provider,
-      aiModel,
-      ...nextKeyState,
-    });
+  // Only a NEWLY entered key is checked; saving a model change with the key left blank
+  // costs no provider call.
+  const newKey = input.apiKey?.trim() || null;
+  let keyNote: string | null = null;
+  if (newKey) {
+    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
+    // Returned, not thrown: a thrown message is a digest in production.
+    if (!outcome.save) return { ok: false as const, error: outcome.error };
+    keyNote = outcome.note;
   }
+  const encrypted = newKey ? encrypt(newKey) : null;
 
-  const nextBackend = await embeddingBackendFor(provider, nextKeyState);
-  if (
-    previousBackend &&
-    nextBackend &&
-    previousBackend !== nextBackend
-  ) {
-    // Different embedding spaces can't be compared — clear stale vectors.
-    await db
-      .delete(contactEmbeddings)
-      .where(eq(contactEmbeddings.userId, userId));
-  }
+  const { embeddingReset } = await applyAiKeyChange({
+    userId,
+    provider,
+    model: input.model,
+    encryptedKey: encrypted,
+  });
 
   revalidatePath("/settings");
   revalidatePath("/chat");
-  return { ok: true, embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend) };
+  return {
+    ok: true as const,
+    embeddingReset,
+    keyNote,
+  };
 }
 
 export async function clearApiKey(provider?: AiProvider) {
@@ -257,13 +224,90 @@ export async function clearApiKey(provider?: AiProvider) {
       ? { geminiApiKeyEncrypted: null }
       : active === "openai"
         ? { openaiApiKeyEncrypted: null }
-        : { anthropicApiKeyEncrypted: null };
+        : active === "anthropic"
+          ? { anthropicApiKeyEncrypted: null }
+          : { openrouterApiKeyEncrypted: null };
 
   await db
     .update(userSettings)
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
+
+  // Clearing a key can move embeddings to another provider — an Anthropic account falls
+  // back from OpenAI to Gemini. Vectors from two providers cannot be compared, so stale ones
+  // go, by the same rule `saveAiSettings` applies when a save changes the backend.
+  let embeddingReset = false;
+  if (existing) {
+    const selected = resolveAiProvider(existing.aiProvider);
+    // Eligibility matters: on Lifetime, clearing a key can move search onto Orbit's managed key.
+    const eligibility = await managedEligibilityFor(userId);
+    const previousBackend = embeddingBackendFor(selected, existing, eligibility);
+    const nextBackend = embeddingBackendFor(selected, { ...existing, ...patch }, eligibility);
+    embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
+    if (embeddingReset) {
+      await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+    }
+  }
+
+  revalidatePathIfRequestScoped("/settings");
+  return { ok: true as const, embeddingReset };
+}
+
+/**
+ * The user's standing notes on how answers and drafts should read — the second box in the
+ * chat Context sheet. Applied to chat and to the draft-writing features by the callers that
+ * own those requests; nothing here decides where it applies. See `writing-instructions.ts`.
+ */
+export async function getWritingInstructions() {
+  const userId = await requireUserId();
+  return { text: await loadWritingInstructions(userId) };
+}
+
+/** Saves the notes, or clears them for empty/whitespace-only text. Returns what was stored. */
+export async function saveWritingInstructions(text: string) {
+  const userId = await requireUserId();
+  if (typeof text !== "string") throw new Error("Invalid writing instructions");
+  const stored = await saveWritingInstructionsFor(userId, text);
+  return { ok: true as const, text: stored };
+}
+
+/**
+ * The decision model's key (TypeSafe's Jev). Its own action, not a branch of
+ * `saveAiSettings`: TypeSafe is not a chat provider, so saving it changes no provider, no
+ * model and no embedding space — it only lets the steps in `src/lib/decisions/` run.
+ */
+export async function saveDecisionKey(apiKey: string) {
+  const userId = await requireUserId();
+  const key = apiKey.trim();
+  if (!key) return { ok: false as const, error: "Paste a TypeSafe key first" };
+
+  const outcome = keyCheckOutcome(await checkDecisionKey(key), "typesafe");
+  // Returned, not thrown: a thrown message is a digest in production.
+  if (!outcome.save) return { ok: false as const, error: outcome.error };
+
+  const encrypted = encrypt(key);
+  const db = await getDb();
+  await db
+    .insert(userSettings)
+    .values({ userId, typesafeApiKeyEncrypted: encrypted })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { typesafeApiKeyEncrypted: encrypted, updatedAt: new Date() },
+    });
+
   revalidatePath("/settings");
+  return { ok: true as const, keyNote: outcome.note };
+}
+
+export async function clearDecisionKey() {
+  const userId = await requireUserId();
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ typesafeApiKeyEncrypted: null, updatedAt: new Date() })
+    .where(eq(userSettings.userId, userId));
+  revalidatePathIfRequestScoped("/settings");
+  return { ok: true as const };
 }
 
 export async function saveOutreachSettings(input: {
@@ -341,50 +385,40 @@ export async function saveSocialLinks(input: {
   return { ok: true };
 }
 
-export async function exportAllData() {
+
+/** Row counts per category, for the delete dialog. */
+export async function getDeletableDataFootprint() {
   const userId = await requireUserId();
-  const db = await getDb();
-
-  const [
-    contactRows,
-    interactionRows,
-    reminderRows,
-    tagRows,
-    importRows,
-    suggestionRows,
-  ] = await Promise.all([
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      with: { contactTags: { with: { tag: true } } },
-    }),
-    db.query.interactions.findMany({ where: eq(interactions.userId, userId) }),
-    db.query.reminders.findMany({ where: eq(reminders.userId, userId) }),
-    db.query.tags.findMany({ where: eq(tags.userId, userId) }),
-    db.query.imports.findMany({ where: eq(imports.userId, userId) }),
-    db.query.aiSuggestions.findMany({
-      where: eq(aiSuggestions.userId, userId),
-    }),
-  ]);
-
-  return {
-    exportedAt: new Date().toISOString(),
-    contacts: contactRows,
-    interactions: interactionRows,
-    reminders: reminderRows,
-    tags: tagRows,
-    imports: importRows,
-    suggestions: suggestionRows,
-  };
+  return getDataFootprint(userId);
 }
 
-export async function deleteAllData() {
+/**
+ * Delete the chosen categories of the caller's own data.
+ *
+ * `categories` is validated against `DATA_CATEGORY_IDS` rather than trusted: this is a
+ * server action, so its argument is a request body, and an unrecognised id must not silently
+ * widen or narrow a destructive call. An empty selection is a no-op, not a full purge —
+ * the failure mode of getting that backwards is unrecoverable.
+ */
+export async function deleteAllData(categories?: readonly DataCategory[]) {
   const userId = await requireUserId();
-  await purgeUserData(userId);
+
+  let only: DataCategory[] | undefined;
+  if (categories) {
+    only = categories.filter((c): c is DataCategory =>
+      (DATA_CATEGORY_IDS as string[]).includes(c)
+    );
+    if (only.length === 0) return { deleted: [] as DataCategory[], pending: [] as DataCategory[] };
+  }
+
+  const result = await deletionOutcome(() => purgeUserData(userId, only ? { only } : {}));
 
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/settings");
   revalidatePath("/outreach");
+
+  return result;
 }
 
 /** Everything the settings billing card needs, in one round trip. */
@@ -395,5 +429,5 @@ export async function getPlanOverview() {
     contactUsageForUser(userId),
   ]);
 
-  return { entitlements, usage };
+  return { entitlements, usage, demoAccount: demoAccountReason(userId) };
 }

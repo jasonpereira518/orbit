@@ -101,6 +101,23 @@ function date(value: unknown): Date | null {
 type LumaEntry = { event?: Record<string, unknown> } & Record<string, unknown>;
 
 /**
+ * Luma's `url` field is the event's SLUG (`abc123`), not a link — but the API is not
+ * consistent about it, and a full URL arriving here used to be prefixed anyway, producing
+ * `https://lu.ma/https://lu.ma/abc123`. That stored link is dead, it is what the event page
+ * renders as "View event page", and a resync then fetches nothing.
+ *
+ * So: absolute stays as it is, a slug gets the host. A slug with stray slashes is trimmed,
+ * because `lu.ma//abc` is a different path.
+ */
+export function lumaEventUrl(value: unknown): string | null {
+  const raw = str(value);
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const slug = raw.replace(/^\/+|\/+$/g, "");
+  return slug ? `https://lu.ma/${slug}` : null;
+}
+
+/**
  * Map one Luma event.
  *
  * Luma nests the event under an `event` key in list responses and returns it bare from the
@@ -121,7 +138,7 @@ export function toProviderEvent(entry: LumaEntry): ProviderEvent | null {
     timezone: str(raw.timezone),
     venue: str(geo.address) ?? str(geo.full_address) ?? str(raw.geo_address_visibility),
     city: str(geo.city),
-    url: str(raw.url) ? `https://lu.ma/${str(raw.url)}` : null,
+    url: lumaEventUrl(raw.url),
     description: str(raw.description) ?? str(raw.description_md),
     coverImageUrl: str(raw.cover_url),
     attendeeCount: typeof raw.guest_count === "number" ? raw.guest_count : null,
@@ -147,6 +164,7 @@ export function toProviderAttendee(entry: Record<string, unknown>): ProviderAtte
     title: null,
     linkedinUrl: null,
     xHandle: null,
+    phone: str(guest.phone_number) ?? str(guest.phone),
     attendeeRole: str(guest.role) === "host" ? "host" : "attendee",
   };
 }

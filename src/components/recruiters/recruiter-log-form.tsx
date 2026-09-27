@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import type { RecruiterLinkStatus } from "@/db/schema";
+import { friendlyError } from "@/lib/errors";
 
 const STATUSES: RecruiterLinkStatus[] = [
   "planned",
@@ -84,12 +85,16 @@ export function RecruiterLogForm({
               personalRating: rating,
               source: "manual",
             });
+            if (!result.ok) {
+              toast.error(result.error);
+              return;
+            }
             toast.success("Recruiter logged");
-            router.push(`/recruiters/${result.id}`);
+            router.push(`/recruiters/${result.value.id}`);
             router.refresh();
           } catch (err) {
             toast.error(
-              err instanceof Error ? err.message : "Failed to log recruiter"
+              friendlyError(err, "Couldn’t log that recruiter — try again?")
             );
           }
         });

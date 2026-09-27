@@ -10,6 +10,8 @@
  *
  * Pure: no network, no database. Run: npx tsx scripts/smoke-chat-stream.ts
  */
+import { CHAT_SIGNED_OUT_MESSAGE, classifyChatResponse } from "../src/lib/chat-stream-client";
+import { API_SIGNED_OUT_BODY, API_SIGNED_OUT_STATUS, isApiPath } from "../src/lib/api-signed-out";
 import {
   RECOMMENDATIONS_MARKER,
   createAnswerSplitter,
@@ -74,7 +76,7 @@ function main() {
   const events: ChatStreamEvent[] = [
     { type: "answer", delta: "Hello\n\nworld" },
     { type: "recommendations", items: [] },
-    { type: "done", messageId: "m1", threadId: "t1", title: "Hi", retrieved: [] },
+    { type: "done", messageId: "m1", userMessageId: "u1", threadId: "t1", title: "Hi", retrieved: [] },
   ];
   const wire = events.map(formatSse).join("");
   check("each event is one data: line ending in a blank line", wire.split("\n\n").filter(Boolean).length === 3, JSON.stringify(wire));
@@ -88,6 +90,82 @@ function main() {
   check("events re-assemble across arbitrary chunk boundaries", all.length === 3 && all[0].type === "answer" && all[2].type === "done", JSON.stringify(all));
   check("a delta containing a blank line survives framing", all[0].type === "answer" && all[0].delta === "Hello\n\nworld");
   check("nothing is left over after the last event", carry === "");
+
+  console.log("\nStep events ride the same framing...");
+  // Steps are emitted while retrieval runs, interleaved with nothing else, so they have to
+  // survive the same arbitrary chunk boundaries the prose does.
+  const stepWire = formatSse({
+    type: "step",
+    step: {
+      id: "search",
+      kind: "search",
+      label: "Searched 412 contacts",
+      detail: "name and notes, meaning",
+      status: "done",
+      ms: 143,
+      refs: [{ id: "c1", name: "Ada Lovelace", kind: "contact" }],
+    },
+  });
+  check("a step is one data: line", stepWire.split("\n\n").filter(Boolean).length === 1);
+  const stepBack: ChatStreamEvent[] = [];
+  let stepCarry = "";
+  for (const piece of [stepWire.slice(0, 11), stepWire.slice(11, 33), stepWire.slice(33)]) {
+    const parsed = parseSseChunk(piece, stepCarry);
+    stepCarry = parsed.carry;
+    stepBack.push(...parsed.events);
+  }
+  check("a step survives chunk boundaries", stepBack.length === 1 && stepBack[0].type === "step");
+  check(
+    "the step keeps its counts, duration and refs",
+    stepBack[0].type === "step" &&
+      stepBack[0].step.label === "Searched 412 contacts" &&
+      stepBack[0].step.ms === 143 &&
+      stepBack[0].step.refs?.[0]?.name === "Ada Lovelace"
+  );
+
+  const withFollowUps = parseSseChunk(
+    formatSse({
+      type: "done",
+      messageId: "m1",
+      userMessageId: "u1",
+      threadId: "t1",
+      title: "Hi",
+      retrieved: [],
+      followUps: ["Who else do I know at Ramp?"],
+    }),
+    ""
+  );
+  check(
+    "done carries follow-ups",
+    withFollowUps.events[0]?.type === "done" &&
+      withFollowUps.events[0].followUps?.[0] === "Who else do I know at Ramp?"
+  );
+  check(
+    "done without follow-ups still parses",
+    parseSseChunk(formatSse({ type: "done", messageId: null, userMessageId: null, threadId: null, title: null, retrieved: [] }), "")
+      .events[0]?.type === "done"
+  );
+
+  console.log("\nA signed-out chat request is named, not parsed as SSE");
+  check("the stream itself is a stream",
+    classifyChatResponse({ status: 200, ok: true, contentType: "text/event-stream; charset=utf-8" }) === "stream");
+  check("a 401 is signed out", classifyChatResponse({ status: 401, ok: false, contentType: "application/json" }) === "signed_out");
+  check("a followed redirect to the sign-in page (200 text/html) is signed out",
+    classifyChatResponse({ status: 200, ok: true, contentType: "text/html; charset=utf-8" }) === "signed_out");
+  check("a 200 with no content type is signed out, not an empty stream",
+    classifyChatResponse({ status: 200, ok: true, contentType: null }) === "signed_out");
+  check("a paywall 403 keeps its own JSON error", classifyChatResponse({ status: 403, ok: false, contentType: "application/json" }) === "error");
+  check("a rate limit 429 keeps its own JSON error", classifyChatResponse({ status: 429, ok: false, contentType: "application/json" }) === "error");
+  check("the signed-out copy follows the house voice",
+    CHAT_SIGNED_OUT_MESSAGE === "You’re signed out — sign in again to keep chatting");
+
+  console.log("\nWhich paths the proxy answers with JSON");
+  check("/api/chat is an API path", isApiPath("/api/chat"));
+  check("/api itself is", isApiPath("/api"));
+  check("/apiary is not", !isApiPath("/apiary"));
+  check("/dashboard is not", !isApiPath("/dashboard"));
+  check("the body is a 401 with a readable error and a machine code",
+    API_SIGNED_OUT_STATUS === 401 && API_SIGNED_OUT_BODY.code === "signed_out" && !API_SIGNED_OUT_BODY.error.includes("'"));
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

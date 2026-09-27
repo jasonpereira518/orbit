@@ -146,9 +146,28 @@ export function canonicalCompanyClusterName(
  * (Google ↔ Google DeepMind, Amazon ↔ Amazon Web Services).
  */
 export function companyFamilyKey(raw: string | null | undefined): string {
+  const root = companyFamilyRoot(raw);
+  if (root) return root;
   const canonical = canonicalCompanyClusterName(raw) || raw || "";
   const normalized = stripTrailingInc(normalizeCompanyName(canonical));
   if (!normalized) return "";
+
+  // Fallback: first significant token (length ≥ 3)
+  const token = normalized.split(/\s+/).find((t) => t.length >= 3);
+  return token || normalized;
+}
+
+/**
+ * The known family a company belongs to (Google DeepMind → "google"), or null.
+ *
+ * `companyFamilyKey` without its first-word fallback. That fallback is fine for ordering whole
+ * clusters, but it would seat a lone "Bank of America" contact beside any "Bank of …" cluster,
+ * so pulling individuals toward a cluster uses only the named roots.
+ */
+export function companyFamilyRoot(raw: string | null | undefined): string | null {
+  const canonical = canonicalCompanyClusterName(raw) || raw || "";
+  const normalized = stripTrailingInc(normalizeCompanyName(canonical));
+  if (!normalized) return null;
 
   // Prefer longest matching known root
   let best: string | null = null;
@@ -169,8 +188,5 @@ export function companyFamilyKey(raw: string | null | undefined): string {
     if (best === "deepmind") return "google";
     return best;
   }
-
-  // Fallback: first significant token (length ≥ 3)
-  const token = normalized.split(/\s+/).find((t) => t.length >= 3);
-  return token || normalized;
+  return null;
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useMemo } from "react";
+import { useLivePoll } from "@/components/admin/use-live-poll";
 
 /**
  * Live presence for the roster, kept fresh by polling.
@@ -15,9 +16,8 @@ import { createContext, useContext, useEffect, useState } from "react";
  * console with one user watching roughly a dozen accounts. If the roster ever renders
  * hundreds of live rows this is the thing to revisit; today a poll is the honest choice.
  *
- * The provider owns exactly one interval no matter how many rows render, and pauses when
- * the tab is hidden — an admin console left open in a background tab should not poll all
- * afternoon.
+ * The polling itself — one interval no matter how many rows render, paused while the tab
+ * is hidden — lives in `use-live-poll.ts`, shared with the Overview and Health screens.
  */
 
 const POLL_INTERVAL_MS = 15 * 1000;
@@ -32,53 +32,19 @@ export function PresenceProvider({
   initialLive: string[];
   children: React.ReactNode;
 }) {
-  const [live, setLive] = useState<ReadonlySet<string>>(
-    () => new Set(initialLive)
+  // Memoized: `useLivePoll` resyncs to `initial` whenever its identity changes, so an
+  // inline object literal recreated on every poll-driven re-render would snap the live
+  // set back to `initialLive` right after each successful poll updated it.
+  const initial = useMemo(() => ({ userIds: initialLive }), [initialLive]);
+  const polled = useLivePoll<{ userIds?: string[] }>(
+    "/api/admin/presence",
+    initial,
+    POLL_INTERVAL_MS
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
-    const poll = async () => {
-      try {
-        const res = await fetch("/api/admin/presence", { cache: "no-store" });
-        if (!res.ok) return;
-        const data = (await res.json()) as { userIds?: string[] };
-        if (cancelled || !Array.isArray(data.userIds)) return;
-        setLive(new Set(data.userIds));
-      } catch {
-        // Keep the last known set rather than blanking every dot on one failed poll:
-        // "briefly stale" reads far better than "everyone went offline at once".
-      }
-    };
-
-    const start = () => {
-      if (timer !== null) return;
-      void poll();
-      timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
-    };
-
-    const stop = () => {
-      if (timer === null) return;
-      clearInterval(timer);
-      timer = null;
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") start();
-      else stop();
-    };
-
-    onVisibilityChange();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      stop();
-    };
-  }, []);
+  const live = useMemo(
+    () => new Set(Array.isArray(polled.userIds) ? polled.userIds : []),
+    [polled]
+  );
 
   return <LiveContext.Provider value={live}>{children}</LiveContext.Provider>;
 }

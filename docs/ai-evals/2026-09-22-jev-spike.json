@@ -1,0 +1,63 @@
+{
+  "model": "jev-1.13.0",
+  "date": "2026-09-22T04:40:28.858Z",
+  "shapeParsed": true,
+  "shapeSample": {
+    "yes": {
+      "type": "noul",
+      "probability": 0.85
+    },
+    "pick": {
+      "type": "choice",
+      "choice": "hiring",
+      "probabilities": {
+        "sales": 0,
+        "hiring": 1,
+        "other": 0
+      },
+      "confidence": 1
+    },
+    "rank": {
+      "type": "score",
+      "score": 2.03,
+      "normalized": 0.6766666666666666,
+      "probabilities": {
+        "0": 0,
+        "1": 0.02,
+        "2": 0.93,
+        "3": 0.05
+      },
+      "confidence": 0.93
+    }
+  },
+  "billing": [
+    {
+      "questions": 1,
+      "inputTokens": 4498
+    },
+    {
+      "questions": 13,
+      "inputTokens": 5782
+    },
+    {
+      "questions": 60,
+      "inputTokens": 10811
+    }
+  ],
+  "billingRatio60to1": 2.4035126722987994,
+  "latencyMs": {
+    "1": {
+      "p50": 190.92012499999964,
+      "p95": 285.6466250000003
+    },
+    "13": {
+      "p50": 198.38474999999926,
+      "p95": 300.44654100000025
+    },
+    "60": {
+      "p50": 347.62437500000124,
+      "p95": 483.7800420000003
+    }
+  },
+  "determinismMaxDrift": 0.18999999999999995
+}

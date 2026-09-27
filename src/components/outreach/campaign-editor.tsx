@@ -22,6 +22,8 @@ import {
   OUTREACH_TONES,
   type OutreachChannel,
 } from "@/lib/outreach-types";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const CAMPAIGN_STATUSES = [
   { value: "draft", label: "Draft" },
@@ -85,7 +87,7 @@ export function CampaignEditor({
         setOpen(false);
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to save");
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
   }

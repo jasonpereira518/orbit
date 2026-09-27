@@ -24,6 +24,10 @@ import {
 } from "@/actions/webhook-endpoints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SettingsSection } from "@/components/settings/settings-section";
+import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const LOAD_TIMEOUT_MS = 12_000;
 const TIMED_OUT = "orbit:timed-out";
@@ -58,6 +62,7 @@ export function WebhookSettings() {
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const deleteFocus = useConfirmFocus(confirmingDelete);
 
   const load = useCallback(() => {
     setError(null);
@@ -79,6 +84,19 @@ export function WebhookSettings() {
     setSelected((prev) => (prev.includes(id) ? prev.filter((e) => e !== id) : [...prev, id]));
   }
 
+  /**
+   * Why a verification ping failed, in words a person configuring their own endpoint can
+   * act on. The HTTP status is worth keeping — "answered HTTP 404" tells them exactly
+   * what to fix. `verifyEndpoint`'s other path is a raw fetch error sliced to 200
+   * characters (undici internals, resolver codes), which is not.
+   */
+  function describeVerification(error: string | null | undefined) {
+    const status = error?.match(/^Endpoint answered HTTP (\d{3})$/)?.[1];
+    return status
+      ? `your endpoint answered HTTP ${status}`
+      : "your endpoint didn’t respond";
+  }
+
   function onCreate() {
     startTransition(async () => {
       const result = await createWebhookEndpoint(url.trim(), selected);
@@ -91,12 +109,14 @@ export function WebhookSettings() {
       setRevealedSecret(result.secret);
       setUrl("");
       if (result.verified) {
-        toast.success("Webhook verified and active");
+        toast.success("Webhook verified — it’s live");
       } else {
+        // This used to tell the person to retry and give them no button, while
+        // `retryWebhookEndpoint` already existed for exactly this.
+        const endpointId = result.endpoint.id;
         toast.error(
-          result.verificationError
-            ? `Saved, but not verified: ${result.verificationError}`
-            : "Saved, but the endpoint did not respond. Retry once it is reachable."
+          `Saved, but ${describeVerification(result.verificationError)} — retry once it’s reachable`,
+          { action: { label: "Retry", onClick: () => onRetry(endpointId) } }
         );
       }
       load();
@@ -115,14 +135,20 @@ export function WebhookSettings() {
   function onRetry(id: string) {
     startTransition(async () => {
       const result = await retryWebhookEndpoint(id);
-      if (result.ok) toast.success("Verified — the webhook is active");
-      else toast.error(result.error ?? "Still unreachable");
+      if (result.ok) toast.success("Verified — the webhook is live");
+      else {
+        const reason = describeVerification(result.error);
+        toast.error(`Still no luck — ${reason}`);
+      }
       load();
     });
   }
 
   return (
-    <div className="space-y-4">
+    <SettingsSection
+      title="Webhooks"
+      description="Have Orbit POST to your own endpoint — or a Zapier or Make hook — when something happens."
+    >
       {revealedSecret ? (
         <div className="space-y-2 rounded-lg border p-3">
           <p className="text-sm font-medium">Signing secret</p>
@@ -142,7 +168,7 @@ export function WebhookSettings() {
                   await navigator.clipboard.writeText(revealedSecret);
                   toast.success("Secret copied");
                 } catch {
-                  toast.error("Could not copy — select and copy it manually");
+                  toast.error(TOAST_COPY.copyFailed);
                 }
               }}
             >
@@ -194,7 +220,10 @@ export function WebhookSettings() {
             </Button>
           </div>
         ) : endpoints === null ? (
-          <p className="text-muted-foreground text-sm">Loading…</p>
+          <div className="space-y-2" aria-busy="true" aria-label="Loading your webhooks">
+            <Skeleton className="h-14 w-full rounded-lg" />
+            <Skeleton className="h-14 w-full rounded-lg" />
+          </div>
         ) : endpoints.length === 0 ? (
           <p className="text-muted-foreground text-sm">No webhooks yet.</p>
         ) : (
@@ -237,6 +266,7 @@ export function WebhookSettings() {
                 {confirmingDelete === endpoint.id ? (
                   <>
                     <Button
+                      ref={deleteFocus.confirmRef(endpoint.id)}
                       size="sm"
                       variant="destructive"
                       disabled={pending}
@@ -250,6 +280,7 @@ export function WebhookSettings() {
                   </>
                 ) : (
                   <Button
+                    ref={deleteFocus.triggerRef(endpoint.id)}
                     size="sm"
                     variant="ghost"
                     onClick={() => setConfirmingDelete(endpoint.id)}
@@ -263,6 +294,6 @@ export function WebhookSettings() {
           ))
         )}
       </div>
-    </div>
+    </SettingsSection>
   );
 }

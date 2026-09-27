@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
 import { importAttendeesFromCsv, importAttendeesFromText } from "@/actions/events";
+import { friendlyError } from "@/lib/errors";
 
 export function RosterImportPanel({ eventId }: { eventId: string }) {
   const router = useRouter();
@@ -34,7 +35,7 @@ export function RosterImportPanel({ eventId }: { eventId: string }) {
       .filter(Boolean)
       .join(", ");
     toast.success(
-      `Added ${result.added} ${result.added === 1 ? "person" : "people"}${extra ? ` (${extra})` : ""}.`
+      `Added ${result.added} ${result.added === 1 ? "person" : "people"}${extra ? ` (${extra})` : ""}`
     );
     router.refresh();
   }
@@ -46,7 +47,7 @@ export function RosterImportPanel({ eventId }: { eventId: string }) {
         report(await importAttendeesFromText(eventId, text));
         setText("");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not read that list.");
+        toast.error(friendlyError(error, "Couldn’t read that list — is it the right file?"));
       }
     });
   }
@@ -56,7 +57,7 @@ export function RosterImportPanel({ eventId }: { eventId: string }) {
       try {
         report(await importAttendeesFromCsv(eventId, await file.text()));
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not read that CSV.");
+        toast.error(friendlyError(error, "Couldn’t read that CSV — is it the right export?"));
       } finally {
         if (fileInput.current) fileInput.current.value = "";
       }

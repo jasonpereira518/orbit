@@ -2,8 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, Lock } from "lucide-react";
-import { setSurfaceHiddenAction, setViewAsUserAction } from "@/actions/admin";
+import { Eye, EyeOff, HardHat, Lock } from "lucide-react";
+import {
+  setPreviewUnreleasedAction,
+  setSurfaceHiddenAction,
+  setViewAsUserAction,
+} from "@/actions/admin";
 import type { Surface } from "@/lib/surfaces";
 import { cn } from "@/lib/utils";
 
@@ -158,6 +162,42 @@ export function ViewAsUserButton({ active }: { active: boolean }) {
     >
       <Eye className="size-3" aria-hidden />
       {active ? "Stop viewing as a user" : "View as a general user"}
+    </button>
+  );
+}
+
+/**
+ * Opts the operator's own session past a coming-soon page (`comingSoon` in
+ * `src/lib/surfaces.ts`), which is closed to admins by default so an unreleased feature
+ * cannot ship early just because whoever is building it is an admin.
+ *
+ * No redirect either direction — unlike `ViewAsUserButton`, turning this on or off does not
+ * change what the caller can navigate to, only what an unreleased page shows once they are
+ * there — so both directions just refresh in place.
+ */
+export function PreviewUnreleasedButton({ active }: { active: boolean }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={() =>
+        start(async () => {
+          await setPreviewUnreleasedAction({ on: !active });
+          router.refresh();
+        })
+      }
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors duration-fast disabled:opacity-60",
+        active
+          ? "border-warning/40 bg-warning/10 text-warning"
+          : "border-border/70 text-muted-foreground hover:text-foreground"
+      )}
+    >
+      <HardHat className="size-3" aria-hidden />
+      {active ? "Stop previewing unreleased pages" : "Preview unreleased pages"}
     </button>
   );
 }

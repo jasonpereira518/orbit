@@ -31,7 +31,7 @@ export function placementScore(c: GraphContactInput) {
 }
 
 export function isDormantContact(c: GraphContactInput) {
-  return c.dormant === true || isCometContact(c.lastInteractionAt);
+  return c.dormant ?? isCometContact(c.lastInteractionAt);
 }
 
 function displayName(c: { fullName: string; preferredName?: string | null }) {

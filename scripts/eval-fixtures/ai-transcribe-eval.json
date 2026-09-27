@@ -1,0 +1,38 @@
+{
+  "cases": [
+    {
+      "id": "tx-01-alumni-mixer",
+      "script": "Quick note after the Harrow State alumni mixer tonight. I spent most of the evening talking with Kwabena Mensah, a backend engineer at Parcelwise, and Ingrid Solberg, who does user research at Copperline Games. Kwabena offered to send me their routing API docs, and Ingrid wants to compare notes on diary studies. I need to email both of them by Friday and send Ingrid the survey template.",
+      "names": [
+        "Kwabena Mensah",
+        "Ingrid Solberg"
+      ]
+    },
+    {
+      "id": "tx-02-coffee-referral-to-colleague",
+      "script": "Voice memo, Tuesday morning. I just had coffee with Priyanka Deshpande from Emberline Energy. She leads their grid forecasting group and might bring on two contractors next quarter. She told me to talk to Rafael Moreno, who built their data pipeline before he left to start his own company. Remind me to send Priyanka my portfolio today and to find Rafael's email before Thursday.",
+      "names": [
+        "Priyanka Deshpande",
+        "Rafael Moreno"
+      ]
+    },
+    {
+      "id": "tx-03-meetup-three-people",
+      "script": "Notes from the infrastructure meetup. First, Chidi Okonkwo, a data scientist at Fernhill Health, who wants help with anomaly detection on heart monitor data. Second, Bartholomew Achterberg, who runs developer relations at Stillwater Compute and offered me a speaking slot in January. And Grace Liang, an associate at Meridian Ridge Ventures, asked for our deck. Follow up with all three next week.",
+      "names": [
+        "Chidi Okonkwo",
+        "Bartholomew Achterberg",
+        "Grace Liang"
+      ]
+    },
+    {
+      "id": "tx-04-dinner-debrief",
+      "script": "Dinner debrief. I sat between Yusuf Demir, who leads the machine learning platform at Brightwater Logistics, and Svetlana Ivanova, a founder building climate risk tools. Haruto Nakamura joined us for dessert; he's a partner at a small fund in Seattle. Yusuf wants to trade notes on feature stores, and Svetlana asked if I'd advise her team. Send Haruto the one-pager tomorrow.",
+      "names": [
+        "Yusuf Demir",
+        "Svetlana Ivanova",
+        "Haruto Nakamura"
+      ]
+    }
+  ]
+}

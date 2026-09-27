@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { notFound } from "next/navigation";
-import { isClerkConfigured, requireUserId } from "@/lib/auth";
+import { isClerkConfigured, isDemoMode, requireUserId } from "@/lib/auth";
 
 /**
  * Thrown by admin server actions when the caller is not an operator.
@@ -31,6 +31,11 @@ function adminIds(): Set<string> {
   );
 }
 
+/** The configured operator ids, for callers that filter by them (traffic analytics). */
+export function adminUserIds(): string[] {
+  return [...adminIds()];
+}
+
 /**
  * Gated on `isClerkConfigured()` rather than `!isDemoMode()` on purpose.
  *
@@ -43,6 +48,11 @@ export function adminAccessEnabled(): boolean {
 }
 
 export function isAdminUser(userId: string | null | undefined): boolean {
+  // Every worktree should be able to reach the console without real Clerk keys or an
+  // ADMIN_USER_IDS entry. `isDemoMode()` requires NODE_ENV === "development" on top of no
+  // Clerk keys, and no deployed build ever runs with NODE_ENV=development, so this can't
+  // leak into production the way gating on `!isClerkConfigured()` alone would.
+  if (isDemoMode()) return true;
   if (!adminAccessEnabled()) return false;
   // Belt and braces: in demo mode every caller resolves to this literal, so even a
   // mistaken ADMIN_USER_IDS=demo-user must not grant access. `adminAccessEnabled()`

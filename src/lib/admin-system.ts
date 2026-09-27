@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import {
   cronRuns,
@@ -7,7 +7,6 @@ import {
   outreachMessages,
   outreachProspects,
   suggestedReminders,
-  usageEvents,
   webhookDeliveries,
   opsAlertState,
 } from "@/db/schema";
@@ -81,15 +80,6 @@ export type CronHealth = {
   }>;
 };
 
-export type AiFailureTaxonomy = {
-  /** Orbit's problem: timeouts, empty responses, unavailable models. */
-  ours: Array<{ kind: string; count: number }>;
-  /** The user's problem: bad keys, their own rate limits. */
-  theirs: Array<{ kind: string; count: number }>;
-  totalCalls: number;
-  slowest: Array<{ operation: string; maxMs: number }>;
-};
-
 export type ErrorEventSummary = {
   grouped: Array<{ source: string; kind: string; count: number; lastAt: Date | null }>;
   recent: Array<{ source: string; kind: string; message: string | null; at: Date }>;
@@ -123,42 +113,34 @@ export async function getOutreachQueueHealth(now = new Date()): Promise<Outreach
   const db = await getDb();
 
   // outreach_messages has no user_id: it joins message → prospect → campaign.user_id.
-  // Only ids and timestamps are selected — prospect and message bodies are third-party
-  // prose and must never reach an admin surface.
-  const rows = await db
+  // Only counts and a timestamp come back — prospect and message bodies are third-party
+  // prose and must never reach an admin surface. Counted in SQL: a backed-up queue is
+  // exactly when pulling one row per message into JS to count it would hurt most.
+  const isOverdue = lt(outreachMessages.scheduledFor, now);
+  const [row] = await db
     .select({
-      userId: outreachCampaigns.userId,
-      scheduledFor: outreachMessages.scheduledFor,
+      overdue: sql<number>`(count(*) filter (where ${isOverdue}))::int`,
+      total: countInt,
+      oldest: sql<string | null>`min(${outreachMessages.scheduledFor}) filter (where ${isOverdue})`,
+      accounts: sql<number>`(count(distinct ${outreachCampaigns.userId}) filter (where ${isOverdue}))::int`,
     })
     .from(outreachMessages)
     .innerJoin(outreachProspects, eq(outreachProspects.id, outreachMessages.prospectId))
     .innerJoin(outreachCampaigns, eq(outreachCampaigns.id, outreachProspects.campaignId))
     .where(eq(outreachMessages.status, "scheduled"));
 
-  let overdue = 0;
-  let notYetDue = 0;
-  let oldest: Date | null = null;
-  const accounts = new Set<string>();
-
-  for (const row of rows) {
-    const due = toDate(row.scheduledFor);
-    if (due && due.getTime() < now.getTime()) {
-      overdue += 1;
-      accounts.add(row.userId);
-      if (!oldest || due.getTime() < oldest.getTime()) oldest = due;
-    } else {
-      notYetDue += 1;
-    }
-  }
+  const overdue = num(row?.overdue);
+  const oldest = toDate(row?.oldest);
 
   return {
     overdue,
-    notYetDue,
+    // Everything not yet overdue, including a message with no send time at all.
+    notYetDue: num(row?.total) - overdue,
     oldestOverdue: oldest,
     oldestOverdueDays: oldest
       ? Math.round((now.getTime() - oldest.getTime()) / DAY_MS)
       : null,
-    accounts: accounts.size,
+    accounts: num(row?.accounts),
   };
 }
 
@@ -202,50 +184,6 @@ export async function getCronHealth(
       : null,
     missed: hasMissedRun(latest?.startedAt ?? null, now),
     recent,
-  };
-}
-
-export async function getAiFailureTaxonomy(days = 7, now = new Date()): Promise<AiFailureTaxonomy> {
-  const db = await getDb();
-  const since = new Date(now.getTime() - days * DAY_MS);
-
-  const [failures, totals, slowest] = await Promise.all([
-    db
-      .select({ kind: usageEvents.errorKind, n: countInt })
-      .from(usageEvents)
-      .where(and(eq(usageEvents.success, 0), gt(usageEvents.createdAt, since)))
-      .groupBy(usageEvents.errorKind),
-    db
-      .select({ n: countInt })
-      .from(usageEvents)
-      .where(gt(usageEvents.createdAt, since)),
-    // max, not avg or p95: there is no percentile helper, and mean latency changes no
-    // decision. Max is what catches "transcription takes 94s and users think it hung".
-    db
-      .select({
-        operation: usageEvents.operation,
-        maxMs: sql<string>`coalesce(max(${usageEvents.durationMs}), 0)`,
-      })
-      .from(usageEvents)
-      .where(gt(usageEvents.createdAt, since))
-      .groupBy(usageEvents.operation)
-      .orderBy(desc(sql`coalesce(max(${usageEvents.durationMs}), 0)`))
-      .limit(5),
-  ]);
-
-  const ours: Array<{ kind: string; count: number }> = [];
-  const theirs: Array<{ kind: string; count: number }> = [];
-  for (const row of failures) {
-    const kind = row.kind ?? "other";
-    (OUR_ERROR_KINDS.has(kind) ? ours : theirs).push({ kind, count: row.n });
-  }
-  const bySize = (a: { count: number }, b: { count: number }) => b.count - a.count;
-
-  return {
-    ours: ours.sort(bySize),
-    theirs: theirs.sort(bySize),
-    totalCalls: totals[0]?.n ?? 0,
-    slowest: slowest.map((r) => ({ operation: r.operation, maxMs: num(r.maxMs) })),
   };
 }
 
@@ -294,7 +232,7 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
   const db = await getDb();
   const since = new Date(now.getTime() - days * DAY_MS);
 
-  const [bySource, byOutcome, ignored, retried, recentInvalid] = await Promise.all([
+  const [bySource, ignored, retried, recentInvalid] = await Promise.all([
     db
       .select({
         source: webhookDeliveries.source,
@@ -304,11 +242,6 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
       .from(webhookDeliveries)
       .where(gt(webhookDeliveries.createdAt, since))
       .groupBy(webhookDeliveries.source, webhookDeliveries.outcome),
-    db
-      .select({ outcome: webhookDeliveries.outcome, n: countInt })
-      .from(webhookDeliveries)
-      .where(gt(webhookDeliveries.createdAt, since))
-      .groupBy(webhookDeliveries.outcome),
     db
       .select({
         eventType: webhookDeliveries.eventType,
@@ -339,11 +272,16 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
       .limit(10),
   ]);
 
+  // The per-outcome totals are the per-source rows summed: same window, coarser grouping,
+  // so there is no need to scan the window a second time for them.
+  const byOutcome = new Map<string, number>();
+  for (const r of bySource) byOutcome.set(r.outcome, (byOutcome.get(r.outcome) ?? 0) + r.n);
+
   return {
     bySource: bySource
       .map((r) => ({ source: r.source, outcome: r.outcome, count: r.n }))
       .sort((a, b) => b.count - a.count),
-    byOutcome: byOutcome.map((r) => ({ outcome: r.outcome, count: r.n })),
+    byOutcome: [...byOutcome].map(([outcome, count]) => ({ outcome, count })),
     ignored: ignored.map((r) => ({
       eventType: r.eventType,
       reason: r.reason,
@@ -373,8 +311,11 @@ export async function getBugSignatures(): Promise<BugSignatures> {
       ),
     // Measures the harm of an unconfigured Blob store directly, instead of logging the
     // config fact once per cold start: these are base64 images living in Postgres.
+    // `substr(…, 1, 5)` is exactly `LIKE 'data:%'` but detoasts one chunk of each image
+    // rather than all of it. The same figure is on the page's data-quality panel; that one
+    // is a separate server component, so the two cannot share a read.
     db.execute(
-      sql`SELECT count(*)::int AS n FROM contacts WHERE profile_image_url LIKE 'data:%'`
+      sql`SELECT count(*)::int AS n FROM contacts WHERE substr(profile_image_url, 1, 5) = 'data:'`
     ),
   ]);
 
@@ -483,13 +424,6 @@ export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
   }
 }
 
-export async function getSystemIssueCount(now = new Date()): Promise<number> {
-  const i = await getSystemIssues(now);
-  return (
-    i.wedged + i.overdue + i.calendarErrors + i.needsReauth + i.syncWedged + i.syncFailing
-  );
-}
-
 export type WebhookSource = "clerk" | "stripe" | "resend";
 
 /**
@@ -540,6 +474,7 @@ export type OpsStatus = {
   builtAt: string | null;
   sentryUrl: string | null;
   slackConfigured: boolean;
+  slackDmConfigured: boolean;
 };
 
 /** What the admin "System status" strip shows: is anyone watching, and what did they see. */
@@ -567,5 +502,6 @@ export async function getOpsStatus(now = new Date()): Promise<OpsStatus> {
     builtAt: process.env.BUILD_TIME ?? null,
     sentryUrl: process.env.SENTRY_PROJECT_URL ?? null,
     slackConfigured: Boolean(process.env.SLACK_OPS_WEBHOOK_URL),
+    slackDmConfigured: Boolean(process.env.SLACK_BOT_TOKEN && process.env.SLACK_ALERT_USER_ID),
   };
 }

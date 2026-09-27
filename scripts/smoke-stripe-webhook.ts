@@ -26,7 +26,7 @@ process.env.STRIPE_SECRET_KEY ||= "sk_test_smoke_only_not_a_real_key";
 import Stripe from "stripe";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { userSettings, billingEvents, webhookDeliveries } from "../src/db/schema";
+import { userSettings, billingEvents, webhookDeliveries, stripeProcessedEvents } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { getEntitlements } from "../src/lib/entitlements";
 import {
@@ -63,6 +63,7 @@ function sessionEvent(over: Record<string, unknown> = {}) {
         client_reference_id: USER,
         payment_status: "paid",
         customer: "cus_smoke_1",
+        payment_intent: "pi_smoke_lifetime_1",
         metadata: { [LIFETIME_METADATA_KEY]: LIFETIME_METADATA_VALUE },
         ...over,
       },
@@ -173,6 +174,32 @@ function disputeEvent(
   };
 }
 
+/** A charge on the Lifetime purchase's own payment intent. */
+function lifetimeChargeEvent(over: Record<string, unknown>, eventId: string) {
+  return {
+    id: eventId,
+    object: "event",
+    type: "charge.refunded",
+    created: 1_700_000_500,
+    data: {
+      object: {
+        id: "ch_smoke_lt_1",
+        object: "charge",
+        customer: "cus_smoke_1",
+        currency: "usd",
+        payment_intent: "pi_smoke_lifetime_1",
+        amount: 2500,
+        amount_captured: 2500,
+        amount_refunded: 0,
+        refunded: false,
+        // Unexpanded, as current API versions send it: revocation must not depend on it.
+        refunds: { object: "list", data: [] },
+        ...over,
+      },
+    },
+  };
+}
+
 /** An annual Pro checkout session — $50/yr, which must book as $4.17/mo. */
 function annualProSession(eventId = "evt_smoke_annual_1") {
   return {
@@ -269,6 +296,8 @@ async function reset() {
   await db.delete(billingEvents).where(eq(billingEvents.userId, CASH_USER));
   await db.delete(billingEvents).where(eq(billingEvents.userId, ANNUAL_USER));
   await db.delete(webhookDeliveries).where(eq(webhookDeliveries.source, "stripe"));
+  await db.delete(stripeProcessedEvents);
+  await db.delete(stripeProcessedEvents);
   await ensureUserSettings(USER);
 }
 
@@ -353,13 +382,17 @@ async function main() {
       where: eq(userSettings.userId, PRO_USER),
     }))!;
 
-  const proSession = sessionEvent({
-    id: "cs_test_smoke_pro",
-    client_reference_id: PRO_USER,
-    customer: "cus_smoke_pro",
-    mode: "subscription",
-    metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
-  });
+  // Its own event id: real Stripe ids are unique, and the webhook now dedupes on them.
+  const proSession = {
+    ...sessionEvent({
+      id: "cs_test_smoke_pro",
+      client_reference_id: PRO_USER,
+      customer: "cus_smoke_pro",
+      mode: "subscription",
+      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
+    }),
+    id: "evt_smoke_pro_checkout",
+  };
   const proOk = await post(signedRequest(proSession));
   check("pro session -> 200", proOk.status === 200, String(proOk.status));
 
@@ -707,6 +740,50 @@ async function main() {
     (await ledgerFor(USER)).filter((r) => r.kind === "lifetime").length === 1
   );
 
+  /* ------------------------------------------------- refunds revoke ------------- */
+  console.log("\nwithdraws Lifetime on a full refund, not a partial one");
+  const lifetimeRow = (await ledgerFor(USER)).find((r) => r.kind === "lifetime");
+  check(
+    "the Lifetime booking remembers its payment intent",
+    lifetimeRow?.detail?.paymentIntentId === "pi_smoke_lifetime_1",
+    JSON.stringify(lifetimeRow?.detail)
+  );
+  await post(signedRequest(lifetimeChargeEvent({ amount_refunded: 1000 }, "evt_smoke_lt_partial")));
+  check("a partial refund keeps Lifetime", (await lifetimeAt()) !== null);
+
+  const fullRefund = lifetimeChargeEvent({ refunded: true, amount_refunded: 2500 }, "evt_smoke_lt_full");
+  const refundRes = await post(signedRequest(fullRefund));
+  check("full refund -> 200", refundRes.status === 200, String(refundRes.status));
+  check("a full refund of the Lifetime charge withdraws Lifetime", (await lifetimeAt()) === null);
+  const afterRefund = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, USER) });
+  check("…so the account resolves to free", resolvePlan(afterRefund).plan === "free", resolvePlan(afterRefund).plan);
+  const refundRetry = await post(signedRequest(fullRefund));
+  check("a redelivered refund is harmless", refundRetry.status === 200 && (await lifetimeAt()) === null);
+
+  console.log("\nwithdraws Lifetime on a lost dispute");
+  const regrant = sessionEvent({ id: "cs_test_smoke_2", payment_intent: "pi_smoke_lifetime_2" }) as Record<string, unknown>;
+  regrant.id = "evt_smoke_lt_regrant";
+  await post(signedRequest(regrant));
+  check("a second purchase grants Lifetime again", (await lifetimeAt()) !== null);
+  const lost = await post(
+    signedRequest(
+      disputeEvent(
+        "charge.dispute.closed",
+        {
+          id: "dp_smoke_lt",
+          charge: "ch_smoke_lt_2",
+          customer: "cus_smoke_1",
+          payment_intent: "pi_smoke_lifetime_2",
+          amount: 2500,
+          status: "lost",
+        },
+        "evt_smoke_lt_dispute"
+      )
+    )
+  );
+  check("lost dispute -> 200", lost.status === 200, String(lost.status));
+  check("a lost dispute on the Lifetime charge withdraws Lifetime", (await lifetimeAt()) === null);
+
   /* ------------------------------------------------- delivery telemetry ---------- */
   console.log("\nrecords its own deliveries");
   const deliveries = await db
@@ -757,6 +834,7 @@ async function main() {
     await db.delete(userSettings).where(eq(userSettings.userId, u));
   }
   await db.delete(webhookDeliveries).where(eq(webhookDeliveries.source, "stripe"));
+  await db.delete(stripeProcessedEvents);
   console.log("\nAll Stripe webhook checks passed.");
 }
 

@@ -9,15 +9,38 @@ export function ExpandableText({
   lines = 2,
   className,
   buttonClassName,
+  onLayoutChange,
 }: {
   text: string;
   lines?: 2 | 3 | 4;
   className?: string;
   buttonClassName?: string;
+  /**
+   * Called after the rendered height changes — the See more control appearing once
+   * overflow is measured, or the text expanding and collapsing. For containers that
+   * size themselves from a one-off measurement: a toast, which sonner measures once
+   * and then locks to that height while the stack is hovered.
+   */
+  onLayoutChange?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const ref = useRef<HTMLParagraphElement>(null);
+
+  // Held in a ref so a new callback identity never re-fires the effect below — only a
+  // real change in layout does.
+  const onLayoutChangeRef = useRef(onLayoutChange);
+  useEffect(() => {
+    onLayoutChangeRef.current = onLayoutChange;
+  });
+  const hasRendered = useRef(false);
+  useEffect(() => {
+    if (!hasRendered.current) {
+      hasRendered.current = true;
+      return;
+    }
+    onLayoutChangeRef.current?.();
+  }, [expanded, overflows]);
 
   useEffect(() => {
     const el = ref.current;

@@ -7,6 +7,7 @@ import {
   hydrateDesktopNotifiedIds,
   registerNotificationServiceWorker,
   showDesktopNotification,
+  syncDesktopNotificationsPreference,
 } from "@/lib/browser-notifications";
 
 /**
@@ -22,6 +23,14 @@ export function DueNotificationsWatcher() {
   const running = useRef(false);
   const swReady = useRef(false);
   const dueItems = pulse?.dueItems;
+  const accountPreference = pulse?.desktopNotificationsEnabled;
+
+  // Before the delivery effect below, so a pulse that both turns notifications off (from
+  // another device) and carries due items is read with the new preference, not the old.
+  useEffect(() => {
+    if (accountPreference === undefined) return;
+    syncDesktopNotificationsPreference(accountPreference);
+  }, [accountPreference]);
 
   useEffect(() => {
     if (!dueItems || dueItems.length === 0) return;

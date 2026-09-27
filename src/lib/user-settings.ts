@@ -1,6 +1,7 @@
 import { cache } from "react";
-import { and, count, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, count, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { queuePlanUpgradeTransition } from "@/lib/plan-upgrade-events";
 import { userSettings } from "@/db/schema";
 
 /**
@@ -178,6 +179,33 @@ export async function setUserIdentity(
 }
 
 /**
+ * Stores a Terms acceptance. `onlyIfUnset` is for the Clerk webhook: user.created can be
+ * retried, and a retry must never re-stamp an old acceptance with a newer version. The
+ * guided-setup checkbox writes unconditionally — it IS an acceptance of the current text.
+ * Returns whether a row was written.
+ */
+export async function recordTermsAcceptance(
+  userId: string,
+  acceptance: { acceptedAt: Date; version: string },
+  opts: { onlyIfUnset?: boolean } = {}
+): Promise<boolean> {
+  const db = await getDb();
+  const where = opts.onlyIfUnset
+    ? and(eq(userSettings.userId, userId), isNull(userSettings.termsAcceptedAt))
+    : eq(userSettings.userId, userId);
+  const rows = await db
+    .update(userSettings)
+    .set({
+      termsAcceptedAt: acceptance.acceptedAt,
+      termsVersion: acceptance.version,
+      updatedAt: new Date(),
+    })
+    .where(where)
+    .returning();
+  return rows.length > 0;
+}
+
+/**
  * Clerk timestamps are unix epochs, but the units vary by field across the API surface.
  * Anything below ~2001-09 in milliseconds is far more likely to be seconds.
  */
@@ -216,11 +244,11 @@ export type SubscriptionMirror = {
 export async function setSubscriptionState(
   userId: string,
   mirror: SubscriptionMirror,
-  opts: { stripeCustomerId?: string | null } = {}
+  opts: { stripeCustomerId?: string | null; eventKey?: string; eventAt?: Date } = {}
 ) {
-  await ensureUserSettings(userId);
+  const existing = await ensureUserSettings(userId);
   const db = await getDb();
-  await db
+  const [updated] = await db
     .update(userSettings)
     .set({
       subscriptionPlan: mirror.plan,
@@ -235,9 +263,32 @@ export async function setSubscriptionState(
       ...(opts.stripeCustomerId !== undefined
         ? { stripeCustomerId: opts.stripeCustomerId }
         : {}),
+      // GREATEST, not assignment: two deliveries racing must never move the clock backwards.
+      ...(opts.eventAt
+        ? {
+            subscriptionEventAt: sql`GREATEST(${userSettings.subscriptionEventAt}, ${opts.eventAt.toISOString()}::timestamptz)`,
+          }
+        : {}),
       updatedAt: new Date(),
     })
-    .where(eq(userSettings.userId, userId));
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  // Queues the one-shot celebration when the RESOLVED plan moves upward. Server-side on
+  // purpose: the client watcher's localStorage key is per-device, so upgrading on a phone
+  // would celebrate again on a laptop, and clearing site data replays it.
+  if (updated) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: updated,
+      eventKey:
+        opts.eventKey ??
+        `subscription:${userId}:${mirror.status ?? "none"}:${mirror.periodEnd ?? "none"}`,
+    });
+  }
+
+  return updated;
 }
 
 /**
@@ -261,20 +312,98 @@ export async function findUserIdByStripeCustomerId(customerId: string) {
  */
 export async function setLifetimePurchase(
   userId: string,
-  opts: { purchasedAt?: Date; stripeCustomerId?: string | null } = {}
+  opts: {
+    purchasedAt?: Date;
+    stripeCustomerId?: string | null;
+    eventKey?: string;
+  } = {}
 ) {
   const existing = await ensureUserSettings(userId);
   if (existing?.lifetimePurchasedAt) return;
 
   const db = await getDb();
-  await db
+  const [updated] = await db
     .update(userSettings)
     .set({
       lifetimePurchasedAt: opts.purchasedAt ?? new Date(),
       stripeCustomerId: opts.stripeCustomerId ?? existing?.stripeCustomerId ?? null,
+      // Resolved: nothing left for the AI gate to ask Stripe about.
+      lifetimeCheckoutSessionId: null,
+      lifetimeCheckoutStartedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  if (updated) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: updated,
+      eventKey: opts.eventKey ?? `lifetime:${userId}`,
+    });
+  }
+
+  return updated;
+}
+
+/**
+ * Withdraws a Lifetime purchase after a full refund or a lost dispute.
+ *
+ * Idempotent: Stripe retries, and a second revocation of an already-withdrawn grant is a
+ * no-op. Comps are untouched — `comped_plan` outranks this column in `resolvePlan`, and an
+ * operator's grant is not something a refund can take back. Queues no plan transition:
+ * the celebration watcher only ever looks upward.
+ *
+ * Returns whether a grant was actually removed.
+ */
+export async function revokeLifetimePurchase(userId: string): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db
+    .update(userSettings)
+    .set({ lifetimePurchasedAt: null, updatedAt: new Date() })
+    .where(
+      and(eq(userSettings.userId, userId), isNotNull(userSettings.lifetimePurchasedAt))
+    )
+    .returning();
+  return rows.length > 0;
+}
+
+/**
+ * Remember the Lifetime Checkout Session this account just opened, so the AI gate can ask
+ * Stripe about it if the webhook is slow. Overwrites any earlier one — only the latest
+ * attempt can still be paid. See `src/lib/lifetime-checkout.ts`.
+ */
+export async function setPendingLifetimeCheckout(userId: string, sessionId: string) {
+  await ensureUserSettings(userId);
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({
+      lifetimeCheckoutSessionId: sessionId,
+      lifetimeCheckoutStartedAt: new Date(),
       updatedAt: new Date(),
     })
     .where(eq(userSettings.userId, userId));
+}
+
+/**
+ * Forget a pending Lifetime checkout that Stripe says is over (expired, or not ours).
+ *
+ * Conditional on the id, so a stale verdict about an OLD session can never erase a newer
+ * checkout the user opened in the meantime.
+ */
+export async function clearPendingLifetimeCheckout(userId: string, sessionId: string) {
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ lifetimeCheckoutSessionId: null, lifetimeCheckoutStartedAt: null })
+    .where(
+      and(
+        eq(userSettings.userId, userId),
+        eq(userSettings.lifetimeCheckoutSessionId, sessionId)
+      )
+    );
 }
 
 /** How many one-time Lifetime purchases have been made. Reported in /admin. */
@@ -302,9 +431,13 @@ export async function countLifetimePurchases() {
 export async function setCompedPlan(
   userId: string,
   plan: "orbit" | "lifetime" | null,
-  opts: { note?: string | null; adminUserId?: string | null } = {}
+  opts: {
+    note?: string | null;
+    adminUserId?: string | null;
+    eventKey?: string;
+  } = {}
 ) {
-  await ensureUserSettings(userId);
+  const existing = await ensureUserSettings(userId);
   const db = await getDb();
 
   const [row] = await db
@@ -320,6 +453,26 @@ export async function setCompedPlan(
     })
     .where(eq(userSettings.userId, userId))
     .returning();
+
+  // Comps celebrate too, and have to queue here rather than riding on the Stripe
+  // producers: `comped_plan` outranks every billing signal in `resolvePlan`, so a grant
+  // moves the resolved plan upward without any subscription or purchase ever being
+  // written. Without this the watcher would see the upgrade, find nothing queued, and
+  // stay silent — which also silently breaks `triggerDemoCelebration`, since that comps
+  // the demo account.
+  //
+  // The event key is stamped with the grant time so revoking and re-granting the same
+  // plan celebrates again, while a retry of the same grant does not.
+  if (row) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: row,
+      eventKey:
+        opts.eventKey ??
+        `comp:${userId}:${plan ?? "none"}:${row.compedAt?.getTime() ?? 0}`,
+    });
+  }
 
   return row;
 }

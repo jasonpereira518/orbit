@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { and, asc, eq, gte, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, reminders, userSettings } from "@/db/schema";
@@ -45,6 +45,40 @@ export function generateCalendarFeedToken() {
   return randomBytes(32).toString("base64url");
 }
 
+/**
+ * What `user_settings.calendar_feed_token` stores: the SHA-256 of the token, hex. The feed
+ * URL is a bearer credential, so the column holds only its fingerprint and a copy of the
+ * table opens nobody's calendar. Must equal the SQL that hashed existing rows in place:
+ * encode(sha256(convert_to(token, 'UTF8')), 'hex').
+ */
+export function hashCalendarFeedToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+/** Mint a token, store its hash, and return the token — the only time it exists in plaintext. */
+export async function mintCalendarFeedToken(userId: string): Promise<string> {
+  const token = generateCalendarFeedToken();
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({
+      calendarFeedToken: hashCalendarFeedToken(token),
+      calendarFeedTokenCreatedAt: new Date(),
+      calendarFeedLastFetchedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(userSettings.userId, userId));
+  return token;
+}
+
+export async function clearCalendarFeedToken(userId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ calendarFeedToken: null, calendarFeedTokenCreatedAt: null, calendarFeedLastFetchedAt: null, updatedAt: new Date() })
+    .where(eq(userSettings.userId, userId));
+}
+
 export function buildCalendarFeedUrl(token: string) {
   return `${getAppBaseUrl()}/api/calendar/${token}.ics`;
 }
@@ -64,7 +98,7 @@ export async function findUserByFeedToken(rawToken: string) {
 
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
-    where: eq(userSettings.calendarFeedToken, token),
+    where: eq(userSettings.calendarFeedToken, hashCalendarFeedToken(token)),
     columns: {
       userId: true,
       calendarFeedLastFetchedAt: true,
@@ -116,7 +150,9 @@ export async function buildRemindersFeed(userId: string) {
       contactPreferredName: contacts.preferredName,
     })
     .from(reminders)
-    .leftJoin(contacts, eq(reminders.contactId, contacts.id))
+    // Scoped to the owner too: a reminder's contactId is a client-supplied reference, and an
+    // unscoped join would print another account's contact name into this feed.
+    .leftJoin(contacts, and(eq(reminders.contactId, contacts.id), eq(contacts.userId, userId)))
     .where(
       and(
         eq(reminders.userId, userId),

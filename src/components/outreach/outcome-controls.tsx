@@ -9,6 +9,7 @@ import {
   OUTCOME_LABELS,
   type OutreachMessageOutcome,
 } from "@/lib/outreach-types";
+import { friendlyError } from "@/lib/errors";
 
 const QUICK_OUTCOMES: OutreachMessageOutcome[] = [
   "positive_reply",
@@ -43,7 +44,7 @@ export function OutcomeControls({
         setShowNotes(false);
         onUpdated?.();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to log outcome");
+        toast.error(friendlyError(err, "Couldn’t log that outcome — try again?"));
       }
     });
   }

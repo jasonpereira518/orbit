@@ -7,6 +7,8 @@ import {
   upsertGmailConnection,
 } from "@/lib/gmail";
 import { isDemoMode } from "@/lib/auth";
+import { deleteEventConnection } from "@/lib/events/connections";
+import { missingGooglePurposes, serializeGooglePurposes } from "@/lib/google-scopes";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
 /** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
@@ -38,6 +40,17 @@ export async function GET(request: Request) {
       kind: "provider_denied",
       message: error,
     });
+    // A cancelled consent still carries the state, so honour its returnTo too — otherwise
+    // "Cancel" on Google's screen dumped the user on /recruiters whichever page they
+    // started from. Best-effort: a bad or missing state just keeps the default.
+    try {
+      const { returnTo, purposes } = await consumeGmailOAuthState(state);
+      const [purpose] = purposes;
+      if (returnTo) redirectBase = new URL(returnTo, url.origin);
+      if (purpose) redirectBase.searchParams.set("purpose", purpose);
+    } catch {
+      // keep the default destination
+    }
     redirectBase.searchParams.set("gmail", "error");
     redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set("reason", error);
@@ -47,8 +60,9 @@ export async function GET(request: Request) {
   try {
     if (!code) throw new Error("Missing authorization code");
 
-    const { userId: stateUserId, returnTo } = await consumeGmailOAuthState(state);
+    const { userId: stateUserId, returnTo, purposes } = await consumeGmailOAuthState(state);
     if (returnTo) redirectBase = new URL(returnTo, url.origin);
+    if (purposes.length > 0) redirectBase.searchParams.set("purpose", purposes[0]);
 
     let sessionUserId: string | null = null;
     if (isDemoMode()) {
@@ -64,7 +78,38 @@ export async function GET(request: Request) {
 
     const tokens = await exchangeCodeForTokens(code);
     const email = await fetchGoogleProfileEmail(tokens.access_token);
-    await upsertGmailConnection(sessionUserId, tokens, email);
+    const { row: connection, switchedFrom } = await upsertGmailConnection(sessionUserId, tokens, email);
+
+    // The upsert has already run by here — whatever it did (including swapping the account
+    // and resetting scopes/cursor to the new grant alone) is true regardless of what the
+    // missing-scope check below decides, so every redirect from this point on must say so.
+    if (switchedFrom) {
+      redirectBase.searchParams.set("switched", "1");
+      // The confirmation-email scan is opted into PER MAILBOX, and its row carries no token of
+      // its own — `events/sync.ts` resolves one from `gmail_connections` by user. Left behind
+      // after a switch it still bears the old address while pointing at the new mailbox: either
+      // failing every pass up the backoff ladder, or reading a mailbox whose owner never opted
+      // in. Disconnecting already takes it; switching accounts has to as well. (Microsoft has
+      // no equivalent row.)
+      await deleteEventConnection(sessionUserId, "gmail");
+    }
+
+    // Google's granular consent lets people untick a box. Only a grant that covers none of
+    // what was asked is a failed connect; a partial one is connected, and the feature whose
+    // scope is missing offers its own Allow button on the account page.
+    const missing = missingGooglePurposes(purposes, connection?.scopes);
+    if (purposes.length > 0 && missing.length === purposes.length) {
+      await recordErrorEvent({
+        source: ERROR_SOURCES.oauthGmailCallback,
+        kind: "missing_scope",
+        message: serializeGooglePurposes(missing),
+      });
+      redirectBase.searchParams.set("purpose", missing[0]);
+      redirectBase.searchParams.set("gmail", "error");
+      redirectBase.searchParams.set("google", "error");
+      redirectBase.searchParams.set("reason", "missing_scope");
+      return NextResponse.redirect(redirectBase);
+    }
 
     redirectBase.searchParams.set("gmail", "connected");
     redirectBase.searchParams.set("google", "connected");
@@ -79,7 +124,10 @@ export async function GET(request: Request) {
     redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set(
       "reason",
-      err instanceof Error ? err.message : "oauth_failed"
+      // A code, not the message. The full error is already in recordErrorEvent above;
+      // in the URL it only leaked token-endpoint bodies into a toast, browser history
+      // and access logs.
+      "oauth_failed"
     );
     return NextResponse.redirect(redirectBase);
   }

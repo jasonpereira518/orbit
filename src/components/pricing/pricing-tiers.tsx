@@ -87,6 +87,22 @@ function TierCta({
       );
     }
 
+    if (currentPlan === "orbit") {
+      // One plan at a time: a Pro subscriber switches from Settings, where the dialog says
+      // Pro ends on the spot with no refund. Checkout refuses them from here anyway.
+      return (
+        <Link
+          href="/settings#settings-plan"
+          className={cn(
+            base,
+            "border border-[#f2c14e]/45 text-[#f2c14e] hover:opacity-90"
+          )}
+        >
+          Switch from Pro in Settings
+        </Link>
+      );
+    }
+
     return <LifetimeCheckoutButton priceUsd={lifetimePriceUsd} />;
   }
 

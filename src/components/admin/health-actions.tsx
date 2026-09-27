@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCw, XCircle, PlugZap, CalendarOff, Radar, Megaphone } from "lucide-react";
+import { RotateCw, XCircle, PlugZap, CalendarOff, Radar, Megaphone, MessageCircle } from "lucide-react";
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
@@ -10,9 +10,11 @@ import {
   retryImportAction,
   runOpsSweepAction,
   sendTestAlertAction,
+  sendTestSlackDMAction,
   setCalendarFeedEnabledAction,
 } from "@/actions/admin";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 /**
  * The per-row repair buttons on `/admin/health`.
@@ -142,8 +144,14 @@ export function DisableCalendarFeedButton({
   );
 }
 
-/** "Run sweep now" and "Send test alert" for the System status strip. */
-export function OpsButtons({ slackConfigured }: { slackConfigured: boolean }) {
+/** "Run sweep now", "Send test alert", and "Send test DM" for the System status strip. */
+export function OpsButtons({
+  slackConfigured,
+  slackDmConfigured,
+}: {
+  slackConfigured: boolean;
+  slackDmConfigured: boolean;
+}) {
   const [pending, start] = useTransition();
   return (
     <span className="flex items-center gap-2">
@@ -163,7 +171,7 @@ export function OpsButtons({ slackConfigured }: { slackConfigured: boolean }) {
                 parts.length ? `Sweep done: ${parts.join("; ")}` : `Sweep done: ${r.active.length} condition(s) active, nothing new`
               );
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Sweep failed");
+              toast.error(friendlyError(err, "The sweep didn’t run — try again?"));
             }
           })
         }
@@ -182,13 +190,32 @@ export function OpsButtons({ slackConfigured }: { slackConfigured: boolean }) {
               await sendTestAlertAction();
               toast.success("Test alert sent to Slack");
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Could not reach Slack");
+              toast.error(friendlyError(err, "Couldn’t reach Slack — try again?"));
             }
           })
         }
       >
         <Megaphone className="size-3" aria-hidden />
         Send test alert
+      </button>
+      <button
+        type="button"
+        className={cn(ROW_BUTTON, (pending || !slackDmConfigured) && "opacity-60")}
+        disabled={pending || !slackDmConfigured}
+        title={slackDmConfigured ? undefined : "SLACK_BOT_TOKEN / SLACK_ALERT_USER_ID is not set"}
+        onClick={() =>
+          start(async () => {
+            try {
+              await sendTestSlackDMAction();
+              toast.success("Test DM sent to Slack");
+            } catch (err) {
+              toast.error(friendlyError(err, "Couldn’t reach Slack — try again?"));
+            }
+          })
+        }
+      >
+        <MessageCircle className="size-3" aria-hidden />
+        Send test DM
       </button>
     </span>
   );

@@ -25,6 +25,7 @@ import { PlanBadge } from "@/components/admin/primitives";
 import { PLAN_LABELS, type Plan } from "@/lib/plan-limits";
 import type { PlanSource } from "@/lib/entitlements";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 type Choice = "lifetime" | "orbit" | "none";
 
@@ -188,14 +189,14 @@ function CompPlanDialog({
         });
         toast.success(
           choice === "none"
-            ? `Comp removed — now on ${PLAN_LABELS[result.plan]}.`
-            : `Comped ${PLAN_LABELS[result.plan]}.`
+            ? `Comp removed — now on ${PLAN_LABELS[result.plan]}`
+            : `Comped ${PLAN_LABELS[result.plan]}`
         );
         onOpenChange(false);
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not change the plan."
+          friendlyError(err, "Couldn’t change the plan — try again?")
         );
       }
     });

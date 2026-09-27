@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { feedback, feedbackScreenshots, userSettings } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
@@ -339,17 +339,4 @@ export async function deleteFeedbackScreenshot(
 
   await db.delete(feedbackScreenshots).where(eq(feedbackScreenshots.id, id));
   return row;
-}
-
-/** Recent entries for the Product page's "what are people saying" strip. */
-export async function recentFeedbackForOverview(limit = 5): Promise<FeedbackListRow[]> {
-  const db = await getDb();
-  const rows = await db
-    .select(listSelection())
-    .from(feedback)
-    .leftJoin(userSettings, eq(userSettings.userId, feedback.userId))
-    .where(gte(feedback.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)))
-    .orderBy(desc(feedback.createdAt))
-    .limit(limit);
-  return rows as FeedbackListRow[];
 }

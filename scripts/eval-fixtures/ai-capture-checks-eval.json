@@ -1,0 +1,213 @@
+{
+ "$comment": "Capture checks (decisions/capture.ts decideCaptureChecks): whether the referral LANGUAGE test's 'referral' is right, which existing tag a proposed tag means, and what each extracted name is in the note.",
+ "referrals": [
+  {
+   "id": "ref-yes-01",
+   "label": "Referral at Stripe",
+   "sentence": "She said she'd put my name forward for the PM role at Stripe.",
+   "referral": true
+  },
+  {
+   "id": "ref-yes-02",
+   "label": "Referral",
+   "sentence": "Marcus offered to refer me to the hiring manager on the card team.",
+   "referral": true
+  },
+  {
+   "id": "ref-yes-03",
+   "label": "Intro to hiring manager",
+   "sentence": "Dana will pass my resume along to the recruiter she works with at Figma.",
+   "referral": true
+  },
+  {
+   "id": "ref-yes-04",
+   "label": "Vouch",
+   "sentence": "Leo is happy to vouch for me if I apply to Notion.",
+   "referral": true
+  },
+  {
+   "id": "ref-no-01",
+   "label": "Referrals",
+   "sentence": "They don't do referrals at her company, everything goes through the portal.",
+   "referral": false
+  },
+  {
+   "id": "ref-no-02",
+   "label": "Book recommendation",
+   "sentence": "I'd recommend you read High Output Management before the interview.",
+   "referral": false
+  },
+  {
+   "id": "ref-no-03",
+   "label": "Tool",
+   "sentence": "He recommended you try Linear for tracking the roadmap.",
+   "referral": false
+  },
+  {
+   "id": "ref-no-04",
+   "label": "Referral bonus",
+   "sentence": "Their referral bonus is $5k, which she said is why everyone refers friends.",
+   "referral": false
+  },
+  {
+   "id": "ref-no-05",
+   "label": "Advice",
+   "sentence": "She suggested I refer back to the job description when I tailor my resume.",
+   "referral": false
+  },
+  {
+   "id": "ref-no-06",
+   "label": "Declined",
+   "sentence": "Sam said he can't refer me since he only just joined.",
+   "referral": false
+  }
+ ],
+ "tags": [
+  {
+   "id": "tag-01",
+   "existing": [
+    "Fintech",
+    "Investors",
+    "Mentors",
+    "Machine learning"
+   ],
+   "proposed": "ML",
+   "expect": "Machine learning"
+  },
+  {
+   "id": "tag-02",
+   "existing": [
+    "Fintech",
+    "Investors",
+    "Mentors"
+   ],
+   "proposed": "investor",
+   "expect": "Investors"
+  },
+  {
+   "id": "tag-03",
+   "existing": [
+    "Fintech",
+    "Investors",
+    "Mentors"
+   ],
+   "proposed": "mentorship",
+   "expect": "Mentors"
+  },
+  {
+   "id": "tag-04",
+   "existing": [
+    "Fintech",
+    "Investors",
+    "Climate"
+   ],
+   "proposed": "climate tech",
+   "expect": "Climate"
+  },
+  {
+   "id": "tag-05",
+   "existing": [
+    "Fintech",
+    "Investors",
+    "Climate"
+   ],
+   "proposed": "robotics",
+   "expect": "keep_new"
+  },
+  {
+   "id": "tag-06",
+   "existing": [
+    "YC",
+    "Stanford",
+    "Founders"
+   ],
+   "proposed": "Y Combinator",
+   "expect": "YC"
+  },
+  {
+   "id": "tag-07",
+   "existing": [
+    "YC",
+    "Stanford",
+    "Founders"
+   ],
+   "proposed": "startup founder",
+   "expect": "Founders"
+  },
+  {
+   "id": "tag-08",
+   "existing": [
+    "YC",
+    "Stanford",
+    "Founders"
+   ],
+   "proposed": "Berkeley",
+   "expect": "keep_new"
+  },
+  {
+   "id": "tag-09",
+   "existing": [
+    "Recruiters",
+    "Designers",
+    "Engineers"
+   ],
+   "proposed": "talent acquisition",
+   "expect": "Recruiters"
+  },
+  {
+   "id": "tag-10",
+   "existing": [
+    "Recruiters",
+    "Designers",
+    "Engineers"
+   ],
+   "proposed": "product manager",
+   "expect": "keep_new"
+  }
+ ],
+ "presence": [
+  {
+   "id": "pres-01",
+   "note": "Coffee with Priya today. She mentioned her manager Tom is leaving Stripe.",
+   "people": {
+    "Priya": "participant",
+    "Tom": "mentioned",
+    "Leo Chen": "not_in_note"
+   }
+  },
+  {
+   "id": "pres-02",
+   "note": "Lunch with Marcus and Dana at the Ramp office. Marcus showed the new card; Dana asked about hiring.",
+   "people": {
+    "Marcus": "participant",
+    "Dana": "participant",
+    "Sarah": "not_in_note"
+   }
+  },
+  {
+   "id": "pres-03",
+   "note": "Call with Nora. She said her old boss at Spotify, Erik, would be a good intro for me.",
+   "people": {
+    "Nora": "participant",
+    "Erik": "mentioned"
+   }
+  },
+  {
+   "id": "pres-04",
+   "note": "Met Sam at the YC dinner. His cofounder Mia runs sales.",
+   "people": {
+    "Sam": "participant",
+    "Mia": "mentioned",
+    "Tobias": "not_in_note"
+   }
+  },
+  {
+   "id": "pres-05",
+   "note": "Quick sync with Aisha about the fund. Nothing on portfolio companies.",
+   "people": {
+    "Aisha": "participant",
+    "Imani Clarke": "not_in_note"
+   }
+  }
+ ]
+}

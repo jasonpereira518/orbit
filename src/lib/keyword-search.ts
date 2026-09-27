@@ -17,6 +17,8 @@ export type SearchableContact = {
   industry?: string | null;
   keyFacts?: string[] | null;
   sharedInterests?: string[] | null;
+  /** The `contacts.opportunities` mirror: "Referral - could forward my resume". */
+  opportunities?: string[] | null;
   relationshipScore?: number | null;
   priorityLevel?: number | null;
   tags?: string[];
@@ -38,7 +40,8 @@ export type MatchedField =
   | "notes"
   | "industry"
   | "keyFacts"
-  | "interests";
+  | "interests"
+  | "opportunities";
 
 export type SearchHitSource = "keyword" | "semantic" | "hybrid";
 
@@ -69,6 +72,10 @@ const FIELD_WEIGHTS: Record<MatchedField, number> = {
   summary: 3.5,
   keyFacts: 3.5,
   interests: 3.5,
+  // Above notes and level with key facts. An opportunity is a deliberate classification of
+  // what this relationship can produce, not incidental prose, and "who can refer me?" is a
+  // question people come back to Orbit specifically to answer.
+  opportunities: 3.5,
   notes: 3,
   industry: 3,
   phone: 2.5,
@@ -93,6 +100,7 @@ const FIELD_LABELS: Record<MatchedField, string> = {
   industry: "industry",
   keyFacts: "key facts",
   interests: "interests",
+  opportunities: "opportunities",
 };
 
 function normalize(value: string) {
@@ -126,6 +134,7 @@ function fieldValues(contact: SearchableContact): Record<MatchedField, string> {
     industry: contact.industry || "",
     keyFacts: (contact.keyFacts || []).join(" "),
     interests: (contact.sharedInterests || []).join(" "),
+    opportunities: (contact.opportunities || []).join(" "),
   };
 }
 

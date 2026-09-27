@@ -39,9 +39,6 @@ const CIRCLE_PX = 32;
  */
 const CONTRACT = { type: "spring", stiffness: 500, damping: 32 } as const;
 
-/** The check draws itself. Held back a beat so it starts as the contraction settles. */
-const DRAW = { duration: 0.2, ease: EASE_HOUSE, delay: 0.06 } as const;
-
 export function SendButton({
   sending,
   sent,
@@ -126,40 +123,39 @@ export function SendButton({
           Send
         </motion.span>
 
-        {sent && <SentCheck reduced={reduced} />}
+        {sent && <SentCheck />}
       </Button>
     </motion.div>
   );
 }
 
 /**
- * Drawn, not revealed.
- *
- * A check that fades in is a state; a check that strokes itself in is an event, and an
- * event is what just happened. Absolutely positioned so the contracting width and the
- * button's padding cannot push it around mid-draw.
+ * Transitions.dev's success check (`.t-success-check` in globals.css): fade, rotate, blur
+ * and a Y-bob in parallel with the stroke drawing itself. Still an event rather than a
+ * state, and still absolutely positioned so the contracting width and the button's padding
+ * cannot push it around mid-draw. Its own reduced-motion rule shows the finished check.
  *
  * `aria-hidden`: the success is announced by the `toast.success` the panel still fires,
  * through sonner's own live region. Two announcements of one event is worse than none.
  */
-function SentCheck({ reduced }: { reduced: boolean }) {
+function SentCheck() {
   return (
-    <svg
+    <span
       aria-hidden
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={3}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="absolute inset-0 m-auto size-4"
+      data-state="in"
+      className="t-success-check absolute inset-0 m-auto size-4"
     >
-      <motion.path
-        d="M20 6 9 17l-5-5"
-        initial={reduced ? false : { pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={reduced ? { duration: 0 } : DRAW}
-      />
-    </svg>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="size-4"
+      >
+        <path d="M20 6 9 17l-5-5" />
+      </svg>
+    </span>
   );
 }

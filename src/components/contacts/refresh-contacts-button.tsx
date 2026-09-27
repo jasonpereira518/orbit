@@ -16,6 +16,7 @@ import {
   startBackgroundJob,
   updateBackgroundJob,
 } from "@/lib/background-jobs";
+import { friendlyError } from "@/lib/errors";
 
 type RefreshProgress = {
   done: number;
@@ -43,7 +44,7 @@ export function RefreshContactsButton() {
 
       if (targets.length === 0) {
         toast.message("No LinkedIn profiles to refresh", {
-          description: "Add LinkedIn URLs to contacts first.",
+          description: "Add LinkedIn URLs to your contacts first",
         });
         return;
       }
@@ -89,8 +90,8 @@ export function RefreshContactsButton() {
           avatarOnly
             ? {
                 description: hasApollo
-                  ? "Role and school need a paid Apollo plan. Photos were refreshed from LinkedIn."
-                  : "Photos refreshed from LinkedIn. Add an Apollo key in Settings to also update roles and schools.",
+                  ? "Photos refreshed — roles and schools need a paid Apollo plan"
+                  : "Photos refreshed — add an Apollo key in Settings to update roles and schools too",
               }
             : undefined
         );
@@ -98,29 +99,30 @@ export function RefreshContactsButton() {
         resultMessage = "Photo lookup rate limited";
         toast.message(resultMessage, {
           description:
-            "LinkedIn photo providers are temporarily unavailable. Try again in a few minutes.",
+            "LinkedIn photos aren’t available right now — try again in a few minutes",
         });
       } else {
         resultMessage = "No profiles updated";
         toast.message(resultMessage, {
           description:
             unmatched > 0
-              ? "Couldn’t find public photos for these LinkedIn profiles. Check that each URL is a public linkedin.com/in/… link."
-              : "Nothing changed.",
+              ? "Couldn’t find public photos for these profiles — check each is a public linkedin.com/in/… link"
+              : "Nothing changed",
         });
       }
 
       if (failed > 0) {
         toast.error(
-          `${failed} contact${failed === 1 ? "" : "s"} failed to refresh`
+          `${failed} contact${failed === 1 ? "" : "s"} didn’t refresh — try again?`
         );
       }
 
       finishBackgroundJob(jobId, { status: "completed", resultMessage });
       router.refresh();
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Could not refresh contacts";
+      // Feeds the toast AND the job's stored error, which the notifications panel
+      // renders — so both must be copy a person can read.
+      const message = friendlyError(err, "Couldn’t refresh your contacts — try again?");
       toast.error(message);
       finishBackgroundJob(jobId, { status: "failed", error: message });
     } finally {

@@ -1,82 +1,45 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import {
-  getOutlookConnectionStatus,
-  startOutlookOAuth,
-  disconnectOutlook,
-  type OutlookConnectionStatus,
-} from "@/actions/outlook";
-import { previewOutlookContacts, type OutlookContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
+import {
+  SESSION_EXPIRED_LINE,
+  calendarOffLine,
+  calendarPauseLine,
+} from "@/lib/connection-status";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
-import { BusyHint } from "@/components/imports/import-utils";
-import { startImportJob, useImportJob } from "@/lib/import-job-runner";
-import { toast } from "@/lib/toast";
+import { BusyHint, ConnectedImportSkeleton } from "@/components/imports/import-utils";
+import { useImportJob } from "@/lib/import-job-runner";
+import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
+import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
+import { useContactsImport } from "@/components/settings/use-contacts-import";
 
-export function OutlookContactsImport() {
-  const router = useRouter();
+/** `returnTo`: see `GoogleContactsImport`. */
+export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const job = useImportJob();
-  const [pending, start] = useTransition();
-  const [status, setStatus] = useState<OutlookConnectionStatus | null>(null);
-  const [people, setPeople] = useState<OutlookContactPerson[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loaded, setLoaded] = useState(false);
+  const connection = useMicrosoftConnection({ returnTo, deletesData: false });
+  const { status } = connection;
+  const contacts = useContactsImport("microsoft");
+  const { people, selected, setSelected, loaded } = contacts;
 
-  const outlookJob =
-    job?.kind === "outlook_contacts" && job.status === "running" ? job : null;
-  const importProgress = outlookJob?.progress ?? null;
-  const busy = pending || job?.status === "running";
-
-  // Clear local review UI once this job finishes (toast handled globally by
-  // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
-  // deferred a microtask so this reads as reacting to the external job-runner singleton
-  // (react-hooks/set-state-in-effect's own carve-out: "calling setState in a callback
-  // function when external state changes") rather than an unconditional synchronous
-  // setState in the effect body.
-  useEffect(() => {
-    if (!job || job.kind !== "outlook_contacts") return;
-    if (
-      job.status !== "completed" &&
-      job.status !== "failed" &&
-      job.status !== "cancelled"
-    )
-      return;
-    queueMicrotask(() => {
-      setPeople([]);
-      setSelected(new Set());
-      setLoaded(false);
-    });
-  }, [job]);
-
-  useEffect(() => {
-    getOutlookConnectionStatus().then(setStatus).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const outlook = params.get("outlook");
-    if (outlook === "connected") {
-      toast.success("Outlook connected");
-      params.delete("outlook");
-      params.delete("reason");
-      const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
-      router.refresh();
-      getOutlookConnectionStatus().then(setStatus).catch(() => {});
-    } else if (outlook === "error") {
-      toast.error(params.get("reason") || "Outlook connection failed");
-      params.delete("outlook");
-      params.delete("reason");
-      const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
-    }
-  }, [router]);
+  const importProgress = contacts.progress;
+  const busy = connection.busy || contacts.loading || job?.status === "running";
+  // Connect and disconnect run in the hook's own transition, not this component's — so the
+  // "loading contacts" label/hint (below) has to read both, the way `pending` alone used to
+  // cover all three when they shared one transition. Not `busy`: that also folds in a
+  // running import job, which never used to flip this label.
+  const loadingContacts = contacts.loading || connection.busy;
+  // One handler for every button: each asks Microsoft for that feature's scope and nothing
+  // else. "Reconnect" after a session expiry asks as "contacts" (this is the contacts card);
+  // a paused calendar sync reconnects as "calendar", which was already granted, so fixing it
+  // never asks for anything new.
+  const connect = (purpose: MicrosoftPurpose = "contacts") => connection.connect([purpose]);
 
   if (!status) {
-    return null;
+    // Not known yet: the card's frame with placeholders, rather than an empty panel that
+    // the card then pops into.
+    return <ConnectedImportSkeleton id="import-outlook-contacts" title="Outlook Contacts" />;
   }
 
   if (!status.configured) {
@@ -84,7 +47,7 @@ export function OutlookContactsImport() {
       <IntegrationUnavailable
         id="import-outlook-contacts"
         title="Outlook Contacts"
-        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Export your Outlook contacts as a CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
           "MICROSOFT_CLIENT_ID",
           "MICROSOFT_CLIENT_SECRET",
@@ -100,112 +63,100 @@ export function OutlookContactsImport() {
         <div>
           <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {status.connected
-              ? `Connected as ${status.emailAddress}`
-              : "Connect your Microsoft account to import contacts directly."}
+            {status.status === "needs_reauth"
+              ? `${SESSION_EXPIRED_LINE} to import contacts again`
+              : status.connected
+                ? `Connected as ${status.emailAddress}${!status.hasContactsScope ? " — allow contacts access to import" : ""}`
+                : "Connect your Microsoft account to import contacts directly."}
           </p>
+          {status.status === "disarmed" ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
+              <span>{calendarPauseLine(status.syncError, "Microsoft")}</span>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={() => connect("calendar")}>
+                Reconnect Microsoft
+              </Button>
+            </p>
+          ) : status.status === "paused" && status.hasCalendarScope ? (
+            // The person switched meetings off themselves: not a fault, so no warning colour
+            // and no Reconnect — a consent screen would not turn them back on.
+            //
+            // Guarded on the scope because `deriveConnectionHealth` answers "paused" from
+            // `sync_status` alone: an account that paused and later reconnected without
+            // calendar would otherwise say "Meetings are switched off — turn them on"
+            // directly above the block below offering to grant the calendar in the first
+            // place. Only one of those two can be true, so only one renders. (`disarmed`
+            // above cannot reach this: its branch already requires the scope.)
+            <p className="mt-1 text-sm text-muted-foreground">{calendarOffLine("Microsoft")}</p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {!status.connected ? (
-            <Button
-              disabled={busy}
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const { url } = await startOutlookOAuth("/imports");
-                    window.location.href = url;
-                  } catch (err) {
-                    toast.error(err instanceof Error ? err.message : "OAuth failed");
-                  }
-                })
-              }
-            >
-              Connect Microsoft
+            <Button disabled={busy} onClick={() => connect()}>
+              {status.status === "needs_reauth" ? "Reconnect Microsoft" : "Connect Microsoft"}
             </Button>
           ) : (
             <>
-              <Button
+              {!status.hasContactsScope ? (
+                <Button disabled={busy} onClick={() => connect("contacts")}>
+                  Allow contacts access
+                </Button>
+              ) : (
+                <Button disabled={busy} onClick={contacts.load}>
+                  {loadingContacts ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
+                </Button>
+              )}
+              <DisconnectAccountDialog
+                provider="outlook"
                 disabled={busy}
-                onClick={() =>
-                  start(async () => {
-                    try {
-                      const res = await previewOutlookContacts();
-                      setPeople(res.people);
-                      setSelected(
-                        new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
-                      );
-                      setLoaded(true);
-                      toast.success(`Loaded ${res.people.length} contacts`);
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not load contacts"
-                      );
-                    }
-                  })
-                }
-              >
-                {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  start(async () => {
-                    await disconnectOutlook();
-                    setPeople([]);
-                    setLoaded(false);
-                    setStatus(null);
-                    toast.success("Outlook disconnected");
-                    router.refresh();
-                    getOutlookConnectionStatus().then(setStatus).catch(() => {});
-                  })
-                }
-              >
-                Disconnect
-              </Button>
+                onConfirm={(opts) => {
+                  connection.disconnect(opts).then(() => {
+                    contacts.reset();
+                  });
+                }}
+              />
             </>
           )}
         </div>
       </div>
 
-      {pending && !loaded ? <BusyHint>Loading contacts…</BusyHint> : null}
+      {status.connected ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/40 px-4 py-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium text-ink">Outlook calendar</h3>
+            <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
+              {!status.hasCalendarScope
+                ? "Read-only. Orbit logs meetings with people you know onto their timelines, and keeps them current."
+                : status.status === "disarmed"
+                  ? "Sync is paused — see above."
+                  : status.status === "paused"
+                    ? "Sync is off — see above."
+                    : "Sync is on — meetings with people you know are logged on their timelines."}
+            </p>
+          </div>
+          {!status.hasCalendarScope ? (
+            <Button variant="outline" disabled={busy} onClick={() => connect("calendar")}>
+              Sync your Outlook calendar
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {loadingContacts && !loaded ? <BusyHint>Loading contacts…</BusyHint> : null}
 
       {people.length > 0 && (
         <>
           <ImportPeopleReview
-            people={people.map((p) => ({
-              id: p.id,
-              name: p.fullName,
-              subtitle: [p.title, p.company].filter(Boolean).join(" · "),
-              isRepeat: p.isRepeat,
-              repeatReason: p.duplicate?.reason,
-            }))}
+            people={people}
             selectedIds={selected}
             onSelectedIdsChange={setSelected}
-            onRemove={(id) => {
-              setPeople((prev) => prev.filter((p) => p.id !== id));
-              setSelected((prev) => {
-                const next = new Set(prev);
-                next.delete(id);
-                return next;
-              });
-            }}
+            onRemove={contacts.remove}
           />
           <Button
             disabled={busy || selected.size === 0}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => {
               if (busy) return;
-              try {
-                const ids = [...selected];
-                startImportJob({ kind: "outlook_contacts", ids });
-                // Clear the review list immediately; progress lives in the runner.
-                setPeople([]);
-                setSelected(new Set());
-                setLoaded(false);
-              } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Import failed");
-              }
+              contacts.start();
             }}
           >
             {importProgress

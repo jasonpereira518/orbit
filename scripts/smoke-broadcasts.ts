@@ -87,7 +87,8 @@ async function main() {
   });
   check("operator prose is escaped, never injected", built.html.includes("&lt;b&gt;") && built.html.includes("&amp;"));
   check("the unsubscribe link reaches the html", built.html.includes("https://u.test/x"));
-  check("the text part carries the footer", built.text.includes("Unsubscribe any time"));
+  check("the text part carries the footer", built.text.includes("Leave the waitlist"));
+  check("the shell never names the product or shows its logo", !/orbit/i.test(built.html) && !/orbit/i.test(built.text));
   check("no undefined interpolation", !built.html.includes("undefined"));
 
   // --- send
@@ -145,7 +146,7 @@ async function main() {
   check("a sent broadcast cannot be deleted as a draft", (await deleteDraftBroadcast(draft.id)) === null);
 
   // --- page renders
-  const { default: Page } = await import("../src/app/(admin)/admin/growth/broadcasts/page");
+  const { default: Page } = await import("../src/app/(clerk)/(admin)/admin/growth/broadcasts/page");
   const tree = await Page();
   check("the broadcasts page renders", tree != null);
 

@@ -1,0 +1,711 @@
+{
+ "$comment": "Same person? over two contact cards (decisions/duplicates.ts). 'same' is the truth; the task also computes which rule tier the pair hits, so wrong merges today (different people the rules auto-merge) are measured directly.",
+ "pairs": [
+  {
+   "id": "diff-title-01",
+   "a": {
+    "fullName": "Michael Chen",
+    "title": "Software Engineer",
+    "company": "Google",
+    "location": "Mountain View",
+    "email": "mchen@google.com"
+   },
+   "b": {
+    "fullName": "Michael Chen",
+    "title": "Software Engineer",
+    "company": "Meta",
+    "location": "Menlo Park",
+    "email": "michael.chen@meta.com"
+   },
+   "same": false,
+   "why": "same name+title, different employers at the same time"
+  },
+  {
+   "id": "diff-title-02",
+   "a": {
+    "fullName": "Sarah Johnson",
+    "title": "Product Manager",
+    "company": "Stripe",
+    "school": "Stanford"
+   },
+   "b": {
+    "fullName": "Sarah Johnson",
+    "title": "Product Manager",
+    "company": "Shopify",
+    "school": "University of Waterloo",
+    "location": "Toronto"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-title-03",
+   "a": {
+    "fullName": "David Kim",
+    "title": "Recruiter",
+    "company": "Amazon",
+    "location": "Seattle"
+   },
+   "b": {
+    "fullName": "David Kim",
+    "title": "Recruiter",
+    "company": "Robert Half",
+    "location": "Chicago"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-title-04",
+   "a": {
+    "fullName": "Emily Davis",
+    "title": "Designer",
+    "company": "Figma",
+    "location": "San Francisco"
+   },
+   "b": {
+    "fullName": "Emily Davis",
+    "title": "Designer",
+    "location": "London",
+    "aiSummary": "Freelance illustrator in London who did the logo for a friend's bakery."
+   },
+   "same": false
+  },
+  {
+   "id": "diff-title-05",
+   "a": {
+    "fullName": "James Lee",
+    "title": "Founder",
+    "company": "Acme Robotics",
+    "aiSummary": "Building warehouse robots; met at a hardware meetup."
+   },
+   "b": {
+    "fullName": "James Lee",
+    "title": "Founder",
+    "company": "Leaf & Loaf Bakery",
+    "aiSummary": "Runs a neighbourhood bakery; sells sourdough at the farmers market."
+   },
+   "same": false
+  },
+  {
+   "id": "diff-title-06",
+   "a": {
+    "fullName": "Anna Müller",
+    "title": "Data Scientist",
+    "company": "SAP",
+    "location": "Walldorf"
+   },
+   "b": {
+    "fullName": "Anna Müller",
+    "title": "Data Scientist",
+    "company": "Spotify",
+    "location": "Stockholm"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-co-01",
+   "a": {
+    "fullName": "John Smith",
+    "title": "Technical Recruiter",
+    "company": "Google",
+    "location": "New York"
+   },
+   "b": {
+    "fullName": "John Smith",
+    "title": "Staff Engineer",
+    "company": "Google",
+    "location": "Zurich",
+    "school": "ETH Zurich"
+   },
+   "same": false,
+   "why": "same name+company, different roles and cities"
+  },
+  {
+   "id": "diff-co-02",
+   "a": {
+    "fullName": "Wei Zhang",
+    "title": "Research Scientist",
+    "company": "Microsoft",
+    "location": "Beijing"
+   },
+   "b": {
+    "fullName": "Wei Zhang",
+    "title": "Sales Director",
+    "company": "Microsoft",
+    "location": "Dallas"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-co-03",
+   "a": {
+    "fullName": "Maria Garcia",
+    "title": "Nurse",
+    "company": "Kaiser Permanente",
+    "location": "Oakland"
+   },
+   "b": {
+    "fullName": "Maria Garcia",
+    "title": "Software Engineer",
+    "company": "Kaiser Permanente",
+    "location": "Denver"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-co-04",
+   "a": {
+    "fullName": "Chris Brown",
+    "title": "Intern",
+    "company": "Deloitte",
+    "aiSummary": "Summer intern in 2026, economics student at Duke."
+   },
+   "b": {
+    "fullName": "Chris Brown",
+    "title": "Managing Partner",
+    "company": "Deloitte",
+    "aiSummary": "Managing partner, 25 years at the firm, advises on M&A."
+   },
+   "same": false
+  },
+  {
+   "id": "diff-co-05",
+   "a": {
+    "fullName": "Priya Sharma",
+    "title": "Engineer",
+    "company": "Infosys",
+    "location": "Bangalore"
+   },
+   "b": {
+    "fullName": "Priya Sharma",
+    "title": "Marketing Lead",
+    "company": "Infosys",
+    "location": "London"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-fuzzy-01",
+   "a": {
+    "fullName": "Alec Park",
+    "title": "Designer",
+    "company": "Stripe"
+   },
+   "b": {
+    "fullName": "Alex Park",
+    "title": "Account Executive",
+    "company": "Stripe",
+    "location": "Chicago"
+   },
+   "same": false,
+   "why": "fuzzy name + company, clearly different roles"
+  },
+  {
+   "id": "diff-fuzzy-02",
+   "a": {
+    "fullName": "Jon Rivera",
+    "title": "Engineer",
+    "company": "Airbnb"
+   },
+   "b": {
+    "fullName": "Juan Rivera",
+    "title": "Chef",
+    "company": "Airbnb Experiences host"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-fuzzy-03",
+   "a": {
+    "fullName": "Kate Wilson",
+    "title": "CFO",
+    "company": "Brex"
+   },
+   "b": {
+    "fullName": "Katie Wilson",
+    "title": "Student",
+    "company": "Brex intern program",
+    "school": "UCLA",
+    "aiSummary": "Undergraduate at UCLA, interned at Brex last summer."
+   },
+   "same": false
+  },
+  {
+   "id": "diff-co-06",
+   "a": {
+    "fullName": "Tom Nguyen",
+    "title": "Software Engineer",
+    "company": "Apple",
+    "location": "Cupertino",
+    "email": "tnguyen@apple.com"
+   },
+   "b": {
+    "fullName": "Tom Nguyen",
+    "title": "Software Engineer",
+    "company": "Apple",
+    "location": "Austin",
+    "email": "tom.nguyen@apple.com",
+    "aiSummary": "Works on Apple Pay backend in Austin; different team from the Cupertino Tom."
+   },
+   "same": false,
+   "why": "summary says it outright"
+  },
+  {
+   "id": "same-co-01",
+   "a": {
+    "fullName": "Priya Natarajan",
+    "title": "Product Manager",
+    "company": "Stripe",
+    "email": "priya@stripe.com"
+   },
+   "b": {
+    "fullName": "Priya Natarajan",
+    "title": "Senior Product Manager",
+    "company": "Stripe",
+    "location": "San Francisco"
+   },
+   "same": true,
+   "why": "promotion"
+  },
+  {
+   "id": "same-co-02",
+   "a": {
+    "fullName": "Leo Chen",
+    "title": "Engineer",
+    "company": "Notion"
+   },
+   "b": {
+    "fullName": "Leo Chen",
+    "title": "Staff Engineer",
+    "company": "Notion",
+    "school": "MIT"
+   },
+   "same": true
+  },
+  {
+   "id": "same-co-03",
+   "a": {
+    "fullName": "Dana Holt",
+    "title": "Recruiter",
+    "company": "TalentBridge",
+    "email": "dana@talentbridge.example"
+   },
+   "b": {
+    "fullName": "Dana Holt",
+    "title": "Senior Recruiter",
+    "company": "TalentBridge"
+   },
+   "same": true
+  },
+  {
+   "id": "same-co-04",
+   "a": {
+    "fullName": "Marcus Webb",
+    "title": "VP Engineering",
+    "company": "Ramp",
+    "location": "New York"
+   },
+   "b": {
+    "fullName": "Marcus Webb",
+    "title": "VP Eng",
+    "company": "Ramp"
+   },
+   "same": true,
+   "why": "abbreviated title"
+  },
+  {
+   "id": "same-title-01",
+   "a": {
+    "fullName": "Aisha Bello",
+    "title": "Partner",
+    "company": "Seedcamp",
+    "location": "London"
+   },
+   "b": {
+    "fullName": "Aisha Bello",
+    "title": "Partner",
+    "location": "London"
+   },
+   "same": true,
+   "why": "company missing on one side"
+  },
+  {
+   "id": "same-title-02",
+   "a": {
+    "fullName": "Ravi Menon",
+    "title": "Staff Engineer",
+    "company": "Datadog"
+   },
+   "b": {
+    "fullName": "Ravi Menon",
+    "title": "Staff Engineer",
+    "aiSummary": "Works on Datadog's metrics pipeline."
+   },
+   "same": true
+  },
+  {
+   "id": "same-fuzzy-01",
+   "a": {
+    "fullName": "Alex Chen",
+    "title": "Product Designer",
+    "company": "Figma"
+   },
+   "b": {
+    "fullName": "Alexander Chen",
+    "title": "Product Designer",
+    "company": "Figma"
+   },
+   "same": true,
+   "why": "nickname"
+  },
+  {
+   "id": "same-fuzzy-02",
+   "a": {
+    "fullName": "Bob Martinez",
+    "title": "CTO",
+    "company": "Plaid"
+   },
+   "b": {
+    "fullName": "Robert Martinez",
+    "title": "CTO",
+    "company": "Plaid"
+   },
+   "same": true
+  },
+  {
+   "id": "same-fuzzy-03",
+   "a": {
+    "fullName": "Katherine O'Neil",
+    "title": "Head of Sales",
+    "company": "Rippling"
+   },
+   "b": {
+    "fullName": "Katherine ONeil",
+    "title": "Head of Sales",
+    "company": "Rippling"
+   },
+   "same": true,
+   "why": "punctuation"
+  },
+  {
+   "id": "same-fuzzy-04",
+   "a": {
+    "fullName": "Jen Wu",
+    "title": "Engineering Manager",
+    "company": "Snowflake"
+   },
+   "b": {
+    "fullName": "Jennifer Wu",
+    "title": "Engineering Manager",
+    "company": "Snowflake"
+   },
+   "same": true
+  },
+  {
+   "id": "same-co-05",
+   "a": {
+    "fullName": "Sam Patel",
+    "title": "Founder",
+    "company": "Loop Labs",
+    "aiSummary": "Building a dev tools startup, raised a seed round."
+   },
+   "b": {
+    "fullName": "Sam Patel",
+    "title": "CEO & Founder",
+    "company": "Loop Labs"
+   },
+   "same": true
+  },
+  {
+   "id": "same-co-06",
+   "a": {
+    "fullName": "Olivia Brooks",
+    "title": "Designer",
+    "company": "Airbnb"
+   },
+   "b": {
+    "fullName": "Olivia Brooks",
+    "title": "Senior Designer",
+    "company": "Airbnb",
+    "email": "olivia.brooks@airbnb.com"
+   },
+   "same": true
+  },
+  {
+   "id": "same-bare-01",
+   "a": {
+    "fullName": "Nora Lindqvist",
+    "title": "Product Manager",
+    "company": "Spotify",
+    "location": "Stockholm"
+   },
+   "b": {
+    "fullName": "Nora Lindqvist",
+    "title": "Director of Product",
+    "company": "Klarna",
+    "location": "Stockholm",
+    "aiSummary": "Moved from Spotify to Klarna in 2025."
+   },
+   "same": true,
+   "why": "job change, summary confirms"
+  },
+  {
+   "id": "same-bare-02",
+   "a": {
+    "fullName": "Tobias Frei",
+    "title": "Engineer",
+    "company": "Google",
+    "school": "ETH Zurich"
+   },
+   "b": {
+    "fullName": "Tobias Frei",
+    "title": "Founder",
+    "company": "Frei Labs",
+    "school": "ETH Zurich",
+    "location": "Zurich"
+   },
+   "same": true,
+   "why": "left to found a company, same school"
+  },
+  {
+   "id": "same-bare-03",
+   "a": {
+    "fullName": "Imani Clarke",
+    "title": "Associate",
+    "company": "Andreessen Horowitz"
+   },
+   "b": {
+    "fullName": "Imani Clarke",
+    "title": "Principal",
+    "company": "Andreessen Horowitz"
+   },
+   "same": true
+  },
+  {
+   "id": "same-bare-04",
+   "a": {
+    "fullName": "Hiro Tanaka",
+    "location": "Tokyo",
+    "aiSummary": "Met at the Tokyo dev conference; works on mobile games."
+   },
+   "b": {
+    "fullName": "Hiro Tanaka",
+    "title": "Game Developer",
+    "company": "Square Enix",
+    "location": "Tokyo"
+   },
+   "same": true
+  },
+  {
+   "id": "same-bare-05",
+   "a": {
+    "fullName": "Fatima Zahra",
+    "title": "Consultant",
+    "company": "McKinsey"
+   },
+   "b": {
+    "fullName": "Fatima Zahra",
+    "title": "Chief of Staff",
+    "company": "Stripe",
+    "aiSummary": "Former McKinsey consultant, now chief of staff at Stripe."
+   },
+   "same": true
+  },
+  {
+   "id": "same-bare-06",
+   "a": {
+    "fullName": "Lucas Silva",
+    "email": "lucas@loopstudio.io"
+   },
+   "b": {
+    "fullName": "Lucas Silva",
+    "title": "Founder",
+    "company": "Loop Studio"
+   },
+   "same": true,
+   "why": "email domain matches the company"
+  },
+  {
+   "id": "diff-bare-01",
+   "a": {
+    "fullName": "David Smith",
+    "title": "Accountant",
+    "company": "H&R Block",
+    "location": "Phoenix"
+   },
+   "b": {
+    "fullName": "David Smith",
+    "title": "Professor of Physics",
+    "company": "MIT",
+    "location": "Cambridge"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-bare-02",
+   "a": {
+    "fullName": "Jessica Taylor",
+    "title": "Real Estate Agent",
+    "location": "Miami"
+   },
+   "b": {
+    "fullName": "Jessica Taylor",
+    "title": "Software Engineer",
+    "company": "GitHub",
+    "location": "Remote",
+    "school": "Carnegie Mellon"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-bare-03",
+   "a": {
+    "fullName": "Mohammed Ali",
+    "title": "Student",
+    "school": "University of Toronto"
+   },
+   "b": {
+    "fullName": "Mohammed Ali",
+    "title": "Surgeon",
+    "company": "Mayo Clinic",
+    "location": "Rochester"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-bare-04",
+   "a": {
+    "fullName": "Laura Chen",
+    "title": "Investor",
+    "company": "Sequoia"
+   },
+   "b": {
+    "fullName": "Laura Chen",
+    "title": "Barista",
+    "location": "Portland",
+    "aiSummary": "Makes great coffee at the shop near the office."
+   },
+   "same": false
+  },
+  {
+   "id": "diff-bare-05",
+   "a": {
+    "fullName": "Daniel Park",
+    "title": "High school teacher",
+    "location": "Seoul"
+   },
+   "b": {
+    "fullName": "Daniel Park",
+    "title": "VP Sales",
+    "company": "Salesforce",
+    "location": "San Francisco"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-bare-06",
+   "a": {
+    "fullName": "Sophie Martin",
+    "title": "Lawyer",
+    "company": "Clifford Chance",
+    "location": "Paris"
+   },
+   "b": {
+    "fullName": "Sophie Martin",
+    "title": "Yoga instructor",
+    "location": "Bali"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-bare-07",
+   "a": {
+    "fullName": "Kevin O'Brien",
+    "title": "Plumber",
+    "location": "Dublin"
+   },
+   "b": {
+    "fullName": "Kevin O'Brien",
+    "title": "Head of Growth",
+    "company": "Intercom",
+    "location": "Dublin"
+   },
+   "same": false,
+   "why": "same city, obviously different lives"
+  },
+  {
+   "id": "diff-bare-08",
+   "a": {
+    "fullName": "Grace Hopper",
+    "title": "Rear Admiral",
+    "company": "US Navy"
+   },
+   "b": {
+    "fullName": "Grace Hopper",
+    "title": "Product Manager",
+    "company": "Hopper (travel app)",
+    "aiSummary": "PM at the travel app Hopper; jokes about her name."
+   },
+   "same": false
+  },
+  {
+   "id": "same-thin-01",
+   "a": {
+    "fullName": "Zoe Adams",
+    "title": "Engineer",
+    "company": "Vercel"
+   },
+   "b": {
+    "fullName": "Zoe Adams",
+    "title": "Engineer",
+    "company": "Vercel",
+    "email": "zoe@vercel.com"
+   },
+   "same": true
+  },
+  {
+   "id": "same-thin-02",
+   "a": {
+    "fullName": "Ethan Wright",
+    "title": "Founder",
+    "company": "Tidepool",
+    "location": "Oakland"
+   },
+   "b": {
+    "fullName": "Ethan Wright",
+    "location": "Oakland",
+    "aiSummary": "Founder of a climate startup called Tidepool."
+   },
+   "same": true
+  },
+  {
+   "id": "diff-thin-01",
+   "a": {
+    "fullName": "Chris Lee",
+    "title": "Engineer",
+    "company": "Google"
+   },
+   "b": {
+    "fullName": "Chris Lee",
+    "title": "Chef",
+    "company": "Chris Lee's Kitchen"
+   },
+   "same": false
+  },
+  {
+   "id": "diff-thin-02",
+   "a": {
+    "fullName": "Michelle Wong",
+    "title": "Doctor",
+    "company": "Stanford Health"
+   },
+   "b": {
+    "fullName": "Michelle Wong",
+    "title": "Doctoral student",
+    "company": "Stanford",
+    "school": "Stanford"
+   },
+   "same": false,
+   "why": "doctor vs doctoral student"
+  }
+ ]
+}

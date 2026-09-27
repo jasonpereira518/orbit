@@ -146,7 +146,7 @@ async function main() {
   });
 
   const { default: Page } = await import(
-    "../src/app/(admin)/admin/growth/interest-list/page"
+    "../src/app/(clerk)/(admin)/admin/growth/interest-list/page"
   );
 
   // --- unfiltered
@@ -154,7 +154,8 @@ async function main() {
   check("renders every seeded signup", ["active", "unsubbed", "converted"].every((n) => all.includes(`${PREFIX}${n}@example.test`)));
   check("shows an absolute signup date", all.includes("10 Aug 2026"), all.slice(0, 400));
   check("labels the converted row", all.includes("Converted"));
-  check("labels the unsubscribed row", all.includes("Unsubscribed"));
+  check("labels the rows that left", all.includes("Left"));
+  check("counts the front wave", all.includes("Front wave"));
   check("surfaces the source from utm", all.includes("reddit · social"));
   check("renders the signup trend panel", all.includes("Signups by week"));
   check("renders the source rollup panel", all.includes("Where they come from"));
@@ -162,7 +163,9 @@ async function main() {
   check("links to the broadcast composer", all.includes("Broadcasts"));
   check("links to the email preview", all.includes("Preview emails"));
   check("shows the stored planet", all.toLowerCase().includes("jupiter"));
-  check("offers the filter tabs", ["All", "Active", "Converted", "Unsubscribed"].every((f) => all.includes(f)));
+  check("offers the filter tabs", ["All", "Waiting", "Front wave", "Converted", "Left"].every((f) => all.includes(f)));
+  check("offers both orders", all.includes("In line") && all.includes("Newest"));
+  check("never mentions the retired day-3 follow-up", !/day-3|follow-up/i.test(all));
 
   // --- filtered
   const active = textOf(
@@ -221,6 +224,26 @@ async function main() {
     summary.converted === 1,
     `converted=${summary.converted}`
   );
+  // --- the at-a-glance stats on Overview and Growth
+  const { getWaitlistStats } = await import("../src/lib/admin-interest-list");
+  const activeRow = (
+    await db.select().from(interestListSignups).where(like(interestListSignups.email, `${PREFIX}active%`))
+  )[0]!;
+  await db.insert(interestListSignups).values(
+    mk(`${PREFIX}friend@example.test`, { referredById: activeRow.id })
+  );
+  const stats = await getWaitlistStats();
+  check("stats carry the summary tiles", stats.converted === summary.converted && stats.total >= 4);
+  check("stats count joins through an invite link", stats.referred >= 1, String(stats.referred));
+  check("stats count joins this week", stats.joined7d >= 1 && stats.joined24h <= stats.joined7d);
+  const leader = stats.topReferrers.find((r) => r.email === activeRow.email);
+  check(
+    "the referrer leads the top-referrers list with their place in line",
+    leader?.referrals === 1 && typeof leader.position === "number",
+    JSON.stringify(stats.topReferrers)
+  );
+  await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}friend@%`));
+
   const audience = await (await import("../src/lib/broadcasts")).audienceFor();
   const audienceEmails = audience.filter((a) => a.email.startsWith(PREFIX)).map((a) => a.email);
   check(
@@ -230,38 +253,40 @@ async function main() {
   );
 
   // --- the integration that matters: an admin removal must actually stop the mail.
-  const {
-    unsubscribeInterestListRow,
-  } = await import("../src/lib/admin-interest-list");
-  const { sweepInterestListFollowUps } = await import(
-    "../src/lib/interest-list-follow-up"
+  // --- the integration that matters: an admin removal takes them out of the line AND the mail.
+  const { unsubscribeInterestListRow, resubscribeInterestListRow } = await import(
+    "../src/lib/admin-interest-list"
   );
+  const { readStandings } = await import("../src/lib/interest-list-ticket");
   const target = (
     await db
       .select()
       .from(interestListSignups)
       .where(like(interestListSignups.email, `${PREFIX}active%`))
   )[0];
-  // Backdate it past the follow-up delay so it would otherwise be due today.
-  await db
-    .update(interestListSignups)
-    .set({ createdAt: new Date("2026-01-01T00:00:00Z") })
-    .where(like(interestListSignups.email, `${PREFIX}active%`));
-
-  const beforeRemoval = await sweepInterestListFollowUps();
+  const placeBefore = (await readStandings()).get(target.id)?.position;
+  check("a waiting signup has a place in line", typeof placeBefore === "number");
+  const rowsInLine = findRows(await Page({ searchParams: Promise.resolve({ filter: "active" }) })) as Array<
+    RowProp & { position?: number | null }
+  >;
   check(
-    "a due signup is eligible for the follow-up before removal",
-    beforeRemoval.eligible >= 1,
-    JSON.stringify(beforeRemoval)
+    "the table is handed each row's place",
+    rowsInLine.some((r) => r.email === target.email && r.position === placeBefore),
+    JSON.stringify(rowsInLine)
   );
-  // The sweep above claimed then released it (no Resend key), so it is still pending.
   await unsubscribeInterestListRow(target.id);
-  const afterRemoval = await sweepInterestListFollowUps();
+  check("removing them takes them out of the line", !(await readStandings()).has(target.id));
+  const afterAudience = await (await import("../src/lib/broadcasts")).audienceFor();
   check(
-    "removing them from the console takes them out of the mailer",
-    afterRemoval.eligible === 0,
-    JSON.stringify(afterRemoval)
+    "removing them takes them out of the mail",
+    !afterAudience.some((a) => a.email === target.email)
   );
+  await resubscribeInterestListRow(target.id);
+  check(
+    "restoring them puts them back in their old place",
+    (await readStandings()).get(target.id)?.position === placeBefore
+  );
+  await unsubscribeInterestListRow(target.id);
 
   const searched = textOf(
     await Page({ searchParams: Promise.resolve({ q: "unsubbed" }) })
@@ -289,7 +314,7 @@ async function main() {
   check("junk query parameters fall back rather than throwing", junk.includes(`${PREFIX}`));
 
   await cleanup();
-  console.log("\ninterest-list console: all checks passed");
+  console.log("\nwaitlist console: all checks passed");
   process.exit(0);
 }
 

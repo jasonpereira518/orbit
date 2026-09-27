@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import {
-  closenessTierChipClass,
+  closenessPercentChipClass,
 } from "@/lib/closeness";
 import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
@@ -59,8 +59,10 @@ export function ContactAvatarPreview({
   children: ReactNode;
   className?: string;
 }) {
+  // Only ever true from a timer started by a client pointer event, so the portal below never
+  // renders on the server or before hydration — no separate `mounted` flag (and no extra
+  // render per avatar on mount) needed.
   const [visible, setVisible] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const openTimer = useRef<number | null>(null);
   // Cursor-following position lives in refs and is written straight to the
   // card's transform — a React render per pointermove is wasted work.
@@ -69,7 +71,6 @@ export function ContactAvatarPreview({
   const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
-    setMounted(true);
     return () => {
       if (openTimer.current) window.clearTimeout(openTimer.current);
       if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
@@ -128,8 +129,7 @@ export function ContactAvatarPreview({
       >
         {children}
       </span>
-      {mounted &&
-        visible &&
+      {visible &&
         createPortal(
           <div
             // Callback ref runs at commit (before paint): position the card
@@ -152,7 +152,6 @@ export function ContactAvatarPreview({
                 contactId={contact.id}
                 firstName={contact.firstName}
                 fullName={contact.fullName}
-                linkedinUrl={contact.linkedinUrl}
                 profileImageUrl={contact.profileImageUrl}
                 size="lg"
                 className="size-14 max-h-14 max-w-14 shrink-0"
@@ -193,9 +192,7 @@ export function ContactAvatarPreview({
                   <span
                     className={cn(
                       "rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
-                      contact.closenessTier
-                        ? closenessTierChipClass(contact.closenessTier)
-                        : "bg-muted text-muted-foreground"
+                      closenessPercentChipClass(contact.closeness)
                     )}
                   >
                     {Math.round(contact.closeness * 100)}%

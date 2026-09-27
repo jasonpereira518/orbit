@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 
 export function DeleteContactButton({
   id,
@@ -43,7 +44,7 @@ export function DeleteContactButton({
           router.refresh();
         } catch {
           setLeaving(false);
-          toast.error("Could not delete contact");
+          toast.error("Couldn’t delete that contact — try again?");
         }
       });
     }, 280);
@@ -86,8 +87,7 @@ export function DeleteContactButton({
               Delete {name ?? "this contact"}?
             </DialogTitle>
             <DialogDescription>
-              This removes the contact and their interaction history. This
-              cannot be undone.
+              {CONTACT_DELETE_EXPLAINER}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">

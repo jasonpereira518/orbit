@@ -1,9 +1,11 @@
 import { Check, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { SubscriptionManager } from "@/components/settings/subscription-manager";
 import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
-import { planCopy } from "@/lib/plan-copy";
+import { planCopy, unlimitedContactsLine } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
+import type { DemoAccountReason } from "@/lib/demo-account";
 import type { Entitlements, PlanSource } from "@/lib/entitlements";
 
 const SOURCE_NOTE: Record<PlanSource, string | null> = {
@@ -82,9 +84,12 @@ const TIER_ACCENT: Record<
 export function PlanSettings({
   entitlements,
   usage,
+  demoAccount,
 }: {
   entitlements: Entitlements;
   usage: { used: number; limit: number | null; remaining: number | null };
+  /** Set when plan limits are lifted because this is a demo account, not because of the plan. */
+  demoAccount: DemoAccountReason | null;
 }) {
   const copy = planCopy(entitlements.plan);
   const note = SOURCE_NOTE[entitlements.source];
@@ -118,7 +123,7 @@ export function PlanSettings({
       <div className="relative space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-medium text-ink">Pricing Plan</h2>
+            <h3 className="text-lg font-medium text-ink">Pricing Plan</h3>
             <p className="mt-1 text-sm text-muted-foreground">{copy.tagline}</p>
           </div>
           <span
@@ -179,7 +184,7 @@ export function PlanSettings({
         ) : (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Check className={cn("size-4", accent.ink)} aria-hidden="true" />
-            Unlimited contacts — {usage.used} in your orbit.
+            {unlimitedContactsLine(usage.used, demoAccount)}
           </p>
         )}
 
@@ -187,9 +192,9 @@ export function PlanSettings({
             Read from the same copy the pricing page renders, so the two cannot
             describe a tier differently. */}
         <div className="border-t border-border/60 pt-4">
-          <h3 className="text-sm font-medium text-ink">
+          <h4 className="text-sm font-medium text-ink">
             What&apos;s included
-          </h3>
+          </h4>
           {/* Columns, not a two-column grid. A grid ties both cells of a row to
               the tallest of them, so a feature that wraps to two lines opened a
               double gap under its short neighbour. Columns flow independently,
@@ -216,6 +221,13 @@ export function PlanSettings({
             Outreach section below. Email and SMS sending is included on your
             plan.
           </p>
+        )}
+
+        {entitlements.source === "subscription" && (
+          <div className="border-t border-border/60 pt-4">
+            <h4 className="mb-3 text-sm font-medium text-ink">Your subscription</h4>
+            <SubscriptionManager />
+          </div>
         )}
 
         <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-4">

@@ -20,7 +20,8 @@
  */
 
 import { z } from "zod";
-import { completeJson, parseAiJson, userHasAiKey } from "@/lib/ai";
+import { parseAiJson, userCanUseAi } from "@/lib/ai";
+import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import { untrustedPageBlock } from "@/lib/conversation-starters";
 import type { PageContext, ParsedProfileFields } from "./contract";
 
@@ -84,13 +85,16 @@ export async function parseProfileFields(
 
   const blob = untrustedPageBlock(page);
   if (!blob) return { ...empty, degradedReason: "no_text" };
-  if (!(await userHasAiKey(userId))) {
+  if (!(await userCanUseAi(userId))) {
     return { ...empty, degradedReason: "no_api_key" };
   }
 
   let content: string;
   try {
-    content = await completeJson(userId, {
+    // Cached on the exact page text: the panel re-reads a profile every time its tab comes
+    // back into view, and the page has not changed.
+    content = await cachedCompleteJson(userId, {
+      operation: "extension.parse",
       system: SYSTEM,
       user: [
         // What the adapter already knows, so the model corroborates rather than
@@ -104,6 +108,9 @@ export async function parseProfileFields(
         .join("\n\n"),
       temperature: 0.1,
       maxOutputTokens: 4096,
+    }, {
+      ttlDays: 7,
+      accept: (raw) => profileSchema.safeParse(parseAiJson(raw)).success,
     });
   } catch (error) {
     console.warn("[parse-profile] model call failed", error);
@@ -112,7 +119,7 @@ export async function parseProfileFields(
 
   const parsed = profileSchema.safeParse(parseAiJson(content));
   if (!parsed.success) {
-    console.warn("[parse-profile] unparseable response", content.slice(0, 300));
+    console.warn("[parse-profile] unparseable response", { chars: content.length });
     return { ...empty, degradedReason: "ai_error" };
   }
 

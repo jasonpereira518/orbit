@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   ArrowDown,
@@ -10,6 +11,7 @@ import {
   ChevronDown,
   ChevronUp,
   MoreHorizontal,
+  NotebookPen,
   Pencil,
   Sparkles,
   Trash2,
@@ -61,6 +63,8 @@ import {
   normalizeInteractionType,
 } from "@/lib/interaction-types";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -82,8 +86,16 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
  * Contact identity is deliberately absent: this only opens from that contact's own profile, so
  * a name and avatar would restate the page behind it.
  */
+/** The fields a timeline row already has, so the header can draw before the detail lands. */
+export type InteractionPreview = {
+  id: string;
+  interactionType: string;
+  interactionDate: Date | string;
+};
+
 export function InteractionDetailSheet({
   interactionId,
+  preview,
   canReorder,
   onReorder,
   canStep,
@@ -91,6 +103,7 @@ export function InteractionDetailSheet({
   onOpenChange,
 }: {
   interactionId: string | null;
+  preview?: InteractionPreview | null;
   canReorder: { up: boolean; down: boolean };
   onReorder: (direction: -1 | 1) => void;
   /** Whether a newer/older interaction exists to step to. */
@@ -117,7 +130,7 @@ export function InteractionDetailSheet({
         setDetail(await getInteractionDetail(id));
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not load this interaction"
+          friendlyError(err, "Couldn’t load this interaction — try again?")
         );
         onOpenChange(false);
       }
@@ -167,7 +180,7 @@ export function InteractionDetailSheet({
         await load(detail.id);
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not save");
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
   }
@@ -182,7 +195,7 @@ export function InteractionDetailSheet({
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not summarize those notes"
+          friendlyError(err, "Couldn’t summarize those notes — try again?")
         );
       }
     });
@@ -198,7 +211,7 @@ export function InteractionDetailSheet({
         close();
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not delete");
+        toast.error(friendlyError(err, TOAST_COPY.deleteFailed));
       }
     });
   }
@@ -216,7 +229,7 @@ export function InteractionDetailSheet({
           return next;
         });
         toast.error(
-          err instanceof Error ? err.message : "Could not update action item"
+          friendlyError(err, "Couldn’t update that action item — try again?")
         );
       }
     });
@@ -224,8 +237,17 @@ export function InteractionDetailSheet({
 
   // Read off the spec at the point of use: binding a lookup's result to a capitalized
   // local reads as constructing a component during render.
-  const typeSpec = interactionTypeSpec(detail?.interactionType ?? null);
-  const typeFamily = interactionFamilySpec(detail?.interactionType ?? null);
+  // While the detail loads, the header shows what the clicked row already knows about the same
+  // interaction — its type and date — instead of "Interaction · Loading…". Only a preview for
+  // the interaction actually requested; the body still waits for the detail.
+  const header =
+    detail && detail.id === interactionId
+      ? detail
+      : preview && preview.id === interactionId
+        ? preview
+        : null;
+  const typeSpec = interactionTypeSpec(header?.interactionType ?? null);
+  const typeFamily = interactionFamilySpec(header?.interactionType ?? null);
   const hasNotes = Boolean(detail?.rawNotes?.trim());
   const canMove = canReorder.up || canReorder.down;
 
@@ -249,16 +271,16 @@ export function InteractionDetailSheet({
             </span>
             <div className="min-w-0 flex-1">
               <SheetTitle>
-                {detail
-                  ? interactionTypeLabel(detail.interactionType)
+                {header
+                  ? interactionTypeLabel(header.interactionType)
                   : "Interaction"}
               </SheetTitle>
               {/* Not truncated: at the panel's desktop width the compact date fits on one
                   line, and on a narrow viewport wrapping to two reads better than clipping
                   the year off the end. */}
               <SheetDescription>
-                {detail
-                  ? `${format(new Date(detail.interactionDate), "EEE, MMM d, yyyy")} · ${formatDistanceToNow(new Date(detail.interactionDate), { addSuffix: true })}`
+                {header
+                  ? `${format(new Date(header.interactionDate), "EEE, MMM d, yyyy")} · ${formatDistanceToNow(new Date(header.interactionDate), { addSuffix: true })}`
                   : "Loading…"}
               </SheetDescription>
             </div>
@@ -432,18 +454,55 @@ export function InteractionDetailSheet({
               </div>
             )}
 
+            {/* Above "Also came up" and below the action items, because this is context for
+                everything already read: the per-person summary at the top answers "what did
+                THEY say", and this answers "what was the meeting". */}
+            {detail.meeting && (
+              <div>
+                <SectionLabel>From the meeting</SectionLabel>
+                <div className="space-y-2 rounded-xl border border-border/50 bg-muted/20 p-3">
+                  <p className="text-sm font-medium text-ink">{detail.meeting.title}</p>
+                  {detail.meeting.summary.trim() && (
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      {detail.meeting.summary.trim()}
+                    </p>
+                  )}
+                  {detail.meeting.decisions.length > 0 && (
+                    <div>
+                      <p className="mb-1 text-xs font-medium text-muted-foreground">
+                        Decided
+                      </p>
+                      <ul className="space-y-1">
+                        {detail.meeting.decisions.map((d, i) => (
+                          <li
+                            key={`${i}-${d}`}
+                            className="flex gap-2 text-sm leading-relaxed text-ink"
+                          >
+                            <span aria-hidden className="text-muted-foreground">
+                              &middot;
+                            </span>
+                            <span className="min-w-0 flex-1">{d}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {detail.mentions.length > 0 && (
               <div>
                 <SectionLabel>Also came up</SectionLabel>
                 <div className="flex flex-wrap gap-1.5">
                   {detail.mentions.map((m) => (
-                    <Link
+                    <IntentLink
                       key={m.contactId}
                       href={`/contacts/${m.contactId}`}
                       className="rounded-full border border-border/60 px-2.5 py-1 text-xs text-ink transition-colors hover:border-primary/50 hover:text-primary"
                     >
                       {m.fullName}
-                    </Link>
+                    </IntentLink>
                   ))}
                 </div>
               </div>
@@ -459,6 +518,18 @@ export function InteractionDetailSheet({
                 <p className="text-sm text-muted-foreground">
                   Nothing was written down for this one.
                 </p>
+              )}
+              {/* The way back to everything the capture produced — the other people, the
+                  reminders, the original photos. Reuses the affordance `reminder-card.tsx`
+                  already has rather than inventing one. */}
+              {detail.batchId && (
+                <Link
+                  href={`/capture/${detail.batchId}`}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+                >
+                  <NotebookPen className="size-3" />
+                  {detail.meeting ? "Meeting notes" : "The capture this came from"}
+                </Link>
               )}
             </div>
           </div>

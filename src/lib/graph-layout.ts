@@ -1,3 +1,4 @@
+import { initialsFromName } from "@/lib/initials";
 import {
   buildConstellationFit,
   constellationFitEdges,
@@ -9,7 +10,7 @@ import {
 import { isCometContact } from "@/lib/comet";
 import { scaleForStarCount } from "@/lib/constellation-shapes";
 import { type BuiltCluster, type ClusterKind } from "@/lib/constellation-clusters";
-import { companyFamilyKey } from "@/lib/company-family";
+import { companyFamilyKey, companyFamilyRoot } from "@/lib/company-family";
 import { peerEdgeToLayoutEdge, type PeerEdge } from "@/lib/network-metrics";
 import {
   clusterBrandColor,
@@ -17,6 +18,7 @@ import {
   withAlpha,
 } from "@/lib/school-color";
 import { hashUnit } from "@/lib/hash";
+import { hashUnitStream } from "@/lib/hash-stream";
 
 export { orderConstellationMembers };
 
@@ -108,7 +110,14 @@ export type GraphNodeData = {
   spotlight?: boolean;
   /** The one-and-only search hit — bobs gently so the eye lands on it. */
   spotlightSolo?: boolean;
-  motionPaused?: boolean;
+  /** Hovered, selected or the sole search hit: labelled at every zoom, whatever overlaps it. */
+  labelPinned?: boolean;
+  /** Lost the label collision pass: its name would overlap a higher-priority one. */
+  labelHidden?: boolean;
+  /** Hovered or selected: drawn above its neighbours. Set per render by the chart. */
+  raised?: boolean;
+  /** Newly arrived in the sky: plays the entrance once. Set per render by the chart. */
+  entering?: boolean;
 };
 
 export type OrbitRingsData = {
@@ -124,6 +133,21 @@ export type ClusterLabelData = {
   nebulaColor?: string;
   clusterKind?: ClusterKind;
   clusterId?: string;
+  /**
+   * The zoomed-out summary view is on: the cluster stands in for its members, so its label
+   * carries their headcount. Set per render by the chart, not by the layout.
+   */
+  summary?: boolean;
+  /**
+   * The node's box, in layout px: the cluster's stars plus room above them for the name. The
+   * node spans the whole cluster so it is on screen whenever any of the cluster is — which is
+   * what lets the name stay pinned in view while you are zoomed in on it.
+   */
+  box?: { width: number; height: number };
+  /** Where the name's bottom-centre sits, in px from the box's top-left: just above the top star. */
+  anchor?: { x: number; y: number };
+  /** Zoomed in far enough to pin the name in view. Set per render by the chart. */
+  pinnable?: boolean;
 };
 
 export type NebulaData = {
@@ -179,12 +203,6 @@ export function displayName(c: {
   return preferred || c.fullName;
 }
 
-export function initialsFromName(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 function toIso(value: Date | string | null | undefined) {
   if (!value) return null;
@@ -202,6 +220,13 @@ function isOverdue(nextFollowUpAt: Date | string | null | undefined) {
 }
 
 type PolarPosition = { x: number; y: number; angle: number; radius: number };
+
+/** Layout px between a cluster's highest star and the bottom of its name — clear of its glow. */
+const CLUSTER_LABEL_GAP = 22;
+/** Room reserved above that for the name itself, so the node's box contains it. */
+const CLUSTER_LABEL_HEAD = 48;
+/** Margin around the stars on the other three sides of the box. */
+const CLUSTER_LABEL_PAD = 24;
 
 function toPosition(x: number, y: number): PolarPosition {
   return { x, y, angle: Math.atan2(y, x), radius: Math.hypot(x, y) };
@@ -251,6 +276,58 @@ function labelClear(
   );
 }
 
+const GRID_OFFSET = 2 ** 20;
+const GRID_STRIDE = 2 ** 21;
+
+/**
+ * The placed stars, bucketed so a clearance test looks at neighbours rather than everyone.
+ *
+ * Cells are exactly one label-clearance box wide and tall. Two stars conflict only when they
+ * are closer than LABEL_CLEAR_X horizontally AND LABEL_CLEAR_Y vertically, so any conflict
+ * sits in the candidate's cell or one of its eight neighbours — the answer is the same as
+ * testing every placed star with `labelClear`, which is what this replaced. That linear scan
+ * ran for every candidate of every star, and all of a network's unclustered contacts share
+ * one field, so it grew with the square of the network.
+ */
+class ClearanceGrid {
+  private cells = new Map<number, Array<{ x: number; y: number }>>();
+
+  /**
+   * One number per cell rather than a `"cx,cy"` string: the test below looks up nine cells per
+   * candidate, and building and hashing those strings was most of the layout's time at 10,000
+   * contacts. Exact for |cx|, |cy| < 2^20 cells — over a hundred million world px either way.
+   */
+  private static key(cx: number, cy: number) {
+    return (cx + GRID_OFFSET) * GRID_STRIDE + (cy + GRID_OFFSET);
+  }
+
+  add(p: { x: number; y: number }) {
+    const k = ClearanceGrid.key(
+      Math.floor(p.x / LABEL_CLEAR_X),
+      Math.floor(p.y / LABEL_CLEAR_Y)
+    );
+    const cell = this.cells.get(k);
+    if (cell) cell.push(p);
+    else this.cells.set(k, [p]);
+  }
+
+  /** True when `labelClear(candidate, p)` holds for every star added so far. */
+  clear(candidate: { x: number; y: number }) {
+    const cx = Math.floor(candidate.x / LABEL_CLEAR_X);
+    const cy = Math.floor(candidate.y / LABEL_CLEAR_Y);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const cell = this.cells.get(ClearanceGrid.key(cx + dx, cy + dy));
+        if (!cell) continue;
+        for (const p of cell) {
+          if (!labelClear(candidate, p)) return false;
+        }
+      }
+    }
+    return true;
+  }
+}
+
 /**
  * Scatter members organically through an annulus — no rings, no lattice.
  * Seeded rejection sampling: each member tries hash-driven spots until one
@@ -266,16 +343,20 @@ function scatterField(
   avoid: Array<{ x: number; y: number }>
 ): { placed: Array<{ id: string; x: number; y: number }>; outer: number } {
   const placed: Array<{ id: string; x: number; y: number }> = [];
+  const occupied = new ClearanceGrid();
+  for (const p of avoid) occupied.add(p);
   let outer = inner + initialWidth;
 
   for (const id of ids) {
     let spot: { x: number; y: number } | null = null;
     let attempt = 0;
     let rounds = 0;
+    // The same values as hashUnit(seedPrefix + ":" + id, salt), hashing the string once per star.
+    const hash = hashUnitStream(`${seedPrefix}:${id}`);
     while (!spot && rounds < 200) {
       for (let tries = 0; tries < 24 && !spot; tries++, attempt++) {
-        const u = hashUnit(`${seedPrefix}:${id}`, attempt * 2 + 1);
-        const v = hashUnit(`${seedPrefix}:${id}`, attempt * 2 + 2);
+        const u = hash(attempt * 2 + 1);
+        const v = hash(attempt * 2 + 2);
         const angle = u * Math.PI * 2;
         // sqrt() → uniform density over the annulus
         const radius = Math.sqrt(
@@ -285,10 +366,7 @@ function scatterField(
           x: Math.cos(angle) * radius,
           y: Math.sin(angle) * radius,
         };
-        if (
-          avoid.every((p) => labelClear(candidate, p)) &&
-          placed.every((p) => labelClear(candidate, p))
-        ) {
+        if (occupied.clear(candidate)) {
           spot = candidate;
         }
       }
@@ -303,6 +381,7 @@ function scatterField(
       spot = { x: outer, y: 0 };
     }
     placed.push({ id, ...spot });
+    occupied.add(spot);
   }
 
   const maxR = placed.reduce((m, p) => Math.max(m, Math.hypot(p.x, p.y)), inner);
@@ -312,6 +391,8 @@ function scatterField(
 /** One cluster's local geometry: undistorted figure plus a scatter field. */
 export type ClusterGeometry = {
   cluster: BuiltCluster;
+  /** The company family it packs beside (see `clusterFamily`); its own id when it has none. */
+  family?: string;
   fit: ClusterFit;
   /** Rotated, scaled shape stars in cluster-local space (index ↔ figureMemberIds). */
   figureLocal: Array<{ x: number; y: number }>;
@@ -330,7 +411,14 @@ export type ClusterGeometry = {
  * extent, which guarantees clearance from every figure star and line by
  * construction.
  */
-export function buildClusterGeometry(fit: ClusterFit): ClusterGeometry {
+export function buildClusterGeometry(
+  fit: ClusterFit,
+  /**
+   * People seated in this cluster's field without being members of it: loners from the same
+   * company family (see `familySatellites`). Placed after the members, so further out.
+   */
+  satelliteIds: string[] = []
+): ClusterGeometry {
   const { shape, figureMemberIds, scatterMemberIds, cluster } = fit;
   const count = figureMemberIds.length;
   const baseScale = scaleForStarCount(count);
@@ -367,7 +455,7 @@ export function buildClusterGeometry(fit: ClusterFit): ClusterGeometry {
   );
 
   const { placed: scatterLocal, outer } = scatterField(
-    scatterMemberIds,
+    [...scatterMemberIds, ...satelliteIds],
     cluster.id,
     figureExtent + SCATTER_CLEAR,
     SCATTER_FIELD_WIDTH,
@@ -385,14 +473,54 @@ export function buildClusterGeometry(fit: ClusterFit): ClusterGeometry {
   };
 }
 
+/** The family a cluster packs beside: related companies share one, schools stand alone. */
+function clusterFamily(cluster: BuiltCluster): string {
+  return cluster.kind === "company"
+    ? companyFamilyKey(cluster.name) || cluster.id
+    : cluster.id;
+}
+
+/**
+ * People who belong near a cluster they are not in.
+ *
+ * A company needs two people to become a constellation, so the one person at Google DeepMind
+ * was scattered across the rim of the sky with everyone unclustered — nowhere near Google. Any
+ * contact outside a constellation whose company is a known family (see `companyFamilyRoot`)
+ * is seated in the outer field of that family's largest cluster instead. They are placed there,
+ * not added to it: the cluster's name, headcount and search hits still mean its own members.
+ */
+function familySatellites(
+  contacts: GraphContactInput[],
+  eligible: BuiltCluster[]
+): Map<string, string[]> {
+  const inConstellation = new Set(eligible.flatMap((c) => c.contactIds));
+  const headByRoot = new Map<string, BuiltCluster>();
+  for (const cluster of eligible) {
+    if (cluster.kind !== "company") continue;
+    const root = companyFamilyRoot(cluster.name);
+    if (!root) continue;
+    const head = headByRoot.get(root);
+    if (!head || cluster.count > head.count) headByRoot.set(root, cluster);
+  }
+  const satellites = new Map<string, string[]>();
+  if (headByRoot.size === 0) return satellites;
+  for (const c of [...contacts].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (inConstellation.has(c.id)) continue;
+    const root = companyFamilyRoot(c.company);
+    const head = root ? headByRoot.get(root) : undefined;
+    if (!head) continue;
+    const list = satellites.get(head.id);
+    if (list) list.push(c.id);
+    else satellites.set(head.id, [c.id]);
+  }
+  return satellites;
+}
+
 /** Family-adjacent cluster order: families by total size, members by size. */
 function orderClustersByFamily(eligible: BuiltCluster[]): BuiltCluster[] {
   const families = new Map<string, BuiltCluster[]>();
   for (const cluster of eligible) {
-    const key =
-      cluster.kind === "company"
-        ? companyFamilyKey(cluster.name) || cluster.id
-        : cluster.id;
+    const key = clusterFamily(cluster);
     const list = families.get(key);
     if (list) list.push(cluster);
     else families.set(key, [cluster]);
@@ -462,6 +590,22 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
       idx++;
     }
 
+    // Never split a family across two shells: a family member that did not fit went to the far
+    // side of the next shell, however closely related. If the family started partway through
+    // this shell, the whole family moves out to the next one — unless it alone fills a shell.
+    const next = geoms[idx];
+    const last = items[items.length - 1];
+    if (next && last?.family && next.family === last.family) {
+      let familyStart = items.length - 1;
+      while (familyStart > 0 && items[familyStart - 1].family === last.family) familyStart--;
+      if (familyStart > 0) {
+        idx -= items.length - familyStart;
+        items.splice(familyStart);
+        maxFoot = Math.max(...items.map((g) => g.foot));
+        R = prevOuter + maxFoot + (shellIndex > 0 ? CLUSTER_GAP : 0);
+      }
+    }
+
     // Place along the shell: exact pairwise increments plus even slack.
     const start = -Math.PI / 2 + shellIndex * 0.6;
     if (items.length === 1) {
@@ -474,13 +618,22 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
         pairArc(g, items[(i + 1) % items.length], R)
       );
       const used = increments.reduce((a, b) => a + b, 0);
-      const slack = Math.max(0, Math.PI * 2 - used) / items.length;
+      // Spare arc goes between families, not inside one: spread evenly, a sparse shell pushed
+      // Google DeepMind a quarter-turn away from the Google beside it.
+      const boundary = items.map(
+        (g, i) => !g.family || g.family !== items[(i + 1) % items.length].family
+      );
+      // One family filling the shell: keep it together and leave the gap after its last member.
+      if (!boundary.some(Boolean)) boundary[boundary.length - 1] = true;
+      const boundaries = boundary.filter(Boolean).length;
+      const spare = Math.max(0, Math.PI * 2 - used);
       let theta = start;
       items.forEach((g, i) => {
         centers.set(g.cluster.id, {
           x: Math.cos(theta) * R,
           y: Math.sin(theta) * R,
         });
+        const slack = boundary[i] ? spare / boundaries : 0;
         theta += increments[i] + slack;
       });
     }
@@ -501,17 +654,54 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
  * - Deep Space and singletons rim the sky beyond the last shell.
  * - Nothing overlaps: stars, figures, and lines all keep their distance.
  */
+export type HybridGraphLayout = { nodes: LayoutNode[]; edges: LayoutEdge[] };
+
 export function buildHybridGraphLayout(
   contacts: GraphContactInput[],
   userName: string
-): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
+): HybridGraphLayout {
+  const steps = buildHybridGraphLayoutSteps(contacts, userName);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/**
+ * `buildHybridGraphLayout`, one phase at a time: it yields between phases so a caller can give
+ * the main thread back in between (`src/lib/graph/sky-layout.ts`). At 10,000 contacts the whole
+ * layout is ~50ms in one piece — a long task on its own — and no phase is more than ~15ms.
+ * Drained without pausing, it is exactly the synchronous layout.
+ */
+export function* buildHybridGraphLayoutSteps(
+  contacts: GraphContactInput[],
+  userName: string
+): Generator<void, HybridGraphLayout, void> {
+  // `clusterBrandColor` normalises, looks up and mixes a colour on every call, and a layout asks
+  // about each cluster once for itself and again for every line of its figure. Scoped to this
+  // one layout, so it neither outlives it nor ships to pages that never lay out a sky.
+  const brandMemo = new Map<string, string>();
+  const brandOf = (name: string, kind?: string) => {
+    const key = `${kind ?? ""}|${name}`;
+    let color = brandMemo.get(key);
+    if (color === undefined) {
+      color = clusterBrandColor(name, kind);
+      brandMemo.set(key, color);
+    }
+    return color;
+  };
+
   const fit = buildConstellationFit(contacts);
   const { byContactId, fits } = fit;
+  yield;
 
   const eligible = fit.clusters.filter((c) => fits.has(c.id));
-  const geoms = orderClustersByFamily(eligible).map((cluster) =>
-    buildClusterGeometry(fits.get(cluster.id)!)
-  );
+  const satellites = familySatellites(contacts, eligible);
+  const geoms = orderClustersByFamily(eligible).map((cluster) => ({
+    ...buildClusterGeometry(fits.get(cluster.id)!, satellites.get(cluster.id)),
+    family: clusterFamily(cluster),
+  }));
+  yield;
   const { centers, skyEdge } = packClusterShells(geoms);
 
   const positions = new Map<string, PolarPosition>();
@@ -549,12 +739,12 @@ export function buildHybridGraphLayout(
     }
   }
 
+  yield;
   const clusterNodes: LayoutNode[] = [];
   const clusterColorById = new Map<string, string>();
   for (const geom of geoms) {
     const cluster = geom.cluster;
-    const center = centers.get(cluster.id)!;
-    const color = clusterBrandColor(cluster.name, cluster.kind);
+    const color = brandOf(cluster.name, cluster.kind);
     clusterColorById.set(cluster.id, color);
 
     const memberPositions = cluster.contactIds
@@ -589,10 +779,24 @@ export function buildHybridGraphLayout(
       zIndex: 0,
     });
 
-    // Label just outside the footprint, away from the sun — it lands in the
-    // guaranteed gap between shells.
-    const centerAngle = Math.atan2(center.y, center.x);
-    const labelRadius = Math.hypot(center.x, center.y) + geom.foot;
+    // The name sits centred just above the cluster's highest star, so it reads as the
+    // constellation's title. It used to hang outside the footprint on the side facing away from
+    // the sun, which could be the bottom of the figure or off the screen entirely once the
+    // camera framed the cluster.
+    let top = Infinity;
+    let bottom = -Infinity;
+    let left = Infinity;
+    let right = -Infinity;
+    for (const p of memberPositions) {
+      top = Math.min(top, p.y);
+      bottom = Math.max(bottom, p.y);
+      left = Math.min(left, p.x);
+      right = Math.max(right, p.x);
+    }
+    const boxLeft = left - CLUSTER_LABEL_PAD;
+    const boxTop = top - CLUSTER_LABEL_GAP - CLUSTER_LABEL_HEAD;
+    const boxWidth = right + CLUSTER_LABEL_PAD - boxLeft;
+    const boxHeight = bottom + CLUSTER_LABEL_PAD - boxTop;
     clusterNodes.push({
       id: `cluster-${cluster.id}`,
       type: "clusterLabel",
@@ -603,11 +807,11 @@ export function buildHybridGraphLayout(
         nebulaColor: color,
         clusterKind: cluster.kind,
         clusterId: cluster.id,
+        box: { width: boxWidth, height: boxHeight },
+        anchor: { x: (left + right) / 2 - boxLeft, y: CLUSTER_LABEL_HEAD },
       },
-      position: {
-        x: Math.cos(centerAngle) * labelRadius,
-        y: Math.sin(centerAngle) * labelRadius,
-      },
+      // The name's anchor. The chart sets the node's origin so its box lands around it.
+      position: { x: (left + right) / 2, y: top - CLUSTER_LABEL_GAP },
       draggable: false,
       selectable: true,
       zIndex: 7,
@@ -644,7 +848,9 @@ export function buildHybridGraphLayout(
     ...contacts.map((c) => {
       const pos = positions.get(c.id) || toPosition(0, 320);
       const score = placementScore(c);
-      const dormant = c.dormant === true || isCometContact(c.lastInteractionAt);
+      // The payload's own decision when it made one (graph-data.ts caps comets per cluster);
+      // the raw day threshold only for callers that never set it.
+      const dormant = c.dormant ?? isCometContact(c.lastInteractionAt);
       const name = displayName(c);
       const cluster = byContactId.get(c.id);
       return {
@@ -697,6 +903,7 @@ export function buildHybridGraphLayout(
 
   // Constellation path edges only — brand-tinted lines along each figure,
   // synthesized from the same fit that placed the stars.
+  yield;
   const edges: LayoutEdge[] = [];
   for (const fitEdge of constellationFitEdges(fit)) {
     const reason = fitEdge.clusterKind === "school" ? "school" : "company";
@@ -708,7 +915,7 @@ export function buildHybridGraphLayout(
       company: fitEdge.clusterName,
     };
     const layoutEdge = peerEdgeToLayoutEdge(peer);
-    const brand = clusterBrandColor(fitEdge.clusterName, reason);
+    const brand = brandOf(fitEdge.clusterName, reason);
     edges.push({
       ...layoutEdge,
       type: "labeled",

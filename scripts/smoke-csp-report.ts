@@ -2,9 +2,10 @@
  * Pins the CSP violation receiver at `POST /api/csp-report`.
  *
  * Reports land in `error_events` under the `csp.report` source with the violated directive
- * as the low-cardinality `kind` and the blocked URI in context — bounded by a once-per-hour
- * latch per (directive, blocked URI), so a noisy browser extension cannot write a row per
- * page view. Hobby runtime logs keep an hour; a week of report-only data has to live here.
+ * as the low-cardinality `kind` and the blocked source (an origin or a keyword) in context —
+ * bounded by a once-per-hour latch per (directive, source), so a noisy browser extension
+ * cannot write a row per page view, and by a per-instance hourly row budget, so an anonymous
+ * script inventing sources cannot fill the table. Hobby runtime logs keep an hour; a week of report-only data has to live here.
  *
  * Runs against a throwaway PGlite database. Run: npx tsx scripts/smoke-csp-report.ts
  */
@@ -25,7 +26,8 @@ function check(label: string, ok: boolean, detail?: string) {
 }
 
 const STARTED = new Date();
-const uri = `https://evil.example/${Date.now()}.js`;
+const origin = `https://evil${Date.now()}.example`;
+const uri = `${origin}/tracker.js`;
 
 function report(over: Record<string, unknown> = {}) {
   return new Request("http://localhost/api/csp-report", {
@@ -57,8 +59,8 @@ async function main() {
   let got = await rows();
   check("it becomes one error_events row", got.length === 1, `rows=${got.length}`);
   check("kind is the effective directive", got[0]?.kind === "script-src");
-  check("context carries the blocked URI and document path, not the whole report",
-    (got[0]?.context as { blockedUri?: string; documentPath?: string })?.blockedUri === uri &&
+  check("context carries the blocked origin and document path, not the whole report",
+    (got[0]?.context as { blockedUri?: string; documentPath?: string })?.blockedUri === origin &&
       (got[0]?.context as { documentPath?: string })?.documentPath === "/dashboard",
     JSON.stringify(got[0]?.context));
 
@@ -67,8 +69,21 @@ async function main() {
   got = await rows();
   check("repeats within the hour are throttled to the one row", got.length === 1, `rows=${got.length}`);
 
-  const other = await POST(report({ "blocked-uri": `${uri}?other` }));
-  check("a different blocked URI is a new row", other.status === 204 && (await rows()).length === 2);
+  await POST(report({ "blocked-uri": `${uri}?other` }));
+  await POST(report({ "blocked-uri": `${origin}/another/path.js` }));
+  check("another path on the same origin is the same row", (await rows()).length === 1);
+
+  const other = await POST(report({ "blocked-uri": `https://other${Date.now()}.example/x.js` }));
+  check("a different blocked origin is a new row", other.status === 204 && (await rows()).length === 2);
+
+  await POST(report({ "effective-directive": "script-src'; DROP", "violated-directive": undefined }));
+  check("a directive that is not a directive is dropped", (await rows()).length === 2);
+
+  for (let i = 0; i < 150; i++) {
+    await POST(report({ "blocked-uri": `https://flood${i}-${Date.now()}.example/x.js` }));
+  }
+  const flooded = (await rows()).length;
+  check("a flood of invented origins stops at the hourly row budget", flooded <= 100, `rows=${flooded}`);
 
   const huge = new Request("http://localhost/api/csp-report", {
     method: "POST",
@@ -78,7 +93,7 @@ async function main() {
   check("an oversize body is refused with 413", (await POST(huge)).status === 413);
 
   const garbage = new Request("http://localhost/api/csp-report", { method: "POST", body: "not json" });
-  check("garbage is dropped quietly (204, no row)", (await POST(garbage)).status === 204 && (await rows()).length === 2);
+  check("garbage is dropped quietly (204, no row)", (await POST(garbage)).status === 204 && (await rows()).length === flooded);
 
   const db = await getDb();
   await db.delete(errorEvents).where(and(eq(errorEvents.source, "csp.report"), gte(errorEvents.createdAt, STARTED)));

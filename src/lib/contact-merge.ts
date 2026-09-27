@@ -31,11 +31,15 @@
  * be run again.
  */
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { after } from "next/server";
 import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
+import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
+import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import { scheduleEmbeddingRebuild } from "@/lib/contact-writes";
+import { rebuildContactEmbeddingsBatch } from "@/lib/search";
 
 /**
  * Child tables that move to the winner with a plain UPDATE.
@@ -74,6 +78,11 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   { table: "contact_identities", column: "contact_id", scoped: true },
   { table: "note_batches", column: "seed_contact_id", scoped: true },
   { table: "import_job_rows", column: "contact_id", scoped: true },
+  // memory_chunks is unique on (user_id, source_kind, source_id, chunk_index) — no contact
+  // column in the key, so this cannot collide either. Only `contact_id` moves here; the
+  // `contact_ids` array it also carries is rewritten separately (step 4c-2), because an
+  // array rewrite is not reversible from a list of ids alone.
+  { table: "memory_chunks", column: "contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */
@@ -135,7 +144,7 @@ export async function mergeContacts(
 
   const db = await getDb();
   const rows = await db
-    .select({ id: contacts.id })
+    .select({ id: contacts.id, profileImageUrl: contacts.profileImageUrl })
     .from(contacts)
     .where(and(eq(contacts.userId, userId), sql`${contacts.id} IN (${winnerId}::uuid, ${loserId}::uuid)`));
   const present = new Set(rows.map((r) => r.id));
@@ -302,6 +311,44 @@ export async function mergeContacts(
       )
     );
 
+    // 4c-2. memory_chunks.contact_ids: everyone a passage names, as a uuid[] with no foreign
+    //     key — so nothing in the database moves or cascades it, and a merged-away id would
+    //     sit in the index forever while the note stopped being findable from the person who
+    //     survived. Without this the loser's passages were cascade-deleted with its contact
+    //     row (`contact_id` is ON DELETE CASCADE) and only came back when the sweep next ran.
+    //
+    //     Two cases, recorded under separate labels because the archive stores ids and the
+    //     rewrite is only reversible if unmerge knows which one it is undoing:
+    //      - collapsed: the passage named BOTH people, so the pair dedupes to one element and
+    //        undoing means putting the loser back, not swapping.
+    //      - replaced: it named only the loser, so undoing is a straight swap.
+    //     ORDER MATTERS. Collapse first: run the replace first and a passage naming both ends
+    //     up holding the winner twice, with nothing left for the collapse to match.
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "memory_chunks.contact_ids.collapsed",
+        sql`UPDATE memory_chunks SET contact_ids = array_remove(contact_ids, ${loserId}::uuid)
+             WHERE user_id = ${userId}
+               AND ${loserId}::uuid = ANY(contact_ids)
+               AND ${winnerId}::uuid = ANY(contact_ids)
+         RETURNING id`
+      )
+    );
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "memory_chunks.contact_ids.replaced",
+        sql`UPDATE memory_chunks
+               SET contact_ids = array_replace(contact_ids, ${loserId}::uuid, ${winnerId}::uuid)
+             WHERE user_id = ${userId}
+               AND ${loserId}::uuid = ANY(contact_ids)
+         RETURNING id`
+      )
+    );
+
     // 4d. ai_suggestions carries contact ids inside a jsonb array with no FK. Rewrite in
     //     place — cheap, and guarded so it only touches rows that mention the loser.
     statements.push(
@@ -427,6 +474,11 @@ export async function mergeContacts(
     return statements;
   });
 
+  await releaseOrphanedLoserPhoto(userId, mergeId, {
+    winner: rows.find((r) => r.id === winnerId)?.profileImageUrl ?? null,
+    loser: rows.find((r) => r.id === loserId)?.profileImageUrl ?? null,
+  });
+
   if (!options.deferInvalidation) await invalidateAfterMerge(userId, winnerId);
 
   return { mergeId, winnerId, loserId };
@@ -444,6 +496,70 @@ export async function invalidateAfterMerge(userId: string, winnerId: string) {
   // Without the rescore the winner reads as never-scored, which triggers a full-network
   // recalibration on the user's next page view rather than a one-contact update.
   await rescoreContact(userId, winnerId);
+}
+
+/**
+ * Up to this many survivors are rescored one by one against the stored distribution; past it,
+ * the whole network is recalibrated once instead. A rescore is two dependent round trips per
+ * contact, a recalibration a fixed handful plus one write per 500 contacts — so for a bulk
+ * sweep the recalibration is cheaper, and for the usual one or two merges on a page render it
+ * is not.
+ */
+const RESCORE_ONE_BY_ONE_MAX = 5;
+
+/**
+ * `invalidateAfterMerge` for many survivors at once, for bulk callers that deferred it
+ * (`mergeConfidentDuplicates`). The same three effects in a bounded number of statements
+ * rather than a handful per survivor: one UPDATE marks every embedding stale and ONE batched
+ * rebuild is deferred past the response, the cohort is marked dirty once, and closeness is
+ * either rescored per survivor (few) or recalibrated for the network (many).
+ *
+ * The deferred rebuild does not clear `embedding_stale_at`: it cannot tell a provider failure
+ * from success. The backfill clears the marker without an API call once the stored vector's
+ * hash matches, and re-embeds the row if the rebuild never landed.
+ *
+ * Best-effort per step like the loop it replaces: a failed rescore of one survivor does not
+ * skip the others. Recalibration is last and rethrows, after the dirty mark is down, so the
+ * cron still drains a cohort a failed recalibration left behind.
+ */
+export async function invalidateAfterMerges(userId: string, winnerIds: Iterable<string>) {
+  const ids = [...new Set(winnerIds)];
+  if (ids.length === 0) return;
+  if (ids.length === 1) return invalidateAfterMerge(userId, ids[0]);
+
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ embeddingStaleAt: new Date() })
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, ids)));
+  deferEmbeddingRebuilds(userId, ids);
+  await markCohortDirty(userId);
+
+  if (ids.length <= RESCORE_ONE_BY_ONE_MAX) {
+    for (const id of ids) await rescoreContact(userId, id).catch(() => false);
+  } else {
+    await recalibrateCloseness(userId);
+  }
+}
+
+/**
+ * One batched embedding rebuild after the response. Same `after()`-or-macrotask shape as
+ * `deferEmbeddingRebuild` in `contact-writes.ts`, and for the same reasons: `after()` throws
+ * outside a request scope, and a bare call would race the caller's own writes.
+ */
+function deferEmbeddingRebuilds(userId: string, contactIds: string[]) {
+  const task = async () => {
+    try {
+      await rebuildContactEmbeddingsBatch(userId, contactIds);
+    } catch {
+      // Left stale on purpose; the backfill picks it up.
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
 }
 
 /**
@@ -475,6 +591,33 @@ export async function resolveContactId(userId: string, contactId: string): Promi
  *
  * Merges in a chain may be undone in any order — see the note on `stillMerged` below.
  */
+/**
+ * The fold is COALESCE(winner, loser), so the loser's photo survives only when the winner
+ * had none. Otherwise its Blob object is orphaned: delete it, and null it in the archive so
+ * an unmerge restores the contact photo-less (the backfill re-resolves it) rather than
+ * pointing at nothing. Best-effort and after the commit: never worth failing a merge over.
+ */
+async function releaseOrphanedLoserPhoto(
+  userId: string,
+  mergeId: string,
+  photos: { winner: string | null; loser: string | null }
+) {
+  if (photos.winner === null || !isAvatarBlobUrl(photos.loser) || photos.loser === photos.winner) {
+    return;
+  }
+  try {
+    await deleteAvatarBlobs([photos.loser]);
+    const db = await getDb();
+    await db.execute(sql`
+      UPDATE contact_merges
+         SET loser_snapshot = jsonb_set(loser_snapshot, '{profile_image_url}', 'null'::jsonb)
+       WHERE id = ${mergeId}::uuid AND user_id = ${userId}
+    `);
+  } catch {
+    // See above.
+  }
+}
+
 export async function unmergeContacts(userId: string, mergeId: string): Promise<MergeResult> {
   const db = await getDb();
   const [merge] = await db
@@ -600,6 +743,37 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
       );
     }
 
+    // 2b. memory_chunks.contact_ids, the mirror of the merge's two cases. These id sets are
+    //     disjoint, so unlike the merge side the order here is free.
+    const collapsedChunks = repointed["memory_chunks.contact_ids.collapsed"] ?? [];
+    if (collapsedChunks.length) {
+      statements.push(
+        tx.execute(sql`
+          UPDATE memory_chunks SET contact_ids = contact_ids || ${loserId}::uuid
+           WHERE user_id = ${userId}
+             AND id = ANY(${sql`ARRAY[${sql.join(
+               collapsedChunks.map((id) => sql`${id}::uuid`),
+               sql`, `
+             )}]`})
+             AND NOT (${loserId}::uuid = ANY(contact_ids))
+        `)
+      );
+    }
+    const replacedChunks = repointed["memory_chunks.contact_ids.replaced"] ?? [];
+    if (replacedChunks.length) {
+      statements.push(
+        tx.execute(sql`
+          UPDATE memory_chunks
+             SET contact_ids = array_replace(contact_ids, ${winnerId}::uuid, ${loserId}::uuid)
+           WHERE user_id = ${userId}
+             AND id = ANY(${sql`ARRAY[${sql.join(
+               replacedChunks.map((id) => sql`${id}::uuid`),
+               sql`, `
+             )}]`})
+        `)
+      );
+    }
+
     // 3. Restore rows that were deleted rather than moved. ON CONFLICT DO NOTHING because
     //    the winner may legitimately have recreated an equivalent row since.
     for (const [table, rows] of Object.entries(deleted)) {
@@ -642,6 +816,12 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
     return statements;
   });
 
+  // An undo is the strongest "these are two people" there is. Recorded as a dismissal, so
+  // neither the sweep (which re-runs on every duplicates-page render and skips only
+  // dismissed pairs) nor a decision-model merge puts them back together — before this, an
+  // undone automatic merge came straight back on the page refresh that followed the Undo.
+  await dismissDuplicatePair(userId, winnerId, loserId, "Merge undone");
+
   // Both contacts changed; both need rescoring.
   await invalidateAfterMerge(userId, winnerId);
   await scheduleEmbeddingRebuild(userId, loserId);
@@ -679,6 +859,52 @@ export async function recordDuplicateSuggestion(
     });
 }
 
+export type DuplicateSuggestionPair = {
+  contactIdA: string;
+  contactIdB: string;
+  reason: string;
+  confidence: number;
+};
+
+/** Rows per insert: five parameters each, far under Postgres's 65,535-parameter ceiling. */
+const SUGGESTION_INSERT_CHUNK = 500;
+
+/**
+ * `recordDuplicateSuggestion` for many pairs in one INSERT per chunk rather than one per pair.
+ * Same canonical ordering, same self-pair skip, same DO NOTHING on the pair key. A pair named
+ * twice keeps its FIRST reason and confidence — what calling the single function in order
+ * would have left, since the second insert would have hit the conflict.
+ */
+export async function recordDuplicateSuggestions(
+  userId: string,
+  pairs: ReadonlyArray<DuplicateSuggestionPair>
+) {
+  const rows = new Map<string, typeof duplicateSuggestions.$inferInsert>();
+  for (const { contactIdA, contactIdB, reason, confidence } of pairs) {
+    if (contactIdA === contactIdB) continue;
+    const [a, b] = contactIdA < contactIdB ? [contactIdA, contactIdB] : [contactIdB, contactIdA];
+    const key = `${a}:${b}`;
+    if (!rows.has(key)) rows.set(key, { userId, contactAId: a, contactBId: b, reason, confidence });
+  }
+  if (rows.size === 0) return;
+
+  const values = [...rows.values()];
+  const db = await getDb();
+  for (let i = 0; i < values.length; i += SUGGESTION_INSERT_CHUNK) {
+    await db
+      .insert(duplicateSuggestions)
+      .values(values.slice(i, i + SUGGESTION_INSERT_CHUNK))
+      // See `recordDuplicateSuggestion`: a dismissed pair stays dismissed.
+      .onConflictDoNothing({
+        target: [
+          duplicateSuggestions.userId,
+          duplicateSuggestions.contactAId,
+          duplicateSuggestions.contactBId,
+        ],
+      });
+  }
+}
+
 /**
  * Reject a pair, permanently.
  *
@@ -690,7 +916,8 @@ export async function recordDuplicateSuggestion(
 export async function dismissDuplicatePair(
   userId: string,
   contactIdA: string,
-  contactIdB: string
+  contactIdB: string,
+  reason = "Dismissed by hand"
 ) {
   if (contactIdA === contactIdB) return;
   // Same canonical ordering as `recordDuplicateSuggestion`, so this writes the row a write
@@ -704,7 +931,7 @@ export async function dismissDuplicatePair(
       userId,
       contactAId: a,
       contactBId: b,
-      reason: "Dismissed by hand",
+      reason,
       confidence: 0,
       status: "dismissed",
       resolvedAt: now,

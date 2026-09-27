@@ -12,6 +12,8 @@
  */
 import Papa from "papaparse";
 import { attendeeIdentityKey } from "@/lib/events/identity";
+import type { AttendeeRole } from "@/lib/events/types";
+import type { EventSpeaker } from "@/lib/events/parse-page";
 
 export type ParsedAttendee = {
   fullName: string | null;
@@ -20,6 +22,20 @@ export type ParsedAttendee = {
   title: string | null;
   linkedinUrl: string | null;
   xHandle: string | null;
+  /**
+   * Optional because the paste and CSV paths cannot know it. The connectors and the page's
+   * speaker line-up can, and until now both computed it and had it dropped on the way to
+   * the database — `event_attendees.attendee_role` was NULL for every row ever written.
+   */
+  attendeeRole?: AttendeeRole | null;
+  /**
+   * The provider's own id for this guest (`evt-guest-…`, a Luma `usr-…`, an Eventbrite
+   * attendee id). Only a connector knows it. It is the most stable handle on a person a
+   * platform gives us — stable across a name change, a second registration, and a typo'd
+   * email — so it is stored even though nothing reads it yet.
+   */
+  externalRef?: string | null;
+  phone?: string | null;
   identityKey: string;
 };
 
@@ -166,14 +182,26 @@ export function parseRosterText(text: string): RosterParseResult {
   return finalize(rows);
 }
 
-/** Header aliases, lowercased. Covers Luma, Eventbrite and Partiful exports plus the obvious. */
-const HEADERS: Record<keyof Omit<ParsedAttendee, "identityKey">, string[]> = {
+/**
+ * Header aliases, lowercased. Covers Luma, Eventbrite and Partiful exports plus the obvious.
+ *
+ * `attendeeRole` is omitted deliberately: a CSV's "role" column is a job title far more often
+ * than it is host/speaker/attendee, and `title` already claims that header.
+ *
+ * `externalRef` is omitted for a different reason: a provider's guest id is only meaningful
+ * alongside the provider that issued it, and a CSV does not say which one that is.
+ */
+const HEADERS: Record<
+  keyof Omit<ParsedAttendee, "identityKey" | "attendeeRole" | "externalRef">,
+  string[]
+> = {
   fullName: ["name", "full name", "attendee name", "guest name", "first name"],
   email: ["email", "email address", "e-mail", "attendee email"],
   company: ["company", "organization", "organisation", "employer", "company name"],
   title: ["title", "job title", "role", "position", "headline"],
   linkedinUrl: ["linkedin", "linkedin url", "linkedin profile", "profile url"],
   xHandle: ["x", "twitter", "x handle", "twitter handle"],
+  phone: ["phone", "phone number", "mobile", "cell phone", "telephone"],
 };
 
 function pick(row: Record<string, string>, keys: string[]): string | null {
@@ -214,8 +242,158 @@ export function parseRosterCsv(csvText: string): RosterParseResult {
       title: pick(row, HEADERS.title),
       linkedinUrl: pick(row, HEADERS.linkedinUrl),
       xHandle: pick(row, HEADERS.xHandle)?.replace(/^@/, "") ?? null,
+      // Never an identity key — a phone number is stored as a detail only, so a column of
+      // blank-ish values cannot silently key rows together.
+      phone: pick(row, HEADERS.phone),
     };
   });
 
   return finalize(rows);
+}
+
+/**
+ * A page's speaker line-up as roster rows.
+ *
+ * Produces the same `ParsedAttendee` shape as paste, CSV and the provider connectors, so
+ * speakers converge on `upsertEventAttendees` and dedupe by identity key. That matters more
+ * than it looks: a user who later pastes the real attendee list containing the same names
+ * gets ONE row per person, enriched, rather than a duplicate beside the speaker row.
+ *
+ * A line-up gives a name and sometimes a link, so most rows key on `nm:<name>` — the weakest
+ * identity `attendeeIdentityKey` issues. That is the honest tier for this data, and it is
+ * why these rows arrive unconfirmed: `spoke_to` stays 0 and no contact exists until the user
+ * says otherwise.
+ *
+ * A `performer` URL is a homepage as often as a profile, and there is no column for a
+ * homepage — so it is claimed only when it is recognisably LinkedIn or X, and dropped
+ * otherwise rather than stuffed into a field that means something else.
+ */
+/**
+ * Drop the speakers who are already on this roster under any identity.
+ *
+ * A page gives a speaker a NAME and little else, so `speakersToAttendees` keys most of them
+ * `nm:<name>` — the weakest tier. The moment the user corrects that row and adds an email,
+ * its identity key legitimately becomes `em:…`, and the page's name-only key stops matching
+ * it. Re-reading the page then misses the conflict target and inserts a SECOND row for
+ * somebody the user has already curated.
+ *
+ * That is tolerable once, on a manual paste. It is not tolerable on a Refresh button, which
+ * would manufacture a fresh duplicate every single time it is pressed.
+ *
+ * So page speakers are filtered by name against the roster before they are written. This is a
+ * name comparison, which this codebase otherwise refuses — see `DUPLICATE_MERGE_CONFIDENCE`
+ * and the 0.85 floor. The difference is what the comparison is used FOR: nothing is merged
+ * here, and no two records are folded together. It only decides whether to SKIP an insert
+ * inside one event's guest list. Its false positive is "a genuine second speaker with the
+ * same name was not auto-added", which the user can add by hand; the alternative's false
+ * positive is a duplicate appearing on every refresh forever.
+ */
+export function speakersNotOnRoster(
+  speakers: ParsedAttendee[],
+  existingNames: Array<string | null>
+): ParsedAttendee[] {
+  const known = new Set(
+    existingNames
+      .map((name) => name?.trim().toLowerCase().replace(/\s+/g, " "))
+      .filter((name): name is string => Boolean(name))
+  );
+  return speakers.filter((speaker) => {
+    const key = speaker.fullName?.trim().toLowerCase().replace(/\s+/g, " ");
+    return !key || !known.has(key);
+  });
+}
+
+export function speakersToAttendees(speakers: EventSpeaker[]): ParsedAttendee[] {
+  const out: ParsedAttendee[] = [];
+  const seen = new Set<string>();
+
+  for (const speaker of speakers) {
+    let linkedinUrl: string | null = null;
+    let xHandle: string | null = null;
+    if (speaker.url) {
+      try {
+        const parsed = new URL(speaker.url);
+        const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+        if (host === "linkedin.com" || host.endsWith(".linkedin.com")) {
+          linkedinUrl = parsed.href;
+        } else if (host === "x.com" || host === "twitter.com") {
+          xHandle = parsed.pathname.split("/").filter(Boolean)[0]?.replace(/^@/, "") ?? null;
+        }
+      } catch {
+        // A malformed URL costs the link, never the speaker.
+      }
+    }
+
+    const identityKey = attendeeIdentityKey({
+      linkedinUrl,
+      xHandle,
+      fullName: speaker.name,
+    });
+    if (!identityKey || seen.has(identityKey)) continue;
+    seen.add(identityKey);
+
+    out.push({
+      fullName: speaker.name,
+      email: null,
+      company: null,
+      title: null,
+      linkedinUrl,
+      xHandle,
+      attendeeRole: "speaker",
+      identityKey,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * The people a platform's own page names — hosts, and the guests a host featured.
+ *
+ * Richer than a JSON-LD speaker: these carry the platform's user id and, on Luma, a LinkedIn
+ * handle. That matters more than it sounds. A name-only row keys as `nm:<name>`, the weakest
+ * identity there is, so it cannot be matched to a contact with any confidence and cannot be
+ * recognised as the same person at a second event. A LinkedIn URL keys at the top tier, which
+ * is what makes "you keep running into this person" possible at all.
+ *
+ * `externalRef` carries the platform id (`luma:usr-…`) rather than the bare value, because a
+ * Luma user id and a Partiful user id are only unique within their own platform.
+ */
+export function peopleToAttendees(
+  people: Array<{
+    name: string;
+    externalRef: string | null;
+    linkedinUrl: string | null;
+    xHandle: string | null;
+  }>,
+  role: AttendeeRole,
+  platform?: string | null
+): ParsedAttendee[] {
+  const out: ParsedAttendee[] = [];
+  const seen = new Set<string>();
+
+  for (const item of people) {
+    const identityKey = attendeeIdentityKey({
+      linkedinUrl: item.linkedinUrl,
+      xHandle: item.xHandle,
+      fullName: item.name,
+    });
+    if (!identityKey || seen.has(identityKey)) continue;
+    seen.add(identityKey);
+
+    out.push({
+      fullName: item.name,
+      email: null,
+      company: null,
+      title: null,
+      linkedinUrl: item.linkedinUrl,
+      xHandle: item.xHandle,
+      attendeeRole: role,
+      externalRef:
+        item.externalRef && platform ? `${platform}:${item.externalRef}` : item.externalRef,
+      identityKey,
+    });
+  }
+
+  return out;
 }

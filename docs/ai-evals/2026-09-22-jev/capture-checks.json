@@ -1,0 +1,44 @@
+{
+  "label": "jev",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T16:57:55.556Z",
+  "commit": "d416723a",
+  "fixtures": "d6aaf8aadeea",
+  "runs": 1,
+  "decisions": "jev",
+  "tasks": {
+    "capture-checks": {
+      "cases": 25,
+      "metrics": {
+        "referralAccuracy": 1,
+        "wrongReferrals": 0,
+        "tagAccuracy": 0.9,
+        "presenceAccuracy": 1,
+        "inventedRecall": 1,
+        "presenceAct": null
+      },
+      "misses": [
+        "tag-04"
+      ],
+      "p50LatencyMs": 176,
+      "costMicros": 448,
+      "costPerCaseMicros": 17.92,
+      "usage": [
+        {
+          "operation": "capture.checks",
+          "model": "jev-1.13.0",
+          "calls": 23,
+          "failures": 0,
+          "inputTokens": 10632,
+          "outputTokens": 1271,
+          "cachedInputTokens": 0,
+          "costMicros": 448,
+          "unpriced": 0,
+          "p50Ms": 173
+        }
+      ],
+      "decisionCostMicros": 448
+    }
+  }
+}

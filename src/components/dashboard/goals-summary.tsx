@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Plus, Settings } from "lucide-react";
@@ -12,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 type GoalAlignedContact = {
   id: string;
@@ -88,12 +90,16 @@ export function GoalsSummary({
             if (!trimmed) return;
             start(async () => {
               try {
-                await addGoal(trimmed);
+                const res = await addGoal(trimmed);
+                if (!res.ok) {
+                  toast.error(res.error);
+                  return;
+                }
                 setText("");
                 toast.success("Goal added");
                 router.refresh();
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Could not add goal");
+                toast.error(friendlyError(err, "Couldn’t add that goal — try again?"));
               }
             });
           }}
@@ -120,7 +126,7 @@ export function GoalsSummary({
             <ul className="space-y-1">
               {goalAlignedContacts.map((c) => (
                 <li key={c.id}>
-                  <Link
+                  <IntentLink
                     href={`/contacts/${c.id}`}
                     className={cn(
                       "flex items-center justify-between px-2 py-1.5",
@@ -139,7 +145,7 @@ export function GoalsSummary({
                     <span className="text-xs tabular-nums text-muted-foreground">
                       {Math.round(c.goalRelevance * 100)}% match
                     </span>
-                  </Link>
+                  </IntentLink>
                 </li>
               ))}
             </ul>

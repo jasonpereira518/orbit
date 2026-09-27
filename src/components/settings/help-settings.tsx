@@ -6,6 +6,7 @@ import { resetOnboarding } from "@/actions/onboarding";
 import { resetWizard } from "@/actions/onboarding-wizard";
 import { Button } from "@/components/ui/button";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
+import { SettingsRow } from "@/components/settings/settings-section";
 
 export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) {
   const router = useRouter();
@@ -13,14 +14,11 @@ export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) 
   const [wizardPending, startWizard] = useTransition();
 
   return (
-    <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Help</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Replay the first-run walkthrough, jump straight into a guided setup for adding
-          people to your orbit, or tell us what isn&apos;t working.
-        </p>
-      </div>
+    <SettingsRow
+      id="settings-help"
+      title="Help"
+      description="Replay the first-run walkthrough, jump straight into a guided setup for adding people to your orbit, or tell us what isn’t working."
+    >
       <div className="flex flex-wrap gap-2">
         <Button
           variant="outline"
@@ -65,6 +63,6 @@ export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) 
         </Button>
         )}
       </div>
-    </section>
+    </SettingsRow>
   );
 }

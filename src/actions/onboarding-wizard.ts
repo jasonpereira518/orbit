@@ -5,7 +5,8 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { ensureUserSettings } from "@/lib/user-settings";
+import { ensureUserSettings, recordTermsAcceptance } from "@/lib/user-settings";
+import { needsTermsAcceptance, TERMS_VERSION } from "@/lib/legal";
 import type { WizardStep } from "@/components/onboarding/wizard/setup-wizard";
 
 /**
@@ -39,7 +40,16 @@ export async function getWizardStatus() {
     offered: Boolean(settings.wizardOfferedAt),
     completed: Boolean(settings.wizardCompletedAt),
     step: settings.wizardStep,
+    termsAccepted: !needsTermsAcceptance(settings.termsVersion),
   };
+}
+
+/** The fallback consent for accounts Clerk did not record one for. */
+export async function acceptTerms() {
+  const userId = await requireUserId();
+  await ensureUserSettings(userId);
+  await recordTermsAcceptance(userId, { acceptedAt: new Date(), version: TERMS_VERSION });
+  return { ok: true as const };
 }
 
 /** Persist the current wizard step so a refresh resumes mid-flow. */

@@ -1,11 +1,16 @@
 import Papa from "papaparse";
-import type { Contact } from "@/db/schema";
 import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
   linkedinSlug,
+  type DuplicateSubject,
 } from "@/lib/duplicates";
-import { csvGet } from "@/lib/linkedin-connections";
+import {
+  LinkedInExportError,
+  csvGet,
+  looksLikeConnectionsExport,
+} from "@/lib/linkedin-connections";
+import { personNameFromSlug } from "@/lib/linkedin-paste";
 
 export type LinkedInMessageRow = {
   conversationId: string;
@@ -65,14 +70,17 @@ export function isLikelyPersonName(name: string): boolean {
   return words.every((w) => /^[\p{L}'’.-]+$/u.test(w));
 }
 
+/**
+ * Name a person when a LinkedIn URL is all we have.
+ *
+ * The rule itself lives in lib/linkedin-paste.ts and is shared with the capture path, which
+ * reads the same slugs off pasted URLs. This wrapper keeps the importer's contract — a URL
+ * in, always a string out — rather than making every call site handle a null.
+ */
 export function nameFromLinkedInSlug(url: string): string {
   const slug = linkedinSlug(url);
   if (!slug) return "LinkedIn contact";
-  return slug
-    .split("-")
-    .filter((p) => p && !/^\d+$/.test(p))
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
+  return personNameFromSlug(slug) || "LinkedIn contact";
 }
 
 export function mapLinkedInMessageRow(
@@ -152,7 +160,15 @@ export function parseLinkedInMessagesCsv(csvText: string): {
   });
 
   if (parsed.errors.length && !parsed.data.length) {
-    throw new Error(parsed.errors[0]?.message || "Failed to parse messages CSV");
+    throw new LinkedInExportError(
+      "Couldn’t read that file as a CSV — download messages.csv from LinkedIn again and upload it as it is"
+    );
+  }
+
+  if (looksLikeConnectionsExport(parsed.meta.fields || [])) {
+    throw new LinkedInExportError(
+      "This looks like a Connections export, not Messages — upload it on the Connections tab instead"
+    );
   }
 
   const messages = parsed.data
@@ -380,7 +396,7 @@ function resolveNameForUrl(
 
 export function resolveConversations(
   messages: ParsedLinkedInMessage[],
-  existing: Contact[],
+  existing: DuplicateSubject[],
   selfLinkedInUrl?: string | null
 ): ConversationResolution[] {
   const selfUrl = inferSelfLinkedInUrl(messages, selfLinkedInUrl);

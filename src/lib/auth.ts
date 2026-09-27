@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { isClerkConfigured, isDemoMode } from "@/lib/demo-account";
 import { ensureLocalDemoData } from "@/lib/demo-data/ensure";
 import { needsOnboarding } from "@/lib/onboarding";
+import { isHeldByStealth } from "@/lib/site-access";
 import { ensureUserSettings } from "@/lib/user-settings";
 
 export class UnauthorizedError extends Error {
@@ -24,6 +25,19 @@ export class AccountSuspendedError extends Error {
   constructor(public readonly suspendedAt: Date) {
     super("Account suspended");
     this.name = "AccountSuspendedError";
+  }
+}
+
+/**
+ * Thrown by `requireUserId()` for an account stealth is holding: one created while the site
+ * was in stealth, without an admin's invitation (see `src/lib/site-access.ts`). A subclass of
+ * `UnauthorizedError` so every route that already answers 401 for "not signed in" answers
+ * the same for this; `(app)/layout.tsx` sends the person to the waitlist instead.
+ */
+export class AccountHeldError extends UnauthorizedError {
+  constructor() {
+    super("This account is waiting for an invitation");
+    this.name = "AccountHeldError";
   }
 }
 
@@ -78,10 +92,29 @@ export async function redirectIfAuthenticated() {
  *
  * Demo mode is exempt: `demo-user` is a shared local literal, never a real account.
  */
-export const requireUserId = cache(async (): Promise<string> => {
+export const requireUserId = cache(
+  async (): Promise<string> => (await requireAuthenticatedUser()).userId
+);
+
+/** The signed-in user and the `user_settings` row `requireUserId()` bootstrapped for them. */
+export type AuthenticatedUser = {
+  userId: string;
+  settings: Awaited<ReturnType<typeof bootstrapAuthenticatedUser>>;
+};
+
+/**
+ * `requireUserId()`, also handing back the settings row the gate already read.
+ *
+ * Same gate, same errors — `requireUserId()` is this with the row dropped. It exists for
+ * Server Actions and route handlers, where `cache()` is a pass-through: there, a later
+ * `ensureUserSettings(userId)` or `getEntitlements(userId)` is another round trip for the
+ * row this function has just read. Pass `settings` on instead (`entitlementsFromSettings`,
+ * `resolveApolloKey(userId, row)`), as the app pulse does.
+ */
+export const requireAuthenticatedUser = cache(async (): Promise<AuthenticatedUser> => {
   if (isDemoMode()) {
-    await bootstrapAuthenticatedUser("demo-user");
-    return "demo-user";
+    const settings = await bootstrapAuthenticatedUser("demo-user");
+    return { userId: "demo-user", settings };
   }
 
   if (!isClerkConfigured()) {
@@ -107,7 +140,8 @@ export const requireUserId = cache(async (): Promise<string> => {
     if (settings.suspendedAt) {
       throw new AccountSuspendedError(settings.suspendedAt);
     }
-    return userId;
+    if (await isHeldByStealth(userId, settings)) throw new AccountHeldError();
+    return { userId, settings };
   }
 
   throw new UnauthorizedError();
@@ -119,6 +153,44 @@ export type UserProfile = {
   email: string;
   imageUrl?: string;
 };
+
+/**
+ * The signed-in user's profile for RENDERING — a name to greet, an avatar, an address to
+ * show — read from the `user_settings` mirror instead of Clerk's Backend API.
+ *
+ * `getCurrentUserProfile()` below is a network call to Clerk on every use. The dashboard,
+ * the graph and the settings page all made it while rendering, so a page switch waited on
+ * Clerk as well as on Postgres. The mirror (`setUserEmail` / `setUserIdentity`, kept by the
+ * `user.created`/`user.updated` webhook) holds the same fields, and the row is already
+ * loaded and request-cached by `requireUserId()` — so this is usually zero round trips.
+ *
+ * Falls back to Clerk whenever the mirror cannot answer (no email, or no name at all),
+ * which is also what backfills it. Anything where a stale value would be WRONG rather than
+ * merely out of date — a Stripe customer's email, a From line — keeps calling
+ * `getCurrentUserProfile()` directly.
+ */
+export async function getDisplayProfile(): Promise<UserProfile | null> {
+  if (isDemoMode() || !isClerkConfigured()) return getCurrentUserProfile();
+
+  try {
+    const { userId } = await auth();
+    if (userId) {
+      const settings = await ensureUserSettings(userId);
+      const name = [settings?.firstName, settings?.lastName].filter(Boolean).join(" ");
+      if (settings?.email && name) {
+        return {
+          id: userId,
+          name,
+          email: settings.email,
+          imageUrl: settings.profileImageUrl ?? undefined,
+        };
+      }
+    }
+  } catch {
+    // Fall through to Clerk: a missing mirror is a slower page, never a broken one.
+  }
+  return getCurrentUserProfile();
+}
 
 export async function getCurrentUserProfile(): Promise<UserProfile | null> {
   if (isDemoMode()) {
@@ -142,11 +214,19 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
       // net if a user.updated webhook is ever missed. Deliberately here rather than in
       // bootstrapAuthenticatedUser, which runs on every authenticated request — this
       // path already pays for the currentUser() call. Best-effort; never blocks render.
-      if (email) {
-        void import("@/lib/user-settings")
-          .then(({ setUserEmail }) => setUserEmail(user.id, email))
-          .catch(() => {});
-      }
+      //
+      // The name and avatar are backfilled the same way, so `getDisplayProfile()` can answer
+      // from the mirror next time instead of calling Clerk again.
+      void import("@/lib/user-settings")
+        .then(async ({ setUserEmail, setUserIdentity }) => {
+          if (email) await setUserEmail(user.id, email);
+          await setUserIdentity(user.id, {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            imageUrl: user.imageUrl,
+          });
+        })
+        .catch(() => {});
       return {
         id: user.id,
         name: user.fullName || user.firstName || "You",

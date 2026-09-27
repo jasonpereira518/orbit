@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { runOpsSweep } from "@/lib/ops-sweep";
+import { reportError } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -26,9 +27,11 @@ export async function POST(request: Request) {
   try {
     const result = await runOpsSweep({ trigger: "schedule", deploy });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
-  } catch {
-    // The database is unreachable or the sweep itself broke. Say so without notifying —
-    // the uptime monitor owns "down".
-    return NextResponse.json({ status: "failed" }, { status: 503 });
+  } catch (err) {
+    // The database is unreachable or the sweep itself broke. The uptime monitor owns
+    // "down", but a sweep that breaks while the site is up would otherwise be invisible:
+    // it is the thing that sends every other alert.
+    const ref = reportError(err, { where: "job.ops-sweep" });
+    return NextResponse.json({ status: "failed", ref }, { status: 503 });
   }
 }

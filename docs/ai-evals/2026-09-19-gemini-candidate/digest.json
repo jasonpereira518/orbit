@@ -1,0 +1,93 @@
+{
+  "label": "candidate-digest",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-20T00:37:15.414Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 2,
+  "candidate": {
+    "thinking": {
+      "capture.parse": "minimal",
+      "capture.parse.identify": "minimal",
+      "capture.parse.details": "minimal",
+      "capture.parse.excerpt-retry": "minimal",
+      "capture.dates": "minimal",
+      "capture.transcribe.page": "minimal",
+      "capture.transcribe.audio": "minimal",
+      "meeting.transcribe": "minimal",
+      "meeting.digest": "minimal",
+      "meeting.digest.map": "minimal",
+      "meeting.digest.reduce": "minimal",
+      "chat.understand": "minimal",
+      "chat.rerank": "minimal",
+      "recruiter.scan": "minimal",
+      "extension.parse": "minimal",
+      "import.enrich": "minimal",
+      "import.linkedin.timeline": "minimal",
+      "events.why": "minimal"
+    },
+    "tiers": {
+      "recruiter.scan": "fast",
+      "extension.parse": "fast",
+      "capture.dates": "fast",
+      "import.enrich": "fast",
+      "meeting.digest.map": "fast"
+    },
+    "model": "gemini-3.8-flash",
+    "visionModels": {
+      "gemini": "gemini-3.8-flash"
+    }
+  },
+  "tasks": {
+    "digest": {
+      "cases": 3,
+      "metrics": {
+        "attendeeRecall": 1,
+        "attendeePrecision": 1,
+        "actionItemRecall": 0.9230769230769231
+      },
+      "misses": [
+        "digest-b-career-chat"
+      ],
+      "p50LatencyMs": 8522.5,
+      "costMicros": 37308.5,
+      "costPerCaseMicros": 12436.166666666666,
+      "usage": [
+        {
+          "operation": "meeting.digest",
+          "model": "gemini-3.8-flash",
+          "calls": 4,
+          "failures": 0,
+          "inputTokens": 9406,
+          "outputTokens": 7928,
+          "cachedInputTokens": 0,
+          "costMicros": 36785,
+          "unpriced": 0
+        },
+        {
+          "operation": "meeting.digest.map",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 4,
+          "failures": 0,
+          "inputTokens": 18632,
+          "outputTokens": 6743,
+          "cachedInputTokens": 0,
+          "costMicros": 14772,
+          "unpriced": 0
+        },
+        {
+          "operation": "meeting.digest.reduce",
+          "model": "gemini-3.8-flash",
+          "calls": 2,
+          "failures": 0,
+          "inputTokens": 5997,
+          "outputTokens": 4950,
+          "cachedInputTokens": 0,
+          "costMicros": 23060,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

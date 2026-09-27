@@ -27,6 +27,7 @@ config({ path: ".env.local" });
 config();
 
 import { createClerkClient } from "@clerk/backend";
+import { missingDemoUserMessage } from "./lib/demo-account-messages";
 
 const args = process.argv.slice(2);
 function flagValue(name: string, fallback: string) {
@@ -56,10 +57,7 @@ async function main() {
   const { data } = await clerk.users.getUserList({ emailAddress: [EMAIL] });
   const user = data[0];
   if (!user) {
-    console.error(
-      `No Clerk user found for ${EMAIL}.\n` +
-        "Run scripts/provision-demo-account.ts first."
-    );
+    console.error(missingDemoUserMessage(EMAIL, secretKey!));
     process.exit(1);
   }
 

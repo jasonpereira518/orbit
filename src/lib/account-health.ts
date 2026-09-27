@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
+  appleConnections,
   calendarSubscriptions,
   contacts,
   gmailConnections,
@@ -8,7 +9,7 @@ import {
   outlookConnections,
   userSettings,
 } from "@/db/schema";
-import { hasAiKeyFor } from "@/lib/ai";
+import { aiReadyFromSettings } from "@/lib/ai-access";
 import { resolveAiProvider } from "@/lib/ai-providers";
 import {
   IMPORT_ALERT_WINDOW_MS,
@@ -22,9 +23,13 @@ import {
   type ConnectionFacts,
   type HealthInput,
 } from "@/lib/account-alerts";
-import { getEntitlements } from "@/lib/entitlements";
-import { getGmailOAuthConfigSummary } from "@/lib/gmail";
-import { getOutlookOAuthConfigSummary } from "@/lib/outlook";
+import { entitlementsFromSettings, type Entitlements } from "@/lib/entitlements";
+import { deriveConnectionHealth } from "@/lib/connection-status";
+import { getGmailOAuthConfigSummary, hasCalendarScope } from "@/lib/gmail";
+import {
+  getOutlookOAuthConfigSummary,
+  hasCalendarScope as hasOutlookCalendarScope,
+} from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
 
@@ -34,18 +39,18 @@ import { ensureUserSettings } from "@/lib/user-settings";
  *
  * COST. This runs on the notifications panel's 120-second poll, so every fact it needs is
  * either already in hand or folded into one statement. Provider, key presence, onboarding,
- * subscription state, plan and `contactLimit` come from `ensureUserSettings` and
- * `getEntitlements`, which are React `cache()` memos — `getEntitlements` reads nothing of
- * its own, and the panel's `Promise.all` awaits both anyway. Surface visibility is a third
- * memo the app shell already uses. Everything else is scalar subqueries in a SINGLE
+ * subscription state, plan and `contactLimit` come from the settings row — the caller's
+ * (`AccountHealthContext`), or else `ensureUserSettings`, a React `cache()` memo — and
+ * `entitlementsFromSettings` on that same row, which reads nothing. Surface visibility is a
+ * second memo the app shell already uses. Everything else is scalar subqueries in a SINGLE
  * `select`, the pattern `admin-user-detail.ts` uses and for the reason it gives there: on
  * Neon HTTP every separate query is its own round trip, and one statement the planner runs
  * as a handful of index lookups is the same work at a fraction of the latency.
  *
- * Measured (`scripts/smoke-account-alerts.ts`, case 19): 4 statements called standalone
- * with no request context, where the `cache()` memos cannot help. Inside a request that
- * has already resolved settings and surface visibility, the marginal cost is the one
- * combined select. A paid account never pays for the contact count.
+ * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 4 statements called
+ * standalone with no request context, where the `cache()` memos cannot help. Inside a
+ * request that has already resolved settings and surface visibility (or passes the row in),
+ * the marginal cost is the one combined select. A paid account never pays for the contact count.
  *
  * FRESHNESS. Alerts clear on the next poll, on panel open, or after any panel mutation —
  * so the bell's dot can outlive the fix by up to 120 seconds. That is deliberate and is
@@ -97,15 +102,101 @@ function connectionFacts(
   };
 }
 
+function googleCalendarFacts(
+  configured: boolean,
+  status: unknown,
+  nextSyncAt: unknown,
+  syncError: unknown,
+  scopes: unknown
+): HealthInput["googleCalendar"] {
+  const resolved = text(status);
+  if (!configured || !resolved || !hasCalendarScope(text(scopes))) return null;
+  const reason = text(syncError);
+  return {
+    paused:
+      deriveConnectionHealth({
+        status: resolved,
+        nextSyncAt: toDate(nextSyncAt),
+        syncError: reason,
+        calendarScopeGranted: true,
+      }) === "disarmed",
+    reason,
+  };
+}
+
+/** Mirrors `googleCalendarFacts` exactly, for the Outlook grant instead of the Gmail one. */
+function microsoftCalendarFacts(
+  configured: boolean,
+  status: unknown,
+  nextSyncAt: unknown,
+  syncError: unknown,
+  scopes: unknown
+): HealthInput["microsoftCalendar"] {
+  const resolved = text(status);
+  if (!configured || !resolved || !hasOutlookCalendarScope(text(scopes))) return null;
+  const reason = text(syncError);
+  return {
+    paused:
+      deriveConnectionHealth({
+        status: resolved,
+        nextSyncAt: toDate(nextSyncAt),
+        syncError: reason,
+        calendarScopeGranted: true,
+      }) === "disarmed",
+    reason,
+  };
+}
+
+/**
+ * Unlike `googleCalendarFacts`/`microsoftCalendarFacts`, no `configured` gate (Apple has no
+ * OAuth app to configure) and no scope check (Apple grants none — see
+ * `apple_connections.scopes`'s own comment, and `account-alerts.ts`'s `appleCalendar` doc
+ * comment for why a revoked app-specific password reads as the same "disarmed" state as a
+ * sync that gave up on its own).
+ */
+function appleCalendarFacts(
+  status: unknown,
+  nextSyncAt: unknown,
+  syncError: unknown
+): HealthInput["appleCalendar"] {
+  const resolved = text(status);
+  if (!resolved) return null;
+  const reason = text(syncError);
+  return {
+    paused:
+      deriveConnectionHealth({
+        status: resolved,
+        nextSyncAt: toDate(nextSyncAt),
+        syncError: reason,
+        calendarScopeGranted: true,
+      }) === "disarmed",
+    reason,
+  };
+}
+
+/**
+ * The account's settings row and entitlements, for a caller that already holds them.
+ *
+ * Optional everywhere it is accepted. The app pulse is a Server Action, where `cache()` is a
+ * pass-through: without this, `ensureUserSettings` and `getEntitlements` would each re-read
+ * the row `requireAuthenticatedUser()` had just read, on a 90-second poll per tab.
+ */
+export type AccountHealthContext = {
+  settings: typeof userSettings.$inferSelect;
+  /** Resolved from `settings` when omitted — the same computation `getEntitlements` runs. */
+  entitlements?: Entitlements;
+};
+
 export async function loadAccountHealthInput(
   userId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  context?: AccountHealthContext
 ): Promise<HealthInput | null> {
-  const [settings, entitlements] = await Promise.all([
-    ensureUserSettings(userId),
-    getEntitlements(userId),
-  ]);
+  // `getEntitlements(userId)` is exactly `entitlementsFromSettings(userId, ensureUserSettings(userId))`,
+  // so resolving from the row in hand is the same answer without a second read of it.
+  const settings = context?.settings ?? (await ensureUserSettings(userId));
   if (!settings) return null;
+  const entitlements = context?.entitlements ?? entitlementsFromSettings(userId, settings);
 
   const provider = resolveAiProvider(settings.aiProvider);
   const stalledBefore = new Date(now.getTime() - STALLED_IMPORT_MS);
@@ -129,6 +220,15 @@ export async function loadAccountHealthInput(
       gmailHasRefresh: sql<boolean | null>`(
         SELECT ${gmailConnections.refreshTokenEncrypted} IS NOT NULL FROM ${gmailConnections}
         WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
+      gmailNextSyncAt: sql<Date | string | null>`(
+        SELECT ${gmailConnections.nextSyncAt} FROM ${gmailConnections}
+        WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
+      gmailSyncError: sql<string | null>`(
+        SELECT ${gmailConnections.syncError} FROM ${gmailConnections}
+        WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
+      gmailScopes: sql<string | null>`(
+        SELECT ${gmailConnections.scopes} FROM ${gmailConnections}
+        WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
 
       outlookStatus: sql<string | null>`(
         SELECT ${outlookConnections.status} FROM ${outlookConnections}
@@ -142,6 +242,25 @@ export async function loadAccountHealthInput(
       outlookHasRefresh: sql<boolean | null>`(
         SELECT ${outlookConnections.refreshTokenEncrypted} IS NOT NULL FROM ${outlookConnections}
         WHERE ${outlookConnections.userId} = ${userId} LIMIT 1)`,
+      outlookNextSyncAt: sql<Date | string | null>`(
+        SELECT ${outlookConnections.nextSyncAt} FROM ${outlookConnections}
+        WHERE ${outlookConnections.userId} = ${userId} LIMIT 1)`,
+      outlookSyncError: sql<string | null>`(
+        SELECT ${outlookConnections.syncError} FROM ${outlookConnections}
+        WHERE ${outlookConnections.userId} = ${userId} LIMIT 1)`,
+      outlookScopes: sql<string | null>`(
+        SELECT ${outlookConnections.scopes} FROM ${outlookConnections}
+        WHERE ${outlookConnections.userId} = ${userId} LIMIT 1)`,
+
+      appleStatus: sql<string | null>`(
+        SELECT ${appleConnections.status} FROM ${appleConnections}
+        WHERE ${appleConnections.userId} = ${userId} LIMIT 1)`,
+      appleNextSyncAt: sql<Date | string | null>`(
+        SELECT ${appleConnections.nextSyncAt} FROM ${appleConnections}
+        WHERE ${appleConnections.userId} = ${userId} LIMIT 1)`,
+      appleSyncError: sql<string | null>`(
+        SELECT ${appleConnections.syncError} FROM ${appleConnections}
+        WHERE ${appleConnections.userId} = ${userId} LIMIT 1)`,
 
       // Disabled feeds are not syncing by choice; only an enabled one can be "failing".
       calendarErrorCount: sql<number>`(
@@ -215,7 +334,8 @@ export async function loadAccountHealthInput(
 
   return {
     aiProvider: provider,
-    hasAiKey: hasAiKeyFor(provider, settings),
+    // The gate's own policy, presence-only: a Lifetime account on Orbit's key is not missing one.
+    hasAiKey: aiReadyFromSettings(userId, settings),
     onboardingCompletedAt: toDate(settings.onboardingCompletedAt),
 
     gmail: connectionFacts(
@@ -232,6 +352,21 @@ export async function loadAccountHealthInput(
       row.outlookExpiresAt,
       row.outlookHasRefresh
     ),
+    googleCalendar: googleCalendarFacts(
+      getGmailOAuthConfigSummary().configured,
+      row.gmailStatus,
+      row.gmailNextSyncAt,
+      row.gmailSyncError,
+      row.gmailScopes
+    ),
+    microsoftCalendar: microsoftCalendarFacts(
+      getOutlookOAuthConfigSummary().configured,
+      row.outlookStatus,
+      row.outlookNextSyncAt,
+      row.outlookSyncError,
+      row.outlookScopes
+    ),
+    appleCalendar: appleCalendarFacts(row.appleStatus, row.appleNextSyncAt, row.appleSyncError),
 
     calendarErrorCount: num(row.calendarErrorCount),
     calendarErrorLabel: text(row.calendarErrorLabel),
@@ -263,10 +398,11 @@ export async function loadAccountHealthInput(
  */
 export async function getAccountAlerts(
   userId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  context?: AccountHealthContext
 ): Promise<AccountAlert[]> {
   try {
-    const input = await loadAccountHealthInput(userId, now);
+    const input = await loadAccountHealthInput(userId, now, context);
     if (!input) return [];
 
     const alerts = sortAccountAlerts(toAccountAlerts(evaluateAccountHealth(input, now)));

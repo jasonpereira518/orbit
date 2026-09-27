@@ -3,6 +3,7 @@
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useBackgroundJobs } from "@/lib/background-jobs";
+import { SettingsRow } from "@/components/settings/settings-section";
 
 /**
  * Shows progress for the LinkedIn photo backfill (`avatar-backfill.tsx`),
@@ -20,9 +21,8 @@ export function AvatarSyncStatus() {
     : null;
 
   return (
-    <div className="border-t border-border/60 pt-4">
-      <h3 className="text-sm font-medium text-ink">Contact photos</h3>
-      <div className="mt-2 flex items-start gap-2.5">
+    <SettingsRow title="Contact photos">
+      <div className="flex items-start gap-2.5">
         <div className="mt-0.5 shrink-0">
           {job.status === "running" ? (
             <Loader2 className="size-4 animate-spin text-primary" />
@@ -70,6 +70,6 @@ export function AvatarSyncStatus() {
           )}
         </div>
       </div>
-    </div>
+    </SettingsRow>
   );
 }

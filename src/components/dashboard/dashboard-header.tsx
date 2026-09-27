@@ -21,6 +21,10 @@ export function DashboardHeader() {
           <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
             ⌘K
           </kbd>{" "}
+          to jump anywhere, or{" "}
+          <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
+            ⌘J
+          </kbd>{" "}
           to ask your network.
         </span>
       </p>

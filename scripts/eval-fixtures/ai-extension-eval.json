@@ -1,0 +1,207 @@
+{
+  "cases": [
+    {
+      "id": "ext-01-standard-profile",
+      "identityName": "Oluwaseun Adeyemi",
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nOluwaseun Adeyemi\nHe/Him\nSenior Product Manager at Brightwater Logistics | Infra & developer platforms\nSeattle, Washington, United States · Contact info\n1,204 followers · 500+ connections\nMessage\nFollow\nMore\nAbout\nI build internal platforms that make other engineers faster. Currently leading the developer-experience product area at Brightwater, where we run CI and deploy tooling for about 600 engineers. Previously shipped the self-serve onboarding flow at Tidewater Analytics.\nActivity\n1,204 followers\nOluwaseun posted this • 3w\nWe cut median CI time from 22 to 9 minutes. Here's what actually mattered (hint: not the hardware)...\n42 comments · 310 reactions\nExperience\nSenior Product Manager\nBrightwater Logistics · Full-time\nMar 2023 - Present · 3 yrs 7 mos\nSeattle, Washington, United States\nProduct Manager\nTidewater Analytics · Full-time\nJun 2019 - Feb 2023 · 3 yrs 9 mos\nAssociate Product Manager\nQuillfeather Bank · Full-time\nJul 2017 - May 2019 · 1 yr 11 mos\nEducation\nHarrow State University\nBachelor of Science, Computer Science\n2013 - 2017\nSkills\nProduct Strategy\nDeveloper Experience\nSQL\nPeople also viewed\nMarguerite Solano\nStaff Engineer at Brightwater Logistics\nKenji Aramaki\nDirector of Product at Stillwater Compute\nIfeanyi Obi\nEngineering Manager at Tidewater Analytics\nMore profiles for you\nHanna Lindgren\nProduct Lead at Copperline Games\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Oluwaseun Adeyemi",
+        "title": "Senior Product Manager",
+        "company": "Brightwater Logistics",
+        "location": "Seattle",
+        "school": "Harrow State",
+        "mustBeNull": [
+          "email"
+        ],
+        "forbidden": [
+          "Marguerite Solano",
+          "Kenji Aramaki",
+          "Ifeanyi Obi",
+          "Hanna Lindgren"
+        ]
+      }
+    },
+    {
+      "id": "ext-02-no-current-company",
+      "identityName": "Tomasz Wrobel",
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nTomasz Wrobel\nProduct Designer | Open to work\nLisbon, Portugal · Contact info\n387 followers · 312 connections\nOpen to work\nProduct Designer, UX Designer and Interaction Designer roles\nSee all details\nMessage\nMore\nAbout\nI left Copperline Games this summer after five great years designing puzzle mechanics and monetization flows, and I'm taking a few months to find the next thing. I care about accessible, calm interfaces and design systems that survive contact with engineering.\nExperience\nSenior Product Designer\nCopperline Games · Full-time\nJan 2021 - Jul 2026 · 5 yrs 7 mos\nLisbon, Portugal\nProduct Designer\nParcelwise · Full-time\nSep 2018 - Dec 2020 · 2 yrs 4 mos\nDesign Intern\nGlasswing Software · Internship\nJun 2017 - Aug 2017 · 3 mos\nEducation\nLisbon Institute of Design\nMaster of Arts, Interaction Design\n2016 - 2018\nLicenses & certifications\nAccessibility Specialist Certificate\nIssued Mar 2024\nPeople also viewed\nCarolina Mendes\nSenior UX Researcher at Copperline Games\nArjen Visser\nDesign Director at Parcelwise\nMore profiles for you\nBeatrice Lindholm\nProduct Designer at Brambleworks\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Tomasz Wrobel",
+        "location": "Lisbon",
+        "school": "Lisbon Institute of Design",
+        "mustBeNull": [
+          "company",
+          "email"
+        ],
+        "forbidden": [
+          "Carolina Mendes",
+          "Arjen Visser",
+          "Beatrice Lindholm"
+        ]
+      }
+    },
+    {
+      "id": "ext-03-no-location",
+      "identityName": "Meera Venkataraman",
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nMeera Venkataraman\nShe/Her\nStaff Machine Learning Engineer at Halvorsen Freight\nContact info\n2,031 followers · 500+ connections\nMessage\nFollow\nMore\nAbout\nI work on travel-time prediction and demand forecasting for large-scale vehicle routing. Before that I spent six years building fraud models in payments. I write occasionally about graph neural networks and about making ML systems boring in production.\nFeatured\nPost\nWhy our routing model stopped improving (and what fixed it)\nExperience\nStaff Machine Learning Engineer\nHalvorsen Freight · Full-time\nApr 2022 - Present · 4 yrs 6 mos\nSenior Machine Learning Engineer\nQuillfeather Bank · Full-time\nJan 2016 - Mar 2022 · 6 yrs 3 mos\nEducation\nHarrow State University\nMaster of Science, Statistics\n2014 - 2015\nSkills\nMachine Learning\nGraph Neural Networks\nPython\nPeople also viewed\nLars Eriksen\nPrincipal Engineer at Halvorsen Freight\nYusra Qadir\nData Science Manager at Quillfeather Bank\nMore profiles for you\nTobiah Brennan\nML Engineer at Stillwater Compute\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Meera Venkataraman",
+        "title": "Machine Learning Engineer",
+        "company": "Halvorsen Freight",
+        "school": "Harrow State",
+        "mustBeNull": [
+          "location",
+          "email"
+        ],
+        "forbidden": [
+          "Lars Eriksen",
+          "Yusra Qadir",
+          "Tobiah Brennan"
+        ]
+      }
+    },
+    {
+      "id": "ext-04-fluff-headline",
+      "identityName": "Dominic Castellano",
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nDominic Castellano\nHelping founders scale 🚀 | Speaker | Dad of 3 | Coffee enthusiast ☕\nAustin, Texas, United States · Contact info\n14,882 followers · 500+ connections\nFollow\nMessage\nMore\nAbout\nI've been on both sides of the table. After building and selling Lumenpath, I now spend my days backing bold founders who are rewriting how the world works. Passionate about community, grit, and the power of saying yes. DMs open 🙌\nActivity\n14,882 followers\nDominic posted this • 2d\n5 lessons I learned from 100 pitch meetings this year. Number 3 will surprise you 👇\nLiked by Harper Quinlan and 1,203 others\nExperience\nGeneral Partner\nMeridian Ridge Ventures · Full-time\nJan 2022 - Present · 4 yrs 10 mos\nAustin, Texas, United States\nFounder & CEO\nLumenpath\nMar 2015 - Nov 2021 · 6 yrs 9 mos\nAcquired by Glasswing Software in 2021\nProduct Manager\nQuillfeather Bank\nJun 2011 - Feb 2015 · 3 yrs 9 mos\nEducation\nLakeshore Business School\nMaster of Business Administration\n2009 - 2011\nPeople also viewed\nNadine Oyelowo\nPartner at Meridian Ridge Ventures\nSebastian Kraus\nFounder at Kestrel Pay\nMore profiles for you\nPriscilla Tan\nPrincipal at Harbourline Capital\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Dominic Castellano",
+        "title": "General Partner",
+        "company": "Meridian Ridge Ventures",
+        "location": "Austin",
+        "school": "Lakeshore Business School",
+        "mustBeNull": [
+          "email"
+        ],
+        "forbidden": [
+          "Harper Quinlan",
+          "Nadine Oyelowo",
+          "Sebastian Kraus",
+          "Priscilla Tan"
+        ]
+      }
+    },
+    {
+      "id": "ext-05-identity-null",
+      "identityName": null,
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nChinonso Eze\nData Journalist at The Lantern Ledger\nToronto, Ontario, Canada · Contact info\n3,410 followers · 500+ connections\nMessage\nFollow\nMore\nAbout\nI report on housing, transit, and public money with data. I built the paper's open-data desk and teach a spreadsheet-reporting workshop for newsrooms.\nActivity\n3,410 followers\nChinonso reposted this • 1w\nRebecca Thornbury: Our investigation into transit delays is live. Months of work by the data desk.\nRebecca Thornbury and 48 others reacted\nExperience\nData Journalist\nThe Lantern Ledger · Full-time\nAug 2021 - Present · 5 yrs 3 mos\nToronto, Ontario, Canada\nResearch Assistant\nCivic Numbers Lab · Part-time\nSep 2019 - Jul 2021 · 1 yr 11 mos\nEducation\nNorthgate Polytechnic\nBachelor of Journalism\n2016 - 2020\nPeople also viewed\nDeclan Moreau\nInvestigations Editor at The Lantern Ledger\nAyesha Rahimi\nData Reporter at Harbour City Post\nMore profiles for you\nJulien Fortier\nGraphics Editor at The Lantern Ledger\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Chinonso Eze",
+        "title": "Data Journalist",
+        "company": "The Lantern Ledger",
+        "location": "Toronto",
+        "school": "Northgate Polytechnic",
+        "mustBeNull": [
+          "email"
+        ],
+        "forbidden": [
+          "Rebecca Thornbury",
+          "Declan Moreau",
+          "Ayesha Rahimi",
+          "Julien Fortier"
+        ]
+      }
+    },
+    {
+      "id": "ext-06-very-short-profile",
+      "identityName": "Arash Karimi",
+      "pageText": "Home\nMy Network\nJobs\nMessaging\nNotifications\nArash Karimi\nBackend Engineer at Parcelwise\nBerlin, Germany\n42 connections\nConnect\nMessage\nExperience\nBackend Engineer\nParcelwise\n2024 - Present\nPeople also viewed\nLotte Brandsma\nFrontend Developer at Parcelwise\nTheo Marchand\nBackend Engineer at Glasswing Software",
+      "expect": {
+        "fullName": "Arash Karimi",
+        "title": "Backend Engineer",
+        "company": "Parcelwise",
+        "location": "Berlin",
+        "mustBeNull": [
+          "school",
+          "email"
+        ],
+        "forbidden": [
+          "Lotte Brandsma",
+          "Theo Marchand"
+        ]
+      }
+    },
+    {
+      "id": "ext-07-headline-names-past-employers",
+      "identityName": "Rosalind Achebe-Hart",
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nRosalind Achebe-Hart\nEngineering Manager at Fernhill Health | ex-Quillfeather Bank, ex-Brambleworks\nDenver, Colorado, United States · Contact info\n968 followers · 500+ connections\nMessage\nMore\nAbout\nI lead the clinical data team at Fernhill Health: eight engineers building the pipelines that turn heart-monitor signals into alerts clinicians can trust. Before that I spent a decade as an IC in payments and developer tools.\nExperience\nEngineering Manager\nFernhill Health · Full-time\nFeb 2025 - Present · 1 yr 9 mos\nDenver, Colorado, United States\nSenior Software Engineer\nQuillfeather Bank · Full-time\nMar 2020 - Jan 2025 · 4 yrs 11 mos\nSoftware Engineer\nBrambleworks · Full-time\nJul 2017 - Feb 2020 · 2 yrs 8 mos\nEducation\nHarrow State University\nBachelor of Science, Mathematics\n2013 - 2017\nRecommendations\nReceived\nGideon Falk\nDirector of Engineering at Quillfeather Bank\nRosalind was the engineer everyone wanted on their incident bridge.\nPeople also viewed\nMariana Costa\nEngineering Manager at Quillfeather Bank\nViktor Holm\nVP Engineering at Fernhill Health\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Rosalind Achebe-Hart",
+        "title": "Engineering Manager",
+        "company": "Fernhill Health",
+        "location": "Denver",
+        "school": "Harrow State",
+        "mustBeNull": [
+          "email"
+        ],
+        "forbidden": [
+          "Gideon Falk",
+          "Mariana Costa",
+          "Viktor Holm"
+        ]
+      }
+    },
+    {
+      "id": "ext-08-comments-and-recommendations",
+      "identityName": "Kwasi Ofori",
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nKwasi Ofori\nHead of Data at Glasswing Software\nChicago, Illinois, United States · Contact info\n5,122 followers · 500+ connections\nMessage\nFollow\nMore\nAbout\nI run the data team at Glasswing: analytics engineering, data platform, and our streaming dashboards product. I care about metric definitions people actually agree on.\nActivity\n5,122 followers\nKwasi posted this • 5d\nWe finally retired our last nightly batch report. Here's the migration plan we used.\nLiesel Hartmann · 1st\nGreat writeup. We're about to do the same thing.\nDiego Marin · 2nd\nHow did you handle late-arriving events?\nKwasi reposted this • 2w\nFarah Qureshi: Hiring two analytics engineers on my team, DM me.\nExperience\nHead of Data\nGlasswing Software · Full-time\nJun 2023 - Present · 3 yrs 5 mos\nChicago, Illinois, United States\nSenior Analytics Engineer\nTidewater Analytics · Full-time\nFeb 2019 - May 2023 · 4 yrs 4 mos\nEducation\nNorthgate Polytechnic\nBachelor of Science, Economics\n2012 - 2016\nRecommendations\nReceived\nEleanor Whitcombe\nVP Engineering at Glasswing Software\nI managed Kwasi directly for two years. He built our data team from scratch.\nPeople also viewed\nSoren Lund\nData Platform Lead at Brightwater Logistics\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Kwasi Ofori",
+        "title": "Head of Data",
+        "company": "Glasswing Software",
+        "location": "Chicago",
+        "school": "Northgate Polytechnic",
+        "mustBeNull": [
+          "email"
+        ],
+        "forbidden": [
+          "Liesel Hartmann",
+          "Diego Marin",
+          "Farah Qureshi",
+          "Eleanor Whitcombe",
+          "Soren Lund"
+        ]
+      }
+    },
+    {
+      "id": "ext-09-mission-headline-top-card-chips",
+      "identityName": "Mireya Castillo",
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nMireya Castillo\nBuilding GPU infrastructure for research labs\nStillwater Compute\nAshford Institute of Technology\nOakland, California, United States · Contact info\n742 followers · 500+ connections\nMessage\nMore\nAbout\nResearch labs waste most of their GPU budget waiting in queues. I'm fixing that. Previously a PhD student working on distributed training systems.\nExperience\nFounding Engineer\nStillwater Compute · Full-time\nFeb 2024 - Present · 2 yrs 9 mos\nOakland, California, United States\nGraduate Research Assistant\nAshford Institute of Technology · Part-time\nSep 2018 - Jan 2024 · 5 yrs 5 mos\nSoftware Engineering Intern\nBrightwater Logistics · Internship\nJun 2017 - Aug 2017 · 3 mos\nEducation\nAshford Institute of Technology\nDoctor of Philosophy, Computer Science\n2018 - 2024\nPeople also viewed\nOskar Lindberg\nCTO at Stillwater Compute\nHaruka Mori\nResearch Scientist at Driftwood Bio\nMore profiles for you\nEverett Sloane\nInfrastructure Engineer at Stillwater Compute\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Mireya Castillo",
+        "title": "Founding Engineer",
+        "company": "Stillwater Compute",
+        "location": "Oakland",
+        "school": "Ashford Institute of Technology",
+        "mustBeNull": [
+          "email"
+        ],
+        "forbidden": [
+          "Oskar Lindberg",
+          "Haruka Mori",
+          "Everett Sloane"
+        ]
+      }
+    },
+    {
+      "id": "ext-10-volunteering-present-decoy",
+      "identityName": "Joost van der Linde",
+      "pageText": "Skip to main content\nHome\nMy Network\nJobs\nMessaging\nNotifications\nMe\nFor Business\nTry Premium for $0\nJoost van der Linde\nPrincipal Research Scientist at Driftwood Bio\nRotterdam, South Holland, Netherlands · Contact info\n1,576 followers · 500+ connections\nMessage\nFollow\nMore\nAbout\nEnzyme engineer. I design and evolve enzymes that break down mixed plastic waste at industrial temperatures. Outside work I teach kids to solder at the local makerspace.\nFeatured\nArticle\nDirected evolution at pilot scale: what we got wrong\nExperience\nPrincipal Research Scientist\nDriftwood Bio · Full-time\nOct 2023 - Present · 3 yrs 1 mo\nRotterdam, South Holland, Netherlands\nSenior Scientist\nEmberline Energy · Full-time\nJan 2018 - Sep 2023 · 5 yrs 9 mos\nEducation\nMaasland University\nDoctor of Philosophy, Biochemistry\n2013 - 2017\nVolunteering\nBoard Member\nRotterdam Makerspace\nMar 2019 - Present · 7 yrs 8 mos\nLicenses & certifications\nLaboratory Safety Officer\nIssued Jan 2024\nPeople also viewed\nAnnika Brouwer\nHead of R&D at Driftwood Bio\nFemi Adebayo\nProcess Engineer at Emberline Energy\nMore profiles for you\nMaarten Hoekstra\nResearch Scientist at Driftwood Bio\nConnect\nAbout\nAccessibility\nTalent Solutions\nCommunity Guidelines\nCareers\nPrivacy & Terms\nAd Choices\nHelp Center\nSelect Language",
+      "expect": {
+        "fullName": "Joost van der Linde",
+        "title": "Principal Research Scientist",
+        "company": "Driftwood Bio",
+        "location": "Rotterdam",
+        "school": "Maasland University",
+        "mustBeNull": [
+          "email"
+        ],
+        "forbidden": [
+          "Annika Brouwer",
+          "Femi Adebayo",
+          "Maarten Hoekstra"
+        ]
+      }
+    }
+  ]
+}

@@ -8,9 +8,13 @@ import {
   scheduleContactFollowUp,
 } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
-import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
+import {
+  FollowUpDraftSheetLazy,
+  preloadFollowUpDraftSheet,
+} from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 const PRESETS = [
   { days: 3, label: "3d" },
@@ -81,13 +85,15 @@ export function EasyFollowUp({
         onScheduled?.(res.dueDate);
         const permission = await promptNotificationsAfterFollowUpAction();
         if (permission === "granted") {
-          toast.success(`Follow-up in ${days} days — desktop alerts on`);
+          // `${days} days` read "1 days" — and the same action's other caller, in
+          // contact-follow-up-section, called it a "Reminder". One wording for one action.
+          toast.success(`Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now — desktop alerts are on`);
         } else {
-          toast.success(`Follow-up set for ${days} days`);
+          toast.success(`Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now`);
         }
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not set follow-up");
+        toast.error(friendlyError(err, "Couldn’t set that follow-up — try again?"));
       }
     });
   }
@@ -134,6 +140,9 @@ export function EasyFollowUp({
             size="sm"
             disabled={pending}
             className="h-8 px-2.5"
+            // Warm the draft sheet's code on the way to the click, so it opens at once.
+            onPointerEnter={preloadFollowUpDraftSheet}
+            onFocus={preloadFollowUpDraftSheet}
             onClick={openFollowUp}
           >
             Follow up
@@ -202,7 +211,7 @@ export function EasyFollowUp({
       </div>
 
       {embedDraftSheet && (
-        <FollowUpDraftSheet
+        <FollowUpDraftSheetLazy
           open={sheetOpen}
           onOpenChange={setSheetOpen}
           contactId={contactId}

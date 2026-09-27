@@ -64,14 +64,17 @@ function SheetContent({
         already determined, and `h-full` would resolve against the viewport and overflow by
         exactly the 2rem of frame.
 
-        `bottom` stays flush. Its only caller is the mobile nav drawer, which is anchored to
-        the nav bar it opens from and would read as detached if it floated.
+        `bottom` floats on the same frame, for the same reason. It used to sit flush on the
+        argument that it is anchored to the nav bar it opens from — but that nav bar is
+        itself a floating pill on a 12px frame, so a welded-on drawer was the one element
+        contradicting the surface it grew out of. Floating it reads as a panel rising off
+        the nav rather than a second wall sliding up the screen.
       */}
       <SheetPrimitive.Popup
         data-slot="sheet-content"
         data-side={side}
         className={cn(
-          "fixed z-50 flex flex-col gap-4 bg-popover bg-clip-padding text-sm text-popover-foreground shadow-lg transition duration-base ease-house data-ending-style:opacity-0 data-starting-style:opacity-0 data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-4 data-[side=left]:left-4 data-[side=left]:w-[calc(100%-2rem)] data-[side=left]:rounded-3xl data-[side=left]:border data-[side=left]:data-ending-style:translate-x-[-2.5rem] data-[side=left]:data-starting-style:translate-x-[-2.5rem] data-[side=right]:inset-y-4 data-[side=right]:right-4 data-[side=right]:w-[calc(100%-2rem)] data-[side=right]:rounded-3xl data-[side=right]:border data-[side=right]:data-ending-style:translate-x-[2.5rem] data-[side=right]:data-starting-style:translate-x-[2.5rem] data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem] data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm data-[side=floating]:inset-y-4 data-[side=floating]:right-4 data-[side=floating]:w-[calc(100%-2rem)] data-[side=floating]:sm:max-w-sm data-[side=floating]:duration-slow data-[side=floating]:data-starting-style:scale-[0.28] data-[side=floating]:data-ending-style:scale-[0.28]",
+          "fixed z-50 flex flex-col gap-4 bg-popover bg-clip-padding text-sm text-popover-foreground shadow-lg transition duration-base ease-house data-ending-style:opacity-0 data-starting-style:opacity-0 data-[side=bottom]:inset-x-3 data-[side=bottom]:bottom-3 data-[side=bottom]:h-auto data-[side=bottom]:rounded-3xl data-[side=bottom]:border data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-4 data-[side=left]:left-4 data-[side=left]:w-[calc(100%-2rem)] data-[side=left]:rounded-3xl data-[side=left]:border data-[side=left]:data-ending-style:translate-x-[-2.5rem] data-[side=left]:data-starting-style:translate-x-[-2.5rem] data-[side=right]:inset-y-4 data-[side=right]:right-4 data-[side=right]:w-[calc(100%-2rem)] data-[side=right]:rounded-3xl data-[side=right]:border data-[side=right]:data-ending-style:translate-x-[2.5rem] data-[side=right]:data-starting-style:translate-x-[2.5rem] data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem] data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm data-[side=floating]:inset-y-4 data-[side=floating]:right-4 data-[side=floating]:w-[calc(100%-2rem)] data-[side=floating]:sm:max-w-sm data-[side=floating]:duration-slow data-[side=floating]:data-starting-style:scale-[0.28] data-[side=floating]:data-ending-style:scale-[0.28]",
           className
         )}
         {...props}

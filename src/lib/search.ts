@@ -30,17 +30,25 @@ const VECTOR_WRITE_CHUNK = 50;
  * unbounded set and build an oversized statement.
  */
 export async function persistEmbeddingVectors(
-  rows: Array<{ id: string; embedding: number[] }>
+  rows: Array<{ id: string; embedding: number[] }>,
+  /**
+   * Which table's `embedding_vector` to fill. A closed union rather than a string, because it
+   * is spliced into the statement as an identifier and must never come from anywhere but here.
+   * `memory_chunks` has its own vector column and HNSW index for the reason its table comment
+   * gives: sharing this one would put many rows per contact into an overscan built for one.
+   */
+  table: "contact_embeddings" | "memory_chunks" = "contact_embeddings"
 ) {
   if (!isPgvectorAvailable() || rows.length === 0) return;
   const db = await getDb();
+  const target = sql.raw(table === "memory_chunks" ? "memory_chunks" : "contact_embeddings");
   for (let i = 0; i < rows.length; i += VECTOR_WRITE_CHUNK) {
     const chunk = rows.slice(i, i + VECTOR_WRITE_CHUNK);
     const tuples = chunk.map(
       (row) => sql`(${row.id}::uuid, ${formatVectorLiteral(row.embedding)}::vector)`
     );
     await db.execute(sql`
-      UPDATE contact_embeddings AS e
+      UPDATE ${target} AS e
       SET embedding_vector = v.vec
       FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, vec)
       WHERE e.id = v.id
@@ -82,6 +90,8 @@ export async function upsertContactEmbedding(
             eq(contactEmbeddings.sourceType, sourceType),
             eq(contactEmbeddings.sourceId, sourceId)
           ),
+          // Only the id and hash are read below — never the stored vector (jsonb) or text.
+          columns: { id: true, contentHash: true },
         })
       : undefined;
 
@@ -210,6 +220,55 @@ type ContactEmbeddingSource = {
 };
 
 /**
+ * Exactly the contact columns and relations `buildContactEmbeddingContent` (and the split
+ * below) reads, plus `id`. Every loader that feeds it used to pull the whole contact —
+ * inline base64 avatar, every enrichment column — and the whole profile and experience
+ * rows, to read these. Relation row order is untouched (only the selected fields narrow),
+ * so tag order and `orderExperiences`' tie-break by input position come out the same.
+ */
+export const CONTACT_EMBEDDING_COLUMNS = {
+  id: true,
+  fullName: true,
+  preferredName: true,
+  title: true,
+  company: true,
+  location: true,
+  email: true,
+  phone: true,
+  linkedinUrl: true,
+  website: true,
+  aiSummary: true,
+  notes: true,
+  metContext: true,
+  dateMet: true,
+  howMet: true,
+  keyFacts: true,
+  opportunities: true,
+} as const;
+
+export const CONTACT_EMBEDDING_WITH = {
+  contactTags: {
+    columns: { tagId: true },
+    with: { tag: { columns: { name: true } } },
+  },
+  profile: { columns: { about: true, headline: true } },
+  experiences: {
+    columns: {
+      kind: true,
+      organization: true,
+      title: true,
+      fieldOfStudy: true,
+      startYear: true,
+      startMonth: true,
+      endYear: true,
+      endMonth: true,
+      isCurrent: true,
+      sortIndex: true,
+    },
+  },
+} as const;
+
+/**
  * Embedding-content audit (spec §3), re-checked in Task 6:
  *
  * 1. This function never absorbs content that has its own source row. LinkedIn messages
@@ -313,11 +372,8 @@ export async function rebuildContactEmbedding(
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    with: {
-      contactTags: { with: { tag: true } },
-      profile: true,
-      experiences: true,
-    },
+    columns: CONTACT_EMBEDDING_COLUMNS,
+    with: CONTACT_EMBEDDING_WITH,
   });
   if (!contact) return false;
 
@@ -356,11 +412,8 @@ export async function rebuildContactEmbeddingsBatch(
   const db = await getDb();
   const rows = await db.query.contacts.findMany({
     where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
-    with: {
-      contactTags: { with: { tag: true } },
-      profile: true,
-      experiences: true,
-    },
+    columns: CONTACT_EMBEDDING_COLUMNS,
+    with: CONTACT_EMBEDDING_WITH,
   });
 
   const existing = await db.query.contactEmbeddings.findMany({

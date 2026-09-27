@@ -32,6 +32,7 @@ export type GateFeature =
   | "sync"
   | "extension"
   | "api"
+  | "meetings"
   | "contacts";
 
 export async function recordGateHit(input: {

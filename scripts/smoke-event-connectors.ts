@@ -72,13 +72,29 @@ async function main() {
     check("venue and city", e.venue === "Shack15" && e.city === "San Francisco");
     check("url is expanded to lu.ma", e.url === "https://lu.ma/ai-tinkerers", String(e.url));
     check("attendee count", e.attendeeCount === 120);
+    // The bug: the host was prepended unconditionally, so an absolute URL from the API became
+    // `https://lu.ma/https://lu.ma/…` — a dead link, stored, rendered, and refetched on resync.
+    check(
+      "an absolute url is left alone",
+      lumaEvent({ api_id: "z", name: "Z", url: "https://lu.ma/already" })?.url ===
+        "https://lu.ma/already",
+      String(lumaEvent({ api_id: "z", name: "Z", url: "https://lu.ma/already" })?.url)
+    );
+    check(
+      "a slug with slashes does not double them",
+      lumaEvent({ api_id: "z", name: "Z", url: "/slugged/" })?.url === "https://lu.ma/slugged"
+    );
+    check("no url at all stays null", lumaEvent({ api_id: "z", name: "Z" })?.url === null);
     check("a nameless event is dropped", lumaEvent({ event: { api_id: "x" } }) === null);
     check("bare (non-nested) shape also maps", lumaEvent({ api_id: "y", name: "Bare" })?.title === "Bare");
   }
   {
-    const g = lumaAttendee({ guest: { api_id: "g1", name: "Ada", email: "ada@x.io", role: "host" } })!;
+    const g = lumaAttendee({
+      guest: { api_id: "g1", name: "Ada", email: "ada@x.io", role: "host", phone_number: "+15551234" },
+    })!;
     check("guest maps", g.fullName === "Ada" && g.email === "ada@x.io" && g.externalRef === "g1");
     check("host role is kept", g.attendeeRole === "host");
+    check("a phone number is carried", g.phone === "+15551234", String(g.phone));
     // Someone who declined was not in the room.
     check("declined guests are dropped", lumaAttendee({ guest: { name: "No", approval_status: "declined" } }) === null);
     check("an anonymous guest is dropped", lumaAttendee({ guest: {} }) === null);

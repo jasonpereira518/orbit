@@ -18,6 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const EMPTY_SUGGESTIONS: ContactFieldSuggestions = {
   locations: [],
@@ -160,7 +162,7 @@ export function ContactForm({
         email: form.email,
       });
       if (!profile) {
-        toast.message("No LinkedIn profile match found");
+        toast.message("Couldn’t find a matching LinkedIn profile");
         return;
       }
 
@@ -185,7 +187,7 @@ export function ContactForm({
     } catch (err) {
       lastLookupUrl.current = "";
       toast.error(
-        err instanceof Error ? err.message : "Could not look up LinkedIn"
+        friendlyError(err, "Couldn’t look that up on LinkedIn — try again?")
       );
     } finally {
       setLookingUp(false);
@@ -244,13 +246,13 @@ export function ContactForm({
               if (redirectOnSuccess) router.push(`/contacts/${contactId}`);
             } else {
               const c = await createContact(payload);
-              toast.success("Contact created");
+              toast.success("Added to your orbit");
               onSuccess?.({ id: c.id });
               if (redirectOnSuccess) router.push(`/contacts/${c.id}`);
             }
             router.refresh();
           } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to save");
+            toast.error(friendlyError(err, TOAST_COPY.saveFailed));
           }
         });
       }}

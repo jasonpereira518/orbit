@@ -1,0 +1,33 @@
+{
+  "thinking": {
+    "capture.parse": "minimal",
+    "capture.parse.identify": "minimal",
+    "capture.parse.details": "minimal",
+    "capture.parse.excerpt-retry": "minimal",
+    "capture.dates": "minimal",
+    "capture.transcribe.page": "minimal",
+    "capture.transcribe.audio": "minimal",
+    "meeting.transcribe": "minimal",
+    "meeting.digest": "minimal",
+    "meeting.digest.map": "minimal",
+    "meeting.digest.reduce": "minimal",
+    "chat.understand": "minimal",
+    "chat.rerank": "minimal",
+    "recruiter.scan": "minimal",
+    "extension.parse": "minimal",
+    "import.enrich": "minimal",
+    "import.linkedin.timeline": "minimal",
+    "events.why": "minimal"
+  },
+  "tiers": {
+    "recruiter.scan": "fast",
+    "extension.parse": "fast",
+    "capture.dates": "fast",
+    "import.enrich": "fast",
+    "meeting.digest.map": "fast"
+  },
+  "model": "gemini-3.8-flash",
+  "visionModels": {
+    "gemini": "gemini-3.8-flash"
+  }
+}

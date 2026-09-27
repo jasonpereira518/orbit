@@ -30,6 +30,8 @@
  * anything is written. That is the honest answer to a genuinely ambiguous match, and it is
  * affordable here in a way a background sync could never afford.
  */
+import { sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
 import { DUPLICATE_MERGE_CONFIDENCE, findDuplicateCandidatesIndexed } from "@/lib/duplicates";
 import { eventExternalIdBase } from "@/lib/ingest/external-id";
 import {
@@ -107,6 +109,62 @@ function buildNetworkEvent(event: EventRecord, rows: EventAttendeeRecord[]): Net
     summary: event.title,
     notes: meetingNote(event),
   };
+}
+
+/**
+ * Bring an event's already-written interactions back in step after its details change.
+ *
+ * Connecting stamps each person's interaction with values DERIVED from the event — the date,
+ * `Met at <title> (venue, city).`, and the title as the summary. Correct the venue afterwards
+ * and every one of those silently describes an event that no longer exists as described.
+ *
+ * ## Regenerate only what we generated
+ *
+ * The interaction is also a thing the user can edit directly, from the contact's timeline.
+ * Overwriting that would be worse than staleness. So each field is updated only where it
+ * still holds exactly what the OLD event values produced: if it matches, nobody has touched
+ * it and it is ours to refresh; if it does not, it is theirs and it is left alone.
+ *
+ * Each field is guarded independently, so correcting only the venue still refreshes the note
+ * without skipping a date the user had also left untouched.
+ *
+ * This lives beside `meetingNote` and `eventTimestamp` deliberately. The predicate is
+ * "does this equal what we would have written", so it has to be computed by the same code
+ * that writes it — a second copy of the format string here would drift and silently stop
+ * matching, turning every restamp into a no-op nobody notices.
+ */
+export async function restampEventInteractions(
+  userId: string,
+  previous: EventRecord,
+  next: EventRecord
+): Promise<number> {
+  const prevNote = meetingNote(previous);
+  const nextNote = meetingNote(next);
+  const prevWhen = eventTimestamp(previous);
+  const nextWhen = eventTimestamp(next);
+
+  const unchanged =
+    prevNote === nextNote &&
+    previous.title === next.title &&
+    prevWhen.getTime() === nextWhen.getTime();
+  if (unchanged) return 0;
+
+  const db = await getDb();
+  // `evt:<uuid>:` — no `%` or `_`, so it needs no LIKE escaping.
+  const prefix = `${eventExternalIdBase(next.id)}:%`;
+  const updated = await db.execute(sql`
+    UPDATE interactions SET
+      raw_notes = CASE WHEN raw_notes IS NOT DISTINCT FROM ${prevNote}
+                       THEN ${nextNote} ELSE raw_notes END,
+      ai_summary = CASE WHEN ai_summary IS NOT DISTINCT FROM ${previous.title}
+                        THEN ${next.title} ELSE ai_summary END,
+      interaction_date = CASE WHEN interaction_date IS NOT DISTINCT FROM ${prevWhen}
+                              THEN ${nextWhen} ELSE interaction_date END
+    WHERE user_id = ${userId}
+      AND external_id LIKE ${prefix}
+    RETURNING id
+  `);
+  return rowsOf(updated).length;
 }
 
 export type ConnectPreviewRow = {

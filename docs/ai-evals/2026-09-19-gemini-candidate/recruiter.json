@@ -1,0 +1,70 @@
+{
+  "label": "candidate-recruiter",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-20T00:37:15.445Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 2,
+  "candidate": {
+    "thinking": {
+      "capture.parse": "minimal",
+      "capture.parse.identify": "minimal",
+      "capture.parse.details": "minimal",
+      "capture.parse.excerpt-retry": "minimal",
+      "capture.dates": "minimal",
+      "capture.transcribe.page": "minimal",
+      "capture.transcribe.audio": "minimal",
+      "meeting.transcribe": "minimal",
+      "meeting.digest": "minimal",
+      "meeting.digest.map": "minimal",
+      "meeting.digest.reduce": "minimal",
+      "chat.understand": "minimal",
+      "chat.rerank": "minimal",
+      "recruiter.scan": "minimal",
+      "extension.parse": "minimal",
+      "import.enrich": "minimal",
+      "import.linkedin.timeline": "minimal",
+      "events.why": "minimal"
+    },
+    "tiers": {
+      "recruiter.scan": "fast",
+      "extension.parse": "fast",
+      "capture.dates": "fast",
+      "import.enrich": "fast",
+      "meeting.digest.map": "fast"
+    },
+    "model": "gemini-3.8-flash",
+    "visionModels": {
+      "gemini": "gemini-3.8-flash"
+    }
+  },
+  "tasks": {
+    "recruiter": {
+      "cases": 40,
+      "metrics": {
+        "precision": 1,
+        "recall": 1,
+        "accuracy": 1,
+        "detailRecall": 1
+      },
+      "misses": [],
+      "p50LatencyMs": 873,
+      "costMicros": 13391.5,
+      "costPerCaseMicros": 334.7875,
+      "usage": [
+        {
+          "operation": "recruiter.scan",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 80,
+          "failures": 0,
+          "inputTokens": 43162,
+          "outputTokens": 10657,
+          "cachedInputTokens": 0,
+          "costMicros": 26783,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

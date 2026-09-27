@@ -3,7 +3,9 @@
  * interactions, dated commitments become reminders immediately, a re-paste creates nothing
  * new, and Undo dismisses without deleting (so the re-paste guard survives it).
  *
- * Writes to the local PGlite file. Stop this worktree's dev server first.
+ * `./smoke/_env` points PGlite at a throwaway directory, so this neither contends with a
+ * dev server's `.data/pglite` nor touches the remote database — the header used to say to
+ * stop your dev server first, which has not been true since that preamble landed.
  * Run: npx tsx scripts/smoke-note-batch.ts
  */
 import "./smoke/_env";
@@ -20,6 +22,8 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 const isoDayOf = (d: Date | string) => isoDay(new Date(d));
 
 const USER = "smoke-note-batch-user";
+/** Somebody else entirely, whose contacts this user must never be able to link a note to. */
+const STRANGER = "smoke-note-batch-stranger";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -31,6 +35,7 @@ async function reset() {
   await db.delete(reminders).where(eq(reminders.userId, USER));
   await db.delete(noteBatches).where(eq(noteBatches.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER)); // cascades interactions, mentions, action items
+  await db.delete(contacts).where(eq(contacts.userId, STRANGER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   await ensureUserSettings(USER);
 }
@@ -43,7 +48,7 @@ function parsed(name: string, company: string | null, actionItems: string[], fol
     name, company, role: null, presence: "participant" as const, location: null, email: null, linkedin_url: null, met_at: null,
     topics: ["fundraising"], action_items: actionItems,
     follow_up_recommendation: followUpDays ? `Follow up with ${name}` : null, follow_up_days: followUpDays,
-    relationship_score_suggestion: 3, tags: [], summary: `Chat with ${name}`, key_facts: [], opportunities: [],
+    relationship_score_suggestion: 3, relevance: null, tags: [], summary: `Chat with ${name}`, key_facts: [], opportunities: [], implied_next_steps: [],
     shared_interests: [], suggested_next_message: null, confidence: 0.9, interaction_date: "2026-09-01",
     low_confidence_fields: [],
   };
@@ -168,6 +173,27 @@ async function main() {
   check("re-paste: mention count still 1 (unique index)", (await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) })).length === 1);
   check("re-paste: a participant-targeted mention is dropped, not unresolved", second.result.unresolvedMentions.length === 1 && second.result.unresolvedMentions[0].text === "Raj", JSON.stringify(second.result.unresolvedMentions));
   check("  and never becomes a mention link", !second.result.mentions.some((m) => m.contactId === first.contactIds[0]));
+
+  // 2b. A mention naming a contact that belongs to SOMEBODY ELSE.
+  //
+  //     `confirmBulkCapture` takes `mentions` straight off the request and hands them here,
+  //     so a forged `contactId` would otherwise write a row into `interaction_mentions`
+  //     pointing at another account's contact — visible on that contact through every
+  //     reader that joins the table. The same check covers the honest version: a contact
+  //     deleted between the parse and the save, which is exactly a name that no longer
+  //     links to anyone.
+  const [strangerContact] = await db.insert(contacts).values({ userId: STRANGER, fullName: "Nadia Rahman" }).returning();
+  const forged = input(miraId);
+  forged.participants[0].mergeContactId = first.contactIds[0];
+  forged.participants[1].mergeContactId = first.contactIds[1];
+  forged.mentions = [
+    { text: "Nadia", context: "came up", nearPerson: "Sarah Chen", contactId: strangerContact.id, confidence: 0.9, matchedBy: "exact_name" },
+  ];
+  const forgedOut = await saveNoteBatch(USER, forged);
+  const strangerLinks = await db.query.interactionMentions.findMany({ where: eq(interactionMentions.contactId, strangerContact.id) });
+  check("a mention for another account's contact writes no link", strangerLinks.length === 0, JSON.stringify(strangerLinks));
+  check("  and is reported as unresolved, not silently swallowed", forgedOut.result.unresolvedMentions.some((m) => m.text === "Nadia"), JSON.stringify(forgedOut.result.unresolvedMentions));
+  check("  and never reaches the batch result", !forgedOut.result.mentions.some((m) => m.contactId === strangerContact.id));
 
   // 3. Undo the first batch: reminders dismissed (not deleted), interactions untouched.
   //    A mention link that this batch did NOT write — seeded by hand on the same

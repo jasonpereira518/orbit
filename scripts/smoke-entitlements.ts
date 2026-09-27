@@ -191,11 +191,10 @@ async function main() {
   check("hosted sending unlocked", ent.canUseHostedSending === true);
   check("hosted enrichment unlocked", ent.canUseHostedEnrichment === true);
 
-  // --- lifetime + live subscription are additive ---
-  // `resolvePlan` ranks lifetime above subscription, so this user resolves to `lifetime`,
-  // which is denied enrichment on its own. The union in `getEntitlements` is the only
-  // thing that grants it back, and it is now the sole flag that union can affect.
-  console.log("\nlifetime plus live subscription");
+  // --- one plan at a time ---
+  // Buying Lifetime cancels Pro, but the mirror can still show a subscription until its
+  // period end. The account is Lifetime, with Lifetime's flags and nothing of Pro's.
+  console.log("\nlifetime with a leftover subscription row");
   await setBilling({
     lifetimePurchasedAt: past,
     subscriptionPlan: "orbit",
@@ -204,14 +203,8 @@ async function main() {
   });
   ent = await getEntitlements(USER);
   check("plan stays lifetime", ent.plan === "lifetime", ent.plan);
-  check("subscription unions enrichment back in", ent.canUseHostedEnrichment === true);
-
-  // Lapse the subscription: the Lifetime floor holds, enrichment falls away.
-  await setBilling({ subscriptionStatus: "canceled", subscriptionPeriodEnd: past });
-  ent = await getEntitlements(USER);
-  check("plan still lifetime after lapse", ent.plan === "lifetime", ent.plan);
-  check("enrichment gated again after lapse", ent.canUseHostedEnrichment === false);
-  check("sending survives the lapse", ent.canUseHostedSending === true);
+  check("Pro's enrichment does not carry over", ent.canUseHostedEnrichment === false);
+  check("Lifetime's own sending is there", ent.canUseHostedSending === true);
 
   await setBilling({
     lifetimePurchasedAt: null,

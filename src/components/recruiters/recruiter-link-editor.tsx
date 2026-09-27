@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/lib/toast";
 import type { RecruiterLinkStatus } from "@/db/schema";
+import { friendlyError } from "@/lib/errors";
 
 const STATUSES: RecruiterLinkStatus[] = [
   "planned",
@@ -119,7 +120,7 @@ export function RecruiterLinkEditor({
                 } catch (err) {
                   setShared(previous);
                   toast.error(
-                    err instanceof Error ? err.message : "Update failed"
+                    friendlyError(err, "That didn’t update — try again?")
                   );
                 }
               });
@@ -150,11 +151,11 @@ export function RecruiterLinkEditor({
                     ? Number(form.personalRating)
                     : null,
                 });
-                toast.success("Updated");
+                toast.success("Recruiter updated");
                 router.refresh();
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Update failed"
+                  friendlyError(err, "That didn’t update — try again?")
                 );
               }
             })

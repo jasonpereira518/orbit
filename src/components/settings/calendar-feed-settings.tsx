@@ -12,6 +12,12 @@ import {
 } from "@/actions/calendar-feed";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SettingsSection } from "@/components/settings/settings-section";
+import { Disclosure } from "@/components/settings/disclosure";
+import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
 
 /**
  * How long to wait for the status action before giving up on it.
@@ -57,6 +63,7 @@ export function CalendarFeedSettings() {
   const [revealed, setRevealed] = useState(false);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
   const [pending, start] = useTransition();
+  const regenFocus = useConfirmFocus(confirmingRegen ? "regen" : null);
 
   // A failed load must be visible and recoverable. Without this the section sits on
   // "Loading…" forever — a dead panel with no way to retry. The two failure modes are
@@ -94,24 +101,18 @@ export function CalendarFeedSettings() {
         const timedOut = err instanceof Error && err.message === TIMED_OUT;
         toast.error(
           timedOut
-            ? "That took too long. Please try again."
-            : err instanceof Error
-              ? err.message
-              : "Something went wrong"
+            ? TIMEOUT_MESSAGE
+            : friendlyError(err, "That didn’t work — try again?")
         );
       }
     });
   }
 
   return (
-    <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Calendar feed</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Subscribe to your reminders in Google Calendar, Apple Calendar, or
-          Outlook so they show up alongside everything else.
-        </p>
-      </div>
+    <SettingsSection
+      title="Reminders in calendar"
+      description="Subscribe to your reminders in Google Calendar, Apple Calendar, or Outlook so they show up alongside everything else."
+    >
 
       {loadFailure && !status ? (
         <div className="space-y-2">
@@ -129,7 +130,10 @@ export function CalendarFeedSettings() {
           </Button>
         </div>
       ) : !status ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="space-y-2" aria-busy="true" aria-label="Loading calendar feed">
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-9 w-44 rounded-lg" />
+        </div>
       ) : !status.enabled ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
@@ -145,50 +149,55 @@ export function CalendarFeedSettings() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Input
-              readOnly
-              value={
-                revealed ? status.url! : maskUrl(status.url!)
-              }
-              onFocus={(e) => e.currentTarget.select()}
-              className="font-mono text-xs"
-              aria-label="Calendar feed URL"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setRevealed((v) => !v)}
-              >
-                {revealed ? "Hide" : "Reveal"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(status.url!);
-                  toast.success("Copied to clipboard");
-                }}
-              >
-                Copy link
-              </Button>
-              <a
-                href={status.webcalUrl!}
-                className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
-              >
-                Add to Apple Calendar
-              </a>
-              <a
-                href={status.googleAddUrl!}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
-              >
-                Add to Google Calendar
-              </a>
+          {status.url ? (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                These open your calendar app’s add-calendar screen — finish subscribing there.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={status.webcalUrl!}
+                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
+                >
+                  Open in Apple Calendar
+                </a>
+                <a
+                  href={status.googleAddUrl!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
+                >
+                  Open in Google Calendar
+                </a>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Outlook:{" "}
+                <a
+                  href={status.outlookOfficeAddUrl!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  work
+                </a>{" "}
+                ·{" "}
+                <a
+                  href={status.outlookLiveAddUrl!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  personal
+                </a>
+              </p>
             </div>
-          </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Your reminders are already in your calendar. Orbit keeps only a fingerprint of
+              the link, so it can’t show it again — regenerating below replaces the current
+              link, and the existing subscription stops updating.
+            </p>
+          )}
 
           <p className="text-xs text-muted-foreground">
             {status.lastFetchedAt
@@ -220,41 +229,76 @@ export function CalendarFeedSettings() {
             <li>Only reminders with a due date appear in your calendar.</li>
           </ul>
 
-          <div className="flex flex-wrap gap-2">
-            {confirmingRegen ? (
-              <>
+          <Disclosure label="Advanced">
+            {status.url && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Copy this link now — Orbit won’t show it again.</p>
+                <Input
+                  readOnly
+                  value={revealed ? status.url : maskUrl(status.url)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="font-mono text-xs"
+                  aria-label="Calendar feed URL"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setRevealed((v) => !v)}>
+                    {revealed ? "Hide" : "Reveal"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(status.url!);
+                      toast.success(TOAST_COPY.copied);
+                    }}
+                  >
+                    Copy link
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              {confirmingRegen ? (
+                <>
+                  <Button
+                    ref={regenFocus.confirmRef("regen")}
+                    size="sm"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() =>
+                      run("New link created", regenerateCalendarFeedToken)
+                    }
+                  >
+                    Yes, replace the link
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setConfirmingRegen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <p role="status" className="w-full text-xs text-muted-foreground">
+                    Your old link stops working immediately. You&apos;ll need to
+                    re-subscribe on every device.
+                  </p>
+                </>
+              ) : (
                 <Button
+                  ref={regenFocus.triggerRef("regen")}
                   size="sm"
                   variant="outline"
                   disabled={pending}
-                  onClick={() =>
-                    run("New link created", regenerateCalendarFeedToken)
-                  }
+                  onClick={() => setConfirmingRegen(true)}
                 >
-                  Yes, replace the link
+                  Regenerate link
                 </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setConfirmingRegen(false)}
-                >
-                  Cancel
-                </Button>
-                <p className="w-full text-xs text-muted-foreground">
-                  Your old link stops working immediately. You&apos;ll need to
-                  re-subscribe on every device.
-                </p>
-              </>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pending}
-                onClick={() => setConfirmingRegen(true)}
-              >
-                Regenerate link
-              </Button>
-            )}
+              )}
+            </div>
+          </Disclosure>
+
+          <div>
             <Button
               size="sm"
               variant="ghost"
@@ -266,6 +310,6 @@ export function CalendarFeedSettings() {
           </div>
         </div>
       )}
-    </section>
+    </SettingsSection>
   );
 }

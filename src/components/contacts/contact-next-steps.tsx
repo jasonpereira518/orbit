@@ -7,6 +7,7 @@ import { toast } from "@/lib/toast";
 import { setActionItemStatus } from "@/actions/action-items";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { friendlyError } from "@/lib/errors";
 
 export type OpenActionItem = {
   id: string;
@@ -36,7 +37,7 @@ export function ContactNextSteps({ items }: { items: OpenActionItem[] }) {
           return next;
         });
         toast.error(
-          err instanceof Error ? err.message : "Could not update action item"
+          friendlyError(err, "Couldn’t update that action item — try again?")
         );
       }
     });

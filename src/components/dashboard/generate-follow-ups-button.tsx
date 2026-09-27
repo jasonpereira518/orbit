@@ -6,6 +6,7 @@ import { Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { generateDueFollowUpsAction } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
+import { friendlyError } from "@/lib/errors";
 
 export function GenerateFollowUpsButton({
   limit = 8,
@@ -31,7 +32,7 @@ export function GenerateFollowUpsButton({
             if (res.created === 0) {
               toast.message("No new follow-ups to generate", {
                 description:
-                  "Everyone eligible already has a due or upcoming follow-up.",
+                  "Everyone eligible already has a follow-up coming up",
               });
             } else {
               toast.success(
@@ -41,7 +42,7 @@ export function GenerateFollowUpsButton({
             router.refresh();
           } catch (err) {
             toast.error(
-              err instanceof Error ? err.message : "Could not generate follow-ups"
+              friendlyError(err, "Couldn’t generate follow-ups — try again?")
             );
           }
         })

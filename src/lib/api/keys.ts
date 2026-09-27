@@ -94,8 +94,3 @@ export function bearerFrom(header: string | null | undefined): string | null {
   const match = /^Bearer\s+(.+)$/i.exec(header.trim());
   return match ? match[1].trim() : null;
 }
-
-/** Masked form for display: `orb_live_7f3a9c2b…`. Never reconstructs the secret. */
-export function maskedKey(prefix: string): string {
-  return `${prefix}…`;
-}

@@ -19,26 +19,6 @@ import { feedback } from "@/db/schema";
 
 export type FeedbackKind = "pmf" | "freeform" | "churn_reason";
 
-/**
- * The Sean Ellis scale. Three points, not five or ten.
- *
- * The question is *"how would you feel if you could no longer use Orbit?"* and the only
- * number anyone acts on is the share answering "very disappointed" — the conventional
- * threshold is 40%. A finer scale would invite averaging, and the average of this scale
- * means nothing at all.
- */
-export const PMF_SCORES = {
-  veryDisappointed: 3,
-  somewhatDisappointed: 2,
-  notDisappointed: 1,
-} as const;
-
-export const PMF_LABELS: Record<number, string> = {
-  3: "Very disappointed",
-  2: "Somewhat disappointed",
-  1: "Not disappointed",
-};
-
 /** Long enough to be a sentence, short enough not to be a document. */
 const MAX_TEXT = 4000;
 
@@ -153,15 +133,4 @@ export async function recentFeedback(opts: { kind?: FeedbackKind; limit?: number
         .limit(limit);
 
   return rows;
-}
-
-/** Has this user already answered the PMF question? Used to ask at most once. */
-export async function hasAnsweredPmf(userId: string): Promise<boolean> {
-  const db = await getDb();
-  const row = await db
-    .select({ id: feedback.id })
-    .from(feedback)
-    .where(and(eq(feedback.userId, userId), eq(feedback.kind, "pmf")))
-    .limit(1);
-  return row.length > 0;
 }

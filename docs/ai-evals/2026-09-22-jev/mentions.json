@@ -1,0 +1,99 @@
+{
+  "label": "jev",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T16:45:07.534Z",
+  "commit": "351fbe0c",
+  "fixtures": "6f98553308b3",
+  "runs": 1,
+  "decisions": "jev",
+  "tasks": {
+    "mentions": {
+      "cases": 24,
+      "metrics": {
+        "outcomeAccuracy": 0.4583333333333333,
+        "wrongLinks": 0,
+        "pickAccuracy": 0.75
+      },
+      "misses": [
+        "m-amb-01",
+        "m-amb-02",
+        "m-amb-03",
+        "m-amb-04",
+        "m-amb-05",
+        "m-amb-07",
+        "m-amb-08",
+        "m-amb-09",
+        "m-amb-10",
+        "m-amb-12",
+        "m-amb-13",
+        "m-amb-14",
+        "m-amb-15"
+      ],
+      "p50LatencyMs": 218,
+      "costMicros": 646,
+      "costPerCaseMicros": 26.916666666666668,
+      "usage": [
+        {
+          "operation": "mentions.resolve",
+          "model": "jev-1.13.0",
+          "calls": 40,
+          "failures": 0,
+          "inputTokens": 15441,
+          "outputTokens": 1652,
+          "cachedInputTokens": 0,
+          "costMicros": 646,
+          "unpriced": 0,
+          "p50Ms": 210
+        }
+      ],
+      "decisionCostMicros": 646,
+      "calibration": {
+        "mentions.resolve": [
+          {
+            "from": 0,
+            "to": 0.1,
+            "n": 0,
+            "meanP": null,
+            "observed": null
+          },
+          {
+            "from": 0.1,
+            "to": 0.3,
+            "n": 0,
+            "meanP": null,
+            "observed": null
+          },
+          {
+            "from": 0.3,
+            "to": 0.5,
+            "n": 0,
+            "meanP": null,
+            "observed": null
+          },
+          {
+            "from": 0.5,
+            "to": 0.7,
+            "n": 6,
+            "meanP": 0.5933333333333333,
+            "observed": 0.3333333333333333
+          },
+          {
+            "from": 0.7,
+            "to": 0.9,
+            "n": 2,
+            "meanP": 0.8049999999999999,
+            "observed": 1
+          },
+          {
+            "from": 0.9,
+            "to": 1,
+            "n": 8,
+            "meanP": 0.97125,
+            "observed": 1
+          }
+        ]
+      }
+    }
+  }
+}

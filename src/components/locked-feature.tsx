@@ -83,3 +83,42 @@ export function LockedFeature({
     </div>
   );
 }
+
+/*
+ * One lock per gated feature, rendered by EVERY page of that feature. Only the list pages
+ * used to check, so a free user who followed a link or an old bookmark to a campaign, the
+ * new-campaign wizard, or a recruiter's page got the full working UI, and every button on
+ * it then failed with a paywall error. The reads behind those pages are deliberately
+ * ungated (they return only the user's own rows); the pages are where the lock belongs.
+ */
+
+export function OutreachLocked() {
+  return (
+    <LockedFeature
+      title="Outreach"
+      description="Find the right people, draft messages that sound like you, and track what actually gets replies — without leaving Orbit."
+      highlights={[
+        "Search prospects by role, company, and seniority",
+        "Personalized email and SMS drafts from your own notes",
+        "Reply tracking and per-campaign quality scores",
+        "Sequenced follow-ups that stop when someone replies",
+      ]}
+      note="Both send email and SMS on Orbit's credits. On Orbit Lifetime you supply your own Apollo key for prospect search."
+    />
+  );
+}
+
+export function RecruitersLocked() {
+  return (
+    <LockedFeature
+      title="Recruiter tracking"
+      description="A crowdsourced directory of recruiters, plus a record of every conversation you've had with each of them."
+      highlights={[
+        "Search recruiters by company and specialism",
+        "Log interactions and unlock contact details",
+        "Pull recruiter threads straight out of Gmail",
+        "See who has gone quiet and who is worth a nudge",
+      ]}
+    />
+  );
+}

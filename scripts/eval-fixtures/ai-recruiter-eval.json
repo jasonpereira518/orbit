@@ -1,0 +1,890 @@
+{
+  "cases": [
+    {
+      "id": "rec-agency-01-cold-outreach",
+      "kind": "agency",
+      "senderName": "Owen Fairbanks",
+      "senderEmail": "owen.fairbanks@sterlingvane-talent.example",
+      "firmGuess": "Sterling Vane Talent",
+      "messages": [
+        {
+          "subject": "Senior Backend Engineer at Larkspur Robotics (Pittsburgh, hybrid)",
+          "date": "2026-03-10",
+          "body": "Hi there,\n\nI'm a technical recruiter at Sterling & Vane Talent, and I'm working with Larkspur Robotics on a Senior Backend Engineer hire for their fleet-management platform. They're building the software that coordinates a few hundred warehouse robots in real time: Go services, Postgres, and a lot of event streaming.\n\nYour background on high-throughput APIs looked like a strong match. The role is hybrid (three days a week in their Pittsburgh office), with a base range of $175-195k plus equity.\n\nWould you be open to a 20-minute call this week or next? Happy to share the full job description first if that's easier.\n\nBest,\nOwen Fairbanks\nSenior Technical Recruiter, Sterling & Vane Talent"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Larkspur Robotics"
+        ],
+        "roles": [
+          "Backend Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-agency-02-thread-client-revealed",
+      "kind": "agency",
+      "senderName": "Hye-jin Park",
+      "senderEmail": "hyejin.park@northbeam-search.example",
+      "firmGuess": "Northbeam Search",
+      "messages": [
+        {
+          "subject": "Staff Data Engineer opportunity with a leading bank",
+          "date": "2025-11-04",
+          "body": "Hi, I hope you're well. I'm Hye-jin, a recruiter with Northbeam Search Partners. I'm partnering with a well-established bank in Chicago that is modernizing its data platform and is hiring a Staff Data Engineer to lead the migration from on-prem Hadoop to a lakehouse architecture. Given your experience with dbt and Spark, I think you'd be a great fit. Are you open to hearing more? Compensation is up to $230k base plus bonus."
+        },
+        {
+          "subject": "Re: Staff Data Engineer opportunity with a leading bank",
+          "date": "2025-11-06",
+          "body": "Thanks for getting back to me so quickly! To answer your question: the client is Quillfeather Bank. The team is about 18 engineers, reporting to the Head of Data Platform. It's hybrid, two days a week downtown.\n\n> On Nov 5, 2025, you wrote:\n> Thanks Hye-jin, I might be open to it. Which bank is it, and is it remote-friendly?\n\nI've attached the full description. If it looks interesting, could you send me an updated resume and a couple of times for a quick screen?"
+        },
+        {
+          "subject": "Re: Staff Data Engineer opportunity with a leading bank",
+          "date": "2025-11-12",
+          "body": "Great speaking with you today. As agreed, I've submitted your profile to Quillfeather Bank's hiring team for the Staff Data Engineer role, and I'll let you know as soon as I hear back about a first-round interview. It usually takes about a week. In the meantime, if anything changes on your side (another process moving faster, a change in your availability), just let me know so I can keep them updated."
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Quillfeather Bank"
+        ],
+        "roles": [
+          "Data Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-agency-03-contract-role",
+      "kind": "agency",
+      "senderName": "Marcus Oduya",
+      "senderEmail": "marcus@keelcompass-recruiting.example",
+      "firmGuess": "Keel Compass Recruiting",
+      "messages": [
+        {
+          "subject": "6-month contract: DevOps Engineer at Emberline Energy",
+          "date": "2026-01-20",
+          "body": "Hello,\n\nI'm recruiting for a 6-month contract DevOps Engineer role at Emberline Energy, with a possible extension. They need someone to own their Terraform and Kubernetes setup while the permanent platform team is being hired. It's fully remote within the US, $95-110/hour on W2 or corp-to-corp, and the start date is flexible within the next month.\n\nIf you or anyone you know might be interested, reply here and I'll send over the details and next steps.\n\nThanks,\nMarcus Oduya\nKeel & Compass Recruiting"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Emberline Energy"
+        ],
+        "roles": [
+          "DevOps"
+        ]
+      }
+    },
+    {
+      "id": "rec-agency-04-confidential-client",
+      "kind": "agency",
+      "senderName": "Charlotte Nguyen",
+      "senderEmail": "charlotte@tessellate-talent.example",
+      "firmGuess": "Tessellate Talent",
+      "messages": [
+        {
+          "subject": "Engineering Manager, Payments (confidential search)",
+          "date": "2026-05-12",
+          "body": "Hi,\n\nI'm leading a confidential search for an Engineering Manager to run a payments team of seven at a Series B fintech in Austin. The company processes several billion dollars a year for independent pharmacies and just closed a $60M round. They can't be named publicly yet, but I can share more on a call.\n\nYou'd own the ledger and reconciliation systems and report to the VP of Engineering. Is this something you'd consider? If the timing isn't right, I'd still appreciate a referral to anyone in your network who might be a fit.\n\nBest,\nCharlotte Nguyen\nPrincipal Recruiter, Tessellate Talent"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "roles": [
+          "Engineering Manager"
+        ]
+      }
+    },
+    {
+      "id": "rec-inhouse-01-ta-partner",
+      "kind": "in-house",
+      "senderName": "Joaquin Herrera",
+      "senderEmail": "joaquin.herrera@tidewater-analytics.example",
+      "firmGuess": "Tidewater Analytics",
+      "messages": [
+        {
+          "subject": "Senior Product Manager, Forecasting at Tidewater Analytics",
+          "date": "2026-02-03",
+          "body": "Hi!\n\nI'm on the talent acquisition team at Tidewater Analytics. We're hiring a Senior Product Manager for our Forecasting product, which regional grocery chains use to plan inventory. I came across your work on the activation funnel at your current company and would love to tell you more.\n\nThe role is remote in North America and reports to our Head of Product. Our process is a recruiter screen, a hiring manager conversation, a product exercise, and a final panel, usually wrapped up within three weeks.\n\nWould you have 30 minutes on Thursday or Friday?\n\nCheers,\nJoaquin Herrera\nTalent Acquisition Partner, Tidewater Analytics"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Tidewater Analytics"
+        ],
+        "roles": [
+          "Product Manager"
+        ]
+      }
+    },
+    {
+      "id": "rec-inhouse-02-scheduling-exchange",
+      "kind": "in-house",
+      "senderName": "Aoife Brennan",
+      "senderEmail": "aoife.brennan@copperline-games.example",
+      "firmGuess": "Copperline Games",
+      "messages": [
+        {
+          "subject": "Copperline Games: Senior Product Designer",
+          "date": "2026-04-14",
+          "body": "Hi, thanks so much for applying to the Senior Product Designer role on our Puzzle team! I'm the recruiter supporting this search. I'd love to set up a 30-minute intro call to learn more about your background and walk you through the role, the team, and our interview process. Could you share a few times that work for you next week?\n\nBest,\nAoife Brennan\nRecruiter, Copperline Games"
+        },
+        {
+          "subject": "Re: Copperline Games: Senior Product Designer",
+          "date": "2026-04-15",
+          "body": "Perfect, Tuesday at 11:00 your time works. I've sent a calendar invite with a video link.\n\n> On Apr 14, 2026, you wrote:\n> Hi Aoife, thanks for reaching out. Tuesday 11am or Wednesday after 2pm Pacific both work for me.\n\nIf you'd like to prepare anything, a quick look at our latest puzzle release would be plenty. Talk soon!"
+        },
+        {
+          "subject": "Re: Copperline Games: Senior Product Designer",
+          "date": "2026-04-22",
+          "body": "Thanks again for the time today. The next step is a portfolio review with Daniela, our design director, and two designers from the Puzzle team. It runs about 75 minutes and you'll present two projects of your choice. I'll send over scheduling options by Friday. Let me know if you have any questions in the meantime."
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Copperline Games"
+        ],
+        "roles": [
+          "Product Designer"
+        ]
+      }
+    },
+    {
+      "id": "rec-inhouse-03-rejection-after-onsite",
+      "kind": "in-house",
+      "senderName": "Tomasz Nowicki",
+      "senderEmail": "tomasz.nowicki@brambleworks.example",
+      "firmGuess": "Brambleworks",
+      "messages": [
+        {
+          "subject": "Brambleworks onsite: Staff Software Engineer",
+          "date": "2025-09-08",
+          "body": "Hi, thanks for confirming your onsite for the Staff Software Engineer role on our Build Systems team next Thursday. You'll meet five people across system design, coding, and a values conversation with our CTO. Lunch is included, and we'll cover your travel from the airport. Let me know if you need anything else before the day."
+        },
+        {
+          "subject": "Re: Brambleworks onsite: Staff Software Engineer",
+          "date": "2025-09-22",
+          "body": "Hi,\n\nThank you for spending the day with us last week. The team enjoyed meeting you, and it was a close decision. Unfortunately, we've decided to move forward with another candidate whose experience with distributed caching was a closer match for what the team needs right now.\n\nI know this isn't the news you were hoping for. I'd love to stay in touch for future openings; we expect to open more senior roles on the platform side early next year.\n\nWarm regards,\nTomasz Nowicki\nSenior Recruiter, Brambleworks"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Brambleworks"
+        ],
+        "roles": [
+          "Software Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-inhouse-04-two-openings",
+      "kind": "in-house",
+      "senderName": "Deepa Krishnamurthy",
+      "senderEmail": "deepa.k@fernhill-health.example",
+      "firmGuess": "Fernhill Health",
+      "messages": [
+        {
+          "subject": "Backend or Platform Engineer at Fernhill Health?",
+          "date": "2026-06-02",
+          "body": "Hi,\n\nI lead recruiting at Fernhill Health. We build remote cardiac monitoring for rural clinics, and after our Series A we're hiring for two engineering roles: a Backend Engineer (Go, Postgres, HIPAA-regulated data) and a Platform Engineer to own our AWS infrastructure.\n\nBased on your profile I think either could be a fit, and I'd love to hear which direction interests you more. We're a team of 40, mostly remote in US time zones. Could we chat for 20 minutes this week?\n\nThanks,\nDeepa Krishnamurthy\nHead of Talent, Fernhill Health"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Fernhill Health"
+        ],
+        "roles": [
+          "Backend Engineer",
+          "Platform Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-sourcer-01-technical-sourcer",
+      "kind": "sourcer",
+      "senderName": "Linnea Berg",
+      "senderEmail": "linnea.berg@halvorsen-freight.example",
+      "firmGuess": "Halvorsen Freight",
+      "messages": [
+        {
+          "subject": "ML Engineer, Routing at Halvorsen Freight (Oslo or remote EU)",
+          "date": "2025-12-01",
+          "body": "Hei!\n\nI'm a technical sourcer at Halvorsen Freight. We plan around 40,000 truck stops a day across the Nordics, and our routing team is hiring a Machine Learning Engineer to work on the travel-time prediction and demand forecasting that feed the optimizer.\n\nI noticed your published work on graph neural networks for traffic, which is exactly the area. The role can be based in Oslo or fully remote within the EU. If you're curious, I can connect you with the head of the routing group for an informal chat first.\n\nBest,\nLinnea Berg\nTechnical Sourcer, Halvorsen Freight"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Halvorsen Freight"
+        ],
+        "roles": [
+          "Machine Learning Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-sourcer-02-startup-bump",
+      "kind": "sourcer",
+      "senderName": "Kenji Morita",
+      "senderEmail": "kenji@stillwater-compute.example",
+      "firmGuess": "Stillwater Compute",
+      "messages": [
+        {
+          "subject": "Infra engineer at a 6-person GPU startup?",
+          "date": "2026-07-08",
+          "body": "Hi! I do sourcing for Stillwater Compute; we build a GPU scheduler for research labs. We're hiring our first Infrastructure Engineer, and your Kubernetes operator work on GitHub caught our eye. Small team, meaningful equity, San Francisco or remote in US time zones. Open to a quick chat sometime in the next couple of weeks?"
+        },
+        {
+          "subject": "Re: Infra engineer at a 6-person GPU startup?",
+          "date": "2026-07-15",
+          "body": "Bumping this in case it got buried under launch-week email! Happy to send over the role doc first if you'd prefer to read before chatting; it covers the stack, the first 90 days, and the equity range. If the timing isn't right, no worries at all.\n\nKenji"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Stillwater Compute"
+        ],
+        "roles": [
+          "Infrastructure Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-hm-01-head-of-eng-outreach",
+      "kind": "hiring-manager",
+      "senderName": "Rafael Moreno",
+      "senderEmail": "rafael@petrichor-labs.example",
+      "firmGuess": "Petrichor Labs",
+      "messages": [
+        {
+          "subject": "Founding Data Engineer at Petrichor Labs",
+          "date": "2026-03-25",
+          "body": "Hi,\n\nI'm Rafael, head of engineering at Petrichor Labs. We build climate-risk scores for mid-size insurers. I'm hiring our Founding Data Engineer and wanted to reach out personally: your talk on geospatial pipelines at last year's data meetup describes basically the system we need to build.\n\nYou'd own ingestion of satellite, flood, and wildfire datasets and work directly with me and our two data scientists. We're 11 people, seed-funded, remote-first with a small office in Denver. Salary is $170-190k plus meaningful equity.\n\nWould you be up for a 30-minute conversation next week? No prep needed.\n\nThanks,\nRafael Moreno\nHead of Engineering, Petrichor Labs"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Petrichor Labs"
+        ],
+        "roles": [
+          "Data Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-hm-02-cto-thread-takehome",
+      "kind": "hiring-manager",
+      "senderName": "Ifeoma Chukwu",
+      "senderEmail": "ifeoma@driftwood-bio.example",
+      "firmGuess": "Driftwood Bio",
+      "messages": [
+        {
+          "subject": "Lab Automation Engineer at Driftwood Bio",
+          "date": "2026-08-04",
+          "body": "Hi, I'm the CTO at Driftwood Bio. We're a 9-person startup doing enzyme-based plastic recycling, and I'm hiring a Lab Automation Engineer to build the software that runs our liquid-handling robots and captures experiment data. A mutual contact from the Venture Lab mentioned you've built robotics control software before. Would you be interested in talking about the role?"
+        },
+        {
+          "subject": "Re: Lab Automation Engineer at Driftwood Bio",
+          "date": "2026-08-06",
+          "body": "Great to hear! Thursday at 3pm works. I'll send a video link.\n\n> On Aug 5, 2026, you wrote:\n> Hi Ifeoma, yes, I'd love to learn more. I'm free Thursday afternoon or Friday morning.\n\nIn the meantime, here's a short doc on the robots we run and the problems we're hitting with them. Looking forward to it."
+        },
+        {
+          "subject": "Re: Lab Automation Engineer at Driftwood Bio",
+          "date": "2026-08-08",
+          "body": "Thanks for a great conversation yesterday. I'd like to invite you to a paid take-home: automate a simple plate-transfer protocol against our simulator. It should take about four hours, and we pay $400 for it regardless of outcome. If that sounds reasonable, I'll send the repo and you can take up to a week."
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Driftwood Bio"
+        ],
+        "roles": [
+          "Lab Automation Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-agency-05-executive-search",
+      "kind": "agency",
+      "senderName": "Harriet Blackwood",
+      "senderEmail": "hblackwood@bellweather-search.example",
+      "firmGuess": "Bellweather Search",
+      "messages": [
+        {
+          "subject": "VP of Engineering, Kestrel Pay",
+          "date": "2026-02-17",
+          "body": "Good afternoon,\n\nI'm a partner at Bellweather Executive Search, retained by Kestrel Pay to find their first VP of Engineering. Kestrel builds B2B invoicing and payments for small businesses in Nigeria and Ghana, has raised a $40M Series B, and has 60 engineers across Lagos and London.\n\nThe VP will report to the CEO and own engineering, security, and infrastructure. Your experience scaling a payments platform through regulatory audits is highly relevant. I'd welcome a confidential conversation at your convenience.\n\nKind regards,\nHarriet Blackwood\nPartner, Bellweather Executive Search"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Kestrel Pay"
+        ],
+        "roles": [
+          "VP"
+        ]
+      }
+    },
+    {
+      "id": "rec-inhouse-05-university-recruiter",
+      "kind": "in-house",
+      "senderName": "Beatriz Santos",
+      "senderEmail": "beatriz.santos@larkspur-robotics.example",
+      "firmGuess": "Larkspur Robotics",
+      "messages": [
+        {
+          "subject": "Following up from the Harrow State career fair",
+          "date": "2026-09-26",
+          "body": "Hi!\n\nIt was great meeting you at the Larkspur Robotics booth at the Harrow State career fair. As promised, here's the link to our Summer 2027 Embedded Software Intern posting. Applications open October 1 and we review on a rolling basis, so applying early helps.\n\nThe internship is 12 weeks in Pittsburgh, paid, with housing support. Interviews are a 45-minute technical screen followed by a virtual final round with two engineers. Feel free to reach out with any questions!\n\nBeatriz Santos\nUniversity Recruiter, Larkspur Robotics"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Larkspur Robotics"
+        ],
+        "roles": [
+          "Embedded Software"
+        ]
+      }
+    },
+    {
+      "id": "rec-inhouse-06-followups-no-reply",
+      "kind": "in-house",
+      "senderName": "Nikolai Petrov",
+      "senderEmail": "nikolai.petrov@parcelwise.example",
+      "firmGuess": "Parcelwise",
+      "messages": [
+        {
+          "subject": "Senior iOS Engineer at Parcelwise",
+          "date": "2026-05-05",
+          "body": "Hi, I'm the recruiter at Parcelwise, where we make routing and proof-of-delivery apps for small courier companies. We're hiring a Senior Mobile Engineer (iOS) to lead our driver app, which about 8,000 drivers use every day: Swift, SwiftUI, offline-first sync. I'd love to tell you more if you're open to it."
+        },
+        {
+          "subject": "Re: Senior iOS Engineer at Parcelwise",
+          "date": "2026-05-13",
+          "body": "Just following up on my note last week. The role is remote-friendly anywhere in Europe, and the mobile team ships to the App Store weekly. The hiring manager is our head of mobile, and the process is three conversations in total. Would a short call work sometime this week or next?"
+        },
+        {
+          "subject": "Re: Senior iOS Engineer at Parcelwise",
+          "date": "2026-05-27",
+          "body": "Last note from me, since I don't want to crowd your inbox. If the timing isn't right, no problem at all; I'll close the loop on my side. If anything changes down the line and you'd like to hear about mobile roles at Parcelwise, you know where to find me.\n\nAll the best,\nNikolai"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Parcelwise"
+        ],
+        "roles": [
+          "iOS"
+        ]
+      }
+    },
+    {
+      "id": "rec-agency-06-submitted-then-rejected",
+      "kind": "agency",
+      "senderName": "Gareth Pryce",
+      "senderEmail": "gareth.pryce@sterlingvane-talent.example",
+      "firmGuess": "Sterling Vane Talent",
+      "messages": [
+        {
+          "subject": "Solutions Architect, Orchard & Pike Insurance",
+          "date": "2025-06-10",
+          "body": "Hi, following our call, I've put you forward to Orchard & Pike Insurance for the Solutions Architect position on their claims-modernization program. They move quickly, so expect to hear about a first interview within a few days. Please don't apply to them directly, as that can create a duplicate submission and slow things down."
+        },
+        {
+          "subject": "Re: Solutions Architect, Orchard & Pike Insurance",
+          "date": "2025-06-24",
+          "body": "Hi,\n\nI've just heard back from Orchard & Pike after your second-round interview. They were impressed with your system design walkthrough but have decided to go with a candidate who has more direct experience with mainframe policy systems. I'm sorry this one didn't work out.\n\nI'll keep you in mind for other architecture roles; I have two more insurance clients hiring this quarter.\n\nBest,\nGareth"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Orchard & Pike"
+        ],
+        "roles": [
+          "Solutions Architect"
+        ]
+      }
+    },
+    {
+      "id": "rec-inhouse-07-offer-stage",
+      "kind": "in-house",
+      "senderName": "Rania Aziz",
+      "senderEmail": "rania.aziz@quillfeather-bank.example",
+      "firmGuess": "Quillfeather Bank",
+      "messages": [
+        {
+          "subject": "Next steps: Senior Site Reliability Engineer",
+          "date": "2026-06-18",
+          "body": "Hi, congratulations! The panel was unanimous, and we'd like to move forward with an offer for the Senior Site Reliability Engineer role on the Payments Infrastructure team. Before I send the written offer, I'd like to set up a quick call to walk you through compensation, the sign-on bonus, and the start-date options. Are you free tomorrow afternoon?"
+        },
+        {
+          "subject": "Re: Next steps: Senior Site Reliability Engineer",
+          "date": "2026-06-23",
+          "body": "Thanks for the call today. As discussed, I went back to the compensation team and they were able to increase the base to $212,000 and add a $20,000 sign-on bonus. The updated offer letter is attached and is valid until June 30. Background check paperwork will follow from our vendor once you sign.\n\nLet me know if you have any other questions.\n\nBest,\nRania Aziz\nTalent Acquisition, Quillfeather Bank"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Quillfeather Bank"
+        ],
+        "roles": [
+          "Site Reliability Engineer"
+        ]
+      }
+    },
+    {
+      "id": "rec-hm-03-founder-first-hire",
+      "kind": "hiring-manager",
+      "senderName": "Pedro Oliveira",
+      "senderEmail": "pedro@lanternfish.example",
+      "firmGuess": "Lanternfish",
+      "messages": [
+        {
+          "subject": "First engineering hire at Lanternfish",
+          "date": "2026-10-02",
+          "body": "Hi,\n\nI'm the founder of Lanternfish, a no-code tool labs use to track reagents and equipment. We just signed our first three paying labs, and I'm hiring a Full-Stack Engineer as employee number one: TypeScript, React, Postgres.\n\nI found you through your open-source inventory scanner project. You'd have a lot of ownership and a meaningful equity stake. Could we grab a virtual coffee next week? I'm flexible on time zones.\n\nThanks,\nPedro Oliveira\nFounder, Lanternfish"
+        }
+      ],
+      "expect": {
+        "isRecruiter": true,
+        "companies": [
+          "Lanternfish"
+        ],
+        "roles": [
+          "Stack Engineer"
+        ]
+      }
+    },
+    {
+      "id": "not-ats-greenhouse-01-application-received",
+      "kind": "ats",
+      "senderName": "Tidewater Analytics Hiring Team",
+      "senderEmail": "no-reply@us.greenhouse-mail.example",
+      "firmGuess": "Greenhouse",
+      "messages": [
+        {
+          "subject": "Thank you for applying to Tidewater Analytics",
+          "date": "2026-01-28",
+          "body": "Hi,\n\nThank you for your interest in Tidewater Analytics! We have received your application for the Senior Product Manager, Forecasting position. Our team will review your qualifications and will reach out if your experience is a match for the role.\n\nIn the meantime, you can learn more about life at Tidewater on our careers page.\n\nPlease note: this mailbox is not monitored. Replies to this email will not be read.\n\nBest regards,\nTidewater Analytics Talent Team\n\nPowered by Greenhouse"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-ats-lever-01-ack-then-auto-reject",
+      "kind": "ats",
+      "senderName": "Brambleworks",
+      "senderEmail": "no-reply@hire.lever-mail.example",
+      "firmGuess": "Lever",
+      "messages": [
+        {
+          "subject": "Your application to Brambleworks",
+          "date": "2025-08-12",
+          "body": "Hi,\n\nThanks for applying to the Senior Software Engineer, Developer Tools position at Brambleworks. This is an automated confirmation that we've received your application. We review every application carefully, and a member of our team will be in touch if there's a potential fit.\n\nThis message was sent automatically. Please do not reply to this email.\n\nSent via Lever"
+        },
+        {
+          "subject": "Update on your Brambleworks application",
+          "date": "2025-08-30",
+          "body": "Hi,\n\nThank you for your interest in Brambleworks and for taking the time to apply. After careful review, we have decided not to move forward with your application for the Senior Software Engineer, Developer Tools position at this time.\n\nWe will keep your resume on file and may reach out if a role opens that better matches your background. We wish you the best in your search.\n\nThis is an automated message sent via Lever. Replies are not monitored."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-ats-workday-01-requisition-received",
+      "kind": "ats",
+      "senderName": "Quillfeather Bank Careers",
+      "senderEmail": "quillfeather@myworkday-mail.example",
+      "firmGuess": "Workday",
+      "messages": [
+        {
+          "subject": "Application Received: Senior Data Analyst (R-10442)",
+          "date": "2026-04-02",
+          "body": "Dear Candidate,\n\nThank you for applying for the Senior Data Analyst position (Requisition R-10442) at Quillfeather Bank. Your application has been successfully submitted.\n\nYou can track the status of your application at any time by signing in to your Candidate Home account. If your qualifications match the requirements of the role, a member of our recruiting team will contact you.\n\nPlease do not reply to this email; this mailbox is not monitored.\n\nQuillfeather Bank Talent Acquisition"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-ats-workday-02-assessment-invite",
+      "kind": "ats",
+      "senderName": "Emberline Energy Recruiting",
+      "senderEmail": "emberline@myworkday-mail.example",
+      "firmGuess": "Workday",
+      "messages": [
+        {
+          "subject": "Action required: complete your online assessment",
+          "date": "2026-02-19",
+          "body": "Hello,\n\nAs part of your application for Grid Analytics Intern (R-2231) at Emberline Energy, you are invited to complete an online assessment. The assessment takes approximately 40 minutes and must be completed within 5 days of receiving this message.\n\nTo begin, sign in to your Candidate Home account and open the Tasks section. If you experience technical difficulties, please use the Help link on the assessment page.\n\nThis is an automated notification. Please do not reply to this message."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-jobalert-linkedin-01-digest",
+      "kind": "job-board",
+      "senderName": "LinkedIn Job Alerts",
+      "senderEmail": "jobalerts-noreply@linkedin.example",
+      "firmGuess": "LinkedIn",
+      "messages": [
+        {
+          "subject": "30+ new jobs for \"data engineer\" in Chicago",
+          "date": "2026-05-19",
+          "body": "Your job alert for data engineer in Chicago, Illinois\n\nStaff Data Engineer\nQuillfeather Bank · Chicago, IL (Hybrid)\nActively recruiting · 3 connections work here\n\nData Engineer II\nTidewater Analytics · Chicago, IL (Remote)\nEasy Apply\n\nSenior Analytics Engineer\nOrchard & Pike Insurance · Chicago, IL (On-site)\nPromoted\n\nData Platform Engineer\nGlasswing Software · Chicago, IL (Hybrid)\nBe an early applicant\n\nSee all jobs\n\nYou are receiving Job Alert emails. Manage job alerts · Unsubscribe"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-jobalert-indeed-01-digest",
+      "kind": "job-board",
+      "senderName": "Indeed",
+      "senderEmail": "alert@indeed.example",
+      "firmGuess": "Indeed",
+      "messages": [
+        {
+          "subject": "Product Designer jobs near Lisbon",
+          "date": "2026-08-11",
+          "body": "New jobs matching your search: product designer, Lisbon\n\nSenior Product Designer - Copperline Games - Lisbon - Posted 2 days ago\nJoin our Puzzle team to design the next generation of our mobile games.\n\nUX/UI Designer - Parcelwise - Remote in Portugal - Posted today\nDesign driver and dispatcher experiences for courier companies.\n\nProduct Designer, Growth - Brambleworks - Lisbon (Hybrid) - Posted 5 days ago\nOwn onboarding and activation experiences for developer tools.\n\nView all 18 new jobs\n\nYou're receiving this email because you created a job alert. To stop receiving these emails, unsubscribe."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-newsletter-01-tech-hiring-market",
+      "kind": "newsletter",
+      "senderName": "The Pragmatic Stack",
+      "senderEmail": "weekly@pragmaticstack-news.example",
+      "firmGuess": "Pragmatic Stack News",
+      "messages": [
+        {
+          "subject": "Issue #212: Hiring is back (sort of)",
+          "date": "2026-03-06",
+          "body": "This week: the engineering job market in Q1, why platform teams are hiring again, and a deep dive into event-driven architectures.\n\n1. Hiring is back, sort of. Our survey of 400 engineering leaders found that 58% plan to grow headcount this year, up from 31% last year. Demand is concentrated in platform, security, and ML infrastructure roles, while frontend and generalist openings remain flat. Senior candidates report more recruiter outreach but longer processes.\n\n2. Deep dive: when event-driven workers beat cron. We walk through a real migration and the three mistakes that cost a team two months.\n\n3. Sponsored: Tracepoint Observability cuts log costs by up to 40%. Start a free trial.\n\nThanks for reading. Forward this to a friend, or unsubscribe at any time."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-jobboard-01-hirewire-matches",
+      "kind": "job-board",
+      "senderName": "Hirewire Matches",
+      "senderEmail": "matches@hirewire.example",
+      "firmGuess": "Hirewire",
+      "messages": [
+        {
+          "subject": "5 companies want to talk to you this week",
+          "date": "2026-07-21",
+          "body": "Hi there,\n\nGood news: 5 companies on Hirewire viewed your profile and requested an intro this week.\n\nStillwater Compute: Infrastructure Engineer, $170k-$200k\nPetrichor Labs: Senior Data Engineer, $160k-$185k\nFernhill Health: Platform Engineer, $165k-$190k\nGlasswing Software: Staff Engineer, $210k-$240k\nKestrel Pay: Backend Engineer, $150k-$175k\n\nLog in to accept or decline each request. Requests expire after 7 days.\n\nYou're receiving this because you're an active candidate on Hirewire. Update your job search status or unsubscribe in settings."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-colleague-01-reorg",
+      "kind": "colleague",
+      "senderName": "Ben Adeyemi",
+      "senderEmail": "ben.adeyemi@glasswing-software.example",
+      "firmGuess": "Glasswing Software",
+      "messages": [
+        {
+          "subject": "Re: team changes after the reorg",
+          "date": "2026-09-09",
+          "body": "Hey, following up on our 1:1.\n\nThe reorg announcement goes out Monday: the data platform and analytics engineering teams merge under Priya, and I'm moving over to lead the ingestion pod. Your projects stay the same for Q4, though the on-call rotation will be shared across both teams starting in November.\n\nWe also got approval to backfill Marco's seat, so we'll be interviewing for a senior engineer later this fall. No action needed from you yet, but I may ask you to sit on a panel.\n\nHappy to talk through any of it before the all-hands. And thanks again for covering the incident review last week.\n\nBen"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-friend-01-asks-for-referral",
+      "kind": "friend",
+      "senderName": "Tunde Bakare",
+      "senderEmail": "tunde.bakare@mailbox.example",
+      "firmGuess": null,
+      "messages": [
+        {
+          "subject": "Quick favor: referral?",
+          "date": "2026-04-27",
+          "body": "Hey! Hope the new job is treating you well.\n\nI saw your company posted a Senior Data Analyst opening and I'm really interested. Would you be comfortable referring me? I've attached my resume and a short blurb you could paste into the referral form. No pressure at all if it's awkward; I know we haven't worked together directly.\n\nAlso, are we still on for climbing Saturday? I can drive this time.\n\nTunde"
+        },
+        {
+          "subject": "Re: Quick favor: referral?",
+          "date": "2026-05-02",
+          "body": "Thank you so much for submitting the referral! Their recruiter already reached out to schedule a screen for next week. I owe you dinner, your pick.\n\n> On Apr 28, 2026, you wrote:\n> Done, submitted you through the portal. Good luck! And yes to Saturday.\n\nSee you at the gym."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-sales-01-observability-sequence",
+      "kind": "sales",
+      "senderName": "Chloe Whitaker",
+      "senderEmail": "chloe.whitaker@tracepoint-observability.example",
+      "firmGuess": "Tracepoint Observability",
+      "messages": [
+        {
+          "subject": "Cutting your log costs by 40%",
+          "date": "2026-02-10",
+          "body": "Hi,\n\nI noticed your team is running a large Kubernetes footprint and hiring for platform roles, which usually means observability bills are climbing fast. Tracepoint helps engineering teams cut log ingestion costs by 30-40% with smart sampling, without losing the traces you need during incidents.\n\nTeams like Parcelwise and Fernhill Health moved over in under two weeks. Would you be open to a 20-minute demo next week?\n\nBest,\nChloe Whitaker\nAccount Executive, Tracepoint Observability"
+        },
+        {
+          "subject": "Re: Cutting your log costs by 40%",
+          "date": "2026-02-17",
+          "body": "Hi again, following up on my last note. I've attached a short case study on how a 40-person platform team cut their monthly observability spend from $38k to $22k. Happy to run a free cost assessment on your current setup if that's useful. Would Thursday or Friday work for a quick call?"
+        },
+        {
+          "subject": "Should I close your file?",
+          "date": "2026-02-26",
+          "body": "Hi, I haven't heard back, so I'll assume observability costs aren't a priority right now. I'll close your file for the moment. If that changes, just reply to this email and I'll set up a demo and a cost assessment for your team.\n\nChloe"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-sales-02-ats-vendor",
+      "kind": "sales",
+      "senderName": "Aaron Feld",
+      "senderEmail": "aaron@talentloop-ats.example",
+      "firmGuess": "Talentloop ATS",
+      "messages": [
+        {
+          "subject": "Hire engineers 2x faster with Talentloop",
+          "date": "2026-06-09",
+          "body": "Hi,\n\nI noticed your team has six open engineering roles on your careers page. Talentloop is an applicant tracking system built for fast-growing engineering teams: automated sourcing, structured scorecards, and one-click interview scheduling.\n\nTeams like Parcelwise cut their time-to-hire from 48 to 22 days after switching. Worth a 15-minute demo to see if it fits your hiring process?\n\nAaron Feld\nSales, Talentloop"
+        },
+        {
+          "subject": "Re: Hire engineers 2x faster with Talentloop",
+          "date": "2026-06-16",
+          "body": "Quick follow-up: we're offering 20% off the first year for teams that sign before the end of the quarter, plus free migration from your current ATS. If someone else owns recruiting tools on your team, I'd appreciate a pointer to the right person.\n\nThanks,\nAaron"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-conference-01-speaker-invite",
+      "kind": "conference",
+      "senderName": "Mireille Dufresne",
+      "senderEmail": "mireille@datacascade-conf.example",
+      "firmGuess": "DataCascade Conf",
+      "messages": [
+        {
+          "subject": "Invitation to speak at DataCascade 2026",
+          "date": "2026-03-30",
+          "body": "Hello,\n\nI'm on the program committee for DataCascade 2026, taking place September 14-15 in Portland. We loved your blog series on streaming dashboards and would like to invite you to give a 30-minute talk in our Real-Time Analytics track.\n\nWe cover travel and two nights of hotel for speakers. Our sponsors include several companies that are hiring, and there's a careers fair on day two, if that's of interest.\n\nCould you let me know by April 10 whether you're able to join us?\n\nBest,\nMireille Dufresne\nProgram Committee, DataCascade"
+        },
+        {
+          "subject": "Re: Invitation to speak at DataCascade 2026",
+          "date": "2026-04-08",
+          "body": "Wonderful, thank you for accepting!\n\n> On Apr 7, 2026, you wrote:\n> I'd be glad to. Could I do the talk on replacing nightly batch reports with streaming?\n\nThat topic is perfect for the track. I'll send the speaker agreement and the slide template this week. Please send a title and a 150-word abstract by May 1."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-vendor-01-renewal",
+      "kind": "vendor",
+      "senderName": "Oliver Grant",
+      "senderEmail": "oliver.grant@harbourline-cloud.example",
+      "firmGuess": "Harbourline Cloud",
+      "messages": [
+        {
+          "subject": "Your annual renewal: Harbourline Cloud Credits",
+          "date": "2026-08-28",
+          "body": "Hi,\n\nYour Harbourline Cloud Credits agreement renews on October 1. Based on your last twelve months of usage (an average of $18,400 per month in compute), we recommend moving to the Growth commitment tier, which would lower your effective rate by about 9%.\n\nI've attached the renewal quote and a usage summary by account. I'm also moving to a new territory next month, so Sofia from our account management team will be your point of contact going forward.\n\nLet me know if you'd like to review the quote together.\n\nBest,\nOliver Grant\nAccount Manager, Harbourline Cloud"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-former-manager-01-catching-up",
+      "kind": "former-manager",
+      "senderName": "Graham Whitlock",
+      "senderEmail": "graham.whitlock@mailbox.example",
+      "firmGuess": null,
+      "messages": [
+        {
+          "subject": "Long time!",
+          "date": "2026-01-12",
+          "body": "Hi!\n\nIt's been ages since our Tidewater days. I finally left last spring and joined Brambleworks as a director; very different pace, and they've been growing fast, which has been fun to watch. How's the new role treating you? Are you still doing the Tuesday pottery class?\n\nThe market's been rough for a lot of people I know, so I hope your team is stable. Ada just started kindergarten and is already bossing the teacher around.\n\nWe should grab lunch next time I'm in Chicago. I'm there the last week of the month.\n\nGraham"
+        },
+        {
+          "subject": "Re: Long time!",
+          "date": "2026-01-20",
+          "body": "Great to hear you're happy there, and congrats on the promotion! Lunch on the 29th works. How about that ramen place near the river we used to go to after sprint reviews? I'll book for 12:30.\n\n> On Jan 14, 2026, you wrote:\n> Graham! So good to hear from you. I'd love lunch. Things are good here; I just got promoted to senior.\n\nSee you then."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-careercenter-01-fair-blast",
+      "kind": "newsletter",
+      "senderName": "Harrow State Career Center",
+      "senderEmail": "careers@harrowstate.example",
+      "firmGuess": "Harrow State",
+      "messages": [
+        {
+          "subject": "Fall Career Fair: 120+ employers, Sept 23-24",
+          "date": "2026-09-15",
+          "body": "Dear Harrow State alumni and students,\n\nThe Fall Career Fair returns to the Student Union on September 23-24 with more than 120 employers, including Larkspur Robotics, Quillfeather Bank, Emberline Energy, and Tidewater Analytics. Full-time, internship, and co-op roles will be represented.\n\nResume review drop-in hours run Monday through Thursday, 1-4pm, in the Career Center. Alumni can also book a free 30-minute coaching session online.\n\nThis message was sent to all subscribers of the Engineering and Computing careers mailing list. To unsubscribe, update your email preferences.\n\nHarrow State Career Center"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-mentor-01-offer-negotiation-advice",
+      "kind": "mentor",
+      "senderName": "Adaeze Nwankwo",
+      "senderEmail": "adaeze.nwankwo@mailbox.example",
+      "firmGuess": null,
+      "messages": [
+        {
+          "subject": "Re: offer from Quillfeather, thoughts?",
+          "date": "2026-06-20",
+          "body": "Congrats on the offer! You earned it.\n\nA few thoughts: ask for the sign-on bonus in writing, compare the 401k match with what you have now, and check whether the on-call comes with extra pay. It's completely normal to ask the recruiter for 48 more hours to decide. Also, $200k is at the low end for senior SRE at a bank that size; I'd counter at $215k and see where they land.\n\n> On Jun 19, 2026, you wrote:\n> Adaeze, I got the SRE offer from Quillfeather Bank, $200k base. Should I push back, or is it fine?\n\nCall me this weekend if you want to rehearse the conversation.\n\nAdaeze"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-peopleops-01-benefits",
+      "kind": "colleague",
+      "senderName": "Glasswing People Team",
+      "senderEmail": "people@glasswing-software.example",
+      "firmGuess": "Glasswing Software",
+      "messages": [
+        {
+          "subject": "Open enrollment closes November 15",
+          "date": "2025-11-01",
+          "body": "Hi team,\n\nOpen enrollment for 2026 benefits is now live and closes on November 15. A few changes this year:\n\n- Our new parental leave policy extends paid leave to 20 weeks for all parents.\n- We've added a second dental plan with orthodontic coverage.\n- The learning stipend increases to $2,000 per year.\n\nIf you don't make any changes, your current elections will roll over, except for FSA contributions, which must be re-elected every year. Join the Q&A session on Thursday at 11am if you have questions.\n\nThanks,\nThe People Team"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-backgroundcheck-01-automated",
+      "kind": "vendor",
+      "senderName": "VerityScreen",
+      "senderEmail": "notifications@verityscreen.example",
+      "firmGuess": "VerityScreen",
+      "messages": [
+        {
+          "subject": "Action needed: authorize your background check for Quillfeather Bank",
+          "date": "2026-06-25",
+          "body": "Hello,\n\nQuillfeather Bank has requested a background check as part of your employment offer. To get started, please review the disclosures and provide your authorization using the secure link in your candidate portal. Most checks are completed within 3-5 business days.\n\nIf you have questions about the process, visit our help center. This is an automated message; please do not reply.\n\nVerityScreen"
+        },
+        {
+          "subject": "Your background check is complete",
+          "date": "2026-06-29",
+          "body": "Hello,\n\nYour background check requested by Quillfeather Bank is complete, and the results have been shared with the employer. You can view and download a copy of your report from the candidate portal at any time.\n\nIf you believe any information in your report is inaccurate, you may file a dispute through the portal within 30 days. This is an automated message; please do not reply.\n\nVerityScreen"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-agency-newsletter-01-salary-guide",
+      "kind": "newsletter",
+      "senderName": "Northbeam Search Partners",
+      "senderEmail": "insights@northbeam-search.example",
+      "firmGuess": "Northbeam Search",
+      "messages": [
+        {
+          "subject": "2026 Tech Salary Guide: what engineers are earning",
+          "date": "2026-01-15",
+          "body": "Our 2026 Tech Salary Guide is here.\n\nDrawing on more than 3,000 placements and survey responses across North America, this year's guide covers base salary, bonus, and equity trends for 42 technology roles. Highlights:\n\n- Median base for senior data engineers rose 6% year over year.\n- Platform and security engineering saw the largest increases in total compensation.\n- Hybrid roles now pay a 4% premium over fully remote roles in major metros.\n\nDownload the full guide from our website, and join our webinar on January 28 for a walkthrough of the findings.\n\nYou are receiving this email because you subscribed to Northbeam Insights. Unsubscribe or manage your preferences."
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-student-01-informational-interview",
+      "kind": "student",
+      "senderName": "Kavya Reddy",
+      "senderEmail": "kavya.reddy@harrowstate.example",
+      "firmGuess": "Harrow State",
+      "messages": [
+        {
+          "subject": "Informational interview request",
+          "date": "2026-10-07",
+          "body": "Hi,\n\nMy name is Kavya, and I'm a senior studying statistics at Harrow State. I found your profile through the alumni directory and really enjoyed your talk on streaming dashboards at DataCascade.\n\nI'm applying for data engineering roles for next year and would love to hear how you moved from analytics into engineering. Would you have 20 minutes for a quick call sometime in the next few weeks? I'm happy to work around your schedule.\n\nThank you so much,\nKavya Reddy"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    },
+    {
+      "id": "not-profileviews-01-notification",
+      "kind": "job-board",
+      "senderName": "LinkedIn",
+      "senderEmail": "notifications-noreply@linkedin.example",
+      "firmGuess": "LinkedIn",
+      "messages": [
+        {
+          "subject": "You appeared in 14 searches this week",
+          "date": "2026-08-03",
+          "body": "You appeared in 14 searches this week\n\nRecruiters from Halvorsen Freight and 2 other companies viewed your profile. People who searched for you also searched for: Data Engineer, Analytics Engineer, Platform Engineer.\n\nYour profile is getting noticed. Add your recent projects and skills to show up in more searches.\n\nSee all profile views with Premium. Try it free for 1 month.\n\nYou are receiving notification emails. Unsubscribe · Help"
+        }
+      ],
+      "expect": {
+        "isRecruiter": false
+      }
+    }
+  ]
+}

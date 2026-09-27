@@ -22,11 +22,28 @@ import type { EventProviderId, ProviderAttendee, ProviderEvent } from "@/lib/eve
  * Keyed on `events_provider_uidx` — `(user_id, provider, provider_event_id)` — so re-syncing
  * updates rather than accumulating a copy of every event on every run.
  *
+ * ## The `WHERE` on the conflict target is not decoration
+ *
+ * `events_provider_uidx` is a PARTIAL index (`WHERE provider_event_id IS NOT NULL`). Postgres
+ * will only infer a partial index as an arbiter when the statement repeats its predicate, and
+ * without it the server does not fall back to a full-table check — it raises "there is no
+ * unique or exclusion constraint matching the ON CONFLICT specification" and the whole sync
+ * fails. That is what it did: every Luma and Eventbrite sync threw on its first event, which
+ * `runEventSyncPass` then recorded as a retryable connection failure, so the pass backed off
+ * and tried again forever instead of saying anything. `smoke-event-roster.ts` now runs this
+ * statement against the real DDL, which is what turns that into a test failure.
+ *
  * The COALESCE direction is deliberate and opposite for two groups. Provider-owned facts
  * (title, dates, venue, cover) take the provider's newer value: the host renamed the event or
  * moved the venue and we should follow. `theme_color` takes the EXISTING value first, because
  * it may have been derived from the cover client-side or picked by the user, and a sync must
  * not silently repaint an event the user has already looked at.
+ *
+ * `role` is set to `hosted` on conflict as well as on insert. Only a host-scoped credential
+ * can list an event here at all — that is what the Luma API key and the Eventbrite organiser
+ * token mean — so the API listing it IS the evidence that the user hosts it. Without this, an
+ * event that reached the table by some other route first kept `attended` forever and the UI
+ * went on telling the user to paste a guest list it was already syncing.
  */
 export async function upsertProviderEvent(
   userId: string,
@@ -44,8 +61,11 @@ export async function upsertProviderEvent(
          ${event.venue}, ${event.city}, ${event.url}, 'hosted', ${provider},
          ${provider}, ${event.providerEventId}, ${event.description},
          ${event.coverImageUrl}, ${event.attendeeCount})
-      ON CONFLICT (user_id, provider, provider_event_id) DO UPDATE SET
+      ON CONFLICT (user_id, provider, provider_event_id)
+        WHERE provider_event_id IS NOT NULL
+      DO UPDATE SET
         title            = excluded.title,
+        role             = 'hosted',
         starts_at        = COALESCE(excluded.starts_at, events.starts_at),
         ends_at          = COALESCE(excluded.ends_at, events.ends_at),
         timezone         = COALESCE(excluded.timezone, events.timezone),
@@ -103,6 +123,11 @@ export async function upsertProviderAttendees(
       title: a.title,
       linkedinUrl: a.linkedinUrl,
       xHandle: a.xHandle,
+      // Both connectors compute this (luma.ts, eventbrite.ts) and it used to be dropped
+      // right here, so every row landed with a NULL role.
+      attendeeRole: a.attendeeRole ?? null,
+      externalRef: a.externalRef,
+      phone: a.phone,
       identityKey,
     });
   }

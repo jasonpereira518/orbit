@@ -17,6 +17,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type ComposeRecruiter = {
   id: string;
@@ -166,10 +168,15 @@ export function ComposeWorkspace({
             onClick={() =>
               start(async () => {
                 try {
-                  const created = await generateRecruiterDrafts(
+                  const res = await generateRecruiterDrafts(
                     Array.from(picked),
                     intent
                   );
+                  if (!res.ok) {
+                    toast.error(res.error);
+                    return;
+                  }
+                  const created = res.value;
                   setDrafts(created);
                   setSelectedDrafts(new Set(created.map((d) => d.id)));
                   setPicked(new Set());
@@ -178,7 +185,7 @@ export function ComposeWorkspace({
                   );
                 } catch (err) {
                   toast.error(
-                    err instanceof Error ? err.message : "Could not draft"
+                    friendlyError(err, "Couldn’t write those drafts — try again?")
                   );
                 }
               })
@@ -236,16 +243,22 @@ export function ComposeWorkspace({
             onClick={() =>
               start(async () => {
                 try {
-                  const result = await sendRecruiterDrafts(
+                  const res = await sendRecruiterDrafts(
                     Array.from(selectedDrafts)
                   );
+                  if (!res.ok) {
+                    toast.error(res.error);
+                    return;
+                  }
+                  const result = res.value;
                   if (result.sent > 0) {
                     toast.success(
                       `Sent ${result.sent} email${result.sent === 1 ? "" : "s"}`
                     );
                   }
+                  // Each failure is already a whole sentence that names the person.
                   for (const f of result.failed) {
-                    toast.error(`${f.recruiterName}: ${f.error}`);
+                    toast.error(f.error);
                   }
                   setDrafts((prev) =>
                     prev.filter((d) => !selectedDrafts.has(d.id))
@@ -254,7 +267,7 @@ export function ComposeWorkspace({
                   router.refresh();
                 } catch (err) {
                   toast.error(
-                    err instanceof Error ? err.message : "Send failed"
+                    friendlyError(err, TOAST_COPY.sendFailed)
                   );
                 }
               })
@@ -397,10 +410,10 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
             onClick={() =>
               start(async () => {
                 try {
-                  const { url } = await startGmailOAuth("/recruiters/compose");
+                  const { url } = await startGmailOAuth({ purpose: "send", returnTo: "/recruiters/compose" });
                   window.location.href = url;
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "OAuth failed");
+                  toast.error(friendlyError(err, TOAST_COPY.connectFailed));
                 }
               })
             }
@@ -413,7 +426,7 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
   );
 }
 
-/** Shown when the Gmail connection predates the send scope. */
+/** Shown when the Gmail grant does not include gmail.send. */
 function ReconnectBanner() {
   const [pending, start] = useTransition();
   return (
@@ -421,12 +434,10 @@ function ReconnectBanner() {
       <div className="flex gap-3">
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
         <div>
-          <p className="font-medium text-foreground">
-            Reconnect Gmail to send
-          </p>
+          <p className="font-medium text-foreground">Allow Gmail to send</p>
           <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-            Your Gmail connection was made before Orbit could send on your behalf. You
-            can draft now, but sending needs permission you haven&apos;t granted yet.
+            You can draft now. Sending from your own address needs Google’s permission to
+            send as you, which Orbit asks for only when you want it.
           </p>
         </div>
       </div>
@@ -436,10 +447,10 @@ function ReconnectBanner() {
         onClick={() =>
           start(async () => {
             try {
-              const { url } = await startGmailOAuth("/recruiters/compose");
+              const { url } = await startGmailOAuth({ purpose: "send", returnTo: "/recruiters/compose" });
               window.location.href = url;
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "OAuth failed");
+              toast.error(friendlyError(err, TOAST_COPY.connectFailed));
             }
           })
         }

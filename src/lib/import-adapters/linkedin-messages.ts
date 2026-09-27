@@ -1,7 +1,7 @@
 import type { LinkedInMessageThreadRowPayload } from "@/db/schema";
 import type { ImportAdapter, InteractionInsert } from "@/lib/import-engine";
 import { kickLinkedInTimelineBackfill } from "@/lib/linkedin-timeline-backfill";
-import { enrichContactsFromMessages } from "@/lib/message-enrichment";
+import { enrichContactsFromMessagesBatched } from "@/lib/message-enrichment";
 
 /**
  * The `imports.import_type` value LinkedIn messages import jobs carry.
@@ -163,7 +163,9 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
    */
   async finalize(userId, contactIds) {
     if (contactIds.length === 0) return;
-    await enrichContactsFromMessages(userId, contactIds);
+    // Batched: half price, and the import is already finished — nobody is waiting on these
+    // summaries. Contacts the batch could not take are enriched inline by the same call.
+    await enrichContactsFromMessagesBatched(userId, contactIds);
     // Timeline-event derivation (reach-out / meeting / in-person) is kicked, not run: it is
     // one AI completion per contact with no cap, so running it here would do inline what
     // `enrichContactsFromMessages` above only gets away with by silently capping itself at

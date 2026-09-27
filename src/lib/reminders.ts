@@ -1,5 +1,5 @@
-import { and, eq, inArray } from "drizzle-orm";
-import { getDb } from "@/db";
+import { and, asc, desc, eq, getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
+import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import {
   actionItems,
   aiSuggestions,
@@ -8,20 +8,34 @@ import {
   reminders,
   userGoals,
 } from "@/db/schema";
-import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
 import {
   buildConstellationClusters,
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
-import { computeNetworkMetrics } from "@/lib/network-metrics";
-import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { computeNetworkMetrics, selectMetricsSample } from "@/lib/network-metrics";
+import {
+  getDashboardCounts,
+  getDashboardVocabularies,
+  getGoalAlignedContactIds,
+} from "@/lib/dashboard-aggregates";
+import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
+import { compareDueFollowUps, DUE_FOLLOW_UP_CAP } from "@/lib/due-follow-ups";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
 
+/**
+ * The suggestion types `buildOutreachSuggestions` OWNS — it deletes and rebuilds exactly
+ * these on a refresh.
+ *
+ * Nothing written by anything else may join this list. `job_posting_signal`
+ * (`src/lib/jobs/matcher.ts`) in particular: it is produced hourly by a cron from a feed
+ * this process cannot re-derive, so adding it here would wipe every job signal the moment
+ * somebody opened the dashboard.
+ */
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
   "post_event",
@@ -29,6 +43,33 @@ const AUTO_SUGGESTION_TYPES = [
 ] as const;
 
 const MAX_AUTO_SUGGESTIONS = 12;
+
+/**
+ * How long without a touch counts as dormant, when the person never said otherwise.
+ *
+ * A stated cadence replaces this per contact: somebody you agreed to speak with quarterly is
+ * not dormant on day 31, and telling them they have "gone quiet" on schedule is how a
+ * suggestion queue loses credibility.
+ */
+const DORMANT_DAYS = 30;
+
+/**
+ * How long a LinkedIn thread sits before it counts as gone quiet.
+ *
+ * Only the LOWER bound is cadence-aware. The upper bound (90 days) exists to stop ancient
+ * threads resurfacing forever and has nothing to do with an agreed rhythm, so a quarterly
+ * cadence must not drag it out to a year. Asymmetric on purpose.
+ */
+const LINKEDIN_QUIET_MIN_DAYS = 14;
+const LINKEDIN_QUIET_MAX_DAYS = 90;
+
+/**
+ * The idle window a contact's own cadence supplies, clamped to what the column allows.
+ * Null-safe: a contact who never stated one falls back to the caller's default.
+ */
+function idleThresholdFor(cadenceDays: number | null | undefined, fallback: number) {
+  return typeof cadenceDays === "number" && cadenceDays > 0 ? cadenceDays : fallback;
+}
 
 /**
  * The dashboard's "Constellation preview" card is a decorative, non-interactive
@@ -39,6 +80,14 @@ const MAX_AUTO_SUGGESTIONS = 12;
  * matching the card's own "closer ties sit nearer the center" framing.
  */
 const GRAPH_PREVIEW_CONTACT_CAP = 150;
+/** Rows on the "aligned with your goals" card. */
+const GOAL_ALIGNED_CAP = 5;
+/** Rows on the "recently updated" card. */
+const RECENT_CONTACT_CAP = 6;
+/** Rows on the reminders card. */
+const REMINDER_CAP = 20;
+/** Rows on the suggestions card. */
+const SUGGESTION_CAP = 40;
 
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
   post_event: 3,
@@ -84,16 +133,17 @@ function isDiscoveryEligible(c: {
  * in `getDashboardData` de-duplicates on read for that case (and for rows already
  * written by one).
  */
-const suggestionRefreshInFlight = new Map<string, Promise<void>>();
+const suggestionRefreshInFlight = new Map<string, Promise<number>>();
 
-export function refreshOutreachSuggestions(userId: string): Promise<void> {
+/** The shared rebuild, resolving with how many suggestions it inserted. */
+function refreshOutreachSuggestionsCounted(userId: string): Promise<number> {
   const existing = suggestionRefreshInFlight.get(userId);
   if (existing) return existing;
 
-  // Result discarded on purpose: no caller reads the inserted rows, and a shared promise
-  // must not hand two callers the same mutable array.
+  // Rows discarded on purpose: no caller reads the inserted rows, and a shared promise
+  // must not hand two callers the same mutable array. Only the count survives.
   const run = buildOutreachSuggestions(userId)
-    .then(() => undefined)
+    .then((rows) => rows.length)
     .finally(() => {
       suggestionRefreshInFlight.delete(userId);
     });
@@ -101,39 +151,64 @@ export function refreshOutreachSuggestions(userId: string): Promise<void> {
   return run;
 }
 
+export function refreshOutreachSuggestions(userId: string): Promise<void> {
+  return refreshOutreachSuggestionsCounted(userId).then(() => undefined);
+}
+
 async function buildOutreachSuggestions(userId: string) {
   const db = await getDb();
-  // Only what the candidate predicates below read. This ran unprojected — every column,
-  // notes and inline avatars included — on a first dashboard visit.
-  const all = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      priorityLevel: true,
-      relationshipScore: true,
-      lastInteractionAt: true,
-      firstInteractionAt: true,
-      nextFollowUpAt: true,
-      // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
-      // an optional field here would let a caller forget the column and quietly never
-      // suppress anything, with nothing failing to say so.
-      constellationPin: true,
-    },
-  });
-
-  // Clear pending auto suggestions so we regenerate fresh ones
-  // (preserve user-facing AI suggestions like score_bump from enrichment)
-  await db
-    .delete(aiSuggestions)
-    .where(
-      and(
-        eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending"),
-        inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
+  // The two reads are independent of each other and of the suggestion rows, so they go
+  // out together; the delete and the insert follow as one atomic write at the end.
+  const [all, messageStatRows] = await Promise.all([
+    // Only what the candidate predicates below read. This ran unprojected — every column,
+    // notes and inline avatars included — on a first dashboard visit.
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        preferredName: true,
+        priorityLevel: true,
+        relationshipScore: true,
+        lastInteractionAt: true,
+        firstInteractionAt: true,
+        nextFollowUpAt: true,
+        // A rhythm the person stated in a note. Projected explicitly — this query lists its
+        // columns, so a threshold that reads `cadenceDays` without this line gets `undefined`
+        // and silently falls back to the default for everybody.
+        cadenceDays: true,
+        cadencePhrase: true,
+        // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
+        // an optional field here would let a caller forget the column and quietly never
+        // suppress anything, with nothing failing to say so.
+        constellationPin: true,
+      },
+    }),
+    // Per-contact count / latest / earliest LinkedIn message, aggregated in Postgres. This
+    // used to pull every linkedin_message row with every column (raw_notes included) just to
+    // fold them into these three figures in JS. `interaction_date` is NOT NULL, so the old
+    // `interactionDate || createdAt` fallback never reached createdAt; mapWith runs the
+    // column's own driver mapper, so max/min come back as the same Date values.
+    db
+      .select({
+        contactId: interactions.contactId,
+        count: sql<number>`count(*)::int`,
+        last: sql<Date>`max(${interactions.interactionDate})`.mapWith(
+          interactions.interactionDate
+        ),
+        first: sql<Date>`min(${interactions.interactionDate})`.mapWith(
+          interactions.interactionDate
+        ),
+      })
+      .from(interactions)
+      .where(
+        and(
+          eq(interactions.userId, userId),
+          eq(interactions.interactionType, "linkedin_message")
+        )
       )
-    );
+      .groupBy(interactions.contactId),
+  ]);
 
   type Candidate = {
     suggestionType: (typeof AUTO_SUGGESTION_TYPES)[number];
@@ -168,39 +243,33 @@ async function buildOutreachSuggestions(userId: string) {
     (c) =>
       isDiscoveryEligible(c) &&
       (c.priorityLevel >= 2 || c.relationshipScore >= 4) &&
-      daysAgo(c.lastInteractionAt) >= 30
+      daysAgo(c.lastInteractionAt) >= idleThresholdFor(c.cadenceDays, DORMANT_DAYS)
   );
   for (const c of dormantHighValue) {
     const idle = daysAgo(c.lastInteractionAt);
     upsertCandidate(c.id, {
       suggestionType: "dormant_high_value",
       title: `Reach out to ${contactDisplayName(c)}`,
-      description: `Gone quiet — last touch ${idle} day${idle === 1 ? "" : "s"} ago`,
+      // Quoting the person back to themselves is the whole point of storing the phrase: "you
+      // said check in monthly" is a reason, where "gone quiet" is just an observation.
+      description: c.cadencePhrase
+        ? `You said "${c.cadencePhrase}" — last touch ${idle} day${idle === 1 ? "" : "s"} ago`
+        : `Gone quiet — last touch ${idle} day${idle === 1 ? "" : "s"} ago`,
       relatedContactIds: [c.id],
       confidenceScore: 80,
     });
   }
 
-  const withMessageHistory = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.interactionType, "linkedin_message")
-    ),
-  });
   const messageStats = new Map<
     string,
     { count: number; last: Date; first: Date }
   >();
-  for (const m of withMessageHistory) {
-    const d = m.interactionDate || m.createdAt;
-    const prev = messageStats.get(m.contactId);
-    if (!prev) {
-      messageStats.set(m.contactId, { count: 1, last: d, first: d });
-    } else {
-      prev.count += 1;
-      if (d > prev.last) prev.last = d;
-      if (d < prev.first) prev.first = d;
-    }
+  for (const m of messageStatRows) {
+    messageStats.set(m.contactId, {
+      count: Number(m.count),
+      last: m.last,
+      first: m.first,
+    });
   }
 
   for (const c of all) {
@@ -208,7 +277,12 @@ async function buildOutreachSuggestions(userId: string) {
     const stats = messageStats.get(c.id);
     if (!stats || stats.count < 2) continue;
     const daysSinceLast = daysAgo(stats.last);
-    if (daysSinceLast < 14 || daysSinceLast > 90) continue;
+    if (
+      daysSinceLast < idleThresholdFor(c.cadenceDays, LINKEDIN_QUIET_MIN_DAYS) ||
+      daysSinceLast > LINKEDIN_QUIET_MAX_DAYS
+    ) {
+      continue;
+    }
     upsertCandidate(c.id, {
       suggestionType: "linkedin_thread_quiet",
       title: `Reach out to ${contactDisplayName(c)}`,
@@ -242,15 +316,34 @@ async function buildOutreachSuggestions(userId: string) {
     .sort((a, b) => b.confidenceScore - a.confidenceScore)
     .slice(0, MAX_AUTO_SUGGESTIONS);
 
-  if (suggestions.length) {
-    await db.insert(aiSuggestions).values(
-      suggestions.map((s) => ({
-        userId,
-        ...s,
-        status: "pending",
-      }))
-    );
-  }
+  // Clear pending auto suggestions and write the fresh ones in one atomic write (one
+  // request on neon-http), so a reader never lands between the two and sees none.
+  // (preserve user-facing AI suggestions like score_bump from enrichment)
+  await runAtomicWrite(db, (tx) => {
+    const statements: AtomicStatement[] = [
+      tx
+        .delete(aiSuggestions)
+        .where(
+          and(
+            eq(aiSuggestions.userId, userId),
+            eq(aiSuggestions.status, "pending"),
+            inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
+          )
+        ),
+    ];
+    if (suggestions.length) {
+      statements.push(
+        tx.insert(aiSuggestions).values(
+          suggestions.map((s) => ({
+            userId,
+            ...s,
+            status: "pending",
+          }))
+        )
+      );
+    }
+    return statements;
+  });
 
   return suggestions;
 }
@@ -260,9 +353,14 @@ function followUpCandidateScore(contact: {
   relationshipScore: number;
   lastInteractionAt: Date | string | null;
   nextFollowUpAt: Date | string | null;
+  cadenceDays?: number | null;
 }) {
   const idleDays = Math.min(daysAgo(contact.lastInteractionAt), 365);
-  const idleScore = Number.isFinite(idleDays) ? idleDays / 30 : 2;
+  // Idle time measured against this person's OWN rhythm, so the score means "how overdue",
+  // not "how long". Dividing everyone by 30 ranked a quarterly contact above a weekly one
+  // purely for sitting still.
+  const window = idleThresholdFor(contact.cadenceDays, DORMANT_DAYS);
+  const idleScore = Number.isFinite(idleDays) ? idleDays / window : 2;
   return (
     (contact.priorityLevel || 0) * 4 +
     (contact.relationshipScore || 0) * 2 +
@@ -280,6 +378,16 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
   const now = new Date();
   const all = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      priorityLevel: true,
+      relationshipScore: true,
+      lastInteractionAt: true,
+      nextFollowUpAt: true,
+      cadenceDays: true,
+    },
   });
 
   const alreadyDueIds = new Set(
@@ -308,42 +416,67 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
     .sort((a, b) => followUpCandidateScore(b) - followUpCandidateScore(a))
     .slice(0, Math.max(1, Math.min(24, limit)));
 
+  const candidateIds = candidates.map((c) => c.id);
   let created = 0;
-  for (const contact of candidates) {
-    const name = contact.preferredName || contact.fullName;
-    const title = `Follow up with ${name}`;
 
-    const existing = await db.query.reminders.findFirst({
+  if (candidateIds.length) {
+    // One lookup for every candidate's existing pending reminder, instead of a
+    // findFirst per candidate — the update-vs-insert branch below is unchanged,
+    // just informed in bulk rather than one round trip at a time.
+    const existingReminders = await db.query.reminders.findMany({
       where: and(
         eq(reminders.userId, userId),
-        eq(reminders.contactId, contact.id),
+        inArray(reminders.contactId, candidateIds),
         eq(reminders.status, "pending")
       ),
+      columns: { id: true, contactId: true },
     });
+    const reminderIdByContact = new Map(
+      existingReminders.map((r) => [r.contactId, r.id])
+    );
 
-    if (existing) {
-      await db
-        .update(reminders)
-        .set({
+    const rowsToInsert: (typeof reminders.$inferInsert)[] = [];
+    const reminderRetitles: SQL[] = [];
+
+    for (const contact of candidates) {
+      const name = contact.preferredName || contact.fullName;
+      const title = `Follow up with ${name}`;
+      const existingReminderId = reminderIdByContact.get(contact.id);
+
+      if (existingReminderId) {
+        reminderRetitles.push(sql`(${existingReminderId}::uuid, ${title}::text)`);
+      } else {
+        rowsToInsert.push({
+          userId,
+          contactId: contact.id,
           title,
+          description: "Generated from dashboard outreach queue",
           dueDate: now,
           reminderType: "generated",
           actionKind: "follow_up",
           createdBy: "system",
-        })
-        .where(eq(reminders.id, existing.id));
-    } else {
-      await db.insert(reminders).values({
-        userId,
-        contactId: contact.id,
-        title,
-        description: "Generated from dashboard outreach queue",
-        dueDate: now,
-        reminderType: "generated",
-        actionKind: "follow_up",
-        createdBy: "system",
-        status: "pending",
-      });
+          status: "pending",
+        });
+      }
+    }
+
+    // Every existing reminder in one statement rather than one per candidate. Candidates
+    // are distinct contacts and the map holds one reminder per contact, so no id repeats.
+    if (reminderRetitles.length) {
+      await db.execute(sql`
+        UPDATE reminders AS r
+           SET title = v.title,
+               due_date = ${now},
+               reminder_type = 'generated',
+               action_kind = 'follow_up',
+               created_by = 'system'
+          FROM (VALUES ${sql.join(reminderRetitles, sql`, `)}) AS v(id, title)
+         WHERE r.id = v.id AND r.user_id = ${userId}
+      `);
+    }
+
+    if (rowsToInsert.length) {
+      await db.insert(reminders).values(rowsToInsert);
     }
 
     await db
@@ -353,13 +486,13 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
         followUpStatus: "pending",
         updatedAt: now,
       })
-      .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+      .where(and(inArray(contacts.id, candidateIds), eq(contacts.userId, userId)));
 
-    created += 1;
+    created = candidates.length;
   }
 
   await refreshOutreachSuggestions(userId);
-  return { created, contactIds: candidates.map((c) => c.id) };
+  return { created, contactIds: candidateIds };
 }
 
 const SUGGESTION_REFRESH_TTL_MS = 30 * 60 * 1000;
@@ -387,8 +520,13 @@ export async function ensureOutreachSuggestions(userId: string) {
     columns: { id: true },
   });
   if (existing) return false;
-  await refreshOutreachSuggestions(userId);
-  return true;
+  // True when the queue may have changed under a concurrent read: this build inserted
+  // rows, or it joined a rebuild someone else started (whose delete could have removed rows
+  // that read saw). A build of our own that found nothing to suggest changed nothing — no
+  // auto row existed for its delete to remove — so there is nothing to re-read.
+  const joined = suggestionRefreshInFlight.has(userId);
+  const inserted = await refreshOutreachSuggestionsCounted(userId);
+  return joined || inserted > 0;
 }
 
 export async function maybeRefreshOutreachSuggestions(userId: string) {
@@ -409,6 +547,274 @@ export async function maybeRefreshOutreachSuggestions(userId: string) {
   // Skip the expensive delete/rebuild on every dashboard hit.
   if (age < SUGGESTION_REFRESH_TTL_MS) return;
   await refreshOutreachSuggestions(userId);
+}
+
+/**
+ * Everything `getDashboardData`'s network scan deliberately does not select.
+ *
+ * The scan reads what the WHOLE network is needed for — clustering and constellation
+ * eligibility — and nothing else. Every field here belongs to a contact that is actually
+ * going to be rendered or analysed, and every one of those sets is bounded: the metrics
+ * sample (≤750), the constellation preview (≤150), the goal-aligned card (5), and the
+ * contacts named by the reminder and suggestion lists (≤60).
+ */
+type ContactDetailColumns = {
+  fullName: string;
+  preferredName: string | null;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  website: string | null;
+  dateMet: Date | null;
+  lastInteractionAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  profileImageUrl: string | null;
+  tags: string[];
+  aiSummary: string | null;
+  keyFacts: string[] | null;
+  sharedInterests: string[] | null;
+  howMet: string | null;
+  metContext: string | null;
+};
+
+/**
+ * Fetch the wide text columns for a bounded set of contacts.
+ *
+ * One statement, or none at all when the set is empty — which is the common case for a new
+ * account and must not cost a round trip. The `inArray` is bounded by construction: every
+ * caller passes either the metrics sample (at most `METRICS_MAX_CONTACTS`) or the preview
+ * payload (at most `GRAPH_PREVIEW_CONTACT_CAP`).
+ */
+async function hydrateContactDetail(
+  userId: string,
+  ids: string[]
+): Promise<Map<string, ContactDetailColumns>> {
+  const out = new Map<string, ContactDetailColumns>();
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return out;
+
+  const db = await getDb();
+  const rows = await db.query.contacts.findMany({
+    where: and(eq(contacts.userId, userId), inArray(contacts.id, unique)),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      title: true,
+      email: true,
+      phone: true,
+      linkedinUrl: true,
+      website: true,
+      dateMet: true,
+      lastInteractionAt: true,
+      createdAt: true,
+      updatedAt: true,
+      profileImageUrl: false,
+      aiSummary: true,
+      keyFacts: true,
+      sharedInterests: true,
+      howMet: true,
+      metContext: true,
+    },
+    extras: { avatarUrl: clientAvatarUrlSql.as("avatar_url") },
+    with: { contactTags: { with: { tag: true } } },
+  });
+
+  for (const r of rows) {
+    out.set(r.id, {
+      fullName: r.fullName,
+      preferredName: r.preferredName ?? null,
+      title: r.title ?? null,
+      email: r.email ?? null,
+      phone: r.phone ?? null,
+      linkedinUrl: r.linkedinUrl ?? null,
+      website: r.website ?? null,
+      dateMet: r.dateMet ?? null,
+      lastInteractionAt: r.lastInteractionAt ?? null,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      profileImageUrl: r.avatarUrl,
+      tags: r.contactTags.map((ct) => ct.tag.name),
+      aiSummary: r.aiSummary ?? null,
+      keyFacts: r.keyFacts ?? null,
+      sharedInterests: r.sharedInterests ?? null,
+      howMet: r.howMet ?? null,
+      metContext: r.metContext ?? null,
+    });
+  }
+  return out;
+}
+
+/**
+ * The six contacts on the "recently updated" card.
+ *
+ * Its own query rather than the head of the network scan, because the scan no longer
+ * selects `updated_at` — or a name, or an avatar — for anyone. Six rows, ordered in SQL.
+ *
+ * `updated_at` alone is not a total order: after a bulk import every contact carries the
+ * same one, so `LIMIT 6` over it returns an arbitrary six that can change between loads
+ * with nothing having changed. Hence the tiebreak on `id`.
+ */
+async function loadRecentContacts(userId: string) {
+  const db = await getDb();
+  return db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      company: true,
+      title: true,
+      school: true,
+      email: true,
+      linkedinUrl: true,
+      relationshipScore: true,
+      nextFollowUpAt: true,
+      lastInteractionAt: true,
+      createdAt: true,
+      updatedAt: true,
+      profileImageUrl: false,
+    },
+    extras: { avatarUrl: clientAvatarUrlSql.as("avatar_url") },
+    orderBy: (c, { desc }) => [desc(c.updatedAt), desc(c.id)],
+    limit: RECENT_CONTACT_CAP,
+  });
+}
+
+/**
+ * "This contact's follow-up is due", in SQL, for a correlated `contacts` row aliased `due`.
+ *
+ * The same test `getDashboardData` applies in JavaScript to build `dueFollowUpIds`
+ * (`new Date(nextFollowUpAt) <= now`), against the SAME `now`: a JS Date carries
+ * milliseconds and the column carries microseconds, so the stored value is truncated to the
+ * millisecond first, exactly as parsing it into a Date does. Without that, a follow-up
+ * stamped in the same millisecond as `now` but a few microseconds after it would be due to
+ * the JavaScript list and not due here.
+ */
+function followUpDueSql(alias: SQL, now: Date) {
+  return sql`date_trunc('milliseconds', ${alias}.next_follow_up_at) <= ${now.toISOString()}::timestamptz`;
+}
+
+/** A canonical (lower-case) uuid: the only text `c.id = x::uuid` can match exactly as a JS string compare would. */
+const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+/**
+ * The reminders card: the first `REMINDER_CAP` pending reminders in due order, and how many
+ * there are in all — the filter, the cap and the count in one statement.
+ *
+ * It used to read every pending reminder (every column, `description` and `source_excerpt`
+ * included), drop in JavaScript the generated reminders whose contact already sits on the
+ * due list, and then keep twenty of them and a `.length`. The drop is a pure predicate, so it
+ * runs here instead; `count(*) over ()` is evaluated before the LIMIT, so it is the count of
+ * every row that passed the filter, not of the twenty returned.
+ *
+ * "Already on the due list" is `dueFollowUpIds` in `getDashboardData`: a contact OF THIS
+ * ACCOUNT whose `next_follow_up_at <= now` — hence the `user_id` on the correlated row.
+ *
+ * The whole row is kept, not only the fields the card renders: the rows go out as the
+ * loader's return value, which the behavior golden pins field for field, and twenty rows is
+ * no longer the cost that mattered.
+ */
+export async function loadDashboardReminders(userId: string, now: Date) {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      ...getTableColumns(reminders),
+      total: sql<number>`count(*) over ()`.mapWith(Number),
+    })
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.userId, userId),
+        eq(reminders.status, "pending"),
+        // `reminder_type` is NOT NULL and the other two are plain booleans, so this NOT
+        // never meets a NULL: it is exactly `!(generated && contactId && due.has(contactId))`.
+        sql`not (
+          ${reminders.reminderType} = 'generated'
+          and ${reminders.contactId} is not null
+          and exists (
+            select 1 from ${contacts} due
+            where due.id = ${reminders.contactId}
+              and due.user_id = ${userId}
+              and ${followUpDueSql(sql.raw("due"), now)}
+          )
+        )`
+      )
+    )
+    .orderBy(asc(reminders.dueDate))
+    .limit(REMINDER_CAP);
+  const total = rows[0]?.total ?? 0;
+  return {
+    rows: rows.map(({ total: _total, ...row }) => row),
+    total,
+  };
+}
+
+/**
+ * The suggestions card: the first `SUGGESTION_CAP` pending suggestions by confidence, and how
+ * many there are in all, with the card's three filters applied in SQL:
+ *
+ *   1. One row per (suggestion type, first related contact — or the row's own id when it
+ *      has none): the first in `confidence_score DESC` order wins. `row_number()` over that
+ *      partition in that order is the JavaScript `seen` set, which kept the first row of each
+ *      key in the same order. It dedupes BEFORE the next two filters, as the loop did (a key
+ *      was marked seen even when its row was then dropped).
+ *   2. A suggestion about a contact that no longer exists in this account is dropped
+ *      (`related_contact_ids` is jsonb, so a delete does not cascade to it).
+ *   3. A suggestion about a contact whose follow-up is already due is dropped.
+ *
+ * "Has no contact" is JavaScript falsiness of `relatedContactIds?.[0]`: missing, JSON null or
+ * the empty string. A contact id is compared as text, as the `Set<string>` lookup did, so
+ * it is cast to uuid (for the primary key) only when it is already canonical text.
+ */
+export async function loadDashboardSuggestions(userId: string, now: Date) {
+  const db = await getDb();
+  const cols = getTableColumns(aiSuggestions);
+  const firstContact = sql`(${aiSuggestions.relatedContactIds} ->> 0)`;
+  const ranked = db
+    .select({
+      ...cols,
+      firstContactId: sql<string | null>`${firstContact}`.as("first_contact_id"),
+      rn: sql<number>`row_number() over (
+        partition by ${aiSuggestions.suggestionType}, coalesce(${firstContact}, ${aiSuggestions.id}::text)
+        order by ${aiSuggestions.confidenceScore} desc
+      )`.as("rn"),
+    })
+    .from(aiSuggestions)
+    .where(and(eq(aiSuggestions.userId, userId), eq(aiSuggestions.status, "pending")))
+    .as("ranked");
+  // Every column of the table, in the table's order, read back through the subquery — the
+  // same row shape `findMany` returned.
+  const rowFields = Object.fromEntries(
+    Object.keys(cols).map((key) => [key, ranked[key as keyof typeof cols]])
+  ) as { [K in keyof typeof cols]: (typeof ranked)[K] };
+  const rows = await db
+    .select({ ...rowFields, total: sql<number>`count(*) over ()`.mapWith(Number) })
+    .from(ranked)
+    .where(
+      and(
+        sql`${ranked.rn} = 1`,
+        sql`(
+          coalesce(${ranked.firstContactId}, '') = ''
+          or exists (
+            select 1 from ${contacts} due
+            where due.user_id = ${userId}
+              and due.id = case when ${ranked.firstContactId} ~ ${CANONICAL_UUID_RE}
+                                then ${ranked.firstContactId}::uuid end
+              and not coalesce(${followUpDueSql(sql.raw("due"), now)}, false)
+          )
+        )`
+      )
+    )
+    .orderBy(desc(ranked.confidenceScore))
+    .limit(SUGGESTION_CAP);
+  const total = rows[0]?.total ?? 0;
+  return {
+    rows: rows.map(({ total: _total, ...row }) => row),
+    total,
+  };
 }
 
 export async function getDashboardData(
@@ -432,309 +838,405 @@ export async function getDashboardData(
       // notes; it now matches /graph, which never had them. The browser-safe avatar URL
       // is computed in SQL instead (`avatarUrl` below). `contacts_user_updated_idx` backs
       // the ordering. `scripts/smoke-page-budgets.ts` asserts this shape.
+      // ONLY what the whole network is needed for: clustering (company, school) and
+      // constellation eligibility (the pin, notes, stated closeness, priority, the next
+      // follow-up and a tag COUNT). Everything a contact needs in order to be *rendered* —
+      // name, title, contact details, avatar, timestamps, the wide text — belongs to a
+      // bounded set and is fetched by `hydrateContactDetail`.
+      //
+      // `last_interaction_at` is gone from here specifically: it was the widest field on the
+      // row, and the only whole-network question it answered was "how many are dormant",
+      // which `getDashboardCounts` now asks Postgres.
+      //
+      // The `contact_tags` JOIN is gone for the same reason. Eligibility wants a count, not
+      // the names, and the vocabulary that wanted names is `getDashboardVocabularies`.
       columns: {
         id: true,
-        userId: true,
-        fullName: true,
-        firstName: true,
-        lastName: true,
-        preferredName: true,
         company: true,
-        title: true,
-        location: true,
         school: true,
-        email: true,
-        phone: true,
-        linkedinUrl: true,
-        website: true,
-        profileImageUrl: false,
         relationshipScore: true,
         statedCloseness: true,
         priorityLevel: true,
         constellationPin: true,
-        source: true,
-        industry: true,
-        metContext: true,
-        dateMet: true,
-        howMet: true,
-        keyFacts: true,
-        sharedInterests: true,
-        aiSummary: true,
-        firstInteractionAt: true,
-        lastInteractionAt: true,
         nextFollowUpAt: true,
-        followUpStatus: true,
-        closeness: true,
-        closenessTier: true,
-        orbitScore: true,
-        createdAt: true,
+        // Kept, unlike the rest of the display columns, because it is an ORDERING key rather
+        // than something rendered: orbit scores are integers 1-5, so the preview's "closest
+        // 150" is mostly a tie, and which 150 appear has always been decided by the scan's
+        // `updated_at DESC` order underneath that sort. Dropping it would silently change
+        // who is on the chart.
         updatedAt: true,
-        notes: false,
       },
       extras: {
-        avatarUrl: clientAvatarUrlSql.as("avatar_url"),
         // Computed, never the column — see contact-notes-sql.ts and the budget smoke.
         hasNotes: contactHasNotesSql.as("has_notes"),
       },
-      orderBy: (c, { desc }) => [desc(c.updatedAt)],
-      with: { contactTags: { with: { tag: true } } },
+      // The join key alone. Eligibility wants a tag COUNT, and the vocabulary that wanted
+      // tag NAMES is `getDashboardVocabularies` now — so this carries one narrow row per
+      // tag rather than a whole tags row (id, user, name, timestamp) per tag.
+      //
+      // NOT a correlated `(select count(*) …)` in `extras`: written that way it returned
+      // zero for every contact rather than failing, which quietly made every tag-qualified
+      // contact ineligible for the constellation. Drizzle builds the correlation for a
+      // declared relation; hand-writing it here did not.
+      with: { contactTags: { columns: { contactId: true } } },
+      // The order the preview and the metrics sample break ties in. `id` makes it total.
+      orderBy: (c, { desc }) => [desc(c.updatedAt), desc(c.id)],
     })
   );
+
+  // Taken BEFORE the reads, not after them: the reminder and suggestion filters run in SQL
+  // now and have to agree with `dueFollowUpIds` about which contacts are due, so all three
+  // are judged against this one instant.
+  const now = new Date();
 
   const [
     scannedRows,
     pendingReminders,
     suggestions,
     goals,
-    goalTexts,
     closenessCohort,
     constellationConfig,
+    counts,
+    vocabularies,
+    goalAlignedIds,
   ] = await Promise.all([
     contactRowsPromise,
-    db.query.reminders.findMany({
-      where: and(
-        eq(reminders.userId, userId),
-        eq(reminders.status, "pending")
-      ),
-      orderBy: (r, { asc }) => [asc(r.dueDate)],
-    }),
-    db.query.aiSuggestions.findMany({
-      where: and(
-        eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending")
-      ),
-      orderBy: (s, { desc }) => [desc(s.confidenceScore)],
-    }),
+    // Filtered, capped and counted in SQL — see the two loaders. Both judge "due" against
+    // the same `now` as `dueFollowUpIds` below.
+    loadDashboardReminders(userId, now),
+    loadDashboardSuggestions(userId, now),
     db.query.userGoals.findMany({
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
       orderBy: (g, { desc }) => [desc(g.createdAt)],
     }),
-    listActiveGoalTextsForUser(userId),
-    // Donates the scan above rather than repeating it.
-    getClosenessCohort(userId, contactRowsPromise),
+    // No longer donates the scan above: that scan is now narrow, and the cohort builder
+    // needs the wide text columns to score goal relevance. The donation only ever mattered
+    // on the REBUILD path — the normal path reads each contact's stored breakdown and never
+    // looks at these rows at all — so what this gives up is one scan on the rare render that
+    // also has to recalibrate, in exchange for every other render carrying five fewer
+    // columns per contact. `ClosenessCohortRow` is typed precisely so this trade has to be
+    // made deliberately rather than discovered.
+    // Slim: every whole-network use below reads four numbers per contact (raw, closeness,
+    // orbitScore, tier), so the full breakdowns — every scoring factor, ~3.6 MB at 10,000
+    // contacts — never leave the database. See `getClosenessCohortSlim`.
+    getClosenessCohortSlim(userId),
     getConstellationConfig(),
+    // Aggregates Postgres answers better than a pass over the scan would — and, more to the
+    // point, each one lets a column come off that scan. See dashboard-aggregates.ts.
+    getDashboardCounts(userId),
+    getDashboardVocabularies(userId),
+    getGoalAlignedContactIds(userId, GOAL_ALIGNED_CAP),
   ]);
 
   // `profileImageUrl` keeps its name for the cards that render these rows, but it is now
   // the browser-safe URL from SQL — never the stored data: URL.
-  const allContactRows = scannedRows.map((c) => ({ ...c, profileImageUrl: c.avatarUrl }));
+  // The scan is minimal now, so nothing below reads a display field off it. These rows
+  // answer exactly two whole-network questions — who clusters with whom, and who is on the
+  // chart — and every contact that gets rendered is hydrated by id afterwards.
+  const lightContacts = scannedRows;
+  const lightById = new Map(lightContacts.map((c) => [c.id, c]));
 
-  const enrichedContacts = allContactRows.map((c) => {
-    const tags = c.contactTags.map((ct) => ct.tag.name);
-    return { ...c, tags };
-  });
-
-  const { metrics: networkMetrics, contactsWithNetwork } =
-    computeNetworkMetrics(
-      enrichedContacts,
-      goalTexts,
-      closenessCohort.byId
+  // Constellation eligibility, for the whole network. Same shared predicate as
+  // `loadGraphData` — this payload path is a parallel implementation, so the decision has to
+  // come from one place or the two surfaces will quietly disagree about who is on the chart.
+  const eligibleIds = new Set<string>();
+  for (const c of lightContacts) {
+    const { eligible } = constellationEligibility(
+      closenessCohort.constellationSignals.get(c.id),
+      {
+        pin: c.constellationPin ?? null,
+        hasNotesText: Boolean(c.hasNotes),
+        statedCloseness: c.statedCloseness ?? null,
+        priorityLevel: c.priorityLevel ?? 0,
+        nextFollowUpAt: c.nextFollowUpAt ?? null,
+        // A COUNT from SQL, where this used to be `(c.tags ?? []).length` over a joined
+        // array of tag rows. The predicate only ever wanted the number.
+        tagCount: c.contactTags.length,
+      },
+      constellationConfig.thresholds
     );
+    if (eligible) eligibleIds.add(c.id);
+  }
 
-  const closenessById = new Map(
-    contactsWithNetwork.map((c) => [c.id, c])
+  // `selectMetricsSample` is the same function `computeNetworkMetrics` samples with, so
+  // these are exactly the contacts the link analysis will read — not a query that resembles
+  // that set.
+  const metricsSampleIds = selectMetricsSample(lightContacts, closenessCohort.byId).map(
+    (c) => c.id
   );
 
-  const graphContacts = enrichedContacts.map((c) => {
-    const closeness = closenessById.get(c.id);
-    const lastAt = c.lastInteractionAt
-      ? c.lastInteractionAt instanceof Date
-        ? c.lastInteractionAt
-        : new Date(c.lastInteractionAt)
-      : null;
-    const dormant = isCometContact(lastAt);
-    return {
-      id: c.id,
-      fullName: c.fullName,
-      preferredName: c.preferredName ?? null,
-      company: c.company ?? null,
-      school: c.school ?? null,
-      title: c.title ?? null,
-      relationshipScore: c.relationshipScore ?? 2,
-      closeness: closeness?.closeness ?? 0,
-      closenessTier: closeness?.tier ?? ("outer" as const),
-      orbitScore: closeness?.orbitScore ?? 2,
-      lastInteractionAt: lastAt,
-      hasLoggedInteraction: closenessCohort.interactedIds.has(c.id),
-      nextFollowUpAt: c.nextFollowUpAt
-        ? c.nextFollowUpAt instanceof Date
-          ? c.nextFollowUpAt
-          : new Date(c.nextFollowUpAt)
-        : null,
-      tags: c.tags ?? [],
-      aiSummary: c.aiSummary ?? null,
-      keyFacts: c.keyFacts ?? null,
-      howMet: c.howMet ?? null,
-      metContext: c.metContext ?? null,
-      dateMet: c.dateMet ?? null,
-      notes: null as string | null,
-      sharedInterests: c.sharedInterests ?? null,
-      email: c.email ?? null,
-      phone: c.phone ?? null,
-      linkedinUrl: c.linkedinUrl ?? null,
-      website: c.website ?? null,
-      profileImageUrl: c.profileImageUrl,
-      dormant,
-      // Same rule and the same shared predicate as `loadGraphData` — this payload path is a
-      // parallel implementation, so the decision has to come from one place or the two
-      // surfaces will quietly disagree about who is on the chart.
-      substantive: constellationEligibility(
-        closenessCohort.constellationSignals.get(c.id),
-        {
-          pin: c.constellationPin ?? null,
-          hasNotesText: Boolean(c.hasNotes),
-          statedCloseness: c.statedCloseness ?? null,
-          priorityLevel: c.priorityLevel ?? 0,
-          nextFollowUpAt: c.nextFollowUpAt ?? null,
-          tagCount: (c.tags ?? []).length,
-        },
-        constellationConfig.thresholds
-      ).eligible,
-    };
-  });
-
-  const userName = (await options?.userName) || "You";
+  const orbitScoreOf = (c: { id: string; relationshipScore: number | null }) =>
+    closenessCohort.byId.get(c.id)?.orbitScore ?? 2;
 
   // The preview mirrors /graph: engaged-only by default. It has no "show all" of its own —
   // the link into /graph is where that lives — so this is always the engaged scope.
-  const previewEligibleCount = graphContacts.filter((c) => c.substantive).length;
   const previewFilterActive = constellationConfig.enabled;
-  const previewVisible = previewFilterActive
-    ? graphContacts.filter((c) => c.substantive)
-    : graphContacts;
-
-  const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
-  const clusters = toNamedGraphClusters(builtClusters);
-
-  const companies = [
-    ...new Set(
-      graphContacts.map((c) => (c.company || "").trim()).filter(Boolean)
-    ),
-  ].sort((a, b) => a.localeCompare(b));
-
-  const schools = [
-    ...new Set(
-      graphContacts.map((c) => (c.school || "").trim()).filter(Boolean)
-    ),
-  ].sort((a, b) => a.localeCompare(b));
-
-  const tags = [
-    ...new Set(
-      allContactRows.flatMap((c) =>
-        c.contactTags.map((ct) => ct.tag.name)
-      )
-    ),
-  ];
-
-  const scoreCounts: Record<number, number> = {
-    1: 0,
-    2: 0,
-    3: 0,
-    4: 0,
-    5: 0,
-  };
-  let dormantCount = 0;
-  let overdueCount = 0;
-  for (const c of graphContacts) {
-    const s = Math.min(5, Math.max(1, (c.orbitScore ?? c.relationshipScore) || 2));
-    scoreCounts[s] = (scoreCounts[s] || 0) + 1;
-    if (c.dormant) dormantCount += 1;
-    if (c.nextFollowUpAt && c.nextFollowUpAt.getTime() < Date.now()) {
-      overdueCount += 1;
+  const previewEligibleCount = eligibleIds.size;
+  const { clusters: builtClusters, byContactId: clusterByContactId } =
+    buildConstellationClusters(lightContacts);
+  const engagedContacts = previewFilterActive
+    ? lightContacts.filter((c) => eligibleIds.has(c.id))
+    : lightContacts;
+  // The preview draws constellations only — no lone stars. Keep a contact only when at
+  // least one other shown contact shares its company/school cluster; singletons and Deep
+  // Space are individual connections, which belong on /graph.
+  const shownPerCluster = new Map<string, number>();
+  for (const c of engagedContacts) {
+    const ref = clusterByContactId.get(c.id);
+    if (ref && ref.kind !== "other") {
+      shownPerCluster.set(ref.id, (shownPerCluster.get(ref.id) ?? 0) + 1);
     }
   }
+  const previewVisibleContacts = engagedContacts.filter((c) => {
+    const ref = clusterByContactId.get(c.id);
+    return ref !== undefined && (shownPerCluster.get(ref.id) ?? 0) >= 2;
+  });
 
-  const goalAlignedContacts = [...contactsWithNetwork]
-    .filter((c) => c.goalRelevance > 0)
-    .sort((a, b) => b.goalRelevance - a.goalRelevance)
-    .slice(0, 5);
+  // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
+  // to be hidden and render far fewer than the cap allows.
+  const previewIds = (
+    previewVisibleContacts.length > GRAPH_PREVIEW_CONTACT_CAP
+      ? [...previewVisibleContacts]
+          .sort((a, b) => orbitScoreOf(b) - orbitScoreOf(a))
+          .slice(0, GRAPH_PREVIEW_CONTACT_CAP)
+      : previewVisibleContacts
+  ).map((c) => c.id);
 
-  const contactNameById = new Map(
-    allContactRows.map((c) => [c.id, c.preferredName || c.fullName])
-  );
-
-  const now = new Date();
   const dueFollowUpIds = new Set(
-    allContactRows
+    lightContacts
       .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
       .map((c) => c.id)
   );
 
-  const tierRank = { inner: 0, mid: 1, outer: 2 } as const;
-
-  const dueFollowUps = allContactRows
+  // Shared with `loadDueFollowUps`, which answers this list for the MCP and chat tools
+  // without the rest of the dashboard.
+  const dueFollowUpOrder = lightContacts
     .filter((c) => dueFollowUpIds.has(c.id))
-    .sort((a, b) => {
-      const aTime = a.nextFollowUpAt
-        ? new Date(a.nextFollowUpAt).getTime()
-        : 0;
-      const bTime = b.nextFollowUpAt
-        ? new Date(b.nextFollowUpAt).getTime()
-        : 0;
-      if (aTime !== bTime) return aTime - bTime;
-      const aTier = closenessById.get(a.id)?.tier ?? "outer";
-      const bTier = closenessById.get(b.id)?.tier ?? "outer";
-      const tierDiff = tierRank[aTier] - tierRank[bTier];
-      if (tierDiff !== 0) return tierDiff;
-      return (b.priorityLevel || 0) - (a.priorityLevel || 0);
+    .sort((a, b) => compareDueFollowUps(a, b, closenessCohort));
+  const dueFollowUpTopIds = dueFollowUpOrder.slice(0, DUE_FOLLOW_UP_CAP).map((c) => c.id);
+
+  // The reminder and suggestion lists arrive filtered and capped (`loadDashboardReminders`,
+  // `loadDashboardSuggestions`), before hydration, so that the contacts hydrated are exactly
+  // the contacts rendered. Filtering afterwards would hydrate the first twenty pending
+  // reminders and then render a different twenty, leaving the card unable to name its own
+  // subjects. The suggestion filter is also the belt and braces against a cross-instance
+  // rebuild race writing the same suggestion twice (see refreshOutreachSuggestions), and
+  // keeps suggestions about deleted contacts — ghosts, since `related_contact_ids` is jsonb
+  // and does not cascade — off the card.
+  const filteredReminders = pendingReminders.rows;
+  const filteredSuggestions = suggestions.rows;
+
+  // Bounded: at most REMINDER_CAP + SUGGESTION_CAP contacts, and exactly the ones the two
+  // cards will name through `contactMeta`.
+  const referencedIds = [
+    ...filteredReminders.map((r) => r.contactId),
+    ...filteredSuggestions.map((s) => s.relatedContactIds?.[0]),
+  ].filter((id): id is string => Boolean(id));
+
+  // ONE hydration for every bounded set that needs a renderable contact.
+  const [detail, recentContacts] = await Promise.all([
+    hydrateContactDetail(userId, [
+      ...metricsSampleIds,
+      ...previewIds,
+      ...dueFollowUpTopIds,
+      ...goalAlignedIds.map((g) => g.id),
+      ...referencedIds,
+    ]),
+    loadRecentContacts(userId),
+  ]);
+
+  const networkMetrics = computeNetworkMetrics(
+    metricsSampleIds.flatMap((id) => {
+      const d = detail.get(id);
+      const light = lightById.get(id);
+      if (!d || !light) return [];
+      return [{
+        id,
+        fullName: d.fullName,
+        preferredName: d.preferredName,
+        company: light.company ?? null,
+        school: light.school ?? null,
+        title: d.title,
+        relationshipScore: light.relationshipScore ?? 2,
+        lastInteractionAt: d.lastInteractionAt,
+        nextFollowUpAt: null,
+        tags: d.tags,
+        notes: null,
+        aiSummary: d.aiSummary,
+        keyFacts: d.keyFacts,
+        howMet: d.howMet,
+        sharedInterests: d.sharedInterests,
+      }];
+    }),
+    closenessCohort.byId,
+    counts.totalContacts
+  );
+
+  // The cohort IS the closeness map. It used to be rebuilt as a joined copy of every
+  // contact (`contactsWithNetwork`) so that consumers could read `.tier` off it; they can
+  // read it here, from the map the cohort already returned.
+  const closenessById = closenessCohort.byId;
+
+  /** The full graph-contact shape, built only for the contacts the preview draws. */
+  const graphContacts = previewIds.flatMap((id) => {
+    const d = detail.get(id);
+    const light = lightById.get(id);
+    if (!d || !light) return [];
+    const closeness = closenessById.get(id);
+    const lastAt = d.lastInteractionAt ?? null;
+    return [{
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      company: light.company ?? null,
+      school: light.school ?? null,
+      title: d.title,
+      relationshipScore: light.relationshipScore ?? 2,
+      closeness: closeness?.closeness ?? 0,
+      closenessTier: closeness?.tier ?? ("outer" as const),
+      orbitScore: closeness?.orbitScore ?? 2,
+      lastInteractionAt: lastAt,
+      hasLoggedInteraction: closenessCohort.interactedIds.has(id),
+      nextFollowUpAt: light.nextFollowUpAt ?? null,
+      tags: d.tags,
+      aiSummary: d.aiSummary,
+      keyFacts: d.keyFacts,
+      howMet: d.howMet,
+      metContext: d.metContext,
+      dateMet: d.dateMet,
+      notes: null as string | null,
+      sharedInterests: d.sharedInterests,
+      email: d.email,
+      phone: d.phone,
+      linkedinUrl: d.linkedinUrl,
+      website: d.website,
+      profileImageUrl: d.profileImageUrl,
+      dormant: isCometContact(lastAt),
+      substantive: eligibleIds.has(id),
+    }];
+  });
+
+  const userName = (await options?.userName) || "You";
+
+  // Clusters still see the whole network — a cluster's count is "how many people at Acme",
+  // which a capped sample cannot answer — but they only ever needed three columns, and the
+  // light scan has them.
+  const clusters = toNamedGraphClusters(builtClusters);
+
+  // companies, schools and tags come from `getDashboardVocabularies`, not from a pass over
+  // the scan. That is what lets the `contact_tags` join come off it: eligibility needs a tag
+  // COUNT, which is a scalar subquery, where the vocabulary needed the tag NAMES.
+  const { companies, schools, tags } = vocabularies;
+
+  const scoreCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  // The histogram stays in JavaScript on purpose. `orbitScore` here is the cohort's, not the
+  // `orbit_score` column — those agree for a scored contact and diverge for an unscored one
+  // — and the cohort is already in memory, so counting it costs nothing while asking
+  // Postgres would cost a round trip AND answer a subtly different question. The note in
+  // dashboard-aggregates.ts records this in full.
+  for (const c of lightContacts) {
+    const s = Math.min(5, Math.max(1, orbitScoreOf(c) || 2));
+    scoreCounts[s] = (scoreCounts[s] || 0) + 1;
+  }
+  // Both from SQL: `dormantCount` is why `last_interaction_at` — the widest column on the
+  // row — no longer has to be selected for every contact.
+  const dormantCount = counts.dormantCount;
+  const overdueCount = counts.overdueCount;
+
+  // Ranked and capped by Postgres (`getGoalAlignedContactIds`), then joined to the rows the
+  // card renders. Goal relevance is a stored component of the closeness breakdown, so this
+  // is an ordered read of a column — never a pass over every contact's summary and facts.
+  const goalAlignedContacts = goalAlignedIds.flatMap(({ id, goalRelevance }) => {
+    const d = detail.get(id);
+    const light = lightById.get(id);
+    if (!d || !light) return [];
+    return [{
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      company: light.company ?? null,
+      title: d.title,
+      goalRelevance,
+    }];
+  });
+
+  const dueFollowUps = dueFollowUpTopIds.flatMap((id) => {
+    const d = detail.get(id);
+    const light = lightById.get(id);
+    if (!d || !light) return [];
+    return [{
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      company: light.company ?? null,
+      school: light.school ?? null,
+      title: d.title,
+      email: d.email,
+      linkedinUrl: d.linkedinUrl,
+      profileImageUrl: d.profileImageUrl,
+      relationshipScore: light.relationshipScore ?? 2,
+      priorityLevel: light.priorityLevel ?? 0,
+      nextFollowUpAt: light.nextFollowUpAt ?? null,
+      lastInteractionAt: d.lastInteractionAt,
+      tags: d.tags,
+    }];
+  });
+
+  // Only the contacts something on this page can name: the two cards' rows, the reminder
+  // and suggestion subjects, and the preview. It used to be one entry per contact in the
+  // account, to serve at most sixty lookups.
+  const contactById = new Map<string, {
+    id: string;
+    fullName: string;
+    preferredName: string | null;
+    title: string | null;
+    company: string | null;
+  }>();
+  const contactNameById = new Map<string, string>();
+  for (const [id, d] of detail) {
+    contactById.set(id, {
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      title: d.title,
+      company: lightById.get(id)?.company ?? null,
     });
-
-  const filteredReminders = pendingReminders.filter((r) => {
-    if (r.reminderType !== "generated") return true;
-    if (!r.contactId) return true;
-    return !dueFollowUpIds.has(r.contactId);
-  });
-
-  const contactById = new Map(allContactRows.map((c) => [c.id, c]));
-
-  // Belt and braces against a cross-instance rebuild race writing the same suggestion
-  // twice (see refreshOutreachSuggestions): one row per contact and type, whatever the
-  // table holds. Also repairs rows a previous race already wrote, with no migration.
-  const seenSuggestionKeys = new Set<string>();
-
-  const filteredSuggestions = suggestions.filter((s) => {
-    const contactId = s.relatedContactIds?.[0];
-    const key = `${s.suggestionType}:${contactId ?? s.id}`;
-    if (seenSuggestionKeys.has(key)) return false;
-    seenSuggestionKeys.add(key);
-    if (!contactId) return true;
-    // `related_contact_ids` is a jsonb array, so deleting a contact does not cascade to
-    // its suggestions. Left in, the card renders a row headed "Contact" with a real-looking
-    // "gone quiet 105 days ago" under it — a ghost of someone the user removed. The
-    // rebuild clears them on its own TTL; this stops them being shown in the meantime.
-    if (!contactById.has(contactId)) return false;
-    return !dueFollowUpIds.has(contactId);
-  });
+    contactNameById.set(id, d.preferredName || d.fullName);
+  }
+  for (const c of recentContacts) {
+    contactById.set(c.id, {
+      id: c.id,
+      fullName: c.fullName,
+      preferredName: c.preferredName ?? null,
+      title: c.title ?? null,
+      company: c.company ?? null,
+    });
+    contactNameById.set(c.id, c.preferredName || c.fullName);
+  }
 
   const strongTies =
     networkMetrics.tierCounts.inner + networkMetrics.tierCounts.mid;
 
-  // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
-  // to be hidden and render far fewer than the cap allows.
-  const graphPreviewContacts =
-    previewVisible.length > GRAPH_PREVIEW_CONTACT_CAP
-      ? [...previewVisible]
-          .sort(
-            (a, b) =>
-              (b.orbitScore ?? b.relationshipScore ?? 0) -
-              (a.orbitScore ?? a.relationshipScore ?? 0)
-          )
-          .slice(0, GRAPH_PREVIEW_CONTACT_CAP)
-      : previewVisible;
+  // Already chosen (`previewIds`), already hydrated, already built: `graphContacts` IS the
+  // preview. It used to be the whole network, built in full and then thrown away down to
+  // this cap.
+  const graphPreviewContacts = graphContacts;
 
   return {
     stats: {
-      totalContacts: allContactRows.length,
-      dueFollowUps: dueFollowUps.length,
+      totalContacts: counts.totalContacts,
+      // The count of everyone due, not the length of the capped list below — the stat and
+      // the card answer different questions and the card only ever showed twelve.
+      dueFollowUps: counts.dueFollowUpCount,
       strongConnections: strongTies,
-      pendingReminders: filteredReminders.length,
+      pendingReminders: pendingReminders.total,
       topCompany: null as { name: string; count: number } | null,
     },
-    recentContacts: allContactRows.slice(0, 6),
-    dueFollowUps: dueFollowUps.slice(0, 12),
-    reminders: filteredReminders.slice(0, 20),
-    suggestions: filteredSuggestions.slice(0, 40),
-    totalSuggestions: filteredSuggestions.length,
+    recentContacts,
+    dueFollowUps,
+    reminders: filteredReminders,
+    suggestions: filteredSuggestions,
+    totalSuggestions: suggestions.total,
     goals,
     networkMetrics,
     goalAlignedContacts,
@@ -750,7 +1252,7 @@ export async function getDashboardData(
       clusters,
       userId,
       summary: {
-        total: allContactRows.length,
+        total: counts.totalContacts,
         companyCount: companies.length,
         scoreCounts,
         // Absolute-tier count, matching /graph — see the note there on why the
@@ -767,7 +1269,9 @@ export async function getDashboardData(
           scope: "engaged" as const,
           shown: graphPreviewContacts.length,
           engaged: previewEligibleCount,
-          available: graphContacts.length,
+          // The whole network, not the preview: this is what "show all" would reveal, and
+          // `graphContacts` is now the capped preview rather than everyone.
+          available: counts.totalContacts,
         },
         userName,
         userImageUrl: null,
@@ -779,23 +1283,64 @@ export async function getDashboardData(
   };
 }
 
+/**
+ * What `snoozeReminder` overwrote, so an Undo can put it back.
+ *
+ * `snoozedTo` is the guard: an Undo only restores a field that still holds the value the
+ * snooze wrote. If something else rescheduled the reminder or the contact's follow-up in
+ * the seconds since — the dashboard's day presets write the same `nextFollowUpAt` — that
+ * newer choice wins and the Undo leaves it alone rather than clobbering it.
+ *
+ * ISO strings rather than Dates so it crosses the Server Action boundary unambiguously.
+ */
+export type SnoozeSnapshot = {
+  reminderId: string;
+  snoozedTo: string;
+  previousDueDate: string | null;
+  previousStatus: string;
+  contactId: string | null;
+  previousNextFollowUpAt: string | null;
+  previousFollowUpStatus: string | null;
+};
+
 export async function snoozeReminder(
   userId: string,
   reminderId: string,
   days = 7
-) {
-  const db = await getDb();
+): Promise<SnoozeSnapshot | null> {
   const due = new Date();
   // Same 1..90 clamp as `scheduleContactFollowUp`. Both write `contacts.nextFollowUpAt`
   // for the same contact by different routes (the dashboard's day presets vs. the
   // reminder row's snooze), so they must not disagree about what a day count means.
   due.setDate(due.getDate() + Math.max(1, Math.min(90, days)));
+  return snoozeReminderTo(userId, reminderId, due);
+}
 
+/**
+ * Snooze to a chosen instant — the reminders page's picker ("Tomorrow", "This weekend", a
+ * calendar day). Same writes and same Undo snapshot as `snoozeReminder`, which is this with
+ * a day count.
+ */
+export async function snoozeReminderTo(
+  userId: string,
+  reminderId: string,
+  due: Date
+): Promise<SnoozeSnapshot | null> {
+  const db = await getDb();
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
-    columns: { id: true, contactId: true },
+    columns: { id: true, contactId: true, dueDate: true, status: true },
   });
-  if (!reminder) return;
+  if (!reminder) return null;
+
+  // Read the contact's clock BEFORE overwriting it — this used to be discarded, which is
+  // what made a snooze impossible to take back.
+  const contact = reminder.contactId
+    ? await db.query.contacts.findFirst({
+        where: and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId)),
+        columns: { nextFollowUpAt: true, followUpStatus: true },
+      })
+    : null;
 
   await db
     .update(reminders)
@@ -815,16 +1360,197 @@ export async function snoozeReminder(
         and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId))
       );
   }
+
+  return {
+    reminderId,
+    snoozedTo: due.toISOString(),
+    previousDueDate: reminder.dueDate ? reminder.dueDate.toISOString() : null,
+    previousStatus: reminder.status,
+    contactId: reminder.contactId ?? null,
+    previousNextFollowUpAt: contact?.nextFollowUpAt
+      ? contact.nextFollowUpAt.toISOString()
+      : null,
+    previousFollowUpStatus: contact?.followUpStatus ?? null,
+  };
 }
 
-export async function completeReminder(userId: string, reminderId: string) {
+/**
+ * Put back what a snooze overwrote. Each field is restored only if it still holds the
+ * value the snooze wrote — see `SnoozeSnapshot`. Returns whether the reminder itself was
+ * restored, so the caller can say so honestly rather than claiming "Undone".
+ */
+export async function unsnoozeReminder(
+  userId: string,
+  snap: SnoozeSnapshot
+): Promise<{ restored: boolean }> {
   const db = await getDb();
+  const snoozedTo = new Date(snap.snoozedTo).getTime();
+
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)),
+    columns: { dueDate: true },
+  });
+  if (!reminder || reminder.dueDate?.getTime() !== snoozedTo) {
+    return { restored: false };
+  }
+
+  await db
+    .update(reminders)
+    .set({
+      dueDate: snap.previousDueDate ? new Date(snap.previousDueDate) : null,
+      status: snap.previousStatus,
+    })
+    .where(and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)));
+
+  if (snap.contactId) {
+    const contact = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, snap.contactId), eq(contacts.userId, userId)),
+      columns: { nextFollowUpAt: true },
+    });
+    if (contact?.nextFollowUpAt?.getTime() === snoozedTo) {
+      await db
+        .update(contacts)
+        .set({
+          nextFollowUpAt: snap.previousNextFollowUpAt
+            ? new Date(snap.previousNextFollowUpAt)
+            : null,
+          followUpStatus: snap.previousFollowUpStatus,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(contacts.id, snap.contactId), eq(contacts.userId, userId)));
+    }
+  }
+
+  return { restored: true };
+}
+
+/** What `completeReminder` changed, so an Undo can reverse exactly that and no more. */
+export type CompletionSnapshot = {
+  reminderId: string;
+  previousStatus: string;
+  closedActionItemIds: string[];
+};
+
+export async function completeReminder(
+  userId: string,
+  reminderId: string
+): Promise<CompletionSnapshot | null> {
+  const db = await getDb();
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
+    columns: { status: true },
+  });
+  if (!reminder) return null;
+
   await db
     .update(reminders)
     .set({ status: "done" })
     .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
-  await db
+
+  // Only the OPEN items. This used to set every linked item to done, which also
+  // re-stamped `completedAt` on items finished days earlier — a silent rewrite of when
+  // they were done, and the reason an Undo could not tell which items it had closed.
+  const closed = await db
     .update(actionItems)
     .set({ status: "done", completedAt: new Date() })
-    .where(and(eq(actionItems.userId, userId), eq(actionItems.reminderId, reminderId)));
+    .where(
+      and(
+        eq(actionItems.userId, userId),
+        eq(actionItems.reminderId, reminderId),
+        eq(actionItems.status, "open")
+      )
+    )
+    .returning();
+
+  return {
+    reminderId,
+    previousStatus: reminder.status,
+    closedActionItemIds: closed.map((row) => row.id),
+  };
+}
+
+/**
+ * Reverse a `completeReminder`: the reminder's status, and the action items that call
+ * closed — not every item on the reminder, because some were already done beforehand and
+ * reopening those would undo the person's own earlier work. Only acts on a reminder that
+ * is still done; if it has moved on since, there is nothing honest to undo.
+ */
+export async function reopenReminder(
+  userId: string,
+  snap: CompletionSnapshot
+): Promise<{ restored: boolean }> {
+  const db = await getDb();
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)),
+    columns: { status: true },
+  });
+  if (!reminder || reminder.status !== "done") return { restored: false };
+
+  await db
+    .update(reminders)
+    .set({ status: snap.previousStatus })
+    .where(and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)));
+
+  if (snap.closedActionItemIds.length > 0) {
+    await db
+      .update(actionItems)
+      .set({ status: "open", completedAt: null })
+      .where(
+        and(
+          eq(actionItems.userId, userId),
+          inArray(actionItems.id, snap.closedActionItemIds)
+        )
+      );
+  }
+
+  return { restored: true };
+}
+
+/**
+ * What `dismissReminder` changed. Deleting a reminder is a soft delete to `dismissed` —
+ * the status a note-batch undo already writes — so the row's `item_hash` keeps blocking a
+ * re-paste from recreating it, and so an Undo has something to put back.
+ */
+export type DismissSnapshot = {
+  reminderId: string;
+  previousStatus: string;
+};
+
+export async function dismissReminder(
+  userId: string,
+  reminderId: string
+): Promise<DismissSnapshot | null> {
+  const db = await getDb();
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
+    columns: { status: true },
+  });
+  if (!reminder || reminder.status === "dismissed") return null;
+
+  await db
+    .update(reminders)
+    .set({ status: "dismissed" })
+    .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
+
+  return { reminderId, previousStatus: reminder.status };
+}
+
+/** Reverse a `dismissReminder`, only while the reminder is still dismissed. */
+export async function restoreDismissedReminder(
+  userId: string,
+  snap: DismissSnapshot
+): Promise<{ restored: boolean }> {
+  const db = await getDb();
+  const restored = await db
+    .update(reminders)
+    .set({ status: snap.previousStatus })
+    .where(
+      and(
+        eq(reminders.id, snap.reminderId),
+        eq(reminders.userId, userId),
+        eq(reminders.status, "dismissed")
+      )
+    )
+    .returning(); // bare: a field selector breaks over the Db union
+  return { restored: restored.length > 0 };
 }

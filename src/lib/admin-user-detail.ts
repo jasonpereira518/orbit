@@ -25,6 +25,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
+import { managedKeysConfigured } from "@/lib/ai-access";
 import type { Entitlements, Plan, PlanSource } from "@/lib/entitlements";
 import { assertRevealable } from "@/lib/admin-redaction";
 
@@ -44,7 +45,7 @@ import { assertRevealable } from "@/lib/admin-redaction";
  * never sent. That list is enforced at runtime by `assertRevealable()` against
  * `NEVER_REVEALABLE` in `src/lib/admin-redaction.ts`:
  *   - *_api_key_encrypted, twilio_auth_token_encrypted  (never decrypt a foreign user's key)
- *   - calendar_feed_token                               (a live plaintext bearer credential)
+ *   - calendar_feed_token                               (the SHA-256 of a bearer credential)
  *   - gmail/outlook access + refresh tokens             (same class)
  *   - chat_messages.content                             (the most private data in the app,
  *                                                        and no support question needs it)
@@ -101,6 +102,7 @@ export type AdminConfiguration = {
     gemini: boolean;
     openai: boolean;
     anthropic: boolean;
+    openrouter: boolean;
     apollo: boolean;
     resend: boolean;
     twilio: boolean;
@@ -258,6 +260,7 @@ export async function getAdminUserDetail(
     usageByModel,
     usageErrors,
     contactRows,
+    [extra],
   ] = await Promise.all([
     db
       .select({
@@ -403,12 +406,66 @@ export async function getAdminUserDetail(
     // The summary read — identity and affiliation, no notes, summaries, key facts or
     // opportunities. Those live behind `getAdminContactDetail`, one contact at a time,
     // because a page listing twenty contacts has nowhere useful to put them.
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      orderBy: [desc(contacts.createdAt)],
-      limit: 20,
-      columns: CONTACT_BASE_COLUMNS,
-    }),
+    //
+    // Each row's interaction count rides along as a correlated count — twenty index
+    // lookups — instead of a second, dependent round trip keyed on these ids. Never a
+    // full `GROUP BY` over the user's interactions: on a heavy account that is the largest
+    // table on the screen, scanned to decorate twenty rows.
+    //
+    // The correlation is spelled out by hand, on purpose. Drizzle prints a single-table
+    // select's columns unqualified, so `${contacts.id}` in here would become a bare `"id"`
+    // that binds to `interactions.id` and silently counts nothing — the same trap
+    // `db.query…extras` sets with its aliasing (see `src/lib/reminders.ts`).
+    db
+      .select({
+        id: contacts.id,
+        fullName: contacts.fullName,
+        email: contacts.email,
+        company: contacts.company,
+        title: contacts.title,
+        createdAt: contacts.createdAt,
+        interactionCount: sql<number>`(
+          SELECT count(*)::int FROM interactions i
+          WHERE i.user_id = ${userId} AND i.contact_id = "contacts"."id")`,
+      })
+      .from(contacts)
+      .where(eq(contacts.userId, userId))
+      .orderBy(desc(contacts.createdAt))
+      .limit(20),
+
+    /**
+     * The rest of the footprint, as scalar subqueries in one statement.
+     *
+     * Deliberately not six more entries in this `Promise.all`: on Neon HTTP every entry
+     * is its own round trip, and this page already makes nineteen. One statement that the
+     * planner runs as six index lookups is the same work with a fraction of the latency.
+     */
+    db
+      .select({
+        remindersPending: sql<number>`(
+          SELECT count(*)::int FROM ${reminders}
+          WHERE ${reminders.userId} = ${userId} AND ${reminders.status} = 'pending')`,
+        suggestedReminders: sql<number>`(
+          SELECT count(*)::int FROM ${suggestedReminders}
+          WHERE ${suggestedReminders.userId} = ${userId})`,
+        outreachCampaigns: sql<number>`(
+          SELECT count(*)::int FROM ${outreachCampaigns}
+          WHERE ${outreachCampaigns.userId} = ${userId})`,
+        outreachProspects: sql<number>`(
+          SELECT count(*)::int FROM ${outreachProspects} p
+          JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
+          WHERE c.user_id = ${userId})`,
+        outreachMessagesSent: sql<number>`(
+          SELECT count(*)::int FROM ${outreachMessages} m
+          JOIN ${outreachProspects} p ON p.id = m.prospect_id
+          JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
+          WHERE c.user_id = ${userId} AND m.status = 'sent')`,
+        recruiterLinks: sql<number>`(
+          SELECT count(*)::int FROM ${userRecruiterLinks}
+          WHERE ${userRecruiterLinks.userId} = ${userId})`,
+      })
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId)),
   ]);
 
   const { plan, source } = resolvePlan(settings);
@@ -425,66 +482,13 @@ export async function getAdminUserDetail(
     gemini: Boolean(settings.geminiApiKeyEncrypted),
     openai: Boolean(settings.openaiApiKeyEncrypted),
     anthropic: Boolean(settings.anthropicApiKeyEncrypted),
+    openrouter: Boolean(settings.openrouterApiKeyEncrypted),
     apollo: Boolean(settings.apolloApiKeyEncrypted),
     resend: Boolean(settings.resendApiKeyEncrypted),
     twilio: Boolean(settings.twilioAuthTokenEncrypted),
   };
 
-  // Interaction counts for the visible contact page only.
-  //
-  // The `inArray` is load-bearing: without it this grouped over every interaction the user
-  // had and then looked up twenty of them, so decorating one page cost a full scan of the
-  // largest table on a heavy account.
-  const visibleIds = contactRows.map((c) => c.id);
-  const interactionCounts = visibleIds.length
-    ? await db
-        .select({ contactId: interactions.contactId, n: countInt })
-        .from(interactions)
-        .where(
-          and(
-            eq(interactions.userId, userId),
-            inArray(interactions.contactId, visibleIds)
-          )
-        )
-        .groupBy(interactions.contactId)
-    : [];
-  const interactionsByContact = new Map(
-    interactionCounts.map((r) => [r.contactId, r.n])
-  );
 
-  /**
-   * The rest of the footprint, as scalar subqueries in one statement.
-   *
-   * Deliberately not eight more entries in the `Promise.all` above: on Neon HTTP every
-   * entry is its own round trip, and this page already makes nineteen. One statement that
-   * the planner runs as eight index lookups is the same work with a tenth of the latency.
-   */
-  const [extra] = await db
-    .select({
-      remindersPending: sql<number>`(
-        SELECT count(*)::int FROM ${reminders}
-        WHERE ${reminders.userId} = ${userId} AND ${reminders.status} = 'pending')`,
-      suggestedReminders: sql<number>`(
-        SELECT count(*)::int FROM ${suggestedReminders}
-        WHERE ${suggestedReminders.userId} = ${userId})`,
-      outreachCampaigns: sql<number>`(
-        SELECT count(*)::int FROM ${outreachCampaigns}
-        WHERE ${outreachCampaigns.userId} = ${userId})`,
-      outreachProspects: sql<number>`(
-        SELECT count(*)::int FROM ${outreachProspects} p
-        JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
-        WHERE c.user_id = ${userId})`,
-      outreachMessagesSent: sql<number>`(
-        SELECT count(*)::int FROM ${outreachMessages} m
-        JOIN ${outreachProspects} p ON p.id = m.prospect_id
-        JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
-        WHERE c.user_id = ${userId} AND m.status = 'sent')`,
-      recruiterLinks: sql<number>`(
-        SELECT count(*)::int FROM ${userRecruiterLinks}
-        WHERE ${userRecruiterLinks.userId} = ${userId})`,
-    })
-    .from(userSettings)
-    .where(eq(userSettings.userId, userId));
 
   /**
    * Operator-facing account health.
@@ -574,15 +578,23 @@ export async function getAdminUserDetail(
       ? keys.openai
       : provider === "anthropic"
         ? keys.anthropic
-        : keys.gemini;
+        : provider === "openrouter"
+          ? keys.openrouter
+          : keys.gemini;
 
-  if (!hasSelectedProviderKey) {
+  // The AI gate's rule (`managed-ai-policy.ts`): no key is only a failure off Lifetime, or
+  // on Lifetime when this deployment holds no managed key to fall back on.
+  const onManagedAi =
+    plan === "lifetime" && Object.values(managedKeysConfigured()).some(Boolean);
+  if (!hasSelectedProviderKey && !onManagedAi) {
     health.push({
       kind: "ai",
       severity: "error",
       label: `No ${provider} API key configured`,
       detail:
-        "Production is BYOK — every AI feature fails for this account until they add a key in Settings.",
+        plan === "lifetime"
+          ? "On Lifetime but this deployment has no managed AI key — every AI feature fails until one is set (ORBIT_MANAGED_*_API_KEY) or they add their own."
+          : "AI is bring-your-own-key off Lifetime — every AI feature fails for this account until they add a key in Settings.",
       at: null,
     });
   }
@@ -692,8 +704,8 @@ export async function getAdminUserDetail(
     timeline,
     // `detail: null` here reflects the narrower query above, not a permission — the full
     // record is one click away at `/admin/users/[userId]/contacts/[contactId]`.
-    contacts: contactRows.map((c) =>
-      toContactRow(c as ContactRecord, interactionsByContact.get(c.id) ?? 0, false)
+    contacts: contactRows.map(({ interactionCount, ...c }) =>
+      toContactRow(c, num(interactionCount), false)
     ),
     contactTotal: contactAgg[0]?.n ?? 0,
   };

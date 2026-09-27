@@ -1,0 +1,245 @@
+/**
+ * Guards `friendlyError` — the rule that a toast shows the caller's copy, never
+ * `err.message` — and the AI failure templates it lets through.
+ *
+ * The case most worth keeping: every rewritten AI template must still CLASSIFY to its own
+ * kind. `lib/ai.ts` throws the output of `aiProviderErrorMessage`, and `withUsage` in
+ * `lib/usage-events.ts` classifies that already-rewritten error for
+ * `usage_events.error_kind`. Reword a template without its trigger word and that failure
+ * kind silently becomes "other" in telemetry — nothing else would notice.
+ *
+ * Also covers `UserFacingError` / `asActionResult` (which messages survive the Server
+ * Action boundary) and `describeOAuthReason` (a cancelled consent screen is not an error).
+ *
+ * Run: npx tsx scripts/smoke-friendly-error.ts
+ */
+import { readFileSync } from "node:fs";
+import {
+  isQuotaExhaustion,
+  asAiProviderError,
+  AI_INCOMPLETE_MESSAGE,
+  friendlyError,
+  aiProviderErrorMessage,
+  classifyAiError,
+  MISSING_AI_API_KEY_MESSAGE,
+  OFFLINE_MESSAGE,
+  TIMEOUT_MESSAGE,
+  AI_PROVIDER_LABELS,
+  UserFacingError,
+  asActionResult,
+  describeOAuthReason,
+  AI_KEY_REJECTED_MESSAGE,
+  isAiKeyRejectedError,
+  isMissingAiApiKeyError,
+} from "../src/lib/errors";
+
+let failures = 0;
+function check(name: string, cond: boolean, extra?: unknown) {
+  if (cond) { console.log(`  ok   ${name}`); return; }
+  failures++;
+  console.log(`  FAIL ${name}`, extra ?? "");
+}
+const FB = "That didn’t save — try again?";
+
+console.log("the Next production digest never reaches a person");
+const digest = new Error("An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this Error instance which may provide additional details about the nature of the error.");
+check("digest → fallback", friendlyError(digest, FB) === FB, friendlyError(digest, FB));
+check("empty Error → fallback", friendlyError(new Error(""), FB) === FB);
+
+console.log("raw provider and internal text never reaches a person");
+for (const raw of [
+  'Google Calendar 403: {"error":{"code":403,"message":"insufficient scope"}}',
+  "Apollo search failed (500): upstream exploded",
+  'Failed to parse AI JSON: {"peo',
+  "Token exchange failed: invalid_client",
+  "Token refresh failed: invalid_grant",
+  "ensureUserSettings: no row for user_2abc after an insert race",
+  "Gmail send failed: 429 Too Many Requests",
+  "Unknown surface: foo",
+  "Cannot read properties of undefined (reading 'id')",
+]) {
+  check(`fallback for: ${raw.slice(0, 44)}`, friendlyError(new Error(raw), FB) === FB, friendlyError(new Error(raw), FB));
+}
+
+console.log("non-Error throws");
+check("null → fallback", friendlyError(null, FB) === FB);
+check("undefined → fallback", friendlyError(undefined, FB) === FB);
+check("junk string → fallback", friendlyError("db exploded", FB) === FB);
+check("junk object → fallback", friendlyError({ message: "SELECT * FROM users" }, FB) === FB);
+
+console.log("a missing AI key is worth saying out loud");
+check("no-key error → the key message", friendlyError(new Error("No API key configured for gemini"), FB) === MISSING_AI_API_KEY_MESSAGE, friendlyError(new Error("No API key configured for gemini"), FB));
+
+console.log("a key the provider refused is not a missing key");
+const refused: [string, string][] = [
+  ["Gemini", 'got status: 400 Bad Request. {"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}'],
+  ["OpenAI", "401 Incorrect API key provided: sk-abc***wxyz. You can find your API key at https://platform.openai.com/account/api-keys."],
+  ["Anthropic", '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'],
+];
+for (const [label, raw] of refused) {
+  check(`${label}: not classified as a missing key`, !isMissingAiApiKeyError(raw));
+  check(`${label}: recognised as a refused key`, isAiKeyRejectedError(raw));
+  check(`${label}: provider copy is the auth template`,
+    aiProviderErrorMessage(new Error(raw), label) === `${label} didn’t accept your API key — check it in Settings`,
+    aiProviderErrorMessage(new Error(raw), label));
+  check(`${label}: friendlyError says refused, not missing`, friendlyError(new Error(raw), FB) === AI_KEY_REJECTED_MESSAGE, friendlyError(new Error(raw), FB));
+  check(`${label}: telemetry still files it as auth`, classifyAiError(new Error(raw)) === "auth");
+}
+console.log("Orbit's own no-key errors are still missing keys");
+for (const own of [
+  "No Google Gemini API key configured. Add your own key in Settings.",
+  "No OpenAI API key configured for embeddings. Add your own key in Settings.",
+  "No Gemini API key configured for embeddings. Add your own key in Settings.",
+  "Voice capture needs an OpenAI or Gemini API key in Settings for transcription.",
+  MISSING_AI_API_KEY_MESSAGE,
+]) {
+  check(`missing: ${own.slice(0, 48)}`, isMissingAiApiKeyError(own));
+}
+check("the auth template is not a missing key", !isMissingAiApiKeyError("Gemini didn’t accept your API key — check it in Settings"));
+console.log("a payment, enrichment or email key is never mistaken for the AI key");
+for (const [who, raw] of [
+  ["Stripe", "Invalid API Key provided: sk_test_****1234"],
+  ["Apollo", "Apollo search failed (401): Invalid API key"],
+  ["Apollo, none", "No Apollo API key configured"],
+  ["Resend", "API key is invalid"],
+] as const) {
+  check(`${who}: not a missing AI key`, !isMissingAiApiKeyError(raw));
+  check(`${who}: not a refused AI key`, !isAiKeyRejectedError(raw));
+  check(`${who}: friendlyError keeps the caller's fallback`, friendlyError(new Error(raw), FB) === FB, friendlyError(new Error(raw), FB));
+}
+
+console.log("the connection is worth saying out loud, because the fallback would blame the wrong thing");
+check("Chrome", friendlyError(new TypeError("Failed to fetch"), FB) === OFFLINE_MESSAGE);
+check("Firefox", friendlyError(new TypeError("NetworkError when attempting to fetch resource."), FB) === OFFLINE_MESSAGE);
+check("Safari", friendlyError(new TypeError("Load failed"), FB) === OFFLINE_MESSAGE);
+check("a plain Error saying 'Load failed' is NOT a network error", friendlyError(new Error("Load failed"), FB) === FB, "only a TypeError from fetch counts");
+
+console.log("so is a timeout");
+const abort = new Error("The operation was aborted."); abort.name = "AbortError";
+check("AbortError → timeout copy", friendlyError(abort, FB) === TIMEOUT_MESSAGE, friendlyError(abort, FB));
+const to = new Error("x"); to.name = "TimeoutError";
+check("TimeoutError → timeout copy", friendlyError(to, FB) === TIMEOUT_MESSAGE);
+
+console.log("our own AI wording passes through, for every provider, every kind");
+const kinds: [string, unknown, string][] = [
+  ["auth", new Error("401 Unauthorized: invalid x-api-key"), "auth"],
+  ["rate_limit", new Error("429 RESOURCE_EXHAUSTED quota"), "rate_limit"],
+  ["quota", new Error("429 You exceeded your current quota, please check your plan and billing details."), "quota"],
+  ["timeout", new Error("Request timed out"), "timeout"],
+  ["model_unavailable", new Error("404 model not found"), "model_unavailable"],
+  ["other", new Error('{"secret":"sk-live-123","trace":"at foo"}'), "other"],
+];
+for (const label of AI_PROVIDER_LABELS) {
+  for (const [kind, raw, expected] of kinds) {
+    const msg = aiProviderErrorMessage(raw, label);
+    check(`${label}/${kind}: passes through friendlyError`, friendlyError(new Error(msg), FB) === msg, msg);
+    // The load-bearing one: withUsage classifies the ALREADY-rewritten error.
+    check(`${label}/${kind}: telemetry still classifies it as ${expected}`, classifyAiError(new Error(msg)) === expected, `${classifyAiError(new Error(msg))} ← "${msg}"`);
+  }
+}
+
+console.log("the catch-all no longer repeats whatever the provider said");
+const leaky = aiProviderErrorMessage(new Error('{"secret":"sk-live-123","trace":"at foo (/srv/x.ts:9)"}'), "Gemini");
+check("no secret", !leaky.includes("sk-live"), leaky);
+check("no stack/path", !leaky.includes("/srv/") && !leaky.includes("trace"), leaky);
+check("no 'server env' jargon anywhere", !kinds.some(([, raw]) => aiProviderErrorMessage(raw, "Gemini").toLowerCase().includes("env")));
+
+console.log("the streaming, transcription and embedding paths speak the same language");
+const refusedStream = asAiProviderError(new Error("401 Incorrect API key provided: sk-abc"), "OpenAI");
+check("a refused key on a stream → the auth template", refusedStream.message === "OpenAI didn’t accept your API key — check it in Settings", refusedStream.message);
+check("…which friendlyError passes through", friendlyError(refusedStream, FB) === refusedStream.message);
+const hung = new Error("The operation was aborted."); hung.name = "AbortError";
+check("a timeout → the timeout template", asAiProviderError(hung, "Gemini").message === "Gemini timed out — try again, or ask something shorter");
+// The abort `aiSignal` causes says nothing about time in its message; its name does.
+check("…and telemetry counts it as a timeout, not other", classifyAiError(hung) === "timeout", classifyAiError(hung));
+for (const sentinel of ["Empty AI response", "Empty transcription", "Empty embedding response", "Incomplete embedding batch response", AI_INCOMPLETE_MESSAGE]) {
+  const e = new Error(sentinel);
+  check(`sentinel untouched: ${sentinel}`, asAiProviderError(e, "Gemini") === e);
+}
+check("a truncated JSON transcript → the incomplete-answer copy",
+  asAiProviderError(new Error('Failed to parse AI JSON: {"te'), "Gemini").message === AI_INCOMPLETE_MESSAGE);
+const aiSource = readFileSync("src/lib/ai.ts", "utf8");
+const wrapped = aiSource.match(/translatingProviderErrors\(/g)?.length ?? 0;
+// The definition is `translatingProviderErrors<T>(`, which this pattern does not match.
+check("all five bypassing paths are wrapped (streamText, 2× transcription, 2× embeddings)", wrapped === 5, `${wrapped} call sites`);
+
+console.log("out of credit is not 'give it a moment'");
+const quotaCases: [string, string, "quota" | "rate_limit"][] = [
+  ["OpenAI billing", "429 You exceeded your current quota, please check your plan and billing details.", "quota"],
+  ["OpenAI code", '{"error":{"code":"insufficient_quota","type":"insufficient_quota"}}', "quota"],
+  ["Anthropic credit", '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}', "quota"],
+  ["Gemini daily", '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded for metric: generate_content_free_tier_requests, quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier"}}', "quota"],
+  ["Gemini billing", '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Billing account has no credit"}}', "quota"],
+  ["Gemini per-minute", '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"You exceeded your current quota, please check your plan and billing details. Please retry in 31.2s. quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}}', "rate_limit"],
+  ["plain 429", "429 Too Many Requests: rate limit exceeded", "rate_limit"],
+  ["bare RESOURCE_EXHAUSTED", "429 RESOURCE_EXHAUSTED quota", "rate_limit"],
+];
+for (const [label, raw, expected] of quotaCases) {
+  check(`${label} → ${expected}`, classifyAiError(new Error(raw)) === expected, classifyAiError(new Error(raw)));
+  check(`${label}: isQuotaExhaustion agrees`, isQuotaExhaustion(raw) === (expected === "quota"));
+}
+check(
+  "quota copy tells you where to go",
+  aiProviderErrorMessage(new Error(quotaCases[0][1]), "OpenAI") === "OpenAI says your account is out of credit — top up with them, then try again",
+  aiProviderErrorMessage(new Error(quotaCases[0][1]), "OpenAI")
+);
+
+console.log("OpenRouter's 402 is quota, but not every 402-shaped substring is");
+const openrouter402 = new Error('402 Payment Required: {"error":{"message":"Insufficient credits to complete this request"}}');
+check("a real 402 balance error → quota", classifyAiError(openrouter402) === "quota", classifyAiError(openrouter402));
+check(
+  "…and the copy names OpenRouter's credits page",
+  aiProviderErrorMessage(openrouter402, "OpenRouter") === "OpenRouter says your account is out of credit — add more at https://openrouter.ai/settings/credits, then try again",
+  aiProviderErrorMessage(openrouter402, "OpenRouter")
+);
+// A demonstrated false positive from fix round 1: 402 here is a token-count value inside a
+// max_tokens validation error, not a status code — this must NOT read as "out of credit".
+const maxTokens402 = new Error('BadRequestError: 400 {"error":{"message":"max_tokens: 402 is too large"}}');
+check(
+  "a 402 that is just a number in an unrelated message → not quota",
+  classifyAiError(maxTokens402) !== "quota",
+  classifyAiError(maxTokens402)
+);
+
+console.log("house voice");
+const all = [MISSING_AI_API_KEY_MESSAGE, OFFLINE_MESSAGE, TIMEOUT_MESSAGE, ...kinds.map(([, raw]) => aiProviderErrorMessage(raw, "Gemini"))];
+check("no straight apostrophes", all.every((m) => !m.includes("'")), all.filter((m) => m.includes("'")));
+check("no trailing period", all.every((m) => !m.endsWith(".")), all.filter((m) => m.endsWith(".")));
+check("no 'Could not' / 'Failed to'", all.every((m) => !/Could not|Failed to/.test(m)));
+
+console.log("a UserFacingError is written to be read, so it passes through");
+check("verbatim", friendlyError(new UserFacingError("Give it a title first"), FB) === "Give it a title first");
+const imposter = new Error("Connect Gmail before sending"); imposter.name = "UserFacingError";
+check("recognised by name too (second module instance)", friendlyError(imposter, FB) === "Connect Gmail before sending");
+check("an ordinary Error with the same text does NOT pass", friendlyError(new Error("Connect Gmail before sending"), FB) === FB);
+
+console.log("OAuth reasons");
+check("a cancel is not an error", describeOAuthReason("access_denied", "Gmail").cancelled === true);
+check("…and reads as one", /cancelled/.test(describeOAuthReason("access_denied", "Gmail").message));
+check("a raw token-endpoint body never shows", describeOAuthReason('Token exchange failed: {"error":"invalid_client"}', "Gmail").message === "Couldn’t connect Gmail — try again?");
+check("no reason at all", describeOAuthReason(null, "Outlook").message === "Couldn’t connect Outlook — try again?");
+check("a missing Google scope is an error, not a cancel", describeOAuthReason("missing_scope", "Gmail", "recruiter_scan").cancelled === false);
+check("…and names the access Google withheld", describeOAuthReason("missing_scope", "Google", "contacts").message === "Google didn’t grant contacts access — reconnect and allow it");
+check("…with the mail copy when the purpose is unknown", describeOAuthReason("missing_scope", "Gmail", "bogus").message === "Google didn’t grant mail access — reconnect and allow it");
+
+(async () => {
+  console.log("asActionResult");
+  const okR = await asActionResult(async () => 42);
+  check("success is { ok: true, value }", okR.ok === true && okR.value === 42);
+  const bad = await asActionResult(async () => { throw new UserFacingError("A list with that name already exists"); });
+  check("a UserFacingError comes back as data", bad.ok === false && bad.error === "A list with that name already exists");
+  const paywalled = await asActionResult(async () => {
+    throw Object.assign(new Error("Recruiter tracking is available on Orbit Pro and Orbit Lifetime."), {
+      name: "PaywallError",
+    });
+  });
+  check(
+    "a PaywallError comes back as data too, not a thrown digest",
+    paywalled.ok === false && paywalled.error === "Recruiter tracking is available on Orbit Pro and Orbit Lifetime."
+  );
+  let rethrown = false;
+  try { await asActionResult(async () => { throw new Error("db exploded"); }); } catch { rethrown = true; }
+  check("anything else is rethrown, not swallowed", rethrown);
+  console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
+  process.exit(failures === 0 ? 0 : 1);
+})();

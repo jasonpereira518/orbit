@@ -10,6 +10,7 @@
  * date a past interaction. This always looks forward.
  */
 import { WEEKDAYS, atLocalNoon } from "@/lib/interaction-date";
+import { formatDistance } from "date-fns";
 
 export type DateBasis = "absolute" | "relative" | "vague";
 
@@ -22,7 +23,12 @@ export type ResolvedRelativeDate = {
 
 export const DEFAULT_VAGUE_WINDOW_DAYS = 14;
 
-const NUMBER_WORDS: Record<string, number> = {
+/**
+ * Shared with `src/lib/cadence-phrase.ts`, which reads counts out of "every two weeks".
+ * Exported rather than copied: a second number-word table is how "a couple" comes to mean 2
+ * in one file and 3 in another.
+ */
+export const NUMBER_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
   ten: 10, eleven: 11, twelve: 12, a: 1, an: 1, "a couple of": 2, "a couple": 2,
   couple: 2, "a few": 3, few: 3, several: 3,
@@ -145,4 +151,16 @@ export function resolveRelativeDate(
   }
 
   return null;
+}
+
+/**
+ * "Last touch …" wording. A timestamp later today reads "today" rather than "in about 9
+ * hours": date-only interactions were stored at noon before `clampSameDayToNow`, so old rows
+ * still carry a noon that is ahead of the morning. Anything else is date-fns' own distance.
+ */
+export function formatLastTouch(at: Date, now: Date = new Date()): string {
+  const sameDay =
+    at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  if (sameDay && at.getTime() > now.getTime()) return "today";
+  return formatDistance(at, now, { addSuffix: true });
 }

@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useState, useTransition } from "react";
+import Link from "next/link";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, Sparkles, Upload, UserPlus } from "lucide-react";
-import { completeWizard, saveWizardStep } from "@/actions/onboarding-wizard";
+import { completeWizard, saveWizardStep, acceptTerms } from "@/actions/onboarding-wizard";
 import { WizardAiKey } from "@/components/onboarding/wizard/wizard-ai-key";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -72,9 +74,11 @@ function isValidStep(step: string | null | undefined): step is WizardStep {
 export function SetupWizard({
   initialStepId = null,
   hasApiKey = true,
+  termsAccepted = true,
 }: {
   initialStepId?: string | null;
   hasApiKey?: boolean;
+  termsAccepted?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -83,6 +87,7 @@ export function SetupWizard({
   );
   // Server-known at mount; flips when the key step saves one.
   const [apiKey, setApiKey] = useState(hasApiKey);
+  const [termsOk, setTermsOk] = useState(termsAccepted);
   const [results, setResults] = useState<WizardResult[]>([]);
 
   const goTo = useCallback((next: WizardStep) => {
@@ -149,7 +154,16 @@ export function SetupWizard({
               transition={{ duration: 0.2 }}
             >
               {step === "intro" && (
-                <IntroStep onNext={() => goTo("add-people")} />
+                <IntroStep
+                  needsTerms={!termsOk}
+                  onNext={async () => {
+                    if (!termsOk) {
+                      await acceptTerms();
+                      setTermsOk(true);
+                    }
+                    goTo("add-people");
+                  }}
+                />
               )}
 
               {step === "add-people" && (
@@ -226,7 +240,15 @@ export function SetupWizard({
   );
 }
 
-function IntroStep({ onNext }: { onNext: () => void }) {
+function IntroStep({
+  needsTerms,
+  onNext,
+}: {
+  needsTerms: boolean;
+  onNext: () => Promise<void>;
+}) {
+  const [agreed, setAgreed] = useState(false);
+  const [saving, setSaving] = useState(false);
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
@@ -234,10 +256,35 @@ function IntroStep({ onNext }: { onNext: () => void }) {
         already have on hand: a LinkedIn export, some raw notes, or just a
         name you want to remember.
       </p>
+      {needsTerms ? (
+        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 p-3 text-sm text-muted-foreground">
+          <Checkbox
+            checked={agreed}
+            onCheckedChange={(checked) => setAgreed(checked === true)}
+            aria-label="I agree to the Terms of Service and Privacy Policy"
+            className="mt-0.5"
+          />
+          <span>
+            I agree to Orbit’s{" "}
+            <Link href="/terms" target="_blank" className="text-primary underline-offset-4 hover:underline">
+              Terms of Service
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" target="_blank" className="text-primary underline-offset-4 hover:underline">
+              Privacy Policy
+            </Link>
+            .
+          </span>
+        </label>
+      ) : null}
       <Button
         type="button"
         className="bg-primary text-primary-foreground hover:bg-primary/90"
-        onClick={onNext}
+        disabled={(needsTerms && !agreed) || saving}
+        onClick={() => {
+          setSaving(true);
+          onNext().finally(() => setSaving(false));
+        }}
       >
         Let&apos;s go
       </Button>

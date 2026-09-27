@@ -26,8 +26,11 @@ export function LandingPage({
 }) {
   const authProps = { clerkOn, demoMode, signedIn };
 
+  // Clipped on both axes: the footer's glow is taller than the footer and would otherwise
+  // extend the page into an empty band below it. `clip`, unlike `hidden`, creates no scroll
+  // container, so the sticky frames inside keep working.
   return (
-    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+    <div className="landing-root relative overflow-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield />
 
       <LandingPageShell

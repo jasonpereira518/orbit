@@ -34,7 +34,8 @@ const PREFIX = "smoke-actions-";
 const ADMIN = `${PREFIX}operator`;
 const TARGET = `${PREFIX}target`;
 const OTHER_OP = `${PREFIX}second-operator`;
-const IDS = [ADMIN, TARGET, OTHER_OP];
+const NO_EMAIL = `${PREFIX}no-email`;
+const IDS = [ADMIN, TARGET, OTHER_OP, NO_EMAIL];
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -215,11 +216,11 @@ async function main() {
 
   // The ICS feed authenticates by token and never calls requireUserId, so it needs its own
   // check — this is the bypass a suspension gate is most likely to miss.
-  const { findUserByFeedToken } = await import("../src/lib/calendar-feed");
+  const { findUserByFeedToken, hashCalendarFeedToken } = await import("../src/lib/calendar-feed");
   const feedToken = "smoke-actions-feed-token-0123456789abcdef";
   await db
     .update(userSettings)
-    .set({ calendarFeedToken: feedToken })
+    .set({ calendarFeedToken: hashCalendarFeedToken(feedToken) })
     .where(eq(userSettings.userId, TARGET));
   check(
     "the ICS feed goes quiet for a suspended account",
@@ -448,6 +449,23 @@ async function main() {
     "a view outside the window writes a fresh row",
     (await auditRows("account.view")).length === 2
   );
+  /* ------------------------------------------------------------------ sign-in link */
+
+  // The reason gate runs before any Clerk call, so this needs no Clerk test user.
+  await refuses(
+    "a sign-in link with no reason is refused",
+    () => actions.mintSignInLink(ADMIN, { targetUserId: TARGET, reason: "" }),
+    /at least 8 characters/
+  );
+  await refuses(
+    "a sign-in link with a token reason is refused",
+    () => actions.mintSignInLink(ADMIN, { targetUserId: TARGET, reason: "demo" }),
+    /at least 8 characters/
+  );
+  check(
+    "a refused sign-in link writes no audit row",
+    (await auditRows("auth.sign_in_link")).length === 0
+  );
 
   /* -------------------------------------------------------------------------- deletion */
 
@@ -518,6 +536,29 @@ async function main() {
     "the whole audit trail survives the deletion",
     trail.length >= 10,
     `${trail.length} rows`
+  );
+
+  /* ------------------------------------------------------- an account with no email */
+
+  await db.insert(contacts).values({ userId: NO_EMAIL, fullName: "Emailless Contact" });
+  await refuses(
+    "an email-less account refuses a confirmation that is not its user id",
+    () =>
+      actions.deleteAccount(ADMIN, {
+        targetUserId: NO_EMAIL,
+        confirmEmail: "someone-else",
+        reason: "testing the email-less confirmation",
+      }),
+    /does not match/i
+  );
+  await actions.deleteAccount(ADMIN, {
+    targetUserId: NO_EMAIL,
+    confirmEmail: NO_EMAIL.toUpperCase(), // case-insensitive, like the dialog
+    reason: "an account with no email on file must still be deletable",
+  });
+  check(
+    "an email-less account is deleted when the user id is typed",
+    (await db.query.contacts.findMany({ where: eq(contacts.userId, NO_EMAIL) })).length === 0
   );
 
   /* --------------------------------------------------------------- the gate itself */

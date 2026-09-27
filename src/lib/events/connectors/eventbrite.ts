@@ -152,6 +152,7 @@ export function toProviderAttendee(raw: Record<string, unknown>): ProviderAttend
     title: str(profile.job_title),
     linkedinUrl: null,
     xHandle: null,
+    phone: str(profile.cell_phone) ?? str(profile.work_phone),
     attendeeRole: "attendee",
   };
 }

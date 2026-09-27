@@ -166,3 +166,19 @@ export function parseInteractionDateFromNotes(
 
   return null;
 }
+
+function localIsoDay(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * A date-only interaction ("2026-09-15") is stored at local noon. Logged that same day
+ * before noon, noon is still ahead, and the profile read "Last touch in about 9 hours". A
+ * same-day date is clamped to now; any other day — past, or a later day someone chose on
+ * purpose — keeps its noon.
+ */
+export function clampSameDayToNow(dateOnly: string, atNoon: Date, now: Date = new Date()): Date {
+  if (dateOnly !== localIsoDay(now)) return atNoon;
+  return atNoon.getTime() > now.getTime() ? new Date(now.getTime()) : atNoon;
+}

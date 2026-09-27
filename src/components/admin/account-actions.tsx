@@ -138,12 +138,12 @@ export function AccountDangerZone({
           confirmLabel="Delete all data"
           danger
           minReason={8}
-          typedConfirmation={email ?? undefined}
-          typedConfirmationHint={`Type ${email ?? "the account email"} to confirm`}
+          typedConfirmation={email ?? targetUserId}
+          typedConfirmationHint={`Type ${email ?? targetUserId} to confirm`}
           onConfirm={(reason) =>
             deleteAccountAction({
               targetUserId,
-              confirmEmail: email ?? "",
+              confirmEmail: email ?? targetUserId,
               reason,
             })
           }
@@ -164,13 +164,13 @@ export function AccountDangerZone({
           confirmLabel="Hard delete account"
           danger
           minReason={20}
-          typedConfirmation={email ?? undefined}
-          typedConfirmationHint={`Type ${email ?? "the account email"} to confirm`}
+          typedConfirmation={email ?? targetUserId}
+          typedConfirmationHint={`Type ${email ?? targetUserId} to confirm`}
           redirectTo="/admin/users"
           onConfirm={(reason) =>
             hardDeleteAccountAction({
               targetUserId,
-              confirmEmail: email ?? "",
+              confirmEmail: email ?? targetUserId,
               reason,
             })
           }

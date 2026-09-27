@@ -1,0 +1,90 @@
+{
+  "label": "jev",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T16:59:11.644Z",
+  "commit": "d416723a",
+  "fixtures": "d6aaf8aadeea",
+  "runs": 1,
+  "decisions": "jev",
+  "tasks": {
+    "calendar": {
+      "cases": 32,
+      "metrics": {
+        "keepAccuracy": 0.90625,
+        "rulesKeepAccuracy": 0.5625,
+        "falseKeeps": 2,
+        "lostKeeps": 1
+      },
+      "misses": [
+        "keep-07",
+        "skip-07",
+        "skip-20"
+      ],
+      "p50LatencyMs": 902,
+      "costMicros": 788,
+      "costPerCaseMicros": 24.625,
+      "usage": [
+        {
+          "operation": "calendar.kind",
+          "model": "jev-1.13.0",
+          "calls": 14,
+          "failures": 0,
+          "inputTokens": 18768,
+          "outputTokens": 3637,
+          "cachedInputTokens": 0,
+          "costMicros": 788,
+          "unpriced": 0,
+          "p50Ms": 208
+        }
+      ],
+      "decisionCostMicros": 788,
+      "calibration": {
+        "calendar.kind": [
+          {
+            "from": 0,
+            "to": 0.1,
+            "n": 16,
+            "meanP": 0.014374999999999999,
+            "observed": 0.0625
+          },
+          {
+            "from": 0.1,
+            "to": 0.3,
+            "n": 2,
+            "meanP": 0.18,
+            "observed": 0
+          },
+          {
+            "from": 0.3,
+            "to": 0.5,
+            "n": 1,
+            "meanP": 0.47,
+            "observed": 1
+          },
+          {
+            "from": 0.5,
+            "to": 0.7,
+            "n": 0,
+            "meanP": null,
+            "observed": null
+          },
+          {
+            "from": 0.7,
+            "to": 0.9,
+            "n": 1,
+            "meanP": 0.73,
+            "observed": 0
+          },
+          {
+            "from": 0.9,
+            "to": 1,
+            "n": 12,
+            "meanP": 0.9950000000000001,
+            "observed": 0.8333333333333334
+          }
+        ]
+      }
+    }
+  }
+}

@@ -330,10 +330,32 @@ async function main() {
   // The CREATE TABLE IF NOT EXISTS guard plus the SELECT.
   check(`the check costs 2 statements, not ~165 (${statements})`, statements <= 2);
 
-  await client.query(
-    `UPDATE schema_migrations SET version = ${SCHEMA_VERSION + 1} WHERE id = 1`
+  await client.query(`UPDATE schema_migrations SET version = ${SCHEMA_VERSION - 1} WHERE id = 1`);
+  check("a database BEHIND this build forces the full sweep", !(await schemaIsCurrent(client.query.bind(client))));
+
+  // A rollback: the database was migrated by a newer build and older code is serving. That
+  // code must not re-run its older sweep inside a user request.
+  await client.query(`UPDATE schema_migrations SET version = ${SCHEMA_VERSION + 1} WHERE id = 1`);
+  check("a database AHEAD of this build is current (a rollback does not re-sweep)", await schemaIsCurrent(client.query.bind(client)));
+
+  await recordSchemaVersion(client.query.bind(client));
+  const kept = await client.query<{ version: number }>(`SELECT version FROM schema_migrations WHERE id = 1`);
+  check(
+    "recording an older build's version never lowers the stored one",
+    Number(kept.rows[0]?.version) === SCHEMA_VERSION + 1,
+    JSON.stringify(kept.rows)
   );
-  check("a version mismatch forces the full sweep", !(await schemaIsCurrent(client.query.bind(client))));
+
+  // A burned version number: the same integer stamped by another branch's statements. The
+  // fingerprint is what tells them apart, so this build's statements run rather than being
+  // skipped by a matching integer.
+  await client.query(
+    `UPDATE schema_migrations SET version = ${SCHEMA_VERSION}, fingerprint = 'another-branch' WHERE id = 1`
+  );
+  check(
+    "the same number stamped by other DDL forces the full sweep",
+    !(await schemaIsCurrent(client.query.bind(client)))
+  );
 
   await client.close();
   fs.rmSync(dataDir, { recursive: true, force: true });

@@ -80,6 +80,11 @@ export function getIntroRun(): IntroRun {
   return run;
 }
 
+/** The server snapshot: nothing ever starts a run outside the browser. */
+export function getIdleIntroRun(): IntroRun {
+  return IDLE;
+}
+
 /**
  * Called at module scope from inside the lazy graph chunk.
  *
@@ -210,11 +215,6 @@ export function markGraphViewportReady() {
   clearLateFallback();
   if (run.status !== "running") return;
   scheduleArrival();
-}
-
-/** Has the chart reported itself visible at least once this document? */
-export function isGraphViewportReady() {
-  return ready;
 }
 
 function scheduleArrival() {

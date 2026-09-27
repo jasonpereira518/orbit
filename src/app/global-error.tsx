@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 
 /**
@@ -15,7 +14,8 @@ export default function GlobalError({
   unstable_retry: () => void;
 }) {
   useEffect(() => {
-    Sentry.captureException(error);
+    // Imported here, not at the top: see `ErrorFallback` — the server render must not load the SDK.
+    void import("@sentry/nextjs").then((Sentry) => Sentry.captureException(error));
   }, [error]);
 
   return (
@@ -34,7 +34,7 @@ export default function GlobalError({
       >
         <main style={{ maxWidth: 480, padding: 24, textAlign: "center" }}>
           <p style={{ fontSize: 14, opacity: 0.8, margin: 0 }}>Something went wrong</p>
-          <h1 style={{ fontSize: 28, margin: "8px 0 12px" }}>Orbit hit a snag</h1>
+          <h1 style={{ fontSize: 28, margin: "8px 0 12px" }}>We hit a snag</h1>
           <p style={{ opacity: 0.8, margin: "0 0 16px" }}>
             The page could not be shown. Trying again usually works.
           </p>

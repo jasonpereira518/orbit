@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 /**
  * One dialog for every operator write.
@@ -75,7 +76,7 @@ export function ConfirmActionDialog({
     startTransition(async () => {
       try {
         await onConfirm(reason.trim());
-        toast.success(`${confirmLabel} — done.`);
+        toast.success(`${confirmLabel} — done`);
         setOpen(false);
         reset();
         if (redirectTo) {
@@ -86,7 +87,7 @@ export function ConfirmActionDialog({
       } catch (e) {
         // Surfaced verbatim: these are the server's own guard messages ("Refusing to act on
         // your own account"), and paraphrasing them would hide which guard fired.
-        toast.error(e instanceof Error ? e.message : "That didn't work.");
+        toast.error(friendlyError(e, "That didn’t work — try again?"));
       }
     });
   };

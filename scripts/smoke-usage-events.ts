@@ -20,7 +20,9 @@ import {
   tokensFromAnthropic,
   tokensFromGemini,
   tokensFromOpenAi,
+  usageRow,
   withUsage,
+  type UsageRecord,
 } from "../src/lib/usage-events";
 import { estimateCostMicros, priceFor } from "../src/lib/ai-pricing";
 
@@ -56,6 +58,19 @@ const META = {
   keyOwner: "user" as const,
 };
 
+/** The row `recordUsage` would insert, built from a `UsageRecord` with sensible defaults. */
+function rowFor(overrides: Partial<UsageRecord> & { model: string }) {
+  return usageRow({
+    userId: USER,
+    operation: "smoke.row",
+    provider: "openai",
+    kind: "completion",
+    keyOwner: "user",
+    success: true,
+    ...overrides,
+  });
+}
+
 async function main() {
   await cleanup();
 
@@ -72,6 +87,26 @@ async function main() {
     check("gemini promptTokenCount → inputTokens", gemini.inputTokens === 120);
     check("gemini candidatesTokenCount → outputTokens", gemini.outputTokens === 45);
     check("gemini cachedContentTokenCount", gemini.cachedInputTokens === 20);
+
+    // Gemini 3.x thinks by default; thoughts bill at the output rate but are reported apart
+    // from candidates, and audio prompt tokens bill at their own rate.
+    const thinking = tokensFromGemini({
+      usageMetadata: {
+        promptTokenCount: 500,
+        candidatesTokenCount: 40,
+        thoughtsTokenCount: 360,
+        promptTokensDetails: [
+          { modality: "TEXT", tokenCount: 20 },
+          { modality: "AUDIO", tokenCount: 480 },
+        ],
+      },
+    });
+    check("gemini thoughts are billed as output", thinking.outputTokens === 400, String(thinking.outputTokens));
+    check("gemini audio prompt tokens are split out", thinking.audioInputTokens === 480);
+    check(
+      "gemini with no candidates or thoughts reports no output",
+      tokensFromGemini({ usageMetadata: { promptTokenCount: 5 } }).outputTokens === null
+    );
 
     // openai v6 chat.completions
     const openai = tokensFromOpenAi({
@@ -98,9 +133,22 @@ async function main() {
         cache_read_input_tokens: 128,
       },
     });
-    check("anthropic input_tokens", anthropic.inputTokens === 900);
+    // Anthropic's input_tokens EXCLUDES cache reads and writes; the extractor sums them so
+    // inputTokens is the whole prompt, as it is for the other two providers.
+    check("anthropic input is the whole prompt", anthropic.inputTokens === 1028, String(anthropic.inputTokens));
     check("anthropic output_tokens", anthropic.outputTokens === 210);
     check("anthropic cache_read_input_tokens", anthropic.cachedInputTokens === 128);
+
+    const written = tokensFromAnthropic({
+      usage: {
+        input_tokens: 50,
+        output_tokens: 10,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 4000,
+      },
+    });
+    check("anthropic cache writes count toward input", written.inputTokens === 4050);
+    check("anthropic cache writes are split out", written.cacheWriteTokens === 4000);
 
     // Providers that report nothing must yield an empty object, never zeros.
     check("missing usage yields no counts", Object.keys(tokensFromGemini({})).length === 0);
@@ -126,14 +174,14 @@ async function main() {
       "no token counts yields null cost, not $0",
       estimateCostMicros({ model: "gemini-3.5-flash" }) === null
     );
-    // 1M input @ $0.30 + 1M output @ $2.50 = $2.80 = 2_800_000 micros
+    // 1M input @ $1.50 + 1M output @ $9.00 = $10.50 = 10_500_000 micros
     check(
       "cost math is exact",
       estimateCostMicros({
         model: "gemini-3.5-flash",
         inputTokens: 1_000_000,
         outputTokens: 1_000_000,
-      }) === 2_800_000
+      }) === 10_500_000
     );
     check(
       "cached tokens bill at the discounted rate",
@@ -142,7 +190,72 @@ async function main() {
         inputTokens: 1_000_000,
         cachedInputTokens: 1_000_000,
         outputTokens: 0,
-      }) === 75_000
+      }) === 150_000
+    );
+    // Sonnet 4.5: 1M cache-written tokens at 1.25 × $3 = $3.75.
+    check(
+      "anthropic cache writes bill at 1.25x input",
+      estimateCostMicros({
+        model: "claude-sonnet-4-5",
+        inputTokens: 1_000_000,
+        cacheWriteTokens: 1_000_000,
+      }) === 3_750_000
+    );
+    // 2.5 Flash: audio $1.00 vs text $0.30.
+    check(
+      "gemini audio bills at the audio rate",
+      estimateCostMicros({
+        model: "gemini-2.5-flash",
+        inputTokens: 1_000_000,
+        audioInputTokens: 1_000_000,
+      }) === 1_000_000
+    );
+    check(
+      "batch calls bill at half price",
+      estimateCostMicros({
+        model: "gpt-4o-mini",
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+        batch: true,
+      }) === 375_000
+    );
+    // Announced price changes apply from their date, not before.
+    check(
+      "gemini 3.8 flash before Jan 1 2027",
+      priceFor("gemini-3.8-flash", new Date("2026-12-31T23:59:59Z"))?.input === 0.75
+    );
+    check(
+      "gemini 3.8 flash from Jan 1 2027",
+      priceFor("gemini-3.8-flash", new Date("2027-01-01T00:00:00Z"))?.input === 1.5
+    );
+    check(
+      "an unlisted gpt-5.x id is never priced as a cheaper sibling",
+      priceFor("gpt-5.6-sol") === null
+    );
+    check(
+      "claude-opus-4-6 is not priced as retired Opus 4",
+      priceFor("claude-opus-4-6")?.input === 5
+    );
+  }
+
+  console.log("\nReported cost (OpenRouter's usage.cost) vs. the estimate");
+  {
+    check(
+      "a reported cost wins over the estimate",
+      rowFor({ model: "google/gemini-3.8-flash", inputTokens: 1000, outputTokens: 100, reportedCostMicros: 4242 })
+        .estimatedCostMicros === 4242
+    );
+    check(
+      "a reported cost is stamped as reported",
+      rowFor({ model: "google/gemini-3.8-flash", reportedCostMicros: 4242 }).costSource === "reported"
+    );
+    check(
+      "no reported cost still estimates, and says so",
+      rowFor({ model: "gemini-3.8-flash", inputTokens: 1000, outputTokens: 100 }).costSource === "estimated"
+    );
+    check(
+      "a reported cost of zero is honoured, not treated as missing",
+      rowFor({ model: "google/gemini-3.8-flash", reportedCostMicros: 0 }).estimatedCostMicros === 0
     );
   }
 
@@ -161,7 +274,7 @@ async function main() {
     check("operation recorded", rows[0].operation === "smoke.test");
     check("keyOwner recorded", rows[0].keyOwner === "user");
     check("input tokens recorded", rows[0].inputTokens === 1_000_000);
-    check("cost computed at write time", rows[0].estimatedCostMicros === 2_800_000);
+    check("cost computed at write time", rows[0].estimatedCostMicros === 10_500_000);
     check("duration recorded", typeof rows[0].durationMs === "number");
   }
 
@@ -213,6 +326,47 @@ async function main() {
       }
     );
     check("succeeds even with degenerate metadata", value === 42);
+  }
+
+  console.log("\nClient disconnect");
+  {
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = new Error("Request was aborted.");
+    let caught: unknown = null;
+    try {
+      await withUsage(
+        { ...META, operation: "smoke.cancelled" },
+        async () => {
+          throw aborted;
+        },
+        { cancelSignal: controller.signal }
+      );
+    } catch (err) {
+      caught = err;
+    }
+    check("the abort is still rethrown unchanged", caught === aborted);
+    await settle();
+    const rows = await rowsFor(USER);
+    const row = rows.find((r) => r.operation === "smoke.cancelled");
+    check("a cancelled call writes a row", Boolean(row));
+    check("…filed as cancelled, not other", row?.errorKind === "cancelled", String(row?.errorKind));
+
+    const live = new AbortController();
+    try {
+      await withUsage(
+        { ...META, operation: "smoke.not-cancelled" },
+        async () => {
+          throw new Error("429 rate limit exceeded");
+        },
+        { cancelSignal: live.signal }
+      );
+    } catch {
+      // expected
+    }
+    await settle();
+    const other = (await rowsFor(USER)).find((r) => r.operation === "smoke.not-cancelled");
+    check("an unaborted signal keeps the real classification", other?.errorKind === "rate_limit", String(other?.errorKind));
   }
 
   await cleanup();

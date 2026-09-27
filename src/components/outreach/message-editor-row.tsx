@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { OutreachChannel } from "@/lib/outreach-types";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export function MessageEditorRow({
   campaignId,
@@ -44,7 +46,7 @@ export function MessageEditorRow({
         toast.success("Draft saved");
         onUpdated?.();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Save failed");
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
   }
@@ -62,7 +64,7 @@ export function MessageEditorRow({
         toast.success("Draft regenerated");
         onUpdated?.();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Regenerate failed");
+        toast.error(friendlyError(err, "Couldn’t regenerate that draft — try again?"));
       }
     });
   }

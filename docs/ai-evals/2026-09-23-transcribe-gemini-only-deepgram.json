@@ -1,0 +1,44 @@
+{
+  "label": "transcribe-gemini-only-deepgram",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-23T06:02:02.233Z",
+  "commit": "f54a6e30",
+  "fixtures": "074a060d9c04",
+  "runs": 1,
+  "decisions": null,
+  "tasks": {
+    "transcribe": {
+      "cases": 4,
+      "metrics": {
+        "nameRecall": 0,
+        "wer": null,
+        "deepgramNameRecall": 1,
+        "deepgramWer": 0.015154994259471873
+      },
+      "misses": [
+        "tx-01-alumni-mixer",
+        "tx-02-coffee-referral-to-colleague",
+        "tx-03-meetup-three-people",
+        "tx-04-dinner-debrief"
+      ],
+      "p50LatencyMs": 275.5,
+      "costMicros": 0,
+      "costPerCaseMicros": 0,
+      "usage": [
+        {
+          "operation": "capture.transcribe.audio",
+          "model": "gemini-3.8-flash",
+          "calls": 4,
+          "failures": 4,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 0,
+          "p50Ms": 249
+        }
+      ]
+    }
+  }
+}
