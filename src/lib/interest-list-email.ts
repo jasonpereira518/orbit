@@ -33,8 +33,8 @@ export function buildUnsubscribeUrl(token: string) {
 }
 
 /**
- * The dark palette. No waitlist email uses it any more; the admin invitation
- * (`site-invite-email.ts`) still builds its boarding pass from these.
+ * The dark palette. Shared with the admin invitation (`site-invite-email.ts`) and the
+ * waitlist pass ticket nested inside the cream paper letter.
  */
 export const BG = "#05070f";
 export const TEXT = "#e8f3f1";
@@ -43,6 +43,10 @@ export const FAINT = "#6d807c";
 export const ACCENT = "#f2c14e";
 export const FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+/** Pass chrome — same wallet-card colours as the site-invite still pass. */
+const PASS_BG = "#0e1524";
+const PASS_BORDER = "#333f5a";
 
 /** The paper letter every waitlist email is written on. */
 export const PAPER = "#f6f4ee";
@@ -62,7 +66,7 @@ export function escapeHtml(value: string) {
 }
 
 /** The footer every waitlist email ends with. */
-export const WAITLIST_FOOTER = "You're getting this because you joined the waitlist.";
+export const WAITLIST_FOOTER = "You're getting this because you joined the Orbit waitlist.";
 
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 const inWords = (n: number) => NUMBER_WORDS[n] ?? String(n);
@@ -72,57 +76,124 @@ const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slic
 export const paperParagraph = (content: string) =>
   `<tr><td style="font-size:15px;line-height:1.65;color:${INK_MUTED};padding-bottom:16px;">${content}</td></tr>`;
 
-/** The one link in a waitlist email: underlined teal text, not a button. */
-const textLink = (href: string, label: string) =>
-  `<a href="${escapeHtml(href)}" style="color:${LINK};text-decoration:underline;font-weight:600;">${escapeHtml(label)}</a>`;
+/**
+ * Dark wallet-pass ticket with the Open your pass CTA. Planet art and both hrefs stay on
+ * the waitlist origin — no app logo, no app-base URLs. Still tables only so it nests
+ * inside the cream paper shell (no kinetic CSS; that stays invite-only).
+ *
+ * The invite link is `/waitlist/<slug>` — the address's local part — the same path the
+ * pass page shares. A `?ref=` fallback is never printed here; only the pretty path is.
+ */
+export function waitlistPassTicket(input: {
+  planet: WelcomePlanet;
+  ticketUrl: string;
+  /** `/waitlist/<slug>` invite link. Shown on the ticket when it is that path form. */
+  shareUrl: string;
+  /** 1-based place in line when known; omitted from the ticket when missing. */
+  position?: number | null;
+}) {
+  const place = input.position ? formatTicketNumber(input.position) : null;
+  const planet = planetLabel(input.planet);
+  const planetUrl = `${getWaitlistOrigin()}/landing/planets/${input.planet}.png`;
+  const subtitle = place ? `No. ${place} · ${planet}` : planet;
+  const label = (text: string) =>
+    `<div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:${FAINT};padding-bottom:3px;">${text}</div>`;
+  // Only the pretty `/waitlist/<slug>` form — never a `?ref=` token URL.
+  const invitePath = (() => {
+    try {
+      const u = new URL(input.shareUrl);
+      return /^\/waitlist\/[^/?#]+$/.test(u.pathname) ? `${u.host}${u.pathname}` : null;
+    } catch {
+      return null;
+    }
+  })();
+  const inviteRow = invitePath
+    ? `<tr>
+                          <td colspan="2" valign="top" style="padding:0 0 16px 0;">
+                            ${label("Invite link")}
+                            <div style="font-size:14px;line-height:1.4;color:${ACCENT};word-break:break-all;">
+                              <a href="${escapeHtml(input.shareUrl)}" style="color:${ACCENT};text-decoration:none;">${escapeHtml(invitePath)}</a>
+                            </div>
+                          </td>
+                        </tr>`
+    : "";
+
+  return `<tr>
+              <td style="padding-bottom:16px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                       style="background-color:${PASS_BG};border:1px solid ${PASS_BORDER};border-radius:18px;border-collapse:separate;">
+                  <tr>
+                    <td align="center" style="padding:28px 22px 20px;">
+                      <img src="${escapeHtml(planetUrl)}" alt="" width="76" height="76"
+                           style="display:block;border:0;outline:none;width:76px;height:76px;" />
+                      <div style="font-family:${SERIF_STACK};font-size:22px;line-height:1.3;color:${TEXT};padding-top:16px;">Your Orbit pass</div>
+                      <div style="font-size:14px;line-height:1.5;color:${MUTED};padding-top:4px;">${escapeHtml(subtitle)}</div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="border-top:1px dashed ${PASS_BORDER};padding:20px 22px 4px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td valign="top" width="50%" style="padding:0 8px 16px 0;">
+                            ${label("Class")}
+                            <div style="font-size:15px;line-height:1.4;color:${TEXT};">Waitlist</div>
+                          </td>
+                          <td valign="top" width="50%" style="padding:0 0 16px 0;">
+                            ${label("Planet")}
+                            <div style="font-size:15px;line-height:1.4;color:${TEXT};">${escapeHtml(planet)}</div>
+                          </td>
+                        </tr>
+                        ${inviteRow}
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:4px 22px 22px;">
+                      <a href="${escapeHtml(input.ticketUrl)}"
+                         style="display:block;text-align:center;background-color:${ACCENT};color:${BG};font-weight:600;font-size:15px;text-decoration:none;padding:14px 0;border-radius:10px;">
+                        Open your pass
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>`;
+}
 
 /**
- * The paper letter every waitlist email shares: an eyebrow line with the planet, a serif
- * headline, the body rows, the sign-off and the leave link.
+ * The paper letter every waitlist email shares: an eyebrow line, a serif headline, the
+ * body rows, the sign-off and the leave link.
  *
- * UNBRANDED ON PURPOSE. The waitlist does not name the product, show its logo, link to its
- * domain or describe what it does (see `lib/waitlist-host.ts`), and an email is the easiest
- * thing in the world to forward, so these carry no name but Jason's, no image but the
- * planet, and no link that is not on the waitlist's own domain.
+ * NAMES ORBIT, DOES NOT PITCH IT. The waitlist may say "Orbit" / "Project: Orbit" the way
+ * the page header does, but it must not describe what the product does, show the app logo,
+ * or link anywhere but the waitlist's own domain (see `lib/waitlist-host.ts`). An email is
+ * the easiest thing in the world to forward.
  *
- * WRITTEN TO REACH THE INBOX. A light letter with one text link, no button, no printed
- * referral URL and a plain-text twin reads as correspondence rather than a campaign, which
- * is how the filters that were junking the old dark card score it. `color-scheme: light`
- * asks clients not to invert it; the ones that do anyway still get readable ink on paper.
+ * WRITTEN TO REACH THE INBOX. A light letter with no printed referral URL and a plain-text
+ * twin reads as correspondence rather than a campaign. The dark pass ticket (when present)
+ * nests inside the paper; its CTA is the only button. `color-scheme: light` asks clients
+ * not to invert the letter; the ones that do anyway still get readable ink on paper.
  *
  * Inline styles and a table shell rather than a stylesheet: most email clients strip
- * `<style>` blocks. The planet is decorative with empty alt text, so a client that blocks
- * images loses nothing.
+ * `<style>` blocks. Planet images are decorative with empty alt text, so a client that
+ * blocks images loses nothing essential.
  */
 export function paperShell(input: {
   preheader?: string;
-  /** Small caps line above the headline, beside the planet. Escaped here. */
+  /** Small caps line above the headline. Escaped here. */
   eyebrow?: string;
-  planet?: WelcomePlanet;
   /** Serif headline. Escaped here. Omitted, the rows start straight away. */
   headline?: string;
   rows: string;
   unsubscribeUrl: string;
 }) {
-  const planetImg = input.planet
-    ? `<img src="${escapeHtml(`${getWaitlistOrigin()}/landing/planets/${input.planet}.png`)}" alt="" width="28" height="28"
-                           style="display:block;border:0;outline:none;width:28px;height:28px;" />`
-    : "";
-  const eyebrow =
-    input.eyebrow || planetImg
-      ? `<tr>
-              <td style="padding-bottom:18px;">
-                <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-                  ${planetImg ? `<td style="padding-right:10px;vertical-align:middle;">${planetImg}</td>` : ""}
-                  ${
-                    input.eyebrow
-                      ? `<td style="vertical-align:middle;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${INK_FAINT};">${escapeHtml(input.eyebrow)}</td>`
-                      : ""
-                  }
-                </tr></table>
+  const eyebrow = input.eyebrow
+    ? `<tr>
+              <td style="padding-bottom:18px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${INK_FAINT};">
+                ${escapeHtml(input.eyebrow)}
               </td>
             </tr>`
-      : "";
+    : "";
   const headline = input.headline
     ? `<tr>
               <td style="font-family:${SERIF_STACK};font-size:25px;line-height:1.25;color:${INK};padding-bottom:16px;">
@@ -139,6 +210,7 @@ export function paperShell(input: {
   return `<!doctype html>
 <html>
   <head>
+    <meta charset="utf-8" />
     <meta name="color-scheme" content="light only" />
     <meta name="supported-color-schemes" content="light" />
   </head>
@@ -173,11 +245,11 @@ export function paperShell(input: {
 /**
  * Sent the moment someone joins (and again when someone who left rejoins).
  *
- * It says three things: your place in line, that spots open a few at a time and the
- * invite will come by email, and how to move up. `position` is null only when the line
- * could not be counted at join time; the email then leaves the number out rather than
- * guessing one. The referral link itself is not in the email: the pass page shows it with a
- * copy button, and a printed `?ref=` URL was one of the things filters held against it.
+ * It says three things: your place in line, that seats open in waves and the invite will
+ * come by email, and how to move up. `position` is null only when the line could not be
+ * counted at join time; the email then leaves the number out rather than guessing one.
+ * The referral link itself is not in the email: the pass page shows it with a copy button,
+ * and a printed `?ref=` URL was one of the things filters held against it.
  */
 export function buildInterestListWelcomeEmail(input: {
   unsubscribeUrl: string;
@@ -186,17 +258,24 @@ export function buildInterestListWelcomeEmail(input: {
   position?: number | null;
 }) {
   const place = input.position ? formatTicketNumber(input.position) : null;
-  const subject = "You're on the list";
-  const headline = "Thanks for joining.";
-  const opening = `${place ? `You're #${place} in line. ` : ""}I'm letting people in a few at a time, in the order they joined. When your spot opens, I'll write to you here.`;
-  const moveUp = `Every friend who joins from your pass moves you up ${SPOTS_PER_REFERRAL} spots, and there are a few extras along the way.`;
+  const subject = place ? `Welcome to Orbit — you're #${place}` : "Welcome to Orbit";
+  const headline = "Your place is held.";
+  const opening = `Thanks for joining the Orbit waitlist.${place ? ` You're #${place} in line.` : ""} Seats open in waves — when yours is ready, I'll email you from here.`;
+  const moveUp = `Want to move up? Every friend who joins from your pass bumps you ${SPOTS_PER_REFERRAL} spots.`;
+
+  const inviteLine =
+    input.links && /\/waitlist\/[^/?#]+$/.test(input.links.shareUrl)
+      ? `Your invite link: ${input.links.shareUrl}`
+      : null;
 
   const text = [
     headline,
     "",
     opening,
     "",
-    ...(input.links ? [moveUp, "", `Open your pass: ${input.links.ticketUrl}`, ""] : []),
+    ...(input.links
+      ? [moveUp, "", ...(inviteLine ? [inviteLine, ""] : []), `Open your pass: ${input.links.ticketUrl}`, ""]
+      : []),
     "— Jason",
     "",
     "—",
@@ -206,13 +285,22 @@ export function buildInterestListWelcomeEmail(input: {
 
   const rows = [
     paperParagraph(escapeHtml(opening)),
-    ...(input.links ? [paperParagraph(`${escapeHtml(moveUp)} ${textLink(input.links.ticketUrl, "Open your pass")}`)] : []),
+    ...(input.links
+      ? [
+          paperParagraph(escapeHtml(moveUp)),
+          waitlistPassTicket({
+            planet: input.planet,
+            ticketUrl: input.links.ticketUrl,
+            shareUrl: input.links.shareUrl,
+            position: input.position,
+          }),
+        ]
+      : []),
   ].join("\n            ");
 
   const html = paperShell({
-    preheader: "A quick note on what happens next.",
-    eyebrow: `${place ? `No. ${place}` : "On the waitlist"} · ${planetLabel(input.planet)}`,
-    planet: input.planet,
+    preheader: "Your place is held on the Orbit waitlist.",
+    eyebrow: place ? `Project: Orbit · No. ${place}` : "Project: Orbit · On the waitlist",
     headline,
     rows,
     unsubscribeUrl: input.unsubscribeUrl,
@@ -261,6 +349,9 @@ export function buildTierEmail(input: {
 }) {
   const { subject, headline, body } = tierCopy(input.tier, input.tier.at);
   const thanks = "Thank you for passing it on.";
+  const inviteLine = /\/waitlist\/[^/?#]+$/.test(input.links.shareUrl)
+    ? `Your invite link: ${input.links.shareUrl}`
+    : null;
 
   const text = [
     headline,
@@ -269,6 +360,7 @@ export function buildTierEmail(input: {
     "",
     thanks,
     "",
+    ...(inviteLine ? [inviteLine, ""] : []),
     `Open your pass: ${input.links.ticketUrl}`,
     "",
     "— Jason",
@@ -280,12 +372,17 @@ export function buildTierEmail(input: {
 
   const html = paperShell({
     preheader: thanks,
-    eyebrow: `${input.tier.label} · ${planetLabel(input.planet)}`,
-    planet: input.planet,
+    eyebrow: `Project: Orbit · ${input.tier.label}`,
     headline,
     rows: [
       paperParagraph(escapeHtml(body)),
-      paperParagraph(`${escapeHtml(thanks)} ${textLink(input.links.ticketUrl, "Open your pass")}`),
+      paperParagraph(escapeHtml(thanks)),
+      waitlistPassTicket({
+        planet: input.planet,
+        ticketUrl: input.links.ticketUrl,
+        shareUrl: input.links.shareUrl,
+        position: null,
+      }),
     ].join("\n            "),
     unsubscribeUrl: input.unsubscribeUrl,
   });

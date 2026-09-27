@@ -39,7 +39,8 @@ function isTemplate(value: string | null): value is Template {
 const SAMPLE_UNSUBSCRIBE = "https://example.invalid/unsubscribe?token=preview";
 const SAMPLE_LINKS = {
   ticketUrl: "https://waitlist.example/?me=sample-token",
-  shareUrl: "https://waitlist.example/?ref=sample-token",
+  // Same shape as production: `/waitlist/<email local part>`.
+  shareUrl: "https://waitlist.example/waitlist/maya",
 };
 
 export async function GET(request: NextRequest) {

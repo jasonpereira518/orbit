@@ -24,8 +24,9 @@ import {
  * Operator-composed notes to the waitlist.
  *
  * Same rules as every waitlist email (`lib/interest-list-email.ts`): sent from the
- * waitlist's own sender, with no product name, logo or app link in the shell. What the
- * operator writes in the body is theirs to keep equally quiet.
+ * waitlist's own sender. The shell may name Orbit; it must not pitch the product, show
+ * the app logo, or link off the waitlist host. What the operator writes in the body is
+ * theirs to keep equally quiet.
  */
 
 /** Ceiling on one send request, so a run cannot outlive its invocation. */
