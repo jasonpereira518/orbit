@@ -128,11 +128,11 @@ export const WAITLIST_ALLOWED_PATHS = [
 
 /**
  * Segments of `/waitlist/<slug>` that are something else: the waitlist's favicon file lives
- * at `/waitlist/icon.png` (see `WAITLIST_ALLOWED_PATHS`), and `/waitlist/privacy` is the
- * local-development preview of the notice. A person's referral slug is never one of these
- * (`slugFromEmail` swaps them for a neutral name).
+ * at `/waitlist/icon.png` (see `WAITLIST_ALLOWED_PATHS`), the page header's logo mark lives at
+ * `/waitlist/logo.png`, and `/waitlist/privacy` is the local-development preview of the notice.
+ * A person's referral slug is never one of these (`slugFromEmail` swaps them for a neutral name).
  */
-export const RESERVED_WAITLIST_SLUGS = ["privacy", "icon.png", "favicon.ico", "apple-icon.png"] as const;
+export const RESERVED_WAITLIST_SLUGS = ["privacy", "icon.png", "logo.png", "favicon.ico", "apple-icon.png"] as const;
 
 /** The path-to-regexp pattern of a referral slug: one URL-safe segment, not a reserved one. */
 const SLUG_PATTERN = `(?!${RESERVED_WAITLIST_SLUGS.map((s) => `${escapeRegex(s)}$`).join("|")})[A-Za-z0-9][A-Za-z0-9._-]*`;
