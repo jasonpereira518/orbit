@@ -1,12 +1,13 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Check } from "lucide-react";
 import { castPollVote } from "@/actions/waitlist-poll";
 import { EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
 import { pulseStarfield } from "@/lib/starfield-events";
 import { cn } from "@/lib/utils";
+import { onPass } from "@/lib/waitlist-pass-events";
 import {
   POLL_ERROR,
   POLL_OPTIONS,
@@ -20,19 +21,21 @@ import {
 export type FeaturePollInitial = { results: PollResults; choice: PollOptionId | null };
 
 /**
- * The waitlist's feature poll. Before a vote: radio cards in authored order, no results.
+ * The waitlist's feature poll. Before a vote: toggle-button cards in authored order, no results.
  * One tap votes (no submit button); the bars then grow in and the cards glide into ranked
  * order, the pick highlighted. Tapping another card moves the vote.
  *
- * The cards are native radios inside labels, so keyboard and screen-reader behaviour is the
- * platform's. The vote is applied optimistically and replaced by the server's tally; a
+ * Each card is a `<button aria-pressed>` in a labelled group: Tab walks the cards in their
+ * current visual order, Enter/Space votes, and moving focus never does (native radios would
+ * select on arrow keys, which fights the list reordering after a vote). The vote is applied optimistically and replaced by the server's tally; a
  * failure rolls it back and says so.
  *
  * A visitor who already voted gets the ranked view from the server on first paint, and their
  * bars start at full length (`initial={false}`) rather than replaying the reveal.
  *
  * `me` is the visitor's `?me=` pass token, if any, so the server can tie the vote to their
- * signup. Reduced motion is read at render time from `useReducedMotion`, not from a
+ * signup. A visitor who joins on this page gets their token from the hero via `onPass`
+ * (`replaceState` does not re-render the server-fed `me`). Reduced motion is read at render time from `useReducedMotion`, not from a
  * post-mount effect: a hook that flips after mount would let the first transition play.
  */
 export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: string | null }) {
@@ -44,6 +47,9 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
   const [, startTransition] = useTransition();
   const [votedOnLoad] = useState(initial.choice !== null);
   const inFlight = useRef(false);
+  const [passToken, setPassToken] = useState<string | null>(null);
+
+  useEffect(() => onPass(setPassToken), []);
 
   const voted = choice !== null;
   const view = rankPoll(results);
@@ -68,7 +74,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
     };
     startTransition(async () => {
       try {
-        const res = await castPollVote({ optionId: id, me });
+        const res = await castPollVote({ optionId: id, me: passToken ?? me });
         if (!res.ok) {
           rollback(res.message);
           return;
@@ -91,27 +97,22 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
 
   return (
     <div className="mx-auto w-full max-w-2xl">
-      <fieldset>
-        <legend className="sr-only">Which feature do you want most?</legend>
+      <div role="group" aria-label="Which feature do you want most?">
         <ul className="grid gap-3">
           {ordered.map((opt) => {
             const selected = choice === opt.id;
             return (
               <motion.li key={opt.id} layout="position" transition={glide}>
-                <label
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={(e) => vote(opt.id, e.currentTarget)}
                   className={cn(
-                    "landing-glass relative block cursor-pointer overflow-hidden rounded-2xl border border-transparent px-5 py-4 transition-colors",
-                    "hover:border-[#e8f3f1]/20 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[#f2c14e]/60",
+                    "landing-glass relative block w-full cursor-pointer overflow-hidden rounded-2xl border border-transparent px-5 py-4 text-left transition-colors",
+                    "hover:border-[#e8f3f1]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60",
                     selected && "border-[#f2c14e]/50"
                   )}
                 >
-                  <input
-                    type="radio"
-                    name="feature-poll"
-                    className="sr-only"
-                    checked={selected}
-                    onChange={(e) => vote(opt.id, e.currentTarget.parentElement ?? e.currentTarget)}
-                  />
                   {voted && (
                     <motion.span
                       aria-hidden="true"
@@ -123,7 +124,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
                   )}
                   <span className="relative flex items-center gap-3">
                     {voted && (
-                      <span className="w-5 shrink-0 text-sm tabular-nums text-[#6d807c]">{opt.rank}</span>
+                      <span aria-hidden="true" className="w-5 shrink-0 text-sm tabular-nums text-[#6d807c]">{opt.rank}</span>
                     )}
                     <span className="flex-1 text-sm font-medium text-[#e8f3f1] sm:text-base">{opt.label}</span>
                     {selected && <Check className="size-4 shrink-0 text-[#f2c14e]" aria-hidden="true" />}
@@ -133,12 +134,12 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
                       </span>
                     )}
                   </span>
-                </label>
+                </button>
               </motion.li>
             );
           })}
         </ul>
-      </fieldset>
+      </div>
 
       <p className="mt-4 text-center text-sm text-[#9aada8]">
         {!voted

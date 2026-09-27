@@ -15,6 +15,7 @@ import {
 import type { InterestProof } from "@/lib/interest-list-ticket";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { pulseStarfield } from "@/lib/starfield-events";
+import { announcePass } from "@/lib/waitlist-pass-events";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
@@ -106,6 +107,8 @@ export function InterestHero({
   useEffect(() => {
     if (phase !== "ticket" || entrance !== "flip" || !ticket) return;
     window.history.replaceState(window.history.state, "", buildTicketUrl(pagePath, ticket.shareToken));
+    // The URL change does not re-render server components; tell the poll who this is.
+    announcePass(ticket.shareToken);
     const id = window.setTimeout(
       () => headingRef.current?.focus({ preventScroll: true }),
       reduced ? 0 : 1600
