@@ -27,22 +27,22 @@ New table `waitlist_poll_votes`:
 
 | column      | type        | notes                                           |
 |-------------|-------------|-------------------------------------------------|
-| id          | serial PK   |                                                 |
+| id          | uuid PK     | `defaultRandom()`                               |
 | option_id   | text        | validated against the option list in code       |
 | voter_key   | text UNIQUE | `signup:<id>` or `cookie:<random id>`           |
-| signup_id   | nullable    | `interest_list_signups.id` (match that column's type); `ON DELETE SET NULL` so leaving the waitlist keeps the vote |
+| signup_id   | uuid, nullable | `interest_list_signups.id`. No FK and no `ON DELETE SET NULL` (repo convention): a deleted signup simply leaves the vote counted |
 | created_at  | timestamptz | default now                                     |
 | updated_at  | timestamptz | bumped when the vote changes                    |
 
 Index on `option_id` for the tally. Migration follows the new-table path: `pgTable` in
 `src/db/schema.ts`, `CREATE TABLE IF NOT EXISTS` in the `DDL` template in `src/db/index.ts`,
-`SCHEMA_VERSION` bump, `EXPECTED_TABLES` in `scripts/setup-db.ts`, then
-`smoke-schema-ddl.ts --update`. The branch is at v120 and main has moved; rescan versions
+`SCHEMA_VERSION` bump (126 as built), `EXPECTED_TABLES` in `scripts/setup-db.ts`, then
+`smoke-schema-ddl.ts --update`. Main moves quickly; rescan versions
 before pushing (see the merge-DDL-needs-new-version note).
 
 ## Behaviour
 
-**Options** live as a const in `src/lib/waitlist-poll.ts` with stable ids and plain-language
+**Options** live as a const in `src/lib/waitlist-poll.ts` (pure, client-safe) with stable ids and plain-language
 labels (no product jargon, matching the page's under-wraps stance). First-draft list:
 
 1. Ask your network anything
@@ -53,7 +53,7 @@ labels (no product jargon, matching the page's under-wraps stance). First-draft 
 6. Finding new people worth knowing
 
 **Vote action** (`src/actions/waitlist-poll.ts`, request-reading half; logic in
-`src/lib/waitlist-poll.ts` so the smoke can drive it without a request):
+`src/lib/waitlist-poll-votes.ts` (server-only, DB) so the smoke can drive it without a request):
 
 1. Rate-limit by IP via a new `RATE_LIMITS.pollVote` bucket (~20 per 10 min).
 2. Reject an unknown `option_id`.
@@ -71,7 +71,7 @@ renders returning voters straight into the results state with no flash.
 
 - Section heading "What should we build first?", same `HEADING` / `Reveal` treatment and
   `landing-glass` cards as the neighbouring sections.
-- Before voting: a `radiogroup` of tappable cards; one tap casts the vote, no submit button.
+- Before voting: a `role="group"` of toggle-button cards (`aria-pressed`); one tap casts the vote, no submit button. Not a radiogroup: arrow keys on native radios would cast a vote on every press and, with the reordering list, alternate the top two cards.
 - After: bars animate in from zero, cards reorder to ranked order with a layout animation,
   rank number and share on each, the visitor's pick highlighted with a check. Tapping another
   card changes the vote.
@@ -84,7 +84,9 @@ renders returning voters straight into the results state with no flash.
 
 ## Files
 
-- `src/lib/waitlist-poll.ts` — options, floor, tally, vote core
+- `src/lib/waitlist-poll.ts` — options, floor, ranking helpers (pure, client-safe)
+- `src/lib/waitlist-poll-votes.ts` — tally, vote core, DB access (server-only)
+- `src/lib/waitlist-pass-events.ts` — small client DOM event so a just-joined visitor's vote ties to their signup without a reload
 - `src/actions/waitlist-poll.ts` — request-reading action
 - `src/components/interest/feature-poll.tsx` — client component
 - `src/app/(site)/interest/page.tsx` — new section + server-side initial state
