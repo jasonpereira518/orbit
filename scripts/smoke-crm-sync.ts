@@ -15,6 +15,7 @@ import {
   claimConnectorConnectionForUser,
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
+import { SYNC_LEASE_MS } from "../src/lib/provider-connections";
 import { resolveConnectorWithSync } from "../src/lib/connectors/syncs";
 import { HUBSPOT_WATERMARK_OVERLAP_MS } from "../src/lib/crm/hubspot/mapping";
 import { syncHubspot } from "../src/lib/crm/hubspot/sync";
@@ -277,6 +278,20 @@ run(async () => {
   check("stopped without calling HubSpot", r6.outcome === "stopped" && unpaid.searches.length === 0 && unpaid.introspections() === 0);
   check("with the upgrade message", ((await row())?.syncError ?? "").includes("Orbit Pro and Lifetime"));
   check("and nothing was deleted", (await db.select().from(crmRecords).where(eq(crmRecords.userId, USER))).length > 0);
+  await db.update(userSettings).set({ compedPlan: "lifetime" }).where(eq(userSettings.userId, USER));
+
+  console.log("\na lost lease on the stop path (Ruling 12b): the stop is never recorded over the new holder");
+  await db.update(connectorConnections).set({ syncCursor: null, syncStatus: "idle", syncStartedAt: null, syncError: null }).where(eq(connectorConnections.userId, USER));
+  const stolen = hubspot(["403"], {
+    onSearch: async () => {
+      await claimConnectorConnectionForUser(USER, "hubspot", new Date(Date.now() + SYNC_LEASE_MS + 1000));
+    },
+  });
+  const r10 = await syncHubspot(await claim(), { fetchImpl: stolen.impl });
+  check("stopped", r10.outcome === "stopped", JSON.stringify(r10));
+  const afterStolen = await row();
+  check("the row's error stays null — the stop was not recorded over the new holder", afterStolen?.syncError === null, String(afterStolen?.syncError));
+  await db.update(connectorConnections).set({ syncStatus: "idle", syncStartedAt: null }).where(eq(connectorConnections.userId, USER));
 
   await reset();
   await db.delete(userSettings).where(eq(userSettings.userId, USER));

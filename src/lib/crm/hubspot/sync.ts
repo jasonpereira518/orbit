@@ -20,7 +20,7 @@ import { connectorLeaseHeld, markConnectorSyncResult, saveConnectorCursor } from
 import { ConnectorNeedsReauthError } from "@/lib/connectors/auth-errors";
 import { openConnectorAuth, type ConnectorAuthDeps } from "@/lib/connectors/token";
 import { persistCrmPage } from "@/lib/crm/persist";
-import type { CrmPerson } from "@/lib/crm/types";
+import type { CrmPerson, CrmSyncResult } from "@/lib/crm/types";
 import { getEntitlements } from "@/lib/entitlements";
 import { finalizeIngest, openIngestContext, type IngestContext } from "@/lib/ingest/events";
 import { HubspotApiError, findHubspotOwner, introspectHubspotToken, searchHubspotContacts } from "./api";
@@ -45,15 +45,7 @@ export type HubspotSyncDeps = {
   auth?: ConnectorAuthDeps;
 };
 
-export type HubspotSyncResult = {
-  outcome: "complete" | "partial" | "needs_reauth" | "stopped";
-  pages: number;
-  records: number;
-  contactsCreated: number;
-  leadsCreated: number;
-  blocked: number;
-  message?: string;
-};
+export type HubspotSyncResult = CrmSyncResult;
 
 const NOT_ENTITLED = "HubSpot sync is on Orbit Pro and Lifetime — upgrade to keep it running";
 const NO_OWNER =
@@ -71,13 +63,15 @@ export async function syncHubspot(
   const started = now().getTime();
   const result: HubspotSyncResult = { outcome: "complete", pages: 0, records: 0, contactsCreated: 0, leadsCreated: 0, blocked: 0 };
 
+  const holdsLease = () => connectorLeaseHeld(conn.id, conn.leaseStartedAt);
+  // Nothing recorded: the row is gone, or belongs to a newer run.
+  const leaseLost = (): HubspotSyncResult => ({ ...result, outcome: "stopped", message: LEASE_LOST });
+  // A stop disarms the row — so it checks the lease first, like every other write (Ruling 12b).
   const stop = async (message: string): Promise<HubspotSyncResult> => {
+    if (!(await holdsLease())) return leaseLost();
     await markConnectorSyncResult(conn.id, { ok: false, error: message, retryable: false });
     return { ...result, outcome: "stopped", message };
   };
-  // Nothing recorded: the row is gone, or belongs to a newer run.
-  const leaseLost = (): HubspotSyncResult => ({ ...result, outcome: "stopped", message: LEASE_LOST });
-  const holdsLease = () => connectorLeaseHeld(conn.id, conn.leaseStartedAt);
 
   const entitlements = await getEntitlements(conn.userId);
   if (!entitlements.canUseCrm) return stop(NOT_ENTITLED);

@@ -87,6 +87,17 @@ export type CrmStatus = {
   providers: CrmProviderStatus[];
 };
 
+/** One connector's sync run, whatever provider ran it — `syncHubspot` and `syncSalesforce` share it. */
+export type CrmSyncResult = {
+  outcome: "complete" | "partial" | "needs_reauth" | "stopped";
+  pages: number;
+  records: number;
+  contactsCreated: number;
+  leadsCreated: number;
+  blocked: number;
+  message?: string;
+};
+
 export type CrmSyncNowResult = {
   outcome: "complete" | "partial" | "needs_reauth" | "stopped";
   pages: number;
