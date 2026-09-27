@@ -141,6 +141,12 @@ export const RATE_LIMITS = {
    */
   interestJoin: { limit: 10, windowSec: 600 },
   /**
+   * `castPollVote`: the waitlist's feature poll. A vote is one upsert, so this is loose on
+   * purpose — several friends behind one NAT voting is normal. What it stops is a loop
+   * stuffing the tally from one address.
+   */
+  pollVote: { limit: 20, windowSec: 600 },
+  /**
    * Public API reads. Generous — a read is one or two indexed queries — but bounded, because
    * these endpoints are reachable by anyone holding a key and a polling integration with a
    * misconfigured interval is the normal failure mode, not an attack.
