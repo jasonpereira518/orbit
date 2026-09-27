@@ -321,7 +321,9 @@ function variantOrThrow(
   variant: string | undefined
 ): { authorizeUrl: string; tokenUrl: string } {
   if (!variant) return { authorizeUrl: provider.authorizeUrl, tokenUrl: provider.tokenUrl };
-  const hosts = provider.variants?.[variant];
+  // `hasOwn`, not a bare index: a variant named "constructor" or "__proto__" must not reach
+  // an inherited property of the variants object.
+  const hosts = provider.variants && Object.hasOwn(provider.variants, variant) ? provider.variants[variant] : undefined;
   if (!hosts) throw new Error(`Connector "${connectorId}" has no "${variant}" login host`);
   return hosts;
 }

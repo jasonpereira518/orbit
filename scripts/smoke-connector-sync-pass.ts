@@ -32,6 +32,7 @@ import { connectorById } from "../src/lib/connectors/registry";
 import type { ClaimedConnectorConnection } from "../src/lib/connectors/connections";
 import { SYNC_LEASE_MS } from "../src/lib/provider-connections";
 import { runSyncPass } from "../src/lib/sync-scheduler";
+import { SalesforceApiError } from "../src/lib/crm/salesforce/api";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -194,7 +195,34 @@ run(async () => {
   check("it is not also counted as a sync", badStats.connectorSynced === 0, String(badStats.connectorSynced));
   const badRow = await rowFor(badConn.id);
   check("the failure is recorded on the row", badRow?.syncFailures === 1, String(badRow?.syncFailures));
-  check("with the provider's message", (badRow?.syncError ?? "").includes("provider exploded"), String(badRow?.syncError));
+  // Only Orbit's sentences are stored: the raw error goes to the report, never the row.
+  check(
+    "with Orbit's generic retry line, never the raw error",
+    badRow?.syncError === "The last sync hit a problem — the next automatic sync will try again",
+    String(badRow?.syncError)
+  );
+
+  console.log("\na CRM API error thrown from a sync keeps its own fixed sentence");
+  const sfErrConn = await arm("stub-sf-throws");
+  const sfLine = "Salesforce is having trouble — the next sync will try again";
+  await runSyncPass({
+    now: new Date(),
+    deps: {
+      getAccessToken: async () => {
+        throw new Error("not used");
+      },
+      fetchPage: async () => {
+        throw new Error("not used");
+      },
+      resolveConnector: resolverFor([
+        stubManifest("stub-sf-throws", async () => {
+          throw new SalesforceApiError(sfLine, "server", 503, true, "raw upstream body");
+        }),
+      ]),
+    },
+  });
+  const sfErrRow = await rowFor(sfErrConn.id);
+  check("the SalesforceApiError's message is stored as is", sfErrRow?.syncError === sfLine, String(sfErrRow?.syncError));
   check("a retryable failure stays armed, on a backoff", badRow?.nextSyncAt !== null);
   check("and the lease is released", badRow?.syncStatus === "error", String(badRow?.syncStatus));
 

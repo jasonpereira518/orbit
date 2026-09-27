@@ -5,7 +5,7 @@
  */
 import type { ConnectorSyncCursor } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { getConnectorConnection, resetConnectorCursor, upsertConnectorConnection } from "@/lib/connectors/connections";
+import { getConnectorConnection, upsertConnectorConnection } from "@/lib/connectors/connections";
 import {
   buildAuthorizeUrl,
   exchangeCode,
@@ -75,8 +75,10 @@ async function identifyCrmAccount(connectorId: CrmConnectorId, tokens: OAuthToke
     const info = await introspectHubspotToken(tokens.accessToken, fetchImpl);
     return { accountRef: info.hubId, label: info.hubDomain, instanceUrl: null, cursorSeed: null };
   }
-  const instanceUrl = tokens.extra?.instance_url;
-  if (!isTrustedInstanceUrl("salesforce", instanceUrl)) throw new Error("Salesforce named an org host Orbit doesn’t trust");
+  const rawInstanceUrl = tokens.extra?.instance_url;
+  if (!isTrustedInstanceUrl("salesforce", rawInstanceUrl)) throw new Error("Salesforce named an org host Orbit doesn’t trust");
+  // Only the origin: every call builds its path on it, so a stray path or slash never rides along.
+  const instanceUrl = new URL(rawInstanceUrl).origin;
   const idUrl = tokens.extra?.id;
   if (!idUrl) throw new Error("Salesforce’s token named no identity URL");
   // fetchSalesforceIdentity refuses an untrusted identity host before sending the token.
@@ -153,11 +155,13 @@ export async function completeCrmConnect(input: {
     capabilities: ["syncPeople"],
     // Armed now: HubSpot's sync ships in this same change (the rule on ConnectorManifest.sync).
     nextSyncAt: new Date(),
+    // Every connect starts a fresh window: the cursor caches the owner of whoever connected
+    // last, and this may be a different user in the same account. The next sync re-identifies
+    // and re-reads everything, which the idempotent upsert makes safe. A provider's seed (from
+    // its identity call, above) carries what the first sync needs instead of null. Written in
+    // the upsert itself, never a second statement: a claim landing between the two would pair
+    // the new grant with the old identity.
+    syncCursor: account.cursorSeed,
   });
-  // Every connect starts a fresh window: the cursor caches the owner of whoever connected
-  // last, and this may be a different user in the same account. The next sync re-identifies
-  // and re-reads everything, which the idempotent upsert makes safe. A provider's seed (from
-  // its identity call, above) carries what the first sync needs instead of null.
-  await resetConnectorCursor(input.sessionUserId, input.connectorId, account.cursorSeed);
   return { label: account.label, accountRef: account.accountRef, switchedAccount };
 }

@@ -233,7 +233,7 @@ run(async () => {
     } }
   );
   const r7 = await syncHubspot(await claim(), { fetchImpl: purged.impl });
-  check("stopped, and says why", r7.outcome === "stopped" && r7.message === "HubSpot’s connection changed during the sync", JSON.stringify(r7));
+  check("stopped, and says why", r7.outcome === "stopped" && r7.message === "HubSpot was reconnected or disconnected during the sync — nothing more was saved", JSON.stringify(r7));
   const afterPurge = await db.select().from(crmRecords).where(eq(crmRecords.userId, USER));
   check("page 1 was written before the purge", afterPurge.some((r) => r.remoteId === "20"));
   check("the person from page 2 never was", !afterPurge.some((r) => r.remoteId === "21"));
@@ -253,7 +253,7 @@ run(async () => {
     } }
   );
   const r8 = await syncHubspot(await claim(), { fetchImpl: reconnected.impl });
-  check("stopped", r8.outcome === "stopped" && r8.message === "HubSpot’s connection changed during the sync", JSON.stringify(r8));
+  check("stopped", r8.outcome === "stopped" && r8.message === "HubSpot was reconnected or disconnected during the sync — nothing more was saved", JSON.stringify(r8));
   const afterReconnect = await db.select().from(crmRecords).where(eq(crmRecords.userId, USER));
   check("page 2 was never written", afterReconnect.some((r) => r.remoteId === "22") && !afterReconnect.some((r) => r.remoteId === "23"));
   const reconnectedRow = await row();

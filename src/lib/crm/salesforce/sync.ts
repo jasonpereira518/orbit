@@ -41,7 +41,8 @@ export type SalesforceSyncDeps = {
 
 const NOT_ENTITLED = "Salesforce sync is on Orbit Pro and Lifetime — upgrade to keep it running";
 const RECONNECT = "Salesforce didn’t say which org and user to sync — reconnect Salesforce";
-const LEASE_LOST = "Salesforce’s connection changed during the sync";
+// Starts "Salesforce " so `crmErrorLine` shows it, not the generic line.
+const LEASE_LOST = "Salesforce was reconnected or disconnected during the sync — nothing more was saved";
 // Ruling 8's lean fallback already ran and STILL got INVALID_FIELD: reading the ones this
 // user can see is not possible, so `stop()`'s own "Orbit will read the ones you can see" line
 // would be false — the sync just stopped instead.
@@ -118,7 +119,7 @@ export async function syncSalesforce(conn: ClaimedConnectorConnection, deps: Sal
         const last = page.records.length ? markOf(page.records[page.records.length - 1]) : null;
         const step = advanceProgress(progress, { last, full: page.records.length >= SALESFORCE_PAGE });
         progress = step.progress;
-        await saveConnectorCursor(conn.id, cursorFromProgress(progress, identity));
+        await saveConnectorCursor(conn.id, cursorFromProgress(progress, identity), { leaseStartedAt: conn.leaseStartedAt });
         if (step.done) {
           done = true;
           break;

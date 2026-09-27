@@ -33,6 +33,13 @@ export function CrmCard({ status }: { status: CrmStatus }) {
   const [, start] = useTransition();
   const [pending, setPending] = useState<CrmPending>(null);
   const [confirming, setConfirming] = useState<CrmConnectorId | null>(null);
+  // The dialog's words outlive `confirming`: Base UI unmounts only after the exit animation, and
+  // a cleared id would read "Disconnect ?" while it fades. Set on open, never cleared.
+  const [shownId, setShownId] = useState<CrmConnectorId | null>(null);
+  function askDisconnect(id: CrmConnectorId) {
+    setShownId(id);
+    setConfirming(id);
+  }
 
   // The callback's outcome, toasted once. The params are stripped on the first gesture, never
   // in this effect — see `readOAuthReturn`: a replaceState here would drop a sibling's action.
@@ -123,11 +130,11 @@ export function CrmCard({ status }: { status: CrmStatus }) {
     });
   }
 
-  const confirmingLabel = confirming ? crmProviderLabel(confirming) : "";
+  const confirmingLabel = shownId ? crmProviderLabel(shownId) : "";
 
   return (
     <>
-      <CrmCardView status={status} pending={pending} onConnect={connect} onSync={sync} onDisconnect={(id) => setConfirming(id)} />
+      <CrmCardView status={status} pending={pending} onConnect={connect} onSync={sync} onDisconnect={askDisconnect} />
       <Dialog open={confirming !== null} onOpenChange={(open) => setConfirming(open ? confirming : null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

@@ -71,7 +71,19 @@ export type CrmConnectionView = {
    * until the person reconnects, which keeps the records a disconnect would delete.
    */
   paused: boolean;
+  /** A Salesforce sandbox (its instance host says so): Reconnect goes back to the sandbox login. */
+  sandbox: boolean;
 };
+
+/** Salesforce sandboxes live on `<domain>--<name>.sandbox.my.salesforce.com`. */
+export function isSalesforceSandboxHost(instanceUrl: string | null): boolean {
+  if (!instanceUrl) return false;
+  try {
+    return new URL(instanceUrl).hostname.toLowerCase().endsWith(".sandbox.my.salesforce.com");
+  } catch {
+    return false;
+  }
+}
 
 /** One CRM's row on the card: whether this server can connect it, and its connection if any. */
 export type CrmProviderStatus = {

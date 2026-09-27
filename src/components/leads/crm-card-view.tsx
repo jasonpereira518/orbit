@@ -30,7 +30,8 @@ export function CrmCardView({
 }) {
   const connected = status.providers.filter((p) => p.connection);
   const connectable = status.providers.filter((p) => !p.connection && p.configured);
-  const busy = pending !== null || connected.some((p) => p.connection?.syncing);
+  // Any action in flight disables every button; a provider's own sync disables only its own.
+  const acting = pending !== null;
 
   if (connected.length === 0) {
     return (
@@ -45,7 +46,7 @@ export function CrmCardView({
         ) : connectable.length === 0 ? (
           <p className="text-sm text-muted-foreground">CRM sync isn’t set up on this server yet.</p>
         ) : (
-          <ConnectButtons providers={connectable} pending={pending} disabled={busy} onConnect={onConnect} />
+          <ConnectButtons providers={connectable} pending={pending} disabled={acting} onConnect={onConnect} />
         )}
       </Shell>
     );
@@ -59,7 +60,6 @@ export function CrmCardView({
           provider={p}
           entitled={status.entitled}
           pending={pending}
-          busy={busy}
           onConnect={onConnect}
           onSync={onSync}
           onDisconnect={onDisconnect}
@@ -68,7 +68,7 @@ export function CrmCardView({
       {status.entitled && connectable.length > 0 ? (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-border/70 px-5 py-3 text-sm">
           <span className="text-muted-foreground">Use another CRM too?</span>
-          <ConnectButtons providers={connectable} pending={pending} disabled={busy} onConnect={onConnect} size="sm" />
+          <ConnectButtons providers={connectable} pending={pending} disabled={acting} onConnect={onConnect} size="sm" />
         </div>
       ) : null}
     </div>
@@ -103,7 +103,7 @@ function ConnectButtons({
                 variant="ghost"
                 size={size}
                 disabled={disabled}
-                aria-label="Connect a Salesforce sandbox"
+                aria-label="Use a sandbox for Salesforce"
                 onClick={() => onConnect("salesforce", { sandbox: true })}
               >
                 Use a sandbox
@@ -120,7 +120,6 @@ function ConnectedProvider({
   provider,
   entitled,
   pending,
-  busy,
   onConnect,
   onSync,
   onDisconnect,
@@ -128,7 +127,6 @@ function ConnectedProvider({
   provider: CrmProviderStatus;
   entitled: boolean;
   pending: CrmPending;
-  busy: boolean;
   onConnect: (id: CrmConnectorId, opts?: { sandbox?: boolean }) => void;
   onSync: (id: CrmConnectorId) => void;
   onDisconnect: (id: CrmConnectorId) => void;
@@ -138,6 +136,26 @@ function ConnectedProvider({
   const canConnect = entitled && provider.configured;
   const connecting = pending?.action === "connect" && pending.id === id;
   const syncingPending = pending?.action === "sync" && pending.id === id;
+  // This provider's buttons only: another provider syncing leaves these free.
+  const busy = pending !== null || connection.syncing;
+  // A sandbox reconnects to the sandbox login by default; the other environment is secondary.
+  const sandbox = id === "salesforce" && connection.sandbox;
+  const reconnectPrimary = () => onConnect(id, sandbox ? { sandbox: true } : undefined);
+  const reconnectOther = () => onConnect(id, sandbox ? undefined : { sandbox: true });
+  const otherText = sandbox ? "Reconnect production" : "Reconnect a sandbox";
+  const otherAria = `${otherText} for ${label}`;
+  const disconnectButton = (size?: "sm") => (
+    <Button
+      type="button"
+      variant={size ? "ghost" : "outline"}
+      size={size}
+      disabled={busy}
+      aria-label={`Disconnect ${label}`}
+      onClick={() => onDisconnect(id)}
+    >
+      Disconnect
+    </Button>
+  );
 
   if (connection.status === "needs_reauth") {
     const title = `${label} needs you to reconnect`;
@@ -145,18 +163,16 @@ function ConnectedProvider({
       <Shell title={title} ariaLabel={title} body={`${label} stopped accepting Orbit’s sign-in — reconnect to keep syncing`}>
         <div className="flex flex-wrap gap-2">
           {canConnect ? (
-            <Button type="button" disabled={busy} onClick={() => onConnect(id)}>
+            <Button type="button" disabled={busy} onClick={reconnectPrimary}>
               {connecting ? `Opening ${label}…` : `Reconnect ${label}`}
             </Button>
           ) : null}
           {canConnect && id === "salesforce" ? (
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => onConnect(id, { sandbox: true })}>
-              Reconnect a sandbox
+            <Button type="button" variant="ghost" disabled={busy} aria-label={otherAria} onClick={reconnectOther}>
+              {otherText}
             </Button>
           ) : null}
-          <Button type="button" variant="outline" disabled={busy} onClick={() => onDisconnect(id)}>
-            Disconnect
-          </Button>
+          {disconnectButton()}
         </div>
       </Shell>
     );
@@ -189,26 +205,31 @@ function ConnectedProvider({
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {connection.paused && canConnect ? (
-          <Button type="button" size="sm" disabled={busy} onClick={() => onConnect(id)}>
+          <Button type="button" size="sm" disabled={busy} onClick={reconnectPrimary}>
             {connecting ? `Opening ${label}…` : `Reconnect ${label}`}
           </Button>
         ) : null}
         {connection.paused && canConnect && id === "salesforce" ? (
-          <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => onConnect(id, { sandbox: true })}>
-            Reconnect a sandbox
+          <Button type="button" variant="ghost" size="sm" disabled={busy} aria-label={otherAria} onClick={reconnectOther}>
+            {otherText}
           </Button>
         ) : null}
         {connection.demo ? (
           <span className="text-xs text-muted-foreground">Sample data — this demo connection doesn’t sync.</span>
         ) : (
-          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => onSync(id)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            aria-label={syncingPending ? `Syncing ${label}…` : `Sync ${label} now`}
+            onClick={() => onSync(id)}
+          >
             <RefreshCw aria-hidden className={cn(syncingPending && "animate-spin motion-reduce:animate-none")} />
             {syncingPending ? "Syncing…" : "Sync now"}
           </Button>
         )}
-        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => onDisconnect(id)}>
-          Disconnect
-        </Button>
+        {disconnectButton("sm")}
       </div>
     </Shell>
   );

@@ -19,7 +19,9 @@ import { connectorConnections, crmRecords } from "../src/db/schema";
 import {
   claimConnectorConnectionForUser,
   getConnectorConnection,
+  markConnectorNeedsReauth,
   markConnectorSyncResult,
+  saveConnectorCursor,
 } from "../src/lib/connectors/connections";
 import { parseOAuthState, pkceVerifierForState, signOAuthState } from "../src/lib/connectors/oauth";
 import {
@@ -233,6 +235,38 @@ run(async () => {
     const switched = await completeCrmConnect({ sessionUserId: SF, connectorId: "salesforce", code: "c4", state: sfState, rawState: sfRawState, fetchImpl: sfProvider({ orgId: "00D000000000002AAA" }) });
     check("another org is a switched account", switched.switchedAccount);
     check("whose old records are gone", (await listCrmRecordsForSmoke(SF, "salesforce")).length === 0);
+
+    // F1: a reconnect lands while a claimed run is mid-flight. The grant and its seed are one
+    // statement, and the stale run's lease-scoped writes never reach the new grant.
+    const midFlight = await claimConnectorConnectionForUser(SF, "salesforce");
+    if (!midFlight) throw new Error("setup: could not claim");
+    await completeCrmConnect({
+      sessionUserId: SF,
+      connectorId: "salesforce",
+      code: "c6",
+      state: sfState,
+      rawState: sfRawState,
+      fetchImpl: sfProvider({ orgId: "00D000000000003AAA", instanceUrl: "https://acme--dev.sandbox.my.salesforce.com/" }),
+    });
+    await saveConnectorCursor(midFlight.id, { meta: { orgId: "00D000000000002AAA", userId: "005000000000009AAA", phase: "Contact" } }, {
+      leaseStartedAt: midFlight.leaseStartedAt,
+    });
+    await markConnectorNeedsReauth(midFlight.id, "Salesforce stopped accepting Orbit’s sign-in — reconnect to keep syncing", {
+      leaseStartedAt: midFlight.leaseStartedAt,
+    });
+    const afterMid = await claimConnectorConnectionForUser(SF, "salesforce");
+    check(
+      "a stale run's cursor save never overwrites the reconnect's seed",
+      afterMid?.cursor?.meta?.orgId === "00D000000000003AAA" && afterMid.cursor.meta.userId === "005000000000001AAA",
+      JSON.stringify(afterMid?.cursor)
+    );
+    check("nor marks the new grant needs_reauth", afterMid !== null && (await getConnectorConnection(SF, "salesforce"))?.status === "active");
+    check(
+      "the instance host is stored as its origin",
+      (await getConnectorConnection(SF, "salesforce"))?.instanceUrl === "https://acme--dev.sandbox.my.salesforce.com",
+      String((await getConnectorConnection(SF, "salesforce"))?.instanceUrl)
+    );
+    if (afterMid) await markConnectorSyncResult(afterMid.id, { ok: true, cursor: afterMid.cursor });
 
     const forged = await caught(
       completeCrmConnect({ sessionUserId: SF, connectorId: "salesforce", code: "c5", state: { ...sfState, userId: "someone-else" }, rawState: sfRawState, fetchImpl: sfProvider() })

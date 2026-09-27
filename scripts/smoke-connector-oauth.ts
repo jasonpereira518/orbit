@@ -304,6 +304,9 @@ async function exchange() {
     check("a sandbox authorizes at test.salesforce.com", sandbox.origin === "https://test.salesforce.com", sandbox.href);
     check("the variant is signed into the state", parseOAuthState(sandbox.searchParams.get("state"))?.variant === "sandbox");
     check("an unknown variant is refused", (() => { try { buildAuthorizeUrl("salesforce", { userId: "u1", redirectUri: "x", scopes: [], returnTo: "/", variant: "nope" }); return false; } catch { return true; } })());
+    for (const inherited of ["constructor", "__proto__", "toString"]) {
+      check(`an inherited property name is not a variant ("${inherited}")`, (() => { try { buildAuthorizeUrl("salesforce", { userId: "u1", redirectUri: "x", scopes: [], returnTo: "/", variant: inherited }); return false; } catch { return true; } })());
+    }
 
     const hub = new URL(buildAuthorizeUrl("hubspot", { userId: "u1", redirectUri: "https://orbit.test/cb", scopes: ["a"], returnTo: "/leads" }));
     check("HubSpot sends no PKCE challenge", !hub.searchParams.has("code_challenge"));

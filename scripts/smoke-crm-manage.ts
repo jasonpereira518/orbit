@@ -115,6 +115,13 @@ run(async () => {
   );
   check("salesforce counts: one pipeline, no work contacts", sfConnected.counts?.pipeline === 1 && sfConnected.counts.workContacts === 0, JSON.stringify(sfConnected.counts));
   check("hubspot is unaffected by the salesforce connection", (await hubspotOf(USER)).connection?.label === "acme.hubspot.com");
+  check("a production org is not a sandbox", sfConnected.connection?.sandbox === false);
+  check("hubspot is never a sandbox", (await hubspotOf(USER)).connection?.sandbox === false);
+  await db
+    .update(connectorConnections)
+    .set({ instanceUrl: "https://acme--dev.sandbox.my.salesforce.com" })
+    .where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")));
+  check("a sandbox host is a sandbox, so Reconnect goes back to it", (await salesforceOf(USER)).connection?.sandbox === true);
   await db.delete(connectorConnections).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")));
   await db.delete(crmRecords).where(and(eq(crmRecords.userId, USER), eq(crmRecords.connectorId, "salesforce")));
 

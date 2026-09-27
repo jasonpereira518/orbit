@@ -20,7 +20,9 @@ import {
   ConnectorAuthError,
   ConnectorNeedsReauthError,
   openConnectorAuth,
+  reconnectLine,
 } from "../src/lib/connectors/token";
+import { crmErrorLine } from "../src/lib/crm/types";
 import { decryptOrNull } from "../src/lib/crypto";
 
 let failures = 0;
@@ -146,6 +148,38 @@ run(async () => {
     const stored = await row();
     check("the row needs reauth", stored?.status === "needs_reauth");
     check("and is disarmed", stored?.nextSyncAt === null);
+  }
+
+  console.log("\nthe stored reason is Orbit's sentence, never the token endpoint's text");
+  {
+    const conn = await fresh({ expiresInMs: 30_000 });
+    const r = refresher(new OAuthTokenError("BAD_REFRESH_TOKEN: raw provider words", true));
+    await openConnectorAuth(conn, { refresh: r.refresh }).call(async () => "never").catch(() => null);
+    const stored = await row();
+    check(
+      "a CRM's line starts with its name, so the card shows it",
+      stored?.syncError === "HubSpot stopped accepting Orbit’s sign-in — reconnect to keep syncing" &&
+        crmErrorLine(stored.syncError) === stored.syncError,
+      String(stored?.syncError)
+    );
+    check("no provider text is stored", !(stored?.syncError ?? "").includes("BAD_REFRESH_TOKEN"));
+    check("any other connector gets the generic line", reconnectLine("some-other") === "Reconnect to keep syncing");
+  }
+
+  console.log("\na run that lost its lease writes no tokens and no needs_reauth");
+  {
+    const conn = await fresh({ expiresInMs: 30_000 });
+    // Someone else holds the row now (a reconnect, a disconnect's claim, a later run).
+    await claimConnectorConnectionForUser(USER, conn.connectorId, new Date(Date.now() + 3_600_000));
+    const refused = refresher(new OAuthTokenError("BAD_REFRESH_TOKEN", true));
+    await openConnectorAuth(conn, { refresh: refused.refresh }).call(async () => "never").catch(() => null);
+    check("the row is not marked needs_reauth", (await row())?.status === "active", String((await row())?.status));
+    const renewed = refresher({ ...NEW_TOKENS, refreshToken: "refresh-stale" });
+    const conn2 = { ...conn };
+    await openConnectorAuth(conn2, { refresh: renewed.refresh }).call(async () => "ok");
+    const stored = await row();
+    check("the stale refresh's access token is not stored", decryptOrNull(stored?.accessTokenEncrypted ?? null) === "access-old");
+    check("nor its refresh token", decryptOrNull(stored?.refreshTokenEncrypted ?? null) === "refresh-old");
   }
 
   console.log("\na provider having a bad minute does NOT mean reconnect");

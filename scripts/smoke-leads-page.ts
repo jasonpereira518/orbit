@@ -19,6 +19,7 @@ import { WarmthChip } from "../src/components/leads/warmth-chip";
 import { PathSummary } from "../src/components/leads/path-summary";
 import { SharingDl } from "../src/components/leads/sharing-dl";
 import { CrmCardView } from "../src/components/leads/crm-card-view";
+import { Button } from "../src/components/ui/button";
 import { APP_NAV_CORE, APP_NAV_EXTRAS, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
 import { COMING_SOON_KEYS, isHrefComingSoon, surfaceKeyForHref } from "../src/lib/surfaces";
 import { ComingSoon } from "../src/components/coming-soon/coming-soon";
@@ -191,6 +192,7 @@ function main() {
       error: null,
       demo: false,
       paused: false,
+      sandbox: false,
     };
     const salesforceConn = {
       connectorId: "salesforce" as const,
@@ -201,6 +203,7 @@ function main() {
       error: null,
       demo: false,
       paused: false,
+      sandbox: false,
     };
 
     const nothing = view(base);
@@ -337,6 +340,95 @@ function main() {
       buttonTags.join("\n")
     );
 
+    // Every <Button> the card renders, with its props, by expanding the card's own (hook-free)
+    // components by hand — so a check can see which handler a button would call.
+    type ButtonProps = { disabled?: boolean; onClick?: () => void; children?: React.ReactNode; "aria-label"?: string };
+    const buttonsOf = (node: React.ReactNode): ButtonProps[] => {
+      if (Array.isArray(node)) return node.flatMap(buttonsOf);
+      if (!React.isValidElement(node)) return [];
+      const el = node as React.ReactElement<Record<string, unknown>>;
+      if (el.type === Button) return [el.props as ButtonProps];
+      if (typeof el.type === "function") return buttonsOf((el.type as (p: unknown) => React.ReactNode)(el.props));
+      return buttonsOf(el.props.children as React.ReactNode);
+    };
+    const flat = (n: React.ReactNode): string =>
+      Array.isArray(n) ? n.map(flat).join("") : typeof n === "string" || typeof n === "number" ? String(n) : React.isValidElement(n) ? flat((n.props as { children?: React.ReactNode }).children) : "";
+    const cardButtons = (status: CrmStatus, onConnect: (id: string, opts?: { sandbox?: boolean }) => void = noop) =>
+      buttonsOf(React.createElement(CrmCardView, { status, pending: null, onConnect, onSync: noop, onDisconnect: noop }));
+    const named = (bs: ButtonProps[], name: string) => bs.filter((b) => b["aria-label"] === name);
+
+    // F4: Salesforce syncing on its own leaves HubSpot's buttons free.
+    const sfSyncing = cardButtons({
+      entitled: true,
+      providers: [
+        { ...hubspotProvider, connection: hubspotConn, counts: { workContacts: 1, pipeline: 0, blocked: 0 } },
+        { ...salesforceProvider, connection: { ...salesforceConn, syncing: true }, counts: { workContacts: 1, pipeline: 0, blocked: 0 } },
+      ],
+    });
+    check(
+      "Salesforce syncing: its own Sync now and Disconnect are disabled",
+      named(sfSyncing, "Sync Salesforce now")[0]?.disabled === true && named(sfSyncing, "Disconnect Salesforce")[0]?.disabled === true,
+      JSON.stringify(sfSyncing.map((b) => [b["aria-label"], b.disabled]))
+    );
+    check(
+      "Salesforce syncing: HubSpot's Sync now and Disconnect stay enabled",
+      named(sfSyncing, "Sync HubSpot now")[0]?.disabled === false && named(sfSyncing, "Disconnect HubSpot")[0]?.disabled === false,
+      JSON.stringify(sfSyncing.map((b) => [b["aria-label"], b.disabled]))
+    );
+
+    // F5: accessible names contain the visible words, and name the provider where two repeat.
+    const wordsIn = (b: ButtonProps) => {
+      const visible = flat(b.children).trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const name = (b["aria-label"] ?? flat(b.children)).toLowerCase();
+      return visible.every((w) => name.includes(w));
+    };
+    const bothButtons = cardButtons(bothConnected);
+    check(
+      "both connected: every button's accessible name contains its visible words",
+      bothButtons.every(wordsIn),
+      JSON.stringify(bothButtons.map((b) => [flat(b.children), b["aria-label"]]))
+    );
+    check(
+      "both connected: per-provider names on the repeated buttons",
+      ["Sync HubSpot now", "Sync Salesforce now", "Disconnect HubSpot", "Disconnect Salesforce"].every((n) => named(bothButtons, n).length === 1),
+      JSON.stringify(bothButtons.map((b) => b["aria-label"]))
+    );
+    const connectButtons = cardButtons(base);
+    const useSandbox = connectButtons.find((b) => flat(b.children) === "Use a sandbox");
+    check("Use a sandbox: its accessible name contains its visible text", Boolean(useSandbox) && wordsIn(useSandbox!), JSON.stringify(useSandbox?.["aria-label"]));
+
+    // F5: a sandbox connection reconnects to the sandbox; the secondary offers production.
+    for (const [state, conn] of [
+      ["needs reauth", { ...salesforceConn, status: "needs_reauth" as const }],
+      ["paused", { ...salesforceConn, paused: true, error: "Salesforce stopped" }],
+    ] as const) {
+      const calls: Array<{ sandbox?: boolean } | undefined> = [];
+      const record = (_id: string, opts?: { sandbox?: boolean }) => calls.push(opts);
+      const status = (sandbox: boolean): CrmStatus => ({
+        entitled: true,
+        providers: [hubspotProvider, { ...salesforceProvider, connection: { ...conn, sandbox }, counts: null }],
+      });
+      const sb = cardButtons(status(true), record);
+      const primary = sb.find((b) => flat(b.children) === "Reconnect Salesforce");
+      const other = sb.find((b) => flat(b.children) === "Reconnect production");
+      primary?.onClick?.();
+      other?.onClick?.();
+      check(
+        `sandbox ${state}: Reconnect Salesforce goes to the sandbox, Reconnect production does not`,
+        Boolean(primary && other) && calls[0]?.sandbox === true && calls[1]?.sandbox !== true && !sb.some((b) => flat(b.children) === "Reconnect a sandbox"),
+        JSON.stringify(calls)
+      );
+      calls.length = 0;
+      const prod = cardButtons(status(false), record);
+      prod.find((b) => flat(b.children) === "Reconnect Salesforce")?.onClick?.();
+      prod.find((b) => flat(b.children) === "Reconnect a sandbox")?.onClick?.();
+      check(
+        `production ${state}: Reconnect Salesforce goes to production, Reconnect a sandbox to the sandbox`,
+        calls.length === 2 && calls[0]?.sandbox !== true && calls[1]?.sandbox === true,
+        JSON.stringify(calls)
+      );
+    }
+
     const erred = view({
       entitled: true,
       providers: [
@@ -378,6 +470,12 @@ function main() {
     check("connects with sandbox passed through", /startCrmConnectAction\(\s*id\s*,\s*\{\s*sandbox:/.test(cardSource), cardSource);
     check("syncs by id", /syncCrmNowAction\(\s*id\s*\)/.test(cardSource), cardSource);
     check("disconnects by id", /disconnectCrmAction\(\s*id\s*\)/.test(cardSource), cardSource);
+    // The dialog fades out after `confirming` clears; its title must not read "Disconnect ?".
+    check(
+      "the dialog's label is not derived from the id cleared on close",
+      /confirmingLabel\s*=\s*shownId\b/.test(cardSource) && !/confirmingLabel\s*=\s*confirming\b/.test(cardSource),
+      cardSource.match(/confirmingLabel\s*=.*$/m)?.[0] ?? ""
+    );
     const needsReauthBranch = cardSource.slice(
       cardSource.indexOf('"needs_reauth"'),
       cardSource.indexOf("else", cardSource.indexOf('"needs_reauth"'))

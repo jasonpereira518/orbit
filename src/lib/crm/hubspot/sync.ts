@@ -51,7 +51,8 @@ const NOT_ENTITLED = "HubSpot sync is on Orbit Pro and Lifetime — upgrade to k
 const NO_OWNER =
   "HubSpot has no owner record for the person who connected, so no contacts are assigned to you — ask a HubSpot admin to add you as a user, then sync again";
 const NOBODY = "HubSpot didn’t say who connected — reconnect HubSpot";
-const LEASE_LOST = "HubSpot’s connection changed during the sync";
+// Starts "HubSpot " so `crmErrorLine` shows it, not the generic line.
+const LEASE_LOST = "HubSpot was reconnected or disconnected during the sync — nothing more was saved";
 
 export async function syncHubspot(
   conn: ClaimedConnectorConnection,
@@ -102,7 +103,7 @@ export async function syncHubspot(
     const who: HubspotIdentity = identity;
 
     let window = windowFromCursor(cursor, now());
-    await saveConnectorCursor(conn.id, cursorFromWindow(window, who));
+    await saveConnectorCursor(conn.id, cursorFromWindow(window, who), { leaseStartedAt: conn.leaseStartedAt });
 
     // Opened on the first page that has someone in it: it reads the person's whole contact
     // list, which a run that finds nothing new has no use for.
@@ -140,7 +141,7 @@ export async function syncHubspot(
         }
         const step = advanceWindow(window, { maxModified, nextAfter: page.nextAfter }, now());
         window = step.window;
-        await saveConnectorCursor(conn.id, cursorFromWindow(window, who));
+        await saveConnectorCursor(conn.id, cursorFromWindow(window, who), { leaseStartedAt: conn.leaseStartedAt });
         if (step.done) {
           done = true;
           break;

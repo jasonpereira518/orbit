@@ -16,8 +16,11 @@ import {
   claimConnectorConnectionForUser,
   markConnectorSyncResult,
   resetConnectorCursor,
+  saveConnectorCursor,
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
+import { runCrmSyncNow } from "../src/lib/crm/manage";
+import { decryptOrNull } from "../src/lib/crypto";
 import { OAuthTokenError } from "../src/lib/connectors/oauth";
 import { resolveConnectorWithSync } from "../src/lib/connectors/syncs";
 import { SYNC_LEASE_MS } from "../src/lib/provider-connections";
@@ -327,7 +330,7 @@ run(async () => {
   );
   const conn9 = await claim();
   const r9 = await syncSalesforce(conn9, { fetchImpl: ninth.impl });
-  check("stopped, lease lost", r9.outcome === "stopped" && (r9.message ?? "").includes("connection changed"), JSON.stringify(r9));
+  check("stopped, lease lost", r9.outcome === "stopped" && r9.message === "Salesforce was reconnected or disconnected during the sync — nothing more was saved", JSON.stringify(r9));
   const afterSteal9 = await db.select().from(crmRecords).where(eq(crmRecords.userId, USER));
   check("nothing written from this page", !afterSteal9.some((r) => r.remoteId === "003000000000700AAA"), String(afterSteal9.length));
   const after9 = await row();
@@ -456,6 +459,133 @@ run(async () => {
   check("no error recorded over the new holder", after15?.syncError === null, String(after15?.syncError));
   check("no failure counted over the new holder either", after15?.syncFailures === 0, String(after15?.syncFailures));
   await db.update(connectorConnections).set({ syncStatus: "idle", syncStartedAt: null }).where(eq(connectorConnections.userId, USER));
+
+  console.log("\n16. a reconnect while a claimed run is mid-flight: the new grant and seed survive");
+  {
+    await connect();
+    await seedCursor();
+    const OWNER2 = "005000000000002AAA";
+    const newSeed = cursorFromProgress(progressFromCursor(null), { orgId: ORG, userId: OWNER2 });
+    // A second person in the same org reconnects: grant and seed land in ONE statement.
+    const reconnect = () =>
+      upsertConnectorConnection({
+        userId: USER,
+        connectorId: "salesforce",
+        authKind: "oauth2",
+        accountRef: ORG,
+        label: "bob@acme.com",
+        instanceUrl: INSTANCE,
+        accessToken: "at-reconnected",
+        refreshToken: "rt-reconnected",
+        capabilities: ["syncPeople"],
+        nextSyncAt: null,
+        syncCursor: newSeed,
+      });
+    const checkSeed = async (where: string) => {
+      const r = await row();
+      const meta = (r?.syncCursor as { meta?: Record<string, string> } | null)?.meta;
+      check(`${where}: the new seed survives`, meta?.userId === OWNER2 && meta?.orgId === ORG, JSON.stringify(r?.syncCursor));
+      check(`${where}: the reconnected grant's token survives`, decryptOrNull(r?.accessTokenEncrypted ?? null) === "at-reconnected");
+      check(`${where}: still active`, r?.status === "active", String(r?.status));
+      check(`${where}: no error on the new grant`, r?.syncError === null, String(r?.syncError));
+    };
+
+    // (a) The run's refresh is refused AFTER the reconnect: its give-up must not mark the new grant.
+    const giveUpFetch = salesforce(() => ({ status: 401, body: [{ errorCode: "INVALID_SESSION_ID", message: "expired" }] }));
+    const connA = await claim();
+    const rA = await syncSalesforce(connA, {
+      fetchImpl: giveUpFetch.impl,
+      auth: {
+        refresh: async () => {
+          await reconnect();
+          throw new OAuthTokenError("expired access/refresh token", true);
+        },
+      },
+    });
+    check("stale give-up: the run reports needs_reauth to its caller", rA.outcome === "needs_reauth", JSON.stringify(rA));
+    await checkSeed("stale give-up");
+
+    // (b) The run's refresh succeeds AFTER the reconnect: its tokens must not overwrite the new grant's.
+    await connect();
+    await seedCursor();
+    const persistFetch = salesforce((_soql, auth) =>
+      auth.includes("at-stale-refresh")
+        ? { status: 200, body: { records: [contactRecord(800, "2026-09-08T00:00:00.000+0000")] } }
+        : { status: 401, body: [{ errorCode: "INVALID_SESSION_ID", message: "expired" }] }
+    );
+    const connB = await claim();
+    const rB = await syncSalesforce(connB, {
+      fetchImpl: persistFetch.impl,
+      auth: {
+        refresh: async () => {
+          await reconnect();
+          return { accessToken: "at-stale-refresh", refreshToken: "rt-stale-refresh", expiresAt: null, scopes: null };
+        },
+      },
+    });
+    check("stale refresh: the run stops, lease lost", rB.outcome === "stopped", JSON.stringify(rB));
+    await checkSeed("stale refresh");
+    check(
+      "stale refresh: the reconnected refresh token survives",
+      decryptOrNull((await row())?.refreshTokenEncrypted ?? null) === "rt-reconnected"
+    );
+    check(
+      "stale refresh: nothing from the stale run's page was written",
+      !(await db.select().from(crmRecords).where(eq(crmRecords.userId, USER))).some((r) => r.remoteId === "003000000000800AAA")
+    );
+
+    // (c) A stale run's cursor save — the old identity — never lands over the seed.
+    await saveConnectorCursor(connB.id, cursorFromProgress(progressFromCursor(null), { orgId: ORG, userId: OWNER }), {
+      leaseStartedAt: connB.leaseStartedAt,
+    });
+    await checkSeed("stale cursor save");
+    // And a save that still holds its lease does land (the guard is the lease, not a freeze).
+    const live = await claim();
+    await saveConnectorCursor(live.id, cursorFromProgress(progressFromCursor(null), { orgId: ORG, userId: OWNER2 }), {
+      leaseStartedAt: live.leaseStartedAt,
+    });
+    check(
+      "a cursor save that holds its lease lands",
+      ((await row())?.syncCursor as { meta?: Record<string, string> } | null)?.meta?.userId === OWNER2
+    );
+    await db.update(connectorConnections).set({ syncStatus: "idle", syncStartedAt: null }).where(eq(connectorConnections.userId, USER));
+  }
+
+  console.log("\n17. Sync now, end to end with the real sync, when the lease is stolen mid-run");
+  {
+    await connect();
+    await seedCursor();
+    let stolen17: Date | null = null;
+    const seventeenth = salesforce(
+      (soql) => {
+        if (soql.includes("FROM Contact")) return { status: 200, body: { records: [contactRecord(900, "2026-09-09T00:00:00.000+0000")] } };
+        return { status: 200, body: { records: [] } };
+      },
+      {
+        onQuery: async (call) => {
+          if (call === 1) {
+            stolen17 = new Date(Date.now() + SYNC_LEASE_MS + 1000);
+            await claimConnectorConnectionForUser(USER, "salesforce", stolen17);
+          }
+        },
+      }
+    );
+    const r17 = await runCrmSyncNow(USER, "salesforce", {
+      consume: async () => null,
+      sync: (conn, opts) => syncSalesforce(conn, { budgetMs: opts.budgetMs, fetchImpl: seventeenth.impl }),
+    });
+    check("stopped", r17.outcome === "stopped", JSON.stringify(r17));
+    check(
+      "the card is told what happened, not the generic line",
+      r17.message === "Salesforce was reconnected or disconnected during the sync — nothing more was saved",
+      String(r17.message)
+    );
+    const after17 = await row();
+    check("the stealer's lease stands", after17?.syncStartedAt?.getTime() === stolen17!.getTime(), String(after17?.syncStartedAt));
+    check("still syncing for the stealer", after17?.syncStatus === "syncing", String(after17?.syncStatus));
+    check("no sync_error over the stealer", after17?.syncError === null, String(after17?.syncError));
+    await db.update(connectorConnections).set({ syncStatus: "idle", syncStartedAt: null }).where(eq(connectorConnections.userId, USER));
+  }
 
   await reset();
   await db.delete(userSettings).where(eq(userSettings.userId, USER));

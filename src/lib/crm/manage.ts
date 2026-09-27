@@ -24,6 +24,7 @@ import {
   DEMO_CRM_ACCOUNT_REF,
   crmErrorLine,
   crmProviderLabel,
+  isSalesforceSandboxHost,
   type CrmConnectionView,
   type CrmConnectorId,
   type CrmStatus,
@@ -70,6 +71,7 @@ function viewOf(id: CrmConnectorId, connection: ConnectorConnectionSummary, leas
     error: crmErrorLine(connection.syncError),
     demo: connection.accountRef === DEMO_CRM_ACCOUNT_REF,
     paused: connection.status === "active" && connection.nextSyncAt === null && connection.syncError !== null,
+    sandbox: id === "salesforce" && isSalesforceSandboxHost(connection.instanceUrl),
   };
 }
 

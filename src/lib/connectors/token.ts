@@ -26,6 +26,8 @@ import {
   type OAuthTokens,
 } from "@/lib/connectors/oauth";
 import { ConnectorAuthError, ConnectorNeedsReauthError } from "@/lib/connectors/auth-errors";
+import { crmProviderLabel, isCrmConnectorId } from "@/lib/crm/types";
+import { reportError } from "@/lib/report-error";
 
 export { ConnectorAuthError, ConnectorNeedsReauthError };
 
@@ -44,7 +46,16 @@ export type ConnectorAuthDeps = {
   markNeedsReauth?: typeof markConnectorNeedsReauth;
 };
 
-const RECONNECT = "Reconnect to keep syncing";
+/**
+ * The stored `sync_error` for a give-up: a fixed sentence Orbit wrote, never the token
+ * endpoint's text (that goes to `reportError`). A CRM's starts with its label, so the card's
+ * `crmErrorLine` shows it rather than masking it.
+ */
+export function reconnectLine(connectorId: string): string {
+  return isCrmConnectorId(connectorId)
+    ? `${crmProviderLabel(connectorId)} stopped accepting Orbit’s sign-in — reconnect to keep syncing`
+    : "Reconnect to keep syncing";
+}
 
 export function openConnectorAuth(
   conn: ClaimedConnectorConnection,
@@ -58,8 +69,18 @@ export function openConnectorAuth(
   const markNeedsReauth = deps.markNeedsReauth ?? markConnectorNeedsReauth;
   let reactiveUsed = false;
 
+  // Every write here carries the run's lease: a run that lost it (a reconnect stored a new
+  // grant, a disconnect claimed the row) must not persist its tokens or mark the new grant dead.
+  const lease = { leaseStartedAt: conn.leaseStartedAt };
+
   async function giveUp(reason: string): Promise<never> {
-    await markNeedsReauth(conn.id, `${reason} — ${RECONNECT}`);
+    reportError(new Error(reason), {
+      where: "connectors.token.reauth",
+      userId: conn.userId,
+      level: "warning",
+      extra: { connectorId: conn.connectorId, connectionId: conn.id },
+    });
+    await markNeedsReauth(conn.id, reconnectLine(conn.connectorId), lease);
     throw new ConnectorNeedsReauthError(reason);
   }
 
@@ -73,17 +94,20 @@ export function openConnectorAuth(
       throw err;
     }
     // Salesforce names the org's host on every refresh; an org moved to a new instance says so here.
+    // Stored as its origin, like the connect stores it, so a trailing slash is never a "move".
     const movedTo = tokens.extra?.instance_url;
-    const instanceUrl =
-      movedTo && movedTo !== conn.instanceUrl && isTrustedInstanceUrl(conn.connectorId, movedTo)
-        ? movedTo
-        : null;
-    await persist(conn.id, {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
-      instanceUrl,
-    });
+    const movedOrigin = isTrustedInstanceUrl(conn.connectorId, movedTo) ? new URL(movedTo).origin : null;
+    const instanceUrl = movedOrigin && movedOrigin !== conn.instanceUrl ? movedOrigin : null;
+    await persist(
+      conn.id,
+      {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+        instanceUrl,
+      },
+      lease
+    );
     conn.accessToken = tokens.accessToken;
     if (tokens.refreshToken) conn.refreshToken = tokens.refreshToken;
     conn.tokenExpiresAt = tokens.expiresAt;
