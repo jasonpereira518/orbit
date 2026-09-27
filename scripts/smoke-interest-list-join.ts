@@ -23,8 +23,13 @@ import {
   proofShowsCount,
   readInterestProof,
 } from "../src/lib/interest-list-ticket";
-import { INTEREST_LIST_COUNT_FLOOR, MIN_FILL_MS } from "../src/lib/interest-list";
-import { joinInterestListCore, type JoinContext } from "../src/lib/interest-list-join";
+import {
+  INTEREST_LIST_COUNT_FLOOR,
+  MIN_FILL_MS,
+  buildShareUrl,
+  slugFromEmail,
+} from "../src/lib/interest-list";
+import { joinInterestListCore, saveInterestListNameCore, type JoinContext } from "../src/lib/interest-list-join";
 import type { EmailLinks } from "../src/lib/interest-list-email";
 
 const PREFIX = "smoke-join-";
@@ -38,6 +43,7 @@ async function cleanup() {
   const db = await getDb();
   await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
   await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "interest.join:smoke-%"));
+  await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "interest.name:smoke-%"));
   invalidateInterestProof();
 }
 
@@ -143,17 +149,19 @@ async function joinPath() {
   const a = await joinInterestListCore({ ...base, email: `${PREFIX}A@Example.test` }, ctx("a"));
   check("new join is ok", a.ok);
   if (!a.ok) return;
+  check("a new address is not returning", a.returning === false);
   const rowA = await rowFor(`${PREFIX}a@example.test`);
   check("email is normalised on insert", Boolean(rowA));
   check("ticket carries the stored share token", rowA?.shareToken === a.ticket.shareToken);
   check("ticket planet matches the stored one", rowA?.welcomePlanet === a.ticket.planet);
   check("attribution is stored", rowA?.utmSource === "reddit" && rowA.landingPath === "/interest");
   check("welcome states the place in line", sent[0]?.position === a.ticket.position, String(sent[0]?.position));
-  check("welcome sent once with both links", sent.length === 1 && sent[0]!.links.ticketUrl.includes(`me=${a.ticket.shareToken}`) && sent[0]!.links.shareUrl.includes(`ref=${a.ticket.shareToken}`));
+  check("welcome sent once with both links", sent.length === 1 && sent[0]!.links.ticketUrl.includes(`me=${a.ticket.shareToken}`) && sent[0]!.links.shareUrl.endsWith(`/waitlist/${a.ticket.referralSlug}`));
 
   // --- duplicate: same ticket, no second mail, still one row
   const a2 = await joinInterestListCore({ ...base, email: `${PREFIX}a@example.test` }, ctx("a"));
   check("duplicate is ok", a2.ok);
+  check("a recognised address is returning, so the form skips the name step", a2.ok && a2.returning === true);
   check("duplicate returns the same ticket", a2.ok && a2.ticket.shareToken === a.ticket.shareToken && a2.ticket.number === a.ticket.number);
   check("duplicate sends nothing", sent.length === 1);
   check("duplicate creates no row", (await db.select().from(interestListSignups).where(like(interestListSignups.email, `${PREFIX}a@%`))).length === 1);
@@ -201,6 +209,7 @@ async function joinPath() {
   check("too-fast answers ok with a ticket", fast.ok && fast.ticket.referrals === 0 && !fast.ticket.frontWave);
   check("a fake ticket stands at the back of the line", fast.ok && fast.ticket.position === (await readInterestProof()).count + 1);
   check("neither writes a row", (await db.select().from(interestListSignups)).length === rowsBefore);
+  check("a bot never looks returning, so it cannot be told from a new join", bot.ok && bot.returning === false);
   check("fake tokens resolve to nothing", bot.ok && (await getTicketByShareToken(bot.ticket.shareToken)) === null);
 
   // --- invalid email is the one visible error
@@ -221,10 +230,121 @@ async function joinPath() {
   check("proof reflects the joins", proof.count >= before + 8, String(proof.count));
 }
 
+async function namePath() {
+  console.log("\nname step…");
+  const db = await getDb();
+  const ctx: JoinContext = {
+    ip: "smoke-name",
+    attribution: null,
+    sendWelcome: async () => undefined,
+    sendFrontWave: async () => undefined,
+  };
+  const rowFor = async (email: string) =>
+    (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+  const joined = await joinInterestListCore(
+    { email: `${PREFIX}name@example.test`, website: "", elapsedMs: MIN_FILL_MS + 10 },
+    ctx
+  );
+  if (!joined.ok) throw new Error("name-step join failed");
+  const token = joined.ticket.shareToken;
+  check("a fresh join has no name yet", (await rowFor(`${PREFIX}name@example.test`))?.firstName === null);
+
+  const bad = await saveInterestListNameCore({ shareToken: token, firstName: "  ", lastName: "Lovelace" }, ctx);
+  check("a blank first name is the visible error", !bad.ok);
+  check("a rejected name writes nothing", (await rowFor(`${PREFIX}name@example.test`))?.firstName === null);
+
+  const saved = await saveInterestListNameCore({ shareToken: token, firstName: "  Ada ", lastName: " Lovelace" }, ctx);
+  const named = await rowFor(`${PREFIX}name@example.test`);
+  check("a name saves, trimmed", saved.ok && named?.firstName === "Ada" && named.lastName === "Lovelace");
+
+  // The share token is also the public ?ref= link: a second write must not rename anyone.
+  const again = await saveInterestListNameCore({ shareToken: token, firstName: "Mallory", lastName: "X" }, ctx);
+  const still = await rowFor(`${PREFIX}name@example.test`);
+  check("a second save answers ok", again.ok);
+  check("a second save never overwrites", still?.firstName === "Ada" && still.lastName === "Lovelace");
+
+  const unknown = await saveInterestListNameCore({ shareToken: "no-such-token", firstName: "A", lastName: "B" }, ctx);
+  check("an unknown token answers ok, like a real one", unknown.ok);
+
+  await db
+    .update(interestListSignups)
+    .set({ unsubscribedAt: new Date(), firstName: null, lastName: null })
+    .where(eq(interestListSignups.email, `${PREFIX}name@example.test`));
+  await saveInterestListNameCore({ shareToken: token, firstName: "Ghost", lastName: "Writer" }, ctx);
+  check("someone who left gets no name written", (await rowFor(`${PREFIX}name@example.test`))?.firstName === null);
+}
+
+async function slugPath() {
+  console.log("\nreferral slugs…");
+  const db = await getDb();
+  const ctx = (ip: string): JoinContext => ({
+    ip: `smoke-${ip}`,
+    attribution: null,
+    sendWelcome: async () => undefined,
+    sendFrontWave: async () => undefined,
+  });
+  const base = { website: "", elapsedMs: MIN_FILL_MS + 10 };
+  const rowFor = async (email: string) =>
+    (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+
+  check("the local part is the slug", slugFromEmail("Ada.Lovelace@example.com") === "ada.lovelace");
+  check("unsafe characters are dropped", slugFromEmail("ada+list@example.com") === "adalist" && slugFromEmail("a b/c@x.y") === "abc");
+  check("edge punctuation is trimmed", slugFromEmail("..ada..@x.y") === "ada");
+  check("nothing usable becomes member", slugFromEmail("+++@x.y") === "member" && slugFromEmail("@x.y") === "member");
+  check("reserved path names become member", slugFromEmail("privacy@x.y") === "member" && slugFromEmail("icon.png@x.y") === "member");
+  check("a very long local part is capped", slugFromEmail(`${"a".repeat(80)}@x.y`).length <= 42);
+
+  // --- a join gets a slug, and the share link uses it
+  const a = await joinInterestListCore({ ...base, email: `${PREFIX}dup@one.test` }, ctx("s1"));
+  if (!a.ok) throw new Error("slug join failed");
+  check("the ticket carries the local part", a.ticket.referralSlug === `${PREFIX}dup`, a.ticket.referralSlug);
+  check("the slug is stored", (await rowFor(`${PREFIX}dup@one.test`))?.referralSlug === a.ticket.referralSlug);
+  check(
+    "the share link is /waitlist/<slug>",
+    buildShareUrl("https://join.example/", a.ticket) === `https://join.example/waitlist/${PREFIX}dup` &&
+      buildShareUrl("https://app.example/interest", a.ticket) === `https://app.example/waitlist/${PREFIX}dup`
+  );
+  check("the share link no longer carries the ticket token", !buildShareUrl("https://join.example/", a.ticket).includes(a.ticket.shareToken));
+
+  // --- two addresses, one local part
+  const b = await joinInterestListCore({ ...base, email: `${PREFIX}dup@two.test` }, ctx("s2"));
+  check("a second address with the same local part gets a suffix", b.ok && b.ticket.referralSlug === `${PREFIX}dup-2`, b.ok ? b.ticket.referralSlug : "not ok");
+  const c = await joinInterestListCore({ ...base, email: `${PREFIX}dup@three.test` }, ctx("s3"));
+  check("…and a third the next one", c.ok && c.ticket.referralSlug === `${PREFIX}dup-3`, c.ok ? c.ticket.referralSlug : "not ok");
+  const a2 = await joinInterestListCore({ ...base, email: `${PREFIX}dup@one.test` }, ctx("s1"));
+  check("a repeat visit keeps the same slug", a2.ok && a2.ticket.referralSlug === a.ticket.referralSlug);
+
+  // --- a slug credits a referral, and so does an old token link
+  const viaSlug = await joinInterestListCore({ ...base, email: `${PREFIX}via-slug@example.test`, ref: a.ticket.referralSlug }, ctx("s4"));
+  check("a slug ref joins", viaSlug.ok);
+  const rowA = await rowFor(`${PREFIX}dup@one.test`);
+  check("…and credits the slug's owner", (await rowFor(`${PREFIX}via-slug@example.test`))?.referredById === rowA?.id);
+  const viaUpper = await joinInterestListCore({ ...base, email: `${PREFIX}via-upper@example.test`, ref: a.ticket.referralSlug.toUpperCase() }, ctx("s5"));
+  check("a slug is matched case-insensitively", viaUpper.ok && (await rowFor(`${PREFIX}via-upper@example.test`))?.referredById === rowA?.id);
+  const viaToken = await joinInterestListCore({ ...base, email: `${PREFIX}via-token@example.test`, ref: a.ticket.shareToken }, ctx("s6"));
+  check("a share-token ref (links already sent) still credits", viaToken.ok && (await rowFor(`${PREFIX}via-token@example.test`))?.referredById === rowA?.id);
+  check("the inviter's planet resolves from a slug", (await getInviterPlanet(a.ticket.referralSlug)) !== null);
+  check("an unknown slug resolves to nobody", (await getInviterPlanet("nobody-here")) === null);
+
+  // --- a row from before slugs gets one the first time its ticket is read
+  await db.insert(interestListSignups).values({
+    email: `${PREFIX}legacy-slug@example.test`,
+    unsubscribeToken: generateUnsubscribeToken(),
+    shareToken: "smoke-legacy-slug-token",
+    welcomePlanet: "mars",
+  });
+  check("a legacy row starts with none", (await rowFor(`${PREFIX}legacy-slug@example.test`))?.referralSlug === null);
+  const legacy = await getTicketByShareToken("smoke-legacy-slug-token");
+  check("reading its ticket claims one", legacy?.referralSlug === `${PREFIX}legacy-slug`, legacy?.referralSlug);
+  check("…and it is stored", (await rowFor(`${PREFIX}legacy-slug@example.test`))?.referralSlug === `${PREFIX}legacy-slug`);
+}
+
 async function main() {
   await cleanup();
   await readModel();
   await joinPath();
+  await namePath();
+  await slugPath();
   await cleanup();
   console.log("\nwaitlist join: all checks passed");
   process.exit(0);

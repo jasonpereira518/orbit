@@ -69,8 +69,9 @@ async function main() {
   console.log("Links point at the waitlist's own domain:");
   const page = getWaitlistPageUrl();
   check("the waitlist page is the waitlist domain's root", page === `https://${WAITLIST}/`, page);
-  const links = { ticketUrl: buildTicketUrl(page, "tok"), shareUrl: buildShareUrl(page, "tok") };
-  check("pass and invite links are on it", links.ticketUrl === `https://${WAITLIST}/?me=tok` && links.shareUrl === `https://${WAITLIST}/?ref=tok`);
+  const links = { ticketUrl: buildTicketUrl(page, "tok"), shareUrl: buildShareUrl(page, { referralSlug: "ada", shareToken: "tok" }) };
+  check("pass and invite links are on it", links.ticketUrl === `https://${WAITLIST}/?me=tok` && links.shareUrl === `https://${WAITLIST}/waitlist/ada`);
+  check("a row with no slug yet still gets a working link", buildShareUrl(page, { shareToken: "tok" }) === `https://${WAITLIST}/?ref=tok`);
   const leave = email.buildUnsubscribeUrl("tok");
   check("the leave link is on it", leave.startsWith(`https://${WAITLIST}/api/interest-list/unsubscribe`), leave);
 
@@ -132,7 +133,18 @@ async function main() {
   for (const file of surface) {
     // The page's one sanctioned mark is its "Project: Orbit" header; nothing else may name it.
     const raw = code(file);
-    const src = file === "src/app/(site)/interest/page.tsx" ? raw.replace(/>\s*Project: Orbit\s*</, "><") : raw;
+    // The other sanctioned mention: the message a sharer sends a friend (`SHARE_TEXT`) names the
+    // product on purpose, because a friend cannot be asked to join something unnamed. It is
+    // the sharer's own words going out from their own device, not something the waitlist
+    // shows or mails a stranger. The pass's "Want Orbit sooner?" is the third: it is shown
+    // only to someone already holding a pass, above their own invite link. Nothing else in
+    // the file may.
+    const src =
+      file === "src/app/(site)/interest/page.tsx"
+        ? raw.replace(/>\s*Project: Orbit\s*</, "><")
+        : file === "src/lib/interest-list.ts"
+          ? raw.replace(/SHARE_TEXT\s*=\s*"[^"]*"/, "SHARE_TEXT = ''").replace(/"Want Orbit sooner\?"/, "''")
+          : raw;
     // Strings and JSX text only: identifiers are minified away.
     const literals = [...src.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map((m) => m[2]!);
     const jsxText = [...src.matchAll(/>([^<>{}]+)</g)].map((m) => m[1]!);
