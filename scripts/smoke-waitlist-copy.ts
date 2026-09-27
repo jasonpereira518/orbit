@@ -41,7 +41,8 @@ function check(label: string, ok: boolean, detail?: string) {
 const FEATURE_WORDS = /\b(crm|contacts?|linkedin|gmail|calendar|follow-ups?|intros?|drifting|capture|reminders?|outreach|recruiters?|constellation|sign[- ]?up|start free|free for|pricing|already live)\b/i;
 
 /** Sanctioned product-name phrases waitlist mail may use. */
-const SANCTIONED_ORBIT = /\bProject:\s*Orbit\b|\bOrbit waitlist\b|\bOrbit pass\b|\bWelcome to Orbit\b|\bthe Orbit waitlist\b|\bon Orbit\b/gi;
+const SANCTIONED_ORBIT =
+  /\bProject:\s*Orbit\b|\bOrbit waitlist\b|\bOrbit pass\b|\bWelcome to Orbit\b|\bthe Orbit waitlist\b|\bon Orbit\b|\bOrbit — Personal Networking Intelligence\b/gi;
 
 function urlsIn(html: string) {
   return [...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]!.replace(/&amp;/g, "&"));
@@ -88,7 +89,10 @@ async function main() {
   assertClean("welcome", email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: 1285 }));
   const numbered = email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: 1285 });
   check("welcome: states the place in line", numbered.text.includes("#1,285") && numbered.html.includes("No. 1,285"));
-  check("welcome: the subject names Orbit and the place", numbered.subject === "Welcome to Orbit — you're #1,285");
+  check(
+    "welcome: the subject names Orbit",
+    numbered.subject === "You're on the list | Orbit — Personal Networking Intelligence"
+  );
   check("welcome: names Orbit in the body", /Orbit waitlist/.test(numbered.text) && /Project: Orbit/.test(numbered.html));
   check("welcome: the referral URL stays on the pass page", !numbered.html.includes("?ref=") && !numbered.text.includes("?ref="));
   check(
@@ -109,9 +113,16 @@ async function main() {
   check("welcome: Open your pass button hits the ?me= pass", numbered.html.includes("Open your pass") && passAnchors[0]!.includes("?me=tok"));
   check("welcome: asks clients not to invert the paper", numbered.html.includes('content="light only"'));
   check("welcome: nests a dark pass ticket", numbered.html.includes("Your Orbit pass") && numbered.html.includes("#0e1524"));
+  check(
+    "welcome: shows the waitlist Orbit mark",
+    numbered.html.includes(`src="https://${WAITLIST}/waitlist/logo.png"`)
+  );
   const unnumbered = email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: null });
-  check("welcome: without a count, subject is Welcome to Orbit", unnumbered.subject === "Welcome to Orbit");
-  check("welcome: without a count, says no number rather than a wrong one", !/#\d/.test(unnumbered.subject + unnumbered.text));
+  check(
+    "welcome: without a count, subject stays the same",
+    unnumbered.subject === "You're on the list | Orbit — Personal Networking Intelligence"
+  );
+  check("welcome: without a count, says no number rather than a wrong one", !/#\d/.test(unnumbered.text));
   check("welcome: explains moving up", numbered.text.includes("bumps you 5 spots"));
   const { REFERRAL_TIERS } = await import("../src/lib/interest-list");
   for (const tier of REFERRAL_TIERS.filter((t) => t.at > 0)) {

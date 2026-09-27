@@ -161,13 +161,13 @@ export function waitlistPassTicket(input: {
 }
 
 /**
- * The paper letter every waitlist email shares: an eyebrow line, a serif headline, the
- * body rows, the sign-off and the leave link.
+ * The paper letter every waitlist email shares: an Orbit mark, an eyebrow line, a serif
+ * headline, the body rows, the sign-off and the leave link.
  *
- * NAMES ORBIT, DOES NOT PITCH IT. The waitlist may say "Orbit" / "Project: Orbit" the way
- * the page header does, but it must not describe what the product does, show the app logo,
- * or link anywhere but the waitlist's own domain (see `lib/waitlist-host.ts`). An email is
- * the easiest thing in the world to forward.
+ * NAMES ORBIT. The waitlist may say "Orbit" / "Project: Orbit" and show the waitlist-hosted
+ * mark the way the page header does. It must not describe product features beyond the
+ * sanctioned subject line, or link anywhere but the waitlist's own domain (see
+ * `lib/waitlist-host.ts`). An email is the easiest thing in the world to forward.
  *
  * WRITTEN TO REACH THE INBOX. A light letter with no printed referral URL and a plain-text
  * twin reads as correspondence rather than a campaign. The dark pass ticket (when present)
@@ -175,8 +175,8 @@ export function waitlistPassTicket(input: {
  * not to invert the letter; the ones that do anyway still get readable ink on paper.
  *
  * Inline styles and a table shell rather than a stylesheet: most email clients strip
- * `<style>` blocks. Planet images are decorative with empty alt text, so a client that
- * blocks images loses nothing essential.
+ * `<style>` blocks. Mark and planet images are decorative with empty alt text, so a client
+ * that blocks images loses nothing essential.
  */
 export function paperShell(input: {
   preheader?: string;
@@ -187,6 +187,13 @@ export function paperShell(input: {
   rows: string;
   unsubscribeUrl: string;
 }) {
+  const markUrl = `${getWaitlistOrigin()}/waitlist/logo.png`;
+  const mark = `<tr>
+              <td style="padding-bottom:18px;">
+                <img src="${escapeHtml(markUrl)}" alt="" width="40" height="40"
+                     style="display:block;border:0;outline:none;width:40px;height:40px;border-radius:20px;" />
+              </td>
+            </tr>`;
   const eyebrow = input.eyebrow
     ? `<tr>
               <td style="padding-bottom:18px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${INK_FAINT};">
@@ -220,6 +227,7 @@ export function paperShell(input: {
       <tr>
         <td align="center" style="padding:44px 20px;">
           <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
+            ${mark}
             ${eyebrow}
             ${headline}
             ${input.rows}
@@ -242,6 +250,9 @@ export function paperShell(input: {
 </html>`;
 }
 
+/** Subject on every waitlist welcome — name + positioning, no place-in-line (that stays in the body). */
+export const WELCOME_SUBJECT = "You're on the list | Orbit — Personal Networking Intelligence";
+
 /**
  * Sent the moment someone joins (and again when someone who left rejoins).
  *
@@ -258,7 +269,7 @@ export function buildInterestListWelcomeEmail(input: {
   position?: number | null;
 }) {
   const place = input.position ? formatTicketNumber(input.position) : null;
-  const subject = place ? `Welcome to Orbit — you're #${place}` : "Welcome to Orbit";
+  const subject = WELCOME_SUBJECT;
   const headline = "Your place is held.";
   const opening = `Thanks for joining the Orbit waitlist.${place ? ` You're #${place} in line.` : ""} Seats open in waves — when yours is ready, I'll email you from here.`;
   const moveUp = `Want to move up? Every friend who joins from your pass bumps you ${SPOTS_PER_REFERRAL} spots.`;
