@@ -249,6 +249,9 @@ export async function OutreachPerformanceSection({
   );
 }
 
+/** Rows shown in the Due follow-ups card; the rest sit behind "See more". */
+const DUE_FOLLOW_UPS_PREVIEW = 6;
+
 export async function RemindersAndFollowUpsSection({
   bundle,
 }: {
@@ -301,7 +304,7 @@ export async function RemindersAndFollowUpsSection({
                 <GenerateFollowUpsButton limit={8} label="Generate follow-ups" />
               </div>
             ) : (
-              data.dueFollowUps.map((c) => (
+              data.dueFollowUps.slice(0, DUE_FOLLOW_UPS_PREVIEW).map((c) => (
                 <DueFollowUpRow
                   key={c.id}
                   id={c.id}
@@ -313,6 +316,21 @@ export async function RemindersAndFollowUpsSection({
                   lastInteractionAt={c.lastInteractionAt}
                 />
               ))
+            )}
+            {Math.max(data.stats.dueFollowUps, data.dueFollowUps.length) >
+              DUE_FOLLOW_UPS_PREVIEW && (
+              <Link
+                href="/contacts?followUp=due"
+                className={cn(
+                  buttonVariants({ variant: "ghost", size: "sm" }),
+                  "w-full text-muted-foreground"
+                )}
+              >
+                {`See more (${
+                  Math.max(data.stats.dueFollowUps, data.dueFollowUps.length) -
+                  DUE_FOLLOW_UPS_PREVIEW
+                })`}
+              </Link>
             )}
           </CardContent>
         </Card>
