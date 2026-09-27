@@ -7,6 +7,8 @@
  */
 process.env.HUBSPOT_CLIENT_ID = "test-client";
 process.env.HUBSPOT_CLIENT_SECRET = "test-secret";
+process.env.SALESFORCE_CLIENT_ID = "sf-cid";
+process.env.SALESFORCE_CLIENT_SECRET = "sf-secret";
 // Deterministic: force the module's dev-secret fallback so the "hand-signed with the real
 // secret" checks below can reproduce it without reaching into the module's internals, and so
 // this suite behaves the same regardless of what happens to be in the shell environment.
@@ -15,12 +17,14 @@ if (process.env.NODE_ENV === "production") {
   (process.env as Record<string, string>).NODE_ENV = "test";
 }
 
-import { createHmac } from "crypto";
+import { createHash, createHmac } from "crypto";
 import {
   OAuthTokenError,
   buildAuthorizeUrl,
   exchangeCode,
+  isTrustedInstanceUrl,
   parseOAuthState,
+  pkceVerifierForState,
   refreshAccessToken,
   signOAuthState,
 } from "../src/lib/connectors/oauth";
@@ -280,6 +284,56 @@ async function exchange() {
     "refreshAccessToken 4xx needs reauth",
     (threwRefresh as OAuthTokenError)?.needsReauth === true
   );
+
+  // --- Salesforce: PKCE, sandbox variant, instance token host (Leads P5) ----------------
+  {
+    const url = new URL(buildAuthorizeUrl("salesforce", { userId: "u1", redirectUri: "https://orbit.test/cb", scopes: ["api", "refresh_token", "id"], returnTo: "/leads" }));
+    check("production authorizes at login.salesforce.com", url.origin === "https://login.salesforce.com" && url.pathname === "/services/oauth2/authorize", url.href);
+    const state = url.searchParams.get("state");
+    const verifier = pkceVerifierForState(state);
+    check("the state yields a verifier", typeof verifier === "string" && /^[A-Za-z0-9_-]{43}$/.test(verifier ?? ""), String(verifier));
+    const challenge = createHash("sha256").update(verifier ?? "").digest("base64url");
+    check("the challenge is S256 of that verifier", url.searchParams.get("code_challenge") === challenge && url.searchParams.get("code_challenge_method") === "S256");
+    check("the verifier is stable for one state", pkceVerifierForState(state) === verifier);
+    const other = new URL(buildAuthorizeUrl("salesforce", { userId: "u1", redirectUri: "https://orbit.test/cb", scopes: ["api"], returnTo: "/leads" })).searchParams.get("state");
+    check("and differs between states", pkceVerifierForState(other) !== verifier);
+    check("a tampered state yields none", pkceVerifierForState(`${state}x`) === null);
+    check("the verifier never appears in the URL", !url.href.includes(verifier ?? "∅"));
+
+    const sandbox = new URL(buildAuthorizeUrl("salesforce", { userId: "u1", redirectUri: "https://orbit.test/cb", scopes: ["api"], returnTo: "/leads", variant: "sandbox" }));
+    check("a sandbox authorizes at test.salesforce.com", sandbox.origin === "https://test.salesforce.com", sandbox.href);
+    check("the variant is signed into the state", parseOAuthState(sandbox.searchParams.get("state"))?.variant === "sandbox");
+    check("an unknown variant is refused", (() => { try { buildAuthorizeUrl("salesforce", { userId: "u1", redirectUri: "x", scopes: [], returnTo: "/", variant: "nope" }); return false; } catch { return true; } })());
+
+    const hub = new URL(buildAuthorizeUrl("hubspot", { userId: "u1", redirectUri: "https://orbit.test/cb", scopes: ["a"], returnTo: "/leads" }));
+    check("HubSpot sends no PKCE challenge", !hub.searchParams.has("code_challenge"));
+
+    const seen: Array<{ url: string; body: string }> = [];
+    const tokenStub = (json: object, status = 200): typeof fetch => (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ url: String(input), body: String(init?.body ?? "") });
+      return new Response(JSON.stringify(json), { status, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const sfToken = { access_token: "at", refresh_token: "rt", instance_url: "https://acme.my.salesforce.com", id: "https://login.salesforce.com/id/00D1/0051", token_type: "Bearer", issued_at: "1790000000000", signature: "sig" };
+
+    const tokens = await exchangeCode("salesforce", "code-1", "https://orbit.test/cb", { fetchImpl: tokenStub(sfToken), codeVerifier: verifier!, variant: "sandbox" });
+    check("a sandbox exchange goes to test.salesforce.com", seen.at(-1)?.url === "https://test.salesforce.com/services/oauth2/token", seen.at(-1)?.url);
+    check("and sends the verifier", new URLSearchParams(seen.at(-1)?.body).get("code_verifier") === verifier);
+    check("no expires_in means no expiry", tokens.expiresAt === null);
+    check("instance_url and id ride in extra", tokens.extra?.instance_url === "https://acme.my.salesforce.com" && tokens.extra?.id === sfToken.id);
+
+    await refreshAccessToken("salesforce", "rt", { fetchImpl: tokenStub({ access_token: "at2", instance_url: "https://acme.my.salesforce.com" }), instanceUrl: "https://acme.my.salesforce.com" });
+    check("a refresh goes to the org's own host", seen.at(-1)?.url === "https://acme.my.salesforce.com/services/oauth2/token", seen.at(-1)?.url);
+    await refreshAccessToken("salesforce", "rt", { fetchImpl: tokenStub({ access_token: "at3" }) });
+    check("without one it goes to login.salesforce.com", seen.at(-1)?.url === "https://login.salesforce.com/services/oauth2/token", seen.at(-1)?.url);
+    const refused = await refreshAccessToken("salesforce", "rt", { fetchImpl: tokenStub({ access_token: "x" }), instanceUrl: "https://evil.example" }).then(() => null, (e: unknown) => e);
+    check("an untrusted instance host is never sent the refresh token", refused instanceof OAuthTokenError && refused.needsReauth && !seen.some((s) => s.url.startsWith("https://evil.example")));
+    const bad = await refreshAccessToken("salesforce", "rt", { fetchImpl: tokenStub({ error: "invalid_grant", error_description: "expired access/refresh token" }, 400), instanceUrl: "https://acme.my.salesforce.com" }).then(() => null, (e: unknown) => e);
+    check("invalid_grant means reconnect", bad instanceof OAuthTokenError && bad.needsReauth);
+
+    check("isTrustedInstanceUrl trusts a My Domain host", isTrustedInstanceUrl("salesforce", "https://acme.my.salesforce.com"));
+    check("and refuses look-alikes", !isTrustedInstanceUrl("salesforce", "https://salesforce.com.evil.example") && !isTrustedInstanceUrl("salesforce", "http://acme.my.salesforce.com") && !isTrustedInstanceUrl("salesforce", "https://evilsalesforce.com"));
+    check("a provider without instance hosts trusts none", !isTrustedInstanceUrl("hubspot", "https://api.hubapi.com"));
+  }
 }
 
 exchange().then(() => {

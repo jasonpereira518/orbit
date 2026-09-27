@@ -10,13 +10,21 @@
  * A retryable failure (the token endpoint timing out, a 5xx) is NOT a reason to reconnect: it
  * propagates unchanged so the scheduler backs off. That split is the whole point of
  * `OAuthTokenError.needsReauth`.
+ *
+ * Providers that never say when a token expires (Salesforce) have a null `tokenExpiresAt`, so
+ * only the reactive half runs for them.
  */
 import {
   markConnectorNeedsReauth,
   updateConnectorTokens,
   type ClaimedConnectorConnection,
 } from "@/lib/connectors/connections";
-import { OAuthTokenError, refreshAccessToken, type OAuthTokens } from "@/lib/connectors/oauth";
+import {
+  OAuthTokenError,
+  isTrustedInstanceUrl,
+  refreshAccessToken,
+  type OAuthTokens,
+} from "@/lib/connectors/oauth";
 import { ConnectorAuthError, ConnectorNeedsReauthError } from "@/lib/connectors/auth-errors";
 
 export { ConnectorAuthError, ConnectorNeedsReauthError };
@@ -31,7 +39,7 @@ export type ConnectorAuth = {
 
 export type ConnectorAuthDeps = {
   now?: () => Date;
-  refresh?: (connectorId: string, refreshToken: string) => Promise<OAuthTokens>;
+  refresh?: (connectorId: string, refreshToken: string, instanceUrl: string | null) => Promise<OAuthTokens>;
   persist?: typeof updateConnectorTokens;
   markNeedsReauth?: typeof markConnectorNeedsReauth;
 };
@@ -43,7 +51,9 @@ export function openConnectorAuth(
   deps: ConnectorAuthDeps = {}
 ): ConnectorAuth {
   const now = deps.now ?? (() => new Date());
-  const refresh = deps.refresh ?? ((id: string, token: string) => refreshAccessToken(id, token));
+  const refresh =
+    deps.refresh ??
+    ((id: string, token: string, instanceUrl: string | null) => refreshAccessToken(id, token, { instanceUrl }));
   const persist = deps.persist ?? updateConnectorTokens;
   const markNeedsReauth = deps.markNeedsReauth ?? markConnectorNeedsReauth;
   let reactiveUsed = false;
@@ -57,19 +67,27 @@ export function openConnectorAuth(
     if (!conn.refreshToken) return giveUp(reason);
     let tokens: OAuthTokens;
     try {
-      tokens = await refresh(conn.connectorId, conn.refreshToken);
+      tokens = await refresh(conn.connectorId, conn.refreshToken, conn.instanceUrl);
     } catch (err) {
       if (err instanceof OAuthTokenError && err.needsReauth) return giveUp(err.message);
       throw err;
     }
+    // Salesforce names the org's host on every refresh; an org moved to a new instance says so here.
+    const movedTo = tokens.extra?.instance_url;
+    const instanceUrl =
+      movedTo && movedTo !== conn.instanceUrl && isTrustedInstanceUrl(conn.connectorId, movedTo)
+        ? movedTo
+        : null;
     await persist(conn.id, {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
+      instanceUrl,
     });
     conn.accessToken = tokens.accessToken;
     if (tokens.refreshToken) conn.refreshToken = tokens.refreshToken;
     conn.tokenExpiresAt = tokens.expiresAt;
+    if (instanceUrl) conn.instanceUrl = instanceUrl;
     return tokens.accessToken;
   }
 

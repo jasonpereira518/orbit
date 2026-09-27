@@ -9,8 +9,9 @@
  * touches the database. The caller persists the result through
  * `upsertConnectorConnection`.
  */
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { safeReturnPath } from "@/lib/safe-return-path";
+import { isTrustedSalesforceUrl } from "@/lib/crm/salesforce/mapping";
 
 export type OAuthProviderConfig = {
   authorizeUrl: string;
@@ -19,6 +20,18 @@ export type OAuthProviderConfig = {
   clientSecretEnv: string;
   /** Extra authorize-time parameters a provider demands. */
   extraAuthParams?: Record<string, string>;
+  /**
+   * RFC 7636 S256. The verifier is never stored: it is derived from the state's nonce with a
+   * server-only key (`pkceVerifierForState`), so the callback recomputes it from the state it
+   * is handed and an observer of the authorize URL cannot.
+   */
+  pkce?: boolean;
+  /** Alternate login hosts, chosen by a signed `OAuthState.variant` (Salesforce's sandbox). */
+  variants?: Record<string, { authorizeUrl: string; tokenUrl: string }>;
+  /** For providers whose token endpoint lives on the account's own host: the path on it. */
+  instanceTokenPath?: string;
+  /** Which account hosts may be sent this provider's tokens. Absent = none. */
+  trustInstanceUrl?: (url: string) => boolean;
 };
 
 /**
@@ -32,6 +45,24 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     tokenUrl: "https://api.hubapi.com/oauth/2026-09/token",
     clientIdEnv: "HUBSPOT_CLIENT_ID",
     clientSecretEnv: "HUBSPOT_CLIENT_SECRET",
+  },
+  salesforce: {
+    authorizeUrl: "https://login.salesforce.com/services/oauth2/authorize",
+    tokenUrl: "https://login.salesforce.com/services/oauth2/token",
+    clientIdEnv: "SALESFORCE_CLIENT_ID",
+    clientSecretEnv: "SALESFORCE_CLIENT_SECRET",
+    // External Client Apps are created with "Require PKCE" on; the web server flow still
+    // sends the secret too ("Require Secret for Web Server Flow").
+    pkce: true,
+    variants: {
+      sandbox: {
+        authorizeUrl: "https://test.salesforce.com/services/oauth2/authorize",
+        tokenUrl: "https://test.salesforce.com/services/oauth2/token",
+      },
+    },
+    // The org's My Domain answers refreshes for production and sandboxes alike.
+    instanceTokenPath: "/services/oauth2/token",
+    trustInstanceUrl: isTrustedSalesforceUrl,
   },
   // Notion is deliberately NOT wired up here. Its token endpoint requires HTTP Basic
   // client-credential auth plus a JSON request body, and returns neither `refresh_token`
@@ -81,6 +112,8 @@ export type OAuthState = {
   connectorId: string;
   /** Always an app-relative path — see `safeReturnTo`. */
   returnTo: string;
+  /** A provider's alternate login host (`OAuthProviderConfig.variants`). Signed like the rest. */
+  variant?: string;
 };
 
 /** What actually gets signed: `OAuthState` plus the replay defenses described below. */
@@ -93,6 +126,7 @@ type SignedStatePayload = OAuthState & {
   nonce: string;
   /** Unix ms the state was issued, checked against `OAUTH_STATE_TTL_MS` on parse. */
   iat: number;
+  variant?: string;
 };
 
 /**
@@ -167,20 +201,32 @@ function safeReturnTo(value: string | undefined | null): string {
   return safeReturnPath(value) ?? "/settings";
 }
 
-export function signOAuthState(state: OAuthState): string {
+function mintState(state: OAuthState): { raw: string; nonce: string } {
   const payload: SignedStatePayload = {
     userId: state.userId,
     connectorId: state.connectorId,
     returnTo: safeReturnTo(state.returnTo),
+    ...(state.variant ? { variant: state.variant } : {}),
     nonce: randomBytes(16).toString("hex"),
     iat: Date.now(),
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const mac = createHmac("sha256", stateKey()).update(encoded).digest("base64url");
-  return `${encoded}.${mac}`;
+  return { raw: `${encoded}.${mac}`, nonce: payload.nonce };
 }
 
-export function parseOAuthState(raw: string | null | undefined): OAuthState | null {
+export function signOAuthState(state: OAuthState): string {
+  return mintState(state).raw;
+}
+
+/**
+ * Verifies the signature, checks freshness, and sanitizes — independent of whatever
+ * `signOAuthState` already did on the way in, since this is what actually protects the
+ * callback: it runs on whatever a validly-signed payload contains, not on whatever this
+ * module happened to sign most recently. Returns the raw payload (including `nonce`), which
+ * `parseOAuthState` trims down and `pkceVerifierForState` uses directly.
+ */
+function readSignedState(raw: string | null | undefined): SignedStatePayload | null {
   if (!raw) return null;
   const [payload, mac] = raw.split(".");
   if (!payload || !mac) return null;
@@ -195,22 +241,51 @@ export function parseOAuthState(raw: string | null | undefined): OAuthState | nu
     const parsed = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")
     ) as Partial<SignedStatePayload>;
-    if (!parsed.userId || !parsed.connectorId) return null;
+    if (!parsed.userId || !parsed.connectorId || !parsed.nonce) return null;
     if (typeof parsed.iat !== "number" || Date.now() - parsed.iat > OAUTH_STATE_TTL_MS) {
       return null;
     }
-    // Sanitized again here, independent of `signOAuthState` having already sanitized on the
-    // way in: this is the check that actually protects the callback, since it runs on
-    // whatever a validly-signed payload contains, not on whatever this module happened to
-    // sign most recently.
     return {
       userId: parsed.userId,
       connectorId: parsed.connectorId,
       returnTo: safeReturnTo(parsed.returnTo),
+      ...(typeof parsed.variant === "string" && /^[a-z]{1,32}$/.test(parsed.variant)
+        ? { variant: parsed.variant }
+        : {}),
+      nonce: parsed.nonce,
+      iat: parsed.iat,
     };
   } catch {
     return null;
   }
+}
+
+export function parseOAuthState(raw: string | null | undefined): OAuthState | null {
+  const payload = readSignedState(raw);
+  if (!payload) return null;
+  return {
+    userId: payload.userId,
+    connectorId: payload.connectorId,
+    returnTo: payload.returnTo,
+    ...(payload.variant ? { variant: payload.variant } : {}),
+  };
+}
+
+/**
+ * Its own label, never the state key: see STATE_HMAC_LABEL on why purposes don't share a key.
+ */
+const PKCE_HMAC_LABEL = "orbit:connector-oauth-pkce:v1";
+
+function pkceVerifierForNonce(nonce: string): string {
+  const key = createHmac("sha256", stateSecret()).update(PKCE_HMAC_LABEL).digest();
+  // 32 bytes → 43 base64url characters: inside RFC 7636's 43–128 and its unreserved alphabet.
+  return createHmac("sha256", key).update(nonce).digest("base64url");
+}
+
+/** The PKCE verifier for a state this server signed — null when the state is invalid or expired. */
+export function pkceVerifierForState(raw: string | null | undefined): string | null {
+  const payload = readSignedState(raw);
+  return payload ? pkceVerifierForNonce(payload.nonce) : null;
 }
 
 function providerOrThrow(connectorId: string): OAuthProviderConfig {
@@ -240,13 +315,25 @@ export function isOAuthConfigured(connectorId: string): boolean {
   return Boolean(process.env[provider.clientIdEnv]?.trim() && process.env[provider.clientSecretEnv]?.trim());
 }
 
+function variantOrThrow(
+  connectorId: string,
+  provider: OAuthProviderConfig,
+  variant: string | undefined
+): { authorizeUrl: string; tokenUrl: string } {
+  if (!variant) return { authorizeUrl: provider.authorizeUrl, tokenUrl: provider.tokenUrl };
+  const hosts = provider.variants?.[variant];
+  if (!hosts) throw new Error(`Connector "${connectorId}" has no "${variant}" login host`);
+  return hosts;
+}
+
 export function buildAuthorizeUrl(
   connectorId: string,
-  opts: { userId: string; redirectUri: string; scopes: string[]; returnTo: string }
+  opts: { userId: string; redirectUri: string; scopes: string[]; returnTo: string; variant?: string }
 ): string {
   const provider = providerOrThrow(connectorId);
   const { id } = clientCredentials(provider);
-  const url = new URL(provider.authorizeUrl);
+  const host = variantOrThrow(connectorId, provider, opts.variant);
+  const url = new URL(host.authorizeUrl);
   // Applied first, not last: a provider's `extraAuthParams` must never be able to silently
   // overwrite a parameter we control. `URLSearchParams.set` replaces any existing value at
   // that key, so whichever of `client_id`/`redirect_uri`/`response_type`/`scope`/`state` we
@@ -258,10 +345,20 @@ export function buildAuthorizeUrl(
   url.searchParams.set("redirect_uri", opts.redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", opts.scopes.join(" "));
-  url.searchParams.set(
-    "state",
-    signOAuthState({ userId: opts.userId, connectorId, returnTo: opts.returnTo })
-  );
+  const state = mintState({
+    userId: opts.userId,
+    connectorId,
+    returnTo: opts.returnTo,
+    ...(opts.variant ? { variant: opts.variant } : {}),
+  });
+  url.searchParams.set("state", state.raw);
+  if (provider.pkce) {
+    url.searchParams.set(
+      "code_challenge",
+      createHash("sha256").update(pkceVerifierForNonce(state.nonce)).digest("base64url")
+    );
+    url.searchParams.set("code_challenge_method", "S256");
+  }
   return url.toString();
 }
 
@@ -308,13 +405,13 @@ function truncateProviderMessage(message: string): string {
 }
 
 async function postToken(
-  provider: OAuthProviderConfig,
+  tokenUrl: string,
   body: URLSearchParams,
   fetchImpl: typeof fetch
 ): Promise<OAuthTokens> {
   let res: Response;
   try {
-    res = await fetchImpl(provider.tokenUrl, {
+    res = await fetchImpl(tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,
@@ -368,32 +465,49 @@ export async function exchangeCode(
   connectorId: string,
   code: string,
   redirectUri: string,
-  opts: { fetchImpl?: typeof fetch } = {}
+  opts: { fetchImpl?: typeof fetch; codeVerifier?: string; variant?: string } = {}
 ): Promise<OAuthTokens> {
   const provider = providerOrThrow(connectorId);
   const { id, secret } = clientCredentials(provider);
-  return postToken(
-    provider,
-    new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri,
-      client_id: id,
-      client_secret: secret,
-    }),
-    opts.fetchImpl ?? fetch
-  );
+  const { tokenUrl } = variantOrThrow(connectorId, provider, opts.variant);
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+    client_id: id,
+    client_secret: secret,
+  });
+  if (opts.codeVerifier) body.set("code_verifier", opts.codeVerifier);
+  return postToken(tokenUrl, body, opts.fetchImpl ?? fetch);
+}
+
+/** Whether `url` is a host this provider's tokens may be sent to (Salesforce's `instance_url`). */
+export function isTrustedInstanceUrl(
+  connectorId: string,
+  url: string | null | undefined
+): url is string {
+  const provider = OAUTH_PROVIDERS[connectorId];
+  return Boolean(url && provider?.trustInstanceUrl?.(url));
 }
 
 export async function refreshAccessToken(
   connectorId: string,
   refreshToken: string,
-  opts: { fetchImpl?: typeof fetch } = {}
+  opts: { fetchImpl?: typeof fetch; instanceUrl?: string | null } = {}
 ): Promise<OAuthTokens> {
   const provider = providerOrThrow(connectorId);
   const { id, secret } = clientCredentials(provider);
+  let tokenUrl = provider.tokenUrl;
+  if (provider.instanceTokenPath && opts.instanceUrl) {
+    // A stored host that fails the check was never written by Orbit's own connect: refuse to
+    // hand it the refresh token, and ask for a reconnect that stores a good one.
+    if (!isTrustedInstanceUrl(connectorId, opts.instanceUrl)) {
+      throw new OAuthTokenError("The stored account host isn’t one Orbit trusts", true);
+    }
+    tokenUrl = new URL(provider.instanceTokenPath, opts.instanceUrl).href;
+  }
   return postToken(
-    provider,
+    tokenUrl,
     new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,

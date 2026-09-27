@@ -12,6 +12,7 @@ import { getDb } from "../src/db";
 import { connectorConnections } from "../src/db/schema";
 import {
   claimConnectorConnectionForUser,
+  updateConnectorTokens,
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
 import { OAuthTokenError, type OAuthTokens } from "../src/lib/connectors/oauth";
@@ -30,19 +31,26 @@ function check(label: string, ok: boolean, detail = "") {
 
 const USER = "smoke-connector-token";
 
-async function fresh(opts: { expiresInMs: number | null; refreshToken?: string | null }) {
+async function fresh(opts: {
+  expiresInMs: number | null;
+  refreshToken?: string | null;
+  connectorId?: string;
+  instanceUrl?: string | null;
+}) {
+  const connectorId = opts.connectorId ?? "hubspot";
   const db = await getDb();
   await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));
   await upsertConnectorConnection({
     userId: USER,
-    connectorId: "hubspot",
+    connectorId,
     authKind: "oauth2",
     accessToken: "access-old",
     refreshToken: opts.refreshToken === undefined ? "refresh-old" : opts.refreshToken,
     tokenExpiresAt: opts.expiresInMs === null ? null : new Date(Date.now() + opts.expiresInMs),
     nextSyncAt: null,
+    instanceUrl: opts.instanceUrl,
   });
-  const conn = await claimConnectorConnectionForUser(USER, "hubspot");
+  const conn = await claimConnectorConnectionForUser(USER, connectorId);
   if (!conn) throw new Error("setup: could not claim");
   return conn;
 }
@@ -166,6 +174,68 @@ run(async () => {
     }
     check("it throws ConnectorNeedsReauthError", caught instanceof ConnectorNeedsReauthError);
     check("without trying to refresh", r.calls.length === 0);
+  }
+
+  console.log("\na Salesforce refresh carries the stored instance host and adopts a moved one");
+  {
+    const conn = await fresh({
+      expiresInMs: null,
+      connectorId: "salesforce",
+      instanceUrl: "https://acme.my.salesforce.com",
+    });
+    const seenInstanceUrls: Array<string | null> = [];
+    const persisted: Array<Parameters<typeof updateConnectorTokens>[1]> = [];
+    const refresh = async (_id: string, _refreshToken: string, instanceUrl: string | null) => {
+      seenInstanceUrls.push(instanceUrl);
+      return {
+        accessToken: "new",
+        refreshToken: null,
+        expiresAt: null,
+        scopes: null,
+        extra: { instance_url: "https://acme2.my.salesforce.com" },
+      };
+    };
+    const persist = async (id: string, tokens: Parameters<typeof updateConnectorTokens>[1]) => {
+      persisted.push(tokens);
+      return updateConnectorTokens(id, tokens);
+    };
+    const seen: string[] = [];
+    await openConnectorAuth(conn, { refresh, persist }).call(async (t) => {
+      seen.push(t);
+      if (t === "access-old") throw new ConnectorAuthError("401");
+    });
+    check("the refresh received the stored instance host", seenInstanceUrls[0] === "https://acme.my.salesforce.com", String(seenInstanceUrls[0]));
+    check("persist got the new instance host", persisted[0]?.instanceUrl === "https://acme2.my.salesforce.com", String(persisted[0]?.instanceUrl));
+    check("persist got a null refresh token", persisted[0]?.refreshToken === null);
+    check("the connection's instance host is now the new one", conn.instanceUrl === "https://acme2.my.salesforce.com");
+    check("the refresh token in memory is unchanged", conn.refreshToken === "refresh-old");
+    check("the second call used the new token", seen[1] === "new", seen.join(","));
+  }
+
+  console.log("\nan untrusted moved instance host is never adopted");
+  {
+    const conn = await fresh({
+      expiresInMs: null,
+      connectorId: "salesforce",
+      instanceUrl: "https://acme.my.salesforce.com",
+    });
+    const persisted: Array<Parameters<typeof updateConnectorTokens>[1]> = [];
+    const refresh = async () => ({
+      accessToken: "new",
+      refreshToken: null,
+      expiresAt: null,
+      scopes: null,
+      extra: { instance_url: "https://evil.example" },
+    });
+    const persist = async (id: string, tokens: Parameters<typeof updateConnectorTokens>[1]) => {
+      persisted.push(tokens);
+      return updateConnectorTokens(id, tokens);
+    };
+    await openConnectorAuth(conn, { refresh, persist }).call(async (t) => {
+      if (t === "access-old") throw new ConnectorAuthError("401");
+    });
+    check("an untrusted moved host is persisted as null", persisted[0]?.instanceUrl === null, String(persisted[0]?.instanceUrl));
+    check("the connection's instance host is unchanged", conn.instanceUrl === "https://acme.my.salesforce.com");
   }
 
   const db = await getDb();
