@@ -18,6 +18,7 @@ import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach
 import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
 import { buttonVariants } from "@/components/ui/button";
 import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
+import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
@@ -46,6 +47,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
       name: "Unknown contact",
       title: null as string | null,
       company: null as string | null,
+      lastInteractionAt: null as Date | null,
     };
   }
   const c = data.contactById.get(contactId);
@@ -53,6 +55,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
     name: data.contactNameById.get(contactId) || c?.fullName || "Contact",
     title: c?.title ?? null,
     company: c?.company ?? null,
+    lastInteractionAt: c?.lastInteractionAt ?? null,
   };
 }
 
@@ -210,6 +213,7 @@ export async function SuggestedOutreachSection({
             contactName: meta.name,
             contactTitle: meta.title,
             contactCompany: meta.company,
+            lastInteractionAt: meta.lastInteractionAt,
             tier: contactId ? tierForContact(data, contactId) : undefined,
           };
         })}
@@ -248,6 +252,9 @@ export async function OutreachPerformanceSection({
     </div>
   );
 }
+
+/** Rows shown in the Due follow-ups card; the rest sit behind "See more". */
+const DUE_FOLLOW_UPS_PREVIEW = 6;
 
 export async function RemindersAndFollowUpsSection({
   bundle,
@@ -301,7 +308,7 @@ export async function RemindersAndFollowUpsSection({
                 <GenerateFollowUpsButton limit={8} label="Generate follow-ups" />
               </div>
             ) : (
-              data.dueFollowUps.map((c) => (
+              data.dueFollowUps.slice(0, DUE_FOLLOW_UPS_PREVIEW).map((c) => (
                 <DueFollowUpRow
                   key={c.id}
                   id={c.id}
@@ -313,6 +320,21 @@ export async function RemindersAndFollowUpsSection({
                   lastInteractionAt={c.lastInteractionAt}
                 />
               ))
+            )}
+            {Math.max(data.stats.dueFollowUps, data.dueFollowUps.length) >
+              DUE_FOLLOW_UPS_PREVIEW && (
+              <Link
+                href="/contacts?followUp=due"
+                className={cn(
+                  buttonVariants({ variant: "ghost", size: "sm" }),
+                  "w-full text-muted-foreground"
+                )}
+              >
+                {`See more (${
+                  Math.max(data.stats.dueFollowUps, data.dueFollowUps.length) -
+                  DUE_FOLLOW_UPS_PREVIEW
+                })`}
+              </Link>
             )}
           </CardContent>
         </Card>
@@ -381,7 +403,16 @@ export async function RecentlyUpdatedSection({
                     <div className="min-w-0">
                       <p className="font-medium">{c.fullName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {c.company || "No company"}
+                        {c.company ? (
+                          <span
+                            className="font-medium"
+                            style={{ color: companyBrandColor(c.company) ?? undefined }}
+                          >
+                            {c.company}
+                          </span>
+                        ) : (
+                          "No company"
+                        )}
                       </p>
                     </div>
                   </div>

@@ -1091,7 +1091,8 @@
             "fullName": "Amara Diallo",
             "preferredName": null,
             "title": "Head of Talent",
-            "company": "Bellwether Ventures"
+            "company": "Bellwether Ventures",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1101,7 +1102,8 @@
             "fullName": "Olivia Brooks",
             "preferredName": null,
             "title": "Alumni Relations Lead",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1111,7 +1113,8 @@
             "fullName": "Ben Carter",
             "preferredName": null,
             "title": "Computer Science Student",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1121,7 +1124,8 @@
             "fullName": "Priya Nair",
             "preferredName": null,
             "title": "Founding Engineer",
-            "company": "Notion"
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1131,7 +1135,8 @@
             "fullName": "Marcus Webb",
             "preferredName": null,
             "title": "Engineering Lead",
-            "company": "Linear"
+            "company": "Linear",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1141,7 +1146,8 @@
             "fullName": "Andre Silva",
             "preferredName": null,
             "title": "Head of Platform",
-            "company": "Google"
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1151,7 +1157,8 @@
             "fullName": "Victor Reyes",
             "preferredName": null,
             "title": "Software Engineer",
-            "company": "Anthropic"
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1161,7 +1168,8 @@
             "fullName": "Maya Thompson",
             "preferredName": null,
             "title": "Program Director",
-            "company": "Innovate Carolina"
+            "company": "Innovate Carolina",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1171,7 +1179,8 @@
             "fullName": "Fatima Nasser",
             "preferredName": null,
             "title": "Product Manager",
-            "company": "Stripe"
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1181,7 +1190,8 @@
             "fullName": "David Kim",
             "preferredName": null,
             "title": "Engineering Manager",
-            "company": "OpenAI"
+            "company": "OpenAI",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1191,7 +1201,8 @@
             "fullName": "Daniel Osei",
             "preferredName": null,
             "title": "Founder & CTO",
-            "company": "Northlight Robotics"
+            "company": "Northlight Robotics",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1201,7 +1212,8 @@
             "fullName": "Hassan Ali",
             "preferredName": null,
             "title": "Senior Backend Engineer",
-            "company": "Notion"
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1211,7 +1223,8 @@
             "fullName": "Marcus Lee",
             "preferredName": null,
             "title": "Technical Recruiter",
-            "company": "Stripe"
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1221,7 +1234,8 @@
             "fullName": "Yuki Tanaka",
             "preferredName": null,
             "title": "Research Scientist",
-            "company": "Anthropic"
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1231,7 +1245,8 @@
             "fullName": "Grace Whitfield",
             "preferredName": null,
             "title": "Angel Investor",
-            "company": "Independent"
+            "company": "Independent",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1241,7 +1256,8 @@
             "fullName": "Sarah Chen",
             "preferredName": null,
             "title": "Partnerships Lead",
-            "company": "OpenAI"
+            "company": "OpenAI",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1251,7 +1267,8 @@
             "fullName": "Chris Nowak",
             "preferredName": null,
             "title": "Engineering Manager",
-            "company": "Google"
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1261,7 +1278,8 @@
             "fullName": "Sofia Marchetti",
             "preferredName": null,
             "title": "Design Lead",
-            "company": "Figma"
+            "company": "Figma",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1271,7 +1289,8 @@
             "fullName": "Leo Fernandez",
             "preferredName": null,
             "title": "Founder",
-            "company": "Tidepool Analytics"
+            "company": "Tidepool Analytics",
+            "lastInteractionAt": "<ts>"
           }
         ]
       ]
@@ -3272,7 +3291,9 @@
         "url": "/contacts/<contacts:Olivia Brooks>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Olivia Brooks>"
+        "contactId": "<contacts:Olivia Brooks>",
+        "contactTitle": "Alumni Relations Lead",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "followup:<contacts:Ben Carter>:<date>",
@@ -3282,7 +3303,9 @@
         "url": "/contacts/<contacts:Ben Carter>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Ben Carter>"
+        "contactId": "<contacts:Ben Carter>",
+        "contactTitle": "Computer Science Student",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "reminder:<reminders:Send Sarah the retrieval write-up>",
@@ -3303,7 +3326,9 @@
         "url": "/contacts/<contacts:Sarah Chen>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Sarah Chen>"
+        "contactId": "<contacts:Sarah Chen>",
+        "contactTitle": "Partnerships Lead",
+        "company": "OpenAI"
       },
       {
         "id": "reminder:<reminders:Send Grace the quarterly update>",
@@ -3324,7 +3349,9 @@
         "url": "/contacts/<contacts:Grace Whitfield>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Grace Whitfield>"
+        "contactId": "<contacts:Grace Whitfield>",
+        "contactTitle": "Angel Investor",
+        "company": "Independent"
       },
       {
         "id": "reminder:<reminders:Add James to the monthly update>",
@@ -3345,7 +3372,9 @@
         "url": "/contacts/<contacts:James Okafor>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:James Okafor>"
+        "contactId": "<contacts:James Okafor>",
+        "contactTitle": "Partner",
+        "company": "Bellwether Ventures"
       },
       {
         "id": "followup:<contacts:David Kim>:<date>",
@@ -3355,7 +3384,9 @@
         "url": "/contacts/<contacts:David Kim>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:David Kim>"
+        "contactId": "<contacts:David Kim>",
+        "contactTitle": "Engineering Manager",
+        "company": "OpenAI"
       },
       {
         "id": "reminder:<reminders:Send Maya the showcase one-liner>",
@@ -3398,7 +3429,9 @@
         "url": "/contacts/<contacts:Maya Thompson>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Maya Thompson>"
+        "contactId": "<contacts:Maya Thompson>",
+        "contactTitle": "Program Director",
+        "company": "Innovate Carolina"
       },
       {
         "id": "followup:<contacts:Dr. Elena Vasquez>:<date>",
@@ -3408,7 +3441,9 @@
         "url": "/contacts/<contacts:Dr. Elena Vasquez>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Dr. Elena Vasquez>"
+        "contactId": "<contacts:Dr. Elena Vasquez>",
+        "contactTitle": "Professor of Computer Science",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "reminder:<reminders:Call Tom about API versioning>",
@@ -3429,7 +3464,9 @@
         "url": "/contacts/<contacts:Fatima Nasser>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Fatima Nasser>"
+        "contactId": "<contacts:Fatima Nasser>",
+        "contactTitle": "Product Manager",
+        "company": "Stripe"
       },
       {
         "id": "followup:<contacts:Marcus Lee>:<date>",
@@ -3439,7 +3476,9 @@
         "url": "/contacts/<contacts:Marcus Lee>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Marcus Lee>"
+        "contactId": "<contacts:Marcus Lee>",
+        "contactTitle": "Technical Recruiter",
+        "company": "Stripe"
       },
       {
         "id": "reminder:<reminders:Book a venue for the Orbit user dinner>",
@@ -3460,7 +3499,9 @@
         "url": "/contacts/<contacts:Victor Reyes>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Victor Reyes>"
+        "contactId": "<contacts:Victor Reyes>",
+        "contactTitle": "Software Engineer",
+        "company": "Anthropic"
       },
       {
         "id": "followup:<contacts:Aisha Rahman>:<date>",
@@ -3470,7 +3511,9 @@
         "url": "/contacts/<contacts:Aisha Rahman>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Aisha Rahman>"
+        "contactId": "<contacts:Aisha Rahman>",
+        "contactTitle": "Senior Product Manager",
+        "company": "Google"
       },
       {
         "id": "followup:<contacts:Priya Nair>:<date>",
@@ -3480,7 +3523,9 @@
         "url": "/contacts/<contacts:Priya Nair>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Priya Nair>"
+        "contactId": "<contacts:Priya Nair>",
+        "contactTitle": "Founding Engineer",
+        "company": "Notion"
       },
       {
         "id": "followup:<contacts:Nina Petrova>:<date>",
@@ -3490,7 +3535,9 @@
         "url": "/contacts/<contacts:Nina Petrova>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Nina Petrova>"
+        "contactId": "<contacts:Nina Petrova>",
+        "contactTitle": "Co-founder & CEO",
+        "company": "Lumen Health"
       },
       {
         "id": "suggested_reminder:<suggested_reminders:Send Nina the pricing draft>",
@@ -8423,7 +8470,8 @@
             "fullName": "Rachel Adeyemi",
             "preferredName": null,
             "title": "Director of Talent",
-            "company": "Figma"
+            "company": "Figma",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8433,7 +8481,8 @@
             "fullName": "Nina Petrova",
             "preferredName": null,
             "title": "Co-founder & CEO",
-            "company": "Lumen Health"
+            "company": "Lumen Health",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8443,7 +8492,8 @@
             "fullName": "James Okafor",
             "preferredName": null,
             "title": "Partner",
-            "company": "Bellwether Ventures"
+            "company": "Bellwether Ventures",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8453,7 +8503,8 @@
             "fullName": "Amara Diallo",
             "preferredName": null,
             "title": "Head of Talent",
-            "company": "Bellwether Ventures"
+            "company": "Bellwether Ventures",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8463,7 +8514,8 @@
             "fullName": "Olivia Brooks",
             "preferredName": null,
             "title": "Alumni Relations Lead",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8473,7 +8525,8 @@
             "fullName": "Ben Carter",
             "preferredName": null,
             "title": "Computer Science Student",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8483,7 +8536,8 @@
             "fullName": "Priya Nair",
             "preferredName": null,
             "title": "Founding Engineer",
-            "company": "Notion"
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8493,7 +8547,8 @@
             "fullName": "Marcus Webb",
             "preferredName": null,
             "title": "Engineering Lead",
-            "company": "Linear"
+            "company": "Linear",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8503,7 +8558,8 @@
             "fullName": "Andre Silva",
             "preferredName": null,
             "title": "Head of Platform",
-            "company": "Google"
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8513,7 +8569,8 @@
             "fullName": "Victor Reyes",
             "preferredName": null,
             "title": "Software Engineer",
-            "company": "Anthropic"
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8523,7 +8580,8 @@
             "fullName": "Maya Thompson",
             "preferredName": null,
             "title": "Program Director",
-            "company": "Innovate Carolina"
+            "company": "Innovate Carolina",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8533,7 +8591,8 @@
             "fullName": "Fatima Nasser",
             "preferredName": null,
             "title": "Product Manager",
-            "company": "Stripe"
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8543,7 +8602,8 @@
             "fullName": "David Kim",
             "preferredName": null,
             "title": "Engineering Manager",
-            "company": "OpenAI"
+            "company": "OpenAI",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8553,7 +8613,8 @@
             "fullName": "Daniel Osei",
             "preferredName": null,
             "title": "Founder & CTO",
-            "company": "Northlight Robotics"
+            "company": "Northlight Robotics",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8563,7 +8624,8 @@
             "fullName": "Hassan Ali",
             "preferredName": null,
             "title": "Senior Backend Engineer",
-            "company": "Notion"
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8573,7 +8635,8 @@
             "fullName": "Marcus Lee",
             "preferredName": null,
             "title": "Technical Recruiter",
-            "company": "Stripe"
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8583,7 +8646,8 @@
             "fullName": "Yuki Tanaka",
             "preferredName": null,
             "title": "Research Scientist",
-            "company": "Anthropic"
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8593,7 +8657,8 @@
             "fullName": "Grace Whitfield",
             "preferredName": null,
             "title": "Angel Investor",
-            "company": "Independent"
+            "company": "Independent",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8603,7 +8668,8 @@
             "fullName": "Chris Nowak",
             "preferredName": null,
             "title": "Engineering Manager",
-            "company": "Google"
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8613,7 +8679,8 @@
             "fullName": "Sofia Marchetti",
             "preferredName": null,
             "title": "Design Lead",
-            "company": "Figma"
+            "company": "Figma",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8623,7 +8690,8 @@
             "fullName": "Leo Fernandez",
             "preferredName": null,
             "title": "Founder",
-            "company": "Tidepool Analytics"
+            "company": "Tidepool Analytics",
+            "lastInteractionAt": "<ts>"
           }
         ]
       ]
