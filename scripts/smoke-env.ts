@@ -25,10 +25,10 @@ const GOOD: Record<string, string> = {
   CLERK_WEBHOOK_SIGNING_SECRET: "whsec_abc",
   ENCRYPTION_SECRET: "a".repeat(40),
   CRON_SECRET: "b".repeat(24),
-  APP_BASE_URL: "https://orbit.jasonpereira.live",
+  APP_BASE_URL: "https://myorbitnetwork.com",
   ADMIN_USER_IDS: "user_123",
   RESEND_API_KEY: "re_abc",
-  RESEND_FROM_EMAIL: "orbit@jasonpereira.live",
+  RESEND_FROM_EMAIL: "orbit@myorbitnetwork.com",
   STRIPE_SECRET_KEY: "sk_live_stripe",
   STRIPE_WEBHOOK_SECRET: "whsec_stripe",
   STRIPE_LIFETIME_PRICE_ID: "price_1",
@@ -151,11 +151,11 @@ function main() {
   check("a waitlist host needs its own sender", noSender.errors.some((e) => e.includes("WAITLIST_FROM_EMAIL")), noSender.errors.join("; "));
   const own = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "Jason <hello@join.example>" });
   check("a sender on the waitlist's own domain is fine", own.errors.length === 0, own.errors.join("; "));
-  for (const leaky of ["hello@orbit.jasonpereira.live", "Jason <hi@jasonpereira.live>"]) {
+  for (const leaky of ["hello@myorbitnetwork.com", "Jason <hi@myorbitnetwork.com>"]) {
     const r = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: leaky });
     check(`a sender on the app's domain is refused (${leaky})`, r.errors.some((e) => e.includes("WAITLIST_FROM_EMAIL")), r.errors.join("; "));
   }
-  const leakyReply = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_REPLY_TO: "orbit@jasonpereira.live" });
+  const leakyReply = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_REPLY_TO: "orbit@myorbitnetwork.com" });
   check("a reply-to on the app's domain is refused", leakyReply.errors.some((e) => e.includes("WAITLIST_REPLY_TO")));
   const gmailSender = prod({
     RESEND_FROM_EMAIL: "someone@gmail.com",

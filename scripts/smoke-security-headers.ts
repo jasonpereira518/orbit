@@ -25,8 +25,8 @@ const header = (headers: Array<{ key: string; value: string }>, key: string) =>
 function main() {
   console.log("Clerk frontend API host...");
   // A publishable key is `pk_<env>_` + base64("<frontend-api-host>$").
-  const pk = "pk_live_" + Buffer.from("clerk.orbit.jasonpereira.live$").toString("base64");
-  check("derived from a live publishable key", clerkFrontendApiHost(pk) === "clerk.orbit.jasonpereira.live");
+  const pk = "pk_live_" + Buffer.from("clerk.myorbitnetwork.com$").toString("base64");
+  check("derived from a live publishable key", clerkFrontendApiHost(pk) === "clerk.myorbitnetwork.com");
   check("a test key resolves its accounts.dev host",
     clerkFrontendApiHost("pk_test_" + Buffer.from("amazing-fox-12.clerk.accounts.dev$").toString("base64")) === "amazing-fox-12.clerk.accounts.dev");
   check("garbage yields null", clerkFrontendApiHost("nope") === null && clerkFrontendApiHost(undefined) === null);
