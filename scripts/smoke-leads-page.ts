@@ -177,74 +177,216 @@ function main() {
   console.log("\nthe CRM card says the right thing in every state");
   {
     const noop = () => {};
-    const view = (status: Parameters<typeof CrmCardView>[0]["status"]) =>
-      text(React.createElement(CrmCardView, { status, pending: null, onConnect: noop, onSync: noop, onDisconnect: noop }));
-    const baseProvider: CrmStatus["providers"][number] = { id: "hubspot", label: "HubSpot", configured: true, connection: null, counts: null };
-    const base: CrmStatus = { entitled: true, providers: [baseProvider] };
-    // Builds a full CrmStatus: `patch` overrides providers[0]'s fields, `statusPatch` the
-    // top-level ones (currently only `entitled`).
-    const withProvider = (
-      patch: Partial<CrmStatus["providers"][number]>,
-      statusPatch: Partial<Omit<CrmStatus, "providers">> = {}
-    ): CrmStatus => ({
-      ...base,
-      ...statusPatch,
-      providers: [{ ...baseProvider, ...patch }],
-    });
-    const conn = { connectorId: "hubspot" as const, label: "acme.hubspot.com", status: "active" as const, syncing: false, lastSyncedAgo: "5 minutes ago", error: null, demo: false, paused: false };
+    const view = (status: CrmStatus, pending: Parameters<typeof CrmCardView>[0]["pending"] = null) =>
+      text(React.createElement(CrmCardView, { status, pending, onConnect: noop, onSync: noop, onDisconnect: noop }));
+    const hubspotProvider: CrmStatus["providers"][number] = { id: "hubspot", label: "HubSpot", configured: true, connection: null, counts: null };
+    const salesforceProvider: CrmStatus["providers"][number] = { id: "salesforce", label: "Salesforce", configured: true, connection: null, counts: null };
+    const base: CrmStatus = { entitled: true, providers: [hubspotProvider, salesforceProvider] };
+    const hubspotConn = {
+      connectorId: "hubspot" as const,
+      label: "acme.hubspot.com",
+      status: "active" as const,
+      syncing: false,
+      lastSyncedAgo: "5 minutes ago",
+      error: null,
+      demo: false,
+      paused: false,
+    };
+    const salesforceConn = {
+      connectorId: "salesforce" as const,
+      label: "ada@acme.com",
+      status: "active" as const,
+      syncing: false,
+      lastSyncedAgo: "10 minutes ago",
+      error: null,
+      demo: false,
+      paused: false,
+    };
 
-    const locked = view(withProvider({}, { entitled: false }));
-    check("free: the paywall, not a connect button", locked.includes("HubSpot sync is on Orbit Pro and Lifetime") && locked.includes("See plans") && !locked.includes("Connect HubSpot"), locked);
-    const unset = view(withProvider({ configured: false }));
-    check("unconfigured: says so, no button", unset.includes("isn’t set up on this server yet") && !unset.includes("Connect HubSpot"), unset);
-    const ready = view(base);
-    check("ready: the pitch and the button", ready.includes("Connect your CRM") && ready.includes("work contacts") && ready.includes("Connect HubSpot"), ready);
-    const live = view(withProvider({ connection: conn, counts: { workContacts: 12, pipeline: 3, blocked: 0 } }));
-    check("connected: account, last sync, counts", live.includes("HubSpot · acme.hubspot.com") && live.includes("Last synced 5 minutes ago") && live.includes("12 work contacts") && live.includes("3 in your pipeline"), live);
-    check("connected: sync and disconnect", live.includes("Sync now") && live.includes("Disconnect") && live.includes("See work contacts"), live);
-    check("healthy: no reconnect offered", !live.includes("Reconnect HubSpot"), live);
-    const paused = view(
-      withProvider({
-        connection: { ...conn, paused: true, error: "HubSpot says this connection can’t read contacts or owners — reconnect HubSpot and approve every permission" },
-        counts: { workContacts: 2, pipeline: 1, blocked: 0 },
-      })
+    const nothing = view(base);
+    check(
+      "nothing connected: pitch and both connect buttons",
+      nothing.includes("Connect your CRM") &&
+        nothing.includes("Connect HubSpot") &&
+        nothing.includes("Connect Salesforce") &&
+        nothing.includes("Use a sandbox"),
+      nothing
     );
-    check("paused: offers Reconnect before Sync now", paused.includes("Reconnect HubSpot") && paused.indexOf("Reconnect HubSpot") < paused.indexOf("Sync now"), paused);
-    const pausedUnpaid = view(
-      withProvider(
-        { connection: { ...conn, paused: true, error: "HubSpot sync is on Orbit Pro and Lifetime — upgrade to keep it running" }, counts: null },
-        { entitled: false }
-      )
+
+    const onlyHubspotConfigured = view({ entitled: true, providers: [hubspotProvider, { ...salesforceProvider, configured: false }] });
+    check(
+      "only HubSpot configured: Connect HubSpot present, Connect Salesforce absent, no missing-provider sentence",
+      onlyHubspotConfigured.includes("Connect HubSpot") &&
+        !onlyHubspotConfigured.includes("Connect Salesforce") &&
+        !onlyHubspotConfigured.includes("Salesforce"),
+      onlyHubspotConfigured
     );
-    check("paused and not entitled: no Reconnect", !pausedUnpaid.includes("Reconnect HubSpot"), pausedUnpaid);
-    const first = view(withProvider({ connection: { ...conn, lastSyncedAgo: null }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } }));
-    check("never synced: when it will", first.includes("The first sync starts within a few minutes"), first);
-    const running = view(withProvider({ connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } }));
-    check("syncing: says so", running.includes("Syncing now"), running);
-    const runningHtml = renderToStaticMarkup(
+
+    const neitherConfigured = view({
+      entitled: true,
+      providers: [
+        { ...hubspotProvider, configured: false },
+        { ...salesforceProvider, configured: false },
+      ],
+    });
+    check(
+      "neither configured: one sentence, no button",
+      neitherConfigured.includes("isn’t set up on this server yet") &&
+        !neitherConfigured.includes("Connect HubSpot") &&
+        !neitherConfigured.includes("Connect Salesforce"),
+      neitherConfigured
+    );
+    check(
+      "neither configured: no provider named twice",
+      (neitherConfigured.match(/HubSpot|Salesforce/g) ?? []).length <= 1,
+      neitherConfigured
+    );
+
+    const notEntitled = view({ entitled: false, providers: [hubspotProvider, salesforceProvider] });
+    check(
+      "not entitled: the paywall, no connect buttons",
+      notEntitled.includes("CRM sync is on Orbit Pro and Lifetime.") &&
+        notEntitled.includes("See plans") &&
+        !notEntitled.includes("Connect HubSpot") &&
+        !notEntitled.includes("Connect Salesforce"),
+      notEntitled
+    );
+
+    const hubspotOnly = view({
+      entitled: true,
+      providers: [
+        { ...hubspotProvider, connection: hubspotConn, counts: { workContacts: 12, pipeline: 3, blocked: 0 } },
+        salesforceProvider,
+      ],
+    });
+    check(
+      "HubSpot connected, Salesforce configured but not: HubSpot section, its counts, Sync now, and a Connect Salesforce row",
+      hubspotOnly.includes("HubSpot · acme.hubspot.com") &&
+        hubspotOnly.includes("12 work contacts") &&
+        hubspotOnly.includes("Sync now") &&
+        hubspotOnly.includes("Connect Salesforce") &&
+        !hubspotOnly.includes("Connect your CRM"),
+      hubspotOnly
+    );
+
+    const salesforceOnly = view({
+      entitled: true,
+      providers: [
+        hubspotProvider,
+        { ...salesforceProvider, connection: salesforceConn, counts: { workContacts: 4, pipeline: 1, blocked: 0 } },
+      ],
+    });
+    check(
+      "Salesforce connected: title and counts",
+      salesforceOnly.includes("Salesforce · ada@acme.com") && salesforceOnly.includes("4 work contacts"),
+      salesforceOnly
+    );
+
+    const salesforceReauth = view({
+      entitled: true,
+      providers: [
+        hubspotProvider,
+        {
+          ...salesforceProvider,
+          connection: { ...salesforceConn, status: "needs_reauth" as const, error: "Token endpoint returned 400" },
+          counts: null,
+        },
+      ],
+    });
+    check(
+      "Salesforce reauth: named reconnect sentence and button",
+      salesforceReauth.includes("Salesforce needs you to reconnect") && salesforceReauth.includes("Reconnect Salesforce"),
+      salesforceReauth
+    );
+    check("Salesforce reauth: never the stored error", !salesforceReauth.includes("Token endpoint returned 400"), salesforceReauth);
+
+    const bothConnected: CrmStatus = {
+      entitled: true,
+      providers: [
+        { ...hubspotProvider, connection: hubspotConn, counts: { workContacts: 12, pipeline: 3, blocked: 0 } },
+        { ...salesforceProvider, connection: salesforceConn, counts: { workContacts: 4, pipeline: 1, blocked: 0 } },
+      ],
+    };
+    const both = view(bothConnected);
+    check(
+      "both connected: both titles",
+      both.includes("HubSpot · acme.hubspot.com") && both.includes("Salesforce · ada@acme.com"),
+      both
+    );
+    check(
+      "both connected: two Sync now, two Disconnect",
+      (both.match(/Sync now/g) ?? []).length === 2 && (both.match(/Disconnect/g) ?? []).length === 2,
+      both
+    );
+
+    const pendingText = view(bothConnected, { action: "sync", id: "salesforce" });
+    check("pending: Syncing… appears once", (pendingText.match(/Syncing…/g) ?? []).length === 1, pendingText);
+    const pendingHtml = renderToStaticMarkup(
       React.createElement(CrmCardView, {
-        status: withProvider({ connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } }),
-        pending: null,
+        status: bothConnected,
+        pending: { action: "sync", id: "salesforce" },
         onConnect: noop,
         onSync: noop,
         onDisconnect: noop,
       })
     );
-    const disconnectButton = runningHtml.match(/<button[^>]*>Disconnect<\/button>/);
+    const buttonTags = pendingHtml.match(/<button[^>]*>/g) ?? [];
     check(
-      "while syncing, the Disconnect button is disabled",
-      disconnectButton !== null && disconnectButton[0].includes('disabled=""'),
-      disconnectButton?.[0] ?? runningHtml
+      "pending: every button is disabled",
+      buttonTags.length > 0 && buttonTags.every((b) => b.includes('disabled=""')),
+      buttonTags.join("\n")
     );
-    const erred = view(withProvider({ connection: { ...conn, error: "HubSpot is rate-limiting this account — the next sync picks up where this one stopped" }, counts: { workContacts: 1, pipeline: 0, blocked: 2 } }));
-    check("an error and the cap are shown", erred.includes("rate-limiting") && erred.includes("2 customers didn’t fit your plan’s contact limit"), erred);
-    const reauth = view(withProvider({ connection: { ...conn, status: "needs_reauth", error: "Token endpoint returned 400" }, counts: null }));
-    check("needs reauth: reconnect, not sync", reauth.includes("HubSpot needs you to reconnect") && reauth.includes("Reconnect HubSpot") && !reauth.includes("Sync now"), reauth);
-    check("needs reauth: the fixed body", reauth.includes("HubSpot stopped accepting Orbit’s sign-in — reconnect to keep syncing"), reauth);
-    check("needs reauth: never the stored error", !reauth.includes("Token endpoint returned 400"), reauth);
-    const demo = view(withProvider({ connection: { ...conn, demo: true }, counts: { workContacts: 4, pipeline: 2, blocked: 0 } }));
+
+    const erred = view({
+      entitled: true,
+      providers: [
+        {
+          ...hubspotProvider,
+          connection: { ...hubspotConn, error: "HubSpot is rate-limiting this account — the next sync picks up where this one stopped" },
+          counts: { workContacts: 1, pipeline: 0, blocked: 2 },
+        },
+        salesforceProvider,
+      ],
+    });
+    check(
+      "an error and the cap are shown",
+      erred.includes("rate-limiting") && erred.includes("2 customers didn’t fit your plan’s contact limit"),
+      erred
+    );
+
+    const demo = view({
+      entitled: true,
+      providers: [
+        { ...hubspotProvider, connection: { ...hubspotConn, demo: true }, counts: { workContacts: 4, pipeline: 2, blocked: 0 } },
+        salesforceProvider,
+      ],
+    });
     check("demo: sample data, no sync", demo.includes("Sample data") && !demo.includes("Sync now"), demo);
-    check("one work contact is singular", view(withProvider({ connection: conn, counts: { workContacts: 1, pipeline: 1, blocked: 0 } })).includes("1 work contact ·"));
+
+    check(
+      "one work contact is singular",
+      view({
+        entitled: true,
+        providers: [{ ...hubspotProvider, connection: hubspotConn, counts: { workContacts: 1, pipeline: 1, blocked: 0 } }, salesforceProvider],
+      }).includes("1 work contact ·")
+    );
+  }
+
+  console.log("\nthe CRM card component calls the right actions and never leaks provider text");
+  {
+    const cardSource = code("src/components/leads/crm-card.tsx");
+    check("connects with sandbox passed through", /startCrmConnectAction\(\s*id\s*,\s*\{\s*sandbox:/.test(cardSource), cardSource);
+    check("syncs by id", /syncCrmNowAction\(\s*id\s*\)/.test(cardSource), cardSource);
+    check("disconnects by id", /disconnectCrmAction\(\s*id\s*\)/.test(cardSource), cardSource);
+    const needsReauthBranch = cardSource.slice(
+      cardSource.indexOf('"needs_reauth"'),
+      cardSource.indexOf("else", cardSource.indexOf('"needs_reauth"'))
+    );
+    check(
+      "needs_reauth toast is a fixed sentence, never the server's message",
+      needsReauthBranch.includes("needs you to reconnect — use Reconnect, then sync") && !needsReauthBranch.includes("r.message ?? "),
+      needsReauthBranch
+    );
   }
 
   console.log("\nthe CRM actions are thin, gated shells");

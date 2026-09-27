@@ -1,17 +1,20 @@
 import Link from "next/link";
 import { Building2, RefreshCw } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import type { CrmStatus } from "@/lib/crm/types";
+import type { CrmConnectorId, CrmProviderStatus, CrmStatus } from "@/lib/crm/types";
 import { cn } from "@/lib/utils";
 
 const PITCH =
-  "Bring HubSpot in: your customers become work contacts, and your leads join this pipeline — ranked by who on your team knows them.";
+  "Bring your CRM in: your customers become work contacts, and your leads join this pipeline — ranked by who on your team knows them.";
 
 function plural(n: number, one: string, many: string) {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`;
 }
 
-/** The CRM card's words and buttons for one status. `pending` names the button that is busy. */
+/** The button (or pair, for Salesforce) that names the action mid-flight. */
+export type CrmPending = { action: "connect" | "sync" | "disconnect"; id: CrmConnectorId } | null;
+
+/** The CRM card's words and buttons for one status. `pending` names the connector mid-flight. */
 export function CrmCardView({
   status,
   pending,
@@ -20,47 +23,138 @@ export function CrmCardView({
   onDisconnect,
 }: {
   status: CrmStatus;
-  pending: "connect" | "sync" | "disconnect" | null;
-  onConnect: () => void;
-  onSync: () => void;
-  onDisconnect: () => void;
+  pending: CrmPending;
+  onConnect: (id: CrmConnectorId, opts?: { sandbox?: boolean }) => void;
+  onSync: (id: CrmConnectorId) => void;
+  onDisconnect: (id: CrmConnectorId) => void;
 }) {
-  // TODO(Task 8): this reads only the first provider (HubSpot); Task 8 renders the full list.
-  const provider = status.providers[0];
-  const { connection, counts } = provider;
-  const canConnect = status.entitled && provider.configured;
+  const connected = status.providers.filter((p) => p.connection);
+  const connectable = status.providers.filter((p) => !p.connection && p.configured);
+  const busy = pending !== null || connected.some((p) => p.connection?.syncing);
 
-  if (!connection) {
+  if (connected.length === 0) {
     return (
       <Shell title="Connect your CRM" body={PITCH}>
         {!status.entitled ? (
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span className="text-muted-foreground">HubSpot sync is on Orbit Pro and Lifetime.</span>
+            <span className="text-muted-foreground">CRM sync is on Orbit Pro and Lifetime.</span>
             <Link href="/upgrade" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
               See plans
             </Link>
           </div>
-        ) : !provider.configured ? (
-          <p className="text-sm text-muted-foreground">HubSpot isn’t set up on this server yet.</p>
+        ) : connectable.length === 0 ? (
+          <p className="text-sm text-muted-foreground">CRM sync isn’t set up on this server yet.</p>
         ) : (
-          <Button type="button" disabled={pending !== null} onClick={onConnect}>
-            {pending === "connect" ? "Opening HubSpot…" : "Connect HubSpot"}
-          </Button>
+          <ConnectButtons providers={connectable} pending={pending} disabled={busy} onConnect={onConnect} />
         )}
       </Shell>
     );
   }
 
+  return (
+    <div className="space-y-4">
+      {connected.map((p) => (
+        <ConnectedProvider
+          key={p.id}
+          provider={p}
+          entitled={status.entitled}
+          pending={pending}
+          busy={busy}
+          onConnect={onConnect}
+          onSync={onSync}
+          onDisconnect={onDisconnect}
+        />
+      ))}
+      {status.entitled && connectable.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-border/70 px-5 py-3 text-sm">
+          <span className="text-muted-foreground">Use another CRM too?</span>
+          <ConnectButtons providers={connectable} pending={pending} disabled={busy} onConnect={onConnect} size="sm" />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ConnectButtons({
+  providers,
+  pending,
+  disabled,
+  onConnect,
+  size,
+}: {
+  providers: CrmProviderStatus[];
+  pending: CrmPending;
+  disabled: boolean;
+  onConnect: (id: CrmConnectorId, opts?: { sandbox?: boolean }) => void;
+  size?: "default" | "sm";
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {providers.map((p) => {
+        const opening = pending?.action === "connect" && pending.id === p.id;
+        return (
+          <div key={p.id} className="flex flex-wrap items-center gap-2">
+            <Button type="button" size={size} disabled={disabled} onClick={() => onConnect(p.id)}>
+              {opening ? `Opening ${p.label}…` : `Connect ${p.label}`}
+            </Button>
+            {p.id === "salesforce" ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size={size}
+                disabled={disabled}
+                aria-label="Connect a Salesforce sandbox"
+                onClick={() => onConnect("salesforce", { sandbox: true })}
+              >
+                Use a sandbox
+              </Button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ConnectedProvider({
+  provider,
+  entitled,
+  pending,
+  busy,
+  onConnect,
+  onSync,
+  onDisconnect,
+}: {
+  provider: CrmProviderStatus;
+  entitled: boolean;
+  pending: CrmPending;
+  busy: boolean;
+  onConnect: (id: CrmConnectorId, opts?: { sandbox?: boolean }) => void;
+  onSync: (id: CrmConnectorId) => void;
+  onDisconnect: (id: CrmConnectorId) => void;
+}) {
+  const { id, label, connection, counts } = provider;
+  if (!connection) return null;
+  const canConnect = entitled && provider.configured;
+  const connecting = pending?.action === "connect" && pending.id === id;
+  const syncingPending = pending?.action === "sync" && pending.id === id;
+
   if (connection.status === "needs_reauth") {
+    const title = `${label} needs you to reconnect`;
     return (
-      <Shell title="HubSpot needs you to reconnect" body="HubSpot stopped accepting Orbit’s sign-in — reconnect to keep syncing">
+      <Shell title={title} ariaLabel={title} body={`${label} stopped accepting Orbit’s sign-in — reconnect to keep syncing`}>
         <div className="flex flex-wrap gap-2">
           {canConnect ? (
-            <Button type="button" disabled={pending !== null} onClick={onConnect}>
-              {pending === "connect" ? "Opening HubSpot…" : "Reconnect HubSpot"}
+            <Button type="button" disabled={busy} onClick={() => onConnect(id)}>
+              {connecting ? `Opening ${label}…` : `Reconnect ${label}`}
             </Button>
           ) : null}
-          <Button type="button" variant="outline" disabled={pending !== null} onClick={onDisconnect}>
+          {canConnect && id === "salesforce" ? (
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => onConnect(id, { sandbox: true })}>
+              Reconnect a sandbox
+            </Button>
+          ) : null}
+          <Button type="button" variant="outline" disabled={busy} onClick={() => onDisconnect(id)}>
             Disconnect
           </Button>
         </div>
@@ -73,9 +167,10 @@ export function CrmCardView({
     : connection.lastSyncedAgo
       ? `Last synced ${connection.lastSyncedAgo}`
       : "The first sync starts within a few minutes";
+  const title = connection.label ? `${label} · ${connection.label}` : label;
 
   return (
-    <Shell title={connection.label ? `HubSpot · ${connection.label}` : "HubSpot"} body={when}>
+    <Shell title={title} ariaLabel={title} body={when}>
       {connection.error ? <p className="text-sm text-amber-700 dark:text-amber-400">{connection.error}</p> : null}
       {counts ? (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink">
@@ -94,19 +189,24 @@ export function CrmCardView({
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {connection.paused && canConnect ? (
-          <Button type="button" size="sm" disabled={pending !== null || connection.syncing} onClick={onConnect}>
-            {pending === "connect" ? "Opening HubSpot…" : "Reconnect HubSpot"}
+          <Button type="button" size="sm" disabled={busy} onClick={() => onConnect(id)}>
+            {connecting ? `Opening ${label}…` : `Reconnect ${label}`}
+          </Button>
+        ) : null}
+        {connection.paused && canConnect && id === "salesforce" ? (
+          <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => onConnect(id, { sandbox: true })}>
+            Reconnect a sandbox
           </Button>
         ) : null}
         {connection.demo ? (
           <span className="text-xs text-muted-foreground">Sample data — this demo connection doesn’t sync.</span>
         ) : (
-          <Button type="button" variant="outline" size="sm" disabled={pending !== null || connection.syncing} onClick={onSync}>
-            <RefreshCw aria-hidden className={cn(pending === "sync" && "animate-spin motion-reduce:animate-none")} />
-            {pending === "sync" ? "Syncing…" : "Sync now"}
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => onSync(id)}>
+            <RefreshCw aria-hidden className={cn(syncingPending && "animate-spin motion-reduce:animate-none")} />
+            {syncingPending ? "Syncing…" : "Sync now"}
           </Button>
         )}
-        <Button type="button" variant="ghost" size="sm" disabled={pending !== null || connection.syncing} onClick={onDisconnect}>
+        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => onDisconnect(id)}>
           Disconnect
         </Button>
       </div>
@@ -114,9 +214,19 @@ export function CrmCardView({
   );
 }
 
-function Shell({ title, body, children }: { title: string; body: string; children: React.ReactNode }) {
+function Shell({
+  title,
+  body,
+  children,
+  ariaLabel,
+}: {
+  title: string;
+  body: string;
+  children: React.ReactNode;
+  ariaLabel?: string;
+}) {
   return (
-    <section aria-label="Your CRM" className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
+    <section aria-label={ariaLabel ?? "Your CRM"} className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
       <div className="flex gap-3">
         <div className="mt-0.5 h-9 w-9 shrink-0 rounded-full bg-primary/10 p-2 text-primary">
           <Building2 className="h-5 w-5" aria-hidden />

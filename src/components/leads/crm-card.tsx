@@ -12,27 +12,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { CrmStatus } from "@/lib/crm/types";
+import { crmProviderLabel, type CrmConnectorId, type CrmStatus } from "@/lib/crm/types";
 import { friendlyError } from "@/lib/errors";
 import { readOAuthReturn } from "@/lib/oauth-return";
 import { toast } from "@/lib/toast";
-import { CrmCardView } from "./crm-card-view";
+import { CrmCardView, type CrmPending } from "./crm-card-view";
 
 const CRM_RETURN = {
   param: "crm",
-  provider: "HubSpot",
-  connectedText: "HubSpot connected — your first sync starts within a few minutes",
+  provider: "your CRM",
+  connectedText: "CRM connected — your first sync starts within a few minutes",
   reasons: {
-    not_entitled: "HubSpot sync is on Orbit Pro and Lifetime — upgrade, then connect again",
+    not_entitled: "CRM sync is on Orbit Pro and Lifetime — upgrade, then connect again",
   },
 };
 
-/** The CRM card: connect, sync now, disconnect, and what came back from HubSpot's sign-in. */
+/** The CRM card: connect, sync now, disconnect, and what came back from a CRM's sign-in. */
 export function CrmCard({ status }: { status: CrmStatus }) {
   const router = useRouter();
   const [, start] = useTransition();
-  const [pending, setPending] = useState<"connect" | "sync" | "disconnect" | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState<CrmPending>(null);
+  const [confirming, setConfirming] = useState<CrmConnectorId | null>(null);
 
   // The callback's outcome, toasted once. The params are stripped on the first gesture, never
   // in this effect — see `readOAuthReturn`: a replaceState here would drop a sibling's action.
@@ -56,41 +56,45 @@ export function CrmCard({ status }: { status: CrmStatus }) {
     };
   }, []);
 
-  function connect() {
-    setPending("connect");
+  function connect(id: CrmConnectorId, opts?: { sandbox?: boolean }) {
+    setPending({ action: "connect", id });
     start(async () => {
       try {
-        const result = await startCrmConnectAction("hubspot");
+        const result = await startCrmConnectAction(id, { sandbox: opts?.sandbox === true });
         if (!result.ok) {
           toast.error(result.error);
           setPending(null);
           return;
         }
-        // A full navigation, not a router push: HubSpot's consent screen is another origin.
+        // A full navigation, not a router push: the CRM's consent screen is another origin.
         window.location.assign(result.value.url);
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t open HubSpot — try again?"));
+        toast.error(friendlyError(err, `Couldn’t open ${crmProviderLabel(id)} — try again?`));
         setPending(null);
       }
     });
   }
 
-  function sync() {
-    setPending("sync");
+  function sync(id: CrmConnectorId) {
+    setPending({ action: "sync", id });
     start(async () => {
       try {
-        const result = await syncCrmNowAction("hubspot");
+        const result = await syncCrmNowAction(id);
         if (!result.ok) {
           toast.error(result.error);
           return;
         }
         const r = result.value;
-        if (r.outcome === "stopped" || r.outcome === "needs_reauth") toast.error(r.message ?? "HubSpot sync stopped — see the card for why");
-        else if (r.outcome === "partial") toast.message("Synced part of HubSpot — the rest follows automatically");
-        else toast.success(r.records === 0 ? "HubSpot is up to date" : `Synced ${r.records.toLocaleString()} from HubSpot`);
+        const label = crmProviderLabel(id);
+        // Fixed words: the server already swapped a token endpoint's text for this sentence,
+        // and the card must never be the place provider text leaks back in (Ruling 12a).
+        if (r.outcome === "needs_reauth") toast.error(`${label} needs you to reconnect — use Reconnect, then sync`);
+        else if (r.outcome === "stopped") toast.error(r.message ?? `${label} sync stopped — see the card for why`);
+        else if (r.outcome === "partial") toast.message(`Synced part of ${label} — the rest follows automatically`);
+        else toast.success(r.records === 0 ? `${label} is up to date` : `Synced ${r.records.toLocaleString()} from ${label}`);
         router.refresh();
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t sync HubSpot — try again?"));
+        toast.error(friendlyError(err, `Couldn’t sync ${crmProviderLabel(id)} — try again?`));
       } finally {
         setPending(null);
       }
@@ -98,40 +102,44 @@ export function CrmCard({ status }: { status: CrmStatus }) {
   }
 
   function disconnect() {
-    setConfirming(false);
-    setPending("disconnect");
+    const id = confirming;
+    if (!id) return;
+    setConfirming(null);
+    setPending({ action: "disconnect", id });
     start(async () => {
       try {
-        const result = await disconnectCrmAction("hubspot");
+        const result = await disconnectCrmAction(id);
         if (!result.ok) {
           toast.error(result.error);
           return;
         }
-        toast.success("HubSpot disconnected");
+        toast.success(`${crmProviderLabel(id)} disconnected`);
         router.refresh();
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t disconnect HubSpot — try again?"));
+        toast.error(friendlyError(err, `Couldn’t disconnect ${crmProviderLabel(id)} — try again?`));
       } finally {
         setPending(null);
       }
     });
   }
 
+  const confirmingLabel = confirming ? crmProviderLabel(confirming) : "";
+
   return (
     <>
-      <CrmCardView status={status} pending={pending} onConnect={connect} onSync={sync} onDisconnect={() => setConfirming(true)} />
-      <Dialog open={confirming} onOpenChange={setConfirming}>
+      <CrmCardView status={status} pending={pending} onConnect={connect} onSync={sync} onDisconnect={(id) => setConfirming(id)} />
+      <Dialog open={confirming !== null} onOpenChange={(open) => setConfirming(open ? confirming : null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Disconnect HubSpot?</DialogTitle>
+            <DialogTitle>Disconnect {confirmingLabel}?</DialogTitle>
             <DialogDescription>
-              Orbit stops syncing, asks HubSpot to revoke its access, and forgets which contacts came
-              from it. The work contacts it added stay in your network, and your leads stay in the
-              pipeline.
+              Orbit stops syncing, asks {confirmingLabel} to revoke its access, and forgets which
+              contacts came from it. The work contacts it added stay in your network, and your
+              leads stay in the pipeline.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+            <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
               Cancel
             </Button>
             <Button variant="destructive" size="sm" onClick={disconnect}>
