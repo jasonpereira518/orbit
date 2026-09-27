@@ -303,7 +303,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         <section className="mt-24 md:mt-32" aria-labelledby="waitlist-poll">
           <Reveal className="reveal-celestial">
             <h2 id="waitlist-poll" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
-              What should we build first?
+              What should we release first?
             </h2>
           </Reveal>
           <Reveal className="reveal-celestial" delay={80}>

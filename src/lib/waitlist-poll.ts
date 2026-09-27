@@ -15,12 +15,12 @@
  */
 
 export const POLL_OPTIONS = [
-  { id: "ask-network", label: "Network Chat — ask your network anything" },
-  { id: "reminders", label: "Smart Reminders — reach out at the right moment" },
-  { id: "auto-import", label: "Auto-Import — pull in your inbox and calendar" },
-  { id: "network-map", label: "Network Map — a visual view of everyone you know" },
-  { id: "drafted-outreach", label: "Drafted Outreach — ready-to-send messages, written for you" },
-  { id: "find-people", label: "People Discovery — find new people worth knowing" },
+  { id: "constellation-map", label: "Constellation Map — your whole network, mapped as a living galaxy" },
+  { id: "network-chat", label: "Network Chat — ask your network anything, get answers instantly" },
+  { id: "outreach-campaign", label: "Outreach Campaign — finds the right people, drafts the message for you" },
+  { id: "events", label: "Events — see who's converging at every event before you arrive" },
+  { id: "auto-integrations", label: "Auto-Integrations — your inbox and calendar sync themselves in" },
+  { id: "smart-follow-ups", label: "Smart Follow-Ups — the right nudge, exactly when it matters" },
 ] as const;
 
 export type PollOptionId = (typeof POLL_OPTIONS)[number]["id"];
