@@ -24,6 +24,8 @@ import { interestListSignups } from "@/db/schema";
 import {
   INTEREST_LIST_COUNT_FLOOR,
   SPOTS_PER_REFERRAL,
+  slugFromEmail,
+  slugWithSuffix,
   type InterestTicket,
 } from "@/lib/interest-list";
 import { asWelcomePlanet, type WelcomePlanet } from "@/lib/welcome-planets";
@@ -39,12 +41,77 @@ export type InterestProof = {
 
 export type SignupRowForTicket = {
   id: string;
+  email: string;
+  /** Null for a row that has never had a ticket read; `ticketForRow` claims one. */
+  referralSlug: string | null;
   createdAt: Date;
   welcomePlanet: string | null;
   shareToken: string;
 };
 
 const countInt = sql<number>`count(*)::int`;
+
+/** Postgres unique_violation, as either driver (PGlite, Neon) surfaces it, cause included. */
+function isUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; cause?: { code?: string } } | null;
+  return e?.code === "23505" || e?.cause?.code === "23505";
+}
+
+/**
+ * Gives a row its referral slug: the address's local part, or that with `-2`, `-3`, … when
+ * another address already holds it. Idempotent — a row that has one keeps it, since links
+ * already sent must never change.
+ *
+ * The free suffix is read, then written under the unique index, so two simultaneous claims
+ * of one local part cannot both win: the loser gets a unique violation and reads again.
+ * A handful of attempts is far more than a real collision needs; past that the error is
+ * thrown, and the ticket read that asked (which the join catches) falls back to the token link.
+ */
+export async function claimReferralSlug(row: { id: string; email: string }): Promise<string> {
+  const db = await getDb();
+  const base = slugFromEmail(row.email);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const [current] = await db
+      .select({ slug: interestListSignups.referralSlug })
+      .from(interestListSignups)
+      .where(eq(interestListSignups.id, row.id))
+      .limit(1);
+    if (current?.slug) return current.slug;
+
+    // Every slug that could collide: `base` itself and `base-<n>`. LIKE's `_` also matches
+    // any one character, which only over-reads — the check below is exact.
+    const taken = new Set(
+      (
+        await db
+          .select({ slug: interestListSignups.referralSlug })
+          .from(interestListSignups)
+          .where(
+            or(
+              eq(interestListSignups.referralSlug, base),
+              sql`${interestListSignups.referralSlug} LIKE ${`${base}-%`}`
+            )
+          )
+      ).map((r) => r.slug)
+    );
+    let n = 1;
+    while (taken.has(slugWithSuffix(base, n))) n++;
+    const candidate = slugWithSuffix(base, n);
+
+    try {
+      const [claimed] = await db
+        .update(interestListSignups)
+        // `IS NULL` again: a concurrent read of the same row may have claimed one already.
+        .set({ referralSlug: candidate })
+        .where(and(eq(interestListSignups.id, row.id), isNull(interestListSignups.referralSlug)))
+        // Bare, not `.returning({...})`: an explicit selector defeats Drizzle's overloads here.
+        .returning();
+      if (claimed?.referralSlug) return claimed.referralSlug;
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+    }
+  }
+  throw new Error("could not claim a referral slug");
+}
 
 /**
  * Ordinal by (created_at, id): rows inserted in the same instant still get distinct
@@ -53,7 +120,7 @@ const countInt = sql<number>`count(*)::int`;
  */
 export async function ticketForRow(row: SignupRowForTicket): Promise<InterestTicket> {
   const db = await getDb();
-  const [[ordinal], standing] = await Promise.all([
+  const [[ordinal], standing, referralSlug] = await Promise.all([
     db
       .select({ n: countInt })
       .from(interestListSignups)
@@ -67,6 +134,7 @@ export async function ticketForRow(row: SignupRowForTicket): Promise<InterestTic
         )
       ),
     standingFor(row),
+    row.referralSlug ?? claimReferralSlug(row),
   ]);
   return {
     number: Math.max(1, ordinal?.n ?? 1),
@@ -75,6 +143,7 @@ export async function ticketForRow(row: SignupRowForTicket): Promise<InterestTic
     planet: asWelcomePlanet(row.welcomePlanet),
     joinedAt: row.createdAt.toISOString(),
     shareToken: row.shareToken,
+    referralSlug,
   };
 }
 
@@ -179,6 +248,8 @@ export const getTicketByShareToken = cache(
     const [row] = await db
       .select({
         id: interestListSignups.id,
+        email: interestListSignups.email,
+        referralSlug: interestListSignups.referralSlug,
         createdAt: interestListSignups.createdAt,
         welcomePlanet: interestListSignups.welcomePlanet,
         shareToken: interestListSignups.shareToken,
@@ -228,14 +299,22 @@ export function invalidateProgress(token: string) {
   progressMemo.delete(token);
 }
 
-/** The planet on the ticket a `?ref=` link points at, for the invited strip. */
-export async function getInviterPlanet(token: string): Promise<WelcomePlanet | null> {
-  if (!token) return null;
+/** The row a `ref` names: by slug (always lowercase) or by share token (case-sensitive). */
+export function refMatch(ref: string) {
+  return or(eq(interestListSignups.referralSlug, ref.toLowerCase()), eq(interestListSignups.shareToken, ref));
+}
+
+/**
+ * The planet on the ticket a `?ref=` link points at, for the invited strip. `ref` is a
+ * referral slug (`/waitlist/<slug>`) or, on links sent before slugs, a share token.
+ */
+export async function getInviterPlanet(ref: string): Promise<WelcomePlanet | null> {
+  if (!ref) return null;
   const db = await getDb();
   const [row] = await db
     .select({ welcomePlanet: interestListSignups.welcomePlanet })
     .from(interestListSignups)
-    .where(eq(interestListSignups.shareToken, token))
+    .where(refMatch(ref))
     .limit(1);
   return row ? asWelcomePlanet(row.welcomePlanet) : null;
 }

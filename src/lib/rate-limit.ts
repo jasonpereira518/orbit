@@ -29,6 +29,7 @@ const BUCKET_LABELS: Record<string, string> = {
   feedback: "feedback",
   interestJoin: "sign-up",
   interestProgress: "progress check",
+  interestName: "sign-up",
   apiRead: "API read",
   apiWrite: "API write",
   apiIngest: "event import",
@@ -147,6 +148,11 @@ export const RATE_LIMITS = {
    * for several people behind one NAT, and stops a script sweeping share tokens.
    */
   interestProgress: { limit: 120, windowSec: 300 },
+  /**
+   * `saveInterestListName`, the join's second step. A person makes one, maybe a couple of
+   * corrections' worth; the limit exists to stop a script walking guessed tokens.
+   */
+  interestName: { limit: 20, windowSec: 600 },
   /**
    * Public API reads. Generous — a read is one or two indexed queries — but bounded, because
    * these endpoints are reachable by anyone holding a key and a polling integration with a

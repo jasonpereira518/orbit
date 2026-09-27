@@ -21,7 +21,7 @@ const PILL =
  */
 export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pageUrl: string; play: boolean }) {
   const reduced = usePrefersReducedMotion();
-  const url = buildShareUrl(pageUrl, ticket.shareToken);
+  const url = buildShareUrl(pageUrl, ticket);
   const text = SHARE_TEXT;
   const [copied, setCopied] = useState(false);
   const [messageCopied, setMessageCopied] = useState(false);
@@ -74,7 +74,7 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
   async function copyMessage() {
     let ok = false;
     try {
-      await navigator.clipboard.writeText(`${text} ${url}`);
+      await navigator.clipboard.writeText(`${text}\n${url}`);
       ok = true;
     } catch {
       ok = false;

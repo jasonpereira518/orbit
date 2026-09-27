@@ -1113,12 +1113,16 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   follow_up_sent_at timestamptz,
   share_token text,
   referred_by_id uuid,
+  first_name text,
+  last_name text,
+  referral_slug text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_referral_slug_uidx ON interest_list_signups(referral_slug);
 CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2127,7 +2131,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // `alters` are kept and the version is new, so every database re-runs the full list once.
 // Scanned every local and remote ref and every worktree's working src/db/index.ts on Sep 26
 // 2026: 119 is the highest claimed anywhere, so 120 is the next free integer.
-export const SCHEMA_VERSION = 120;
+//
+// 125 = interest_list_signups.first_name + last_name, the name the waitlist's second join step
+// collects, and referral_slug, the `/waitlist/<slug>` in a person's share link (folded into
+// 125 before it shipped). NOT 121-124, which the Leads stack (#264 -> #343) claims. Scanned every local and
+// remote ref and every worktree's working src/db/index.ts on Sep 27 2026: 124 is the highest
+// claimed anywhere, so 125 is the next free integer.
+export const SCHEMA_VERSION = 125;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3573,6 +3583,11 @@ const alters = [
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referred_by_id uuid`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token)`,
   `CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id)`,
+  // v125: the name on the pass, collected in the waitlist join's second step.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS first_name text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS last_name text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_slug text`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_referral_slug_uidx ON interest_list_signups(referral_slug)`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go

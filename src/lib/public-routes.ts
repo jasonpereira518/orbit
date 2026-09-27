@@ -16,6 +16,9 @@ export const PUBLIC_ROUTES = [
   "/interest",
   // The waitlist's own privacy notice (served at /privacy on the waitlist domain).
   "/interest/privacy",
+  // A person's referral link, `/waitlist/<slug>`, which next.config rewrites to /interest.
+  // The proxy sees the path as requested, before the rewrite.
+  "/waitlist/(.*)",
   "/privacy",
   // How to connect an assistant. A setup guide whose whole audience is people deciding
   // whether to sign up, so it must be readable signed out.
