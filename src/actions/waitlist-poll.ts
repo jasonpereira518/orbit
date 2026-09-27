@@ -2,7 +2,7 @@
 
 import { cookies, headers } from "next/headers";
 import { clientIpFrom } from "@/lib/client-ip";
-import { POLL_VOTER_COOKIE, type PollOptionId, type PollResults } from "@/lib/waitlist-poll";
+import { POLL_ERROR, POLL_VOTER_COOKIE, type PollOptionId, type PollResults } from "@/lib/waitlist-poll";
 import { castVoteCore } from "@/lib/waitlist-poll-votes";
 
 /**
@@ -23,11 +23,17 @@ export async function castPollVote(input: {
   | { ok: true; choice: PollOptionId; results: PollResults }
   | { ok: false; message: string }
 > {
+  // A server action is a public POST endpoint: the types above are not enforced at runtime.
+  const raw: unknown = input;
+  if (raw === null || typeof raw !== "object") return { ok: false, message: POLL_ERROR };
+  const { optionId, me } = raw as { optionId?: unknown; me?: unknown };
+  if (typeof optionId !== "string") return { ok: false, message: POLL_ERROR };
+
   const ip = clientIpFrom(await headers());
   const jar = await cookies();
   const voterId = jar.get(POLL_VOTER_COOKIE)?.value ?? null;
 
-  const result = await castVoteCore({ optionId: input.optionId, me: input.me, voterId }, { ip });
+  const result = await castVoteCore({ optionId, me: typeof me === "string" ? me : null, voterId }, { ip });
   if (!result.ok) return result;
 
   if (result.newVoterId) {

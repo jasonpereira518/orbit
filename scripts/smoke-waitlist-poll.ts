@@ -116,6 +116,17 @@ async function main() {
   check("at the floor: shares appear", POLL_RESULTS_FLOOR === 25 && full.showNumbers);
   check("shares are rounded percentages of the total", full.options[0].share === 60 && full.options[1].share === 40);
 
+  const below = rankPoll({ counts: { [A]: 12, [B]: 12 } });
+  const atFloor = rankPoll({ counts: { [A]: 12, [B]: 13 } });
+  check("floor boundary: 24 votes hides numbers", below.total === 24 && !below.showNumbers);
+  check("floor boundary: 25 votes shows numbers", atFloor.total === 25 && atFloor.showNumbers);
+
+  const rounded = rankPoll({ counts: { [A]: 8, [B]: 17 } });
+  check(
+    "shares round to whole percents, larger first",
+    rounded.options[0].id === B && rounded.options[0].share === 68 && rounded.options[1].share === 32
+  );
+
   const orphan = rankPoll({ counts: { [A]: 1, "retired-option": 99 } });
   check("votes for a retired option are ignored", orphan.total === 1 && orphan.options.length === POLL_OPTIONS.length);
 
@@ -188,6 +199,14 @@ async function main() {
   const stray = await castVoteCore({ optionId: A, me: "not-a-real-token", voterId: V2 }, ctx("e"));
   check("an unknown pass falls back to the cookie path", stray.ok && stray.choice === A);
   check("…moving that browser's vote", (await readPollChoice({ voterId: V2 })) === A);
+
+  const odd = await castVoteCore(
+    { optionId: A, me: 123 as unknown as string, voterId: V2 },
+    ctx("odd")
+  );
+  check("a non-string pass does not crash the core", odd.ok && odd.choice === A);
+  check("…and votes under the cookie key, not a signup", (await rowsFor(`cookie:${V2}`))[0]?.optionId === A);
+  check("…readable by cookie", (await readPollChoice({ voterId: V2 })) === A);
 
   console.log("\nrate limit…");
   await cleanup();

@@ -64,7 +64,8 @@ export function invalidatePollResults() {
 
 /** The signup a share token belongs to, or null for anything that is not a live token. */
 async function signupIdForToken(token: string | null | undefined): Promise<string | null> {
-  if (!token || token.length > SHARE_TOKEN_MAX) return null;
+  // Public input: a non-string must never reach the query, whatever the types say.
+  if (typeof token !== "string" || !token || token.length > SHARE_TOKEN_MAX) return null;
   const db = await getDb();
   const [row] = await db
     .select({ id: interestListSignups.id })

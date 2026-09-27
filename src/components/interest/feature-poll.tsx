@@ -27,16 +27,17 @@ export type FeaturePollInitial = { results: PollResults; choice: PollOptionId | 
  *
  * Each card is a `<button aria-pressed>` in a labelled group: Tab walks the cards in their
  * current visual order, Enter/Space votes, and moving focus never does (native radios would
- * select on arrow keys, which fights the list reordering after a vote). The vote is applied optimistically and replaced by the server's tally; a
- * failure rolls it back and says so.
+ * select on arrow keys, which fights the list reordering after a vote). The vote is applied
+ * optimistically and replaced by the server's tally; a failure rolls it back and says so.
  *
  * A visitor who already voted gets the ranked view from the server on first paint, and their
  * bars start at full length (`initial={false}`) rather than replaying the reveal.
  *
  * `me` is the visitor's `?me=` pass token, if any, so the server can tie the vote to their
  * signup. A visitor who joins on this page gets their token from the hero via `onPass`
- * (`replaceState` does not re-render the server-fed `me`). Reduced motion is read at render time from `useReducedMotion`, not from a
- * post-mount effect: a hook that flips after mount would let the first transition play.
+ * (`replaceState` does not re-render the server-fed `me`). Reduced motion is read at render
+ * time from `useReducedMotion`, not from a post-mount effect: a hook that flips after mount
+ * would let the first transition play.
  */
 export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: string | null }) {
   const reduced = useReducedMotion();
@@ -145,7 +146,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
         {!voted
           ? "Pick the one you'd use most, then see how everyone voted."
           : view.showNumbers
-            ? `${view.total.toLocaleString()} votes so far. Tap another to change yours.`
+            ? `${view.total.toLocaleString("en-US")} votes so far. Tap another to change yours.`
             : POLL_RESULTS_CAPTION}
       </p>
       {error && (

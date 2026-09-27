@@ -172,6 +172,9 @@ async function main() {
 
   // The poll lives in a client component this walk cannot enter; its props are the contract.
   check("the poll carries a tally", typeof pollInitial(form)?.results?.counts === "object");
+  // The tally is not per-viewer: the seeded signup's vote must show up for a no-pass visitor.
+  const tally = pollInitial(form)?.results?.counts as Record<string, number> | undefined;
+  check("…that counts the seeded vote", (tally?.[pollPick] ?? 0) >= 1, JSON.stringify(tally));
   check("a visitor with no pass or cookie has not voted", pollInitial(form)?.choice === null);
   check("…and hands the poll no pass token", findProp(form, "me") === null);
 
