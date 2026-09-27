@@ -1120,6 +1120,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_l
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
+CREATE TABLE IF NOT EXISTS waitlist_poll_votes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  option_id text NOT NULL,
+  voter_key text NOT NULL,
+  signup_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_poll_votes_voter_uidx ON waitlist_poll_votes(voter_key);
+CREATE INDEX IF NOT EXISTS waitlist_poll_votes_option_idx ON waitlist_poll_votes(option_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subject text NOT NULL,
@@ -2127,7 +2137,10 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // `alters` are kept and the version is new, so every database re-runs the full list once.
 // Scanned every local and remote ref and every worktree's working src/db/index.ts on Sep 26
 // 2026: 119 is the highest claimed anywhere, so 120 is the next free integer.
-export const SCHEMA_VERSION = 120;
+// 126 = waitlist_poll_votes, the waitlist page's feature poll. Scanned every local and remote
+// ref and every worktree's working src/db/index.ts on Sep 27 2026: 125 is the highest
+// claimed anywhere, so 126 is the next free integer.
+export const SCHEMA_VERSION = 126;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
