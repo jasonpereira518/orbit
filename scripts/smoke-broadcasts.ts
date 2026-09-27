@@ -88,7 +88,13 @@ async function main() {
   check("operator prose is escaped, never injected", built.html.includes("&lt;b&gt;") && built.html.includes("&amp;"));
   check("the unsubscribe link reaches the html", built.html.includes("https://u.test/x"));
   check("the text part carries the footer", built.text.includes("Leave the waitlist"));
-  check("the shell never names the product or shows its logo", !/orbit/i.test(built.html) && !/orbit/i.test(built.text));
+  // The shell may name Orbit (footer / chrome); it must not pitch the product or ship a logo.
+  const shellOrbit = (built.html + "\n" + built.text).replace(
+    /\bProject:\s*Orbit\b|\bOrbit waitlist\b|\bOrbit pass\b|\bWelcome to Orbit\b|\bthe Orbit waitlist\b/gi,
+    ""
+  );
+  check("the shell names Orbit only via the waitlist footer", /Orbit waitlist/.test(built.text) && /Orbit waitlist/.test(built.html));
+  check("the shell never pitches the product or shows its logo", !/\borbit\b/i.test(shellOrbit) && !/orbit-logo/i.test(built.html));
   check("no undefined interpolation", !built.html.includes("undefined"));
 
   // --- send
