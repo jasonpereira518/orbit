@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { Network, Plug, Sparkles } from "lucide-react";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
@@ -11,6 +11,7 @@ import { RingsBackdrop } from "@/components/interest/rings-backdrop";
 import { AppDemo } from "@/components/interest/app-demo/app-demo";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
+import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
 import {
   REFERRAL_TIERS,
@@ -27,6 +28,8 @@ import {
   type InterestProof,
 } from "@/lib/interest-list-ticket";
 import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
+import { getPollInitial } from "@/lib/waitlist-poll-votes";
+import { POLL_VOTER_COOKIE } from "@/lib/waitlist-poll";
 import { isWaitlistHostHeader } from "@/lib/waitlist-host";
 
 // The proof line, the invited strip and the pass all come from the URL and the database
@@ -103,6 +106,9 @@ const HEADING =
  * floor, so the count itself is hidden. */
 const EMPTY_PROOF: InterestProof = { count: 0, total: 0, recent: [] };
 
+/** What the poll degrades to if the database read fails: nothing voted, nothing tallied. */
+const EMPTY_POLL: FeaturePollInitial = { results: { counts: {} }, choice: null };
+
 const PILLARS = [
   {
     icon: Network,
@@ -174,7 +180,8 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   const privacyHref = onWaitlistHost ? "/privacy" : "/interest/privacy";
 
   // The proof line never depends on either token, so it runs alongside the pass.
-  const [proof, ticket, showDemo] = await Promise.all([
+  const voterId = await readVoterId();
+  const [proof, ticket, showDemo, poll] = await Promise.all([
     getInterestProof().catch((err: unknown) => {
       console.error("[interest] proof read failed", err);
       return EMPTY_PROOF;
@@ -187,6 +194,10 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
       : Promise.resolve(null),
     // The admin console's switch. Never throws: a failed read shows the demo.
     getWaitlistDemoEnabled(),
+    getPollInitial({ me, voterId }).catch((err: unknown) => {
+      console.error("[interest] poll read failed", err);
+      return EMPTY_POLL;
+    }),
   ]);
 
   // `?ref=` loses to a pass that actually RESOLVED, not to the mere presence of `?me=`: a
@@ -316,6 +327,22 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
           </Reveal>
         </section>
 
+        <section className="mt-24 md:mt-32" aria-labelledby="waitlist-poll">
+          <Reveal className="reveal-celestial">
+            <h2 id="waitlist-poll" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
+              What should we release first?
+            </h2>
+          </Reveal>
+          <Reveal className="reveal-celestial" delay={80}>
+            <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
+              Vote for the one you want most, and see what everyone else picked.
+            </p>
+          </Reveal>
+          <Reveal className="reveal-celestial mt-10 block" delay={120}>
+            <FeaturePoll initial={poll} me={me} />
+          </Reveal>
+        </section>
+
         <section className="mt-24 md:mt-32" aria-labelledby="waitlist-faq">
           <Reveal className="reveal-celestial">
             <h2 id="waitlist-faq" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
@@ -387,4 +414,16 @@ async function servedOnWaitlistHost() {
     return false;
   }
   return isWaitlistHostHeader(host);
+}
+
+/**
+ * The poll's voter cookie, or null. Outside a request — the page smoke renders this
+ * function directly — there is no cookie store, which reads as "hasn't voted".
+ */
+async function readVoterId() {
+  try {
+    return (await cookies()).get(POLL_VOTER_COOKIE)?.value ?? null;
+  } catch {
+    return null;
+  }
 }

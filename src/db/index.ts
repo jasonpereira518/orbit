@@ -1124,6 +1124,16 @@ CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_si
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_referral_slug_uidx ON interest_list_signups(referral_slug);
 CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
+CREATE TABLE IF NOT EXISTS waitlist_poll_votes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  option_id text NOT NULL,
+  voter_key text NOT NULL,
+  signup_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_poll_votes_voter_uidx ON waitlist_poll_votes(voter_key);
+CREATE INDEX IF NOT EXISTS waitlist_poll_votes_option_idx ON waitlist_poll_votes(option_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subject text NOT NULL,
@@ -2137,7 +2147,19 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 125 before it shipped). NOT 121-124, which the Leads stack (#264 -> #343) claims. Scanned every local and
 // remote ref and every worktree's working src/db/index.ts on Sep 27 2026: 124 is the highest
 // claimed anywhere, so 125 is the next free integer.
-export const SCHEMA_VERSION = 125;
+//
+// 126 was this branch's own version for waitlist_poll_votes, stamped before merging main at
+// 125 (the waitlist join-step name + referral_slug pass above). Keeping 126 through that merge
+// would repeat the failure recorded at 118/120 above: a database already stamped 126 from
+// before the merge would never re-sweep for main's first_name/last_name/referral_slug columns,
+// because `isSchemaCurrent` treats any recorded version at or above the running one as current.
+// So the merge gets its own number.
+//
+// 127 = merging main at 125 into this branch's 126. Both sides' DDL and alters are kept; only
+// the version is new, so every database re-runs the full list once. Scanned every local and
+// remote ref and every worktree's working src/db/index.ts on Sep 27 2026: 126 is the highest
+// claimed anywhere, so 127 is the next free integer.
+export const SCHEMA_VERSION = 127;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the

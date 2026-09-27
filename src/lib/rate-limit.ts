@@ -143,6 +143,12 @@ export const RATE_LIMITS = {
    */
   interestJoin: { limit: 10, windowSec: 600 },
   /**
+   * `castPollVote`: the waitlist's feature poll. A vote is one upsert, so this is loose on
+   * purpose — several friends behind one NAT voting is normal. What it stops is a loop
+   * stuffing the tally from one address.
+   */
+  pollVote: { limit: 20, windowSec: 600 },
+  /**
    * `/api/interest-list/progress`: the referral tracker polls it about every 20 seconds
    * while a pass is open, so one visitor is ~15 calls per five minutes. This leaves room
    * for several people behind one NAT, and stops a script sweeping share tokens.

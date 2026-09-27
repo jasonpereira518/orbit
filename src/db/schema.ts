@@ -3765,6 +3765,33 @@ export const interestListSignups = pgTable(
 );
 
 /**
+ * One row per voter in the waitlist page's feature poll. `voterKey` is the identity:
+ * `signup:<interest_list_signups.id>` when the visitor came in on a resolving `?me=` pass,
+ * otherwise `cookie:<id>` from the `wp_voter` cookie. It is unique, so a vote is an upsert
+ * and changing your mind moves the row rather than adding one.
+ *
+ * `optionId` is validated against `POLL_OPTIONS` in `lib/waitlist-poll.ts` before insert, and
+ * is deliberately not constrained here: the option list is code, and retiring an option
+ * must not need a migration. Votes for an id no longer listed are ignored by the tally.
+ * `signupId` has no FK, like every other cross-row reference in the interest-list tables.
+ */
+export const waitlistPollVotes = pgTable(
+  "waitlist_poll_votes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    optionId: text("option_id").notNull(),
+    voterKey: text("voter_key").notNull(),
+    signupId: uuid("signup_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("waitlist_poll_votes_voter_uidx").on(t.voterKey),
+    index("waitlist_poll_votes_option_idx").on(t.optionId),
+  ]
+);
+
+/**
  * An operator-composed note to the interest list — the "occasional note on what's new" the
  * landing page promises, which the two automated emails do not cover.
  *
