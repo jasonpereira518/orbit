@@ -17,7 +17,8 @@ export class HubspotApiError extends Error {
     message: string,
     readonly kind: HubspotErrorKind,
     readonly status: number | null,
-    readonly retryable: boolean
+    readonly retryable: boolean,
+    readonly detail: string | null = null
   ) {
     super(message);
     this.name = "HubspotApiError";
@@ -32,22 +33,23 @@ async function send(url: string, init: RequestInit, fetchImpl: typeof fetch, tim
     return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    throw new HubspotApiError(`HubSpot didn’t answer — ${detail}`.slice(0, 300), "network", null, true);
+    throw new HubspotApiError("HubSpot didn’t answer — the next sync will try again", "network", null, true, detail.slice(0, 300));
   }
 }
 
 function failure(status: number, body: { message?: unknown }): Error {
   const detail = typeof body.message === "string" ? body.message.slice(0, 200).replace(/\.$/, "") : "";
-  if (status === 401) return new ConnectorAuthError(`HubSpot refused the access token${detail ? ` — ${detail}` : ""}`);
+  const withDetail = `${status}${detail ? `: ${detail}` : ""}`;
+  if (status === 401) return new ConnectorAuthError("HubSpot refused the access token");
   if (status === 429) {
-    return new HubspotApiError("HubSpot is rate-limiting this account — the next sync picks up where this one stopped", "rate_limited", 429, true);
+    return new HubspotApiError("HubSpot is rate-limiting this account — the next sync picks up where this one stopped", "rate_limited", 429, true, withDetail);
   }
   if (status === 403) {
-    return new HubspotApiError("HubSpot says this connection can’t read contacts or owners — reconnect HubSpot and approve every permission", "forbidden", 403, false);
+    return new HubspotApiError("HubSpot says this connection can’t read contacts or owners — reconnect HubSpot and approve every permission", "forbidden", 403, false, withDetail);
   }
-  if (status === 404) return new HubspotApiError(`HubSpot couldn’t find that${detail ? ` — ${detail}` : ""}`, "not_found", 404, false);
-  if (status >= 500) return new HubspotApiError(`HubSpot returned ${status} — the next sync will try again`, "server", status, true);
-  return new HubspotApiError(`HubSpot rejected the request (${status})${detail ? ` — ${detail}` : ""}`, "bad_request", status, false);
+  if (status === 404) return new HubspotApiError("HubSpot couldn’t find what Orbit asked for — reconnect HubSpot", "not_found", 404, false, withDetail);
+  if (status >= 500) return new HubspotApiError("HubSpot is having trouble — the next sync will try again", "server", status, true, withDetail);
+  return new HubspotApiError("HubSpot turned down Orbit’s request — reconnect HubSpot, and tell us if it keeps happening", "bad_request", status, false, withDetail);
 }
 
 async function hubspotJson<T>(

@@ -87,6 +87,15 @@ async function main() {
   const eNet = await caught(searchHubspotContacts("tok", {}, down));
   check("a network failure is retryable", eNet instanceof HubspotApiError && eNet.kind === "network" && eNet.retryable);
   check("messages never end in a period", [e429, e403, e500, e400, eNet].every((e) => !(e as Error).message.endsWith(".")));
+  const errors4 = [e429, e403, e500, e400, eNet];
+  check("no provider text in any message", errors4.every((e) => e instanceof Error && !e.message.includes("nope") && !e.message.includes("fetch failed")));
+  const secret = scripted([[() => true, () => json(400, { message: "SECRET PROVIDER TEXT" })]]).impl;
+  const eSecret = await caught(searchHubspotContacts("tok", {}, secret));
+  check(
+    "provider text is kept on .detail, not the message",
+    eSecret instanceof HubspotApiError && !eSecret.message.includes("SECRET") && (eSecret.detail ?? "").includes("SECRET PROVIDER TEXT"),
+    String(eSecret instanceof HubspotApiError ? `${eSecret.message} | ${eSecret.detail}` : eSecret)
+  );
 
   console.log("\nintrospection");
   {

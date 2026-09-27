@@ -7,11 +7,13 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 process.env.HUBSPOT_CLIENT_ID = "cid";
 process.env.HUBSPOT_CLIENT_SECRET = "csecret";
+process.env.SALESFORCE_CLIENT_ID = "sfcid";
+process.env.SALESFORCE_CLIENT_SECRET = "sfcsecret";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { connectorConnections, crmRecords, leads, userSettings } from "../src/db/schema";
-import { upsertConnectorConnection } from "../src/lib/connectors/connections";
+import { upsertConnectorConnection, type ClaimedConnectorConnection } from "../src/lib/connectors/connections";
 import { crmStatusFor, disconnectCrm, runCrmSyncNow } from "../src/lib/crm/manage";
 import { upsertCrmRecords } from "../src/lib/crm/records";
 import { DEMO_CRM_ACCOUNT_REF, type CrmPerson } from "../src/lib/crm/types";
@@ -54,47 +56,74 @@ run(async () => {
   await ensureUserSettings(USER);
 
   console.log("status");
+  const hubspotOf = async (userId: string) => (await crmStatusFor(userId)).providers.find((p) => p.id === "hubspot")!;
+  const salesforceOf = async (userId: string) => (await crmStatusFor(userId)).providers.find((p) => p.id === "salesforce")!;
   await db.update(userSettings).set({ compedPlan: null }).where(eq(userSettings.userId, USER));
   const free = await crmStatusFor(USER);
-  check("a free account is not entitled", free.entitled === false && free.connection === null && free.counts === null);
+  check(
+    "providers list HubSpot then Salesforce, unconnected",
+    free.providers.map((p) => p.id).join(",") === "hubspot,salesforce" &&
+      free.providers.every((p) => p.connection === null && p.counts === null && p.configured === true)
+  );
+  check("a free account is not entitled", free.entitled === false && free.providers[0]?.connection === null && free.providers[0]?.counts === null);
   await db.update(userSettings).set({ compedPlan: "lifetime" }).where(eq(userSettings.userId, USER));
   const paid = await crmStatusFor(USER);
-  check("a paid account is, and the server is configured", paid.entitled && paid.configured);
+  check("a paid account is, and the server is configured", paid.entitled && paid.providers[0]?.configured);
 
   await upsertConnectorConnection({ userId: USER, connectorId: "hubspot", authKind: "oauth2", label: "acme.hubspot.com", accountRef: "4242", accessToken: "a", refreshToken: "r", nextSyncAt: null });
   await upsertCrmRecords(USER, "hubspot", [person("1", "customer"), person("2", "lead"), person("3", "other")]);
-  const connected = await crmStatusFor(USER);
+  const connected = await hubspotOf(USER);
   check("the connection shows", connected.connection?.label === "acme.hubspot.com" && connected.connection.status === "active" && !connected.connection.demo);
   check("never synced yet", connected.connection?.lastSyncedAgo === null && connected.connection?.syncing === false);
   check("counts: pipeline is every non-customer", connected.counts?.pipeline === 2 && connected.counts.workContacts === 0, JSON.stringify(connected.counts));
   await db.update(connectorConnections).set({ syncStatus: "syncing", syncStartedAt: new Date(), lastSyncedAt: new Date(Date.now() - 5 * 60_000) }).where(eq(connectorConnections.userId, USER));
-  const busy = await crmStatusFor(USER);
+  const busy = await hubspotOf(USER);
   check("a live lease reads as syncing", busy.connection?.syncing === true);
   check("with a relative last sync", /minutes? ago/.test(busy.connection?.lastSyncedAgo ?? ""), String(busy.connection?.lastSyncedAgo));
   await db.update(connectorConnections).set({ syncStartedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(connectorConnections.userId, USER));
-  check("an expired lease does not", (await crmStatusFor(USER)).connection?.syncing === false);
+  check("an expired lease does not", (await hubspotOf(USER)).connection?.syncing === false);
   await db.update(connectorConnections).set({ syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
 
   console.log("\nthe error the card shows never carries raw text");
   await db.update(connectorConnections).set({ syncError: 'duplicate key value violates unique constraint "x"' }).where(eq(connectorConnections.userId, USER));
-  const rawError = (await crmStatusFor(USER)).connection?.error;
+  const rawError = (await hubspotOf(USER)).connection?.error;
   check("a database error reads as the generic line", rawError === "The last sync hit a problem — the next automatic sync will try again", String(rawError));
   const rateLimited = "HubSpot is rate-limiting this account — the next sync picks up where this one stopped";
   await db.update(connectorConnections).set({ syncError: rateLimited }).where(eq(connectorConnections.userId, USER));
-  const ownError = (await crmStatusFor(USER)).connection?.error;
+  const ownError = (await hubspotOf(USER)).connection?.error;
   check("Orbit’s own HubSpot message passes through", ownError === rateLimited, String(ownError));
   await db.update(connectorConnections).set({ syncError: null }).where(eq(connectorConnections.userId, USER));
-  check("no error is no line", (await crmStatusFor(USER)).connection?.error === null);
+  check("no error is no line", (await hubspotOf(USER)).connection?.error === null);
 
   console.log("\na connection a stop disarmed reads as paused");
-  check("an unarmed connection with no error is not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  check("an unarmed connection with no error is not paused", (await hubspotOf(USER)).connection?.paused === false);
   await db.update(connectorConnections).set({ nextSyncAt: null, syncError: rateLimited }).where(eq(connectorConnections.userId, USER));
-  check("disarmed with an error: paused", (await crmStatusFor(USER)).connection?.paused === true);
+  check("disarmed with an error: paused", (await hubspotOf(USER)).connection?.paused === true);
   await db.update(connectorConnections).set({ nextSyncAt: new Date() }).where(eq(connectorConnections.userId, USER));
-  check("armed again (a retry is coming): not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  check("armed again (a retry is coming): not paused", (await hubspotOf(USER)).connection?.paused === false);
   await db.update(connectorConnections).set({ nextSyncAt: null, status: "needs_reauth" }).where(eq(connectorConnections.userId, USER));
-  check("needs reauth is its own state, not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  check("needs reauth is its own state, not paused", (await hubspotOf(USER)).connection?.paused === false);
   await db.update(connectorConnections).set({ status: "active", syncError: null }).where(eq(connectorConnections.userId, USER));
+
+  console.log("\nsalesforce status alongside hubspot");
+  await upsertConnectorConnection({ userId: USER, connectorId: "salesforce", authKind: "oauth2", label: "ada@acme.com", accountRef: "00Dxx", instanceUrl: "https://acme.my.salesforce.com", accessToken: "sfa", refreshToken: "sfr", nextSyncAt: null });
+  await upsertCrmRecords(USER, "salesforce", [person("sf1", "customer"), person("sf2", "lead")]);
+  const sfConnected = await salesforceOf(USER);
+  check(
+    "the salesforce connection shows its own label and id",
+    sfConnected.connection?.label === "ada@acme.com" && sfConnected.connection.connectorId === "salesforce"
+  );
+  check("salesforce counts: one pipeline, no work contacts", sfConnected.counts?.pipeline === 1 && sfConnected.counts.workContacts === 0, JSON.stringify(sfConnected.counts));
+  check("hubspot is unaffected by the salesforce connection", (await hubspotOf(USER)).connection?.label === "acme.hubspot.com");
+  check("a production org is not a sandbox", sfConnected.connection?.sandbox === false);
+  check("hubspot is never a sandbox", (await hubspotOf(USER)).connection?.sandbox === false);
+  await db
+    .update(connectorConnections)
+    .set({ instanceUrl: "https://acme--dev.sandbox.my.salesforce.com" })
+    .where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")));
+  check("a sandbox host is a sandbox, so Reconnect goes back to it", (await salesforceOf(USER)).connection?.sandbox === true);
+  await db.delete(connectorConnections).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")));
+  await db.delete(crmRecords).where(and(eq(crmRecords.userId, USER), eq(crmRecords.connectorId, "salesforce")));
 
   console.log("\nsync now");
   const calls: string[] = [];
@@ -133,7 +162,7 @@ run(async () => {
   check("needs reauth is said before trying", (await message(runCrmSyncNow(USER, "hubspot", { sync: okSync, consume: async () => {} }))) === "HubSpot needs you to reconnect — use Reconnect, then sync");
   await db.update(connectorConnections).set({ status: "active", accountRef: DEMO_CRM_ACCOUNT_REF }).where(eq(connectorConnections.userId, USER));
   check("the demo connection never syncs", (await message(runCrmSyncNow(USER, "hubspot", { sync: okSync, consume: async () => {} }))) === "The demo’s HubSpot data is sample data — there’s nothing to sync");
-  check("…and says it is the demo", (await crmStatusFor(USER)).connection?.demo === true);
+  check("…and says it is the demo", (await hubspotOf(USER)).connection?.demo === true);
   await db.update(connectorConnections).set({ accountRef: "4242" }).where(eq(connectorConnections.userId, USER));
 
   console.log("\ndisconnect");
@@ -173,6 +202,65 @@ run(async () => {
   await db.update(connectorConnections).set({ status: "needs_reauth", syncStatus: "syncing", syncStartedAt: new Date() }).where(eq(connectorConnections.userId, USER));
   await disconnectCrm(USER, "hubspot", { revoke: async () => true });
   check("a needs_reauth connection with a stale syncing flag disconnects anyway", (await db.select().from(connectorConnections).where(eq(connectorConnections.userId, USER))).length === 0);
+
+  console.log("\nsalesforce sync now and disconnect");
+  check(
+    "not connected names the provider",
+    (await message(runCrmSyncNow(USER, "salesforce", { sync: okSync, consume: async () => {} }))) === "Connect Salesforce first"
+  );
+
+  await upsertConnectorConnection({ userId: USER, connectorId: "salesforce", authKind: "oauth2", label: "ada@acme.com", accountRef: "00Dxx", instanceUrl: "https://acme.my.salesforce.com", accessToken: "sfa", refreshToken: "sfr", nextSyncAt: null });
+  const sfCalls: { connectorId: string; instanceUrl: string | null }[] = [];
+  const sfSync = async (conn: ClaimedConnectorConnection, _opts: { budgetMs: number }) => {
+    sfCalls.push({ connectorId: conn.connectorId, instanceUrl: conn.instanceUrl });
+    return { outcome: "complete" as const, pages: 1, records: 1, contactsCreated: 0, leadsCreated: 1, blocked: 0 };
+  };
+  const sfResult = await runCrmSyncNow(USER, "salesforce", { sync: sfSync, consume: async () => {} });
+  check(
+    "the claimed row handed to the stub is salesforce, with its instance url",
+    sfCalls[0]?.connectorId === "salesforce" && sfCalls[0]?.instanceUrl === "https://acme.my.salesforce.com",
+    JSON.stringify(sfCalls[0])
+  );
+  check("the stub's result comes back", sfResult.outcome === "complete" && sfResult.pages === 1 && sfResult.records === 1);
+
+  await db.update(connectorConnections).set({ status: "needs_reauth" }).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")));
+  check(
+    "needs reauth names the provider",
+    (await message(runCrmSyncNow(USER, "salesforce", { sync: sfSync, consume: async () => {} }))) === "Salesforce needs you to reconnect — use Reconnect, then sync"
+  );
+  await db.update(connectorConnections).set({ status: "active" }).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")));
+
+  await db.update(connectorConnections).set({ syncStatus: "syncing", syncStartedAt: new Date() }).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")));
+  check(
+    "already syncing names the provider",
+    (await message(runCrmSyncNow(USER, "salesforce", { sync: sfSync, consume: async () => {} }))) === "A sync is already running — give it a minute"
+  );
+  await db.update(connectorConnections).set({ syncStatus: "idle" }).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")));
+
+  const sfDisconnectRevokes: { token: string; instanceUrl: string | null }[] = [];
+  await upsertConnectorConnection({ userId: USER, connectorId: "hubspot", authKind: "oauth2", accountRef: "4242", accessToken: "a3", refreshToken: "r3", nextSyncAt: null });
+  await upsertCrmRecords(USER, "hubspot", [person("h1", "customer")]);
+  await upsertCrmRecords(USER, "salesforce", [person("sf3", "lead")]);
+  await disconnectCrm(USER, "salesforce", {
+    revoke: async (token, instanceUrl) => {
+      sfDisconnectRevokes.push({ token, instanceUrl });
+      return true;
+    },
+  });
+  check(
+    "disconnect revokes with the refresh token and the instance url",
+    sfDisconnectRevokes[0]?.token === "sfr" && sfDisconnectRevokes[0]?.instanceUrl === "https://acme.my.salesforce.com",
+    JSON.stringify(sfDisconnectRevokes[0])
+  );
+  check("the salesforce connection is gone", (await db.select().from(connectorConnections).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")))).length === 0);
+  check("only salesforce's records were deleted", (await db.select().from(crmRecords).where(eq(crmRecords.userId, USER))).map((r) => r.connectorId).sort().join(",") === "hubspot");
+  await db.delete(connectorConnections).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "hubspot")));
+  await db.delete(crmRecords).where(eq(crmRecords.userId, USER));
+
+  await upsertConnectorConnection({ userId: USER, connectorId: "salesforce", authKind: "oauth2", accountRef: "00Dxx", instanceUrl: "https://evil.example", accessToken: "sfa2", refreshToken: "sfr2", nextSyncAt: null });
+  const defaultRevokeMessage = await message(disconnectCrm(USER, "salesforce"));
+  check("default revoke wiring disconnects without throwing even against an untrusted instance url", defaultRevokeMessage === null, String(defaultRevokeMessage));
+  check("…and the connection is gone", (await db.select().from(connectorConnections).where(and(eq(connectorConnections.userId, USER), eq(connectorConnections.connectorId, "salesforce")))).length === 0);
 
   await reset();
   await db.delete(userSettings).where(eq(userSettings.userId, USER));

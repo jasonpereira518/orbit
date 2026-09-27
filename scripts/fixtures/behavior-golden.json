@@ -5449,6 +5449,10 @@
       "hubspot": {
         "state": "on",
         "detail": "orbit-demo.hubspot.com"
+      },
+      "salesforce": {
+        "state": "off",
+        "detail": "Not connected"
       }
     }
   },

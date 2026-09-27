@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { isCrmConnectorId, crmAuthorizeUrl } from "@/lib/crm/connect";
 import { crmStatusFor, disconnectCrm, runCrmSyncNow } from "@/lib/crm/manage";
-import type { CrmStatus, CrmSyncNowResult } from "@/lib/crm/types";
+import { crmProviderLabel, type CrmStatus, type CrmSyncNowResult } from "@/lib/crm/types";
 import { isOAuthConfigured } from "@/lib/connectors/oauth";
 import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { asActionResult, UserFacingError, type ActionResult } from "@/lib/errors";
@@ -20,7 +20,7 @@ type ConnectStart = { url: string };
 type Disconnected = { disconnected: true };
 
 const NOT_AVAILABLE = "That CRM isn’t available yet";
-const UPGRADE = "HubSpot sync is on Orbit Pro and Lifetime — upgrade to connect it";
+const UPGRADE = "CRM sync is on Orbit Pro and Lifetime — upgrade to connect it";
 
 async function requireCrm(userId: string): Promise<void> {
   try {
@@ -36,13 +36,16 @@ export async function loadCrmStatusAction(): Promise<CrmStatus> {
   return crmStatusFor(userId);
 }
 
-export async function startCrmConnectAction(connectorId: string): Promise<ActionResult<ConnectStart>> {
+export async function startCrmConnectAction(
+  connectorId: string,
+  options: { sandbox?: boolean } = {}
+): Promise<ActionResult<ConnectStart>> {
   const userId = await requireLeadsUser();
   return asActionResult(async () => {
     await requireCrm(userId);
     if (!isCrmConnectorId(connectorId)) throw new UserFacingError(NOT_AVAILABLE);
-    if (!isOAuthConfigured(connectorId)) throw new UserFacingError("HubSpot isn’t set up on this server yet");
-    return { url: crmAuthorizeUrl(userId, connectorId, "/leads") };
+    if (!isOAuthConfigured(connectorId)) throw new UserFacingError(`${crmProviderLabel(connectorId)} isn’t set up on this server yet`);
+    return { url: crmAuthorizeUrl(userId, connectorId, "/leads", { sandbox: options.sandbox === true }) };
   });
 }
 

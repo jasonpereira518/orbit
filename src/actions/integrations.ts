@@ -56,7 +56,7 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, hubspot] =
+  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, hubspot, salesforce] =
     await Promise.all([
       settle(getSettings()),
       settle(getCalendarFeedStatus()),
@@ -68,6 +68,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(listCalendarSubscriptions()),
       settle(requireUserId().then((id) => listEventConnections(id))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "hubspot"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "salesforce"))),
     ]);
   const now = new Date();
   const pages: IntegrationStatuses["pages"] = {};
@@ -192,6 +193,16 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
         : hubspot.status === "needs_reauth"
           ? { state: "partial", detail: "Reconnect needed" }
           : { state: "on", detail: hubspot.label ?? "Connected" };
+
+  // Salesforce's row (Leads P5): the connected username, or why not.
+  connectors.salesforce =
+    salesforce === "unknown"
+      ? "unknown"
+      : salesforce === null
+        ? { state: "off", detail: "Not connected" }
+        : salesforce.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: salesforce.label ?? "Connected" };
 
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.

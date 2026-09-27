@@ -355,6 +355,19 @@ const CONNECTOR_MANIFESTS = [
     ],
   },
   {
+    id: "salesforce",
+    label: "Salesforce",
+    family: "crm",
+    auth: "oauth2",
+    availability: "available",
+    entitlement: "crm",
+    rateBucket: "providerSync",
+    purgeCategory: "connections",
+    // P5 reads people. Scopes mirror `SALESFORCE_SCOPES` in src/lib/crm/salesforce/mapping.ts
+    // (smoke-connector-registry compares them).
+    capabilities: [read("syncPeople", "Read the contacts and leads you own", ["api", "refresh_token", "id"])],
+  },
+  {
     id: "notion",
     label: "Notion",
     family: "knowledge",
