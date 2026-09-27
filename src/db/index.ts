@@ -1390,6 +1390,7 @@ CREATE TABLE IF NOT EXISTS connector_connections (
   auth_kind text NOT NULL,
   label text,
   account_ref text,
+  instance_url text,
   api_key_encrypted text,
   access_token_encrypted text,
   refresh_token_encrypted text,
@@ -2172,7 +2173,9 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // docs/superpowers/specs/2026-09-22-leads-design.md. First shipped on its branch as 94 (which
 // also covered merging the connector spine, since merged to main); renumbered with the rest
 // of the Leads stack on merging main at 118 (see 121).
-export const SCHEMA_VERSION = 123;
+//
+// 124 = connector_connections.instance_url: the account's own API host (Leads P5, Salesforce).
+export const SCHEMA_VERSION = 124;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3264,6 +3267,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "connector_outbox", "claimed_until", "timestamptz");
   // v94: a CRM lead's record (P4).
   await ensureColumn(client, "leads", "crm_record_id", "uuid REFERENCES crm_records(id) ON DELETE SET NULL");
+  // v124: the account's own API host (Leads P5, Salesforce).
+  await ensureColumn(client, "connector_connections", "instance_url", "text");
 
   // v89: Deepgram diarization label on a local database built before it existed.
   await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
@@ -3854,7 +3859,7 @@ const alters = [
   // predecessor, and both indexes are written in both places because smoke-schema-ddl
   // compares the `uniqueIndex()` declarations in schema.ts against this file by name and
   // column list.
-  `CREATE TABLE IF NOT EXISTS connector_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, auth_kind text NOT NULL, label text, account_ref text, api_key_encrypted text, access_token_encrypted text, refresh_token_encrypted text, token_expires_at timestamptz, scopes text, capabilities jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS connector_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, auth_kind text NOT NULL, label text, account_ref text, instance_url text, api_key_encrypted text, access_token_encrypted text, refresh_token_encrypted text, token_expires_at timestamptz, scopes text, capabilities jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id)`,
   `CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
   // Schema v75: connector write-back. Same both-places rule as v74 above.
@@ -3930,6 +3935,8 @@ const alters = [
   // template runs first, and on a database that already has `leads` the column is not there yet.
   `ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_record_id uuid REFERENCES crm_records(id) ON DELETE SET NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS leads_user_crm_record_uidx ON leads(user_id, crm_record_id) WHERE crm_record_id IS NOT NULL`,
+  // v124: connector_connections.instance_url — the account's own API host (Leads P5, Salesforce).
+  `ALTER TABLE connector_connections ADD COLUMN IF NOT EXISTS instance_url text`,
 ];
 
 /**

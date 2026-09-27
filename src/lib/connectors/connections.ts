@@ -37,6 +37,8 @@ export type ClaimedConnectorConnection = {
   connectorId: string;
   authKind: "oauth2" | "api_key" | "dav_password" | "api_token";
   accountRef: string | null;
+  /** The account's own API host (Salesforce). Null for providers with one global host. */
+  instanceUrl: string | null;
   /** Already decrypted. Null means the row is unusable and the caller must flag reauth. */
   accessToken: string | null;
   refreshToken: string | null;
@@ -58,6 +60,7 @@ type ClaimRow = {
   connector_id: string;
   auth_kind: ClaimedConnectorConnection["authKind"];
   account_ref: string | null;
+  instance_url: string | null;
   api_key_encrypted: string | null;
   access_token_encrypted: string | null;
   refresh_token_encrypted: string | null;
@@ -87,6 +90,7 @@ function toClaimed(row: ClaimRow): ClaimedConnectorConnection {
     connectorId: row.connector_id,
     authKind: row.auth_kind,
     accountRef: row.account_ref,
+    instanceUrl: row.instance_url ?? null,
     accessToken: decryptOrNull(
       row.auth_kind === "oauth2" ? row.access_token_encrypted : row.api_key_encrypted
     ),
@@ -125,7 +129,7 @@ export async function claimDueConnectorConnections(
           ORDER BY next_sync_at
           LIMIT ${limit}
        )
-      RETURNING id, user_id, connector_id, auth_kind, account_ref, api_key_encrypted,
+      RETURNING id, user_id, connector_id, auth_kind, account_ref, instance_url, api_key_encrypted,
                 access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes,
                 capabilities, sync_cursor, sync_failures, sync_started_at
     `)
@@ -154,7 +158,7 @@ export async function claimConnectorConnectionForUser(
          AND connector_id = ${connectorId}
          AND status = 'active'
          AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
-      RETURNING id, user_id, connector_id, auth_kind, account_ref, api_key_encrypted,
+      RETURNING id, user_id, connector_id, auth_kind, account_ref, instance_url, api_key_encrypted,
                 access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes,
                 capabilities, sync_cursor, sync_failures, sync_started_at
     `)
@@ -191,7 +195,12 @@ export async function connectorLeaseHeld(id: string, leaseStartedAt: Date): Prom
  */
 export async function updateConnectorTokens(
   id: string,
-  tokens: { accessToken: string; refreshToken: string | null; expiresAt: Date | null }
+  tokens: {
+    accessToken: string;
+    refreshToken: string | null;
+    expiresAt: Date | null;
+    instanceUrl?: string | null;
+  }
 ): Promise<void> {
   const db = await getDb();
   await db
@@ -200,6 +209,7 @@ export async function updateConnectorTokens(
       accessTokenEncrypted: encrypt(tokens.accessToken),
       ...(tokens.refreshToken ? { refreshTokenEncrypted: encrypt(tokens.refreshToken) } : {}),
       tokenExpiresAt: tokens.expiresAt,
+      ...(tokens.instanceUrl ? { instanceUrl: tokens.instanceUrl } : {}),
       updatedAt: new Date(),
     })
     .where(eq(connectorConnections.id, id));
@@ -355,6 +365,7 @@ export type UpsertConnectorConnectionInput = {
   authKind: ClaimedConnectorConnection["authKind"];
   label?: string | null;
   accountRef?: string | null;
+  instanceUrl?: string | null;
   /** OAuth access token, API key or app-specific password, encrypted before it is stored. */
   accessToken?: string | null;
   refreshToken?: string | null;
@@ -381,6 +392,7 @@ export async function upsertConnectorConnection(
     authKind: input.authKind,
     label: input.label ?? null,
     accountRef: input.accountRef ?? null,
+    instanceUrl: input.instanceUrl ?? null,
     apiKeyEncrypted: input.authKind === "oauth2" ? null : secret,
     accessTokenEncrypted: input.authKind === "oauth2" ? secret : null,
     refreshTokenEncrypted: input.refreshToken ? encrypt(input.refreshToken) : null,
@@ -413,6 +425,10 @@ export async function upsertConnectorConnection(
         authKind: sql`excluded.auth_kind`,
         label: sql`coalesce(excluded.label, ${connectorConnections.label})`,
         accountRef: sql`coalesce(excluded.account_ref, ${connectorConnections.accountRef})`,
+        // Unconditionally overwritten, not coalesced: a reconnect without a new instance_url
+        // means the provider's host is no longer known (or unchanged and resupplied), and an
+        // upsert that omits it is exactly how a caller says "I have no host for this row".
+        instanceUrl: sql`excluded.instance_url`,
         // Unconditionally overwritten, not coalesced: a reconnect that supplies a new
         // secret must replace the old one. The auth-kind split in `values` above already
         // nulls out whichever of these two columns no longer applies, so a switch between
@@ -452,12 +468,19 @@ export async function upsertConnectorConnection(
  * Forget a connection's sync progress, so its next run re-identifies and starts a fresh window.
  * A reconnect calls this: the grant may belong to someone else in the same account, and the
  * cursor caches who the last one was.
+ *
+ * A seed replaces the cursor with facts the next sync needs from the connect (Salesforce's
+ * org and user ids).
  */
-export async function resetConnectorCursor(userId: string, connectorId: string): Promise<void> {
+export async function resetConnectorCursor(
+  userId: string,
+  connectorId: string,
+  seed: ConnectorSyncCursor | null = null
+): Promise<void> {
   const db = await getDb();
   await db
     .update(connectorConnections)
-    .set({ syncCursor: null, updatedAt: new Date() })
+    .set({ syncCursor: seed ?? null, updatedAt: new Date() })
     .where(and(eq(connectorConnections.userId, userId), eq(connectorConnections.connectorId, connectorId)));
 }
 
@@ -466,6 +489,7 @@ export type ConnectorConnectionSummary = {
   connectorId: string;
   label: string | null;
   accountRef: string | null;
+  instanceUrl: string | null;
   status: "active" | "needs_reauth";
   capabilities: string[];
   lastSyncedAt: Date | null;
@@ -486,6 +510,7 @@ export async function listConnectorConnections(
       connectorId: connectorConnections.connectorId,
       label: connectorConnections.label,
       accountRef: connectorConnections.accountRef,
+      instanceUrl: connectorConnections.instanceUrl,
       status: connectorConnections.status,
       capabilities: connectorConnections.capabilities,
       lastSyncedAt: connectorConnections.lastSyncedAt,

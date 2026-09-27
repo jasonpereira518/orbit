@@ -4776,6 +4776,12 @@ export const connectorConnections = pgTable(
     label: text("label"),
     /** Remote account/workspace/portal id, when the provider has one. */
     accountRef: text("account_ref"),
+    /**
+     * The account's own API host, for providers that assign one (Salesforce's `instance_url`).
+     * Every API, refresh and revoke call for the row goes here. Checked against the provider's
+     * trusted hosts before it is stored — a bearer token is sent to it.
+     */
+    instanceUrl: text("instance_url"),
     apiKeyEncrypted: text("api_key_encrypted"),
     accessTokenEncrypted: text("access_token_encrypted"),
     refreshTokenEncrypted: text("refresh_token_encrypted"),

@@ -14,8 +14,10 @@ import {
   claimDueConnectorConnections,
   connectorLeaseHeld,
   disarmConnectorSync,
+  getConnectorConnection,
   listConnectorConnections,
   markConnectorSyncResult,
+  resetConnectorCursor,
   saveConnectorCursor,
   updateConnectorTokens,
   upsertConnectorConnection,
@@ -30,10 +32,12 @@ function check(label: string, ok: boolean, detail = "") {
 }
 
 const USER = "smoke-connector-claim";
+const SF_USER = "smoke-claim-instance";
 
 run(async () => {
   const db = await getDb();
   await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));
+  await db.delete(connectorConnections).where(eq(connectorConnections.userId, SF_USER));
 
   const now = new Date();
   const conn = await upsertConnectorConnection({
@@ -313,6 +317,31 @@ run(async () => {
   check("a deleted row holds no lease", takeover !== null && !(await connectorLeaseHeld(takeover.id, takeover.leaseStartedAt)));
 
   await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));
+
+  console.log("\ninstance_url (Leads P5)");
+  await upsertConnectorConnection({
+    userId: SF_USER, connectorId: "salesforce", authKind: "oauth2", label: "ada@acme.com",
+    accountRef: "00D000000000001", accessToken: "at-1", refreshToken: "rt-1",
+    instanceUrl: "https://acme.my.salesforce.com",
+  });
+  const sfSummary = await getConnectorConnection(SF_USER, "salesforce");
+  check("the summary carries instance_url", sfSummary?.instanceUrl === "https://acme.my.salesforce.com", String(sfSummary?.instanceUrl));
+  const sfClaim = await claimConnectorConnectionForUser(SF_USER, "salesforce");
+  check("the claim carries instance_url", sfClaim?.instanceUrl === "https://acme.my.salesforce.com", String(sfClaim?.instanceUrl));
+  await updateConnectorTokens(sfClaim!.id, { accessToken: "at-2", refreshToken: null, expiresAt: null });
+  check("a refresh without instance_url keeps it", (await getConnectorConnection(SF_USER, "salesforce"))?.instanceUrl === "https://acme.my.salesforce.com");
+  await updateConnectorTokens(sfClaim!.id, { accessToken: "at-3", refreshToken: null, expiresAt: null, instanceUrl: "https://acme2.my.salesforce.com" });
+  check("a refresh that names a new instance_url stores it", (await getConnectorConnection(SF_USER, "salesforce"))?.instanceUrl === "https://acme2.my.salesforce.com");
+  await resetConnectorCursor(SF_USER, "salesforce", { meta: { orgId: "00D000000000001", userId: "005000000000001" } });
+  const seeded = await claimConnectorConnectionForUser(SF_USER, "salesforce", new Date(Date.now() + 60 * 60 * 1000));
+  check("resetConnectorCursor stores the seed", seeded?.cursor?.meta?.userId === "005000000000001", JSON.stringify(seeded?.cursor));
+  await resetConnectorCursor(SF_USER, "salesforce");
+  const cleared = await getDb().then((db) => db.query.connectorConnections.findFirst({ where: eq(connectorConnections.userId, SF_USER) }));
+  check("and without one clears it", cleared?.syncCursor === null, JSON.stringify(cleared?.syncCursor));
+  await upsertConnectorConnection({ userId: SF_USER, connectorId: "salesforce", authKind: "oauth2", accessToken: "at-4" });
+  check("an upsert without instance_url clears it", (await getConnectorConnection(SF_USER, "salesforce"))?.instanceUrl === null);
+
+  await db.delete(connectorConnections).where(eq(connectorConnections.userId, SF_USER));
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
