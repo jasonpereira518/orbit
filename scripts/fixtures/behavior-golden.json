@@ -3272,7 +3272,9 @@
         "url": "/contacts/<contacts:Olivia Brooks>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Olivia Brooks>"
+        "contactId": "<contacts:Olivia Brooks>",
+        "contactTitle": "Alumni Relations Lead",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "followup:<contacts:Ben Carter>:<date>",
@@ -3282,7 +3284,9 @@
         "url": "/contacts/<contacts:Ben Carter>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Ben Carter>"
+        "contactId": "<contacts:Ben Carter>",
+        "contactTitle": "Computer Science Student",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "reminder:<reminders:Send Sarah the retrieval write-up>",
@@ -3303,7 +3307,9 @@
         "url": "/contacts/<contacts:Sarah Chen>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Sarah Chen>"
+        "contactId": "<contacts:Sarah Chen>",
+        "contactTitle": "Partnerships Lead",
+        "company": "OpenAI"
       },
       {
         "id": "reminder:<reminders:Send Grace the quarterly update>",
@@ -3324,7 +3330,9 @@
         "url": "/contacts/<contacts:Grace Whitfield>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Grace Whitfield>"
+        "contactId": "<contacts:Grace Whitfield>",
+        "contactTitle": "Angel Investor",
+        "company": "Independent"
       },
       {
         "id": "reminder:<reminders:Add James to the monthly update>",
@@ -3345,7 +3353,9 @@
         "url": "/contacts/<contacts:James Okafor>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:James Okafor>"
+        "contactId": "<contacts:James Okafor>",
+        "contactTitle": "Partner",
+        "company": "Bellwether Ventures"
       },
       {
         "id": "followup:<contacts:David Kim>:<date>",
@@ -3355,7 +3365,9 @@
         "url": "/contacts/<contacts:David Kim>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:David Kim>"
+        "contactId": "<contacts:David Kim>",
+        "contactTitle": "Engineering Manager",
+        "company": "OpenAI"
       },
       {
         "id": "reminder:<reminders:Send Maya the showcase one-liner>",
@@ -3398,7 +3410,9 @@
         "url": "/contacts/<contacts:Maya Thompson>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Maya Thompson>"
+        "contactId": "<contacts:Maya Thompson>",
+        "contactTitle": "Program Director",
+        "company": "Innovate Carolina"
       },
       {
         "id": "followup:<contacts:Dr. Elena Vasquez>:<date>",
@@ -3408,7 +3422,9 @@
         "url": "/contacts/<contacts:Dr. Elena Vasquez>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Dr. Elena Vasquez>"
+        "contactId": "<contacts:Dr. Elena Vasquez>",
+        "contactTitle": "Professor of Computer Science",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "reminder:<reminders:Call Tom about API versioning>",
@@ -3429,7 +3445,9 @@
         "url": "/contacts/<contacts:Fatima Nasser>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Fatima Nasser>"
+        "contactId": "<contacts:Fatima Nasser>",
+        "contactTitle": "Product Manager",
+        "company": "Stripe"
       },
       {
         "id": "followup:<contacts:Marcus Lee>:<date>",
@@ -3439,7 +3457,9 @@
         "url": "/contacts/<contacts:Marcus Lee>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Marcus Lee>"
+        "contactId": "<contacts:Marcus Lee>",
+        "contactTitle": "Technical Recruiter",
+        "company": "Stripe"
       },
       {
         "id": "reminder:<reminders:Book a venue for the Orbit user dinner>",
@@ -3460,7 +3480,9 @@
         "url": "/contacts/<contacts:Victor Reyes>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Victor Reyes>"
+        "contactId": "<contacts:Victor Reyes>",
+        "contactTitle": "Software Engineer",
+        "company": "Anthropic"
       },
       {
         "id": "followup:<contacts:Aisha Rahman>:<date>",
@@ -3470,7 +3492,9 @@
         "url": "/contacts/<contacts:Aisha Rahman>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Aisha Rahman>"
+        "contactId": "<contacts:Aisha Rahman>",
+        "contactTitle": "Senior Product Manager",
+        "company": "Google"
       },
       {
         "id": "followup:<contacts:Priya Nair>:<date>",
@@ -3480,7 +3504,9 @@
         "url": "/contacts/<contacts:Priya Nair>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Priya Nair>"
+        "contactId": "<contacts:Priya Nair>",
+        "contactTitle": "Founding Engineer",
+        "company": "Notion"
       },
       {
         "id": "followup:<contacts:Nina Petrova>:<date>",
@@ -3490,7 +3516,9 @@
         "url": "/contacts/<contacts:Nina Petrova>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Nina Petrova>"
+        "contactId": "<contacts:Nina Petrova>",
+        "contactTitle": "Co-founder & CEO",
+        "company": "Lumen Health"
       },
       {
         "id": "suggested_reminder:<suggested_reminders:Send Nina the pricing draft>",
