@@ -74,7 +74,7 @@ async function readModel() {
   const t1 = await getTicketByShareToken("smoke-share-1");
   check("first row is #1 on Mercury", t1?.number === 1 && t1.planet === "mercury", JSON.stringify(t1));
   check("first row has two referrals", t1?.referrals === 2, String(t1?.referrals));
-  check("two referrals is not yet the front wave", t1?.frontWave === false);
+  check("two referrals are two referrals", t1?.referrals === 2);
   check("joinedAt is an ISO string", typeof t1?.joinedAt === "string" && t1.joinedAt.endsWith("Z"));
 
   const t2 = await getTicketByShareToken("smoke-share-2");
@@ -133,7 +133,7 @@ async function joinPath() {
     sendWelcome: async (email, _unsub, _planet, links, position) => {
       sent.push({ email, links, position });
     },
-    sendFrontWave: async () => undefined,
+    sendTier: async () => undefined,
   });
   const base = { website: "", elapsedMs: MIN_FILL_MS + 10 };
   const rowFor = async (email: string) =>
@@ -198,7 +198,7 @@ async function joinPath() {
   const bot = await joinInterestListCore({ ...base, website: "http://spam", email: `${PREFIX}bot@example.test` }, ctx("bot"));
   const fast = await joinInterestListCore({ ...base, elapsedMs: 10, email: `${PREFIX}fast@example.test` }, ctx("fast"));
   check("honeypot answers ok with a ticket", bot.ok && bot.ticket.number > 0 && bot.ticket.shareToken.length > 10);
-  check("too-fast answers ok with a ticket", fast.ok && fast.ticket.referrals === 0 && !fast.ticket.frontWave);
+  check("too-fast answers ok with a ticket", fast.ok && fast.ticket.referrals === 0);
   check("a fake ticket stands at the back of the line", fast.ok && fast.ticket.position === (await readInterestProof()).count + 1);
   check("neither writes a row", (await db.select().from(interestListSignups)).length === rowsBefore);
   check("fake tokens resolve to nothing", bot.ok && (await getTicketByShareToken(bot.ticket.shareToken)) === null);

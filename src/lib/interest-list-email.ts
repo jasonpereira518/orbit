@@ -1,7 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getWaitlistOrigin } from "@/lib/app-url";
-import { formatTicketNumber, FRONT_WAVE_REFERRALS } from "@/lib/interest-list";
+import {
+  formatTicketNumber,
+  SPOTS_PER_REFERRAL,
+  spotsEarned,
+  type ReferralTier,
+} from "@/lib/interest-list";
 import { waitlistHost } from "@/lib/waitlist-host";
 import { planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
 
@@ -184,7 +189,7 @@ export function buildInterestListWelcomeEmail(input: {
   const subject = "You're on the list";
   const headline = "Thanks for joining.";
   const opening = `${place ? `You're #${place} in line. ` : ""}I'm letting people in a few at a time, in the order they joined. When your spot opens, I'll write to you here.`;
-  const moveUp = `${capitalize(inWords(FRONT_WAVE_REFERRALS))} friends joining from your pass moves you into the front wave, the first group through the door.`;
+  const moveUp = `Every friend who joins from your pass moves you up ${SPOTS_PER_REFERRAL} spots, and there are a few extras along the way.`;
 
   const text = [
     headline,
@@ -216,15 +221,45 @@ export function buildInterestListWelcomeEmail(input: {
   return { subject, html, text };
 }
 
-/** Sent to a referrer when their friends carry them into the front wave. */
-export function buildFrontWaveEmail(input: {
+/** What each referral tier's email says. `move-up` and `joined` share the first-friend note. */
+function tierCopy(tier: ReferralTier, friends: number) {
+  const moved = spotsEarned(friends);
+  switch (tier.id) {
+    case "priority-beta":
+      return {
+        subject: "Priority beta access",
+        headline: "You've unlocked priority beta access.",
+        body: `${capitalize(inWords(friends))} friends joined from your pass. You'll get first look at new features in the beta, and you've moved up ${moved} spots.`,
+      };
+    case "early-access":
+      return {
+        subject: "You've unlocked early access",
+        headline: "You've unlocked early access.",
+        body: `${capitalize(inWords(friends))} friends joined from your pass, so you'll be invited early. There's nothing else to do; your invite will come by email.`,
+      };
+    case "founding":
+      return {
+        subject: "You're a founding member",
+        headline: "You're a founding member.",
+        body: `${capitalize(inWords(friends))} friends joined from your pass. You'll carry the founding member badge, and you've moved up ${moved} spots.`,
+      };
+    default:
+      return {
+        subject: "You moved up",
+        headline: `You moved up ${SPOTS_PER_REFERRAL} spots.`,
+        body: `A friend joined from your pass, so you're ${SPOTS_PER_REFERRAL} spots closer. Every friend after that moves you up ${SPOTS_PER_REFERRAL} more.`,
+      };
+  }
+}
+
+/** Sent to a referrer when their friends unlock a referral tier (1, 3, 5 or 10 friends). */
+export function buildTierEmail(input: {
   unsubscribeUrl: string;
   planet: WelcomePlanet;
   links: EmailLinks;
+  tier: ReferralTier;
 }) {
-  const subject = "You moved to the front";
-  const headline = "You're in the front wave.";
-  const body = `${capitalize(inWords(FRONT_WAVE_REFERRALS))} friends joined from your pass, so you'll be in the first group through the door. There's nothing else to do; your invite will come by email.`;
+  const { subject, headline, body } = tierCopy(input.tier, input.tier.at);
   const thanks = "Thank you for passing it on.";
 
   const text = [
@@ -245,7 +280,7 @@ export function buildFrontWaveEmail(input: {
 
   const html = paperShell({
     preheader: thanks,
-    eyebrow: `Front wave · ${planetLabel(input.planet)}`,
+    eyebrow: `${input.tier.label} · ${planetLabel(input.planet)}`,
     planet: input.planet,
     headline,
     rows: [
@@ -285,7 +320,7 @@ export function waitlistReplyTo(): string | undefined {
  * its signup row is durable either way and a Resend hiccup must not fail the submission.
  */
 async function deliver(
-  kind: "welcome" | "front-wave",
+  kind: "welcome" | "tier",
   email: string,
   unsubscribeUrl: string,
   message: { subject: string; html: string; text: string }
@@ -363,11 +398,12 @@ export async function sendInterestListWelcomeEmail(
 }
 
 /** Best-effort, like the welcome. Returns whether it sent. */
-export async function sendFrontWaveEmail(
+export async function sendTierEmail(
   email: string,
   unsubscribeUrl: string,
   planet: WelcomePlanet,
-  links: EmailLinks
+  links: EmailLinks,
+  tier: ReferralTier
 ): Promise<boolean> {
-  return deliver("front-wave", email, unsubscribeUrl, buildFrontWaveEmail({ unsubscribeUrl, planet, links }));
+  return deliver("tier", email, unsubscribeUrl, buildTierEmail({ unsubscribeUrl, planet, links, tier }));
 }

@@ -1311,6 +1311,19 @@
   backdrop-filter: blur(12px);
 }
 
+/* The referral tracker's card: a busier surface (ten circles, five planets, a moving
+ * number) than .landing-glass's other, sparser uses, so it takes a darker, near-opaque fill
+ * instead — same border and blur, but the starfield behind it barely shows through. */
+.referral-tracker-glass {
+  border: 1px solid rgba(232, 243, 241, 0.1);
+  background: linear-gradient(
+    180deg,
+    rgba(10, 13, 22, 0.94) 0%,
+    rgba(5, 7, 14, 0.96) 100%
+  );
+  backdrop-filter: blur(16px);
+}
+
 /* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
  * doesn't bleed through as much behind logo + auth controls. */
 .landing-header-glass {
@@ -1492,25 +1505,6 @@
 .interest-flip-face {
   transform-style: preserve-3d;
   backface-visibility: hidden;
-}
-
-/* Referral moons drift around the planet once they have dropped in. Slow enough to read
- * as an orbit, not a spinner. Paused, not removed, under reduced motion so the moons
- * still sit on their ring. */
-@keyframes interest-moon-drift {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.interest-moons-drift {
-  animation: interest-moon-drift 40s linear infinite;
-  transform-origin: 50% 50%;
-  will-change: transform;
-}
-@media (prefers-reduced-motion: reduce) {
-  .interest-moons-drift {
-    animation-play-state: paused;
-  }
 }
 
 /* ── Transitions.dev: shimmer text ──

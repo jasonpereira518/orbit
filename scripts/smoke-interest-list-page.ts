@@ -112,7 +112,8 @@ async function main() {
   // it sees the hero's props (asserted above) and the server-rendered sections below it.
   const formText = textOf(form).join(" ");
   check("the FAQ keeps the product under wraps", formText.includes("under wraps"));
-  check("the front wave is explained", formText.includes("How do I get into the front wave?"));
+  check("moving up the line is explained", formText.includes("How do I move up the line?"));
+  check("the tracker section is on the page", formText.includes("Bring friends, move up."));
   // Its one sanctioned mark is the "Project: Orbit" header; nothing else names it.
   const unmarked = formText.replace("Project: Orbit", "");
   check("the header carries the product mark", formText.includes("Project: Orbit"));

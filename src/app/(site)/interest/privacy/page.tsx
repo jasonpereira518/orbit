@@ -31,7 +31,7 @@ const SECTIONS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
         <li>The email address you join with.</li>
         <li>
           Whose invite link brought you here, if any, so the person who shared it gets credit
-          toward the front wave.
+          for the referral.
         </li>
         <li>
           How you found the page: the referring site and any campaign tags in the link you

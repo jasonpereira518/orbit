@@ -18,6 +18,7 @@ import {
   type InterestListTableRow,
 } from "@/components/admin/interest-list-table";
 import { cn } from "@/lib/utils";
+import { REFERRAL_TIERS, SPOTS_PER_REFERRAL } from "@/lib/interest-list";
 import {
   getInterestListSummary,
   INTEREST_LIST_PAGE_SIZE,
@@ -35,14 +36,16 @@ export const metadata = { title: "Admin · Waitlist" };
 const FILTERS: Array<{ value: InterestListFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Waiting" },
-  { value: "front-wave", label: "Front wave" },
+  { value: "priority-beta", label: "Priority beta" },
+  { value: "early-access", label: "Early access" },
+  { value: "founding", label: "Founding" },
   { value: "converted", label: "Converted" },
   { value: "unsubscribed", label: "Left" },
 ];
 
-/** Who gets in first is the question for the waiting views; who just joined, for the rest. */
+/** Who gets in first is the question for the waiting and tier views; who just joined, for the rest. */
 function defaultSort(filter: InterestListFilter): InterestListSort {
-  return filter === "active" || filter === "front-wave" ? "position" : "newest";
+  return filter === "all" || filter === "converted" || filter === "unsubscribed" ? "newest" : "position";
 }
 
 /** Absolute date, spelled out. The relative label rides alongside it, not instead of it. */
@@ -79,7 +82,8 @@ export default async function AdminInterestListPage({
     ? params.filter
     : "all";
   const sort: InterestListSort =
-    params.sort === "position" || params.sort === "newest" ? params.sort : defaultSort(filter);
+    params.sort === "position" || params.sort === "newest" || params.sort === "oldest"
+      ? params.sort : defaultSort(filter);
   const q = (params.q ?? "").trim();
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
 
@@ -115,8 +119,9 @@ export default async function AdminInterestListPage({
     source: sourceLabel(row),
     status: row.unsubscribedAt ? "unsubscribed" : row.converted ? "converted" : "active",
     position: row.position,
+    joinRank: row.joinRank,
     referrals: row.referrals,
-    frontWave: row.frontWave,
+    tierLabel: row.tier && row.tier !== "joined" ? (REFERRAL_TIERS.find((t) => t.id === row.tier)?.label ?? null) : null,
     planet: row.welcomePlanet,
   }));
 
@@ -126,7 +131,8 @@ export default async function AdminInterestListPage({
         title="Waitlist"
         subtitle={
           <>
-            Everyone waiting for early access. The front wave goes first, then join order.{" "}
+            Everyone waiting for early access. The line is join order, less {SPOTS_PER_REFERRAL} spots per
+            referral; “Newest” and “Oldest” show plain join order.{" "}
             <Link
               href="/admin/growth"
               className="underline underline-offset-2 hover:text-foreground"
@@ -174,9 +180,9 @@ export default async function AdminInterestListPage({
           tone="accent"
         />
         <MetricTile
-          label="Front wave"
-          value={summary.frontWave}
-          hint="Brought in enough friends to go first"
+          label="Early access"
+          value={summary.earlyAccess}
+          hint="Brought in 5+ friends"
           icon={Rocket}
         />
         <MetricTile
@@ -288,7 +294,7 @@ export default async function AdminInterestListPage({
             </nav>
 
             <nav className="flex items-center gap-1" aria-label="Sort">
-              {(["position", "newest"] as const).map((value) => {
+              {(["position", "newest", "oldest"] as const).map((value) => {
                 const active = value === sort;
                 const sp = new URLSearchParams();
                 if (filter !== "all") sp.set("filter", filter);
@@ -307,7 +313,7 @@ export default async function AdminInterestListPage({
                         : "text-muted-foreground hover:text-foreground"
                     )}
                   >
-                    {value === "position" ? "In line" : "Newest"}
+                    {value === "position" ? "In line" : value === "newest" ? "Newest" : "Oldest"}
                   </Link>
                 );
               })}

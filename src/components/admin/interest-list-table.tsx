@@ -29,10 +29,26 @@ export type InterestListTableRow = {
   status: "active" | "converted" | "unsubscribed";
   /** Place in line; null once they have left. */
   position: number | null;
+  /** Place by join order alone; null once they have left. */
+  joinRank: number | null;
   referrals: number;
-  frontWave: boolean;
+  /** Label of the referral tier they hold, once they hold one (0 referrals holds none). */
+  tierLabel: string | null;
   planet: string | null;
 };
+
+/** Spots gained on join order: `+25` moved up, `−3` passed by others, `—` where nothing moved. */
+function MovedCell({ position, joinRank }: { position: number | null; joinRank: number | null }) {
+  if (position === null || joinRank === null || position === joinRank) {
+    return <span className="text-muted-foreground/50">—</span>;
+  }
+  const moved = joinRank - position;
+  return moved > 0 ? (
+    <span className="text-accent-foreground">+{moved.toLocaleString("en-US")}</span>
+  ) : (
+    <span className="text-muted-foreground">−{Math.abs(moved).toLocaleString("en-US")}</span>
+  );
+}
 
 const BULK_BUTTON =
   "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors duration-fast";
@@ -135,6 +151,8 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
               />
             </Th>
             <Th numeric>In line</Th>
+            <Th numeric>Joined #</Th>
+            <Th numeric>Moved</Th>
             <Th>Email</Th>
             <Th numeric>Referrals</Th>
             <Th>Signed up</Th>
@@ -165,6 +183,12 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
             <Td numeric className="tabular-nums">
               {row.position !== null ? `#${row.position.toLocaleString("en-US")}` : "—"}
             </Td>
+            <Td numeric className="tabular-nums text-muted-foreground">
+              {row.joinRank !== null ? `#${row.joinRank.toLocaleString("en-US")}` : "—"}
+            </Td>
+            <Td numeric className="tabular-nums">
+              <MovedCell position={row.position} joinRank={row.joinRank} />
+            </Td>
             <Td className="font-medium text-ink">{row.email}</Td>
             <Td numeric className={row.referrals === 0 ? "text-muted-foreground/50" : undefined}>
               {row.referrals}
@@ -183,8 +207,8 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 <span className="text-destructive">Left</span>
               ) : row.status === "converted" ? (
                 <span className="text-accent-foreground">Converted</span>
-              ) : row.frontWave ? (
-                <span className="font-medium text-accent-foreground">Front wave</span>
+              ) : row.tierLabel ? (
+                <span className="font-medium text-accent-foreground">{row.tierLabel}</span>
               ) : (
                 <span className="text-muted-foreground">Waiting</span>
               )}

@@ -19,11 +19,87 @@ export const INTEREST_LIST_COUNT_FLOOR = 50;
 export const SHARE_TOKEN_MAX = 64;
 
 /**
- * Friends who must join through your link to put you in the front wave — the first group
- * let in, ahead of everyone who has not. Only friends still on the waitlist count, so an
- * address that bounces (the Resend webhook unsubscribes it) stops counting by itself.
+ * Spots each referral moves you up the line. Only friends still on the waitlist count, so
+ * an address that bounces (the Resend webhook unsubscribes it) stops counting by itself.
  */
-export const FRONT_WAVE_REFERRALS = 3;
+export const SPOTS_PER_REFERRAL = 5;
+
+/** Circles on the referral tracker: the most referrals it draws (the top tier). */
+export const TRACKER_SLOTS = 10;
+
+export type ReferralTierId = "joined" | "move-up" | "priority-beta" | "early-access" | "founding";
+
+export type ReferralTier = {
+  id: ReferralTierId;
+  /** Referrals that unlock it. */
+  at: number;
+  /** The tier's name on the tracker and the roster. */
+  label: string;
+  /** What it gets you, in a phrase that finishes "one more friend for …". */
+  perk: string;
+  /** The tier's line on the tracker's cards. */
+  blurb: string;
+};
+
+/**
+ * The referral perks, lowest first. None of them costs anything to give: each is a place
+ * in line, a flag or a badge. `at` values are the referral counts the tracker marks.
+ */
+export const REFERRAL_TIERS: readonly ReferralTier[] = [
+  {
+    id: "joined",
+    at: 0,
+    label: "On the waitlist",
+    perk: "a spot on the waitlist",
+    blurb: "You've joined the waitlist.",
+  },
+  {
+    id: "move-up",
+    at: 1,
+    label: "Move up",
+    perk: `${SPOTS_PER_REFERRAL} spots up the line`,
+    blurb: `Move up ${SPOTS_PER_REFERRAL} spots, and ${SPOTS_PER_REFERRAL} more for every friend after.`,
+  },
+  {
+    id: "priority-beta",
+    at: 3,
+    label: "Priority beta",
+    perk: "priority beta access to features",
+    blurb: "Priority beta access to features.",
+  },
+  {
+    id: "early-access",
+    at: 5,
+    label: "Early access",
+    perk: "early access",
+    blurb: "Early access.",
+  },
+  {
+    id: "founding",
+    at: TRACKER_SLOTS,
+    label: "Founding member",
+    perk: "the founding member badge",
+    blurb: "A founding member badge.",
+  },
+];
+
+/** Where a referral count sits: the tier it holds, the next one up, and the gap to it. */
+export function tierFor(referrals: number): {
+  current: ReferralTier;
+  next: ReferralTier | null;
+  toNext: number;
+} {
+  const n = Math.max(0, Math.floor(referrals));
+  let current = REFERRAL_TIERS[0];
+  for (const tier of REFERRAL_TIERS) if (n >= tier.at) current = tier;
+  const next = REFERRAL_TIERS.find((tier) => tier.at > n) ?? null;
+  return { current, next, toNext: next ? next.at - n : 0 };
+}
+
+/** Spots a referral count has earned. Earned, not net: people who join behind you can pass you. */
+export function spotsEarned(referrals: number) {
+  return Math.max(0, Math.floor(referrals)) * SPOTS_PER_REFERRAL;
+}
 
 export const interestListSchema = z.object({
   email: z.email("That address doesn't look right.").max(160),
@@ -42,13 +118,13 @@ export type InterestTicket = {
   /** 1-based join ordinal by (created_at, id), over every row ever. Picks the planet. */
   number: number;
   /**
-   * Place in line among the people still waiting: the front wave first, then everyone
-   * else, each by join order. Moves as friends join and as people leave.
+   * Place in line among the people still waiting: join order, less `SPOTS_PER_REFERRAL`
+   * for each friend who joined through this ticket. Moves as friends join and as people
+   * leave, and can slip when someone behind you refers more people than you have.
    */
   position: number;
   /** Friends who joined through this ticket's link and are still on the waitlist. */
   referrals: number;
-  frontWave: boolean;
   planet: WelcomePlanet;
   /** ISO string — this crosses the server-action boundary. */
   joinedAt: string;
@@ -84,14 +160,13 @@ export function positionLine(ticket: Pick<InterestTicket, "position">) {
   return `You're #${formatTicketNumber(ticket.position)} on the waitlist.`;
 }
 
-/** The front-wave meter's caption. */
-export function frontWaveLine(referrals: number) {
-  if (referrals >= FRONT_WAVE_REFERRALS) return "You're in the front wave.";
-  const left = FRONT_WAVE_REFERRALS - referrals;
-  if (referrals === 0) {
-    return `Invite ${FRONT_WAVE_REFERRALS} friends to skip ahead to the front wave.`;
-  }
-  return `${referrals} of ${FRONT_WAVE_REFERRALS} friends joined. ${left === 1 ? "One more" : `${left} more`} and you're in the front wave.`;
+/** The referral tracker's caption: where you stand and what the next friend gets you. */
+export function referralLine(referrals: number) {
+  const { next, toNext } = tierFor(referrals);
+  if (!next) return `${TRACKER_SLOTS} friends joined. You're a founding member.`;
+  if (referrals <= 0) return `Invite a friend to move up ${SPOTS_PER_REFERRAL} spots.`;
+  const more = toNext === 1 ? "One more friend" : `${toNext} more friends`;
+  return `${referrals} of ${TRACKER_SLOTS} friends joined. ${more} for ${next.perk}.`;
 }
 
 /** The prewritten share text; the URL is appended by the share target. */

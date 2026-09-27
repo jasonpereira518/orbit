@@ -155,7 +155,7 @@ async function main() {
   check("shows an absolute signup date", all.includes("10 Aug 2026"), all.slice(0, 400));
   check("labels the converted row", all.includes("Converted"));
   check("labels the rows that left", all.includes("Left"));
-  check("counts the front wave", all.includes("Front wave"));
+  check("counts early access", all.includes("Early access"));
   check("surfaces the source from utm", all.includes("reddit · social"));
   check("renders the signup trend panel", all.includes("Signups by week"));
   check("renders the source rollup panel", all.includes("Where they come from"));
@@ -163,8 +163,8 @@ async function main() {
   check("links to the broadcast composer", all.includes("Broadcasts"));
   check("links to the email preview", all.includes("Preview emails"));
   check("shows the stored planet", all.toLowerCase().includes("jupiter"));
-  check("offers the filter tabs", ["All", "Waiting", "Front wave", "Converted", "Left"].every((f) => all.includes(f)));
-  check("offers both orders", all.includes("In line") && all.includes("Newest"));
+  check("offers the filter tabs", ["All", "Waiting", "Priority beta", "Early access", "Founding", "Converted", "Left"].every((f) => all.includes(f)));
+  check("offers every order", all.includes("In line") && all.includes("Newest") && all.includes("Oldest"));
   check("never mentions the retired day-3 follow-up", !/day-3|follow-up/i.test(all));
 
   // --- filtered
@@ -269,6 +269,14 @@ async function main() {
   const rowsInLine = findRows(await Page({ searchParams: Promise.resolve({ filter: "active" }) })) as Array<
     RowProp & { position?: number | null }
   >;
+  const mine = rowsInLine.find((r) => r.email === target.email) as
+    | (RowProp & { joinRank?: number | null; position?: number | null })
+    | undefined;
+  check(
+    "the table is handed each row's join rank beside its place",
+    typeof mine?.joinRank === "number" && mine.joinRank === mine.position,
+    JSON.stringify(mine)
+  );
   check(
     "the table is handed each row's place",
     rowsInLine.some((r) => r.email === target.email && r.position === placeBefore),
@@ -287,6 +295,20 @@ async function main() {
     (await readStandings()).get(target.id)?.position === placeBefore
   );
   await unsubscribeInterestListRow(target.id);
+
+  // Join-time orders never look at referrals: oldest and newest are exact mirrors.
+  type Dated = RowProp & { createdAtIso: string };
+  const oldest = findRows(await Page({ searchParams: Promise.resolve({ sort: "oldest" }) })) as Dated[];
+  const newest = findRows(await Page({ searchParams: Promise.resolve({ sort: "newest" }) })) as Dated[];
+  check(
+    "oldest is join order, oldest first",
+    oldest.length > 1 && oldest.every((r, i) => i === 0 || oldest[i - 1]!.createdAtIso <= r.createdAtIso),
+    oldest.map((r) => r.createdAtIso).join(",")
+  );
+  check(
+    "newest is join order, newest first",
+    newest.length > 1 && newest.every((r, i) => i === 0 || newest[i - 1]!.createdAtIso >= r.createdAtIso)
+  );
 
   const searched = textOf(
     await Page({ searchParams: Promise.resolve({ q: "unsubbed" }) })

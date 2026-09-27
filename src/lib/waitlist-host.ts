@@ -97,8 +97,8 @@ export function hostMatchValue(host: string) {
  * - `privacy` (exactly): the notice, reached through the rewrite below. `/interest` and
  *   `/interest/privacy` are NOT here — they redirect to `/` and `/privacy` first.
  * - `_next/`: the page's own chunks and fonts. The server action POSTs to `/`.
- * - `api/interest-list/unsubscribe` and `/ticket-image`: the email's leave link and the
- *   share image. `api/track`: the page-view beacon. `api/csp-report`: the waitlist
+ * - `api/interest-list/unsubscribe`, `/ticket-image` and `/progress`: the email's leave
+ *   link, the share image and the referral tracker's poll. `api/track`: the page-view beacon. `api/csp-report`: the waitlist
  *   CSP's report target. `_vercel/`: Vercel's analytics.
  * - `landing/planets/` and `waitlist/`: the planet art and the waitlist's favicon.
  * - `favicon.ico`, `icon.png`, `apple-icon.png`: the root layout's file-based icons, which
@@ -113,6 +113,7 @@ export const WAITLIST_ALLOWED_PATHS = [
   "_next/",
   "api/interest-list/unsubscribe$",
   "api/interest-list/ticket-image$",
+  "api/interest-list/progress$",
   "api/track$",
   "api/csp-report$",
   "_vercel/",

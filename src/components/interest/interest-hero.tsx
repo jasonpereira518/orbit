@@ -13,6 +13,7 @@ import {
   type InterestTicket,
 } from "@/lib/interest-list";
 import type { InterestProof } from "@/lib/interest-list-ticket";
+import { publishProgress } from "@/lib/interest-progress-store";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { pulseStarfield } from "@/lib/starfield-events";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -150,6 +151,13 @@ export function InterestHero({
         const rect = buttonRef.current?.getBoundingClientRect();
         if (rect) pulseStarfield(rect.left + rect.width / 2, rect.top + rect.height / 2);
         setTicket(result.ticket);
+        // The referral tracker further down the page has no token until a reload; this hands
+        // it the new pass so it can start watching for friends.
+        publishProgress({
+          token: result.ticket.shareToken,
+          referrals: result.ticket.referrals,
+          position: result.ticket.position,
+        });
         setEntrance("flip");
         setPhase(reduced ? "ticket" : "turning");
       } catch {
@@ -258,8 +266,7 @@ export function InterestHero({
                   <p className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#f2c14e]/25 bg-[#f2c14e]/[0.06] px-3.5 py-2.5 text-sm text-[#e8f3f1]">
                     <PlanetArt planet={invite} size={22} />
                     <span>
-                      A friend saved you a seat. Join and you&apos;ll help them reach the front
-                      wave.
+                      A friend saved you a seat. Join and you&apos;ll move them up the line.
                     </span>
                   </p>
                 ) : null}
