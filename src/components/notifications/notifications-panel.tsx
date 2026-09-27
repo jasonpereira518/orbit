@@ -40,6 +40,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { companyBrandColor } from "@/lib/company-brand";
 import { playDing } from "@/lib/ding";
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
@@ -650,7 +651,21 @@ function NotificationRow({
         </span>
         <span className="mt-0.5 block truncate text-xs text-muted-foreground">
           {when}
-          {item.body ? ` · ${item.body}` : ""}
+          {item.company ? (
+            <>
+              {item.contactTitle ? ` · ${item.contactTitle}` : ""} ·{" "}
+              <span
+                className="font-medium"
+                style={{ color: companyBrandColor(item.company) ?? undefined }}
+              >
+                {item.company}
+              </span>
+            </>
+          ) : item.body ? (
+            ` · ${item.body}`
+          ) : (
+            ""
+          )}
         </span>
       </Link>
       {item.kind === "reminder" && onSnooze && (
