@@ -1,8 +1,8 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups, userSettings } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
-import { FRONT_WAVE_REFERRALS } from "@/lib/interest-list";
+import { REFERRAL_TIERS, tierFor, type ReferralTierId } from "@/lib/interest-list";
 import { readStandings, type Standing } from "@/lib/interest-list-ticket";
 
 /**
@@ -19,12 +19,29 @@ export const INTEREST_LIST_PAGE_SIZE = 50;
 export const INTEREST_LIST_FILTERS = [
   "all",
   "active",
-  "front-wave",
+  "priority-beta",
+  "early-access",
+  "founding",
   "unsubscribed",
   "converted",
 ] as const;
 
 export type InterestListFilter = (typeof INTEREST_LIST_FILTERS)[number];
+
+/** The referral count each tier filter starts at, read from the tier table so they cannot drift. */
+const TIER_FILTER_AT = {
+  "priority-beta": tierAt("priority-beta"),
+  "early-access": tierAt("early-access"),
+  founding: tierAt("founding"),
+} as const;
+
+function tierAt(id: ReferralTierId) {
+  return REFERRAL_TIERS.find((t) => t.id === id)?.at ?? Number.POSITIVE_INFINITY;
+}
+
+function isTierFilter(filter: InterestListFilter): filter is keyof typeof TIER_FILTER_AT {
+  return filter in TIER_FILTER_AT;
+}
 
 export function isInterestListFilter(value: string | undefined): value is InterestListFilter {
   return value != null && (INTEREST_LIST_FILTERS as readonly string[]).includes(value);
@@ -48,18 +65,25 @@ export type InterestListRow = {
   referrals: number;
   /** Place in line, or null once they have left the waitlist. See `lineSql`. */
   position: number | null;
-  frontWave: boolean;
+  /** Place by join order alone: what `position` would be with no referrals. Null once they have left. */
+  joinRank: number | null;
+  /** The referral tier they hold, or null once they have left the waitlist. */
+  tier: ReferralTierId | null;
 };
 
-/** The two orders the roster can be read in. */
-export type InterestListSort = "newest" | "position";
+/**
+ * The orders the roster can be read in: by place in line, or by join time (newest or
+ * oldest first). The join-time orders never look at referrals.
+ */
+export type InterestListSort = "newest" | "oldest" | "position";
 
 export type InterestListSummary = {
   total: number;
   active: number;
   unsubscribed: number;
   converted: number;
-  frontWave: number;
+  /** Still-waiting rows with enough referrals for early access. */
+  earlyAccess: number;
 };
 
 /**
@@ -98,10 +122,10 @@ function whereFor(filter: InterestListFilter) {
     // converted is not a lost subscriber, but they are not an audience either.
     return and(isNull(interestListSignups.unsubscribedAt), sql`not ${convertedSql}`);
   }
-  if (filter === "front-wave") {
+  if (isTierFilter(filter)) {
     return and(
       isNull(interestListSignups.unsubscribedAt),
-      sql`${referralsSql} >= ${FRONT_WAVE_REFERRALS}`
+      sql`${referralsSql} >= ${TIER_FILTER_AT[filter]}`
     );
   }
   if (filter === "unsubscribed") return isNotNull(interestListSignups.unsubscribedAt);
@@ -116,8 +140,8 @@ export async function getInterestListSummary(): Promise<InterestListSummary> {
     .select({
       total: countInt,
       unsubscribed: sql<number>`count(*) filter (where ${interestListSignups.unsubscribedAt} is not null)::int`,
-      frontWave: sql<number>`count(*) filter (
-        where ${interestListSignups.unsubscribedAt} is null and ${referralsSql} >= ${FRONT_WAVE_REFERRALS}
+      earlyAccess: sql<number>`count(*) filter (
+        where ${interestListSignups.unsubscribedAt} is null and ${referralsSql} >= ${TIER_FILTER_AT["early-access"]}
       )::int`,
       converted: sql<number>`count(*) filter (where ${convertedSql})::int`,
       active: sql<number>`count(*) filter (
@@ -131,7 +155,7 @@ export async function getInterestListSummary(): Promise<InterestListSummary> {
     active: row?.active ?? 0,
     unsubscribed: row?.unsubscribed ?? 0,
     converted: row?.converted ?? 0,
-    frontWave: row?.frontWave ?? 0,
+    earlyAccess: row?.earlyAccess ?? 0,
   };
 }
 
@@ -204,7 +228,7 @@ function selection() {
   };
 }
 
-type SelectedRow = Omit<InterestListRow, "position" | "frontWave">;
+type SelectedRow = Omit<InterestListRow, "position" | "joinRank" | "tier">;
 
 function withStanding(row: SelectedRow, standings: Map<string, Standing>): InterestListRow {
   const standing = row.unsubscribedAt ? undefined : standings.get(row.id);
@@ -212,7 +236,8 @@ function withStanding(row: SelectedRow, standings: Map<string, Standing>): Inter
     ...row,
     referrals: Number(row.referrals ?? 0),
     position: standing?.position ?? null,
-    frontWave: standing?.frontWave ?? false,
+    joinRank: standing?.joinRank ?? null,
+    tier: row.unsubscribedAt ? null : tierFor(Number(row.referrals ?? 0)).current.id,
   };
 }
 
@@ -239,8 +264,9 @@ function searchFor(q: string | undefined) {
 }
 
 /**
- * One page of signups — newest first (who just joined) or by place in line (who gets in
- * first). Position is a window over the whole line, so the position order is sorted here
+ * One page of signups — by join time, newest or oldest first (who just joined; the order
+ * people signed up in), or by place in line (who gets in first). Position is a window over
+ * the whole line, so the position order is sorted here
  * from `readStandings` over the filtered set rather than in SQL; the roster is a few
  * thousand rows at most, and this keeps `lineSql` the single definition of the line.
  */
@@ -278,7 +304,10 @@ export async function loadInterestList(options: {
     .select(selection())
     .from(interestListSignups)
     .where(where)
-    .orderBy(desc(interestListSignups.createdAt))
+    .orderBy(
+      options.sort === "oldest" ? asc(interestListSignups.createdAt) : desc(interestListSignups.createdAt),
+      options.sort === "oldest" ? asc(interestListSignups.id) : desc(interestListSignups.id)
+    )
     .limit(INTEREST_LIST_PAGE_SIZE)
     .offset((page - 1) * INTEREST_LIST_PAGE_SIZE)) as SelectedRow[];
 

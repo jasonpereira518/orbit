@@ -1,18 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { motion } from "motion/react";
-import { Moons } from "@/components/interest/moons";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import { ShareRow } from "@/components/interest/share-row";
-import { frontWaveLine, positionLine, type InterestTicket } from "@/lib/interest-list";
+import { positionLine, referralLine, tierFor, type InterestTicket } from "@/lib/interest-list";
+import { usePassProgress } from "@/lib/interest-progress-store";
 import { DUR, EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { planetLabel } from "@/lib/welcome-planets";
 
 const PLANET_SIZE = 96;
-const RING_SIZE = 148;
+/** Room around the planet: the stub keeps the height the moon ring used to give it. */
+const STUB_SIZE = 148;
 
 function joinedLabel(iso: string) {
   return new Intl.DateTimeFormat("en-GB", {
@@ -24,21 +25,18 @@ function joinedLabel(iso: string) {
 }
 
 /**
- * The early-access pass. A stub (planet, the front-wave moons, place in line) and a
- * details pane (place line, front-wave line, share tools) with a perforated seam between
+ * The early-access pass. A stub (planet, place in line) and a
+ * details pane (place line, referral line, share tools) with a perforated seam between
  * them; the seam runs vertically from `sm` up and horizontally on phones, where the stub
  * stacks above the details.
  *
  * `entrance: "flip"` is the in-place reveal after a join: everything assembles in order
- * (seam draws, number rolls, planet springs in, moons drop, lines rise). `"direct"` is a
- * `?me=` visit: the ticket is fully in the HTML and only the number roll and the moon
- * drop play, once. Reduced motion: everything is simply there.
+ * (seam draws, number rolls, planet springs in, lines rise). `"direct"` is a `?me=`
+ * visit: the ticket is fully in the HTML and only the number roll plays, once. Reduced
+ * motion: everything is simply there.
  *
- * The moons wait for mount before they may hide themselves. `Moons` renders its hidden
- * `initial` styles whenever `play` is true, and on a `?me=` visit that markup is server
- * HTML — so passing `play` on the first render would strip the moons off a JS-less page
- * and leave them stripped. Mounted-only `play` puts them in the HTML; the `key` remount is what
- * replays the drop, because motion reads `initial` only at first render.
+ * The place in line and the referral line follow the live progress (`usePassProgress`), so
+ * they move when the referral tracker's poll finds a new friend.
  */
 export function BoardingPass({
   ticket,
@@ -54,10 +52,16 @@ export function BoardingPass({
 }) {
   const reduced = usePrefersReducedMotion();
   const full = entrance === "flip" && !reduced;
-  // Same mount-detection shape as the rest of the repo: false on the server and on the
-  // first client render, true from the first effect on.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+
+  const serverProgress = useMemo(
+    () => ({ token: ticket.shareToken, referrals: ticket.referrals, position: ticket.position }),
+    [ticket.shareToken, ticket.referrals, ticket.position]
+  );
+  const progress = usePassProgress(serverProgress);
+  // Published progress can belong to a different pass (a second join on the same page).
+  const live = progress.token === ticket.shareToken ? progress : serverProgress;
+  const position = live.position ?? ticket.position;
+  const { current: tier } = tierFor(live.referrals);
 
   const rise = (delay: number) =>
     full
@@ -70,28 +74,20 @@ export function BoardingPass({
       <div className="relative flex flex-col items-center px-4 pb-6 pt-5 text-center sm:pb-5">
         <motion.span
           className="relative flex items-center justify-center"
-          style={{ width: RING_SIZE, height: RING_SIZE }}
+          style={{ width: STUB_SIZE, height: STUB_SIZE }}
           initial={full ? { scale: 0.6, opacity: 0 } : false}
           animate={{ scale: 1, opacity: 1 }}
           transition={full ? { ...SPRING_SOFT, delay: 0.55 } : { duration: 0 }}
         >
-          <Moons
-            // Keyed on mount: motion reads `initial` once, when the element first renders.
-            // Remounting after hydration is what makes the drop actually play.
-            key={mounted ? "play" : "ssr"}
-            lit={ticket.referrals}
-            play={mounted && !reduced}
-            size={RING_SIZE}
-          />
           <PlanetArt planet={ticket.planet} size={PLANET_SIZE} />
         </motion.span>
         <p className="mt-3 font-[family-name:var(--font-display)] text-[28px] leading-none tracking-tight text-[#e8f3f1]">
           <span aria-hidden="true">#</span>
           <span className="sr-only">Place in line: </span>
-          <RollingCount value={ticket.position} delay={full ? 0.35 : 0.1} />
+          <RollingCount value={position} delay={full ? 0.35 : 0.1} />
         </p>
         <p className="mt-1.5 text-xs uppercase tracking-[0.14em] text-[#9aada8]">
-          {ticket.frontWave ? "Front wave" : planetLabel(ticket.planet)}
+          {live.referrals > 0 ? tier.label : planetLabel(ticket.planet)}
         </p>
       </div>
 
@@ -136,12 +132,12 @@ export function BoardingPass({
           tabIndex={-1}
           className="mt-2 font-[family-name:var(--font-display)] text-[22px] leading-[1.15] tracking-tight text-[#e8f3f1] outline-none"
         >
-          {positionLine(ticket)}
+          {positionLine({ position })}
         </motion.h3>
         <motion.p {...rise(1.05)} className="mt-2 text-sm text-[#9aada8]">
           Joined {joinedLabel(ticket.joinedAt)} ·{" "}
           <span className="text-[#f2c14e]">
-            {frontWaveLine(ticket.referrals)}
+            {referralLine(live.referrals)}
           </span>
         </motion.p>
 

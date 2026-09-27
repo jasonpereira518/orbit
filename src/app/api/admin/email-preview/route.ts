@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { AdminForbiddenError, requireAdminUserId } from "@/lib/admin";
+import { REFERRAL_TIERS } from "@/lib/interest-list";
 import {
   asWelcomePlanet,
-  buildFrontWaveEmail,
   buildInterestListWelcomeEmail,
+  buildTierEmail,
 } from "@/lib/interest-list-email";
 import { buildBroadcastEmail, loadBroadcast } from "@/lib/broadcasts";
 import { buildSiteInviteEmail } from "@/lib/site-invite-email";
@@ -27,7 +28,7 @@ export const runtime = "nodejs";
  * it to the list.
  */
 
-const TEMPLATES = ["welcome", "front-wave", "broadcast", "site-invite"] as const;
+const TEMPLATES = ["welcome", "tier", "broadcast", "site-invite"] as const;
 type Template = (typeof TEMPLATES)[number];
 
 function isTemplate(value: string | null): value is Template {
@@ -83,11 +84,16 @@ export async function GET(request: NextRequest) {
         "This is what a broadcast looks like.\n\nThe first paragraph is set larger, as the opening line. Everything after it is body copy.\n\nWrite plain prose. The letter, the sign-off and the leave-the-waitlist footer are added for you.",
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
     });
-  } else if (template === "front-wave") {
-    message = buildFrontWaveEmail({
+  } else if (template === "tier") {
+    // `&tier=founding` picks the tier; the first-friend note is the default.
+    const wanted = url.searchParams.get("tier");
+    const tier =
+      REFERRAL_TIERS.find((t) => t.at > 0 && t.id === wanted) ?? REFERRAL_TIERS.find((t) => t.at > 0)!;
+    message = buildTierEmail({
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
       planet,
       links: SAMPLE_LINKS,
+      tier,
     });
   } else {
     message = buildInterestListWelcomeEmail({

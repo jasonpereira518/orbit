@@ -40,20 +40,27 @@ export function ProofLine({ proof, showCount }: { proof: InterestProof; showCoun
   );
 }
 
-/** Rolls from `value − 40` to `value` after mount; instant under reduced motion. */
+/**
+ * Rolls from `value − 40` to `value` after mount; instant under reduced motion. A later
+ * change rolls from the number it replaced, so a place that moves up 5 counts down 5.
+ */
 export function RollingCount({ value, delay = 0 }: { value: number; delay?: number }) {
   const reduced = usePrefersReducedMotion();
   const mv = useMotionValue(value);
   const text = useTransform(mv, (v) => formatTicketNumber(Math.round(v)));
   const [mounted, setMounted] = useState(false);
+  const shown = useRef<number | null>(null);
 
   useEffect(() => {
     setMounted(true);
     if (reduced) {
       mv.set(value);
+      shown.current = value;
       return;
     }
-    mv.set(Math.max(1, value - 40));
+    const start = shown.current ?? Math.max(1, value - 40);
+    shown.current = value;
+    mv.set(start);
     const controls = animate(mv, value, { duration: DUR.celestial, ease: EASE_HOUSE, delay });
     return () => controls.stop();
   }, [value, reduced, mv, delay]);
