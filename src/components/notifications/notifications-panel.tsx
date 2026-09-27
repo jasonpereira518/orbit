@@ -76,7 +76,7 @@ const refreshPanel = (force = false) => refreshPulse(force);
 /**
  * The panel is for what needs you now, not a full inbox: due reminders and follow-ups,
  * running work, and failures you missed. Upcoming items and outreach suggestions live on
- * /reminders and the dashboard. Past this many due rows the panel links there instead.
+ * /reminders and the dashboard. Past this many due rows the rest sit behind "See more".
  */
 const DUE_VISIBLE = 5;
 
@@ -98,6 +98,7 @@ export function NotificationsPanelButton({
   const { pulse, loading } = useAppPulse();
   const data = pulse?.panel ?? null;
   const [pending, start] = useTransition();
+  const [showAllDue, setShowAllDue] = useState(false);
 
   useEffect(() => {
     void refreshPanel();
@@ -299,7 +300,7 @@ export function NotificationsPanelButton({
             ) : (
               <div className="space-y-4">
                 <Section title="Due now" count={dueItems.length}>
-                  {dueItems.slice(0, DUE_VISIBLE).map((item) => (
+                  {(showAllDue ? dueItems : dueItems.slice(0, DUE_VISIBLE)).map((item) => (
                     <NotificationRow
                       key={item.id}
                       item={item}
@@ -323,13 +324,16 @@ export function NotificationsPanelButton({
                     />
                   ))}
                   {dueItems.length > DUE_VISIBLE && (
-                    <Link
-                      href="/reminders"
-                      onClick={() => setOpen(false)}
-                      className="block px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    <button
+                      type="button"
+                      className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      aria-expanded={showAllDue}
+                      onClick={() => setShowAllDue((v) => !v)}
                     >
-                      See all {dueItems.length} in Reminders
-                    </Link>
+                      {showAllDue
+                        ? "See less"
+                        : `See ${dueItems.length - DUE_VISIBLE} more`}
+                    </button>
                   )}
                 </Section>
 
