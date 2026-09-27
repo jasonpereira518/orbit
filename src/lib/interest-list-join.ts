@@ -7,8 +7,9 @@
  * `ok` with a ticket. A real join, a duplicate, an unsubscribed address rejoining, a bot
  * and a rate-limited caller all get the same shape, so which check a submit tripped is
  * not inferable from the response. What IS inferable, by design (see the spec's privacy
- * section): a duplicate gets its real ticket, whose number is below the current total —
- * membership of an address can be probed at ten tries per ten minutes per IP. The
+ * section): a duplicate gets its real ticket, whose number is below the current total, and
+ * `returning: true` so the form can skip the name step — membership of an address can be
+ * probed at ten tries per ten minutes per IP. The
  * address itself is never returned.
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -23,8 +24,11 @@ import {
   buildShareUrl,
   buildTicketUrl,
   interestListSchema,
+  interestNameSchema,
   type InterestListInput,
   type InterestListResult,
+  type InterestNameInput,
+  type InterestNameResult,
   type InterestTicket,
 } from "@/lib/interest-list";
 import {
@@ -37,6 +41,7 @@ import {
 import {
   getInterestProof,
   invalidateInterestProof,
+  refMatch,
   ticketForRow,
 } from "@/lib/interest-list-ticket";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -70,6 +75,7 @@ export type JoinContext = {
 };
 
 const FORMAT_ERROR = "That address doesn't look right.";
+const NAME_ERROR = "Please add your first and last name.";
 
 /** Same generator as the unsubscribe token; a separate value, never the same one. */
 export function generateShareToken() {
@@ -92,6 +98,8 @@ async function plausibleTicket(): Promise<InterestTicket> {
     planet: planetForSignupNumber(number),
     joinedAt: new Date().toISOString(),
     shareToken: generateShareToken(),
+    // Shaped like a real one and resolving to no row, like the token beside it.
+    referralSlug: `member-${generateShareToken().slice(0, 6).toLowerCase().replace(/[^a-z0-9]/g, "x")}`,
   };
 }
 
@@ -101,7 +109,7 @@ export async function joinInterestListCore(
 ): Promise<InterestListResult> {
   // 1. Honeypot, before parsing: a filled decoy field is a bot, and a bot gets a ticket.
   if (typeof input.website === "string" && input.website.length > 0) {
-    return { ok: true, ticket: await plausibleTicket() };
+    return { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
   // 2. Validation — the one path with a visible error.
@@ -111,7 +119,7 @@ export async function joinInterestListCore(
   const email = parsed.data.email.trim().toLowerCase();
 
   // 3. Faster than a person can read the form.
-  if (elapsedMs < MIN_FILL_MS) return { ok: true, ticket: await plausibleTicket() };
+  if (elapsedMs < MIN_FILL_MS) return { ok: true, ticket: await plausibleTicket(), returning: false };
 
   // 4. Rate limit. A limiter that cannot count must not fail open into the write, and must
   //    not break a real person's signup either — so any throw is the fake ticket.
@@ -124,7 +132,7 @@ export async function joinInterestListCore(
     // that a real person was dropped.
     if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ipTag: ipLogTag(ctx.ip) });
     else console.error("[interest-list] limiter failed", err);
-    return { ok: true, ticket: await plausibleTicket() };
+    return { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
   const db = await getDb();
@@ -140,9 +148,10 @@ export async function joinInterestListCore(
             unsubscribedAt: interestListSignups.unsubscribedAt,
             welcomePlanet: interestListSignups.welcomePlanet,
             shareToken: interestListSignups.shareToken,
+            referralSlug: interestListSignups.referralSlug,
           })
           .from(interestListSignups)
-          .where(eq(interestListSignups.shareToken, ref))
+          .where(refMatch(ref))
           .limit(1)
       )[0] ?? null
     : null;
@@ -225,7 +234,7 @@ export async function joinInterestListCore(
 
   if (!row?.shareToken) {
     // Unreachable: every branch above leaves a row with a token. Fail like a bot would.
-    return { ok: true, ticket: await plausibleTicket() };
+    return { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
   // Counted before the welcome, because the welcome states the place in line. But a throw
@@ -237,6 +246,8 @@ export async function joinInterestListCore(
   try {
     ticket = await ticketForRow({
       id: row.id,
+      email: row.email,
+      referralSlug: row.referralSlug,
       createdAt: row.createdAt,
       welcomePlanet: row.welcomePlanet,
       shareToken: row.shareToken,
@@ -255,7 +266,8 @@ export async function joinInterestListCore(
       asWelcomePlanet(row.welcomePlanet),
       {
         ticketUrl: buildTicketUrl(pageUrl, row.shareToken),
-        shareUrl: buildShareUrl(pageUrl, row.shareToken),
+        // The ticket read claimed the slug; without it the link falls back to the token.
+        shareUrl: buildShareUrl(pageUrl, { referralSlug: ticket?.referralSlug, shareToken: row.shareToken }),
       },
       ticket?.position ?? null
     );
@@ -266,7 +278,52 @@ export async function joinInterestListCore(
     await notifyIfFrontWave(referrer as typeof referrer & { shareToken: string }, ctx);
   }
 
-  return { ok: true, ticket };
+  return { ok: true, ticket, returning: Boolean(existing) };
+}
+
+/**
+ * Step two of the join: the name for the pass. The address is already on the list by now,
+ * so the ticket's share token is what says whose row this is.
+ *
+ * WHAT A CALLER LEARNS. A bad name is the one visible error. Everything else — a real save,
+ * a name already on file, a token that matches nothing (a bot's ticket, a stale link, an
+ * address that has since left) — answers `ok`, so the response cannot be used to test tokens.
+ * The write only ever fills an empty name and never replaces one: the share token is also
+ * the public `?ref=` link, so anyone a friend forwarded it to holds it, and a name that could
+ * be overwritten would be a name anyone could change.
+ */
+export async function saveInterestListNameCore(
+  input: InterestNameInput,
+  ctx: Pick<JoinContext, "ip">
+): Promise<InterestNameResult> {
+  const parsed = interestNameSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? NAME_ERROR };
+  }
+  const { shareToken, firstName, lastName } = parsed.data;
+
+  // Same posture as the join: a limiter that cannot count must not fail open into a write,
+  // and must not break a real person's step either — so any throw is a quiet no-op.
+  try {
+    await consumeBucket("interest.name", ctx.ip, RATE_LIMITS.interestName);
+  } catch (err) {
+    if (isRateLimitedError(err)) console.warn("[interest-list] name rate-limited", { ipTag: ipLogTag(ctx.ip) });
+    else console.error("[interest-list] limiter failed", err);
+    return { ok: true };
+  }
+
+  const db = await getDb();
+  await db
+    .update(interestListSignups)
+    .set({ firstName, lastName })
+    .where(
+      and(
+        eq(interestListSignups.shareToken, shareToken),
+        isNull(interestListSignups.unsubscribedAt),
+        isNull(interestListSignups.firstName)
+      )
+    );
+  return { ok: true };
 }
 
 /**
@@ -304,7 +361,7 @@ async function notifyIfFrontWave(
       asWelcomePlanet(referrer.welcomePlanet),
       {
         ticketUrl: buildTicketUrl(pageUrl, referrer.shareToken),
-        shareUrl: buildShareUrl(pageUrl, referrer.shareToken),
+        shareUrl: buildShareUrl(pageUrl, referrer),
       }
     );
   } catch (err) {

@@ -3736,10 +3736,27 @@ export const interestListSignups = pgTable(
      * on insert, never on a rejoin. No FK, like every other cross-row reference here.
      */
     referredById: uuid("referred_by_id"),
+    /**
+     * The name on the pass, collected in the join's second step. Null until then — and for
+     * every row from before the step existed, and for anyone who left after step one.
+     * Written once (`saveInterestListNameCore` only fills a null), so a shared link cannot
+     * be used to rename someone.
+     */
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    /**
+     * The public referral path, `/waitlist/<slug>`: the address's local part, with a numeric
+     * suffix when two addresses share one (`sam`, `sam-2`). Claimed lazily by
+     * `claimReferralSlug` the first time a ticket is read, so rows from before it existed get
+     * one too. Never changes once set — links already sent must keep working — and is kept
+     * after someone leaves, so their old link cannot be re-issued to a stranger.
+     */
+    referralSlug: text("referral_slug"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     uniqueIndex("interest_list_signups_email_uidx").on(t.email),
+    uniqueIndex("interest_list_signups_referral_slug_uidx").on(t.referralSlug),
     uniqueIndex("interest_list_signups_token_uidx").on(t.unsubscribeToken),
     index("interest_list_signups_created_idx").on(t.createdAt),
     uniqueIndex("interest_list_signups_share_token_uidx").on(t.shareToken),

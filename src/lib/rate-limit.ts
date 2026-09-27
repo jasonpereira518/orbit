@@ -28,6 +28,7 @@ const BUCKET_LABELS: Record<string, string> = {
   avatarResolve: "photo lookup",
   feedback: "feedback",
   interestJoin: "sign-up",
+  interestName: "sign-up",
   apiRead: "API read",
   apiWrite: "API write",
   apiIngest: "event import",
@@ -146,6 +147,11 @@ export const RATE_LIMITS = {
    * stuffing the tally from one address.
    */
   pollVote: { limit: 20, windowSec: 600 },
+  /**
+   * `saveInterestListName`, the join's second step. A person makes one, maybe a couple of
+   * corrections' worth; the limit exists to stop a script walking guessed tokens.
+   */
+  interestName: { limit: 20, windowSec: 600 },
   /**
    * Public API reads. Generous — a read is one or two indexed queries — but bounded, because
    * these endpoints are reachable by anyone holding a key and a polling integration with a
