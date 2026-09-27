@@ -12,6 +12,7 @@ import { listOpenActionItems } from "@/lib/action-items";
 import { OPEN_OPPORTUNITY_STATUSES, opportunityKindLabel } from "@/lib/opportunity-kinds";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { reportUnlessQuiet } from "@/lib/report-error";
+import { fenceUntrusted } from "@/lib/ai-security";
 
 /** Never reject a good summary over an overlong standing paragraph — truncate instead. */
 export function clampStanding(s: string) {
@@ -436,7 +437,9 @@ export async function generateAndStoreContactBrief(
     const content = await completeJson(userId, {
       operation: "contact.brief",
       temperature: 0.3,
-      user: userPrompt,
+      // Fenced for the model only: `inputHash` and the skip gate stay on the plain input, so
+      // adding the fence did not make every brief on file look stale.
+      user: fenceUntrusted("RECORDS", userPrompt),
       system: BRIEF_SYSTEM,
     });
     const parsed = contactBriefSchema.parse(JSON.parse(content));

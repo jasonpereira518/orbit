@@ -117,6 +117,14 @@ export const ERROR_SOURCES = {
    * and a few malformed listings are normal, so neither is an error.
    */
   jobFeedFetch: "jobs.feed_fetch",
+  /**
+   * Security-relevant AI behaviour (`src/lib/ai-security.ts`): a tool call the registry
+   * refused, an MCP batch over the cap, a draft flood, an answer the output guard scrubbed,
+   * agent-written text shaped like an injection. `kind` is which; context carries ids and
+   * signal names, never the untrusted text itself. Throttled per (kind, account) per ten
+   * minutes, and the ops sweep opens `ai.security` when an hour's rows cross its threshold.
+   */
+  aiSecurity: "ai.security",
 } as const;
 
 export type ErrorEventInput = {

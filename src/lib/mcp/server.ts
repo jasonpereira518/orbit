@@ -44,7 +44,26 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { ORBIT_TOOLS } from "@/lib/tools/definitions";
-import { isToolError, runTool, toolsFor } from "@/lib/tools/registry";
+import { isToolError, runTool, toolError, toolsFor } from "@/lib/tools/registry";
+import { auditUntrustedWrite, recordAiSecurityEvent } from "@/lib/ai-security";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+
+/**
+ * Free-text arguments of write tools whose content lands somewhere Orbit's own chat will
+ * later read it. Checked for injection shapes for the audit trail only — see
+ * `detectInjectionSignals` for why nothing is blocked on the result.
+ */
+const AUDITED_WRITE_FIELDS = [
+  "notes",
+  "note",
+  "body",
+  "subject",
+  "title",
+  "description",
+  "howMet",
+  "fullName",
+  "company",
+] as const;
 
 /** Every tool response is capped, so one call cannot flood a client's context window. */
 const MAX_RESPONSE_CHARS = 8_000;
@@ -104,7 +123,34 @@ export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[
         ...(tool.annotations ? { annotations: tool.annotations } : {}),
       },
       async (args: unknown) => {
-        const result = await runTool(tool, userId, args, { surface: "mcp" });
+        if (tool.scope === "write") {
+          // Its own, tighter budget on top of the per-request one: a write is re-read by
+          // Orbit's chat on every later question, so a fast-writing agent is the shape to stop.
+          try {
+            await consumeBucket("mcpWrite", userId, RATE_LIMITS.mcpWrite);
+          } catch (err) {
+            if (isRateLimitedError(err)) return textResult(toolError(err.message));
+            throw err;
+          }
+          const record = (args ?? {}) as Record<string, unknown>;
+          for (const field of AUDITED_WRITE_FIELDS) {
+            const value = record[field];
+            if (typeof value === "string") auditUntrustedWrite(userId, `mcp.${tool.name}`, field, value);
+          }
+        }
+        const result = await runTool(tool, userId, args, {
+          surface: "mcp",
+          // Re-checked at execution, not only when listing: a client that names a tool it was
+          // never offered (a read-only key calling a write tool) gets a refusal, not a write.
+          scopes: opts.scopes,
+          onRefused: (name, reason) =>
+            void recordAiSecurityEvent({
+              kind: "tool_refused",
+              userId,
+              surface: "mcp",
+              detail: { tool: name, reason },
+            }),
+        });
         // An error envelope is this code's own message and carries no user text, so it is
         // reported plainly rather than fenced as something to be careful of. Same for a
         // write's confirmation, which is why those tools carry no `resultLabel`.

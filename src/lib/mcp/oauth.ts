@@ -13,17 +13,24 @@
  * and no consent UI in this repo — the parts of OAuth that are easy to get subtly wrong are
  * Clerk's problem, and Clerk is already the identity of record for every Orbit user.
  *
- * ## Why an OAuth caller gets read and write
+ * ## What an OAuth caller may do
  *
- * Clerk's dynamic clients arrive with whatever default scopes the instance publishes, and a
- * client may omit scopes entirely. Deriving Orbit's permissions from that would mean a user
- * whose assistant cannot log a meeting, with no setting anywhere in Orbit to fix it.
+ * The grant comes from the token's own scopes, read by `oauthGrantFor`:
  *
- * So the grant is deliberately coarse: connecting an assistant is consent to read and write,
- * exactly like a write-scoped API key, and the consent screen names Orbit. What this does NOT
- * grant is sending — that is not a scope at all. An agent can only queue a message, and the
- * human approves it inside Orbit (see `server.ts`). Nothing an OAuth token can do reaches the
- * outside world on its own, which is what makes a coarse grant defensible.
+ *   - `orbit:write` (or the umbrella `orbit:mcp`) → read and write;
+ *   - `orbit:read` → read only — the assistant sees the network and can change nothing;
+ *   - no Orbit scope at all → depends on `MCP_OAUTH_REQUIRE_SCOPES`.
+ *
+ * That last case is the one the security audit flagged: a dynamically registered client that
+ * asked only for `openid email` used to get full CRM read AND write. With
+ * `MCP_OAUTH_REQUIRE_SCOPES=1` such a token is refused outright. Unset, it keeps the old
+ * coarse read+write grant — because until the Clerk instance publishes the `orbit:*` scopes
+ * no client CAN ask for them, and flipping this first would disconnect every assistant.
+ * The order is: define `orbit:read` and `orbit:write` in Clerk (Configure → OAuth
+ * applications → Scopes), confirm new connections carry them, then set the flag.
+ *
+ * What no scope grants is sending — that is not a scope at all. An agent can only queue a
+ * message, and the human approves it inside Orbit (see `server.ts`).
  *
  * ## Why the Clerk import is dynamic
  *
@@ -38,8 +45,29 @@ import { clerkFrontendApiHost } from "@/lib/security-headers";
 import { getAppBaseUrl } from "@/lib/app-url";
 import type { ApiKeyScope } from "@/lib/api/keys";
 
-/** The scopes an OAuth-connected assistant holds. See the header for why this is flat. */
+/** Orbit's own OAuth scopes, as published in the protected-resource metadata. */
+export const ORBIT_OAUTH_SCOPES = ["orbit:read", "orbit:write"] as const;
+
+/** The legacy coarse grant, for tokens without Orbit scopes while enforcement is off. */
 export const OAUTH_CALLER_SCOPES: ApiKeyScope[] = ["read", "write"];
+
+/**
+ * What a token's scopes allow. Null means refuse: the token carries no Orbit scope and
+ * enforcement is on. Pure — see the header for the policy and the rollout order.
+ */
+export function oauthGrantFor(
+  tokenScopes: readonly string[] | null | undefined,
+  requireScopes: boolean
+): ApiKeyScope[] | null {
+  const scopes = new Set(tokenScopes ?? []);
+  if (scopes.has("orbit:write") || scopes.has("orbit:mcp")) return ["read", "write"];
+  if (scopes.has("orbit:read")) return ["read"];
+  return requireScopes ? null : OAUTH_CALLER_SCOPES;
+}
+
+export function oauthScopesRequired(): boolean {
+  return process.env.MCP_OAUTH_REQUIRE_SCOPES === "1";
+}
 
 /**
  * The origin a client is actually talking to.
@@ -119,7 +147,12 @@ export async function verifyOAuthCaller(): Promise<OAuthCaller | null> {
       ("userId" in result ? result.userId : null);
     if (!userId) return null;
     const clientId = "clientId" in result ? ((result.clientId as string) ?? null) : null;
-    return { userId, scopes: OAUTH_CALLER_SCOPES, clientId };
+    const tokenScopes = "scopes" in result && Array.isArray(result.scopes) ? (result.scopes as string[]) : [];
+    const scopes = oauthGrantFor(tokenScopes, oauthScopesRequired());
+    // A token with no Orbit scope while enforcement is on is not a caller at all: the same
+    // 401 an unknown key gets, which sends a well-behaved client back through consent.
+    if (!scopes) return null;
+    return { userId, scopes, clientId };
   } catch {
     // A malformed or expired token is not an exception worth surfacing: the caller turns it
     // into the same 401 an unknown API key gets.

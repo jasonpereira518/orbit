@@ -1,6 +1,7 @@
 /**
  * The Drive import: picked Google Docs and Slides decks, read one at a time through capture's
- * own parse and save, with no review step.
+ * own parse and save, with no review step — so the decisions a reviewer would make are made by
+ * rules in `acceptUnattended` (grounded names only, confident merges only, bounded counts).
  *
  * Staging writes one pending `import_job_rows` row per file and nothing else — no Drive call
  * happens until the runner claims the job. The runner is resumable like the other server-owned
@@ -49,6 +50,8 @@ import {
 } from "@/lib/imports/drive-reminder-rules";
 import { DRIVE_MIME, type PickedDriveFile } from "@/lib/imports/drive-triage";
 import { DRIVE_IMPORT_TYPE } from "@/lib/drive-import-type";
+import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
+import { auditUntrustedWrite, cleanSingleLine } from "@/lib/ai-security";
 
 export { DRIVE_IMPORT_TYPE, DRIVE_ROW_COPY };
 
@@ -177,26 +180,66 @@ export async function stageDriveImport(
   return { importId: row.id, totalRows: usable.length };
 }
 
+/** People one doc may add or update unattended. A real meeting doc names a handful. */
+export const MAX_DRIVE_PEOPLE_PER_DOC = 30;
+/** Tags per person from an unreviewed doc, each one short line. */
+const MAX_DRIVE_TAGS = 5;
+
 /**
- * Every person the parse found, accepted — no review step.
- *
- * Merged only into the parse's own confident suggestion (`suggestedMergeId`). A weaker
- * lookalike is NOT merged unattended: the person is created, and the duplicate machinery
- * flags the pair for review, where a human decides.
+ * Whether the doc itself names this person — at least one word of the parsed name appears in
+ * the text as a whole word. Parses routinely expand "Priya" to "Priya Raman" from context, so
+ * this is deliberately looser than full-name containment; what it refuses is a person the doc
+ * never mentions at all, which is either an invention or an instruction ("also add…") that
+ * the model followed.
  */
-function acceptEveryone(
+export function nameGroundedInDoc(name: string | null | undefined, docText: string): boolean {
+  const words = (name ?? "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}'-]+/u)
+    .filter((w) => w.length >= 2);
+  if (!words.length) return false;
+  const haystack = ` ${docText.toLowerCase().replace(/[^\p{L}\p{N}'-]+/gu, " ")} `;
+  return words.some((w) => haystack.includes(` ${w} `));
+}
+
+/**
+ * The decisions a reviewer would have made, made by rules instead — there is no review step.
+ *
+ * A doc is text somebody wrote, and a shared doc may be text somebody ELSE wrote, so nothing
+ * the parse proposes is taken on the model's word alone:
+ *
+ *   - Only people the doc actually names are accepted (`nameGroundedInDoc`), and at most
+ *     `MAX_DRIVE_PEOPLE_PER_DOC` of them; everyone else is set aside as skipped.
+ *   - A merge into an existing contact happens only when the rule-based duplicate match
+ *     itself is confident (`DUPLICATE_MERGE_CONFIDENCE`). A merge target that came from the
+ *     model's own pick, or a weaker lookalike, is not merged unattended: the person is
+ *     created and the duplicate machinery flags the pair for a human.
+ *   - Tags are bounded and cleaned to one short line each.
+ */
+function acceptUnattended(
   items: Awaited<ReturnType<typeof runCaptureParse>>["items"],
   keep: string[],
   at: string,
+  docText: string,
 ): CaptureDecisions {
   const people: NonNullable<CaptureDecisions["people"]> = {};
+  let accepted = 0;
   items.forEach((item, index) => {
+    const grounded = nameGroundedInDoc(item.parsed.name, docText);
+    const accept = grounded && accepted < MAX_DRIVE_PEOPLE_PER_DOC;
+    if (accept) accepted++;
+    const confident = item.duplicates.find(
+      (d) => d.id === item.suggestedMergeId && d.confidence >= DUPLICATE_MERGE_CONFIDENCE,
+    );
     people[item.key] = {
-      decision: "accept",
+      decision: accept ? "accept" : "skip",
       index,
-      mergeContactId: item.suggestedMergeId ?? null,
+      mergeContactId: accept && confident ? confident.id : null,
       relationshipScore: item.parsed.relationship_score_suggestion ?? 3,
-      tagNames: item.parsed.tags ?? [],
+      tagNames: (item.parsed.tags ?? [])
+        .map((t) => cleanSingleLine(t, 40))
+        .filter((t): t is string => Boolean(t))
+        .slice(0, MAX_DRIVE_TAGS),
       decidedAt: at,
     };
   });
@@ -285,6 +328,10 @@ async function processDoc(
   }
   if (!text.trim()) return { status: "skipped", reason: DRIVE_ROW_COPY.empty };
 
+  // Nothing is blocked on this — a doc is the user's own record — but an instruction-shaped
+  // doc imported with no reviewer is worth a row in the audit trail.
+  auditUntrustedWrite(userId, "drive.import", "doc", text);
+
   const sourceHash = hashSourceNote(text);
   const prior = await priorImportFor(userId, sourceHash, rowId);
   if (prior) {
@@ -317,7 +364,7 @@ async function processDoc(
   const input = await saveInputFromParse({
     userId,
     result,
-    decisions: acceptEveryone(result.items, keep, now.toISOString()),
+    decisions: acceptUnattended(result.items, keep, now.toISOString(), text),
     sourceText: text,
     sourceHash,
     entryPoint: "capture",

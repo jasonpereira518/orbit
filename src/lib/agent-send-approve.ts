@@ -21,6 +21,8 @@ import { gmailConnections } from "@/db/schema";
 import {
   claimAgentSendForApproval,
   finishAgentSend,
+  getAgentSendRequest,
+  recipientNeedsConfirmation,
   type AgentSendSummary,
 } from "@/lib/agent-sends";
 import { UserFacingError } from "@/lib/errors";
@@ -56,8 +58,20 @@ async function gmailCanSend(userId: string): Promise<boolean> {
 export async function approveAgentSend(
   userId: string,
   draftId: string,
-  opts: { subject?: string; body?: string } = {}
+  opts: { subject?: string; body?: string; confirmRecipient?: boolean } = {}
 ): Promise<ApproveResult> {
+  // A recipient the user's own contacts cannot vouch for — or one that differs from the
+  // contact the agent attached the draft to — needs a second, explicit confirmation. Checked
+  // here, from the database, so a client that skips the card's warning still cannot send.
+  const current = await getAgentSendRequest(userId, draftId);
+  if (current && recipientNeedsConfirmation(current.recipientTrust) && !opts.confirmRecipient) {
+    throw new UserFacingError(
+      current.recipientTrust === "mismatch"
+        ? `This draft is attached to ${current.contactName ?? "a contact"} but addressed to ${current.toEmail}. Confirm the address to send.`
+        : `${current.toEmail} isn't one of your contacts. Confirm the address to send.`
+    );
+  }
+
   const claimed = await claimAgentSendForApproval(userId, draftId);
   if (!claimed) {
     // Already decided, already sending, or past its date. Never a reason to send.

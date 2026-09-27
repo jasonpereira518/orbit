@@ -25,6 +25,7 @@
 import type { AiOperationId } from "@/lib/ai-operations";
 import { z } from "zod";
 import type { MeetingDigest } from "@/db/schema";
+import { fenceUntrusted } from "@/lib/ai-security";
 
 /** Above this, one call is too slow and too lossy; split and merge instead. */
 export const MAP_THRESHOLD_CHARS = 30_000;
@@ -403,7 +404,7 @@ function userPrompt(input: AnalyzeInput, transcript: string): string {
     `Date: ${input.startedAtIso.slice(0, 10)}`,
     input.attendees.length ? `Attendees the user listed: ${input.attendees.join(", ")}` : "",
   ].filter(Boolean);
-  return `${context.join("\n")}\n\nTRANSCRIPT:\n${transcript}`;
+  return `${context.join("\n")}\n\nTRANSCRIPT:\n${fenceUntrusted("TRANSCRIPT", transcript)}`;
 }
 
 function reducePrompt(input: AnalyzeInput) {

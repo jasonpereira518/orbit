@@ -23,6 +23,7 @@ import {
   inferReminderActionKind,
 } from "@/lib/reminder-action-kind";
 import type { ReminderActionKind } from "@/db/schema";
+import { fenceUntrusted } from "@/lib/ai-security";
 
 const MAX_COMMITMENTS = 25;
 const MAX_NOTE_CHARS = 60_000;
@@ -543,7 +544,7 @@ export async function fetchRawCommitments(
     temperature: 0.1,
     maxOutputTokens: 2048,
     system: buildSystemPrompt(todayIso, todayWeekday),
-    user: `Today: ${todayIso} (${todayWeekday})\n\n${peopleBlock}Notes:\n${corpus}`,
+    user: `Today: ${todayIso} (${todayWeekday})\n\n${peopleBlock}Notes:\n${fenceUntrusted("NOTES", corpus)}`,
   });
   return datedCommitmentsSchema.parse(JSON.parse(content));
 }

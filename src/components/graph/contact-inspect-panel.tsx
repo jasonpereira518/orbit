@@ -28,6 +28,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-links";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { closenessPercentChipClass, closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
@@ -560,9 +561,9 @@ function ContactPanelBody({
                 Call
               </a>
             )}
-            {data.linkedinUrl && (
+            {safeHttpUrl(data.linkedinUrl) && (
               <a
-                href={data.linkedinUrl}
+                href={safeHttpUrl(data.linkedinUrl)!}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
@@ -570,9 +571,9 @@ function ContactPanelBody({
                 LinkedIn
               </a>
             )}
-            {data.website && (
+            {safeHttpUrl(data.website) && (
               <a
-                href={data.website}
+                href={safeHttpUrl(data.website)!}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(buttonVariants({ variant: "outline", size: "sm" }))}

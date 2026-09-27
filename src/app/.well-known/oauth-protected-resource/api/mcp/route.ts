@@ -11,7 +11,7 @@
  * data, and is fetched by a browser-side client (claude.ai) from its own origin. That is a
  * different surface from `/api/mcp` itself, which refuses any request carrying an `Origin`.
  */
-import { clerkIssuerUrl, connectDocsUrl, mcpResourceUrl } from "@/lib/mcp/oauth";
+import { clerkIssuerUrl, connectDocsUrl, mcpResourceUrl, ORBIT_OAUTH_SCOPES } from "@/lib/mcp/oauth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +38,8 @@ export async function GET(request: Request) {
       resource: mcpResourceUrl(request),
       authorization_servers: [issuer],
       bearer_methods_supported: ["header"],
+      // What a client should ask for at consent; `oauthGrantFor` maps them to read/write.
+      scopes_supported: [...ORBIT_OAUTH_SCOPES],
       resource_name: "Orbit",
       resource_documentation: connectDocsUrl(request),
     }),

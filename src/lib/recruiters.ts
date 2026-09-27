@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { cleanSingleLine } from "@/lib/ai-security";
 import {
   recruiters,
   userRecruiterLinks,
@@ -254,6 +255,50 @@ export async function isViewerSharing(userId: string): Promise<boolean> {
 }
 
 /**
+ * The shared-row fields as they may be stored: one line each, bounded, invisible and
+ * executable content removed. Used on every write (`upsertCanonicalRecruiter`) and by
+ * `scripts/backfill-recruiter-clean.ts` for rows written before the rule existed.
+ */
+export function cleanRecruiterFields(row: {
+  fullName: string;
+  firm?: string | null;
+  specialty?: string[] | null;
+}): { fullName: string; firm: string | null; specialty: string[] } {
+  return {
+    fullName: cleanSingleLine(row.fullName, 120) ?? "",
+    firm: cleanSingleLine(row.firm, 120),
+    specialty: (row.specialty ?? [])
+      .map((s) => cleanSingleLine(s, 60))
+      .filter((s): s is string => Boolean(s))
+      .slice(0, 10),
+  };
+}
+
+/**
+ * The patch that brings an already-stored row up to `cleanRecruiterFields`, or null when it
+ * already complies. Normalized columns are recomputed alongside, so matching keeps working.
+ */
+export function recruiterCleanPatch(row: {
+  fullName: string;
+  firm: string | null;
+  specialty: string[] | null;
+}): Partial<typeof recruiters.$inferInsert> | null {
+  const clean = cleanRecruiterFields(row);
+  if (!clean.fullName) return null; // Never blank a name; a human looks at these.
+  const patch: Partial<typeof recruiters.$inferInsert> = {};
+  if (clean.fullName !== row.fullName) {
+    patch.fullName = clean.fullName;
+    patch.nameNormalized = normalizePersonName(clean.fullName);
+  }
+  if (clean.firm !== (row.firm ?? null)) {
+    patch.firm = clean.firm;
+    patch.firmNormalized = normalizeFirm(clean.firm);
+  }
+  if (JSON.stringify(clean.specialty) !== JSON.stringify(row.specialty ?? [])) patch.specialty = clean.specialty;
+  return Object.keys(patch).length ? patch : null;
+}
+
+/**
  * Which of these recruiter ids are in the pool, in one query.
  *
  * Batched on purpose — the per-row alternative is a query per result, and every list
@@ -327,7 +372,12 @@ export async function upsertCanonicalRecruiter(
   opts: { contributePii?: boolean; createdByUserId?: string } = {}
 ): Promise<Recruiter> {
   const db = await getDb();
-  const fullName = input.fullName.trim();
+  // Cleaned before anything else sees it. This row is SHARED across accounts once anyone
+  // contributes to it, and its name, firm and specialty are read into other users' chat
+  // prompts — often from a model's classification of an inbound email the recruiter wrote.
+  // One line each, bounded, with invisible and executable content removed.
+  input = { ...input, ...cleanRecruiterFields(input) };
+  const fullName = input.fullName;
   if (!fullName) throw new Error("Recruiter name is required");
   // Matching may use every identifier; WRITING contact details to the shared row needs consent.
   const shared = opts.contributePii

@@ -28,11 +28,16 @@ export async function listAgentDrafts(): Promise<AgentSendSummary[]> {
 
 export async function approveAgentDraft(
   draftId: string,
-  edits?: { subject?: string; body?: string }
+  edits?: { subject?: string; body?: string; confirmRecipient?: boolean }
 ) {
   return asActionResult(async () => {
     const userId = await requireUserId();
-    const result = await approveAgentSend(userId, draftId, edits ?? {});
+    // Only the three known keys cross from the client, typed; anything else is dropped.
+    const result = await approveAgentSend(userId, draftId, {
+      subject: typeof edits?.subject === "string" ? edits.subject : undefined,
+      body: typeof edits?.body === "string" ? edits.body : undefined,
+      confirmRecipient: edits?.confirmRecipient === true,
+    });
     revalidatePath("/dashboard");
     return result;
   });
