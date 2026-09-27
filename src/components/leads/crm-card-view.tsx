@@ -25,8 +25,10 @@ export function CrmCardView({
   onSync: () => void;
   onDisconnect: () => void;
 }) {
-  const { connection, counts } = status;
-  const canConnect = status.entitled && status.configured;
+  // TODO(Task 8): this reads only the first provider (HubSpot); Task 8 renders the full list.
+  const provider = status.providers[0];
+  const { connection, counts } = provider;
+  const canConnect = status.entitled && provider.configured;
 
   if (!connection) {
     return (
@@ -38,7 +40,7 @@ export function CrmCardView({
               See plans
             </Link>
           </div>
-        ) : !status.configured ? (
+        ) : !provider.configured ? (
           <p className="text-sm text-muted-foreground">HubSpot isn’t set up on this server yet.</p>
         ) : (
           <Button type="button" disabled={pending !== null} onClick={onConnect}>

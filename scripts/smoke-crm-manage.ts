@@ -54,46 +54,47 @@ run(async () => {
   await ensureUserSettings(USER);
 
   console.log("status");
+  const hubspotOf = async (userId: string) => (await crmStatusFor(userId)).providers[0]!;
   await db.update(userSettings).set({ compedPlan: null }).where(eq(userSettings.userId, USER));
   const free = await crmStatusFor(USER);
-  check("a free account is not entitled", free.entitled === false && free.connection === null && free.counts === null);
+  check("a free account is not entitled", free.entitled === false && free.providers[0]?.connection === null && free.providers[0]?.counts === null);
   await db.update(userSettings).set({ compedPlan: "lifetime" }).where(eq(userSettings.userId, USER));
   const paid = await crmStatusFor(USER);
-  check("a paid account is, and the server is configured", paid.entitled && paid.configured);
+  check("a paid account is, and the server is configured", paid.entitled && paid.providers[0]?.configured);
 
   await upsertConnectorConnection({ userId: USER, connectorId: "hubspot", authKind: "oauth2", label: "acme.hubspot.com", accountRef: "4242", accessToken: "a", refreshToken: "r", nextSyncAt: null });
   await upsertCrmRecords(USER, "hubspot", [person("1", "customer"), person("2", "lead"), person("3", "other")]);
-  const connected = await crmStatusFor(USER);
+  const connected = await hubspotOf(USER);
   check("the connection shows", connected.connection?.label === "acme.hubspot.com" && connected.connection.status === "active" && !connected.connection.demo);
   check("never synced yet", connected.connection?.lastSyncedAgo === null && connected.connection?.syncing === false);
   check("counts: pipeline is every non-customer", connected.counts?.pipeline === 2 && connected.counts.workContacts === 0, JSON.stringify(connected.counts));
   await db.update(connectorConnections).set({ syncStatus: "syncing", syncStartedAt: new Date(), lastSyncedAt: new Date(Date.now() - 5 * 60_000) }).where(eq(connectorConnections.userId, USER));
-  const busy = await crmStatusFor(USER);
+  const busy = await hubspotOf(USER);
   check("a live lease reads as syncing", busy.connection?.syncing === true);
   check("with a relative last sync", /minutes? ago/.test(busy.connection?.lastSyncedAgo ?? ""), String(busy.connection?.lastSyncedAgo));
   await db.update(connectorConnections).set({ syncStartedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(connectorConnections.userId, USER));
-  check("an expired lease does not", (await crmStatusFor(USER)).connection?.syncing === false);
+  check("an expired lease does not", (await hubspotOf(USER)).connection?.syncing === false);
   await db.update(connectorConnections).set({ syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
 
   console.log("\nthe error the card shows never carries raw text");
   await db.update(connectorConnections).set({ syncError: 'duplicate key value violates unique constraint "x"' }).where(eq(connectorConnections.userId, USER));
-  const rawError = (await crmStatusFor(USER)).connection?.error;
+  const rawError = (await hubspotOf(USER)).connection?.error;
   check("a database error reads as the generic line", rawError === "The last sync hit a problem — the next automatic sync will try again", String(rawError));
   const rateLimited = "HubSpot is rate-limiting this account — the next sync picks up where this one stopped";
   await db.update(connectorConnections).set({ syncError: rateLimited }).where(eq(connectorConnections.userId, USER));
-  const ownError = (await crmStatusFor(USER)).connection?.error;
+  const ownError = (await hubspotOf(USER)).connection?.error;
   check("Orbit’s own HubSpot message passes through", ownError === rateLimited, String(ownError));
   await db.update(connectorConnections).set({ syncError: null }).where(eq(connectorConnections.userId, USER));
-  check("no error is no line", (await crmStatusFor(USER)).connection?.error === null);
+  check("no error is no line", (await hubspotOf(USER)).connection?.error === null);
 
   console.log("\na connection a stop disarmed reads as paused");
-  check("an unarmed connection with no error is not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  check("an unarmed connection with no error is not paused", (await hubspotOf(USER)).connection?.paused === false);
   await db.update(connectorConnections).set({ nextSyncAt: null, syncError: rateLimited }).where(eq(connectorConnections.userId, USER));
-  check("disarmed with an error: paused", (await crmStatusFor(USER)).connection?.paused === true);
+  check("disarmed with an error: paused", (await hubspotOf(USER)).connection?.paused === true);
   await db.update(connectorConnections).set({ nextSyncAt: new Date() }).where(eq(connectorConnections.userId, USER));
-  check("armed again (a retry is coming): not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  check("armed again (a retry is coming): not paused", (await hubspotOf(USER)).connection?.paused === false);
   await db.update(connectorConnections).set({ nextSyncAt: null, status: "needs_reauth" }).where(eq(connectorConnections.userId, USER));
-  check("needs reauth is its own state, not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  check("needs reauth is its own state, not paused", (await hubspotOf(USER)).connection?.paused === false);
   await db.update(connectorConnections).set({ status: "active", syncError: null }).where(eq(connectorConnections.userId, USER));
 
   console.log("\nsync now");
@@ -133,7 +134,7 @@ run(async () => {
   check("needs reauth is said before trying", (await message(runCrmSyncNow(USER, "hubspot", { sync: okSync, consume: async () => {} }))) === "HubSpot needs you to reconnect — use Reconnect, then sync");
   await db.update(connectorConnections).set({ status: "active", accountRef: DEMO_CRM_ACCOUNT_REF }).where(eq(connectorConnections.userId, USER));
   check("the demo connection never syncs", (await message(runCrmSyncNow(USER, "hubspot", { sync: okSync, consume: async () => {} }))) === "The demo’s HubSpot data is sample data — there’s nothing to sync");
-  check("…and says it is the demo", (await crmStatusFor(USER)).connection?.demo === true);
+  check("…and says it is the demo", (await hubspotOf(USER)).connection?.demo === true);
   await db.update(connectorConnections).set({ accountRef: "4242" }).where(eq(connectorConnections.userId, USER));
 
   console.log("\ndisconnect");

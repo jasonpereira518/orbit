@@ -24,6 +24,7 @@ import { COMING_SOON_KEYS, isHrefComingSoon, surfaceKeyForHref } from "../src/li
 import { ComingSoon } from "../src/components/coming-soon/coming-soon";
 import { LeadsHeader } from "../src/components/leads/leads-header";
 import { AREA_LABELS, featureAreaForPath } from "../src/lib/feedback-report";
+import type { CrmStatus } from "../src/lib/crm/types";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -178,34 +179,51 @@ function main() {
     const noop = () => {};
     const view = (status: Parameters<typeof CrmCardView>[0]["status"]) =>
       text(React.createElement(CrmCardView, { status, pending: null, onConnect: noop, onSync: noop, onDisconnect: noop }));
-    const base = { entitled: true, configured: true, connection: null, counts: null };
+    const baseProvider: CrmStatus["providers"][number] = { id: "hubspot", label: "HubSpot", configured: true, connection: null, counts: null };
+    const base: CrmStatus = { entitled: true, providers: [baseProvider] };
+    // Builds a full CrmStatus: `patch` overrides providers[0]'s fields, `statusPatch` the
+    // top-level ones (currently only `entitled`).
+    const withProvider = (
+      patch: Partial<CrmStatus["providers"][number]>,
+      statusPatch: Partial<Omit<CrmStatus, "providers">> = {}
+    ): CrmStatus => ({
+      ...base,
+      ...statusPatch,
+      providers: [{ ...baseProvider, ...patch }],
+    });
     const conn = { connectorId: "hubspot" as const, label: "acme.hubspot.com", status: "active" as const, syncing: false, lastSyncedAgo: "5 minutes ago", error: null, demo: false, paused: false };
 
-    const locked = view({ ...base, entitled: false });
+    const locked = view(withProvider({}, { entitled: false }));
     check("free: the paywall, not a connect button", locked.includes("HubSpot sync is on Orbit Pro and Lifetime") && locked.includes("See plans") && !locked.includes("Connect HubSpot"), locked);
-    const unset = view({ ...base, configured: false });
+    const unset = view(withProvider({ configured: false }));
     check("unconfigured: says so, no button", unset.includes("isn’t set up on this server yet") && !unset.includes("Connect HubSpot"), unset);
     const ready = view(base);
     check("ready: the pitch and the button", ready.includes("Connect your CRM") && ready.includes("work contacts") && ready.includes("Connect HubSpot"), ready);
-    const live = view({ ...base, connection: conn, counts: { workContacts: 12, pipeline: 3, blocked: 0 } });
+    const live = view(withProvider({ connection: conn, counts: { workContacts: 12, pipeline: 3, blocked: 0 } }));
     check("connected: account, last sync, counts", live.includes("HubSpot · acme.hubspot.com") && live.includes("Last synced 5 minutes ago") && live.includes("12 work contacts") && live.includes("3 in your pipeline"), live);
     check("connected: sync and disconnect", live.includes("Sync now") && live.includes("Disconnect") && live.includes("See work contacts"), live);
     check("healthy: no reconnect offered", !live.includes("Reconnect HubSpot"), live);
-    const paused = view({
-      ...base,
-      connection: { ...conn, paused: true, error: "HubSpot says this connection can’t read contacts or owners — reconnect HubSpot and approve every permission" },
-      counts: { workContacts: 2, pipeline: 1, blocked: 0 },
-    });
+    const paused = view(
+      withProvider({
+        connection: { ...conn, paused: true, error: "HubSpot says this connection can’t read contacts or owners — reconnect HubSpot and approve every permission" },
+        counts: { workContacts: 2, pipeline: 1, blocked: 0 },
+      })
+    );
     check("paused: offers Reconnect before Sync now", paused.includes("Reconnect HubSpot") && paused.indexOf("Reconnect HubSpot") < paused.indexOf("Sync now"), paused);
-    const pausedUnpaid = view({ ...base, entitled: false, connection: { ...conn, paused: true, error: "HubSpot sync is on Orbit Pro and Lifetime — upgrade to keep it running" }, counts: null });
+    const pausedUnpaid = view(
+      withProvider(
+        { connection: { ...conn, paused: true, error: "HubSpot sync is on Orbit Pro and Lifetime — upgrade to keep it running" }, counts: null },
+        { entitled: false }
+      )
+    );
     check("paused and not entitled: no Reconnect", !pausedUnpaid.includes("Reconnect HubSpot"), pausedUnpaid);
-    const first = view({ ...base, connection: { ...conn, lastSyncedAgo: null }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } });
+    const first = view(withProvider({ connection: { ...conn, lastSyncedAgo: null }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } }));
     check("never synced: when it will", first.includes("The first sync starts within a few minutes"), first);
-    const running = view({ ...base, connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } });
+    const running = view(withProvider({ connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } }));
     check("syncing: says so", running.includes("Syncing now"), running);
     const runningHtml = renderToStaticMarkup(
       React.createElement(CrmCardView, {
-        status: { ...base, connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } },
+        status: withProvider({ connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } }),
         pending: null,
         onConnect: noop,
         onSync: noop,
@@ -218,15 +236,15 @@ function main() {
       disconnectButton !== null && disconnectButton[0].includes('disabled=""'),
       disconnectButton?.[0] ?? runningHtml
     );
-    const erred = view({ ...base, connection: { ...conn, error: "HubSpot is rate-limiting this account — the next sync picks up where this one stopped" }, counts: { workContacts: 1, pipeline: 0, blocked: 2 } });
+    const erred = view(withProvider({ connection: { ...conn, error: "HubSpot is rate-limiting this account — the next sync picks up where this one stopped" }, counts: { workContacts: 1, pipeline: 0, blocked: 2 } }));
     check("an error and the cap are shown", erred.includes("rate-limiting") && erred.includes("2 customers didn’t fit your plan’s contact limit"), erred);
-    const reauth = view({ ...base, connection: { ...conn, status: "needs_reauth", error: "Token endpoint returned 400" }, counts: null });
+    const reauth = view(withProvider({ connection: { ...conn, status: "needs_reauth", error: "Token endpoint returned 400" }, counts: null }));
     check("needs reauth: reconnect, not sync", reauth.includes("HubSpot needs you to reconnect") && reauth.includes("Reconnect HubSpot") && !reauth.includes("Sync now"), reauth);
     check("needs reauth: the fixed body", reauth.includes("HubSpot stopped accepting Orbit’s sign-in — reconnect to keep syncing"), reauth);
     check("needs reauth: never the stored error", !reauth.includes("Token endpoint returned 400"), reauth);
-    const demo = view({ ...base, connection: { ...conn, demo: true }, counts: { workContacts: 4, pipeline: 2, blocked: 0 } });
+    const demo = view(withProvider({ connection: { ...conn, demo: true }, counts: { workContacts: 4, pipeline: 2, blocked: 0 } }));
     check("demo: sample data, no sync", demo.includes("Sample data") && !demo.includes("Sync now"), demo);
-    check("one work contact is singular", view({ ...base, connection: conn, counts: { workContacts: 1, pipeline: 1, blocked: 0 } }).includes("1 work contact ·"));
+    check("one work contact is singular", view(withProvider({ connection: conn, counts: { workContacts: 1, pipeline: 1, blocked: 0 } })).includes("1 work contact ·"));
   }
 
   console.log("\nthe CRM actions are thin, gated shells");

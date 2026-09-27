@@ -41,22 +41,30 @@ export async function crmStatusFor(userId: string): Promise<CrmStatus> {
   ]);
   const counts = connection ? await crmCounts(userId, "hubspot") : null;
   const leaseCutoff = Date.now() - SYNC_LEASE_MS;
+  // TODO(Task 7): this stopgap keeps the branch compiling with the new multi-provider
+  // `CrmStatus` shape; Task 7 replaces it with a real per-provider status build.
   return {
     entitled: entitlements.canUseCrm,
-    configured: isOAuthConfigured("hubspot"),
-    connection: connection
-      ? {
-          connectorId: "hubspot",
-          label: connection.label,
-          status: connection.status,
-          syncing: connection.syncStatus === "syncing" && (connection.syncStartedAt?.getTime() ?? 0) > leaseCutoff,
-          lastSyncedAgo: connection.lastSyncedAt ? formatDistanceToNow(connection.lastSyncedAt, { addSuffix: true }) : null,
-          error: crmErrorLine(connection.syncError),
-          demo: connection.accountRef === DEMO_CRM_ACCOUNT_REF,
-          paused: connection.status === "active" && connection.nextSyncAt === null && connection.syncError !== null,
-        }
-      : null,
-    counts,
+    providers: [
+      {
+        id: "hubspot" as const,
+        label: "HubSpot",
+        configured: isOAuthConfigured("hubspot"),
+        connection: connection
+          ? {
+              connectorId: "hubspot" as const,
+              label: connection.label,
+              status: connection.status,
+              syncing: connection.syncStatus === "syncing" && (connection.syncStartedAt?.getTime() ?? 0) > leaseCutoff,
+              lastSyncedAgo: connection.lastSyncedAt ? formatDistanceToNow(connection.lastSyncedAt, { addSuffix: true }) : null,
+              error: crmErrorLine(connection.syncError),
+              demo: connection.accountRef === DEMO_CRM_ACCOUNT_REF,
+              paused: connection.status === "active" && connection.nextSyncAt === null && connection.syncError !== null,
+            }
+          : null,
+        counts,
+      },
+    ],
   };
 }
 

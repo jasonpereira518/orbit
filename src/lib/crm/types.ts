@@ -28,21 +28,38 @@ export type CrmPerson = {
 /** `connector_connections.account_ref` of the localhost demo's HubSpot: never synced, never revoked. */
 export const DEMO_CRM_ACCOUNT_REF = "orbit-demo";
 
+export type CrmConnectorId = "hubspot" | "salesforce";
+
+/** The CRMs Leads connects, in the order the card lists them. */
+export const CRM_PROVIDERS: readonly { id: CrmConnectorId; label: string }[] = [
+  { id: "hubspot", label: "HubSpot" },
+  { id: "salesforce", label: "Salesforce" },
+];
+
+export function isCrmConnectorId(id: string): id is CrmConnectorId {
+  return CRM_PROVIDERS.some((p) => p.id === id);
+}
+
+export function crmProviderLabel(id: CrmConnectorId): string {
+  return CRM_PROVIDERS.find((p) => p.id === id)?.label ?? "your CRM";
+}
+
 /**
- * The line the CRM card shows for a stored `sync_error`. Every message Orbit's own HubSpot code
- * writes on purpose starts with "HubSpot " (the API errors, the not-entitled and no-owner
- * stops) and passes through; anything else — a database constraint, a missing server setting,
- * a token endpoint's status — never reaches the page.
+ * The line the CRM card shows for a stored `sync_error`. Both providers' own API modules
+ * (`HubspotApiError`, `SalesforceApiError`) write only fixed sentences Orbit wrote — starting
+ * "HubSpot " or "Salesforce " — never a provider's raw text (Ruling 12c), so this prefix check
+ * is a second net, not the only one: anything else — a database constraint, a missing server
+ * setting, a token endpoint's status — never reaches the page.
  */
 export function crmErrorLine(error: string | null): string | null {
   if (!error) return null;
-  if (error.startsWith("HubSpot ")) return error;
+  if (error.startsWith("HubSpot ") || error.startsWith("Salesforce ")) return error;
   return "The last sync hit a problem — the next automatic sync will try again";
 }
 
 /** What the CRM card shows about one connection. Dates arrive pre-worded, so SSR and hydration agree. */
 export type CrmConnectionView = {
-  connectorId: "hubspot";
+  connectorId: CrmConnectorId;
   label: string | null;
   status: "active" | "needs_reauth";
   syncing: boolean;
@@ -56,11 +73,18 @@ export type CrmConnectionView = {
   paused: boolean;
 };
 
-export type CrmStatus = {
-  entitled: boolean;
+/** One CRM's row on the card: whether this server can connect it, and its connection if any. */
+export type CrmProviderStatus = {
+  id: CrmConnectorId;
+  label: string;
   configured: boolean;
   connection: CrmConnectionView | null;
   counts: { workContacts: number; pipeline: number; blocked: number } | null;
+};
+
+export type CrmStatus = {
+  entitled: boolean;
+  providers: CrmProviderStatus[];
 };
 
 export type CrmSyncNowResult = {
