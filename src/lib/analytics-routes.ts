@@ -35,6 +35,8 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/pricing",
   "/interest",
   "/interest/privacy",
+  // A referral link. The slug is the sharer's email local part: never stored, only the pattern.
+  "/waitlist/[slug]",
   "/connect",
   "/privacy",
   "/terms",

@@ -5,6 +5,7 @@ import {
   hostMatchValue,
   localWaitlistRewrites,
   waitlistHost,
+  waitlistReferralRewrites,
   waitlistRedirects,
   waitlistRewrites,
 } from "./src/lib/waitlist-host";
@@ -52,7 +53,7 @@ const nextConfig: NextConfig = {
     return waitlistRedirects();
   },
   async rewrites() {
-    return { beforeFiles: [...waitlistRewrites(), ...localWaitlistRewrites()], afterFiles: [], fallback: [] };
+    return { beforeFiles: [...waitlistRewrites(), ...waitlistReferralRewrites(), ...localWaitlistRewrites()], afterFiles: [], fallback: [] };
   },
   env: {
     // Inlined at build time; /api/health reports it so "which build is this" has an answer

@@ -85,6 +85,11 @@ export function redactUrlForVendor(url: string): string | null {
 
   const path = parsed.pathname
     .split("/")
+    .map((segment, i, all) =>
+      // A referral slug is a piece of someone's email address, and it reads like a word,
+      // not an id: named by its position under `/waitlist/`, which is all this module knows.
+      i === 2 && all[1] === "waitlist" && segment !== "icon.png" ? "[slug]" : segment
+    )
     .map((segment) => (segment && isIdSegment(decodeURIComponentSafe(segment)) ? "[id]" : segment))
     .join("/");
 
