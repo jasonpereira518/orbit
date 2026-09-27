@@ -18,6 +18,7 @@ import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach
 import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
 import { buttonVariants } from "@/components/ui/button";
 import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
+import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
@@ -402,7 +403,16 @@ export async function RecentlyUpdatedSection({
                     <div className="min-w-0">
                       <p className="font-medium">{c.fullName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {c.company || "No company"}
+                        {c.company ? (
+                          <span
+                            className="font-medium"
+                            style={{ color: companyBrandColor(c.company) ?? undefined }}
+                          >
+                            {c.company}
+                          </span>
+                        ) : (
+                          "No company"
+                        )}
                       </p>
                     </div>
                   </div>
