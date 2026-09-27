@@ -186,7 +186,7 @@ run(async () => {
   check("idle, synced, no error", after1?.syncStatus === "idle" && after1?.lastSyncedAt !== null && after1?.syncError === null);
 
   console.log("\n2. resume");
-  const second = salesforce((soql) => ({ status: 200, body: { records: [] } }));
+  const second = salesforce((_soql) => ({ status: 200, body: { records: [] } }));
   const r2 = await syncSalesforce(await claim(), { fetchImpl: second.impl });
   check("complete, nothing new", r2.outcome === "complete" && r2.records === 0, JSON.stringify(r2));
   check(
