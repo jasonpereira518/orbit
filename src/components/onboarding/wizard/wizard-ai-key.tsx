@@ -72,9 +72,11 @@ export function WizardAiKey({
       </p>
 
       <div className="grid gap-2 sm:grid-cols-3">
-        {/* The selectable three only — the grid is sm:grid-cols-3, and a provider with no
-            user-facing surface must not be offered to a brand-new account. */}
-        {SELECTABLE_AI_PROVIDERS.map((p) => (
+        {/* The first-party three only. OpenRouter is selectable in Settings, where someone
+            who already runs on it can paste their key, but the grid here is sm:grid-cols-3
+            and a brand-new account should not be sent to mint a key at a fourth service
+            before it can start. */}
+        {SELECTABLE_AI_PROVIDERS.filter((p) => p.id !== "openrouter").map((p) => (
           <button
             key={p.id}
             type="button"

@@ -250,18 +250,21 @@ export default function TermsPage() {
 
         <DocSection id="ai" index={8} title="AI features">
           <p>
-            AI features are optional, and nothing is sent until you use one.
-            When you do, relevant content from your Orbit data is sent to an AI
-            provider you selected so it can generate a response. On every plan,
-            including Orbit Pro and Orbit Lifetime, AI runs on an API key you
-            supply, and that provider bills you directly.
+            Most AI features are optional and run only when you use them; when
+            you do, relevant content from your Orbit data is sent to an AI
+            provider you selected so it can generate a response. A few run
+            automatically in the background instead — see below. On every
+            plan, including Orbit Pro and Orbit Lifetime, AI runs on an API
+            key you supply, and that provider bills you directly.
           </p>
           <p>
-            Some AI work runs in the background: search indexing, and — only if
-            you turn it on — deriving timeline events from imported LinkedIn
-            conversations, which shows an estimated cost before you do and is
-            capped at {TIMELINE_DAILY_CONTACT_CAP} conversations a day. Settings
-            shows the last 30 days of AI usage and its estimated cost; the bill
+            Some AI work runs in the background: search indexing, and — after
+            a LinkedIn import — deriving timeline events from the imported
+            conversations, without you turning anything on first. The cap of{" "}
+            {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the
+            conversations that reach the model; a thread with a single message
+            gets a rule-based note instead, with no AI call. Settings shows
+            the last 30 days of AI usage and its estimated cost; the bill
             itself comes from your provider.
           </p>
           <p>

@@ -6,9 +6,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  *
  * TERMS_VERSION is what `user_settings.terms_version` records at acceptance. Change it (and
  * LEGAL_LAST_UPDATED) in the same commit as any material change to /terms or /privacy.
+ * `scripts/smoke-legal-pages.ts` holds a lock over the two page sources and fails when they
+ * move and these two do not, so the rule above is enforced rather than merely written down.
  */
-export const TERMS_VERSION = "2026-09-19";
-export const LEGAL_LAST_UPDATED = "September 23, 2026";
+export const TERMS_VERSION = "2026-09-26";
+export const LEGAL_LAST_UPDATED = "September 26, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

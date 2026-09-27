@@ -661,8 +661,8 @@ function Panel({
         <div className="space-y-5">
           <AiSettings initialSettings={initialSettings} />
           <DecisionModelSettings initialSettings={initialSettings} />
-          <SpeechUsageCard speech={speechAllowances} />
           <AiUsageCard />
+          <SpeechUsageCard speech={speechAllowances} />
         </div>
       );
     case "assistants":

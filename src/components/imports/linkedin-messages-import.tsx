@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { messageThreadToReviewPerson } from "@/lib/imports/review-people";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
-import { TimelineBackfillToggle } from "@/components/imports/timeline-backfill-toggle";
 import {
   BusyHint,
   ImportFilePicker,
@@ -167,10 +166,6 @@ export function LinkedInMessagesImport() {
             : `Import ${selected.size || 0} selected`}
         </Button>
       </div>
-
-      <TimelineBackfillToggle
-        refreshKey={job?.kind === "messages" ? job.status : null}
-      />
 
       {people.length > 0 && (
         <div className="space-y-2">
