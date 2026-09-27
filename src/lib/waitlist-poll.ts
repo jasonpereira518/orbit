@@ -33,7 +33,7 @@ export const POLL_VOTER_COOKIE = "wp_voter";
 
 export const POLL_ERROR = "Couldn't save your vote — please try again.";
 export const POLL_RATE_LIMITED = "That's a lot of votes — give it a minute and try again.";
-export const POLL_RESULTS_CAPTION = "Results sharpen as more votes come in.";
+export const POLL_RESULTS_CAPTION = "Vote for your favorite feature to come first.";
 
 /** Votes per option id. Ids not in `POLL_OPTIONS` may appear (a retired option) and are ignored. */
 export type PollResults = { counts: Record<string, number> };

@@ -106,7 +106,8 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
         className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(ellipse_at_top,rgba(242,193,78,0.10),transparent_70%)]"
       />
       <div role="group" aria-label="Which feature do you want most?" className="relative">
-        <ul className="grid gap-3">
+        <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">Feature poll</p>
+        <ul className="mt-4 grid gap-3">
           {ordered.map((opt) => {
             const selected = choice === opt.id;
             return (
