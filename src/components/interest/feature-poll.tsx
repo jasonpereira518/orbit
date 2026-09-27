@@ -119,8 +119,9 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
                   aria-pressed={selected}
                   onClick={(e) => vote(opt.id, e.currentTarget)}
                   className={cn(
-                    "landing-glass relative block w-full cursor-pointer overflow-hidden rounded-2xl border border-transparent px-5 py-4 text-left transition-colors",
-                    "hover:border-[#e8f3f1]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60",
+                    "landing-glass relative block w-full cursor-pointer overflow-hidden rounded-2xl border border-transparent px-5 py-4 text-left transition-all duration-150",
+                    "hover:border-[#e8f3f1]/20 hover:bg-[#e8f3f1]/[0.05] motion-safe:hover:-translate-y-0.5 motion-safe:active:translate-y-0",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60",
                     selected && "border-[#f2c14e]/50"
                   )}
                 >
