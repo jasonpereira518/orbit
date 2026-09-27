@@ -46,6 +46,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
       name: "Unknown contact",
       title: null as string | null,
       company: null as string | null,
+      lastInteractionAt: null as Date | null,
     };
   }
   const c = data.contactById.get(contactId);
@@ -53,6 +54,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
     name: data.contactNameById.get(contactId) || c?.fullName || "Contact",
     title: c?.title ?? null,
     company: c?.company ?? null,
+    lastInteractionAt: c?.lastInteractionAt ?? null,
   };
 }
 
@@ -210,6 +212,7 @@ export async function SuggestedOutreachSection({
             contactName: meta.name,
             contactTitle: meta.title,
             contactCompany: meta.company,
+            lastInteractionAt: meta.lastInteractionAt,
             tier: contactId ? tierForContact(data, contactId) : undefined,
           };
         })}
