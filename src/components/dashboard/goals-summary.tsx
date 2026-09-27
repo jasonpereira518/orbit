@@ -1,5 +1,6 @@
 "use client";
 
+import { companyBrandColor } from "@/lib/company-brand";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
@@ -138,7 +139,16 @@ export function GoalsSummary({
                       <span className="font-medium">{c.preferredName || c.fullName}</span>
                       {(c.title || c.company) && (
                         <span className="ml-2 text-xs text-muted-foreground">
-                          {[c.title, c.company].filter(Boolean).join(" · ")}
+                          {c.title}
+                          {c.title && c.company ? " · " : ""}
+                          {c.company && (
+                            <span
+                              className="font-medium"
+                              style={{ color: companyBrandColor(c.company) ?? undefined }}
+                            >
+                              {c.company}
+                            </span>
+                          )}
                         </span>
                       )}
                     </span>

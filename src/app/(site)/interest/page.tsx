@@ -6,6 +6,7 @@ import { Network, Plug, Sparkles } from "lucide-react";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { InterestHero, type HeroInitial } from "@/components/interest/interest-hero";
+import { ReferralTracker } from "@/components/interest/referral-tracker";
 import { RingsBackdrop } from "@/components/interest/rings-backdrop";
 import { AppDemo } from "@/components/interest/app-demo/app-demo";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
@@ -13,8 +14,10 @@ import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
 import {
-  FRONT_WAVE_REFERRALS,
+  REFERRAL_TIERS,
   SHARE_TOKEN_MAX,
+  SPOTS_PER_REFERRAL,
+  TRACKER_SLOTS,
   buildTicketImageUrl,
   type InterestTicket,
 } from "@/lib/interest-list";
@@ -128,7 +131,7 @@ const STEPS = [
   { title: "Join the waitlist", body: "One email address. That's all it takes to hold your place." },
   {
     title: "We open in waves",
-    body: "The front wave goes first, then everyone else in the order they joined.",
+    body: "Spots open a few at a time, in line order. Friends you invite move you up.",
   },
   { title: "Your invite arrives", body: "When your wave opens, your invite lands in your inbox." },
 ];
@@ -141,11 +144,13 @@ function faq(privacyHref: string): readonly FaqItem[] {
     },
     {
       q: "When do I get in?",
-      a: "We're rolling out in waves over the coming weeks. The front wave goes first; everyone else follows in the order they joined.",
+      a: "We're rolling out in waves over the coming weeks, in line order. The earlier you join, and the more friends you bring, the earlier your wave.",
     },
     {
-      q: "How do I get into the front wave?",
-      a: `Share your invite link. When ${FRONT_WAVE_REFERRALS} friends join through it, you're in.`,
+      q: "How do I move up the line?",
+      a: `Share your invite link. Each friend who joins through it moves you up ${SPOTS_PER_REFERRAL} spots, and the more friends you bring, the more you unlock: ${REFERRAL_TIERS.filter((t) => t.at >= 3)
+        .map((t) => `${t.perk} at ${t.at}`)
+        .join(", ")}.`,
     },
     {
       q: "What happens to my email?",
@@ -256,6 +261,28 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
             ))}
           </ul>
         </Reveal>
+
+        <section className="mt-24 md:mt-32" aria-labelledby="waitlist-referrals">
+          <Reveal className="reveal-celestial">
+            <h2 id="waitlist-referrals" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
+              Bring friends, move up.
+            </h2>
+          </Reveal>
+          <Reveal className="reveal-celestial" delay={80}>
+            <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
+              Every friend who joins through your link moves you up {SPOTS_PER_REFERRAL} spots, and
+              the first {TRACKER_SLOTS} unlock more along the way.
+            </p>
+          </Reveal>
+          <Reveal className="reveal-celestial mt-10 block" delay={120}>
+            <ReferralTracker
+              token={ticket?.shareToken ?? null}
+              referrals={ticket?.referrals ?? 0}
+              position={ticket?.position ?? null}
+              joinHref="#interest-join"
+            />
+          </Reveal>
+        </section>
 
         {/* An admin can hide the demo from /admin/growth/interest-list. */}
         {showDemo && (

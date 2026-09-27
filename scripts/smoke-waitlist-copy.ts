@@ -86,8 +86,11 @@ async function main() {
   check("welcome: asks clients not to invert the paper", numbered.html.includes('content="light only"'));
   const unnumbered = email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: null });
   check("welcome: without a count, says no number rather than a wrong one", !/#\d/.test(unnumbered.subject + unnumbered.text));
-  check("welcome: explains the front wave", numbered.text.includes("front wave"));
-  assertClean("front wave", email.buildFrontWaveEmail({ unsubscribeUrl: leave, planet: "mars", links }));
+  check("welcome: explains moving up", numbered.text.includes("moves you up 5 spots"));
+  const { REFERRAL_TIERS } = await import("../src/lib/interest-list");
+  for (const tier of REFERRAL_TIERS.filter((t) => t.at > 0)) {
+    assertClean(`tier email (${tier.id})`, email.buildTierEmail({ unsubscribeUrl: leave, planet: "mars", links, tier }));
+  }
   assertClean("broadcast", buildBroadcastEmail({ subject: "An update", body: "Opening line.\n\nMore.", unsubscribeUrl: leave }));
 
   console.log("\nWho it comes from:");
@@ -124,7 +127,7 @@ async function main() {
     "src/components/interest/boarding-pass.tsx",
     "src/components/interest/share-row.tsx",
     "src/components/interest/proof-line.tsx",
-    "src/components/interest/moons.tsx",
+    "src/components/interest/referral-tracker.tsx",
     "src/components/interest/waitlist-skeleton.tsx",
     "src/app/api/interest-list/ticket-image/route.tsx",
     "src/app/api/interest-list/unsubscribe/route.ts",

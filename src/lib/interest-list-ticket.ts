@@ -1,12 +1,13 @@
 /**
  * The read model behind the waitlist's early-access pass: a row's place in line, its
- * referrals and front-wave standing, its planet, and the page's proof line.
+ * referrals, its planet, and the page's proof line.
  *
- * THE LINE (`lineSql`). Only people still waiting count (`unsubscribed_at IS NULL`).
- * Anyone with `FRONT_WAVE_REFERRALS` friends still on the list is in the front wave, and
- * the front wave goes first; within it and behind it, join order `(created_at, id)`
- * decides. So a place moves up as your friends join and as people ahead leave, and down
- * only when someone behind you reaches the front wave.
+ * THE LINE (`lineSql`). Only people still waiting count (`unsubscribed_at IS NULL`). Each
+ * person's join rank is their place by `(created_at, id)`; each still-waiting friend they
+ * referred takes `SPOTS_PER_REFERRAL` off it, and the line is that score. A tie goes to
+ * whoever has more referrals, then to join order: that is what makes a referral move you up
+ * exactly 5 places, since landing on someone's score puts you ahead of them, not behind. So a place moves up as your friends join and as people ahead leave, and
+ * down when someone behind you refers enough friends to pass you.
  *
  * Server-only. Imports `@/db` and, from the framework, only React's `cache` — nothing from
  * `next/*` — so the join core and the smoke scripts can call it outside a request, where
@@ -21,8 +22,8 @@ import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { interestListSignups } from "@/db/schema";
 import {
-  FRONT_WAVE_REFERRALS,
   INTEREST_LIST_COUNT_FLOOR,
+  SPOTS_PER_REFERRAL,
   slugFromEmail,
   slugWithSuffix,
   type InterestTicket,
@@ -139,7 +140,6 @@ export async function ticketForRow(row: SignupRowForTicket): Promise<InterestTic
     number: Math.max(1, ordinal?.n ?? 1),
     position: standing.position,
     referrals: standing.referrals,
-    frontWave: standing.frontWave,
     planet: asWelcomePlanet(row.welcomePlanet),
     joinedAt: row.createdAt.toISOString(),
     shareToken: row.shareToken,
@@ -147,15 +147,22 @@ export async function ticketForRow(row: SignupRowForTicket): Promise<InterestTic
   };
 }
 
-export type Standing = { position: number; referrals: number; frontWave: boolean };
+export type Standing = {
+  position: number;
+  referrals: number;
+  /** Place by join order alone, among the people still waiting — what `position` would be with no referrals. */
+  joinRank: number;
+};
 
 /**
  * The whole line, in one statement: every waiting row's referrals and its place.
  *
  * `refs` counts each referrer's still-waiting referrals (one GROUP BY over the
- * `referred_by_id` index); `row_number()` orders the front wave first, then join order.
- * This is THE definition of the line — the pass (`standingFor`) and the admin roster
- * (`readStandings`) both read it, so they cannot disagree about anyone's place.
+ * `referred_by_id` index); `join_rank` is the place by join order, and `position` orders by
+ * that rank less `SPOTS_PER_REFERRAL` per referral, ties to the person with more referrals
+ * and then to join order. This is THE definition of the line — the pass (`standingFor`)
+ * and the admin roster (`readStandings`) both read it, so they cannot disagree about
+ * anyone's place.
  */
 function lineSql(only: string | null) {
   return sql`
@@ -165,30 +172,43 @@ function lineSql(only: string | null) {
       WHERE referred_by_id IS NOT NULL AND unsubscribed_at IS NULL
       GROUP BY referred_by_id
     ),
-    line AS (
+    joined AS (
       SELECT
         s.id,
+        s.created_at,
         COALESCE(refs.n, 0) AS referrals,
-        row_number() OVER (
-          ORDER BY (COALESCE(refs.n, 0) >= ${FRONT_WAVE_REFERRALS}) DESC, s.created_at, s.id
-        ) AS position
+        row_number() OVER (ORDER BY s.created_at, s.id) AS join_rank
       FROM interest_list_signups s
       LEFT JOIN refs ON refs.id = s.id
       WHERE s.unsubscribed_at IS NULL
+    ),
+    line AS (
+      SELECT
+        id,
+        referrals,
+        join_rank,
+        row_number() OVER (
+          ORDER BY (join_rank - ${SPOTS_PER_REFERRAL}::int * referrals), referrals DESC, created_at, id
+        ) AS position
+      FROM joined
     )
-    SELECT id, referrals, position FROM line
+    SELECT id, referrals, join_rank, position FROM line
     ${only ? sql`WHERE id = ${only}::uuid` : sql``}
   `;
 }
 
-type LineRow = { id: string; referrals: number | string; position: number | string };
+type LineRow = {
+  id: string;
+  referrals: number | string;
+  join_rank: number | string;
+  position: number | string;
+};
 
 function toStanding(row: LineRow): Standing {
-  const referrals = Number(row.referrals);
   return {
     position: Math.max(1, Number(row.position)),
-    referrals,
-    frontWave: referrals >= FRONT_WAVE_REFERRALS,
+    referrals: Number(row.referrals),
+    joinRank: Math.max(1, Number(row.join_rank)),
   };
 }
 
@@ -205,7 +225,8 @@ export async function standingFor(row: { id: string }): Promise<Standing> {
     .select({ n: countInt })
     .from(interestListSignups)
     .where(isNull(interestListSignups.unsubscribedAt));
-  return { position: (waiting?.n ?? 0) + 1, referrals: 0, frontWave: false };
+  const back = (waiting?.n ?? 0) + 1;
+  return { position: back, referrals: 0, joinRank: back };
 }
 
 /** Every waiting row's standing, keyed by id — for the admin roster and its export. */
@@ -242,6 +263,41 @@ export const getTicketByShareToken = cache(
     return ticketForRow({ ...row, shareToken: row.shareToken });
   }
 );
+
+export type ProgressSnapshot = { referrals: number; position: number };
+
+const PROGRESS_TTL_MS = 5_000;
+const PROGRESS_MEMO_MAX = 500;
+const progressMemo = new Map<string, { at: number; value: ProgressSnapshot | null }>();
+
+/**
+ * What the tracker's poll reads: a pass's live referral count and place, or null when the
+ * token names nobody still waiting. `standingFor` ranks the whole line, so answers are
+ * held for five seconds per token — a referrer watching their pass costs one line read per
+ * five seconds however many tabs they have open. Per-instance, like the proof memo.
+ */
+export async function getProgressByShareToken(token: string): Promise<ProgressSnapshot | null> {
+  if (!token) return null;
+  const hit = progressMemo.get(token);
+  if (hit && Date.now() - hit.at < PROGRESS_TTL_MS) return hit.value;
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: interestListSignups.id })
+    .from(interestListSignups)
+    .where(and(eq(interestListSignups.shareToken, token), isNull(interestListSignups.unsubscribedAt)))
+    .limit(1);
+  const value = row
+    ? await standingFor(row).then((s) => ({ referrals: s.referrals, position: s.position }))
+    : null;
+  if (progressMemo.size >= PROGRESS_MEMO_MAX) progressMemo.clear();
+  progressMemo.set(token, { at: Date.now(), value });
+  return value;
+}
+
+/** Called by the join core once a referral is credited, so the referrer's next poll sees it. */
+export function invalidateProgress(token: string) {
+  progressMemo.delete(token);
+}
 
 /** The row a `ref` names: by slug (always lowercase) or by share token (case-sensitive). */
 export function refMatch(ref: string) {

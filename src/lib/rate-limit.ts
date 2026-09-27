@@ -28,6 +28,7 @@ const BUCKET_LABELS: Record<string, string> = {
   avatarResolve: "photo lookup",
   feedback: "feedback",
   interestJoin: "sign-up",
+  interestProgress: "progress check",
   interestName: "sign-up",
   apiRead: "API read",
   apiWrite: "API write",
@@ -147,6 +148,12 @@ export const RATE_LIMITS = {
    * stuffing the tally from one address.
    */
   pollVote: { limit: 20, windowSec: 600 },
+  /**
+   * `/api/interest-list/progress`: the referral tracker polls it about every 20 seconds
+   * while a pass is open, so one visitor is ~15 calls per five minutes. This leaves room
+   * for several people behind one NAT, and stops a script sweeping share tokens.
+   */
+  interestProgress: { limit: 120, windowSec: 300 },
   /**
    * `saveInterestListName`, the join's second step. A person makes one, maybe a couple of
    * corrections' worth; the limit exists to stop a script walking guessed tokens.
