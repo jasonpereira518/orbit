@@ -17,6 +17,7 @@ import {
   getConnectorConnection,
   listConnectorConnections,
   markConnectorSyncResult,
+  markConnectorSyncSucceeded,
   resetConnectorCursor,
   saveConnectorCursor,
   updateConnectorTokens,
@@ -110,6 +111,97 @@ run(async () => {
   await disarmConnectorSync(conn.id, "needs attention");
   const [disarmed] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, conn.id));
   check("disarming unschedules the connection", disarmed?.nextSyncAt === null);
+
+  console.log("\nthe optional lease guard on markConnectorSyncResult / markConnectorSyncSucceeded");
+  // A caller that already claimed a lease (the scheduler's connector pass, "Sync now", every
+  // sync's own terminal call) can hand back the exact `sync_started_at` it saw; every write
+  // these two functions make then requires the row still carry it. A stale value (someone
+  // else's claim moved the lease on) must change nothing at all — not the cursor, not the
+  // error, not the failure count.
+  const LEASE_TEST_CONNECTOR = "lease-guard-test";
+  await upsertConnectorConnection({
+    userId: USER,
+    connectorId: LEASE_TEST_CONNECTOR,
+    authKind: "api_key",
+    accessToken: "k",
+    nextSyncAt: new Date(Date.now() - 1000),
+  });
+  const leaseConn = await claimConnectorConnectionForUser(USER, LEASE_TEST_CONNECTOR);
+  if (!leaseConn) throw new Error("setup: could not claim the lease-guard test connector");
+  const staleLease = new Date(leaseConn.leaseStartedAt.getTime() - 60_000);
+
+  await markConnectorSyncResult(
+    leaseConn.id,
+    { ok: true, cursor: { cursor: "should-not-land" }, nextSyncAt: new Date(Date.now() + 60_000) },
+    undefined,
+    { leaseStartedAt: staleLease }
+  );
+  const [afterStaleOk] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, leaseConn.id));
+  check(
+    "a stale lease on the success path changes nothing",
+    afterStaleOk?.syncStatus === "syncing" && afterStaleOk?.syncCursor === null,
+    JSON.stringify({ status: afterStaleOk?.syncStatus, cursor: afterStaleOk?.syncCursor })
+  );
+
+  await markConnectorSyncResult(
+    leaseConn.id,
+    { ok: false, error: "should-not-land", retryable: true },
+    undefined,
+    { leaseStartedAt: staleLease }
+  );
+  const [afterStaleFail] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, leaseConn.id));
+  check(
+    "a stale lease on the failure path changes nothing (no error, no failure counted)",
+    afterStaleFail?.syncError === null && afterStaleFail?.syncFailures === 0,
+    JSON.stringify({ error: afterStaleFail?.syncError, failures: afterStaleFail?.syncFailures })
+  );
+
+  await markConnectorSyncSucceeded(leaseConn.id, undefined, { leaseStartedAt: staleLease });
+  const [afterStaleSucceeded] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, leaseConn.id));
+  check(
+    "a stale lease on the success backstop changes nothing",
+    afterStaleSucceeded?.syncStatus === "syncing",
+    String(afterStaleSucceeded?.syncStatus)
+  );
+
+  // The current lease behaves exactly as an omitted one — every write lands.
+  await markConnectorSyncResult(
+    leaseConn.id,
+    { ok: true, cursor: { cursor: "landed" }, nextSyncAt: new Date(Date.now() + 60_000) },
+    undefined,
+    { leaseStartedAt: leaseConn.leaseStartedAt }
+  );
+  const [afterCurrentOk] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, leaseConn.id));
+  check(
+    "the current lease still lets the success path land",
+    afterCurrentOk?.syncCursor?.cursor === "landed" && afterCurrentOk?.syncStatus === "idle",
+    JSON.stringify(afterCurrentOk?.syncCursor)
+  );
+
+  const leaseConn2 = await claimConnectorConnectionForUser(USER, LEASE_TEST_CONNECTOR);
+  if (!leaseConn2) throw new Error("setup: could not re-claim the lease-guard test connector");
+  await markConnectorSyncResult(
+    leaseConn2.id,
+    { ok: false, error: "landed-failure", retryable: true },
+    undefined,
+    { leaseStartedAt: leaseConn2.leaseStartedAt }
+  );
+  const [afterCurrentFail] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, leaseConn2.id));
+  check(
+    "the current lease still lets the failure path land",
+    afterCurrentFail?.syncError === "landed-failure" && afterCurrentFail?.syncFailures === 1,
+    JSON.stringify({ error: afterCurrentFail?.syncError, failures: afterCurrentFail?.syncFailures })
+  );
+
+  const leaseConn3 = await claimConnectorConnectionForUser(USER, LEASE_TEST_CONNECTOR);
+  if (!leaseConn3) throw new Error("setup: could not re-claim the lease-guard test connector");
+  await markConnectorSyncSucceeded(leaseConn3.id, undefined, { leaseStartedAt: leaseConn3.leaseStartedAt });
+  const [afterCurrentSucceeded] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, leaseConn3.id));
+  check(
+    "the current lease still lets the success backstop land",
+    afterCurrentSucceeded?.syncStatus === "idle",
+    String(afterCurrentSucceeded?.syncStatus)
+  );
 
   console.log("\nan api_key connection's secret comes back from the column it was stored in");
   // The claim reads `access_token_encrypted` for oauth2 and `api_key_encrypted` for everything

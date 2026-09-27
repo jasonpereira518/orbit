@@ -103,11 +103,16 @@ export async function runCrmSyncNow(
     // What the scheduler does with a throw: retryable, backed off. The card gets words; the
     // raw error goes to the report, never the row.
     reportError(err, { where: "crm.sync-now", userId, level: "warning", extra: { connectorId } });
-    await markConnectorSyncResult(conn.id, { ok: false, error: DIDNT_ANSWER, retryable: true });
+    await markConnectorSyncResult(
+      conn.id,
+      { ok: false, error: DIDNT_ANSWER, retryable: true },
+      undefined,
+      { leaseStartedAt: conn.leaseStartedAt }
+    );
     throw new UserFacingError(DIDNT_ANSWER);
   }
   // The backstop: a no-op when the sync recorded its own outcome, which HubSpot's always does.
-  await markConnectorSyncSucceeded(conn.id);
+  await markConnectorSyncSucceeded(conn.id, undefined, { leaseStartedAt: conn.leaseStartedAt });
   return { outcome: result.outcome, pages: result.pages, records: result.records, message: result.message ?? null };
 }
 

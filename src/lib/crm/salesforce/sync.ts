@@ -42,6 +42,11 @@ export type SalesforceSyncDeps = {
 const NOT_ENTITLED = "Salesforce sync is on Orbit Pro and Lifetime — upgrade to keep it running";
 const RECONNECT = "Salesforce didn’t say which org and user to sync — reconnect Salesforce";
 const LEASE_LOST = "Salesforce’s connection changed during the sync";
+// Ruling 8's lean fallback already ran and STILL got INVALID_FIELD: reading the ones this
+// user can see is not possible, so `stop()`'s own "Orbit will read the ones you can see" line
+// would be false — the sync just stopped instead.
+const LEAN_BLOCKED =
+  "Salesforce won’t let this connection read contact and lead names, emails and companies — ask a Salesforce admin to grant read access, then sync again";
 
 export async function syncSalesforce(conn: ClaimedConnectorConnection, deps: SalesforceSyncDeps = {}): Promise<CrmSyncResult> {
   const now = deps.now ?? (() => new Date());
@@ -56,7 +61,9 @@ export async function syncSalesforce(conn: ClaimedConnectorConnection, deps: Sal
   // A stop disarms the row — so it checks the lease first, like every other write (Ruling 12b).
   const stop = async (message: string): Promise<CrmSyncResult> => {
     if (!(await holdsLease())) return leaseLost();
-    await markConnectorSyncResult(conn.id, { ok: false, error: message, retryable: false });
+    await markConnectorSyncResult(conn.id, { ok: false, error: message, retryable: false }, undefined, {
+      leaseStartedAt: conn.leaseStartedAt,
+    });
     return { ...result, outcome: "stopped", message };
   };
 
@@ -123,14 +130,19 @@ export async function syncSalesforce(conn: ClaimedConnectorConnection, deps: Sal
     }
 
     if (lost || !(await holdsLease())) return leaseLost();
-    await markConnectorSyncResult(conn.id, {
-      ok: true,
-      cursor: cursorFromProgress(progress, identity),
-      ...(done ? {} : { nextSyncAt: now() }),
-    });
+    await markConnectorSyncResult(
+      conn.id,
+      { ok: true, cursor: cursorFromProgress(progress, identity), ...(done ? {} : { nextSyncAt: now() }) },
+      undefined,
+      { leaseStartedAt: conn.leaseStartedAt }
+    );
     return { ...result, outcome: done ? "complete" : "partial" };
   } catch (err) {
     if (err instanceof ConnectorNeedsReauthError) return { ...result, outcome: "needs_reauth", message: err.message };
+    // Ruling 8's lean fallback already ran once (that's the only way an `invalid_field` error
+    // reaches here): reading the ones this user can see failed too, so the fixed sentence that
+    // normally goes with it would be false.
+    if (err instanceof SalesforceApiError && err.kind === "invalid_field") return stop(LEAN_BLOCKED);
     if (err instanceof SalesforceApiError && !err.retryable) return stop(err.message);
     throw err;
   }

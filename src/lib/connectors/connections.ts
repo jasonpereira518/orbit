@@ -22,7 +22,7 @@
  * smoke tests both load this, and importing `next/server` alone retains the Node event loop
  * and hangs any `tsx` script.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { connectorConnections, type ConnectorSyncCursor } from "@/db/schema";
 import { decryptOrNull, encrypt } from "@/lib/crypto";
@@ -233,15 +233,40 @@ export type ConnectorSyncOutcome =
   | { ok: false; error: string; retryable: boolean };
 
 /**
+ * Belt-and-braces against the same class of bug `connectorLeaseHeld` guards reads against: a
+ * caller that already checked the lease (or claimed it itself) can hand back the very
+ * `sync_started_at` it saw, and every write this function makes then requires the row to
+ * still carry it (and still be `syncing`). A caller that omits it gets the old, unguarded
+ * behavior — every existing call site keeps working unchanged.
+ */
+export type LeaseGuardOpts = { leaseStartedAt?: Date };
+
+function leaseGuard(base: SQL, opts: LeaseGuardOpts): SQL {
+  return opts.leaseStartedAt
+    ? (and(base, eq(connectorConnections.syncStatus, "syncing"), eq(connectorConnections.syncStartedAt, opts.leaseStartedAt)) as SQL)
+    : base;
+}
+
+/**
  * Record the end of one sync run.
  *
  * A non-retryable failure disarms immediately — it is a consent problem, and retrying a
  * revoked grant on a backoff ladder only delays telling the user.
+ *
+ * `opts.leaseStartedAt`: when given, every write here (including the failure path's read of
+ * `sync_failures`, and the `disarmConnectorSync` it may reach) requires the row to still carry
+ * this exact lease. Without it, a caller whose sync lost its lease mid-run — a disconnect, a
+ * reconnect, or a second claim already holds a NEW `sync_started_at` — could still overwrite
+ * that new holder's row: `markConnectorSyncSucceeded`'s guard is `sync_status = 'syncing'`
+ * alone, which the new holder satisfies too, and this function's failure path had no guard at
+ * all. Every caller that already claimed a lease (the scheduler's connector pass, "Sync now",
+ * every sync's own terminal call) should pass it.
  */
 export async function markConnectorSyncResult(
   id: string,
   outcome: ConnectorSyncOutcome,
-  now: Date = new Date()
+  now: Date = new Date(),
+  opts: LeaseGuardOpts = {}
 ): Promise<void> {
   const db = await getDb();
   if (outcome.ok) {
@@ -257,19 +282,21 @@ export async function markConnectorSyncResult(
         nextSyncAt: outcome.nextSyncAt ?? new Date(now.getTime() + CONNECTOR_SYNC_INTERVAL_MS),
         updatedAt: now,
       })
-      .where(eq(connectorConnections.id, id));
+      .where(leaseGuard(eq(connectorConnections.id, id), opts));
     return;
   }
 
   const [row] = await db
     .select({ failures: connectorConnections.syncFailures })
     .from(connectorConnections)
-    .where(eq(connectorConnections.id, id));
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
+  // The lease moved on since the caller claimed it: nothing here still describes this row.
+  if (opts.leaseStartedAt && !row) return;
   const failures = (row?.failures ?? 0) + 1;
   const error = outcome.error.slice(0, 500);
 
   if (!outcome.retryable || failures >= MAX_SYNC_FAILURES) {
-    await disarmConnectorSync(id, error, now, failures);
+    await disarmConnectorSync(id, error, now, failures, opts);
     return;
   }
 
@@ -283,7 +310,7 @@ export async function markConnectorSyncResult(
       nextSyncAt: new Date(now.getTime() + backoffMs(failures)),
       updatedAt: now,
     })
-    .where(eq(connectorConnections.id, id));
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
 }
 
 /**
@@ -300,10 +327,16 @@ export async function markConnectorSyncResult(
  * with `next_sync_at` unchanged and `last_synced_at` NULL: due again on the very next pass,
  * forever, and "never synced" in the settings UI. Nothing in P0 hits that path (no manifest
  * entry has a `sync` yet), which is exactly why it has to be settled before P1 writes one.
+ *
+ * `opts.leaseStartedAt`, when given, narrows the existing `syncing` guard to THIS run's own
+ * lease — without it, a sync that returned after losing its lease (a disconnect, a reconnect,
+ * or a second claim already holds a new `sync_started_at`) would still close out whichever run
+ * holds the row now, since `sync_status = 'syncing'` alone is true for that one too.
  */
 export async function markConnectorSyncSucceeded(
   id: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  opts: LeaseGuardOpts = {}
 ): Promise<void> {
   const db = await getDb();
   await db
@@ -318,16 +351,23 @@ export async function markConnectorSyncSucceeded(
       updatedAt: now,
     })
     .where(
-      and(eq(connectorConnections.id, id), eq(connectorConnections.syncStatus, "syncing"))
+      leaseGuard(and(eq(connectorConnections.id, id), eq(connectorConnections.syncStatus, "syncing")) as SQL, opts)
     );
 }
 
-/** Stop scheduling this connection. Only reconnecting, or a capability change, re-arms it. */
+/**
+ * Stop scheduling this connection. Only reconnecting, or a capability change, re-arms it.
+ *
+ * `opts.leaseStartedAt`, when given, requires the row still carry that exact lease — see
+ * `markConnectorSyncResult`'s doc for why `markConnectorSyncResult`'s failure path threads it
+ * through here rather than disarming unconditionally.
+ */
 export async function disarmConnectorSync(
   id: string,
   reason: string,
   now: Date = new Date(),
-  failures?: number
+  failures?: number,
+  opts: LeaseGuardOpts = {}
 ): Promise<void> {
   const db = await getDb();
   await db
@@ -340,7 +380,7 @@ export async function disarmConnectorSync(
       nextSyncAt: null,
       updatedAt: now,
     })
-    .where(eq(connectorConnections.id, id));
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
 }
 
 /** A token-level rejection: the only way back is re-running the connect flow. */

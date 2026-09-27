@@ -1072,11 +1072,12 @@ export async function runSyncPass(
     await runSettledPool(connections, SYNC_CONCURRENCY, async (conn) => {
       if (deadlineReached(deadline - PER_CONNECTION_BUDGET_MS)) {
         stats.budgetExhausted = true;
-        await markConnectorSyncResult(conn.id, {
-          ok: true,
-          cursor: conn.cursor,
-          nextSyncAt: now,
-        }).catch(() => null);
+        await markConnectorSyncResult(
+          conn.id,
+          { ok: true, cursor: conn.cursor, nextSyncAt: now },
+          undefined,
+          { leaseStartedAt: conn.leaseStartedAt }
+        ).catch(() => null);
         return;
       }
       const manifest = (deps.resolveConnector ?? resolveConnectorWithSync)(conn.connectorId);
@@ -1097,7 +1098,7 @@ export async function runSyncPass(
         // that recorded its own result (it had a cursor, or its own cadence) has already
         // left the row `idle`, and this no-ops against the `syncing` guard. One that just
         // returned gets closed out here rather than staying leased and instantly due again.
-        await markConnectorSyncSucceeded(conn.id, now).catch(
+        await markConnectorSyncSucceeded(conn.id, now, { leaseStartedAt: conn.leaseStartedAt }).catch(
           reportAndContinue({ where: "job.sync.connector-mark" }, null)
         );
         stats.connectorSynced++;
@@ -1109,11 +1110,12 @@ export async function runSyncPass(
           level: "warning",
           extra: { connectionId: conn.id, connectorId: conn.connectorId },
         });
-        await markConnectorSyncResult(conn.id, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-          retryable: true,
-        }).catch(reportAndContinue({ where: "job.sync.connector-mark" }, null));
+        await markConnectorSyncResult(
+          conn.id,
+          { ok: false, error: err instanceof Error ? err.message : String(err), retryable: true },
+          undefined,
+          { leaseStartedAt: conn.leaseStartedAt }
+        ).catch(reportAndContinue({ where: "job.sync.connector-mark" }, null));
       }
     });
   } else {

@@ -69,7 +69,9 @@ export async function syncHubspot(
   // A stop disarms the row — so it checks the lease first, like every other write (Ruling 12b).
   const stop = async (message: string): Promise<HubspotSyncResult> => {
     if (!(await holdsLease())) return leaseLost();
-    await markConnectorSyncResult(conn.id, { ok: false, error: message, retryable: false });
+    await markConnectorSyncResult(conn.id, { ok: false, error: message, retryable: false }, undefined, {
+      leaseStartedAt: conn.leaseStartedAt,
+    });
     return { ...result, outcome: "stopped", message };
   };
 
@@ -150,11 +152,12 @@ export async function syncHubspot(
     }
 
     if (lost || !(await holdsLease())) return leaseLost();
-    await markConnectorSyncResult(conn.id, {
-      ok: true,
-      cursor: cursorFromWindow(window, who),
-      ...(done ? {} : { nextSyncAt: now() }),
-    });
+    await markConnectorSyncResult(
+      conn.id,
+      { ok: true, cursor: cursorFromWindow(window, who), ...(done ? {} : { nextSyncAt: now() }) },
+      undefined,
+      { leaseStartedAt: conn.leaseStartedAt }
+    );
     return { ...result, outcome: done ? "complete" : "partial" };
   } catch (err) {
     if (err instanceof ConnectorNeedsReauthError) return { ...result, outcome: "needs_reauth", message: err.message };

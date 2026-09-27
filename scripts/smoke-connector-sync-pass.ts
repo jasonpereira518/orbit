@@ -23,12 +23,14 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { connectorConnections } from "../src/db/schema";
 import {
+  claimConnectorConnectionForUser,
   markConnectorSyncResult,
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
 import type { ConnectorManifest } from "../src/lib/connectors/registry";
 import { connectorById } from "../src/lib/connectors/registry";
 import type { ClaimedConnectorConnection } from "../src/lib/connectors/connections";
+import { SYNC_LEASE_MS } from "../src/lib/provider-connections";
 import { runSyncPass } from "../src/lib/sync-scheduler";
 
 let failures = 0;
@@ -224,6 +226,69 @@ run(async () => {
   check("one synced, one failed", bothStats.connectorSynced === 1 && bothStats.connectorFailed === 1, JSON.stringify(bothStats));
   check("the healthy connector still ran", bothHanded.includes(secondConn.id), JSON.stringify(bothHanded));
   check("the failing one is still armed for a retry", (await rowFor(firstConn.id))?.nextSyncAt !== null);
+
+  console.log("\na sync that loses its lease mid-run (returns after) writes nothing over the new holder");
+  const stolenReturn = await arm("stub-steals-then-returns");
+  let stolenReturnLease: Date | null = null;
+  await runSyncPass({
+    now: new Date(),
+    deps: {
+      getAccessToken: async () => {
+        throw new Error("not used");
+      },
+      fetchPage: async () => {
+        throw new Error("not used");
+      },
+      resolveConnector: resolverFor([
+        stubManifest("stub-steals-then-returns", async (conn) => {
+          // A disconnect/reconnect/second claim already holds a NEW sync_started_at by the
+          // time this "sync" returns — the scheduler's success backstop must not clear it.
+          stolenReturnLease = new Date(Date.now() + SYNC_LEASE_MS + 1000);
+          await claimConnectorConnectionForUser(conn.userId, conn.connectorId, stolenReturnLease);
+        }),
+      ]),
+    },
+  });
+  const stolenReturnRow = await rowFor(stolenReturn.id);
+  check(
+    "the new holder's lease still stands",
+    stolenReturnRow?.syncStartedAt?.getTime() === stolenReturnLease!.getTime(),
+    String(stolenReturnRow?.syncStartedAt)
+  );
+  check("still syncing — not closed out over the new holder", stolenReturnRow?.syncStatus === "syncing", String(stolenReturnRow?.syncStatus));
+  check("no error recorded over the new holder", stolenReturnRow?.syncError === null, String(stolenReturnRow?.syncError));
+  check("no failure counted either", stolenReturnRow?.syncFailures === 0, String(stolenReturnRow?.syncFailures));
+
+  console.log("\na sync that loses its lease mid-run (throws after) writes nothing over the new holder");
+  const stolenThrow = await arm("stub-steals-then-throws");
+  let stolenThrowLease: Date | null = null;
+  await runSyncPass({
+    now: new Date(),
+    deps: {
+      getAccessToken: async () => {
+        throw new Error("not used");
+      },
+      fetchPage: async () => {
+        throw new Error("not used");
+      },
+      resolveConnector: resolverFor([
+        stubManifest("stub-steals-then-throws", async (conn) => {
+          stolenThrowLease = new Date(Date.now() + SYNC_LEASE_MS + 1000);
+          await claimConnectorConnectionForUser(conn.userId, conn.connectorId, stolenThrowLease);
+          throw new Error("boom");
+        }),
+      ]),
+    },
+  });
+  const stolenThrowRow = await rowFor(stolenThrow.id);
+  check(
+    "the new holder's lease still stands",
+    stolenThrowRow?.syncStartedAt?.getTime() === stolenThrowLease!.getTime(),
+    String(stolenThrowRow?.syncStartedAt)
+  );
+  check("still syncing — not backed off over the new holder", stolenThrowRow?.syncStatus === "syncing", String(stolenThrowRow?.syncStatus));
+  check("no error recorded over the new holder", stolenThrowRow?.syncError === null, String(stolenThrowRow?.syncError));
+  check("no failure counted either", stolenThrowRow?.syncFailures === 0, String(stolenThrowRow?.syncFailures));
 
   console.log("\nan unregistered connector is disarmed, not thrown on");
   await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));

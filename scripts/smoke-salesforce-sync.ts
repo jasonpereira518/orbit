@@ -14,6 +14,7 @@ import { getDb } from "../src/db";
 import { connectorConnections, contacts, crmRecords, leads, userSettings } from "../src/db/schema";
 import {
   claimConnectorConnectionForUser,
+  markConnectorSyncResult,
   resetConnectorCursor,
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
@@ -249,8 +250,10 @@ run(async () => {
   const after5 = await row();
   check("stopped", r5.outcome === "stopped", JSON.stringify(r5));
   check(
-    "disarmed with the house sentence, no provider text",
-    (after5?.syncError ?? "").startsWith("Salesforce says API access is off") && after5?.nextSyncAt === null,
+    "disarmed with the exact house sentence — no provider text ('nope') anywhere in it",
+    after5?.syncError ===
+      "Salesforce says API access is off for your user — ask a Salesforce admin to turn on API Enabled, then sync again" &&
+      after5?.nextSyncAt === null,
     String(after5?.syncError)
   );
 
@@ -365,6 +368,7 @@ run(async () => {
   });
   const r11 = await syncSalesforce(await claim(), { fetchImpl: eleventh.impl });
   check("stopped without calling Salesforce", r11.outcome === "stopped", JSON.stringify(r11));
+  check("no SOQL was sent", eleventh.soqls.length === 0, String(eleventh.soqls.length));
   check("the upgrade line", ((await row())?.syncError ?? "").includes("Orbit Pro and Lifetime"));
   await db.update(userSettings).set({ compedPlan: "lifetime" }).where(eq(userSettings.userId, USER));
   await db.update(connectorConnections).set({ syncStatus: "idle", syncStartedAt: null, syncError: null }).where(eq(connectorConnections.userId, USER));
@@ -376,6 +380,7 @@ run(async () => {
   });
   const r12a = await syncSalesforce(await claim(), { fetchImpl: twelfthA.impl });
   check("no identity: stopped, reconnect", r12a.outcome === "stopped" && (r12a.message ?? "").toLowerCase().includes("reconnect"), JSON.stringify(r12a));
+  check("no SOQL was sent", twelfthA.soqls.length === 0, String(twelfthA.soqls.length));
   await db.update(connectorConnections).set({ syncStatus: "idle", syncStartedAt: null, syncError: null }).where(eq(connectorConnections.userId, USER));
 
   await resetConnectorCursor(USER, "salesforce", cursorFromProgress(progressFromCursor(null), { orgId: "00D000000000999AAA", userId: OWNER }));
@@ -384,6 +389,7 @@ run(async () => {
   });
   const r12b = await syncSalesforce(await claim(), { fetchImpl: twelfthB.impl });
   check("mismatched org: stopped, reconnect", r12b.outcome === "stopped" && (r12b.message ?? "").toLowerCase().includes("reconnect"), JSON.stringify(r12b));
+  check("no SOQL was sent", twelfthB.soqls.length === 0, String(twelfthB.soqls.length));
   await db.update(connectorConnections).set({ syncStatus: "idle", syncStartedAt: null, syncError: null }).where(eq(connectorConnections.userId, USER));
 
   console.log("\n13. untrusted host");
@@ -394,6 +400,62 @@ run(async () => {
   });
   const r13 = await syncSalesforce(await claim(), { fetchImpl: thirteenth.impl });
   check("stopped, no fetch", r13.outcome === "stopped" && thirteenth.soqls.length === 0, JSON.stringify(r13));
+
+  console.log("\n14. the lean fallback is ALSO blocked (Ruling 8 exhausted)");
+  // Case 13 pointed instance_url at an untrusted host directly in the row; restore it.
+  await connect();
+  await seedCursor();
+  const fourteenth = salesforce(() => ({ status: 400, body: [{ errorCode: "INVALID_FIELD", message: "No such column" }] }));
+  const r14 = await syncSalesforce(await claim(), { fetchImpl: fourteenth.impl });
+  check("stopped", r14.outcome === "stopped", JSON.stringify(r14));
+  check("both the full and the lean query were tried", fourteenth.soqls.length === 2, String(fourteenth.soqls.length));
+  const after14 = await row();
+  check(
+    "the fixed sentence, not the false 'Orbit will read the ones you can see' line",
+    after14?.syncError ===
+      "Salesforce won’t let this connection read contact and lead names, emails and companies — ask a Salesforce admin to grant read access, then sync again",
+    String(after14?.syncError)
+  );
+  await db
+    .update(connectorConnections)
+    .set({ syncStatus: "idle", syncStartedAt: null, syncError: null, syncFailures: 0 })
+    .where(eq(connectorConnections.userId, USER));
+
+  console.log("\n15. a lost lease survives the scheduler's own retry bookkeeping too");
+  await seedCursor();
+  let stolenLease15: Date | null = null;
+  const fifteenth = salesforce(
+    () => ({ status: 403, body: [{ errorCode: "REQUEST_LIMIT_EXCEEDED", message: "nope" }] }),
+    {
+      onQuery: async (call) => {
+        if (call === 1) {
+          stolenLease15 = new Date(Date.now() + SYNC_LEASE_MS + 1000);
+          await claimConnectorConnectionForUser(USER, "salesforce", stolenLease15);
+        }
+      },
+    }
+  );
+  const conn15 = await claim();
+  let thrown15: unknown = null;
+  try {
+    await syncSalesforce(conn15, { fetchImpl: fifteenth.impl });
+  } catch (err) {
+    thrown15 = err;
+  }
+  check("rejects, retryable", thrown15 !== null && (thrown15 as { retryable?: boolean }).retryable === true, String(thrown15));
+  // Exactly what the scheduler's (and runCrmSyncNow's) catch does with the claimed connection.
+  await markConnectorSyncResult(
+    conn15.id,
+    { ok: false, error: (thrown15 as Error).message, retryable: true },
+    undefined,
+    { leaseStartedAt: conn15.leaseStartedAt }
+  );
+  const after15 = await row();
+  check("the new holder's lease still stands", after15?.syncStartedAt?.getTime() === stolenLease15!.getTime(), String(after15?.syncStartedAt));
+  check("still syncing — not backed off over the new holder", after15?.syncStatus === "syncing", String(after15?.syncStatus));
+  check("no error recorded over the new holder", after15?.syncError === null, String(after15?.syncError));
+  check("no failure counted over the new holder either", after15?.syncFailures === 0, String(after15?.syncFailures));
+  await db.update(connectorConnections).set({ syncStatus: "idle", syncStartedAt: null }).where(eq(connectorConnections.userId, USER));
 
   await reset();
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
