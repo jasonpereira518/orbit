@@ -173,9 +173,129 @@ export const adminManualInterestListSchema = z.object({
     .trim()
     .min(2, "Event name is required.")
     .max(SIGNUP_EVENT_LABEL_MAX),
+  /** When they signed at the event — used for join order when pasting a spreadsheet. */
+  createdAt: z.coerce.date().optional(),
 });
 
 export type AdminManualInterestListInput = z.infer<typeof adminManualInterestListSchema>;
+
+/** Cap on one paste so a runaway clipboard cannot mail thousands of welcomes. */
+export const ADMIN_EVENT_PASTE_MAX = 100;
+
+export type ParsedEventSignupRow = {
+  /** Spreadsheet timestamp, or null when the line had no parseable time. */
+  signedAt: Date | null;
+  firstName: string;
+  lastName: string;
+  email: string;
+  /** 1-based line number in the paste, for error messages. */
+  line: number;
+};
+
+/**
+ * Spreadsheet paste from an event form: `timestamp \t full name \t email` per line
+ * (tabs or commas). Keeps paste order; callers sort by `signedAt` when every row has one.
+ */
+export function parseEventSignupPaste(text: string): {
+  rows: ParsedEventSignupRow[];
+  errors: string[];
+} {
+  const rows: ParsedEventSignupRow[] = [];
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]!.trim();
+    if (!raw) continue;
+    const line = i + 1;
+    const cols = raw.includes("\t")
+      ? raw.split("\t").map((c) => c.trim())
+      : raw.split(",").map((c) => c.trim());
+
+    // `time | name | email` or `name | email` when someone strips the timestamp column.
+    let signedAt: Date | null = null;
+    let nameRaw: string;
+    let emailRaw: string;
+    if (cols.length >= 3) {
+      signedAt = parseEventSpreadsheetTime(cols[0]!);
+      nameRaw = cols[1]!;
+      emailRaw = cols[2]!;
+    } else if (cols.length === 2) {
+      nameRaw = cols[0]!;
+      emailRaw = cols[1]!;
+    } else {
+      errors.push(`Line ${line}: expected timestamp, name, and email.`);
+      continue;
+    }
+
+    const emailParsed = z.email().max(160).safeParse(emailRaw.toLowerCase());
+    if (!emailParsed.success) {
+      errors.push(`Line ${line}: “${emailRaw || "(empty)"}” is not a valid email.`);
+      continue;
+    }
+    const email = emailParsed.data;
+    if (seen.has(email)) {
+      errors.push(`Line ${line}: ${email} appears more than once in the paste.`);
+      continue;
+    }
+    seen.add(email);
+
+    const nameParts = nameRaw.trim().split(/\s+/).filter(Boolean);
+    if (nameParts.length === 0) {
+      errors.push(`Line ${line}: missing name.`);
+      continue;
+    }
+    const firstName = nameParts[0]!.slice(0, NAME_MAX);
+    const lastName = (nameParts.slice(1).join(" ") || nameParts[0]!).slice(0, NAME_MAX);
+
+    rows.push({ signedAt, firstName, lastName, email, line });
+  }
+
+  if (rows.length > ADMIN_EVENT_PASTE_MAX) {
+    return {
+      rows: [],
+      errors: [`Paste at most ${ADMIN_EVENT_PASTE_MAX} people at a time (${rows.length} found).`],
+    };
+  }
+
+  return { rows, errors };
+}
+
+/** `9/9/2026 17:32:18` (US M/D/Y, 24h) as America/New_York wall time → UTC Date. */
+export function parseEventSpreadsheetTime(raw: string): Date | null {
+  const m = raw
+    .trim()
+    .match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return null;
+  const month = Number(m[1]);
+  const day = Number(m[2]);
+  const year = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = Number(m[6] ?? 0);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+    return null;
+  }
+  // Interpret as Eastern wall clock without a TZ library: format as ISO-like offset guess
+  // via Intl. Build a UTC instant that formats back to this clock in America/New_York.
+  const guess = Date.UTC(year, month - 1, day, hour, minute, second);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(guess));
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((p) => p.type === type)?.value);
+  const asNy = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  const adjusted = new Date(guess - (asNy - guess));
+  return Number.isNaN(adjusted.getTime()) ? null : adjusted;
+}
 
 /** `ok` for a real save, a repeat and an unknown token alike — see `saveInterestListNameCore`. */
 export type InterestNameResult = { ok: true } | { ok: false; message: string };

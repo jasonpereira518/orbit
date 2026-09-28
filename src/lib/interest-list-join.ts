@@ -42,7 +42,6 @@ import {
   getInterestProof,
   invalidateInterestProof,
   invalidateProgress,
-  recordPassCheck,
   refMatch,
   ticketForRow,
 } from "@/lib/interest-list-ticket";
@@ -279,11 +278,6 @@ export async function joinInterestListCore(
   if (credited && referrer && !referrer.unsubscribedAt && referrer.shareToken) {
     await notifyIfTierUnlocked(referrer as typeof referrer & { shareToken: string }, ctx);
   }
-
-  // Seeing the pass after submitting an address is a check — same moment as opening `?me=`.
-  void recordPassCheck(row.shareToken).catch((err: unknown) => {
-    console.error("[interest-list] pass check failed", err);
-  });
 
   return { ok: true, ticket, returning: Boolean(existing) };
 }

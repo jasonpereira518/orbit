@@ -19,6 +19,7 @@ import { eq, inArray, like, or } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { interestListSignups, userSettings, waitlistPollVotes } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
+import { parseEventSignupPaste } from "../src/lib/interest-list";
 
 const PREFIX = "smoke-il-";
 
@@ -126,6 +127,37 @@ async function cleanup() {
 }
 
 async function main() {
+  // Spreadsheet paste from an event form — order and Eastern wall times matter for join order.
+  {
+    const sample = [
+      "9/9/2026 17:40:43\tLuke Allen\tapl1@unc.edu",
+      "9/9/2026 17:32:18\tSai Nagamalla\tshreyas.nagamalla@gmail.com",
+      "9/9/2026 17:45:22\tCaitlin Estrada\tCaitlin.Estrada@unc.edu",
+    ].join("\n");
+    const { rows, errors } = parseEventSignupPaste(sample);
+    check("parses event spreadsheet paste", rows.length === 3 && errors.length === 0);
+    check(
+      "keeps paste order when timestamps present",
+      rows[0]?.email === "apl1@unc.edu" && rows[1]?.email === "shreyas.nagamalla@gmail.com"
+    );
+    const byEventTime = [...rows].sort(
+      (a, b) => a.signedAt!.getTime() - b.signedAt!.getTime() || a.line - b.line
+    );
+    check(
+      "event-time order puts earliest signup first",
+      byEventTime[0]?.email === "shreyas.nagamalla@gmail.com" &&
+        byEventTime[1]?.email === "apl1@unc.edu"
+    );
+    check(
+      "reads Eastern wall time as UTC",
+      rows[1]?.signedAt?.toISOString() === "2026-09-09T21:32:18.000Z"
+    );
+    check(
+      "lowercases emails from paste",
+      rows[2]?.email === "caitlin.estrada@unc.edu"
+    );
+  }
+
   await cleanup();
   const db = await getDb();
 

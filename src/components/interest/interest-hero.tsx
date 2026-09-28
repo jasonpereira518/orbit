@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
-import { joinInterestList, saveInterestListName } from "@/actions/interest-list";
+import { joinInterestList, recordPassCheckAction, saveInterestListName } from "@/actions/interest-list";
 import { BoardingPass } from "@/components/interest/boarding-pass";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { ProofLine } from "@/components/interest/proof-line";
@@ -139,6 +139,12 @@ export function InterestHero({
     );
     return () => window.clearTimeout(id);
   }, [phase, entrance, ticket, reduced, pagePath]);
+
+  // Count a real browser open of the pass — not admin add, not email-link prefetch of HTML.
+  useEffect(() => {
+    if (phase !== "ticket" || !ticket?.shareToken) return;
+    void recordPassCheckAction(ticket.shareToken);
+  }, [phase, ticket?.shareToken]);
 
   function fail(message: string) {
     setError(message);

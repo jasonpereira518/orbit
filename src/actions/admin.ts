@@ -519,6 +519,56 @@ export async function addManualInterestListSignupAction(input: {
   return { ok: true, email: added.email };
 }
 
+/** Spreadsheet paste from an event: many people, one event label, join order preserved. */
+export async function addManualInterestListPasteAction(input: {
+  paste: string;
+  eventLabel: string;
+  reason: string;
+}): Promise<{
+  ok: true;
+  added: number;
+  skipped: number;
+  parseErrors: string[];
+  skippedEmails: Array<{ email: string; reason: string }>;
+}> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const result = await interestList.addManualInterestListSignupsFromPaste({
+    paste: input.paste,
+    eventLabel: input.eventLabel,
+  });
+
+  if (result.added.length === 0 && result.skipped.length === 0) {
+    throw new UserFacingError(
+      result.parseErrors[0] ?? "Paste at least one row: timestamp, name, and email."
+    );
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.manual_add_bulk",
+    resourceType: "interest_list_signup",
+    resourceId: result.added[0]?.id ?? "bulk",
+    detail: {
+      eventLabel: input.eventLabel.trim(),
+      added: result.added.map((a) => a.email),
+      skipped: result.skipped,
+      parseErrors: result.parseErrors,
+    },
+    reason,
+  });
+
+  revalidateInterestList();
+  return {
+    ok: true,
+    added: result.added.length,
+    skipped: result.skipped.length,
+    parseErrors: result.parseErrors,
+    skippedEmails: result.skipped,
+  };
+}
+
 export async function deleteInterestListAction(input: {
   id: string;
   /** Must match the row's address. Guards against deleting whatever was scrolled to. */

@@ -338,7 +338,7 @@ export default async function AdminInterestListPage({
           </EmptyState>
         ) : (
           <>
-            <InterestListTable rows={rows} />
+            <InterestListTable rows={rows} showInLine={sort === "position"} />
             <Pager
               page={listing.page}
               pageCount={listing.pageCount}

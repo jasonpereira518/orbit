@@ -366,11 +366,11 @@ export function invalidateInterestProof() {
 const PASS_CHECK_DEBOUNCE_MS = 30 * 60 * 1000;
 
 /**
- * Records that someone opened their own waitlist pass.
+ * Records that someone opened their own waitlist pass in a real browser.
  *
- * Called from the page when `?me=` resolves, and from the join core when an address is
- * submitted and a pass comes back — those are the two ways a person "checks" standing.
- * Never from the progress poll: that fires every ~20s while a tab is open.
+ * Client-only on purpose: SSR/`after()` and email link prefetch would count an admin-added
+ * welcome email (or a crawler) as a check. The boarding pass mounts in the browser and
+ * calls this once; never from the join write, the progress poll, or the admin add path.
  *
  * Failures are swallowed by callers; a missed count must never fail the page or the join.
  */
