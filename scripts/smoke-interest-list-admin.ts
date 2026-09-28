@@ -15,9 +15,9 @@
  */
 import "./smoke/_env";
 
-import { like } from "drizzle-orm";
+import { eq, inArray, like, or } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { interestListSignups, userSettings } from "../src/db/schema";
+import { interestListSignups, userSettings, waitlistPollVotes } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 
 const PREFIX = "smoke-il-";
@@ -110,6 +110,17 @@ function findRows(node: unknown): RowProp[] {
 
 async function cleanup() {
   const db = await getDb();
+  const prior = await db
+    .select({ id: interestListSignups.id })
+    .from(interestListSignups)
+    .where(like(interestListSignups.email, `${PREFIX}%`));
+  if (prior.length > 0) {
+    const ids = prior.map((r) => r.id);
+    const keys = ids.map((id) => `signup:${id}`);
+    await db
+      .delete(waitlistPollVotes)
+      .where(or(inArray(waitlistPollVotes.signupId, ids), inArray(waitlistPollVotes.voterKey, keys)));
+  }
   await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
   await db.delete(userSettings).where(like(userSettings.email, `${PREFIX}%`));
 }
@@ -295,6 +306,54 @@ async function main() {
     (await readStandings()).get(target.id)?.position === placeBefore
   );
   await unsubscribeInterestListRow(target.id);
+
+  // --- hard delete: erase the row and clear referral / poll leftovers
+  const { deleteInterestListRow } = await import("../src/lib/admin-interest-list");
+  const [doomed] = await db
+    .insert(interestListSignups)
+    .values(
+      mk(`${PREFIX}doomed@example.test`, {
+        shareToken: `smoke-doomed-${generateUnsubscribeToken().slice(0, 8)}`,
+        createdAt: new Date("2026-08-09T09:00:00Z"),
+      })
+    )
+    .returning();
+  const [friendOfDoomed] = await db
+    .insert(interestListSignups)
+    .values(
+      mk(`${PREFIX}doomed-friend@example.test`, {
+        referredById: doomed.id,
+        createdAt: new Date("2026-08-09T10:00:00Z"),
+      })
+    )
+    .returning();
+  await db.insert(waitlistPollVotes).values({
+    optionId: "reminders",
+    voterKey: `signup:${doomed.id}`,
+    signupId: doomed.id,
+  });
+  const erased = await deleteInterestListRow(doomed.id);
+  check("hard delete returns the address", erased?.email === `${PREFIX}doomed@example.test`);
+  check(
+    "hard delete erases the row",
+    (await db.select().from(interestListSignups).where(eq(interestListSignups.id, doomed.id))).length === 0
+  );
+  const [friendAfter] = await db
+    .select()
+    .from(interestListSignups)
+    .where(eq(interestListSignups.id, friendOfDoomed.id));
+  check("hard delete clears referred_by on friends", friendAfter?.referredById == null);
+  check(
+    "hard delete clears the signup's poll vote",
+    (
+      await db
+        .select()
+        .from(waitlistPollVotes)
+        .where(eq(waitlistPollVotes.voterKey, `signup:${doomed.id}`))
+    ).length === 0
+  );
+  // Friend row is cleaned by the final cleanup(); leave it so the rest of the script still
+  // sees a stable set of seeded addresses for search / sort checks.
 
   // Join-time orders never look at referrals: oldest and newest are exact mirrors.
   type Dated = RowProp & { createdAtIso: string };
