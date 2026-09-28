@@ -178,6 +178,13 @@ async function main() {
   check("offers every order", all.includes("In line") && all.includes("Newest") && all.includes("Oldest"));
   check("never mentions the retired day-3 follow-up", !/day-3|follow-up/i.test(all));
 
+  const allRows = findRows(await Page({ searchParams: Promise.resolve({}) }));
+  check(
+    "rows carry pass check counts",
+    allRows.length > 0 && allRows.every((r) => typeof (r as { passCheckCount?: unknown }).passCheckCount === "number"),
+    JSON.stringify(allRows[0])
+  );
+
   // --- filtered
   const active = textOf(
     await Page({ searchParams: Promise.resolve({ filter: "active" }) })

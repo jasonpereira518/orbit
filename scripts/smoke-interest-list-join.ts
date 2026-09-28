@@ -201,16 +201,15 @@ async function joinPath() {
   check("legacy row is minted a share token", legacy.ok && Boolean(rowL?.shareToken) && legacy.ticket.shareToken === rowL?.shareToken);
   check("legacy mint sends no mail", !sent.some((s) => s.email === `${PREFIX}legacy@example.test`));
 
-  // --- honeypot, too fast: ok, plausible ticket, no row
+  // --- honeypot: ok, plausible ticket, no row
   const rowsBefore = (await db.select().from(interestListSignups)).length;
   const bot = await joinInterestListCore({ ...base, website: "http://spam", email: `${PREFIX}bot@example.test` }, ctx("bot"));
-  const fast = await joinInterestListCore({ ...base, elapsedMs: 10, email: `${PREFIX}fast@example.test` }, ctx("fast"));
   check("honeypot answers ok with a ticket", bot.ok && bot.ticket.number > 0 && bot.ticket.shareToken.length > 10);
-  check("too-fast answers ok with a ticket", fast.ok && fast.ticket.referrals === 0);
-  check("a fake ticket stands at the back of the line", fast.ok && fast.ticket.position === (await readInterestProof()).count + 1);
-  check("neither writes a row", (await db.select().from(interestListSignups)).length === rowsBefore);
+  check("honeypot writes no row", (await db.select().from(interestListSignups)).length === rowsBefore);
   check("a bot never looks returning, so it cannot be told from a new join", bot.ok && bot.returning === false);
   check("fake tokens resolve to nothing", bot.ok && (await getTicketByShareToken(bot.ticket.shareToken)) === null);
+  const fast = await joinInterestListCore({ ...base, elapsedMs: 10, email: `${PREFIX}fast@example.test` }, ctx("fast"));
+  check("instant submit still lands a real row", fast.ok && Boolean(await rowFor(`${PREFIX}fast@example.test`)));
 
   // --- invalid email is the one visible error
   const bad = await joinInterestListCore({ ...base, email: "not-an-email" }, ctx("bad"));

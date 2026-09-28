@@ -97,11 +97,13 @@ export async function GET(request: NextRequest) {
       tier,
     });
   } else {
+    const event = url.searchParams.get("event")?.trim();
     message = buildInterestListWelcomeEmail({
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
       planet,
       links: SAMPLE_LINKS,
       position: 1285,
+      signupEventLabel: event || null,
     });
   }
 

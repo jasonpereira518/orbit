@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { cookies, headers } from "next/headers";
+import { after } from "next/server";
 import { Network, Plug, Sparkles } from "lucide-react";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
@@ -25,6 +26,7 @@ import {
   getInterestProof,
   getInviterPlanet,
   getTicketByShareToken,
+  recordPassCheck,
   type InterestProof,
 } from "@/lib/interest-list-ticket";
 import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
@@ -213,6 +215,17 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   const initial: HeroInitial = ticket
     ? { kind: "ticket", proof, ticket }
     : { kind: "form", proof, invite, ref: invite ? ref : null };
+
+  // Opening `?me=` is the other way someone checks standing. Deferred so the pass still
+  // paints if the write is slow, and never on a failed token.
+  if (ticket) {
+    const token = ticket.shareToken;
+    after(() => {
+      void recordPassCheck(token).catch((err: unknown) => {
+        console.error("[interest] pass check failed", err);
+      });
+    });
+  }
 
   return (
     // `landing-root` is load-bearing: globals.css paints the body deep-space while it is

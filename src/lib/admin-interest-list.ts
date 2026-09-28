@@ -2,12 +2,30 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle
 import { getDb } from "@/db";
 import { interestListSignups, userSettings, waitlistPollVotes } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
-import { REFERRAL_TIERS, tierFor, type ReferralTierId } from "@/lib/interest-list";
+import { getWaitlistPageUrl } from "@/lib/app-url";
+import { UserFacingError } from "@/lib/errors";
+import {
+  REFERRAL_TIERS,
+  adminManualInterestListSchema,
+  buildShareUrl,
+  buildTicketUrl,
+  tierFor,
+  type AdminManualInterestListInput,
+  type ReferralTierId,
+} from "@/lib/interest-list";
+import {
+  buildUnsubscribeUrl,
+  generateUnsubscribeToken,
+  sendInterestListWelcomeEmail,
+} from "@/lib/interest-list-email";
+import { generateShareToken } from "@/lib/interest-list-join";
 import {
   invalidateInterestProof,
   readStandings,
+  ticketForRow,
   type Standing,
 } from "@/lib/interest-list-ticket";
+import { asWelcomePlanet, planetForSignupNumber } from "@/lib/welcome-planets";
 
 /**
  * The waitlist roster: everyone who joined, when, and where they stand in line.
@@ -73,6 +91,12 @@ export type InterestListRow = {
   joinRank: number | null;
   /** The referral tier they hold, or null once they have left the waitlist. */
   tier: ReferralTierId | null;
+  /** Times they opened their own pass. Debounced; see `recordPassCheck`. */
+  passCheckCount: number;
+  /** When they last opened their own pass, or null if never. */
+  passLastCheckedAt: Date | null;
+  /** Operator-added from an in-person event; referenced in the welcome email. */
+  signupEventLabel: string | null;
 };
 
 /**
@@ -229,6 +253,9 @@ function selection() {
     landingPath: interestListSignups.landingPath,
     converted: convertedSql,
     referrals: referralsSql,
+    passCheckCount: interestListSignups.passCheckCount,
+    passLastCheckedAt: interestListSignups.passLastCheckedAt,
+    signupEventLabel: interestListSignups.signupEventLabel,
   };
 }
 
@@ -239,6 +266,7 @@ function withStanding(row: SelectedRow, standings: Map<string, Standing>): Inter
   return {
     ...row,
     referrals: Number(row.referrals ?? 0),
+    passCheckCount: Number(row.passCheckCount ?? 0),
     position: standing?.position ?? null,
     joinRank: standing?.joinRank ?? null,
     tier: row.unsubscribedAt ? null : tierFor(Number(row.referrals ?? 0)).current.id,
@@ -558,8 +586,117 @@ export async function bulkDeleteInterestListRows(ids: string[]): Promise<string[
  * whereas the referrer is whatever the browser happened to send.
  */
 export function sourceLabel(row: InterestListRow): string {
+  if (row.signupEventLabel) return `Event · ${row.signupEventLabel}`;
   const utm = [row.utmSource, row.utmMedium, row.utmCampaign].filter(Boolean).join(" · ");
   if (utm) return utm;
   if (row.referrer) return row.referrer;
   return "direct";
+}
+
+/**
+ * Adds someone from an in-person event: names on the pass, a stored event label, and the
+ * welcome note that names the event. Refuses active duplicates; someone who left can rejoin.
+ */
+export async function addManualInterestListSignup(
+  input: AdminManualInterestListInput
+): Promise<{ email: string; id: string }> {
+  const parsed = adminManualInterestListSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new UserFacingError(parsed.error.issues[0]?.message ?? "Could not add that signup.");
+  }
+  const { firstName, lastName, eventLabel } = parsed.data;
+  const email = parsed.data.email.trim().toLowerCase();
+
+  const db = await getDb();
+  const [existing] = await db
+    .select()
+    .from(interestListSignups)
+    .where(eq(interestListSignups.email, email))
+    .limit(1);
+
+  if (existing && !existing.unsubscribedAt) {
+    throw new UserFacingError("That address is already on the waitlist.");
+  }
+
+  let row = existing;
+  if (!existing) {
+    const [before] = await db.select({ n: sql<number>`count(*)::int` }).from(interestListSignups);
+    const [inserted] = await db
+      .insert(interestListSignups)
+      .values({
+        email,
+        firstName,
+        lastName,
+        signupEventLabel: eventLabel,
+        utmSource: "admin",
+        utmMedium: "event",
+        utmCampaign: eventLabel,
+        landingPath: "/admin/growth/interest-list",
+        unsubscribeToken: generateUnsubscribeToken(),
+        shareToken: generateShareToken(),
+        welcomePlanet: planetForSignupNumber((before?.n ?? 0) + 1),
+      })
+      .onConflictDoNothing({ target: interestListSignups.email })
+      .returning();
+    if (inserted) {
+      row = inserted;
+      invalidateInterestProof();
+    } else {
+      [row] = await db
+        .select()
+        .from(interestListSignups)
+        .where(eq(interestListSignups.email, email))
+        .limit(1);
+      if (row && !row.unsubscribedAt) {
+        throw new UserFacingError("That address is already on the waitlist.");
+      }
+    }
+  }
+
+  if (row?.unsubscribedAt) {
+    [row] = await db
+      .update(interestListSignups)
+      .set({
+        unsubscribedAt: null,
+        followUpSentAt: null,
+        firstName,
+        lastName,
+        signupEventLabel: eventLabel,
+        utmSource: "admin",
+        utmMedium: "event",
+        utmCampaign: eventLabel,
+        shareToken: row.shareToken ?? generateShareToken(),
+      })
+      .where(eq(interestListSignups.id, row.id))
+      .returning();
+    invalidateInterestProof();
+  }
+
+  if (!row?.shareToken) {
+    throw new UserFacingError("Could not add that signup — try again.");
+  }
+
+  const ticket = await ticketForRow({
+    id: row.id,
+    email: row.email,
+    referralSlug: row.referralSlug,
+    createdAt: row.createdAt,
+    welcomePlanet: row.welcomePlanet,
+    shareToken: row.shareToken,
+  });
+
+  const pageUrl = getWaitlistPageUrl();
+  await sendInterestListWelcomeEmail(
+    row.email,
+    buildUnsubscribeUrl(row.unsubscribeToken),
+    asWelcomePlanet(row.welcomePlanet),
+    {
+      ticketUrl: buildTicketUrl(pageUrl, row.shareToken),
+      shareUrl: buildShareUrl(pageUrl, { referralSlug: ticket.referralSlug, shareToken: row.shareToken }),
+    },
+    ticket.position,
+    eventLabel
+  );
+
+  return { email: row.email, id: row.id };
 }

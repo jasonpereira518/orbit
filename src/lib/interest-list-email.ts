@@ -288,11 +288,18 @@ export function buildInterestListWelcomeEmail(input: {
   planet: WelcomePlanet;
   links?: EmailLinks;
   position?: number | null;
+  /** In-person / operator-added signups: named in the opening line of the welcome note. */
+  signupEventLabel?: string | null;
 }) {
   const place = input.position ? formatTicketNumber(input.position) : null;
   const subject = WELCOME_SUBJECT;
   const headline = "Your place is held.";
-  const opening = `Thanks for joining the Orbit waitlist.${place ? ` You're #${place} in line.` : ""} Seats open in waves — when yours is ready, I'll email you from here.`;
+  const eventLabel = input.signupEventLabel?.trim();
+  const eventLead = eventLabel
+    ? `You're receiving this because you filled out the interest form at ${eventLabel}.`
+    : null;
+  const thanks = `Thanks for joining the Orbit waitlist.${place ? ` You're #${place} in line.` : ""} Seats open in waves — when yours is ready, I'll email you from here.`;
+  const opening = eventLead ? `${eventLead} ${thanks}` : thanks;
   const moveUp = `Want to move up? Every friend who joins from your pass bumps you ${SPOTS_PER_REFERRAL} spots.`;
 
   const inviteLine =
@@ -516,13 +523,14 @@ export async function sendInterestListWelcomeEmail(
   unsubscribeUrl: string,
   planet: WelcomePlanet,
   links?: EmailLinks,
-  position?: number | null
+  position?: number | null,
+  signupEventLabel?: string | null
 ) {
   await deliver(
     "welcome",
     email,
     unsubscribeUrl,
-    buildInterestListWelcomeEmail({ unsubscribeUrl, planet, links, position })
+    buildInterestListWelcomeEmail({ unsubscribeUrl, planet, links, position, signupEventLabel })
   );
 }
 

@@ -358,6 +358,41 @@ export function invalidateInterestProof() {
   proofMemo = null;
 }
 
+/**
+ * How long between two opens of the same pass before the second counts as a new check.
+ * Short enough that a day later still registers; long enough that a refresh, React
+ * Strict Mode double-mount, or the post-join `?me=` rewrite cannot double-count one visit.
+ */
+const PASS_CHECK_DEBOUNCE_MS = 30 * 60 * 1000;
+
+/**
+ * Records that someone opened their own waitlist pass.
+ *
+ * Called from the page when `?me=` resolves, and from the join core when an address is
+ * submitted and a pass comes back — those are the two ways a person "checks" standing.
+ * Never from the progress poll: that fires every ~20s while a tab is open.
+ *
+ * Failures are swallowed by callers; a missed count must never fail the page or the join.
+ */
+export async function recordPassCheck(shareToken: string): Promise<void> {
+  if (!shareToken) return;
+  const db = await getDb();
+  const cutoff = new Date(Date.now() - PASS_CHECK_DEBOUNCE_MS);
+  await db
+    .update(interestListSignups)
+    .set({
+      passCheckCount: sql`${interestListSignups.passCheckCount} + 1`,
+      passLastCheckedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(interestListSignups.shareToken, shareToken),
+        isNull(interestListSignups.unsubscribedAt),
+        or(isNull(interestListSignups.passLastCheckedAt), lt(interestListSignups.passLastCheckedAt, cutoff))
+      )
+    );
+}
+
 export function proofShowsCount(proof: Pick<InterestProof, "count">) {
   return proof.count >= INTEREST_LIST_COUNT_FLOOR;
 }
