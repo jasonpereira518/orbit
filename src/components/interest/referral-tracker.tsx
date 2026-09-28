@@ -23,11 +23,16 @@ const POLL_MS = 20_000;
 const MIN_GAP_MS = 3_000;
 /** Stagger between circles that fill together. Matches the pass's old moon drop. */
 const STAGGER_S = 0.09;
-const SEEN_KEY = "waitlist-tracker-seen:";
 /** How long a freshly unlocked tier keeps its highlight. */
 const FLASH_MS = 2200;
 
 const MILESTONES = new Set(REFERRAL_TIERS.filter((t) => t.at > 0).map((t) => t.at));
+
+/** Bright yellow fill — pops harder than the landing gold accent alone. */
+const FILLED_GLOW =
+  "bg-[#ffe566] shadow-[0_0_28px_rgba(255,229,102,0.95),0_0_10px_rgba(242,193,78,0.7)]";
+const EMPTY_RING =
+  "border border-[#f2c14e]/55 shadow-[0_0_10px_rgba(242,193,78,0.22),inset_0_0_6px_rgba(242,193,78,0.14)]";
 
 /**
  * One planet per tier, escalating: a small dull Mercury for the waitlist itself, up through
@@ -45,18 +50,61 @@ const TIER_ART: Record<ReferralTierId, { planet: WelcomePlanet | "sun"; size: nu
 };
 const PLANET_BOX = 52;
 
-function TierPlanet({ tierId, unlocked }: { tierId: ReferralTierId; unlocked: boolean }) {
+function TierPlanet({
+  tierId,
+  unlocked,
+  isNext,
+  float,
+  flashing,
+  floatIndex,
+}: {
+  tierId: ReferralTierId;
+  unlocked: boolean;
+  isNext: boolean;
+  /** Slow bob — only when motion is allowed. */
+  float: boolean;
+  flashing: boolean;
+  floatIndex: number;
+}) {
   const art = TIER_ART[tierId];
+  const glow = unlocked
+    ? art.planet === "sun"
+      ? "drop-shadow(0 0 16px rgba(242,193,78,0.75))"
+      : "drop-shadow(0 0 10px rgba(242,193,78,0.45))"
+    : "none";
+
   return (
-    <span
+    <motion.span
       aria-hidden="true"
-      className="relative inline-flex shrink-0 items-center justify-center transition-all duration-700"
+      className="relative inline-flex shrink-0 items-center justify-center transition-[opacity,filter] duration-700"
       style={{
         width: PLANET_BOX,
         height: PLANET_BOX,
-        opacity: unlocked ? 1 : 0.4,
-        filter: unlocked ? "none" : "grayscale(0.85)",
+        opacity: unlocked ? 1 : isNext ? 0.75 : 0.32,
+        filter: unlocked ? "none" : isNext ? "grayscale(0.35)" : "grayscale(1)",
       }}
+      animate={
+        flashing
+          ? { y: 0, scale: [1, 1.08, 1] }
+          : float
+            ? { y: [0, -3, 0], scale: 1 }
+            : { y: 0, scale: 1 }
+      }
+      transition={
+        flashing
+          ? { duration: 0.55, ease: EASE_HOUSE, times: [0, 0.45, 1] }
+          : float
+            ? {
+                y: {
+                  duration: 5.2,
+                  ease: "easeInOut",
+                  repeat: Infinity,
+                  delay: floatIndex * 0.45,
+                },
+                scale: { duration: 0.4, ease: EASE_HOUSE },
+              }
+            : { duration: 0.4, ease: EASE_HOUSE }
+      }
     >
       {art.planet === "sun" ? (
         <picture>
@@ -72,33 +120,17 @@ function TierPlanet({ tierId, unlocked }: { tierId: ReferralTierId; unlocked: bo
               width: art.size,
               height: art.size,
               objectFit: "contain",
-              filter: unlocked ? "drop-shadow(0 0 12px rgba(242,193,78,0.65))" : "none",
+              filter: glow,
             }}
           />
         </picture>
       ) : (
-        <PlanetArt planet={art.planet} size={art.size} />
+        <span style={{ filter: glow }}>
+          <PlanetArt planet={art.planet} size={art.size} />
+        </span>
       )}
-    </span>
+    </motion.span>
   );
-}
-
-function readSeen(token: string): number | null {
-  try {
-    const raw = window.localStorage.getItem(SEEN_KEY + token);
-    const n = raw === null ? NaN : Number.parseInt(raw, 10);
-    return Number.isFinite(n) && n >= 0 ? n : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeSeen(token: string, n: number) {
-  try {
-    window.localStorage.setItem(SEEN_KEY + token, String(n));
-  } catch {
-    // Private mode or blocked storage: the fill just replays next visit.
-  }
 }
 
 /**
@@ -113,13 +145,11 @@ function writeSeen(token: string, n: number) {
  * the boarding pass also reads. A 404 (a pass that no longer exists, or a made-up one) stops
  * the polling for good.
  *
- * ANIMATION. Only circles you have not seen fill are animated. What was already filled the
- * last time this pass was shown (remembered in localStorage) just is; new circles pop in on
- * a 90 ms stagger with one ripple, and start when the card is on screen. Every animated
- * circle is rendered filled in the server HTML and only hides itself after mount, so a
- * JS-less page and a reduced-motion visitor see the true state. Reduced motion is read from
- * `matchMedia` in the mount effect, not from `usePrefersReducedMotion`, whose first value is
- * always false.
+ * ANIMATION. Every reload (and every live increase) pops filled circles in order from 0
+ * through the current count — yellow scale + ripple on a 90 ms stagger, starting when the
+ * card is on screen. Server HTML and reduced-motion visitors see the true filled state with
+ * no pop. Reduced motion is read from `matchMedia` in the mount effect, not from
+ * `usePrefersReducedMotion`, whose first value is always false.
  */
 export function ReferralTracker({
   token,
@@ -146,47 +176,32 @@ export function ReferralTracker({
   const rowRef = useRef<HTMLDivElement>(null);
   const inView = useInView(rowRef, { once: true, amount: 0.6 });
   const [motionOk, setMotionOk] = useState(false);
-  /** How many circles were already filled the last time this pass was shown. Null until read. */
-  const [seen, setSeen] = useState<number | null>(null);
+  /**
+   * Circles at index < animatedUpTo are already settled as filled. Null until the mount
+   * effect reads reduced-motion: then 0 (replay every load) or `referrals` (no motion).
+   */
+  const [animatedUpTo, setAnimatedUpTo] = useState<number | null>(null);
   const [flash, setFlash] = useState<ReferralTierId | null>(null);
-  const latestReferrals = useRef(referrals);
   const previousReferrals = useRef<number | null>(null);
 
-  // Declared before the mount effect so it holds the current count when that one reads it.
-  useEffect(() => {
-    latestReferrals.current = referrals;
-  }, [referrals]);
-
-  // Mount: which circles are news? Everything below `seen` renders as plain filled.
+  // Mount: always replay from 0 when motion is allowed; snap when reduced.
   useEffect(() => {
     const ok = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     setMotionOk(ok);
-    if (!activeToken) {
-      setSeen(0);
-      return;
-    }
-    const stored = readSeen(activeToken);
-    const now = latestReferrals.current;
-    if (!ok) {
-      setSeen(now);
-      writeSeen(activeToken, now);
-    } else {
-      setSeen(Math.min(stored ?? 0, now));
-    }
+    setAnimatedUpTo(ok ? 0 : referrals);
+    // referrals intentionally omitted — reload replay starts at 0 (or snaps once).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount / token-change only
   }, [activeToken]);
 
-  // Once the fill has had time to play, it is no longer news.
+  // After the staggered pops finish, treat those circles as settled (live updates still pop).
   useEffect(() => {
-    if (!activeToken || seen === null || !motionOk || !inView || referrals <= seen) return;
+    if (animatedUpTo === null || !motionOk || !inView || referrals <= animatedUpTo) return;
     const done = window.setTimeout(
-      () => {
-        setSeen(referrals);
-        writeSeen(activeToken, referrals);
-      },
-      (referrals - seen) * STAGGER_S * 1000 + 1000
+      () => setAnimatedUpTo(referrals),
+      (referrals - animatedUpTo) * STAGGER_S * 1000 + 1000
     );
     return () => window.clearTimeout(done);
-  }, [activeToken, seen, motionOk, inView, referrals]);
+  }, [animatedUpTo, motionOk, inView, referrals]);
 
   // A tier crossed while you watch gets a highlight. Never on the first read.
   useEffect(() => {
@@ -257,42 +272,46 @@ export function ReferralTracker({
       >
         {Array.from({ length: TRACKER_SLOTS }, (_, i) => {
           const filled = i < referrals;
-          const news = filled && seen !== null && motionOk && i >= seen;
+          const popping =
+            filled && animatedUpTo !== null && motionOk && i >= animatedUpTo;
+          const popDelay = animatedUpTo === null ? 0 : (i - animatedUpTo) * STAGGER_S;
           const milestone = MILESTONES.has(i + 1);
           return (
             <span key={i} aria-hidden="true" className="relative flex size-6 items-center justify-center sm:size-9">
               {milestone ? (
-                <span className="absolute -inset-1 rounded-full border border-[#f2c14e]/25" />
+                <span
+                  className={cn(
+                    "absolute -inset-1 rounded-full border",
+                    filled ? "border-[#ffe566]/60 shadow-[0_0_14px_rgba(255,229,102,0.4)]" : "border-[#f2c14e]/25"
+                  )}
+                />
               ) : null}
-              {news ? (
+              {popping ? (
                 <>
                   <motion.span
-                    className="absolute inset-0 rounded-full border border-[#f2c14e]"
+                    className="absolute inset-0 rounded-full border-2 border-[#ffe566]"
                     initial={{ scale: 1, opacity: 0 }}
-                    animate={inView ? { scale: [1, 2.4], opacity: [0.7, 0] } : { scale: 1, opacity: 0 }}
-                    transition={{ duration: 0.9, ease: EASE_HOUSE, delay: (i - seen) * STAGGER_S + 0.2 }}
+                    animate={
+                      inView ? { scale: [1, 2.9], opacity: [0.95, 0] } : { scale: 1, opacity: 0 }
+                    }
+                    transition={{ duration: 0.9, ease: EASE_HOUSE, delay: popDelay + 0.15 }}
                   />
                   <motion.span
-                    className="absolute inset-0 rounded-full bg-[#f2c14e] shadow-[0_0_14px_rgba(242,193,78,0.85)]"
+                    className={cn("absolute inset-0 rounded-full", FILLED_GLOW)}
                     initial={{ scale: 0, opacity: 0 }}
-                    animate={inView ? { scale: [0, 1.3, 1], opacity: 1 } : { scale: 0, opacity: 0 }}
+                    animate={
+                      inView ? { scale: [0, 1.45, 1], opacity: 1 } : { scale: 0, opacity: 0 }
+                    }
                     transition={{
-                      duration: 0.6,
+                      duration: 0.55,
                       ease: EASE_HOUSE,
-                      times: [0, 0.6, 1],
-                      delay: (i - seen) * STAGGER_S,
+                      times: [0, 0.5, 1],
+                      delay: popDelay,
                     }}
                   />
                 </>
               ) : (
-                <span
-                  className={cn(
-                    "absolute inset-0 rounded-full",
-                    filled
-                      ? "bg-[#f2c14e] shadow-[0_0_14px_rgba(242,193,78,0.85)]"
-                      : "border border-[#f2c14e]/55"
-                  )}
-                />
+                <span className={cn("absolute inset-0 rounded-full", filled ? FILLED_GLOW : EMPTY_RING)} />
               )}
               {milestone ? (
                 <span className="absolute -bottom-6 text-[11px] tabular-nums text-[#9aada8]">{i + 1}</span>
@@ -344,6 +363,7 @@ export function ReferralTracker({
           const unlocked = referrals >= t.at;
           const active = t.id === tier.id && t.at > 0;
           const isNext = nextTier?.id === t.id;
+          const isFlash = flash === t.id;
           const prevAt = REFERRAL_TIERS[i - 1]?.at ?? 0;
           const pct = isNext ? Math.round(((referrals - prevAt) / (t.at - prevAt)) * 100) : 0;
           return (
@@ -351,18 +371,25 @@ export function ReferralTracker({
               key={t.id}
               aria-current={active ? "step" : undefined}
               className={cn(
-                "rounded-2xl border px-4 py-3.5 transition-colors duration-700",
-                flash === t.id
-                  ? "border-[#f2c14e] bg-[#f2c14e]/15"
+                "rounded-2xl border px-4 py-3.5 transition-[color,background-color,border-color,box-shadow,transform] duration-700",
+                isFlash
+                  ? "border-[#f2c14e] bg-[#f2c14e]/22 shadow-[0_0_28px_rgba(242,193,78,0.35),inset_0_0_20px_rgba(242,193,78,0.08)]"
                   : unlocked
-                    ? "border-[#f2c14e]/35 bg-[#f2c14e]/[0.06]"
+                    ? "border-[#f2c14e]/50 bg-[#f2c14e]/[0.12] motion-safe:hover:-translate-y-0.5 motion-safe:hover:border-[#f2c14e]/70 motion-safe:hover:duration-(--transition-duration-fast)"
                     : isNext
-                      ? "border-[#f2c14e]/60"
-                      : "border-[#e8f3f1]/12"
+                      ? "border-[#f2c14e]/75 bg-[#f2c14e]/[0.04] shadow-[0_0_20px_rgba(242,193,78,0.18)] motion-safe:hover:-translate-y-0.5 motion-safe:hover:border-[#f2c14e] motion-safe:hover:duration-(--transition-duration-fast)"
+                      : "border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.02] opacity-75"
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <TierPlanet tierId={t.id} unlocked={unlocked} />
+                <TierPlanet
+                  tierId={t.id}
+                  unlocked={unlocked}
+                  isNext={isNext}
+                  float={motionOk && (unlocked || isNext)}
+                  flashing={isFlash && motionOk}
+                  floatIndex={i}
+                />
                 <p className="text-[11px] uppercase tracking-[0.14em] text-[#9aada8]">
                   {t.at === 0 ? "Start" : `${t.at} ${t.at === 1 ? "friend" : "friends"}`}
                 </p>
@@ -375,8 +402,8 @@ export function ReferralTracker({
                 <>
                   <div className="mt-3 h-1 overflow-hidden rounded-full bg-[#e8f3f1]/14">
                     <div
-                      className="h-full rounded-full bg-[#f2c14e] transition-[width] duration-500"
-                      style={{ width: `${pct}%` }}
+                      className="h-full w-full origin-left rounded-full bg-[#f2c14e] shadow-[0_0_8px_rgba(242,193,78,0.7)] transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                      style={{ transform: `scaleX(${pct / 100})` }}
                     />
                   </div>
                   <p className="mt-1.5 text-xs text-[#9aada8]">

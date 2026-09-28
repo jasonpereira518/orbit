@@ -1311,29 +1311,47 @@
   backdrop-filter: blur(12px);
 }
 
-/* Feature poll panel — the same surface as `.landing-glass`, just less transparent: six rows
- * of option copy read better against the starfield than the plain glass does. Scoped to this
- * one panel (compound selector beats `.landing-glass` alone) rather than raising the shared
- * class's opacity, which every other landing/waitlist card also uses. */
+/* Shared waitlist panel surface — referral tracker + feature poll. Deep navy, gold wash,
+ * edge vignette, faint card-local stars. Near-opaque so busy copy holds against the starfield. */
+.interest-panel-glass,
+.referral-tracker-glass,
 .landing-glass.feature-poll-panel {
-  background: linear-gradient(
-    180deg,
-    rgba(232, 243, 241, 0.11) 0%,
-    rgba(232, 243, 241, 0.05) 100%
-  );
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(242, 193, 78, 0.14);
+  background:
+    radial-gradient(ellipse 85% 50% at 50% -5%, rgba(242, 193, 78, 0.1) 0%, transparent 58%),
+    radial-gradient(ellipse 100% 70% at 50% 110%, rgba(0, 4, 18, 0.65) 0%, transparent 65%),
+    linear-gradient(180deg, rgba(6, 12, 28, 0.97) 0%, rgba(3, 7, 20, 0.99) 100%);
+  box-shadow:
+    inset 0 1px 0 0 rgba(242, 193, 78, 0.06),
+    0 0 48px -16px rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(16px);
 }
 
-/* The referral tracker's card: a busier surface (ten circles, five planets, a moving
- * number) than .landing-glass's other, sparser uses, so it takes a darker, near-opaque fill
- * instead — same border and blur, but the starfield behind it barely shows through. */
-.referral-tracker-glass {
-  border: 1px solid rgba(232, 243, 241, 0.1);
-  background: linear-gradient(
-    180deg,
-    rgba(10, 13, 22, 0.94) 0%,
-    rgba(5, 7, 14, 0.96) 100%
-  );
-  backdrop-filter: blur(16px);
+.interest-panel-glass::before,
+.referral-tracker-glass::before,
+.landing-glass.feature-poll-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.65;
+  background-image:
+    radial-gradient(1px 1px at 14% 16%, rgba(232, 243, 241, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 76% 10%, rgba(232, 243, 241, 0.35), transparent),
+    radial-gradient(1px 1px at 90% 38%, rgba(242, 193, 78, 0.45), transparent),
+    radial-gradient(1px 1px at 28% 48%, rgba(232, 243, 241, 0.28), transparent),
+    radial-gradient(1.5px 1.5px at 58% 22%, rgba(242, 193, 78, 0.3), transparent);
+}
+
+.interest-panel-glass > *,
+.referral-tracker-glass > *,
+.landing-glass.feature-poll-panel > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
