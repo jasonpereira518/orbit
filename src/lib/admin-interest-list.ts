@@ -73,6 +73,9 @@ export function isInterestListFilter(value: string | undefined): value is Intere
 export type InterestListRow = {
   id: string;
   email: string;
+  /** From the name step or an admin event add; null for address-only signups. */
+  firstName: string | null;
+  lastName: string | null;
   createdAt: Date;
   unsubscribedAt: Date | null;
   followUpSentAt: Date | null;
@@ -99,6 +102,19 @@ export type InterestListRow = {
   /** Operator-added from an in-person event; referenced in the welcome email. */
   signupEventLabel: string | null;
 };
+
+/** Display name for the roster: "First Last", or null when neither is set. */
+export function interestListDisplayName(row: {
+  firstName: string | null;
+  lastName: string | null;
+}): string | null {
+  const first = row.firstName?.trim() || "";
+  const last = row.lastName?.trim() || "";
+  if (!first && !last) return null;
+  // Event paste stores a single given name as both halves — show it once.
+  if (first && last && first.toLowerCase() === last.toLowerCase()) return first;
+  return [first, last].filter(Boolean).join(" ");
+}
 
 /**
  * The orders the roster can be read in: by place in line, or by join time (newest or
@@ -243,6 +259,8 @@ function selection() {
   return {
     id: interestListSignups.id,
     email: interestListSignups.email,
+    firstName: interestListSignups.firstName,
+    lastName: interestListSignups.lastName,
     createdAt: interestListSignups.createdAt,
     unsubscribedAt: interestListSignups.unsubscribedAt,
     followUpSentAt: interestListSignups.followUpSentAt,
@@ -283,17 +301,22 @@ function byPosition(a: InterestListRow, b: InterestListRow) {
 }
 
 /**
- * Free-text match on the address.
+ * Free-text match on the address or name.
  *
- * `ILIKE` with both wildcards, so a partial local part or a bare domain both work — the two
- * things you actually type when hunting for someone. The term is escaped first: `%` and `_`
- * are wildcards in LIKE, so an unescaped `_` in an address would silently widen the match.
+ * `ILIKE` with both wildcards, so a partial local part, a bare domain, or a first name all
+ * work. The term is escaped first: `%` and `_` are wildcards in LIKE, so an unescaped `_`
+ * in an address would silently widen the match.
  */
 function searchFor(q: string | undefined) {
   const term = q?.trim();
   if (!term) return undefined;
   const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
-  return sql`${interestListSignups.email} ilike ${`%${escaped}%`}`;
+  const like = `%${escaped}%`;
+  return sql`(
+    ${interestListSignups.email} ilike ${like}
+    or coalesce(${interestListSignups.firstName}, '') ilike ${like}
+    or coalesce(${interestListSignups.lastName}, '') ilike ${like}
+  )`;
 }
 
 /**

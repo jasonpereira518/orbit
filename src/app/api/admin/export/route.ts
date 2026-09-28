@@ -124,6 +124,8 @@ async function buildDataset(
     const rows = signups.map((r) => ({
       position: r.position ?? "",
       email: r.email,
+      first_name: r.firstName ?? "",
+      last_name: r.lastName ?? "",
       joined_rank: r.joinRank ?? "",
       tier: r.tier ?? "",
       referrals: r.referrals,

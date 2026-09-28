@@ -1,0 +1,31 @@
+/**
+ * Admin console cream lock.
+ *
+ * next-themes forces `light` on /admin, but a client nav from the dark product can
+ * leave `.dark` on <html> for a paint — and every `bg-card` / muted token under it
+ * would go graphite. Re-assert the light ladder on `.admin-console` so the console
+ * cannot inherit the product night theme.
+ */
+.admin-console {
+  --background: #fbfbf9;
+  --foreground: #1a1c1a;
+  --card: #ffffff;
+  --card-foreground: #1a1c1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1c1a;
+  --primary: #0f3d3e;
+  --primary-foreground: #e8f3f1;
+  --secondary: #eef1ec;
+  --secondary-foreground: #1a1c1a;
+  --muted: #f0f2ee;
+  --muted-foreground: #5f6760;
+  --accent: #e7f0ee;
+  --accent-foreground: #0f3d3e;
+  --border: #e4e7e1;
+  --input: #e4e7e1;
+  --ring: #0f3d3e;
+  --ink: #0f3d3e;
+  --admin-nav-hover: rgb(15 61 62 / 0.1);
+  --toast-chip-strength: 12%;
+  color-scheme: light;
+}
