@@ -1,8 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ComponentType } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Check } from "lucide-react";
+import {
+  Bell,
+  Calendar,
+  Check,
+  MessageSquare,
+  Network,
+  Plug,
+  Send,
+} from "lucide-react";
 import { castPollVote } from "@/actions/waitlist-poll";
 import { EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
 import { pulseStarfield } from "@/lib/starfield-events";
@@ -19,6 +27,16 @@ import {
 } from "@/lib/waitlist-poll";
 
 export type FeaturePollInitial = { results: PollResults; choice: PollOptionId | null };
+
+/** One icon per option — same family the waitlist demo nav uses. */
+const POLL_ICONS: Record<PollOptionId, ComponentType<{ className?: string; "aria-hidden"?: boolean }>> = {
+  "constellation-map": Network,
+  "network-chat": MessageSquare,
+  "outreach-campaign": Send,
+  events: Calendar,
+  "auto-integrations": Plug,
+  "smart-follow-ups": Bell,
+};
 
 /**
  * The waitlist's feature poll. Before a vote: toggle-button cards in authored order, no results.
@@ -104,6 +122,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
         <ul className="mt-4 grid gap-3">
           {ordered.map((opt) => {
             const selected = choice === opt.id;
+            const Icon = POLL_ICONS[opt.id];
             return (
               <motion.li key={opt.id} layout="position" transition={glide}>
                 <button
@@ -130,7 +149,17 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
                     {voted && (
                       <span aria-hidden={true} className="w-5 shrink-0 text-sm tabular-nums text-[#6d807c]">{opt.rank}</span>
                     )}
-                    <span className="flex-1 text-sm font-medium text-[#e8f3f1] sm:text-base">{opt.label}</span>
+                    <Icon
+                      aria-hidden={true}
+                      className={cn(
+                        "size-4 shrink-0",
+                        selected ? "text-[#f2c14e]" : "text-[#9aada8]"
+                      )}
+                    />
+                    <span className="min-w-0 flex-1 truncate whitespace-nowrap text-sm sm:text-base">
+                      <span className="font-medium text-[#e8f3f1]">{opt.label}</span>
+                      <span className="text-[#9aada8]"> — {opt.blurb}</span>
+                    </span>
                     {selected && <Check className="size-4 shrink-0 text-[#f2c14e]" aria-hidden={true} />}
                     {voted && view.showNumbers && (
                       <span className="w-11 shrink-0 text-right text-sm tabular-nums text-[#9aada8]">
