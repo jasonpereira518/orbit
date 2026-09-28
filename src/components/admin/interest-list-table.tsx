@@ -285,8 +285,10 @@ export function InterestListTable({
                 <RelativeTime date={row.createdAtIso} /> ago
               </span>
             </Td>
-            <Td className="max-w-[14rem] truncate whitespace-nowrap text-muted-foreground" title={row.source}>
-              {row.source}
+            <Td className="max-w-[14rem] text-muted-foreground">
+              <span className="block truncate whitespace-nowrap" title={row.source}>
+                {row.source}
+              </span>
             </Td>
             <Td className="whitespace-nowrap">
               {row.status === "unsubscribed" ? (
