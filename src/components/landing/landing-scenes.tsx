@@ -8,6 +8,7 @@ import { WaitlistForm } from "@/components/landing/waitlist-form";
 import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { Reveal } from "@/components/motion/reveal";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import "./finale-orbit.css";
 
 // All narrative copy is server-rendered here so it ships in the document;
 // <Reveal> only choreographs when it becomes visible.
@@ -279,8 +280,8 @@ function FinaleCloser({
               vectorEffect="non-scaling-stroke"
             />
           </svg>
-          {/* On the outer ring at 150deg: (50 + 49cos, 50 + 46sin) in percent. */}
-          <span className="absolute left-[7.6%] top-[73%] size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#f2c14e] shadow-[0_0_0_6px_rgba(242,193,78,0.14)]" />
+          {/* Rides the outer ellipse (see finale-orbit.css). */}
+          <span className="finale-orbit-dot absolute size-2.5 rounded-full bg-[#f2c14e] shadow-[0_0_0_6px_rgba(242,193,78,0.14)]" />
         </div>
         <p className="font-[family-name:var(--font-display)] text-[clamp(36px,6.4vw,72px)] font-light leading-[1.06] tracking-[-0.03em] text-balance text-[#e8f3f1]">
           Don&apos;t lose the person who{" "}
