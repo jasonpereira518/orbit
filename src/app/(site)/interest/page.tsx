@@ -40,7 +40,7 @@ type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 /**
  * THE WAITLIST LEADS NOWHERE. It goes out to a large audience before the product is
- * public, so beyond the "Project: Orbit" mark top left it links to nothing but itself, its
+ * public, so beyond the "Orbit" mark top left it links to nothing but itself, its
  * privacy notice and the share targets. On its own domain (`WAITLIST_HOST`) it is served
  * at `/`, and every other path there redirects back to it — see `lib/waitlist-host.ts`.
  * Keep it that way: no nav, no sign-in, no "learn more". The mark's image is a copy under
@@ -237,7 +237,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
             className="shrink-0 rounded-full"
           />
           <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-[#e8f3f1]">
-            Project: Orbit
+            Orbit
           </span>
         </div>
       </header>

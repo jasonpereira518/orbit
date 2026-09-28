@@ -170,7 +170,7 @@ export function waitlistPassTicket(input: {
  * The night-sky letter every waitlist email shares: a twinkling starfield band, an Orbit
  * mark, an eyebrow line, a serif headline, the body rows, the sign-off and the leave link.
  *
- * NAMES ORBIT. The waitlist may say "Orbit" / "Project: Orbit" and show the waitlist-hosted
+ * NAMES ORBIT. The waitlist may say "Orbit" and show the waitlist-hosted
  * mark the way the page header does. It must not describe product features beyond the
  * sanctioned subject line, or link anywhere but the waitlist's own domain (see
  * `lib/waitlist-host.ts`). An email is the easiest thing in the world to forward.
@@ -339,7 +339,7 @@ export function buildInterestListWelcomeEmail(input: {
 
   const html = paperShell({
     preheader: "Your place is held on the Orbit waitlist.",
-    eyebrow: place ? `Project: Orbit · No. ${place}` : "Project: Orbit · On the waitlist",
+    eyebrow: place ? `Orbit · No. ${place}` : "Orbit · On the waitlist",
     headline,
     rows,
     unsubscribeUrl: input.unsubscribeUrl,
@@ -411,7 +411,7 @@ export function buildTierEmail(input: {
 
   const html = paperShell({
     preheader: thanks,
-    eyebrow: `Project: Orbit · ${input.tier.label}`,
+    eyebrow: `Orbit · ${input.tier.label}`,
     headline,
     rows: [
       paperParagraph(escapeHtml(body)),

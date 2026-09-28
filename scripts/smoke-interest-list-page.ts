@@ -154,9 +154,9 @@ async function main() {
   check("the FAQ keeps the product under wraps", formText.includes("under wraps"));
   check("moving up the line is explained", formText.includes("How do I move up the line?"));
   check("the tracker section is on the page", formText.includes("Bring friends, move up."));
-  // Its one sanctioned mark is the "Project: Orbit" header; nothing else names it.
-  const unmarked = formText.replace("Project: Orbit", "");
-  check("the header carries the product mark", formText.includes("Project: Orbit"));
+  // Its one sanctioned mark is the "Orbit" header; nothing else names it.
+  const unmarked = formText.replace("Orbit", "");
+  check("the header carries the product mark", formText.includes("Orbit"));
   check("nothing else names the product", !/orbit/i.test(unmarked), unmarked.match(/.{0,40}orbit.{0,40}/i)?.[0]);
   check(
     "nothing says it is live, free or open for sign-up",

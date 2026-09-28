@@ -1,5 +1,5 @@
 /**
- * The waitlist may name Orbit ("Project: Orbit", "Orbit waitlist") the way the page header
+ * The waitlist may name Orbit ("Orbit", "Orbit waitlist") the way the page header
  * does, but nothing it hands a recipient may describe what the product does or point at the
  * app's domain (src/lib/waitlist-host.ts).
  *
@@ -35,14 +35,14 @@ function check(label: string, ok: boolean, detail?: string) {
 }
 
 /**
- * Words that would describe what the product does. "Orbit" / "Project: Orbit" are the
- * sanctioned name — stripped before this runs so a real pitch still trips the check.
+ * Words that would describe what the product does. "Orbit" and the sanctioned phrases
+ * below are the brand mark — stripped before this runs so a real pitch still trips the check.
  */
 const FEATURE_WORDS = /\b(crm|contacts?|linkedin|gmail|calendar|follow-ups?|intros?|drifting|capture|reminders?|outreach|recruiters?|constellation|sign[- ]?up|start free|free for|pricing|already live)\b/i;
 
 /** Sanctioned product-name phrases waitlist mail may use. */
 const SANCTIONED_ORBIT =
-  /\bProject:\s*Orbit\b|\bOrbit waitlist\b|\bOrbit pass\b|\bWelcome to Orbit\b|\bthe Orbit waitlist\b|\bon Orbit\b|\bOrbit — Personal Networking Intelligence\b/gi;
+  /\bOrbit\s*·|\bOrbit waitlist\b|\bOrbit pass\b|\bWelcome to Orbit\b|\bthe Orbit waitlist\b|\bon Orbit\b|\bOrbit — Personal Networking Intelligence\b/gi;
 
 function urlsIn(html: string) {
   return [...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]!.replace(/&amp;/g, "&"));
@@ -93,7 +93,7 @@ async function main() {
     "welcome: the subject names Orbit",
     numbered.subject === "You're on the list | Orbit — Personal Networking Intelligence"
   );
-  check("welcome: names Orbit in the body", /Orbit waitlist/.test(numbered.text) && /Project: Orbit/.test(numbered.html));
+  check("welcome: names Orbit in the body", /Orbit waitlist/.test(numbered.text) && /Orbit ·/.test(numbered.html));
   check("welcome: the referral URL stays on the pass page", !numbered.html.includes("?ref=") && !numbered.text.includes("?ref="));
   check(
     "welcome: invite link is /waitlist/<slug>",
@@ -176,7 +176,7 @@ async function main() {
     "src/lib/interest-list.ts",
   ];
   for (const file of surface) {
-    // The page's one sanctioned mark is its "Project: Orbit" header; nothing else may name it.
+    // The page's one sanctioned mark is its "Orbit" header; nothing else may name it.
     const raw = code(file);
     // The other sanctioned mention: the message a sharer sends a friend (`SHARE_TEXT`) names the
     // product on purpose, because a friend cannot be asked to join something unnamed. It is
@@ -186,7 +186,7 @@ async function main() {
     // the file may.
     const src =
       file === "src/app/(site)/interest/page.tsx"
-        ? raw.replace(/>\s*Project: Orbit\s*</, "><")
+        ? raw.replace(/>\s*Orbit\s*</, "><")
         : file === "src/lib/interest-list.ts"
           ? raw.replace(/SHARE_TEXT\s*=\s*"[^"]*"/, "SHARE_TEXT = ''").replace(/"Want Orbit sooner\?"/, "''")
           : raw;
