@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useInView } from "motion/react";
+import { Lock } from "lucide-react";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import {
@@ -23,12 +24,14 @@ const POLL_MS = 20_000;
 const MIN_GAP_MS = 3_000;
 /** Stagger between circles that fill together. Matches the pass's old moon drop. */
 const STAGGER_S = 0.09;
+/** Fill seats in this long; settle-timeout adds a little headroom for the ripple. */
+const FILL_S = 0.48;
 /** How long a freshly unlocked tier keeps its highlight. */
 const FLASH_MS = 2200;
 
 const MILESTONES = new Set(REFERRAL_TIERS.filter((t) => t.at > 0).map((t) => t.at));
 
-/** Bright yellow fill — pops harder than the landing gold accent alone. */
+/** Bright yellow fill — brighter than the landing gold accent alone. */
 const FILLED_GLOW =
   "bg-[#ffe566] shadow-[0_0_28px_rgba(255,229,102,0.95),0_0_10px_rgba(242,193,78,0.7)]";
 const EMPTY_RING =
@@ -145,11 +148,12 @@ function TierPlanet({
  * the boarding pass also reads. A 404 (a pass that no longer exists, or a made-up one) stops
  * the polling for good.
  *
- * ANIMATION. Every reload (and every live increase) pops filled circles in order from 0
- * through the current count — yellow scale + ripple on a 90 ms stagger, starting when the
- * card is on screen. Server HTML and reduced-motion visitors see the true filled state with
- * no pop. Reduced motion is read from `matchMedia` in the mount effect, not from
- * `usePrefersReducedMotion`, whose first value is always false.
+ * ANIMATION. Every reload (and every live increase) fills circles in order from 0 through
+ * the current count — gold grows into the empty ring with a soft settle and a light ripple,
+ * on a 90 ms stagger, starting when the card is on screen. Server HTML and reduced-motion
+ * visitors see the true filled state with no motion. Reduced motion is read from
+ * `matchMedia` in the mount effect, not from `usePrefersReducedMotion`, whose first value
+ * is always false.
  */
 export function ReferralTracker({
   token,
@@ -193,12 +197,12 @@ export function ReferralTracker({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount / token-change only
   }, [activeToken]);
 
-  // After the staggered pops finish, treat those circles as settled (live updates still pop).
+  // After the staggered fills finish, treat those circles as settled (live updates still fill).
   useEffect(() => {
     if (animatedUpTo === null || !motionOk || !inView || referrals <= animatedUpTo) return;
     const done = window.setTimeout(
       () => setAnimatedUpTo(referrals),
-      (referrals - animatedUpTo) * STAGGER_S * 1000 + 1000
+      (referrals - animatedUpTo) * STAGGER_S * 1000 + FILL_S * 1000 + 350
     );
     return () => window.clearTimeout(done);
   }, [animatedUpTo, motionOk, inView, referrals]);
@@ -272,9 +276,9 @@ export function ReferralTracker({
       >
         {Array.from({ length: TRACKER_SLOTS }, (_, i) => {
           const filled = i < referrals;
-          const popping =
+          const filling =
             filled && animatedUpTo !== null && motionOk && i >= animatedUpTo;
-          const popDelay = animatedUpTo === null ? 0 : (i - animatedUpTo) * STAGGER_S;
+          const fillDelay = animatedUpTo === null ? 0 : (i - animatedUpTo) * STAGGER_S;
           const milestone = MILESTONES.has(i + 1);
           return (
             <span key={i} aria-hidden="true" className="relative flex size-6 items-center justify-center sm:size-9">
@@ -286,28 +290,34 @@ export function ReferralTracker({
                   )}
                 />
               ) : null}
-              {popping ? (
+              {filling ? (
                 <>
-                  <motion.span
-                    className="absolute inset-0 rounded-full border-2 border-[#ffe566]"
-                    initial={{ scale: 1, opacity: 0 }}
-                    animate={
-                      inView ? { scale: [1, 2.9], opacity: [0.95, 0] } : { scale: 1, opacity: 0 }
-                    }
-                    transition={{ duration: 0.9, ease: EASE_HOUSE, delay: popDelay + 0.15 }}
-                  />
+                  {/* Vessel stays visible so the gold reads as filling the ring, not popping in. */}
+                  <span className={cn("absolute inset-0 rounded-full", EMPTY_RING)} />
                   <motion.span
                     className={cn("absolute inset-0 rounded-full", FILLED_GLOW)}
-                    initial={{ scale: 0, opacity: 0 }}
+                    initial={{ transform: "scale(0.55)", opacity: 0 }}
                     animate={
-                      inView ? { scale: [0, 1.45, 1], opacity: 1 } : { scale: 0, opacity: 0 }
+                      inView
+                        ? { transform: ["scale(0.55)", "scale(1.08)", "scale(1)"], opacity: [0, 1, 1] }
+                        : { transform: "scale(0.55)", opacity: 0 }
                     }
                     transition={{
-                      duration: 0.55,
+                      duration: FILL_S,
                       ease: EASE_HOUSE,
-                      times: [0, 0.5, 1],
-                      delay: popDelay,
+                      times: [0, 0.62, 1],
+                      delay: fillDelay,
                     }}
+                  />
+                  <motion.span
+                    className="absolute inset-0 rounded-full border-2 border-[#ffe566]"
+                    initial={{ transform: "scale(1)", opacity: 0 }}
+                    animate={
+                      inView
+                        ? { transform: ["scale(1)", "scale(2.15)"], opacity: [0.55, 0] }
+                        : { transform: "scale(1)", opacity: 0 }
+                    }
+                    transition={{ duration: 0.65, ease: EASE_HOUSE, delay: fillDelay + 0.2 }}
                   />
                 </>
               ) : (
@@ -371,7 +381,7 @@ export function ReferralTracker({
               key={t.id}
               aria-current={active ? "step" : undefined}
               className={cn(
-                "rounded-2xl border px-4 py-3.5 transition-[color,background-color,border-color,box-shadow,transform] duration-700",
+                "relative rounded-2xl border px-4 py-3.5 transition-[color,background-color,border-color,box-shadow,transform] duration-700",
                 isFlash
                   ? "border-[#f2c14e] bg-[#f2c14e]/22 shadow-[0_0_28px_rgba(242,193,78,0.35),inset_0_0_20px_rgba(242,193,78,0.08)]"
                   : unlocked
@@ -381,6 +391,12 @@ export function ReferralTracker({
                       : "border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.02] opacity-75"
               )}
             >
+              {!unlocked ? (
+                <Lock
+                  aria-hidden="true"
+                  className="pointer-events-none absolute bottom-3 right-3 size-3.5 text-[#9aada8]"
+                />
+              ) : null}
               <div className="flex items-center justify-between gap-2">
                 <TierPlanet
                   tierId={t.id}
@@ -406,12 +422,12 @@ export function ReferralTracker({
                       style={{ transform: `scaleX(${pct / 100})` }}
                     />
                   </div>
-                  <p className="mt-1.5 text-xs text-[#9aada8]">
+                  <p className="mt-1.5 pr-5 text-xs text-[#9aada8]">
                     {t.at - referrals} more {t.at - referrals === 1 ? "friend" : "friends"}
                   </p>
                 </>
               ) : (
-                <p className="mt-3 text-xs text-[#9aada8]">{t.at - referrals} to go</p>
+                <p className="mt-3 pr-5 text-xs text-[#9aada8]">{t.at - referrals} to go</p>
               )}
             </li>
           );

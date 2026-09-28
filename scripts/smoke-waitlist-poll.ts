@@ -87,7 +87,7 @@ async function main() {
   check("ids are unique", new Set(POLL_OPTIONS.map((o) => o.id)).size === POLL_OPTIONS.length);
   check(
     "no label names the product",
-    POLL_OPTIONS.every((o) => !/orbit/i.test(o.label))
+    POLL_OPTIONS.every((o) => !/orbit/i.test(o.label) && !/orbit/i.test(o.blurb))
   );
   check("a listed id is valid", isPollOptionId(A));
   check("an unknown id is not", !isPollOptionId("nope"));

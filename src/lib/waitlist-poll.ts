@@ -15,12 +15,36 @@
  */
 
 export const POLL_OPTIONS = [
-  { id: "constellation-map", label: "Constellation Map — your whole network, mapped as a living galaxy" },
-  { id: "network-chat", label: "Network Chat — ask your network anything, get answers instantly" },
-  { id: "outreach-campaign", label: "Outreach Campaign — finds the right people, drafts the message for you" },
-  { id: "events", label: "Events — see who's converging at every event before you arrive" },
-  { id: "auto-integrations", label: "Auto-Integrations — your inbox and calendar sync themselves in" },
-  { id: "smart-follow-ups", label: "Smart Follow-Ups — the right nudge, exactly when it matters" },
+  {
+    id: "constellation-map",
+    label: "Constellation Map",
+    blurb: "your whole network, mapped as a living galaxy",
+  },
+  {
+    id: "network-chat",
+    label: "Network Chat",
+    blurb: "ask your network anything, get answers instantly",
+  },
+  {
+    id: "outreach-campaign",
+    label: "Outreach Campaign",
+    blurb: "finds the right people, drafts the message for you",
+  },
+  {
+    id: "events",
+    label: "Events",
+    blurb: "see who's converging at every event before you arrive",
+  },
+  {
+    id: "auto-integrations",
+    label: "Auto-Integrations",
+    blurb: "your inbox and calendar sync themselves in",
+  },
+  {
+    id: "smart-follow-ups",
+    label: "Smart Follow-Ups",
+    blurb: "the right nudge, exactly when it matters",
+  },
 ] as const;
 
 export type PollOptionId = (typeof POLL_OPTIONS)[number]["id"];
@@ -41,6 +65,7 @@ export type PollResults = { counts: Record<string, number> };
 export type RankedOption = {
   id: PollOptionId;
   label: string;
+  blurb: string;
   count: number;
   /** 1-based position after ranking. */
   rank: number;
@@ -85,6 +110,7 @@ export function rankPoll(results: PollResults): {
     .map(({ option, count }, i) => ({
       id: option.id,
       label: option.label,
+      blurb: option.blurb,
       count,
       rank: i + 1,
       share: showNumbers ? Math.round((count / total) * 100) : null,

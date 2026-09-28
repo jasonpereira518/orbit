@@ -90,7 +90,7 @@ async function main() {
   check("the text part carries the footer", built.text.includes("Leave the waitlist"));
   // The shell may name Orbit (footer / chrome / mark); it must not pitch beyond that or ship an app-domain logo.
   const shellOrbit = (built.html + "\n" + built.text).replace(
-    /\bProject:\s*Orbit\b|\bOrbit waitlist\b|\bOrbit pass\b|\bWelcome to Orbit\b|\bthe Orbit waitlist\b|\bOrbit — Personal Networking Intelligence\b/gi,
+    /\bOrbit\s*·|\bOrbit waitlist\b|\bOrbit pass\b|\bWelcome to Orbit\b|\bthe Orbit waitlist\b|\bOrbit — Personal Networking Intelligence\b/gi,
     ""
   );
   check("the shell names Orbit only via the waitlist footer", /Orbit waitlist/.test(built.text) && /Orbit waitlist/.test(built.html));
