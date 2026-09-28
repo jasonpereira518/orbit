@@ -6,11 +6,10 @@
  * WHAT A CALLER LEARNS. Every path that does not end in a visible validation error returns
  * `ok` with a ticket. A real join, a duplicate, an unsubscribed address rejoining, a bot
  * and a rate-limited caller all get the same shape, so which check a submit tripped is
- * not inferable from the response. What IS inferable, by design (see the spec's privacy
- * section): a duplicate gets its real ticket, whose number is below the current total, and
- * `returning: true` so the form can skip the name step — membership of an address can be
- * probed at ten tries per ten minutes per IP. The
- * address itself is never returned.
+ * not inferable from the response — except that an address already waiting gets its real
+ * ticket and `returning: true` even on a too-fast or rate-limited submit, so the form can
+ * skip the name step and show where they stand. Membership of an address can be probed at
+ * ten tries per ten minutes per IP. The address itself is never returned.
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -105,6 +104,51 @@ async function plausibleTicket(): Promise<InterestTicket> {
   };
 }
 
+/**
+ * An address already on the list (still waiting): their real pass, so a too-fast or
+ * rate-limited submit still skips the name step and shows where they stand. Unsubscribed
+ * rows return null so the main path can put them back in line. Null means "treat them
+ * like a stranger" — fake ticket, no leak beyond what a normal join already reveals.
+ */
+async function ticketForActiveEmail(email: string): Promise<InterestListResult | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(interestListSignups)
+    .where(and(eq(interestListSignups.email, email), isNull(interestListSignups.unsubscribedAt)))
+    .limit(1);
+  if (!row) return null;
+
+  let shareToken = row.shareToken;
+  if (!shareToken) {
+    const [minted] = await db
+      .update(interestListSignups)
+      .set({ shareToken: generateShareToken() })
+      .where(and(eq(interestListSignups.id, row.id), isNull(interestListSignups.shareToken)))
+      .returning();
+    shareToken = minted?.shareToken ?? null;
+    if (!shareToken) {
+      const [again] = await db
+        .select({ shareToken: interestListSignups.shareToken })
+        .from(interestListSignups)
+        .where(eq(interestListSignups.id, row.id))
+        .limit(1);
+      shareToken = again?.shareToken ?? null;
+    }
+  }
+  if (!shareToken) return null;
+
+  const ticket = await ticketForRow({
+    id: row.id,
+    email: row.email,
+    referralSlug: row.referralSlug,
+    createdAt: row.createdAt,
+    welcomePlanet: row.welcomePlanet,
+    shareToken,
+  });
+  return { ok: true, ticket, returning: true };
+}
+
 export async function joinInterestListCore(
   input: InterestListInput,
   ctx: JoinContext
@@ -120,21 +164,25 @@ export async function joinInterestListCore(
   const { elapsedMs, ref } = parsed.data;
   const email = parsed.data.email.trim().toLowerCase();
 
-  // 3. Faster than a person can read the form.
-  if (elapsedMs < MIN_FILL_MS) return { ok: true, ticket: await plausibleTicket(), returning: false };
+  // 3. Faster than a person can read the form — unless this address is already waiting,
+  //    in which case show their pass (same leak a normal duplicate already allows).
+  if (elapsedMs < MIN_FILL_MS) {
+    return (await ticketForActiveEmail(email)) ?? { ok: true, ticket: await plausibleTicket(), returning: false };
+  }
 
   // 4. Rate limit. A limiter that cannot count must not fail open into the write, and must
-  //    not break a real person's signup either — so any throw is the fake ticket.
+  //    not break a real person's signup either — so any throw is the fake ticket, unless
+  //    the address is already on the list (same as the too-fast path).
   try {
     await consumeBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
   } catch (err) {
-    // Past the limit, or a limiter that cannot count. Either way the caller gets the fake
+    // Past the limit, or a limiter that cannot count. Either way a stranger gets the fake
     // ticket — the write must never fail open — but only the first is expected. The
-    // response stays indistinguishable from a real join, so this log is the only signal
-    // that a real person was dropped.
+    // response stays indistinguishable from a real join for unknowns, so this log is the
+    // only signal that a real person was dropped.
     if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ipTag: ipLogTag(ctx.ip) });
     else console.error("[interest-list] limiter failed", err);
-    return { ok: true, ticket: await plausibleTicket(), returning: false };
+    return (await ticketForActiveEmail(email)) ?? { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
   const db = await getDb();
@@ -167,6 +215,8 @@ export async function joinInterestListCore(
 
   let row = existing;
   let welcome = false;
+  /** True only when this call inserted a brand-new row — not a duplicate or a rejoin. */
+  let isNewInsert = false;
   /** A fresh row that credited `referrer` — the only event that can unlock a referral tier. */
   let credited = false;
 
@@ -197,6 +247,7 @@ export async function joinInterestListCore(
     if (inserted[0]) {
       row = inserted[0];
       welcome = true;
+      isNewInsert = true;
       credited = Boolean(row.referredById);
       invalidateInterestProof();
     } else {
@@ -281,7 +332,9 @@ export async function joinInterestListCore(
     await notifyIfTierUnlocked(referrer as typeof referrer & { shareToken: string }, ctx);
   }
 
-  return { ok: true, ticket, returning: Boolean(existing) };
+  // Skip the name step for anyone who was already on the list (duplicate, race loser, or
+  // rejoin) — only a brand-new insert asks for a name.
+  return { ok: true, ticket, returning: !isNewInsert };
 }
 
 /**
