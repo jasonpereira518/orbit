@@ -9,6 +9,7 @@ import {
   adminManualInterestListSchema,
   buildShareUrl,
   buildTicketUrl,
+  parseEventSignupPaste,
   tierFor,
   type AdminManualInterestListInput,
   type ReferralTierId,
@@ -604,7 +605,7 @@ export async function addManualInterestListSignup(
   if (!parsed.success) {
     throw new UserFacingError(parsed.error.issues[0]?.message ?? "Could not add that signup.");
   }
-  const { firstName, lastName, eventLabel } = parsed.data;
+  const { firstName, lastName, eventLabel, createdAt } = parsed.data;
   const email = parsed.data.email.trim().toLowerCase();
 
   const db = await getDb();
@@ -635,6 +636,7 @@ export async function addManualInterestListSignup(
         unsubscribeToken: generateUnsubscribeToken(),
         shareToken: generateShareToken(),
         welcomePlanet: planetForSignupNumber((before?.n ?? 0) + 1),
+        ...(createdAt ? { createdAt } : {}),
       })
       .onConflictDoNothing({ target: interestListSignups.email })
       .returning();
@@ -666,6 +668,7 @@ export async function addManualInterestListSignup(
         utmMedium: "event",
         utmCampaign: eventLabel,
         shareToken: row.shareToken ?? generateShareToken(),
+        // Keep their original join time on rejoin — do not rewrite with the event stamp.
       })
       .where(eq(interestListSignups.id, row.id))
       .returning();
@@ -699,4 +702,63 @@ export async function addManualInterestListSignup(
   );
 
   return { email: row.email, id: row.id };
+}
+
+export type BulkManualInterestListResult = {
+  added: Array<{ email: string; id: string }>;
+  skipped: Array<{ email: string; reason: string }>;
+  parseErrors: string[];
+};
+
+/**
+ * Paste from an event spreadsheet: timestamp, name, email. Adds in spreadsheet order
+ * (by timestamp when every row has one, otherwise paste order) so join order matches the
+ * line at the event.
+ */
+export async function addManualInterestListSignupsFromPaste(input: {
+  paste: string;
+  eventLabel: string;
+}): Promise<BulkManualInterestListResult> {
+  const eventLabel = input.eventLabel.trim();
+  const labelOk = adminManualInterestListSchema.shape.eventLabel.safeParse(eventLabel);
+  if (!labelOk.success) {
+    throw new UserFacingError(labelOk.error.issues[0]?.message ?? "Event name is required.");
+  }
+
+  const { rows, errors: parseErrors } = parseEventSignupPaste(input.paste);
+  if (rows.length === 0) {
+    if (parseErrors.length > 0) {
+      throw new UserFacingError(parseErrors[0]!);
+    }
+    throw new UserFacingError("Paste at least one row: timestamp, name, and email.");
+  }
+
+  // Prefer event time order when every row carried a timestamp; otherwise keep paste order.
+  const ordered =
+    rows.every((r) => r.signedAt) ?
+      [...rows].sort((a, b) => a.signedAt!.getTime() - b.signedAt!.getTime() || a.line - b.line)
+    : rows;
+
+  const added: BulkManualInterestListResult["added"] = [];
+  const skipped: BulkManualInterestListResult["skipped"] = [];
+
+  // Sequential so each insert sees the previous row and join order stays stable.
+  for (const row of ordered) {
+    try {
+      const result = await addManualInterestListSignup({
+        email: row.email,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        eventLabel,
+        createdAt: row.signedAt ?? undefined,
+      });
+      added.push(result);
+    } catch (err) {
+      const message =
+        err instanceof UserFacingError ? err.message : "Could not add that signup.";
+      skipped.push({ email: row.email, reason: message });
+    }
+  }
+
+  return { added, skipped, parseErrors };
 }

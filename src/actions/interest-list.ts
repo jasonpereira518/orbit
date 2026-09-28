@@ -9,7 +9,9 @@ import type {
   InterestNameInput,
   InterestNameResult,
 } from "@/lib/interest-list";
+import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
 import { joinInterestListCore, saveInterestListNameCore } from "@/lib/interest-list-join";
+import { recordPassCheck } from "@/lib/interest-list-ticket";
 
 /**
  * The request-reading half of the join. Everything that decides what happens lives in
@@ -33,4 +35,18 @@ export async function saveInterestListName(
 ): Promise<InterestNameResult> {
   const ip = clientIpFrom(await headers());
   return saveInterestListNameCore(input, { ip });
+}
+
+/**
+ * Browser-only pass open. Called when the boarding pass mounts — not when an operator
+ * adds someone, and not from email prefetch of `?me=` HTML (no JS → no call).
+ */
+export async function recordPassCheckAction(shareToken: string): Promise<void> {
+  const token = typeof shareToken === "string" ? shareToken.trim() : "";
+  if (!token || token.length > SHARE_TOKEN_MAX) return;
+  try {
+    await recordPassCheck(token);
+  } catch (err) {
+    console.error("[interest-list] pass check failed", err);
+  }
 }

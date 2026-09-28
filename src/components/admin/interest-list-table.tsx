@@ -18,6 +18,9 @@ import { cn } from "@/lib/utils";
  * the bulk bar on top. Dates are passed as ISO strings rather than `Date` objects — the
  * server/client boundary serialises them either way, and being explicit about it stops the
  * absolute label from silently depending on how Next happened to revive the value.
+ *
+ * `showInLine`: only the "In line" sort needs the place-in-line column. Moved spots ride
+ * on that cell's hover title rather than their own column.
  */
 
 export type InterestListTableRow = {
@@ -41,17 +44,13 @@ export type InterestListTableRow = {
   passLastCheckedAtIso: string | null;
 };
 
-/** Spots gained on join order: `+25` moved up, `−3` passed by others, `—` where nothing moved. */
-function MovedCell({ position, joinRank }: { position: number | null; joinRank: number | null }) {
-  if (position === null || joinRank === null || position === joinRank) {
-    return <span className="text-muted-foreground/50">—</span>;
-  }
+/** Hover copy for how far place-in-line moved vs join order. */
+function movedTitle(position: number | null, joinRank: number | null): string | undefined {
+  if (position === null || joinRank === null || position === joinRank) return undefined;
   const moved = joinRank - position;
-  return moved > 0 ? (
-    <span className="text-accent-foreground">+{moved.toLocaleString("en-US")}</span>
-  ) : (
-    <span className="text-muted-foreground">−{Math.abs(moved).toLocaleString("en-US")}</span>
-  );
+  return moved > 0
+    ? `Moved up ${moved.toLocaleString("en-US")} from join order`
+    : `Moved down ${Math.abs(moved).toLocaleString("en-US")} from join order`;
 }
 
 /**
@@ -112,7 +111,14 @@ function relativeAgoLabel(d: Date): string {
 const BULK_BUTTON =
   "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors duration-fast";
 
-export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
+export function InterestListTable({
+  rows,
+  showInLine = false,
+}: {
+  rows: InterestListTableRow[];
+  /** Place-in-line column — only when sorting by the line. */
+  showInLine?: boolean;
+}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const ids = [...selected];
@@ -209,9 +215,8 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 className="size-3.5 accent-current"
               />
             </Th>
-            <Th numeric>In line</Th>
+            {showInLine && <Th numeric>In line</Th>}
             <Th numeric>Joined #</Th>
-            <Th numeric>Moved</Th>
             <Th>Email</Th>
             <Th numeric>Referrals</Th>
             <Th numeric>Checks</Th>
@@ -240,14 +245,15 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 className="size-3.5 accent-current"
               />
             </Td>
-            <Td numeric className="tabular-nums">
-              {row.position !== null ? `#${row.position.toLocaleString("en-US")}` : "—"}
-            </Td>
+            {showInLine && (
+              <Td numeric className="tabular-nums">
+                <span title={movedTitle(row.position, row.joinRank)}>
+                  {row.position !== null ? `#${row.position.toLocaleString("en-US")}` : "—"}
+                </span>
+              </Td>
+            )}
             <Td numeric className="tabular-nums text-muted-foreground">
               {row.joinRank !== null ? `#${row.joinRank.toLocaleString("en-US")}` : "—"}
-            </Td>
-            <Td numeric className="tabular-nums">
-              <MovedCell position={row.position} joinRank={row.joinRank} />
             </Td>
             <Td className="font-medium text-ink">{row.email}</Td>
             <Td numeric className={row.referrals === 0 ? "text-muted-foreground/50" : undefined}>
