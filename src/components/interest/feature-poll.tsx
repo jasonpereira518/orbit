@@ -119,7 +119,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
                 >
                   {voted && (
                     <motion.span
-                      aria-hidden="true"
+                      aria-hidden={true}
                       className="absolute inset-y-0 left-0 w-full origin-left bg-[#f2c14e]/[0.13]"
                       initial={votedOnLoad ? false : { scaleX: 0 }}
                       animate={{ scaleX: opt.count === 0 ? 0 : Math.max(opt.bar, 0.06) }}
@@ -128,10 +128,10 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
                   )}
                   <span className="relative flex items-center gap-3">
                     {voted && (
-                      <span aria-hidden="true" className="w-5 shrink-0 text-sm tabular-nums text-[#6d807c]">{opt.rank}</span>
+                      <span aria-hidden={true} className="w-5 shrink-0 text-sm tabular-nums text-[#6d807c]">{opt.rank}</span>
                     )}
                     <span className="flex-1 text-sm font-medium text-[#e8f3f1] sm:text-base">{opt.label}</span>
-                    {selected && <Check className="size-4 shrink-0 text-[#f2c14e]" aria-hidden="true" />}
+                    {selected && <Check className="size-4 shrink-0 text-[#f2c14e]" aria-hidden={true} />}
                     {voted && view.showNumbers && (
                       <span className="w-11 shrink-0 text-right text-sm tabular-nums text-[#9aada8]">
                         {opt.share}%
