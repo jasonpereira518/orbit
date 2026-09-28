@@ -23,6 +23,7 @@ import { REFERRAL_TIERS, SPOTS_PER_REFERRAL } from "@/lib/interest-list";
 import {
   getInterestListSummary,
   INTEREST_LIST_PAGE_SIZE,
+  interestListDisplayName,
   interestListSources,
   interestListTrend,
   isInterestListFilter,
@@ -115,6 +116,7 @@ export default async function AdminInterestListPage({
   const rows: InterestListTableRow[] = listing.rows.map((row) => ({
     id: row.id,
     email: row.email,
+    displayName: interestListDisplayName(row),
     createdAtIso: row.createdAt.toISOString(),
     createdAtLabel: absolute(row.createdAt),
     source: sourceLabel(row),

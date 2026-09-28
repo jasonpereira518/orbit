@@ -80,6 +80,7 @@ function textOf(node: unknown, out: string[] = []): string[] {
         // The row-action controls are a client component, so its props are all this walk
         // can see — which is the right server-side contract to assert on anyway.
         key === "email" ||
+        key === "displayName" ||
         key === "unsubscribed"
       ) {
         textOf(value, out);
@@ -170,6 +171,8 @@ async function main() {
 
   await db.insert(interestListSignups).values([
     mk(`${PREFIX}active@example.test`, {
+      firstName: "Ada",
+      lastName: "Lovelace",
       utmSource: "reddit",
       utmMedium: "social",
       createdAt: new Date("2026-08-10T09:00:00Z"),
@@ -195,6 +198,7 @@ async function main() {
   // --- unfiltered
   const all = textOf(await Page({ searchParams: Promise.resolve({}) })).join(" ");
   check("renders every seeded signup", ["active", "unsubbed", "converted"].every((n) => all.includes(`${PREFIX}${n}@example.test`)));
+  check("shows the signup's full name above the email", all.includes("Ada Lovelace"));
   check("shows an absolute signup date", all.includes("10 Aug 2026"), all.slice(0, 400));
   check("labels the converted row", all.includes("Converted"));
   check("labels the rows that left", all.includes("Left"));

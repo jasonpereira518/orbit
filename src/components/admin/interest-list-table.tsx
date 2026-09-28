@@ -26,6 +26,8 @@ import { cn } from "@/lib/utils";
 export type InterestListTableRow = {
   id: string;
   email: string;
+  /** Full name when known; shown above the address. */
+  displayName: string | null;
   createdAtIso: string;
   createdAtLabel: string;
   source: string;
@@ -217,7 +219,7 @@ export function InterestListTable({
             </Th>
             {showInLine && <Th numeric>In line</Th>}
             <Th numeric>Joined #</Th>
-            <Th>Email</Th>
+            <Th>Name / email</Th>
             <Th numeric>Referrals</Th>
             <Th numeric>Checks</Th>
             <Th>Signed up</Th>
@@ -255,7 +257,16 @@ export function InterestListTable({
             <Td numeric className="tabular-nums text-muted-foreground">
               {row.joinRank !== null ? `#${row.joinRank.toLocaleString("en-US")}` : "—"}
             </Td>
-            <Td className="font-medium text-ink">{row.email}</Td>
+            <Td className="max-w-[16rem]">
+              {row.displayName ? (
+                <div className="min-w-0 leading-tight">
+                  <div className="truncate font-medium text-ink">{row.displayName}</div>
+                  <div className="truncate text-xs text-muted-foreground">{row.email}</div>
+                </div>
+              ) : (
+                <span className="truncate font-medium text-ink">{row.email}</span>
+              )}
+            </Td>
             <Td numeric className={row.referrals === 0 ? "text-muted-foreground/50" : undefined}>
               {row.referrals}
             </Td>
@@ -265,16 +276,19 @@ export function InterestListTable({
                 lastCheckedAtIso={row.passLastCheckedAtIso}
               />
             </Td>
-            <Td>
+            <Td className="whitespace-nowrap">
               {/* Absolute first — "when did they join" is the question, and a relative
-                  label alone stops being an answer after a month. */}
+                  label alone stops being an answer after a month. Kept on one line so
+                  the roster row stays a single band. */}
               <span className="tabular-nums">{row.createdAtLabel}</span>
-              <span className="ml-2 text-xs text-muted-foreground">
+              <span className="ml-1.5 text-xs text-muted-foreground">
                 <RelativeTime date={row.createdAtIso} /> ago
               </span>
             </Td>
-            <Td className="text-muted-foreground">{row.source}</Td>
-            <Td>
+            <Td className="max-w-[14rem] truncate whitespace-nowrap text-muted-foreground" title={row.source}>
+              {row.source}
+            </Td>
+            <Td className="whitespace-nowrap">
               {row.status === "unsubscribed" ? (
                 <span className="text-destructive">Left</span>
               ) : row.status === "converted" ? (
@@ -285,7 +299,7 @@ export function InterestListTable({
                 <span className="text-muted-foreground">Waiting</span>
               )}
             </Td>
-            <Td className="capitalize text-muted-foreground">{row.planet ?? "—"}</Td>
+            <Td className="whitespace-nowrap capitalize text-muted-foreground">{row.planet ?? "—"}</Td>
             <Td>
               <InterestListRowActions
                 id={row.id}
