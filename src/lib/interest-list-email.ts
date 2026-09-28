@@ -34,7 +34,7 @@ export function buildUnsubscribeUrl(token: string) {
 
 /**
  * The dark palette. Shared with the admin invitation (`site-invite-email.ts`) and the
- * waitlist pass ticket nested inside the cream paper letter.
+ * waitlist pass ticket nested inside the night-sky letter.
  */
 export const BG = "#05070f";
 export const TEXT = "#e8f3f1";
@@ -48,14 +48,20 @@ export const FONT_STACK =
 const PASS_BG = "#0e1524";
 const PASS_BORDER = "#333f5a";
 
-/** The paper letter every waitlist email is written on. */
-export const PAPER = "#f6f4ee";
-export const INK = "#1d2320";
-export const INK_MUTED = "#5d6661";
-export const INK_FAINT = "#8a918c";
-export const RULE = "#e2e0d8";
-export const LINK = "#0f3d3e";
+/**
+ * Former cream-letter tokens. Kept as named exports so older imports compile; the waitlist
+ * shell itself is the night sky (`BG` / `TEXT` / `MUTED`) — do not use these for new markup.
+ */
+export const PAPER = BG;
+export const INK = TEXT;
+export const INK_MUTED = MUTED;
+export const INK_FAINT = FAINT;
+export const RULE = "rgba(232,243,241,0.14)";
+export const LINK = ACCENT;
 export const SERIF_STACK = "'Fraunces', Georgia, 'Times New Roman', serif";
+
+/** Hosted under `/waitlist/` so the waitlist origin serves it (see `waitlist-host.ts`). */
+export const STARFIELD_PATH = "/waitlist/starfield.gif";
 
 export function escapeHtml(value: string) {
   return value
@@ -74,12 +80,12 @@ const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slic
 
 /** A body paragraph. `content` is HTML the caller has already escaped. */
 export const paperParagraph = (content: string) =>
-  `<tr><td style="font-size:15px;line-height:1.65;color:${INK_MUTED};padding-bottom:16px;">${content}</td></tr>`;
+  `<tr><td style="font-size:15px;line-height:1.65;color:${MUTED};padding-bottom:16px;">${content}</td></tr>`;
 
 /**
  * Dark wallet-pass ticket with the Open your pass CTA. Planet art and both hrefs stay on
  * the waitlist origin — no app logo, no app-base URLs. Still tables only so it nests
- * inside the cream paper shell (no kinetic CSS; that stays invite-only).
+ * inside the night-sky shell (no kinetic CSS; that stays invite-only).
  *
  * The invite link is `/waitlist/<slug>` — the address's local part — the same path the
  * pass page shares. A `?ref=` fallback is never printed here; only the pretty path is.
@@ -161,22 +167,25 @@ export function waitlistPassTicket(input: {
 }
 
 /**
- * The paper letter every waitlist email shares: an Orbit mark, an eyebrow line, a serif
- * headline, the body rows, the sign-off and the leave link.
+ * The night-sky letter every waitlist email shares: a twinkling starfield band, an Orbit
+ * mark, an eyebrow line, a serif headline, the body rows, the sign-off and the leave link.
  *
  * NAMES ORBIT. The waitlist may say "Orbit" / "Project: Orbit" and show the waitlist-hosted
  * mark the way the page header does. It must not describe product features beyond the
  * sanctioned subject line, or link anywhere but the waitlist's own domain (see
  * `lib/waitlist-host.ts`). An email is the easiest thing in the world to forward.
  *
- * WRITTEN TO REACH THE INBOX. A light letter with no printed referral URL and a plain-text
- * twin reads as correspondence rather than a campaign. The dark pass ticket (when present)
- * nests inside the paper; its CTA is the only button. `color-scheme: light` asks clients
- * not to invert the letter; the ones that do anyway still get readable ink on paper.
+ * WRITTEN TO REACH THE INBOX. A dark letter with no printed referral URL and a plain-text
+ * twin. The pass ticket (when present) nests inside; its CTA is the only button.
+ * `color-scheme: dark` asks clients not to invert the sky.
+ *
+ * STARS. CSS animations do not run in Gmail or Outlook, so the twinkle is an animated GIF
+ * (`STARFIELD_PATH`) hosted on the waitlist origin. Gmail / Apple Mail / Outlook.com play
+ * it; classic Outlook desktop freezes on frame 0, which is still a readable starfield.
+ * Solid `BG` underneath means a client that blocks images still gets a black letter.
  *
  * Inline styles and a table shell rather than a stylesheet: most email clients strip
- * `<style>` blocks. Mark and planet images are decorative with empty alt text, so a client
- * that blocks images loses nothing essential.
+ * `<style>` blocks. Mark, starfield and planet images are decorative with empty alt text.
  */
 export function paperShell(input: {
   preheader?: string;
@@ -187,7 +196,9 @@ export function paperShell(input: {
   rows: string;
   unsubscribeUrl: string;
 }) {
-  const markUrl = `${getWaitlistOrigin()}/waitlist/logo.png`;
+  const origin = getWaitlistOrigin();
+  const markUrl = `${origin}/waitlist/logo.png`;
+  const starfieldUrl = `${origin}${STARFIELD_PATH}`;
   const mark = `<tr>
               <td style="padding-bottom:18px;">
                 <img src="${escapeHtml(markUrl)}" alt="" width="40" height="40"
@@ -196,50 +207,60 @@ export function paperShell(input: {
             </tr>`;
   const eyebrow = input.eyebrow
     ? `<tr>
-              <td style="padding-bottom:18px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${INK_FAINT};">
+              <td style="padding-bottom:18px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${FAINT};">
                 ${escapeHtml(input.eyebrow)}
               </td>
             </tr>`
     : "";
   const headline = input.headline
     ? `<tr>
-              <td style="font-family:${SERIF_STACK};font-size:25px;line-height:1.25;color:${INK};padding-bottom:16px;">
+              <td style="font-family:${SERIF_STACK};font-size:25px;line-height:1.25;color:${TEXT};padding-bottom:16px;">
                 ${escapeHtml(input.headline)}
               </td>
             </tr>`
     : "";
   const preheader = input.preheader
-    ? `<span style="display:none;font-size:1px;color:${PAPER};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+    ? `<span style="display:none;font-size:1px;color:${BG};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
       ${escapeHtml(input.preheader)}
     </span>`
     : "";
+  // Full-width band above the letter. width=480 matches the column; height keeps aspect
+  // of the 600×220 asset. Empty alt: decorative, and a blocked image must not leave a
+  // broken-image glyph in the letter.
+  const starfield = `<tr>
+              <td style="padding:0 0 22px 0;font-size:0;line-height:0;">
+                <img src="${escapeHtml(starfieldUrl)}" alt="" width="480" height="176"
+                     style="display:block;border:0;outline:none;width:100%;max-width:480px;height:auto;" />
+              </td>
+            </tr>`;
 
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta name="color-scheme" content="light only" />
-    <meta name="supported-color-schemes" content="light" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="supported-color-schemes" content="dark" />
   </head>
-  <body style="margin:0;padding:0;background-color:${PAPER};font-family:${FONT_STACK};color:${INK};">
+  <body style="margin:0;padding:0;background-color:${BG};font-family:${FONT_STACK};color:${TEXT};">
     ${preheader}
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${PAPER};">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${BG};">
       <tr>
-        <td align="center" style="padding:44px 20px;">
+        <td align="center" style="padding:36px 20px 44px;background-color:${BG};">
           <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
+            ${starfield}
             ${mark}
             ${eyebrow}
             ${headline}
             ${input.rows}
             <tr>
-              <td style="font-size:15px;line-height:1.65;color:${INK};padding-top:4px;padding-bottom:28px;">
+              <td style="font-size:15px;line-height:1.65;color:${TEXT};padding-top:4px;padding-bottom:28px;">
                 — Jason
               </td>
             </tr>
             <tr>
-              <td style="font-size:12px;line-height:1.6;color:${INK_FAINT};border-top:1px solid ${RULE};padding-top:18px;">
+              <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid ${RULE};padding-top:18px;">
                 ${WAITLIST_FOOTER}
-                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${INK_FAINT};text-decoration:underline;">Leave the waitlist</a>.
+                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Leave the waitlist</a>.
               </td>
             </tr>
           </table>

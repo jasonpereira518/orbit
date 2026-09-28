@@ -175,6 +175,11 @@ for (const host of [WAITLIST, APP]) {
 }
 check("a slug with a suffix and an underscore matches", slugOn(WAITLIST, "/waitlist/sam_smith-2").kind === "rewrite");
 check("the waitlist icon is still just a file", show(slugOn(WAITLIST, "/waitlist/icon.png")) === show({ kind: "serve", path: "/waitlist/icon.png" }));
+check(
+  "the email starfield is a file, not a referral slug",
+  show(slugOn(WAITLIST, "/waitlist/starfield.gif")) === show({ kind: "serve", path: "/waitlist/starfield.gif" }) &&
+    waitlistSlugFromPath("/waitlist/starfield.gif") === null
+);
 check("the dev privacy preview is not a person", slugOn(WAITLIST, "/waitlist/privacy").kind === "serve");
 check("a nested path is not a slug", slugOn(WAITLIST, "/waitlist/ada/extra").kind !== "rewrite");
 check("waitlistSlugFromPath agrees", waitlistSlugFromPath("/waitlist/ada") === "ada" && waitlistSlugFromPath("/waitlist/icon.png") === null && waitlistSlugFromPath("/waitlist") === null && waitlistSlugFromPath("/waitlist/a/b") === null);
