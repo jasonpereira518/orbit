@@ -97,17 +97,9 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
   const grow = reduced ? { duration: 0 } : { duration: 0.7, ease: EASE_HOUSE };
 
   return (
-    // The panel: the same glass as the steps and FAQ cards, but less transparent
-    // (`feature-poll-panel`, globals.css) so six rows of copy hold up against the starfield,
-    // plus a faint gold bloom from the top edge so the poll reads as one object.
-    // `overflow-hidden` clips the bloom to the rounded corners; the cards inside stay
-    // `overflow-hidden` themselves.
-    <div className="landing-glass feature-poll-panel relative mx-auto w-full max-w-2xl overflow-hidden rounded-3xl p-4 sm:p-6">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(ellipse_at_top,rgba(242,193,78,0.10),transparent_70%)]"
-      />
-      <div role="group" aria-label="Which feature do you want most?" className="relative">
+    // Same deep-navy panel as the referral tracker (`.feature-poll-panel` / shared interest panel).
+    <div className="landing-glass feature-poll-panel mx-auto w-full max-w-2xl rounded-3xl p-4 sm:p-6">
+      <div role="group" aria-label="Which feature do you want most?">
         <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">Feature poll</p>
         <ul className="mt-4 grid gap-3">
           {ordered.map((opt) => {
