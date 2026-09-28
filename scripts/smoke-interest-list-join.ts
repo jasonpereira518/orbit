@@ -166,6 +166,17 @@ async function joinPath() {
   check("duplicate sends nothing", sent.length === 1);
   check("duplicate creates no row", (await db.select().from(interestListSignups).where(like(interestListSignups.email, `${PREFIX}a@%`))).length === 1);
 
+  // --- too-fast on an address already waiting still shows their pass (no name step)
+  const aFast = await joinInterestListCore(
+    { ...base, elapsedMs: 10, email: `${PREFIX}a@example.test` },
+    ctx("a-fast")
+  );
+  check(
+    "too-fast on a known address is still returning with the real pass",
+    aFast.ok && aFast.returning === true && aFast.ticket.shareToken === a.ticket.shareToken
+  );
+  check("too-fast on a known address sends nothing", sent.length === 1);
+
   // --- referral: B joins through A's link
   const b = await joinInterestListCore({ ...base, email: `${PREFIX}b@example.test`, ref: a.ticket.shareToken }, ctx("b"));
   check("referred join is ok", b.ok);
@@ -186,6 +197,7 @@ async function joinPath() {
   const c2 = await joinInterestListCore({ ...base, email: `${PREFIX}c@example.test`, ref: cTicket!.shareToken }, ctx("c"));
   const rowC = await rowFor(`${PREFIX}c@example.test`);
   check("rejoin puts them back in line", c2.ok && rowC?.unsubscribedAt === null);
+  check("rejoin is returning, so the form skips the name step", c2.ok && c2.returning === true);
   check(
     "rejoin keeps the original join time",
     c2.ok && cTicket !== null && c2.ticket.joinedAt === cTicket.joinedAt
