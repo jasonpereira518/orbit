@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatAdminDateTime } from "@/lib/admin-datetime";
 
 /**
  * A relative timestamp ("3d", "2h") with the absolute value in the tooltip.
@@ -10,6 +11,9 @@ import { useEffect, useState } from "react";
  * mismatch — the server renders "2h" and the client, milliseconds later, might render
  * "3h". Rendering the ISO date first and swapping to the relative label after mount is
  * stable, and it degrades to something still readable if JS never runs.
+ *
+ * The hover title is always Eastern Time, 12-hour — same convention as the rest of the
+ * admin console (`formatAdminDateTime`).
  */
 export function RelativeTime({
   date,
@@ -32,9 +36,11 @@ export function RelativeTime({
 
   if (!iso) return <span className="text-muted-foreground">{fallback}</span>;
 
+  const exact = formatAdminDateTime(iso);
+
   return (
-    <time dateTime={iso} title={iso} className="tabular-nums">
-      {label ?? iso.slice(0, 10)}
+    <time dateTime={iso} title={exact} className="tabular-nums">
+      {label ?? exact}
     </time>
   );
 }

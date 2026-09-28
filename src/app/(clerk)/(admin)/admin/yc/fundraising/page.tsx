@@ -21,6 +21,7 @@ import {
   RoundStatusButton,
 } from "@/components/admin/yc/fundraising-forms";
 import { loadFundingTotals } from "@/lib/admin-yc-metrics";
+import { formatAdminDate } from "@/lib/admin-datetime";
 
 export const metadata = { title: "Admin · Funding" };
 
@@ -30,18 +31,11 @@ function usd(value: number) {
 }
 
 /**
- * An expiry date, absolute.
+ * An expiry date is shown absolute via `formatAdminDate`.
  *
  * Deliberately not `RelativeTime`, which counts elapsed time and renders a date in the
  * future as a negative age — an AWS credit good for another 200 days displayed as `-200d`.
  */
-const expiryFormat = new Intl.DateTimeFormat("en-US", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
 const KIND_LABELS: Record<string, string> = {
   credit: "Credits",
   grant: "Grant",
@@ -298,7 +292,7 @@ export default async function FundingPage() {
                     <Td>
                       {row.expiresAt ? (
                         <span className={row.expired ? "text-destructive" : undefined}>
-                          {row.expired ? "expired" : expiryFormat.format(row.expiresAt)}
+                          {row.expired ? "expired" : formatAdminDate(row.expiresAt)}
                         </span>
                       ) : (
                         <span className="text-muted-foreground">—</span>

@@ -8,6 +8,7 @@ import {
   resetOnboardingAction,
   setAccountSuspendedAction,
 } from "@/actions/admin";
+import { formatAdminDateTime } from "@/lib/admin-datetime";
 
 /**
  * The danger zone.
@@ -47,8 +48,8 @@ export function AccountDangerZone({
       {suspendedAt && (
         <p className="rounded-md bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
           Suspended{" "}
-          <span className="tabular-nums">
-            {suspendedAt.toISOString().slice(0, 10)}
+          <span className="tabular-nums" title={formatAdminDateTime(suspendedAt)}>
+            {formatAdminDateTime(suspendedAt)}
           </span>
           {suspendedReason ? ` — ${suspendedReason}` : ""}
         </p>

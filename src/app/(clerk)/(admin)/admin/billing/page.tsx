@@ -12,6 +12,7 @@ import {
   TrendBars,
 } from "@/components/admin/primitives";
 import { MoneyTabs } from "@/components/admin/money-tabs";
+import { formatAdminDate } from "@/lib/admin-datetime";
 import { formatCents } from "@/lib/format-money";
 import {
   ADMIN_AGGREGATES_TTL_MS,
@@ -269,7 +270,7 @@ export default async function AdminMoneyPage() {
                   </Td>
                   <Td numeric>
                     {row.subscriptionPeriodEnd
-                      ? row.subscriptionPeriodEnd.toISOString().slice(0, 10)
+                      ? formatAdminDate(row.subscriptionPeriodEnd)
                       : "—"}
                   </Td>
                   <Td numeric>{row.counts.contacts}</Td>

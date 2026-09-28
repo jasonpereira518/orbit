@@ -14,6 +14,7 @@ import {
 } from "@/components/admin/primitives";
 import { CopyId } from "@/components/admin/copy-id";
 import { requireAdminUserId } from "@/lib/admin";
+import { formatAdminDate } from "@/lib/admin-datetime";
 import { recordAccountView, recordContactView } from "@/lib/admin-operations";
 import { getAdminContactDetail } from "@/lib/admin-user-detail";
 
@@ -100,7 +101,7 @@ export default async function AdminContactDetailPage({
             </DefinitionRow>
             <DefinitionRow label="Next follow-up">
               {detail.nextFollowUpAt
-                ? detail.nextFollowUpAt.toISOString().slice(0, 10)
+                ? formatAdminDate(detail.nextFollowUpAt)
                 : "—"}
             </DefinitionRow>
             <DefinitionRow label="Reminders">{detail.reminderCount}</DefinitionRow>

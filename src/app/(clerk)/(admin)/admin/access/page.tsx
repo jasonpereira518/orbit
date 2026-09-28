@@ -8,24 +8,13 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { InviteForm, InviteRowActions, StealthSwitch } from "@/components/admin/site-access";
+import { formatAdminDateTime } from "@/lib/admin-datetime";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { getSiteMode } from "@/lib/site-access";
 import { listSiteInvites, type SiteInviteRow } from "@/lib/site-invites";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Admin · Access" };
-
-/** Absolute date, spelled out, matching the waitlist roster. */
-function absolute(date: Date) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  }).format(date);
-}
 
 const STATUS_LABEL: Record<SiteInviteRow["status"], string> = {
   pending: "Waiting",
@@ -65,7 +54,9 @@ export default async function AdminAccessPage() {
           <StealthSwitch
             stealth={mode.stealth}
             fromConsole={mode.fromConsole}
-            stealthSinceLabel={mode.stealthSince ? `${absolute(mode.stealthSince)} UTC` : null}
+            stealthSinceLabel={
+              mode.stealthSince ? formatAdminDateTime(mode.stealthSince) : null
+            }
           />
         </AdminPanel>
 
@@ -112,9 +103,7 @@ export default async function AdminAccessPage() {
                     </span>
                   </Td>
                   <Td className="text-muted-foreground">
-                    <span title={`${absolute(invite.createdAt)} UTC`}>
-                      <RelativeTime date={invite.createdAt.toISOString()} /> ago
-                    </span>
+                    <RelativeTime date={invite.createdAt.toISOString()} /> ago
                   </Td>
                   <Td className="text-right">
                     {invite.status === "pending" ? (

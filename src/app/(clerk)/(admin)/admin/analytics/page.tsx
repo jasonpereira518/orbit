@@ -13,6 +13,7 @@ import {
 } from "@/components/admin/primitives";
 import { TrafficTabs } from "@/components/admin/traffic-tabs";
 import { InternalBrowserToggle } from "@/components/admin/internal-browser-toggle";
+import { formatAdminDate } from "@/lib/admin-datetime";
 import {
   ENGAGED_SECONDS,
   RANGES,
@@ -136,7 +137,7 @@ export default async function AdminTrafficPage({
               page view{totals?.views === 1 ? "" : "s"} over {shownDays} day
               {shownDays === 1 ? "" : "s"}
               {window?.clamped && (
-                <> (tracking began {window.from.toISOString().slice(0, 10)})</>
+                <> (tracking began {formatAdminDate(window.from)})</>
               )}{" "}
               · <span className="tabular-nums">{totals?.sessions ?? 0}</span> session
               {totals?.sessions === 1 ? "" : "s"}

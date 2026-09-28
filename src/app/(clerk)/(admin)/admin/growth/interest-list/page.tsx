@@ -17,6 +17,7 @@ import {
   InterestListTable,
   type InterestListTableRow,
 } from "@/components/admin/interest-list-table";
+import { formatAdminDateTime } from "@/lib/admin-datetime";
 import { cn } from "@/lib/utils";
 import { REFERRAL_TIERS, SPOTS_PER_REFERRAL } from "@/lib/interest-list";
 import {
@@ -46,18 +47,6 @@ const FILTERS: Array<{ value: InterestListFilter; label: string }> = [
 /** Who gets in first is the question for the waiting and tier views; who just joined, for the rest. */
 function defaultSort(filter: InterestListFilter): InterestListSort {
   return filter === "all" || filter === "converted" || filter === "unsubscribed" ? "newest" : "position";
-}
-
-/** Absolute date, spelled out. The relative label rides alongside it, not instead of it. */
-function absolute(date: Date) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  }).format(date);
 }
 
 /**
@@ -115,7 +104,7 @@ export default async function AdminInterestListPage({
     id: row.id,
     email: row.email,
     createdAtIso: row.createdAt.toISOString(),
-    createdAtLabel: absolute(row.createdAt),
+    createdAtLabel: formatAdminDateTime(row.createdAt),
     source: sourceLabel(row),
     status: row.unsubscribedAt ? "unsubscribed" : row.converted ? "converted" : "active",
     position: row.position,
