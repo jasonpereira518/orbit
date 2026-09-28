@@ -1,9 +1,13 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { interestListSignups, userSettings } from "@/db/schema";
+import { interestListSignups, userSettings, waitlistPollVotes } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
 import { REFERRAL_TIERS, tierFor, type ReferralTierId } from "@/lib/interest-list";
-import { readStandings, type Standing } from "@/lib/interest-list-ticket";
+import {
+  invalidateInterestProof,
+  readStandings,
+  type Standing,
+} from "@/lib/interest-list-ticket";
 
 /**
  * The waitlist roster: everyone who joined, when, and where they stand in line.
@@ -430,7 +434,11 @@ export async function unsubscribeInterestListRow(
     })
     .where(eq(interestListSignups.id, id))
     .returning();
-  return rows[0] ? { email: rows[0].email } : null;
+  if (!rows[0]) return null;
+  // The public proof memo is module-level; without this the waitlist page keeps counting
+  // them as waiting for up to a minute on this instance.
+  invalidateInterestProof();
+  return { email: rows[0].email };
 }
 
 /**
@@ -448,7 +456,9 @@ export async function resubscribeInterestListRow(
     .set({ unsubscribedAt: null, followUpSentAt: null })
     .where(eq(interestListSignups.id, id))
     .returning();
-  return rows[0] ? { email: rows[0].email } : null;
+  if (!rows[0]) return null;
+  invalidateInterestProof();
+  return { email: rows[0].email };
 }
 
 /**
@@ -458,16 +468,35 @@ export async function resubscribeInterestListRow(
  * which `unsubscribeInterestListRow` does while keeping the acquisition record. Deleting
  * loses the signup date and source permanently, and lets that address rejoin later as a
  * brand-new signup with a fresh planet.
+ *
+ * Child cleanup runs first even though the schema declares no FKs: friends still point at
+ * this id via `referred_by_id`, and a poll vote may still key on `signup:<id>`. Clearing
+ * those keeps the roster and tallies coherent after the row is gone. Broadcast recipient
+ * rows are left alone — they denormalise the address so a send record survives deletion.
  */
 export async function deleteInterestListRow(
   id: string
 ): Promise<{ email: string } | null> {
   const db = await getDb();
-  const rows = await db
-    .delete(interestListSignups)
-    .where(eq(interestListSignups.id, id))
-    .returning();
-  return rows[0] ? { email: rows[0].email } : null;
+  const deleted = await db.transaction(async (tx) => {
+    await tx
+      .update(interestListSignups)
+      .set({ referredById: null })
+      .where(eq(interestListSignups.referredById, id));
+    await tx
+      .delete(waitlistPollVotes)
+      .where(
+        or(eq(waitlistPollVotes.signupId, id), eq(waitlistPollVotes.voterKey, `signup:${id}`))
+      );
+    const rows = await tx
+      .delete(interestListSignups)
+      .where(eq(interestListSignups.id, id))
+      .returning();
+    return rows[0] ?? null;
+  });
+  if (!deleted) return null;
+  invalidateInterestProof();
+  return { email: deleted.email };
 }
 
 /** Ceiling on one bulk action, so a mis-click cannot take out the whole list in one go. */
@@ -490,17 +519,36 @@ export async function bulkUnsubscribeInterestListRows(ids: string[]): Promise<st
     })
     .where(inArray(interestListSignups.id, ids.slice(0, BULK_LIMIT)))
     .returning();
+  if (rows.length > 0) invalidateInterestProof();
   return rows.map((r) => r.email);
 }
 
 export async function bulkDeleteInterestListRows(ids: string[]): Promise<string[]> {
   if (ids.length === 0) return [];
+  const capped = ids.slice(0, BULK_LIMIT);
   const db = await getDb();
-  const rows = await db
-    .delete(interestListSignups)
-    .where(inArray(interestListSignups.id, ids.slice(0, BULK_LIMIT)))
-    .returning();
-  return rows.map((r) => r.email);
+  const emails = await db.transaction(async (tx) => {
+    await tx
+      .update(interestListSignups)
+      .set({ referredById: null })
+      .where(inArray(interestListSignups.referredById, capped));
+    const voterKeys = capped.map((id) => `signup:${id}`);
+    await tx
+      .delete(waitlistPollVotes)
+      .where(
+        or(
+          inArray(waitlistPollVotes.signupId, capped),
+          inArray(waitlistPollVotes.voterKey, voterKeys)
+        )
+      );
+    const rows = await tx
+      .delete(interestListSignups)
+      .where(inArray(interestListSignups.id, capped))
+      .returning();
+    return rows.map((r) => r.email);
+  });
+  if (emails.length > 0) invalidateInterestProof();
+  return emails;
 }
 
 /**
