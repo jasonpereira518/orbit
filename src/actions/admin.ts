@@ -488,6 +488,37 @@ export async function resubscribeInterestListAction(input: {
   return { ok: true, email: restored.email };
 }
 
+/** In-person event signup: adds the row, names on the pass, welcome email names the event. */
+export async function addManualInterestListSignupAction(input: {
+  email: string;
+  firstName: string;
+  lastName: string;
+  eventLabel: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const added = await interestList.addManualInterestListSignup({
+    email: input.email,
+    firstName: input.firstName,
+    lastName: input.lastName,
+    eventLabel: input.eventLabel,
+  });
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.manual_add",
+    resourceType: "interest_list_signup",
+    resourceId: added.id,
+    detail: { email: added.email, eventLabel: input.eventLabel.trim() },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: added.email };
+}
+
 export async function deleteInterestListAction(input: {
   id: string;
   /** Must match the row's address. Guards against deleting whatever was scrolled to. */

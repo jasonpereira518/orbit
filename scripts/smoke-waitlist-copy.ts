@@ -111,11 +111,16 @@ async function main() {
     anchors.join(", ")
   );
   check("welcome: Open your pass button hits the ?me= pass", numbered.html.includes("Open your pass") && passAnchors[0]!.includes("?me=tok"));
-  check("welcome: asks clients not to invert the paper", numbered.html.includes('content="light only"'));
+  check("welcome: asks clients not to invert the night sky", numbered.html.includes('content="dark"'));
   check("welcome: nests a dark pass ticket", numbered.html.includes("Your Orbit pass") && numbered.html.includes("#0e1524"));
   check(
     "welcome: shows the waitlist Orbit mark",
     numbered.html.includes(`src="https://${WAITLIST}/waitlist/logo.png"`)
+  );
+  check(
+    "welcome: twinkles via the hosted starfield GIF",
+    numbered.html.includes(`src="https://${WAITLIST}/waitlist/starfield.gif"`) &&
+      numbered.html.includes(`background-color:#05070f`)
   );
   const unnumbered = email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: null });
   check(

@@ -10,8 +10,8 @@ import { z } from "zod";
 import { RESERVED_WAITLIST_SLUGS } from "@/lib/waitlist-host";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
 
-/** A bot fills a form faster than a person can read it. */
-export const MIN_FILL_MS = 2500;
+/** Kept for callers that still send `elapsedMs`; no minimum wait is enforced on join. */
+export const MIN_FILL_MS = 0;
 
 /** Below this many people on the waitlist the proof line shows no count at all. */
 export const INTEREST_LIST_COUNT_FLOOR = 50;
@@ -160,6 +160,22 @@ export const interestNameSchema = z.object({
 });
 
 export type InterestNameInput = z.input<typeof interestNameSchema>;
+
+/** Operator-added signup from an in-person event (admin console). */
+export const SIGNUP_EVENT_LABEL_MAX = 120;
+
+export const adminManualInterestListSchema = z.object({
+  email: z.email("That address doesn't look right.").max(160),
+  firstName: z.string().trim().min(1, "First name is required.").max(NAME_MAX),
+  lastName: z.string().trim().min(1, "Last name is required.").max(NAME_MAX),
+  eventLabel: z
+    .string()
+    .trim()
+    .min(2, "Event name is required.")
+    .max(SIGNUP_EVENT_LABEL_MAX),
+});
+
+export type AdminManualInterestListInput = z.infer<typeof adminManualInterestListSchema>;
 
 /** `ok` for a real save, a repeat and an unknown token alike — see `saveInterestListNameCore`. */
 export type InterestNameResult = { ok: true } | { ok: false; message: string };

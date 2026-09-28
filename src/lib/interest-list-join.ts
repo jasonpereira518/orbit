@@ -19,7 +19,6 @@ import { getWaitlistPageUrl } from "@/lib/app-url";
 import { ipLogTag } from "@/lib/log-redaction";
 import type { Attribution } from "@/lib/attribution-parse";
 import {
-  MIN_FILL_MS,
   REFERRAL_TIERS,
   type ReferralTier,
   buildShareUrl,
@@ -43,6 +42,7 @@ import {
   getInterestProof,
   invalidateInterestProof,
   invalidateProgress,
+  recordPassCheck,
   refMatch,
   ticketForRow,
 } from "@/lib/interest-list-ticket";
@@ -55,7 +55,8 @@ export type WelcomeSender = (
   planet: WelcomePlanet,
   links: EmailLinks,
   /** Place in line, or null when it could not be counted. */
-  position: number | null
+  position: number | null,
+  signupEventLabel?: string | null
 ) => Promise<unknown>;
 
 /** Mails a referrer whose friends just unlocked a referral tier. */
@@ -86,9 +87,9 @@ export function generateShareToken() {
 }
 
 /**
- * What a bot, a too-fast fill or a rate-limited caller sees: the back of the line, the
- * next planet, and a token that exists nowhere. Indistinguishable in shape from a real
- * ticket; resolves to nothing if followed.
+ * What a bot or a rate-limited caller sees: the back of the line, the next planet, and a
+ * token that exists nowhere. Indistinguishable in shape from a real ticket; resolves to
+ * nothing if followed.
  */
 async function plausibleTicket(): Promise<InterestTicket> {
   const proof = await getInterestProof();
@@ -117,13 +118,10 @@ export async function joinInterestListCore(
   // 2. Validation — the one path with a visible error.
   const parsed = interestListSchema.safeParse(input);
   if (!parsed.success) return { ok: false, message: FORMAT_ERROR };
-  const { elapsedMs, ref } = parsed.data;
+  const { ref } = parsed.data;
   const email = parsed.data.email.trim().toLowerCase();
 
-  // 3. Faster than a person can read the form.
-  if (elapsedMs < MIN_FILL_MS) return { ok: true, ticket: await plausibleTicket(), returning: false };
-
-  // 4. Rate limit. A limiter that cannot count must not fail open into the write, and must
+  // 3. Rate limit. A limiter that cannot count must not fail open into the write, and must
   //    not break a real person's signup either — so any throw is the fake ticket.
   try {
     await consumeBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
@@ -271,7 +269,8 @@ export async function joinInterestListCore(
         // The ticket read claimed the slug; without it the link falls back to the token.
         shareUrl: buildShareUrl(pageUrl, { referralSlug: ticket?.referralSlug, shareToken: row.shareToken }),
       },
-      ticket?.position ?? null
+      ticket?.position ?? null,
+      row.signupEventLabel
     );
   }
   if (!ticket) throw ticketError;
@@ -280,6 +279,11 @@ export async function joinInterestListCore(
   if (credited && referrer && !referrer.unsubscribedAt && referrer.shareToken) {
     await notifyIfTierUnlocked(referrer as typeof referrer & { shareToken: string }, ctx);
   }
+
+  // Seeing the pass after submitting an address is a check — same moment as opening `?me=`.
+  void recordPassCheck(row.shareToken).catch((err: unknown) => {
+    console.error("[interest-list] pass check failed", err);
+  });
 
   return { ok: true, ticket, returning: Boolean(existing) };
 }

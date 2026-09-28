@@ -17,6 +17,7 @@ import {
   InterestListTable,
   type InterestListTableRow,
 } from "@/components/admin/interest-list-table";
+import { InterestListManualAddForm } from "@/components/admin/interest-list-manual-add";
 import { cn } from "@/lib/utils";
 import { REFERRAL_TIERS, SPOTS_PER_REFERRAL } from "@/lib/interest-list";
 import {
@@ -121,6 +122,8 @@ export default async function AdminInterestListPage({
     position: row.position,
     joinRank: row.joinRank,
     referrals: row.referrals,
+    passCheckCount: row.passCheckCount,
+    passLastCheckedAtIso: row.passLastCheckedAt?.toISOString() ?? null,
     tierLabel: row.tier && row.tier !== "joined" ? (REFERRAL_TIERS.find((t) => t.id === row.tier)?.label ?? null) : null,
     planet: row.welcomePlanet,
   }));
@@ -202,6 +205,10 @@ export default async function AdminInterestListPage({
 
       <AdminPanel title="Product demo" className="mb-6 p-4">
         <WaitlistDemoSwitch enabled={demoEnabled} />
+      </AdminPanel>
+
+      <AdminPanel title="Add from event" className="mb-6 p-4">
+        <InterestListManualAddForm />
       </AdminPanel>
 
       <div className="mb-6 grid gap-6 lg:grid-cols-2">

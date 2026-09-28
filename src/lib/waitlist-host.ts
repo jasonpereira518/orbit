@@ -100,7 +100,8 @@ export function hostMatchValue(host: string) {
  * - `api/interest-list/unsubscribe`, `/ticket-image` and `/progress`: the email's leave
  *   link, the share image and the referral tracker's poll. `api/track`: the page-view beacon. `api/csp-report`: the waitlist
  *   CSP's report target. `_vercel/`: Vercel's analytics.
- * - `landing/planets/` and `waitlist/`: the planet art and the waitlist's favicon.
+ * - `landing/planets/` and `waitlist/`: the planet art, the waitlist favicon / logo mark,
+ *   and the email starfield GIF.
  * - `favicon.ico`, `icon.png`, `apple-icon.png`: the root layout's file-based icons, which
  *   every page links. They are rewritten to the waitlist's icon below.
  * - `monitoring`: Sentry's tunnel, if one is ever configured. `__nextjs`: the dev overlay.
@@ -129,10 +130,18 @@ export const WAITLIST_ALLOWED_PATHS = [
 /**
  * Segments of `/waitlist/<slug>` that are something else: the waitlist's favicon file lives
  * at `/waitlist/icon.png` (see `WAITLIST_ALLOWED_PATHS`), the page header's logo mark lives at
- * `/waitlist/logo.png`, and `/waitlist/privacy` is the local-development preview of the notice.
+ * `/waitlist/logo.png`, the welcome email's starfield at `/waitlist/starfield.gif`, and
+ * `/waitlist/privacy` is the local-development preview of the notice.
  * A person's referral slug is never one of these (`slugFromEmail` swaps them for a neutral name).
  */
-export const RESERVED_WAITLIST_SLUGS = ["privacy", "icon.png", "logo.png", "favicon.ico", "apple-icon.png"] as const;
+export const RESERVED_WAITLIST_SLUGS = [
+  "privacy",
+  "icon.png",
+  "logo.png",
+  "starfield.gif",
+  "favicon.ico",
+  "apple-icon.png",
+] as const;
 
 /** The path-to-regexp pattern of a referral slug: one URL-safe segment, not a reserved one. */
 const SLUG_PATTERN = `(?!${RESERVED_WAITLIST_SLUGS.map((s) => `${escapeRegex(s)}$`).join("|")})[A-Za-z0-9][A-Za-z0-9._-]*`;

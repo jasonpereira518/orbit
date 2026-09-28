@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MailX, Trash2 } from "lucide-react";
 import { AdminTable, RelativeTime, Td, Th } from "@/components/admin/primitives";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
@@ -35,6 +35,10 @@ export type InterestListTableRow = {
   /** Label of the referral tier they hold, once they hold one (0 referrals holds none). */
   tierLabel: string | null;
   planet: string | null;
+  /** Times they opened their own pass. */
+  passCheckCount: number;
+  /** ISO of the most recent pass open, or null if never. */
+  passLastCheckedAtIso: string | null;
 };
 
 /** Spots gained on join order: `+25` moved up, `−3` passed by others, `—` where nothing moved. */
@@ -48,6 +52,61 @@ function MovedCell({ position, joinRank }: { position: number | null; joinRank: 
   ) : (
     <span className="text-muted-foreground">−{Math.abs(moved).toLocaleString("en-US")}</span>
   );
+}
+
+/**
+ * Check count with "how long ago was the last one" in the hover title.
+ *
+ * The title is relative and client-driven for the same purity/hydration reason as
+ * `RelativeTime`: a relative label is a function of "now".
+ */
+function PassChecksCell({
+  count,
+  lastCheckedAtIso,
+}: {
+  count: number;
+  lastCheckedAtIso: string | null;
+}) {
+  const [ago, setAgo] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lastCheckedAtIso) {
+      setAgo(null);
+      return;
+    }
+    const update = () => setAgo(relativeAgoLabel(new Date(lastCheckedAtIso)));
+    update();
+    const timer = setInterval(update, 60_000);
+    return () => clearInterval(timer);
+  }, [lastCheckedAtIso]);
+
+  const title = !lastCheckedAtIso
+    ? "Never checked their pass"
+    : ago
+      ? `Last checked ${ago}`
+      : undefined;
+
+  return (
+    <span
+      className={cn("tabular-nums", count === 0 && "text-muted-foreground/50")}
+      title={title}
+    >
+      {count.toLocaleString("en-US")}
+    </span>
+  );
+}
+
+/** Same compact relative labels as `RelativeTime`, with an "ago" suffix for title copy. */
+function relativeAgoLabel(d: Date): string {
+  const diff = Date.now() - d.getTime();
+  const mins = Math.round(diff / 60_000);
+  if (Math.abs(mins) < 1) return "just now";
+  if (Math.abs(mins) < 60) return `${mins}m ago`;
+  const hours = Math.round(diff / 3_600_000);
+  if (Math.abs(hours) < 24) return `${hours}h ago`;
+  const days = Math.round(diff / 86_400_000);
+  if (Math.abs(days) < 365) return `${days}d ago`;
+  return `${Math.round(days / 365)}y ago`;
 }
 
 const BULK_BUTTON =
@@ -155,6 +214,7 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
             <Th numeric>Moved</Th>
             <Th>Email</Th>
             <Th numeric>Referrals</Th>
+            <Th numeric>Checks</Th>
             <Th>Signed up</Th>
             <Th>Source</Th>
             <Th>Status</Th>
@@ -192,6 +252,12 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
             <Td className="font-medium text-ink">{row.email}</Td>
             <Td numeric className={row.referrals === 0 ? "text-muted-foreground/50" : undefined}>
               {row.referrals}
+            </Td>
+            <Td numeric>
+              <PassChecksCell
+                count={row.passCheckCount}
+                lastCheckedAtIso={row.passLastCheckedAtIso}
+              />
             </Td>
             <Td>
               {/* Absolute first — "when did they join" is the question, and a relative

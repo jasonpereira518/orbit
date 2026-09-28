@@ -3752,6 +3752,18 @@ export const interestListSignups = pgTable(
      * after someone leaves, so their old link cannot be re-issued to a stranger.
      */
     referralSlug: text("referral_slug"),
+    /**
+     * How many times this person opened their own pass (`?me=` / re-entered their email to
+     * see standing). Debounced in `recordPassCheck` so a refresh or the progress poll cannot
+     * inflate it. Null `passLastCheckedAt` means they have never come back to look.
+     */
+    passCheckCount: integer("pass_check_count").default(0).notNull(),
+    passLastCheckedAt: timestamp("pass_last_checked_at", { withTimezone: true }),
+    /**
+     * When an operator adds someone from an in-person event, the event name shown in the
+     * welcome email ("you filled out the interest form at …"). Null for ordinary web signups.
+     */
+    signupEventLabel: text("signup_event_label"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
