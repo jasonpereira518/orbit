@@ -5,6 +5,7 @@ import { AgentDraftsCard } from "@/components/dashboard/agent-drafts-card";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
+  MorningBriefingSection,
   OutreachPerformanceSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
@@ -20,7 +21,7 @@ import { listPendingAgentSends } from "@/lib/agent-sends";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { RenderStamp } from "@/components/layout/render-stamp";
-import { fetchRadarPreview } from "@/actions/radar";
+import { fetchRadarBriefing } from "@/actions/radar";
 
 async function AgentDraftsSection() {
   const drafts = await listPendingAgentSends(await requireUserId());
@@ -40,13 +41,12 @@ export default async function DashboardPage() {
   const { hidden, comingSoon } = await resolveSurfaceVisibility(await requireUserId());
   const show = (key: string) => !hidden.has(key);
 
-  // Radar's top cards take the suggestions slot for viewers who can see Radar. Started only
-  // for them, so everyone else pays nothing, and never awaited ahead of the bundle.
-  const radarPreview =
-    show("dashboard.suggested-outreach") && !hidden.has("page.radar") && !comingSoon.has("page.radar")
-      ? fetchRadarPreview()
-      : null;
-  radarPreview?.catch(() => {});
+  // Radar's morning briefing leads the page for viewers who can open Radar, and takes over
+  // from the suggestions card once their first run exists. Started only for them, so
+  // everyone else pays nothing, and never awaited ahead of the bundle.
+  const radarBriefing =
+    !hidden.has("page.radar") && !comingSoon.has("page.radar") ? fetchRadarBriefing() : null;
+  radarBriefing?.catch(() => {});
 
   // The outreach summary streams independently, and is not started at all when its card
   // is hidden — it is the one query on this page that no other card shares.
@@ -62,6 +62,12 @@ export default async function DashboardPage() {
     <div className="space-y-8">
       <RenderStamp />
       <DashboardHeader />
+
+      {radarBriefing && (
+        <Suspense fallback={<DashboardCardSkeleton className="h-48" />}>
+          <MorningBriefingSection briefing={radarBriefing} />
+        </Suspense>
+      )}
 
       {/* Above every other card, and outside the surface-visibility switches: a message
           waiting to go out is the only thing on this page that needs a decision rather
@@ -99,12 +105,14 @@ export default async function DashboardPage() {
           empty column behind, stranding Suggested outreach at half width next to a hole.
           A Suspense boundary renders no DOM node, so with flex the survivor just fills. */}
       {showSuggestedRow && (
-        <div className="flex flex-col items-stretch gap-6 lg:flex-row">
+        // `empty:hidden`: for a Radar viewer the suggestions card steps aside for the
+        // briefing, and with no outreach card either the row would be an empty band.
+        <div className="flex flex-col items-stretch gap-6 empty:hidden lg:flex-row">
           {show("dashboard.suggested-outreach") && (
             <Suspense
               fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
             >
-              <SuggestedOutreachSection bundle={bundle} radar={radarPreview} />
+              <SuggestedOutreachSection bundle={bundle} radar={radarBriefing} />
             </Suspense>
           )}
           {outreachSummary && (

@@ -12,6 +12,7 @@ import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { RADAR_WINDOWS, type RadarPick, type RadarSuppression } from "@/lib/radar/score";
 import type {
+  RadarAutopilotAction,
   RadarDraft,
   RadarAiNote,
   RadarEvidence,
@@ -303,6 +304,9 @@ export type RecommendationRow = {
   avatarUrl: string | null;
   lastInteractionAt: Date | null;
   updatedAt: Date;
+  createdAt: Date;
+  /** When the person first had it on screen; null for a card they haven't seen yet. */
+  firstSeenAt: Date | null;
 };
 
 /**
@@ -330,9 +334,12 @@ export async function listPendingRecommendations(userId: string, limit: number):
     avatar_url: string | null;
     last_interaction_at: string | Date | null;
     updated_at: string | Date;
+    created_at: string | Date;
+    first_seen_at: string | Date | null;
   }>(
     await db.execute(sql`
       SELECT r.id, r.contact_id, r.kind, r.score, r.bucket, r.reasons, r.evidence, r.ai_note, r.ai_angle, r.updated_at,
+             r.created_at, r.first_seen_at,
              CASE WHEN r.draft ->> 'inputsHash' = r.inputs_hash THEN r.draft END AS draft,
              contacts.full_name, contacts.preferred_name, contacts.title, contacts.company,
              contacts.closeness_tier, contacts.last_interaction_at,
@@ -363,6 +370,53 @@ export async function listPendingRecommendations(userId: string, limit: number):
     avatarUrl: r.avatar_url,
     lastInteractionAt: r.last_interaction_at ? new Date(r.last_interaction_at) : null,
     updatedAt: new Date(r.updated_at),
+    createdAt: new Date(r.created_at),
+    firstSeenAt: r.first_seen_at ? new Date(r.first_seen_at) : null,
+  }));
+}
+
+export type AutopilotActionRow = {
+  id: string;
+  contactId: string;
+  contactName: string;
+  kind: RecommendationKind;
+  /** The follow-up autopilot set, and when. */
+  dueDate: string | null;
+  at: Date;
+};
+
+/**
+ * What autopilot did for this account in the last `days`: the cards it acted on, newest
+ * first, for the "Autopilot did this" strip and its Undo. One statement.
+ */
+export async function listAutopilotActions(userId: string, days = 7, limit = 10): Promise<AutopilotActionRow[]> {
+  const db = await getDb();
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const rows = rowsOf<{
+    id: string;
+    contact_id: string;
+    kind: RecommendationKind;
+    autopilot: RadarAutopilotAction | null;
+    acted_at: string | Date;
+    full_name: string;
+    preferred_name: string | null;
+  }>(
+    await db.execute(sql`
+      SELECT r.id, r.contact_id, r.kind, r.autopilot, r.acted_at, c.full_name, c.preferred_name
+        FROM recommendations r
+        JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
+       WHERE r.user_id = ${userId} AND r.status = 'auto_applied' AND r.acted_at > ${since}::timestamptz
+       ORDER BY r.acted_at DESC, r.id
+       LIMIT ${limit}
+    `)
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    contactId: r.contact_id,
+    contactName: (r.preferred_name ?? "").trim() || r.full_name,
+    kind: r.kind,
+    dueDate: r.autopilot?.dueDate ?? null,
+    at: new Date(r.acted_at),
   }));
 }
 

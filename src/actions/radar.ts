@@ -23,7 +23,7 @@ import {
   type SnoozeLength,
 } from "@/lib/radar/actions-core";
 import { explainRecommendation } from "@/lib/radar/explain";
-import { loadRadarPage, loadRadarPreview, type RadarPageData, type RadarPreview } from "@/lib/radar/page-data";
+import { loadRadarBriefing, loadRadarPage, type RadarBriefing, type RadarPageData } from "@/lib/radar/page-data";
 import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, runRadarForUser } from "@/lib/radar/run";
 import { markRecommendationsSeen } from "@/lib/radar/store";
 import { getDb } from "@/db";
@@ -64,18 +64,18 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
 }
 
 /**
- * The dashboard's Radar card. Never blocks the dashboard on a build: an account that has
- * never run gets its first build after the response and keeps the legacy card until then.
+ * The dashboard's morning briefing. Never blocks the dashboard on a build: an account that
+ * has never run gets its first build after the response and keeps the legacy card until then.
  */
-export async function fetchRadarPreview(): Promise<RadarPreview> {
+export async function fetchRadarBriefing(): Promise<RadarBriefing> {
   const userId = await requireUserForSurface(SURFACE);
-  const preview = await loadRadarPreview(userId);
-  const shown = preview.items.map((r) => r.id);
+  const briefing = await loadRadarBriefing(userId);
+  const shown = briefing.top.map((r) => r.id);
   after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
   after(() =>
-    (preview.hasRun ? maybeRefreshRadar(userId) : ensureRadarRun(userId).then(() => undefined)).catch(() => undefined)
+    (briefing.hasRun ? maybeRefreshRadar(userId) : ensureRadarRun(userId).then(() => undefined)).catch(() => undefined)
   );
-  return preview;
+  return briefing;
 }
 
 export type RadarActionResult = { ok: true; message?: string } | { ok: false; message: string };
@@ -194,4 +194,13 @@ export async function setRadarDigest(on: boolean): Promise<RadarActionResult> {
   revalidateRadar();
   revalidatePathIfRequestScoped("/settings");
   return { ok: true, message: on ? "Monday email on" : "Monday email off" };
+}
+
+/** Whether the extension may save LinkedIn posts by known contacts as Radar activity. */
+export async function setRadarCaptureLinkedin(on: boolean): Promise<RadarActionResult> {
+  const userId = await requireUserForSurface(SURFACE);
+  const db = await getDb();
+  await db.update(userSettings).set({ radarCaptureLinkedinActivity: on ? 1 : 0 }).where(eq(userSettings.userId, userId));
+  revalidateRadar();
+  return { ok: true, message: on ? "The extension can save LinkedIn posts to Radar" : "LinkedIn post saving off" };
 }

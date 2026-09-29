@@ -1003,6 +1003,10 @@ export function RadarPageSkeleton() {
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
       <div className="space-y-3">
+        {/* A first visit builds the list while this shows, so it says what it is reading. */}
+        <p className="text-sm text-muted-foreground" role="status">
+          Reading your meetings, messages, follow-ups and news…
+        </p>
         <Skeleton className="h-8 w-full rounded-lg" />
         <Skeleton className="h-6 w-24 rounded-md" />
         {Array.from({ length: 4 }).map((_, i) => (

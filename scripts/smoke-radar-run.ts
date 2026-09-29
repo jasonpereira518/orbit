@@ -56,7 +56,7 @@ import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { getAttentionBrief } from "../src/lib/chat-attention";
 import { isSurfaceLive } from "../src/lib/surface-visibility";
 import { COMING_SOON_KEYS } from "../src/lib/surfaces";
-import { loadRadarPreview } from "../src/lib/radar/page-data";
+import { loadRadarBriefing } from "../src/lib/radar/page-data";
 import { applyAutopilot, undoAutopilotForUser } from "../src/lib/radar/autopilot";
 import { draftChannel, draftTodayForRun } from "../src/lib/radar/drafts";
 import { openRadarAi } from "../src/lib/radar/explain";
@@ -399,8 +399,16 @@ run(async () => {
     const panel = await loadNotificationPanel(USER, new Date(), { withAlerts: false, radar: true });
     check("the bell summarises Radar in one line", panel.radar?.count === live.length && (panel.radar?.names.length ?? 0) <= 3, JSON.stringify(panel.radar));
     check("and never as a due item", !panel.items.some((i) => i.url === "/radar"));
-    const preview = await loadRadarPreview(USER);
-    check("the dashboard previews the top four", preview.hasRun && preview.items.length === Math.min(4, live.length) && preview.total === live.length);
+    const briefing = await loadRadarBriefing(USER);
+    check(
+      "the dashboard's briefing leads with the top three",
+      briefing.hasRun &&
+        briefing.top.length === Math.min(3, live.length) &&
+        briefing.top.every((r, i, all) => i === 0 || all[i - 1]!.score >= r.score) &&
+        briefing.total === live.length,
+      briefing.top.map((r) => `${r.contactName}:${r.score}`).join(", ")
+    );
+    check("and never counts more drafts than cards", briefing.drafts >= 0 && briefing.drafts <= live.length);
     const radarIds = new Set(live.map((r) => r.contactId));
     startQueryCount();
     await getAttentionBrief(USER);

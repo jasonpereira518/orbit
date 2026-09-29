@@ -39,6 +39,8 @@ import {
   multiplierFrom,
 } from "../src/lib/radar/model";
 import type { RadarSignal, RecommendationKind } from "../src/lib/radar/types";
+import { cardLine, draftsReady, whatChanged, WHAT_CHANGED_MAX } from "../src/lib/radar/briefing";
+import { radarKeyFor } from "../src/lib/radar/focus-keys";
 import { APP_NAV, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
 import { COMING_SOON_KEYS, surfaceForPathname } from "../src/lib/surfaces";
 import { ROUTE_PATTERNS } from "../src/lib/analytics-routes";
@@ -456,6 +458,58 @@ function main() {
   }
 }
 
+function briefingAndKeys() {
+  console.log("\nthe briefing, and focus mode's keys");
+  const now = new Date("2031-03-03T08:00:00Z");
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000);
+  const row = (id: string, code: string, points: number, createdHoursAgo: number, seen: boolean) => ({
+    id,
+    contactId: `c-${id}`,
+    contactName: id.toUpperCase(),
+    kind: "heads_up" as const,
+    reasons: [
+      { code: "tier", label: "Inner circle", points: 5 },
+      { code, label: `${code} line`, points },
+    ],
+    createdAt: hoursAgo(createdHoursAgo),
+    firstSeenAt: seen ? hoursAgo(1) : null,
+  });
+  const changes = whatChanged(
+    [
+      row("a", "job_change", 30, 200, false),
+      row("b", "company_news", 20, 200, true),
+      row("c", "company_news", 20, 10, true),
+      row("d", "dormant", 30, 1, false),
+      row("e", "social_post", 0, 1, false),
+    ],
+    now
+  );
+  check("an unseen job move is news", changes.some((c) => c.id === "a" && c.label === "job_change line"));
+  check("a headline already seen days ago is not", !changes.some((c) => c.id === "b"));
+  check("a headline from last night is, even once seen", changes.some((c) => c.id === "c"));
+  check("a card with no outside signal is not", !changes.some((c) => c.id === "d"));
+  check("a signal that scored nothing is not", !changes.some((c) => c.id === "e"));
+  const many = whatChanged(Array.from({ length: 9 }, (_, i) => row(`m${i}`, "social_post", 12, 1, false)), now);
+  check("at most a handful of lines", many.length === WHAT_CHANGED_MAX && many[0]!.id === "m0");
+
+  const reasons = [{ code: "dormant", label: "Quiet for 7 months", points: 30 }];
+  check("a card leads with the AI's why", cardLine({ reasons, aiNote: { why: "She asked about the launch" }, aiAngle: "x" }) === "She asked about the launch");
+  check("then the rerank's angle", cardLine({ reasons, aiNote: null, aiAngle: "Her team just shipped" }) === "Her team just shipped");
+  check("then the scorer's lead reason", cardLine({ reasons, aiNote: null, aiAngle: null }) === "Quiet for 7 months");
+  check("and nothing when there is nothing to say", cardLine({ reasons: [], aiNote: null }) === null);
+  check("drafts are counted", draftsReady([{ draft: { body: "b", channel: "email", inputsHash: "h", generatedAt: "t" } }, { draft: null }, {}]) === 1);
+
+  const key = (k: string, over: Partial<Parameters<typeof radarKeyFor>[0]> = {}) =>
+    radarKeyFor({ key: k, metaKey: false, ctrlKey: false, altKey: false, targetTag: "body", targetEditable: false, overlayOpen: false, ...over });
+  check("j and k move", key("j") === "next" && key("k") === "prev" && key("ArrowRight") === "next");
+  check("s schedules, d drafts, z snoozes, x dismisses", key("s") === "schedule" && key("d") === "draft" && key("z") === "snooze" && key("x") === "dismiss");
+  check("typing in a field is left alone", key("s", { targetTag: "input" }) === null && key("x", { targetTag: "textarea" }) === null);
+  check("so is an editable element", key("d", { targetEditable: true }) === null);
+  check("an open menu or sheet owns the keyboard", key("x", { overlayOpen: true }) === null);
+  check("a modified key is someone else's shortcut", key("s", { metaKey: true }) === null && key("k", { ctrlKey: true }) === null);
+  check("an unmapped key does nothing", key("q") === null && key("Enter") === null);
+}
+
 function registration() {
   console.log("\nthe page is registered everywhere a route must be");
   check("the surface registry maps /radar to page.radar", surfaceForPathname("/radar")?.key === "page.radar");
@@ -467,6 +521,7 @@ function registration() {
 }
 
 main();
+briefingAndKeys();
 registration();
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

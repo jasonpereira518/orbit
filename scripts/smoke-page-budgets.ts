@@ -48,7 +48,7 @@ import { scaleContactRows } from "./lib/scale-fixture";
 import { loadKnowledgeBase } from "../src/lib/knowledge-base";
 import { radarRuns, userSettings } from "../src/db/schema";
 import { claimRadarLease, runRadarForUser } from "../src/lib/radar/run";
-import { loadRadarPage, loadRadarPreview } from "../src/lib/radar/page-data";
+import { loadRadarBriefing, loadRadarPage } from "../src/lib/radar/page-data";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-page-budgets-user";
@@ -274,17 +274,19 @@ async function main() {
   const radarPage = await loadRadarPage(USER);
   const radarPageCount = stopQueryCount();
   console.log(`  page statements: ${radarPageCount}`);
-  check("radar page issues ≤ 5 statements", radarPageCount <= 5, `got ${radarPageCount}`);
+  // 5: the list, one settings read (which also answers "anyone in the network?" and "signals
+  // this week"), the AI key check (two), and what autopilot did. The plan's ceiling is 6.
+  check("radar page issues ≤ 6 statements", radarPageCount <= 6, `got ${radarPageCount}`);
   const radarJson = JSON.stringify(radarPage);
   check("radar page payload carries no inline base64", !radarJson.includes("data:image/"));
   check("radar page payload under 100 KB", radarJson.length < 100_000, `${(radarJson.length / 1024).toFixed(0)} KB`);
   startQueryCount();
-  const radarPreview = await loadRadarPreview(USER);
-  const radarPreviewCount = stopQueryCount();
-  // The dashboard's Radar card is its own load, started beside the dashboard bundle, so the
-  // dashboard's own budget above does not move.
-  check("dashboard's Radar card issues ≤ 2 statements", radarPreviewCount <= 2, `got ${radarPreviewCount}`);
-  check("and shows at most four cards", radarPreview.hasRun && radarPreview.items.length <= 4);
+  const briefing = await loadRadarBriefing(USER);
+  const briefingCount = stopQueryCount();
+  // The dashboard's morning briefing is its own load, started beside the dashboard bundle,
+  // so the dashboard's own budget above does not move. The plan's ceiling is 3.
+  check("dashboard's morning briefing issues ≤ 3 statements", briefingCount <= 3, `got ${briefingCount}`);
+  check("and shows at most three people", briefing.hasRun && briefing.top.length <= 3);
 
   // ---- Graph -------------------------------------------------------------------------
   console.log("\nConstellation (loadGraphData)…");
