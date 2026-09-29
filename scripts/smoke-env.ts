@@ -66,9 +66,20 @@ function main() {
     "test-mode Stripe key in production is an error",
     prod({ STRIPE_SECRET_KEY: "sk_test_x" }).errors.some((e) => e.includes("STRIPE_SECRET_KEY"))
   );
+  // Pricing v2 resolves prices by lookup key, so a missing price-id variable must NOT block
+  // a production deploy (the env gate turns any error here into a failed build).
   check(
-    "Stripe key without all four price ids is an error",
-    prod({ STRIPE_PRO_ANNUAL_PRICE_ID: undefined }).errors.some((e) => e.includes("STRIPE_PRO_ANNUAL_PRICE_ID"))
+    "no price-id variable is required any more",
+    !prod({
+      STRIPE_PRO_ANNUAL_PRICE_ID: undefined,
+      STRIPE_PRO_MONTHLY_PRICE_ID: undefined,
+      STRIPE_LIFETIME_PRICE_ID: undefined,
+      STRIPE_LIFETIME_STANDARD_PRICE_ID: undefined,
+    }).errors.some((e) => e.includes("PRICE_ID"))
+  );
+  check(
+    "a Stripe key still needs its webhook secret",
+    prod({ STRIPE_WEBHOOK_SECRET: undefined }).errors.some((e) => e.includes("STRIPE_WEBHOOK_SECRET"))
   );
   check(
     "no Stripe at all is allowed (checkout hides itself)",

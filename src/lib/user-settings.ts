@@ -215,8 +215,10 @@ function epochToDate(value: number | null | undefined): Date | null {
 }
 
 export type SubscriptionMirror = {
-  plan: "orbit" | null;
+  plan: "orbit" | "max" | null;
   status: "active" | "past_due" | "canceled" | null;
+  /** Epoch seconds. Optional: omitting it leaves the stored period start alone. */
+  periodStart?: number | null;
   periodEnd: number | null;
   /**
    * What the subscription is worth per month, in cents. Optional so existing callers keep
@@ -254,6 +256,9 @@ export async function setSubscriptionState(
       subscriptionPlan: mirror.plan,
       subscriptionStatus: mirror.status,
       subscriptionPeriodEnd: epochToDate(mirror.periodEnd),
+      ...(mirror.periodStart !== undefined
+        ? { subscriptionPeriodStart: epochToDate(mirror.periodStart) }
+        : {}),
       ...(mirror.monthlyCents !== undefined
         ? { subscriptionMonthlyCents: mirror.monthlyCents }
         : {}),
@@ -284,11 +289,51 @@ export async function setSubscriptionState(
       after: updated,
       eventKey:
         opts.eventKey ??
-        `subscription:${userId}:${mirror.status ?? "none"}:${mirror.periodEnd ?? "none"}`,
+        // The plan is part of the key: a Pro -> Max upgrade keeps the status and the period
+        // end, and must still be able to celebrate.
+        `subscription:${userId}:${mirror.plan ?? "none"}:${mirror.status ?? "none"}:${mirror.periodEnd ?? "none"}`,
     });
   }
 
   return updated;
+}
+
+/**
+ * Link a Stripe customer to the account when none is linked yet (a pack bought before any
+ * subscription). Never replaces an existing link: that customer carries the subscription.
+ */
+export async function setStripeCustomerId(userId: string, customerId: string) {
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ stripeCustomerId: sql`coalesce(${userSettings.stripeCustomerId}, ${customerId})` })
+    .where(eq(userSettings.userId, userId));
+}
+
+/**
+ * Record that this account has used its founding price. The FIRST redemption wins for the
+ * timestamp and the subscription id — the coupon applies to the account's first paid
+ * subscription only — while the window end may be filled in (or moved by a tier switch)
+ * later, once the subscription's real start date is known.
+ */
+export async function recordFoundingRedemption(
+  userId: string,
+  founding: { subscriptionId: string | null; windowEndsAt: number | null }
+) {
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({
+      foundingRedeemedAt: sql`coalesce(${userSettings.foundingRedeemedAt}, now())`,
+      foundingSubscriptionId: founding.subscriptionId
+        ? sql`coalesce(${userSettings.foundingSubscriptionId}, ${founding.subscriptionId})`
+        : sql`${userSettings.foundingSubscriptionId}`,
+      ...(founding.windowEndsAt !== null
+        ? { foundingWindowEndsAt: epochToDate(founding.windowEndsAt) }
+        : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(userSettings.userId, userId));
 }
 
 /**

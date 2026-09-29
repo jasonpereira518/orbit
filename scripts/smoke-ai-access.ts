@@ -37,8 +37,7 @@ process.env.ORBIT_MANAGED_GEMINI_API_KEY = "managed-gemini-key";
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type Stripe from "stripe";
-import { and, eq, inArray, like } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { billingEvents, errorEvents, rateLimitBuckets, usageEvents, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
@@ -86,8 +85,6 @@ import {
 import { __clearEmbeddingCacheForTests, defaultResolveScope, getQueryEmbedding } from "../src/lib/embedding-cache";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { friendlyError, isMissingAiApiKeyError } from "../src/lib/errors";
-import { confirmLifetimeCheckout, judgeLifetimeSession } from "../src/lib/lifetime-checkout";
-import { LIFETIME_METADATA_KEY, LIFETIME_METADATA_VALUE } from "../src/lib/stripe";
 import { setLifetimePurchase } from "../src/lib/user-settings";
 import { run } from "./smoke/_env";
 
@@ -426,32 +423,6 @@ function purePolicy() {
   check("the managed-failure copy passes through and reads as managed_unavailable",
     friendlyError(new Error(MANAGED_PROVIDER_FAILURE_MESSAGE), "x") === MANAGED_PROVIDER_FAILURE_MESSAGE &&
       aiDenialFromMessage(MANAGED_PROVIDER_FAILURE_MESSAGE) === "managed_unavailable");
-
-  console.log("\nA returned checkout session");
-  const NOW = new Date("2026-09-15T12:00:00Z");
-  const session = (over: Record<string, unknown> = {}) => ({
-    id: "cs_test_1",
-    client_reference_id: "u1",
-    metadata: { [LIFETIME_METADATA_KEY]: LIFETIME_METADATA_VALUE },
-    status: "complete",
-    payment_status: "paid",
-    created: Math.floor(NOW.getTime() / 1000) - 60,
-    payment_intent: { latest_charge: { refunded: false, disputed: false } },
-    ...over,
-  }) as Parameters<typeof judgeLifetimeSession>[0];
-  const kind = (s: Parameters<typeof judgeLifetimeSession>[0], user = "u1") => {
-    const v = judgeLifetimeSession(s, user, NOW);
-    return v.kind === "refused" ? `refused:${v.reason}` : v.kind;
-  };
-  check("paid → paid", kind(session()) === "paid");
-  check("async payment not settled → processing", kind(session({ payment_status: "unpaid" })) === "processing");
-  check("still open → open", kind(session({ status: "open", payment_status: "unpaid" })) === "open");
-  check("expired → expired", kind(session({ status: "expired" })) === "expired");
-  check("someone else's session → refused", kind(session(), "u2") === "refused:not_yours");
-  check("a Pro session → refused", kind(session({ metadata: { [LIFETIME_METADATA_KEY]: "orbit" } })) === "refused:not_lifetime");
-  check("older than a day → refused", kind(session({ created: Math.floor(NOW.getTime() / 1000) - 2 * 86400 })) === "refused:too_old");
-  check("refunded → refused (a replay must not undo a refund)", kind(session({ payment_intent: { latest_charge: { refunded: true } } })) === "refused:reversed");
-  check("disputed → refused", kind(session({ payment_intent: { latest_charge: { disputed: true } } })) === "refused:reversed");
 }
 
 /* ------------------------------------------------------------------- real gate ------- */
@@ -701,44 +672,6 @@ async function transitions() {
   const passthrough = new Error("401 unauthorized");
   const back = await runOnGrant(grant, Promise.reject(passthrough)).catch((e) => e);
   check("runOnGrant leaves personal-key failures alone", back === passthrough);
-
-  console.log("\nA paid checkout whose webhook has not landed");
-  const fake = (over: Record<string, unknown>) => async (id: string) =>
-    ({
-      id,
-      client_reference_id: U.pending,
-      metadata: { [LIFETIME_METADATA_KEY]: LIFETIME_METADATA_VALUE },
-      status: "complete",
-      payment_status: "paid",
-      created: Math.floor(Date.now() / 1000) - 30,
-      amount_total: 2500,
-      currency: "usd",
-      customer: "cus_pending",
-      payment_intent: { id: "pi_1", latest_charge: { refunded: false, disputed: false } },
-      ...over,
-    }) as unknown as Stripe.Checkout.Session;
-
-  await account(U.asyncPayer, { lifetimeCheckoutSessionId: "cs_test_async", lifetimeCheckoutStartedAt: new Date() });
-  const asyncAccess = await resolveAiAccess(U.asyncPayer, {
-    retrieveSession: async (id) => ({ ...(await fake({ payment_status: "unpaid" })(id)), client_reference_id: U.asyncPayer }),
-  });
-  const pendingErr = await refusal(asyncAccess.completion("chat.answer"));
-  check("payment still clearing → upgrade_pending, not 'add a key'", pendingErr?.reason === "upgrade_pending", pendingErr);
-  check("…and nothing was granted", (await db.query.userSettings.findFirst({ where: eq(userSettings.userId, U.asyncPayer) }))?.lifetimePurchasedAt == null);
-
-  await account(U.pending, { lifetimeCheckoutSessionId: "cs_test_paid", lifetimeCheckoutStartedAt: new Date() });
-  const paidAccess = await resolveAiAccess(U.pending, { retrieveSession: fake({}) });
-  check("paid but no webhook yet → the gate asks Stripe and grants on the spot", paidAccess.plan === "lifetime");
-  const g = await paidAccess.completion("chat.answer");
-  check("…and this very call runs on Orbit's key", g.source === "managed");
-  const after = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, U.pending) });
-  check("…the pending checkout is cleared", after?.lifetimeCheckoutSessionId === null);
-  const verdict = await confirmLifetimeCheckout(U.pending, "cs_test_paid", new Date(), fake({}));
-  check("confirming again (the webhook, or the success page) is harmless", verdict.kind === "paid");
-  const booked = await db.select().from(billingEvents).where(and(eq(billingEvents.userId, U.pending), eq(billingEvents.kind, "lifetime")));
-  check("…one Lifetime booking, keyed on the session — the webhook's key", booked.length === 1 && booked[0]?.eventId === "cs:cs_test_paid", booked.map((b) => b.eventId).join(","));
-  const replay = await confirmLifetimeCheckout(U.freeNone, "cs_test_paid", new Date(), fake({}));
-  check("someone else's session id grants nothing", replay.kind === "refused");
 }
 
 /** `NODE_ENV` is readonly in the Node types; the gate reads it at call time either way. */
@@ -842,19 +775,6 @@ async function byokOnly() {
       JSON.parse(capturedEmbed?.body ?? "{}").model === "openai/text-embedding-3-small",
       capturedEmbed?.body
     );
-
-    console.log("\nA just-paid Lifetime checkout does not ask Stripe for AI");
-    await account(U.pending, { lifetimeCheckoutSessionId: "cs_test_paid", lifetimeCheckoutStartedAt: new Date() });
-    let asked = false;
-    const access = await resolveAiAccess(U.pending, {
-      retrieveSession: async () => {
-        asked = true;
-        throw new Error("the gate should not look up a checkout");
-      },
-    });
-    const err = await refusal(access.completion("chat.answer"));
-    check("refused as key_required, never upgrade_pending", err?.reason === "key_required", err);
-    check("…without a Stripe round trip", !asked);
 
     console.log("\nLocalhost still runs on the developer's .env.local");
     setNodeEnv("development");

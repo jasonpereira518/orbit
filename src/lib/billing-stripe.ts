@@ -6,12 +6,20 @@ import {
   classifyMovement,
 } from "@/lib/billing-events";
 import {
+  CREDIT_PACK_CREDITS,
+  CREDIT_PACK_METADATA_VALUE,
+  FOUNDING_MONTHS,
+  FOUNDING_OFF_METADATA_KEY,
+  FOUNDING_UNTIL_METADATA_KEY,
   LIFETIME_METADATA_KEY,
   LIFETIME_METADATA_VALUE,
+  MAX_METADATA_VALUE,
   PRO_BILLING_PERIOD_METADATA_KEY,
   PRO_METADATA_VALUE,
   SUBSCRIPTION_USER_METADATA_KEY,
-} from "@/lib/stripe";
+  planForLookupKey,
+} from "@/lib/stripe-config";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 
 /**
  * What a Stripe event means, decided without touching anything.
@@ -77,7 +85,7 @@ export type Booking = {
  * (`src/lib/stripe-charge-purpose.ts`), because it needs the ledger and the Stripe API and
  * this module may touch neither. "unknown" revokes nothing.
  */
-export type ChargePurpose = "lifetime" | "subscription" | "unknown";
+export type ChargePurpose = "lifetime" | "subscription" | "credit_pack" | "unknown";
 
 /** Why access was withdrawn. Carried on the mirror and the churn row. */
 export type RevocationReason = "refund" | "dispute_lost";
@@ -86,9 +94,16 @@ export type MirrorInstruction =
   | {
       type: "subscription";
       userId: string;
-      plan: "orbit" | null;
+      plan: "orbit" | "max" | null;
       status: "active" | "past_due" | "canceled" | null;
+      /** Start of the current billing period (epoch seconds) — the allowance resets on it. */
+      periodStart?: number | null;
       periodEnd: number | null;
+      /**
+       * Present when this subscription carries founding pricing: the redemption to record
+       * on the account (idempotent — the first write wins).
+       */
+      founding?: { subscriptionId: string | null; windowEndsAt: number | null };
       monthlyCents: number | null;
       interval: BillingInterval | null;
       stripeCustomerId: string | null;
@@ -100,6 +115,19 @@ export type MirrorInstruction =
       eventAt?: Date | null;
     }
   | { type: "lifetime"; userId: string; stripeCustomerId: string | null }
+  /** A paid credit pack: grant its credits once, keyed by the Checkout Session. */
+  | {
+      type: "credit_pack";
+      userId: string;
+      grantKey: string;
+      /** The payment intent when there is one (how a refund finds the pack), else the session. */
+      stripeRef: string;
+      amountCents: number;
+      credits: number;
+      stripeCustomerId: string | null;
+    }
+  /** A full refund or lost dispute of a pack: take back that pack's unused credits. */
+  | { type: "credit_pack_revoked"; userId: string; paymentIntentId: string; reason: RevocationReason }
   /** A full refund or lost dispute of the Lifetime charge: clear `lifetime_purchased_at`. */
   | { type: "lifetime_revoked"; userId: string; reason: RevocationReason }
   /**
@@ -271,29 +299,37 @@ export function periodEndOf(subscription: Stripe.Subscription): number | null {
 
 /** Period end, monthly value and interval, read defensively in one pass. */
 export function subscriptionShape(subscription: Stripe.Subscription): {
+  periodStart: number | null;
   periodEnd: number | null;
   monthlyCents: number | null;
   interval: BillingInterval | null;
   priceId: string | null;
+  lookupKey: string | null;
 } {
   const item = subscription.items?.data?.[0];
   const price = item?.price as
     | {
         id?: string;
+        lookup_key?: string | null;
         unit_amount?: number | null;
         recurring?: { interval?: string; interval_count?: number | null } | null;
       }
     | undefined;
+  const periodStart = (item as { current_period_start?: number } | undefined)?.current_period_start
+    ?? (subscription as unknown as { current_period_start?: number }).current_period_start
+    ?? null;
 
   const monthlyCents = monthlyEquivalentCents(price, item?.quantity ?? 1);
   const rawInterval = price?.recurring?.interval;
 
   return {
+    periodStart: typeof periodStart === "number" ? periodStart : null,
     periodEnd: periodEndOf(subscription),
     monthlyCents,
     interval:
       rawInterval === "year" ? "year" : rawInterval === "month" ? "month" : null,
     priceId: price?.id ?? null,
+    lookupKey: price?.lookup_key ?? null,
   };
 }
 
@@ -336,6 +372,55 @@ const ANNUAL_CENTS_TOTAL = 5000;
 
 function monthlyCentsForInterval(interval: BillingInterval | null): number {
   return interval === "year" ? ANNUAL_MONTHLY_EQUIVALENT_CENTS : MONTHLY_CENTS;
+}
+
+/* ---------------------------------------------------------------- founding pricing --- */
+
+/** `start` plus `months` calendar months, in epoch seconds (UTC). */
+export function addMonthsSeconds(startSeconds: number, months: number): number {
+  const d = new Date(startSeconds * 1000);
+  const target = new Date(
+    Date.UTC(
+      d.getUTCFullYear(),
+      d.getUTCMonth() + months,
+      d.getUTCDate(),
+      d.getUTCHours(),
+      d.getUTCMinutes(),
+      d.getUTCSeconds()
+    )
+  );
+  return Math.floor(target.getTime() / 1000);
+}
+
+/**
+ * The founding discount on a subscription, read from its own metadata — webhook payloads
+ * never expand `discounts`, so the coupon itself is not visible here. `until` is the window
+ * end: explicit when the app has stamped it, otherwise three calendar months from the
+ * subscription's start. Null when the subscription carries no founding pricing.
+ */
+export function foundingTerms(
+  metadata: Record<string, string> | null | undefined,
+  startSeconds: number | null | undefined
+): { offCents: number; until: number | null } | null {
+  const off = Number(metadata?.[FOUNDING_OFF_METADATA_KEY]);
+  if (!Number.isFinite(off) || off <= 0) return null;
+  const stamped = Number(metadata?.[FOUNDING_UNTIL_METADATA_KEY]);
+  const until = Number.isFinite(stamped) && stamped > 0
+    ? stamped
+    : typeof startSeconds === "number"
+      ? addMonthsSeconds(startSeconds, FOUNDING_MONTHS)
+      : null;
+  return { offCents: Math.round(off), until };
+}
+
+/** Cents off at `atSeconds`: the founding discount while its window is open, else 0. */
+export function foundingOffAt(
+  terms: ReturnType<typeof foundingTerms>,
+  atSeconds: number
+): number {
+  if (!terms) return 0;
+  if (terms.until !== null && atSeconds >= terms.until) return 0;
+  return terms.offCents;
 }
 
 /* ------------------------------------------------------------- attribution hint ----- */
@@ -401,6 +486,16 @@ function revocationFor(
   if (ctx.chargePurpose === "lifetime") {
     // No MRR row: Lifetime never contributed recurring revenue.
     return { mirror: { type: "lifetime_revoked", userId, reason }, bookings: [] };
+  }
+  if (ctx.chargePurpose === "credit_pack") {
+    // A pack is one-time revenue: no MRR row. Its unused credits are taken back; credits
+    // already spent stay spent (the refund covers the money, not the model calls made).
+    const paymentIntentId = typeof detail.paymentIntentId === "string" ? detail.paymentIntentId : null;
+    if (!paymentIntentId) return NO_REVOCATION;
+    return {
+      mirror: { type: "credit_pack_revoked", userId, paymentIntentId, reason },
+      bookings: [],
+    };
   }
   if (ctx.chargePurpose === "subscription") {
     const movement = classifyMovement(ctx.beforeCents, 0, {
@@ -510,7 +605,46 @@ export function decideStripeEvent(
         };
       }
 
-      if (planMeta === PRO_METADATA_VALUE) {
+      if (planMeta === CREDIT_PACK_METADATA_VALUE) {
+        const amountCents = session.amount_total ?? 0;
+        const paymentIntentId = paymentIntentIdOf(session);
+        const credits = Number(session.metadata?.orbit_credits) || CREDIT_PACK_CREDITS;
+        return {
+          mirror: {
+            type: "credit_pack",
+            userId,
+            grantKey: `pack:cs:${session.id}`,
+            stripeRef: paymentIntentId ?? session.id,
+            amountCents,
+            credits,
+            stripeCustomerId: customerId,
+          },
+          // One-time revenue, keyed on the SESSION like Lifetime was: both fulfil events and
+          // the verify-on-return path compute the same key. Never MRR.
+          bookings: [
+            {
+              eventId: `cs:${session.id}`,
+              kind: "credit_pack",
+              userId,
+              amountCents,
+              mrrDeltaCents: 0,
+              effectiveAt: eventAt,
+              detail: {
+                checkoutSessionId: session.id,
+                customerId,
+                currency: session.currency ?? null,
+                credits,
+                paymentIntentId,
+              },
+            },
+          ],
+          outcome: "handled",
+          targetUserId: userId,
+          resourceId,
+        };
+      }
+
+      if (planMeta === PRO_METADATA_VALUE || planMeta === MAX_METADATA_VALUE) {
         if (isStaleSubscriptionEvent(ctx, createdAt, false)) {
           return ignored(STRIPE_IGNORE_REASONS.staleSubscriptionEvent, userId, resourceId);
         }
@@ -524,22 +658,49 @@ export function decideStripeEvent(
             : session.metadata?.[PRO_BILLING_PERIOD_METADATA_KEY] === "monthly"
               ? "month"
               : null) ?? intervalFromAmountTotal(session.amount_total);
-        const monthlyCents = monthlyCentsForInterval(interval);
+        const plan = planMeta === MAX_METADATA_VALUE ? "max" : "orbit";
+        // Valued exactly the way the subscription events will value it — list price less the
+        // founding discount — so the first `customer.subscription.*` finds no movement.
+        // Never `amount_total`: that carries tax and prorations, which are not MRR.
+        // A LEGACY session (the $5/$50 era, which always carried a billing period, or whose
+        // total gives it away) keeps its legacy value, so a backfill replay stays exact.
+        const legacy =
+          Boolean(session.metadata?.[PRO_BILLING_PERIOD_METADATA_KEY]) ||
+          intervalFromAmountTotal(session.amount_total) !== null;
+        const monthlyCents = legacy
+          ? monthlyCentsForInterval(interval)
+          : Math.max(
+              0,
+              (PLAN_CONFIG[plan].monthlyPriceCents ?? MONTHLY_CENTS) -
+                (Number(session.metadata?.[FOUNDING_OFF_METADATA_KEY]) || 0)
+            );
         const movement = classifyMovement(beforeCents, monthlyCents, {
           hadPriorRevenue,
         });
+        const founding = Number(session.metadata?.[FOUNDING_OFF_METADATA_KEY]) > 0;
+        const subscriptionRef = (session as { subscription?: string | { id: string } | null })
+          .subscription;
 
         return {
           mirror: {
             type: "subscription",
             userId,
-            plan: "orbit",
+            plan,
             status: "active",
             // The first `customer.subscription.updated` fills in the real period end.
             periodEnd: null,
             monthlyCents,
-            interval,
+            interval: interval ?? "month",
             stripeCustomerId: customerId,
+            ...(founding
+              ? {
+                  founding: {
+                    subscriptionId:
+                      typeof subscriptionRef === "string" ? subscriptionRef : (subscriptionRef?.id ?? null),
+                    windowEndsAt: null,
+                  },
+                }
+              : {}),
           },
           bookings: movement
             ? [
@@ -555,9 +716,11 @@ export function decideStripeEvent(
                   effectiveAt: eventAt,
                   detail: {
                     checkoutSessionId: session.id,
+                    plan,
                     beforeCents,
                     afterCents: monthlyCents,
                     interval,
+                    ...(founding ? { founding: true } : {}),
                   },
                 },
               ]
@@ -577,7 +740,7 @@ export function decideStripeEvent(
     case "customer.subscription.deleted": {
       const subscription = event.data.object as Stripe.Subscription;
       const planMeta = subscription.metadata?.[LIFETIME_METADATA_KEY];
-      if (planMeta && planMeta !== PRO_METADATA_VALUE) {
+      if (planMeta && planMeta !== PRO_METADATA_VALUE && planMeta !== MAX_METADATA_VALUE) {
         return ignored("other_plan_slug", userId, resourceId);
       }
       if (!userId) return ignored("missing_user_id", null, resourceId);
@@ -589,20 +752,23 @@ export function decideStripeEvent(
       }
       const status = terminal ? "canceled" : subscription.status;
 
-      let plan: "orbit" | null;
+      // The tier is read off the PRICE, never the metadata: a switch in the customer portal
+      // changes the price and leaves the checkout-time metadata alone.
+      const tier = planForLookupKey(shape.lookupKey);
+      let plan: "orbit" | "max" | null;
       let mirrorStatus: "active" | "past_due" | "canceled" | null;
       switch (status) {
         case "active":
         case "trialing":
-          plan = "orbit";
+          plan = tier;
           mirrorStatus = "active";
           break;
         case "past_due":
-          plan = "orbit";
+          plan = tier;
           mirrorStatus = "past_due";
           break;
         case "canceled":
-          plan = "orbit";
+          plan = tier;
           mirrorStatus = "canceled";
           break;
         default:
@@ -611,7 +777,13 @@ export function decideStripeEvent(
           mirrorStatus = null;
       }
 
-      const monthlyCents = shape.monthlyCents ?? MONTHLY_CENTS;
+      // List price less the founding discount while its window is open at this event.
+      const terms = foundingTerms(
+        subscription.metadata,
+        (subscription as { start_date?: number }).start_date ?? null
+      );
+      const listCents = shape.monthlyCents ?? MONTHLY_CENTS;
+      const monthlyCents = Math.max(0, listCents - foundingOffAt(terms, Math.floor(eventAt.getTime() / 1000)));
 
       /*
        * A terminal event forces the recurring value to zero rather than re-deriving it.
@@ -640,11 +812,13 @@ export function decideStripeEvent(
           userId,
           plan,
           status: mirrorStatus,
-          periodEnd: terminal ? shape.periodEnd : shape.periodEnd,
+          periodStart: shape.periodStart,
+          periodEnd: shape.periodEnd,
           monthlyCents: plan ? monthlyCents : null,
           interval: plan ? shape.interval : null,
           stripeCustomerId: customerIdOf(subscription),
           eventAt: createdAt,
+          ...(terms ? { founding: { subscriptionId: subscription.id, windowEndsAt: terms.until } } : {}),
         },
         bookings: movement
           ? [
@@ -662,6 +836,8 @@ export function decideStripeEvent(
                   afterCents,
                   interval: shape.interval,
                   priceId: shape.priceId,
+                  plan,
+                  ...(terms ? { foundingOffCents: foundingOffAt(terms, Math.floor(eventAt.getTime() / 1000)) } : {}),
                   ...(terminal ? { terminal: true } : {}),
                 },
               },

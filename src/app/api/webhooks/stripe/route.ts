@@ -11,7 +11,7 @@ import {
 } from "@/lib/stripe-fulfilment";
 import { WEBHOOK_REASONS, recordWebhookDelivery } from "@/lib/webhook-deliveries";
 import { reportError } from "@/lib/report-error";
-import { endProForLifetime } from "@/lib/subscription-management";
+import { reconcileFoundingDiscount } from "@/lib/founding";
 
 /**
  * (Existing header comment from lines 29–51 of 33a213c, unchanged, then:)
@@ -75,10 +75,15 @@ export async function POST(req: NextRequest) {
     const ctx = await readDecideContext(event, new Date());
     const decision = decideStripeEvent(event, ctx);
     await applyStripeDecision(decision);
-    // One plan at a time: Lifetime replaces Pro the moment it is granted. Best effort and
-    // idempotent — the verify-on-return path usually got here first.
-    if (decision.mirror?.type === "lifetime") {
-      await endProForLifetime(decision.mirror.userId);
+    // Founding pricing: stamp the window end on a new founding subscription, and carry the
+    // discount across a Pro <-> Max switch. Best effort and idempotent; never throws.
+    if (
+      decision.outcome === "handled" &&
+      (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated")
+    ) {
+      await reconcileFoundingDiscount(event.data.object as Stripe.Subscription, (id, params) =>
+        getStripe().subscriptions.update(id, params)
+      );
     }
     if (decision.outcome === "handled") {
       await markStripeEventProcessed(event.id, event.type);
@@ -100,7 +105,8 @@ export async function POST(req: NextRequest) {
     // Kept from Phase 0: /admin/health reads this to show when access was withdrawn.
     const revoked =
       decision.mirror?.type === "lifetime_revoked" ||
-      decision.mirror?.type === "subscription_revoked"
+      decision.mirror?.type === "subscription_revoked" ||
+      decision.mirror?.type === "credit_pack_revoked"
         ? decision.mirror.reason
         : null;
     await recordWebhookDelivery({

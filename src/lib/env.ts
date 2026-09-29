@@ -76,12 +76,11 @@ export const REQUIRED_IN_PREVIEW = [
   "ENCRYPTION_SECRET",
 ] as const;
 
-const STRIPE_PRICE_IDS = [
-  "STRIPE_LIFETIME_PRICE_ID",
-  "STRIPE_LIFETIME_STANDARD_PRICE_ID",
-  "STRIPE_PRO_MONTHLY_PRICE_ID",
-  "STRIPE_PRO_ANNUAL_PRICE_ID",
-] as const;
+/**
+ * No price ids: pricing v2 resolves every price by lookup key (`src/lib/stripe-prices.ts`),
+ * created by `scripts/stripe-pricing-v2.ts`. The old STRIPE_*_PRICE_ID variables are
+ * ignored, so leaving them set in Vercel is harmless.
+ */
 
 /**
  * Orbit's managed AI keys, which Lifetime accounts run on when they bring none
@@ -184,7 +183,7 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       if (!env.STRIPE_SECRET_KEY!.startsWith("sk_live_")) {
         errors.push("STRIPE_SECRET_KEY must be a live key (sk_live_) in production — test-mode prices fail checkout");
       }
-      for (const name of ["STRIPE_WEBHOOK_SECRET", ...STRIPE_PRICE_IDS]) {
+      for (const name of ["STRIPE_WEBHOOK_SECRET"]) {
         if (!has(env, name)) errors.push(`${name} is required when STRIPE_SECRET_KEY is set`);
       }
     }

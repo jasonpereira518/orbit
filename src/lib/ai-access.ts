@@ -14,7 +14,6 @@ import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
-import type { SessionRetriever } from "@/lib/lifetime-checkout";
 import type { Plan } from "@/lib/plan-limits";
 import {
   AI_PROVIDERS,
@@ -74,8 +73,6 @@ import {
  *     every background job.
  *  2. The managed allowance (`usage_events` for this account, `key_owner = 'orbit'`, this
  *     month), checked before any managed grant is minted.
- *  3. A just-paid Lifetime checkout the webhook has not confirmed yet — see
- *     `lifetime-checkout.ts`. Asked about only when the account would otherwise be refused.
  *
  * Refusals are `AiAccessError`s with a typed `reason` and copy from `ai-access-copy.ts`.
  * Nothing here ever substitutes Orbit's key for a user who is not entitled to it; there is
@@ -404,12 +401,6 @@ async function loadAccount(userId: string): Promise<AccountRow | undefined> {
   return db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) });
 }
 
-function hasAnyPersonalKey(row: AccountRow | undefined): boolean {
-  return Boolean(
-    row?.geminiApiKeyEncrypted || row?.openaiApiKeyEncrypted || row?.anthropicApiKeyEncrypted,
-  );
-}
-
 /**
  * What one `usage_events` row costs the managed allowance, in micros. Unpriced successful
  * calls are charged their pessimistic stand-in (UNPRICED_CALL_MICROS); a failed call with
@@ -523,30 +514,10 @@ export class AiAccess {
     if (opts.row && opts.row.userId !== userId) {
       throw new Error("AiAccess.open was handed another account's settings row");
     }
-    let row = opts.row !== undefined ? (opts.row ?? undefined) : await loadAccount(userId);
-    let plan = resolvePlan(row).plan;
-    let upgradePending = false;
-
-    // Only an account about to be refused is worth a Stripe round trip: not on Lifetime,
-    // no key of its own, and a Lifetime checkout opened recently.
-    if (
-      MANAGED_AI_ENABLED &&
-      plan !== "lifetime" &&
-      row?.lifetimeCheckoutSessionId &&
-      !hasAnyPersonalKey(row) &&
-      !demoCountsAsManaged(userId)
-    ) {
-      // Imported here, not at the top: it pulls in the Stripe SDK, which every other AI
-      // call has no use for.
-      const { checkPendingLifetime } = await import("@/lib/lifetime-checkout");
-      const pending = await checkPendingLifetime(userId, row, new Date(), opts.retrieveSession);
-      if (pending === "granted") {
-        row = await loadAccount(userId);
-        plan = resolvePlan(row).plan;
-      } else if (pending === "processing") {
-        upgradePending = true;
-      }
-    }
+    const row = opts.row !== undefined ? (opts.row ?? undefined) : await loadAccount(userId);
+    const plan = resolvePlan(row).plan;
+    // Lifetime is no longer sold, so there is no pending Lifetime payment to wait on.
+    const upgradePending = false;
 
     const personal: Partial<Record<AiProvider, string>> = {};
     const decrypted = {
@@ -732,16 +703,10 @@ export class AiAccess {
 
 export type AiAccessOptions = {
   /**
-   * How a pending Lifetime checkout is looked up. Production always asks Stripe; the smoke
-   * test passes a stand-in so the "just paid" states can be exercised without it.
-   */
-  retrieveSession?: SessionRetriever;
-  /**
    * The account's whole `user_settings` row, when the caller already holds it — the one
    * `requireAuthenticatedUser()` returns is the same full-row read. Skips the gate's own
    * read; `null` means "no row". Only pass a row read in the same request: the plan is
-   * resolved from it. The re-read after a just-granted Lifetime checkout still happens, so
-   * that write is always what the grants are built from.
+   * resolved from it, so that read is always what the grants are built from.
    */
   row?: AccountRow | null;
 };

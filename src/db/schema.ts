@@ -3923,6 +3923,8 @@ export type BillingEventKind =
   | "churn"
   | "reactivation"
   | "lifetime"
+  /** A $5 credit pack (pricing v2): one-time cash, never MRR. */
+  | "credit_pack"
   | "payment"
   | "refund"
   | "payment_failed";

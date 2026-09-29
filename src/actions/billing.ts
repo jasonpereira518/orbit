@@ -1,222 +1,184 @@
 "use server";
 
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { userSettings } from "@/db/schema";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { getShowcaseAccountId } from "@/lib/demo-account";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
-import { getEntitlements } from "@/lib/entitlements";
+import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import {
-  LIFETIME_METADATA_KEY,
-  LIFETIME_METADATA_VALUE,
-  LIFETIME_PRICE_ID,
-  PRO_ANNUAL_PRICE_ID,
-  PRO_BILLING_PERIOD_METADATA_KEY,
-  PRO_METADATA_VALUE,
-  PRO_MONTHLY_PRICE_ID,
+  CREDIT_PACK_CREDITS,
+  CREDIT_PACK_METADATA_VALUE,
+  PLAN_METADATA_KEY,
   SUBSCRIPTION_USER_METADATA_KEY,
   getStripe,
-  isProCheckoutConfigured,
-  isStripeConfigured,
+  isCheckoutConfigured,
 } from "@/lib/stripe";
+import { resolvePriceIds } from "@/lib/stripe-prices";
 import { confirmCheckoutForUser } from "@/lib/stripe-fulfilment";
 import { createBillingPortalUrl, type BillingPortalResult } from "@/lib/billing-portal";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { lifetimeOffer } from "@/lib/lifetime-offer";
-import type { BillingPeriod } from "@/lib/plan-copy";
-import type { Plan } from "@/lib/plan-limits";
-import { setCompedPlan, setPendingLifetimeCheckout } from "@/lib/user-settings";
+import { foundingAppliesToNewSubscription, foundingCheckoutTerms } from "@/lib/founding";
+import { isPurchasablePlan, PLAN_LABELS, type Plan, type PurchasablePlan } from "@/lib/plans/plan-config";
+import { setCompedPlan } from "@/lib/user-settings";
 import { reportError } from "@/lib/report-error";
 import { withReference } from "@/lib/errors";
 import {
-  SUBSCRIPTION_COPY,
   cancelSubscription as cancelSubscriptionFor,
-  changeBillingPeriod as changeBillingPeriodFor,
-  endProForLifetime,
-  getStripeCustomerId,
+  createPlanSwitchUrl,
   getSubscriptionDetails as getSubscriptionDetailsFor,
-  previewBillingPeriodChange as previewBillingPeriodChangeFor,
   resumeSubscription as resumeSubscriptionFor,
-  type PeriodChangePreview,
   type SubscriptionDetails,
   type SubscriptionResult,
 } from "@/lib/subscription-management";
 
 export type CheckoutResult = { url: string } | { error: string };
 
+const CHECKOUT_COPY = {
+  notOpen: "Checkout isn’t open yet. Check back shortly.",
+  onLifetime: "You have Orbit Lifetime — it already includes everything Orbit sells.",
+  switchInSettings: "You already have a plan — switch between Pro and Max from Settings.",
+  packsNeedPlan: FEATURE_DENIAL.creditPacks,
+  failed: "Couldn’t start checkout — try again",
+} as const;
+
+async function billingRow(userId: string) {
+  const db = await getDb();
+  return db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { stripeCustomerId: true, foundingEligible: true, foundingRedeemedAt: true },
+  });
+}
+
+async function checkoutFailed(err: unknown, userId: string, what: string): Promise<CheckoutResult> {
+  // Reported with the Stripe error code, and the person gets a reference to quote.
+  const kind = stripeErrorKind(err);
+  const ref = reportError(err, { where: "action.billing.checkout", userId, extra: { plan: what, stripeCode: kind } });
+  await recordErrorEvent({
+    source: ERROR_SOURCES.stripeCheckout,
+    kind,
+    userId,
+    message: err,
+    context: { plan: what, ref },
+  });
+  return { error: withReference(CHECKOUT_COPY.failed, ref) };
+}
+
 /**
- * Opens a Stripe Checkout Session for the one-time Orbit Lifetime purchase.
+ * Opens a Stripe Checkout Session for Orbit Pro or Orbit Max, monthly.
  *
- * Returns the URL rather than redirecting, so the caller can surface a refusal (already
- * owned, not on sale) inline instead of bouncing the user to a page that explains it.
+ * Returns the URL rather than redirecting, so a refusal (already subscribed, not on sale)
+ * renders inline beside the button. An account eligible for founding pricing that has never
+ * had a paid subscription gets the founding coupon; Stripe's checkout page then shows the
+ * discounted first months and the full price after, which is the disclosure.
  */
-export async function startLifetimeCheckout(
-  opts: { replaceSubscription?: boolean } = {}
-): Promise<CheckoutResult> {
+export async function startSubscriptionCheckout(plan: PurchasablePlan): Promise<CheckoutResult> {
   const userId = await requireUserId();
-  const replaceSubscription = opts?.replaceSubscription === true;
+  if (!isPurchasablePlan(plan)) return { error: CHECKOUT_COPY.notOpen };
+  if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
 
-  if (!isStripeConfigured() || !LIFETIME_PRICE_ID) {
-    return { error: "Lifetime isn't on sale yet. Check back shortly." };
-  }
-
-  // The SAME resolution the pricing page renders from. Reading the price id here
-  // independently is what would let the page advertise one number while checkout charges
-  // another — the failure mode worth engineering against, because it is the one that
-  // turns a stale string into a consumer-protection problem.
-  const offer = await lifetimeOffer();
-
+  // `getEntitlements` resolves comps too, so a comped account gets the same refusal a paying
+  // one would. One plan at a time: tier changes go through Settings, never a second checkout.
   const entitlements = await getEntitlements(userId);
-  if (entitlements.plan === "lifetime") {
-    return { error: "You already have Orbit Lifetime." };
-  }
+  if (entitlements.plan === "lifetime") return { error: CHECKOUT_COPY.onLifetime };
+  if (entitlements.plan !== "free") return { error: CHECKOUT_COPY.switchInSettings };
 
-  // One plan at a time. A Pro subscriber can only buy Lifetime through the switch dialog in
-  // Settings, which tells them Pro ends on the spot with no refund; a checkout from anywhere
-  // else is refused and pointed there, so nobody pays for Lifetime without having read that.
-  const switchingFromPro = entitlements.source === "subscription";
-  if (switchingFromPro && !replaceSubscription) {
-    return { error: SUBSCRIPTION_COPY.switchInSettings };
-  }
-
-  // Reuse the account's Stripe customer when it has one. The Lifetime grant records the
-  // session's customer, and a fresh one would orphan the link to a Pro subscription that
-  // `endProForLifetime` then has to find and cancel.
-  const existingCustomer = await getStripeCustomerId(userId);
-  if (switchingFromPro && !existingCustomer) return { error: SUBSCRIPTION_COPY.noSubscription };
-
+  const row = await billingRow(userId);
+  const founding = foundingAppliesToNewSubscription(row) ? foundingCheckoutTerms(plan) : null;
   const baseUrl = getAppBaseUrl();
   const profile = await getCurrentUserProfile();
 
   try {
+    const prices = await resolvePriceIds();
+    const planMeta = { [PLAN_METADATA_KEY]: plan, ...(founding?.metadata ?? {}) };
     const session = await getStripe().checkout.sessions.create({
-      mode: "payment",
-      line_items: [{ price: offer.stripePriceId ?? LIFETIME_PRICE_ID, quantity: 1 }],
+      mode: "subscription",
+      line_items: [{ price: prices[plan], quantity: 1 }],
       // How the webhook knows who paid. Checkout collects its own email, which need not
       // match the Orbit account, so the Clerk id is the only reliable link.
       client_reference_id: userId,
-      metadata: { [LIFETIME_METADATA_KEY]: LIFETIME_METADATA_VALUE },
-      // A known customer carries its own email; otherwise prefill it without forcing it —
-      // the customer can still change it.
-      ...(existingCustomer
-        ? { customer: existingCustomer }
-        : { customer_email: profile?.email || undefined }),
-      // The plan card here already reads "Orbit Lifetime" once the webhook lands, so this
-      // page confirms the purchase without needing a bespoke success screen. `upgraded`
-      // arms the celebration watcher's fast poll; `session_id` (Stripe fills the template)
-      // lets it confirm the payment with Stripe directly, before the webhook lands.
-      success_url: `${baseUrl}/settings?upgraded=lifetime&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
-      cancel_url: switchingFromPro ? `${baseUrl}/settings#settings-plan` : `${baseUrl}/pricing`,
-    });
-
-    if (!session.url) return { error: "Stripe did not return a checkout URL." };
-    // Remembered so the AI gate can recognise this payment if the webhook is slow — see
-    // `src/lib/lifetime-checkout.ts`. Never an entitlement on its own.
-    await setPendingLifetimeCheckout(userId, session.id);
-    return { url: session.url };
-  } catch (err) {
-    // Reported with the Stripe error code, and the person gets a reference to quote. This
-    // used to return a generic line as a 200, and the real cause lived only in a
-    // console.error on whichever server happened to run it.
-    const kind = stripeErrorKind(err);
-    const ref = reportError(err, { where: "action.billing.checkout", userId, extra: { plan: "lifetime", stripeCode: kind } });
-    await recordErrorEvent({
-      source: ERROR_SOURCES.stripeCheckout,
-      kind,
-      userId,
-      message: err,
-      context: { plan: "lifetime", ref },
-    });
-    return { error: withReference("Couldn’t start checkout — try again", ref) };
-  }
-}
-
-/**
- * Opens a Stripe Checkout Session for the recurring Orbit Pro subscription.
- *
- * Same contract as `startLifetimeCheckout`: the URL comes back to the caller so refusals
- * (already subscribed, not on sale) render inline next to the button.
- */
-export async function startProCheckout(
-  period: BillingPeriod
-): Promise<CheckoutResult> {
-  const userId = await requireUserId();
-
-  const priceId =
-    period === "annual" ? PRO_ANNUAL_PRICE_ID : PRO_MONTHLY_PRICE_ID;
-  if (!isProCheckoutConfigured() || !priceId) {
-    return { error: "Pro checkout isn't open yet. Check back shortly." };
-  }
-
-  // `getEntitlements` resolves comps too, so a comped account gets the same refusal a
-  // paying one would.
-  const entitlements = await getEntitlements(userId);
-  if (entitlements.plan === "lifetime") {
-    return {
-      error: "You already have Orbit Lifetime — it includes everything in Pro.",
-    };
-  }
-  if (entitlements.plan === "orbit") {
-    return { error: "You already have Orbit Pro." };
-  }
-
-  const baseUrl = getAppBaseUrl();
-  const profile = await getCurrentUserProfile();
-
-  try {
-    const session = await getStripe().checkout.sessions.create({
-      mode: "subscription",
-      line_items: [{ price: priceId, quantity: 1 }],
-      // How the webhook knows who paid — same rationale as the Lifetime session above.
-      client_reference_id: userId,
-      metadata: {
-        [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE,
-        // Read by the webhook's optimistic grant, which happens before any subscription
-        // object exists to read a price from. Without it annual books as $5/mo and the
-        // next subscription event looks like a -83 contraction.
-        [PRO_BILLING_PERIOD_METADATA_KEY]: period,
-      },
-      // Copied onto the subscription object itself, so `customer.subscription.*` events
-      // (renewals, cancellations) can be attributed without a session in hand.
+      metadata: planMeta,
+      // Copied onto the subscription itself, so `customer.subscription.*` events (renewals,
+      // cancellations, the founding window) can be attributed and valued without a session.
       subscription_data: {
-        metadata: {
-          [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE,
-          [SUBSCRIPTION_USER_METADATA_KEY]: userId,
-          [PRO_BILLING_PERIOD_METADATA_KEY]: period,
-        },
+        metadata: { ...planMeta, [SUBSCRIPTION_USER_METADATA_KEY]: userId },
       },
-      customer_email: profile?.email || undefined,
-      // `upgraded` arms the celebration watcher's fast poll; see the Lifetime session.
-      success_url: `${baseUrl}/settings?upgraded=pro&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
+      ...(founding ? { discounts: [{ coupon: founding.coupon }] } : {}),
+      // A returning subscriber keeps their Stripe customer (and invoice history).
+      ...(row?.stripeCustomerId
+        ? { customer: row.stripeCustomerId }
+        : { customer_email: profile?.email || undefined }),
+      // `upgraded` arms the celebration watcher's fast poll; `session_id` lets it confirm the
+      // payment with Stripe directly, before the webhook lands.
+      success_url: `${baseUrl}/settings?upgraded=${plan === "max" ? "max" : "pro"}&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
-
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
     return { url: session.url };
   } catch (err) {
-    // Reported with the Stripe error code, and the person gets a reference to quote. This
-    // used to return a generic line as a 200, and the real cause lived only in a
-    // console.error on whichever server happened to run it.
-    const kind = stripeErrorKind(err);
-    const ref = reportError(err, { where: "action.billing.checkout", userId, extra: { plan: "pro", stripeCode: kind } });
-    await recordErrorEvent({
-      source: ERROR_SOURCES.stripeCheckout,
-      kind,
-      userId,
-      message: err,
-      context: { plan: "pro", ref },
-    });
-    return { error: withReference("Couldn’t start checkout — try again", ref) };
+    return checkoutFailed(err, userId, plan);
   }
 }
 
 /**
- * Whether Lifetime can actually be bought, without exposing Stripe details to the client.
- *
- * Lifetime is sold open-endedly, so this is purely a configuration question: false means
- * the deployment has no Stripe keys, and the caller should state that rather than render a
- * button that fails on click.
+ * Opens a Stripe Checkout Session for one $5 pack of 250 credits. Pro and Max only: the
+ * credits are for Orbit's included AI, which Free and Lifetime do not run on. Never
+ * automatic — a person clicks, sees the price and pays.
  */
-export async function getLifetimeAvailability() {
-  return { purchasable: isStripeConfigured() };
+export async function startCreditPackCheckout(): Promise<CheckoutResult> {
+  const userId = await requireUserId();
+  if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
+  const entitlements = await getEntitlements(userId);
+  if (!entitlements.canBuyCreditPacks) return { error: CHECKOUT_COPY.packsNeedPlan };
+
+  const row = await billingRow(userId);
+  const baseUrl = getAppBaseUrl();
+  const profile = await getCurrentUserProfile();
+  const metadata = {
+    [PLAN_METADATA_KEY]: CREDIT_PACK_METADATA_VALUE,
+    orbit_credits: String(CREDIT_PACK_CREDITS),
+  };
+  try {
+    const prices = await resolvePriceIds();
+    const session = await getStripe().checkout.sessions.create({
+      mode: "payment",
+      line_items: [{ price: prices.creditPack, quantity: 1 }],
+      client_reference_id: userId,
+      metadata,
+      // On the payment intent too, so a refund or dispute of the charge can be traced back
+      // to the pack from the payment alone.
+      payment_intent_data: { metadata: { ...metadata, [SUBSCRIPTION_USER_METADATA_KEY]: userId } },
+      ...(row?.stripeCustomerId
+        ? { customer: row.stripeCustomerId }
+        : { customer_email: profile?.email || undefined, customer_creation: "always" as const }),
+      success_url: `${baseUrl}/settings?credits=added&session_id={CHECKOUT_SESSION_ID}#settings-ai`,
+      cancel_url: `${baseUrl}/settings#settings-ai`,
+    });
+    if (!session.url) return { error: "Stripe did not return a checkout URL." };
+    return { url: session.url };
+  } catch (err) {
+    return checkoutFailed(err, userId, "credit_pack");
+  }
+}
+
+/** Switch between Pro and Max on Stripe's own confirmation page. Returns its URL. */
+export async function startPlanSwitch(target: PurchasablePlan): Promise<CheckoutResult> {
+  const userId = await requireUserId();
+  if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
+  const result = await createPlanSwitchUrl(userId, target);
+  return result.ok ? { url: result.url } : { error: result.error };
+}
+
+/**
+ * What the pricing page needs to know about a signed-in visitor: their plan, and whether a
+ * founding price applies to them. Founding prices are shown ONLY to an account for which
+ * this is true — never to anyone signed out.
+ */
+export async function getPricingViewer(): Promise<{ plan: Plan; founding: boolean }> {
+  const userId = await requireUserId();
+  const [{ plan }, row] = await Promise.all([getEntitlements(userId), billingRow(userId)]);
+  return { plan, founding: plan === "free" && foundingAppliesToNewSubscription(row) };
 }
 
 /**
@@ -238,32 +200,18 @@ export async function openBillingPortal(): Promise<BillingPortalResult> {
 }
 
 export type SubscriptionOverview =
-  | {
-      ok: true;
-      subscription: SubscriptionDetails;
-      /** Null when a billing-period switch cannot be priced on this deployment. */
-      canSwitchPeriod: boolean;
-      /** The Lifetime price a switch would charge; null when Lifetime is not on sale. */
-      lifetimePriceUsd: number | null;
-    }
+  | { ok: true; subscription: SubscriptionDetails; planLabel: string }
   | { ok: false; error: string };
 
 /**
- * The caller's Pro subscription as Stripe has it right now, plus what the plan card may
- * offer from it. Read on demand by the card, so the settings page itself never waits on
- * Stripe.
+ * The caller's subscription as Stripe has it right now. Read on demand by the plan card, so
+ * the settings page itself never waits on Stripe.
  */
 export async function getSubscriptionOverview(): Promise<SubscriptionOverview> {
   const userId = await requireUserId();
   const result = await getSubscriptionDetailsFor(userId);
   if (!result.ok) return result;
-  const lifetimePriceUsd = isStripeConfigured() ? (await lifetimeOffer()).priceUsd : null;
-  return {
-    ok: true,
-    subscription: result.subscription,
-    canSwitchPeriod: isProCheckoutConfigured(),
-    lifetimePriceUsd,
-  };
+  return { ok: true, subscription: result.subscription, planLabel: PLAN_LABELS[result.subscription.plan] };
 }
 
 /** Stop renewing at the end of the paid period. Access continues until then. */
@@ -278,37 +226,17 @@ export async function resumeSubscription(): Promise<SubscriptionResult> {
   return resumeSubscriptionFor(userId);
 }
 
-/** What a monthly ↔ annual switch would charge (or credit) today. */
-export async function previewBillingPeriodChange(
-  period: BillingPeriod
-): Promise<PeriodChangePreview> {
-  const userId = await requireUserId();
-  return previewBillingPeriodChangeFor(userId, period);
-}
-
-/** Switch the Pro subscription between monthly and annual billing, prorated. */
-export async function changeBillingPeriod(
-  period: BillingPeriod
-): Promise<SubscriptionResult> {
-  const userId = await requireUserId();
-  return changeBillingPeriodFor(userId, period);
-}
-
 /**
  * Confirm a checkout the moment the buyer is back, instead of waiting on the webhook. Called
- * once by the celebration watcher with the `session_id` Stripe put in the success URL.
- *
- * Two checks, both through the same idempotent writers as the webhook. First the general
- * one (`confirmCheckoutForUser`), which applies a paid Pro or Lifetime session for this
- * caller. When that applies nothing, the Lifetime check the AI gate also uses
- * (`confirmLifetimeCheckout`) says whether the payment is merely still clearing, so the
- * watcher can tell the buyer rather than stay silent. Anything else changes nothing.
+ * once by the celebration watcher (or the credits card) with the `session_id` Stripe put in
+ * the success URL. Same decision, same idempotent writers as the webhook, so whichever
+ * lands second finds nothing left to do.
  */
 export async function confirmCheckoutSession(
   sessionId: string
 ): Promise<{ status: "granted" | "processing" | "unconfirmed" }> {
   const userId = await requireUserId();
-  if (!isStripeConfigured()) return { status: "unconfirmed" };
+  if (!isCheckoutConfigured()) return { status: "unconfirmed" };
   if (typeof sessionId !== "string" || !/^cs_[A-Za-z0-9_]{8,250}$/.test(sessionId)) {
     return { status: "unconfirmed" };
   }
@@ -319,21 +247,12 @@ export async function confirmCheckoutSession(
           expand: ["payment_intent.latest_charge", "subscription"],
         }),
     });
-    if (result.status === "applied") {
-      if (result.grantedLifetime) await endProForLifetime(userId);
-      return { status: "granted" };
-    }
+    if (result.status === "applied") return { status: "granted" };
+    // An async payment (a bank debit) completes the session before the money settles.
+    if (result.reason === "unpaid") return { status: "processing" };
   } catch (err) {
     // Not recorded as a stripeCheckout error event: that source pages "nobody can pay".
     console.error("Checkout confirmation on return did not complete:", err);
-  }
-  try {
-    const { confirmLifetimeCheckout } = await import("@/lib/lifetime-checkout");
-    const verdict = await confirmLifetimeCheckout(userId, sessionId);
-    if (verdict.kind === "paid") return { status: "granted" };
-    if (verdict.kind === "processing") return { status: "processing" };
-  } catch (err) {
-    console.error("Lifetime checkout check on return did not complete:", err);
   }
   return { status: "unconfirmed" };
 }

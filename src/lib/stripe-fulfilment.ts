@@ -20,10 +20,13 @@ import {
 } from "@/lib/billing-stripe";
 import {
   findUserIdByStripeCustomerId,
+  recordFoundingRedemption,
   setLifetimePurchase,
+  setStripeCustomerId,
   setSubscriptionState,
   revokeLifetimePurchase,
 } from "@/lib/user-settings";
+import { grantPack, revokePack } from "@/lib/credits/grants";
 
 /**
  * The half of Stripe fulfilment that touches the database, shared by the webhook
@@ -107,6 +110,10 @@ export type StripeApplyDeps = {
   book: (booking: Booking) => Promise<unknown>;
   setLifetime: typeof setLifetimePurchase;
   setSubscription: typeof setSubscriptionState;
+  grantPack: typeof grantPack;
+  revokePack: typeof revokePack;
+  recordFounding: typeof recordFoundingRedemption;
+  setCustomer: typeof setStripeCustomerId;
 };
 
 export const defaultStripeApplyDeps: StripeApplyDeps = {
@@ -114,6 +121,10 @@ export const defaultStripeApplyDeps: StripeApplyDeps = {
   book: (booking) => recordBillingEventStrict({ source: "stripe", ...booking }),
   setLifetime: setLifetimePurchase,
   setSubscription: setSubscriptionState,
+  grantPack,
+  revokePack,
+  recordFounding: recordFoundingRedemption,
+  setCustomer: setStripeCustomerId,
 };
 
 /** Apply a decision: every booking (throwing on failure), then the mirror. */
@@ -139,6 +150,7 @@ export async function applyStripeDecision(
         {
           plan: mirror.plan,
           status: mirror.status,
+          ...(mirror.periodStart !== undefined ? { periodStart: mirror.periodStart } : {}),
           periodEnd: mirror.periodEnd,
           monthlyCents: mirror.monthlyCents,
           interval: mirror.interval,
@@ -148,6 +160,26 @@ export async function applyStripeDecision(
           ...(mirror.eventAt ? { eventAt: mirror.eventAt } : {}),
         }
       );
+      if (mirror.founding) await deps.recordFounding(mirror.userId, mirror.founding);
+      return;
+    case "credit_pack":
+      // Idempotent on the session: a retried webhook, and verify-on-return racing it, grant
+      // the 250 credits exactly once.
+      await deps.grantPack({
+        userId: mirror.userId,
+        grantKey: mirror.grantKey,
+        stripeRef: mirror.stripeRef,
+        amountCents: mirror.amountCents,
+        credits: mirror.credits,
+      });
+      if (mirror.stripeCustomerId) await deps.setCustomer(mirror.userId, mirror.stripeCustomerId);
+      return;
+    case "credit_pack_revoked":
+      await deps.revokePack({
+        userId: mirror.userId,
+        paymentIntentId: mirror.paymentIntentId,
+        reason: mirror.reason,
+      });
       return;
     case "lifetime_revoked":
       // Phase 0 (audit A4): a full refund or a lost dispute ends Lifetime.
@@ -156,8 +188,10 @@ export async function applyStripeDecision(
     case "subscription_revoked":
       // monthlyCents and interval are omitted, so the stored price stays for display;
       // status canceled with a period end of now is what drops `resolvePlan` to free.
+      // `plan: null` would forget which tier it was; the canceled status with a period end of
+      // now is what drops `resolvePlan` to free, whatever the tier.
       await deps.setSubscription(mirror.userId, {
-        plan: "orbit",
+        plan: null,
         status: "canceled",
         periodEnd: mirror.periodEnd,
       });

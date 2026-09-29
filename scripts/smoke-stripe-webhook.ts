@@ -392,7 +392,9 @@ async function main() {
       client_reference_id: PRO_USER,
       customer: "cus_smoke_pro",
       mode: "subscription",
-      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
+      // A legacy ($5/month) Pro checkout: every session of that era carried its billing
+      // period, which is how the decision tells it from a pricing v2 one.
+      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE, orbit_billing_period: "monthly" },
     }),
     id: "evt_smoke_pro_checkout",
   };
