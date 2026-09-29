@@ -4,7 +4,9 @@ import { discardCapturePhotos, storeCapturePhotos, type StoredCapturePhoto } fro
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
 import {
   appendIngestedBlocks,
+  appendSourceFileHashes,
   createCaptureJob,
+  createCaptureJobWithId,
   failCaptureJob,
   markCaptureJobTranscribed,
   queueCaptureJobRow,
@@ -49,6 +51,11 @@ const SOURCE_KINDS: CaptureJobSource[] = ["messy", "voice", "scan"];
  *     sourceLabel  optional — the original filename, for the queue row
  *     mentionPicks optional — JSON [{id,name}] the person picked with `@`
  *     autoQueue    optional — "1" to queue and start extraction in this same request
+ *     fileHashes   optional — JSON ["<sha256 hex>", ...] of the ORIGINAL files this note is
+ *                  read from, hashed in the browser before preparation. Stored on the job
+ *                  (appended, on a later part) so the same file dropped again is recognised.
+ *     jobId        optional — a uuid the browser minted for the job this request creates, so
+ *                  Stop can discard it before the response has named it. First part only.
  *   x-orbit-capture: 1
  *
  * A route rather than a server action for the same two reasons the meeting chunk route
@@ -119,6 +126,19 @@ export async function POST(request: Request) {
       mentionPicks = [];
     }
   }
+  // Malformed hashes cost the upload nothing: they are a convenience for next time, and
+  // `cleanFileHashes` drops anything that is not a real one before it reaches the row.
+  let fileHashes: unknown[] = [];
+  if (typeof form.get("fileHashes") === "string") {
+    try {
+      const parsed: unknown = JSON.parse(String(form.get("fileHashes")));
+      fileHashes = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      fileHashes = [];
+    }
+  }
+  const clientJobIdRaw = typeof form.get("jobId") === "string" ? String(form.get("jobId")).trim().toLowerCase() : "";
+  const clientJobId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(clientJobIdRaw) ? clientJobIdRaw : "";
   const uploads = form.getAll("files").filter((f): f is File => f instanceof File);
   if (!uploads.length) {
     return NextResponse.json({ error: "Add a file first" }, { status: 400 });
@@ -166,16 +186,25 @@ export async function POST(request: Request) {
     });
   }
 
+  const jobInput = {
+    sourceKind,
+    status: "ingesting" as const,
+    inputText: text,
+    batchGroupId: batchGroupId || null,
+    sourceLabel: sourceLabel || null,
+    mentionPicks,
+    sourceFileHashes: fileHashes,
+  };
   const job =
     continued ??
-    (await createCaptureJob(userId, {
-      sourceKind,
-      status: "ingesting",
-      inputText: text,
-      batchGroupId: batchGroupId || null,
-      sourceLabel: sourceLabel || null,
-      mentionPicks,
-    }));
+    (clientJobId ? await createCaptureJobWithId(userId, clientJobId, jobInput) : await createCaptureJob(userId, jobInput));
+  if (!job) {
+    // The id is taken — almost always by the tombstone a Stop left because it beat this
+    // insert (see `discardCaptureJobRow`). Nobody is waiting on this answer: the tab that
+    // sent it has already aborted. Refusing before transcription is what saves the model call.
+    return NextResponse.json({ error: "That upload was stopped" }, { status: 409 });
+  }
+  if (continued && fileHashes.length) await appendSourceFileHashes(continued.id, fileHashes);
 
   // Photos are kept (shrunk, stripped of metadata) so the capture history can show the page
   // next to what was pulled out of it — the same lifecycle `ingestCaptureMedia` gives them:

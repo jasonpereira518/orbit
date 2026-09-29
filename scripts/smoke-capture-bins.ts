@@ -14,6 +14,10 @@
  * down, a PDF is rasterized up — so checking the size on disk refuses a bin of whiteboard
  * photos while waving through a PDF that cannot fit.
  *
+ * Then two ways a file is staged and still not read: the same BYTES twice (deduped by
+ * content hash, whatever the files are called), and a file unticked — or already captured,
+ * which starts unticked. Neither may break the invariant, and neither may reach an upload.
+ *
  * Run: npx tsx scripts/smoke-capture-bins.ts
  */
 import {
@@ -23,6 +27,7 @@ import {
   combineAll,
   emptyState,
   invariantBroken,
+  isIncluded,
   moveFiles,
   oversizedUploads,
   planUploads,
@@ -31,6 +36,7 @@ import {
   renameBin,
   separateTray,
   setBinAnchor,
+  setExcluded,
   stageFiles,
   type SorterState,
   type StagedFile,
@@ -44,6 +50,7 @@ import {
 import type { ScanPage } from "../src/lib/scan-capture";
 import { CAPTURE_MAX_UPLOAD_BYTES } from "../src/lib/capture-limits";
 import { MAX_SCAN_PAGES, SCAN_TARGET_BYTES } from "../src/lib/scan-image";
+import { hashFileBytes, hashFilesSequentially, isFileHash } from "../src/lib/capture/file-hash";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -59,14 +66,12 @@ function intact(label: string, state: SorterState, ok: boolean, detail = "") {
 }
 
 let n = 0;
-const file = (name: string, size = 100, path = "", type = ""): StagedFile => ({
-  id: `f${++n}`,
-  name,
-  size,
-  type,
-  lastModified: 0,
-  path,
-});
+// Every file gets its own hash unless one is given: distinct bytes, which is what the
+// placement tests below are about. The dedupe tests pass a shared one on purpose.
+const file = (name: string, size = 100, path = "", type = "", hash?: string): StagedFile => {
+  const id = `f${++n}`;
+  return { id, name, size, type, lastModified: 0, path, hash: hash ?? `hash-${id}` };
+};
 
 const seed = (f: StagedFile) => ({ name: f.name.replace(/\.[^.]+$/, ""), anchorIso: null });
 const ids = (mint: string) => () => `${mint}${++n}`;
@@ -434,6 +439,96 @@ async function preparation() {
   }
 }
 
+console.log("\nthe same bytes twice stage once");
+
+{
+  // Two copies in ONE drop: a folder with `IMG_0412.jpg` and `IMG_0412 (1).jpg` in it.
+  const a = file("IMG_0412.jpg", 500, "", "image/jpeg", "same-bytes");
+  const b = file("IMG_0412 (1).jpg", 500, "", "image/jpeg", "same-bytes");
+  const c = file("other.jpg", 500, "", "image/jpeg");
+  const out = stageFiles(emptyState(), [a, b, c]);
+  intact("two identical files in one drop stage once", out.state, out.state.files.length === 2);
+  check("  the first copy is the one kept", out.state.files[0]!.id === a.id);
+  check("  and the fold is reported, not swallowed", out.duplicates === 1, String(out.duplicates));
+
+  // Re-adding: the same bytes dropped again, under a new id and a new name.
+  const again = stageFiles(out.state, [file("renamed.jpg", 500, "", "image/jpeg", "same-bytes")]);
+  intact("re-adding a file already here stages nothing", again.state, again.state.files.length === 2);
+  check("  and says so", again.duplicates === 1, String(again.duplicates));
+
+  // Re-staging the very same StagedFile is a caller repeating itself, not a second copy.
+  const repeat = stageFiles(out.state, [a]);
+  check("re-staging the same id is not counted as a duplicate", repeat.duplicates === 0, String(repeat.duplicates));
+
+  // A blank hash is "identity unknown", never a match — two unhashable files are two files.
+  const blank = stageFiles(emptyState(), [file("x.md", 1, "", "", ""), file("y.md", 1, "", "", "")]);
+  intact("two files with no hash are not folded together", blank.state, blank.state.files.length === 2);
+
+  // Dedupe runs before the cap, so a copy never spends one of the slots.
+  const full = Array.from({ length: MAX_STAGED_FILES }, (_, i) => file(`n${i}.md`));
+  const withCopy = stageFiles(emptyState(), [full[0]!, file("copy.md", 100, "", "", full[0]!.hash), ...full.slice(1)]);
+  check(
+    "a copy does not push a real file over the cap",
+    withCopy.state.files.length === MAX_STAGED_FILES && withCopy.rejected === 0 && withCopy.duplicates === 1,
+    `${withCopy.state.files.length} staged, ${withCopy.rejected} rejected, ${withCopy.duplicates} dupes`
+  );
+}
+
+console.log("\nunticked files stay put and are not read");
+
+{
+  let st = stageFiles(emptyState(), [file("a.md", 10), file("b.md", 20), file("c.md", 40), file("d.md", 80)]).state;
+  const [a, b, c, d] = st.files.map((f) => f.id) as [string, string, string, string];
+  st = moveFiles(addBin(st, "bin1", "Monday"), [a, b], "bin1");
+  st = moveFiles(addBin(st, "bin2", "Tuesday"), [c], "bin2");
+  // Now: bin1 = a,b · bin2 = c · tray = d.
+
+  const before = planUploads(st, seed);
+  check("everything ticked: three notes", before.length === 3, String(before.length));
+
+  st = intact("unticking a file keeps it where it was", setExcluded(st, [b], true), binOf(st, b)?.id === "bin1");
+  check("  it reads as excluded", !isIncluded(st, b));
+  const minusB = planUploads(st, seed);
+  const monday = minusB.find((p) => p.binId === "bin1")!;
+  check("  its bin uploads without it", JSON.stringify(monday.fileIds) === JSON.stringify([a]), JSON.stringify(monday.fileIds));
+  check("  and is priced without it", monday.bytes === 10 && monday.uploadBytes === 10, `${monday.bytes}/${monday.uploadBytes}`);
+  check("  and carries only its hash", JSON.stringify(monday.fileHashes) === JSON.stringify([`hash-${a}`]), JSON.stringify(monday.fileHashes));
+
+  st = intact("a bin whose every file is unticked", setExcluded(st, [c], true), true);
+  const noTuesday = planUploads(st, seed);
+  check("  produces no note", !noTuesday.some((p) => p.binId === "bin2"), JSON.stringify(noTuesday.map((p) => p.label)));
+
+  st = intact("an unticked loose file", setExcluded(st, [d], true), st.trayIds.includes(d));
+  const noLoose = planUploads(st, seed);
+  check("  is not uploaded on its own either", !noLoose.some((p) => p.fileIds.includes(d)));
+  check("  leaving exactly one note", noLoose.length === 1, String(noLoose.length));
+
+  const retick = setExcluded(st, [b, c, d], false);
+  st = intact("ticking them again brings every note back", retick, planUploads(retick, seed).length === 3);
+
+  // Select none / select all are the same helper over every file.
+  const none = setExcluded(st, st.files.map((f) => f.id), true);
+  st = intact("none ticked", none, planUploads(none, seed).length === 0);
+  const all = setExcluded(none, none.files.map((f) => f.id), false);
+  st = intact("all ticked again", all, all.excludedIds.length === 0 && planUploads(all, seed).length === 3);
+
+  // Idempotent, ordered, and blind to ids that are not staged.
+  const twice = setExcluded(setExcluded(st, [d, a], true), [a], true);
+  check("excluding twice lists a file once, in staging order", JSON.stringify(twice.excludedIds) === JSON.stringify([a, d]), JSON.stringify(twice.excludedIds));
+  check("an unknown id cannot be excluded", setExcluded(st, ["ghost"], true) === st);
+
+  // Removing an excluded file removes the exclusion too — no phantom left behind.
+  const gone = removeFile(setExcluded(st, [a], true), a);
+  st = intact("removing an unticked file leaves no exclusion behind", gone, !gone.excludedIds.includes(a));
+
+  // "All one note" names the bin after a file that will actually be read.
+  const firstOut = setExcluded(stageFiles(emptyState(), [file("skip-me.md"), file("keep-me.md")]).state, [], true);
+  const skipped = setExcluded(firstOut, [firstOut.files[0]!.id], true);
+  const combined = combineAll(skipped, ids("bin"), seed);
+  intact("combining keeps the unticked file placed", combined, combined.bins[0]!.fileIds.length === 2);
+  check("  but names the note after a ticked one", combined.bins[0]!.name === "keep-me", combined.bins[0]!.name);
+}
+
 console.log("\nthe invariant catches what it is for");
 
 {
@@ -443,11 +538,34 @@ console.log("\nthe invariant catches what it is for");
   check("a file in two places is caught", invariantBroken({ ...st, bins: [{ id: "b", name: "x", fileIds: [id], anchorIso: null }] }) !== null);
   check("a file in no place is caught", invariantBroken({ ...st, trayIds: [] }) !== null);
   check("a placed id that was never staged is caught", invariantBroken({ ...st, trayIds: [id, "ghost"] }) !== null);
+  check("an excluded id that was never staged is caught", invariantBroken({ ...st, excludedIds: ["ghost"] }) !== null);
+  check("a file excluded twice is caught", invariantBroken({ ...st, excludedIds: [id, id] }) !== null);
+}
+
+// The hash itself, against the real `crypto.subtle` Node provides — the same API the
+// browser uses. Chained into the async tail below with the preparation checks.
+async function hashing() {
+  console.log("\nhashing file bytes");
+  const blob = (text: string) => new Blob([text]);
+  const h1 = await hashFileBytes(blob("hello"));
+  check("a hash is 64 lowercase hex characters", isFileHash(h1), h1);
+  check(
+    "  and is the SHA-256 of the bytes",
+    h1 === "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    h1
+  );
+  check("the same bytes hash the same", (await hashFileBytes(blob("hello"))) === h1);
+  check("different bytes hash differently", (await hashFileBytes(blob("hello!"))) !== h1);
+  const many = await hashFilesSequentially([blob("a"), blob("b"), blob("a")]);
+  check("a batch hashes in order", many.length === 3 && many[0] === many[2] && many[0] !== many[1]);
+  const broken = await hashFileBytes({ arrayBuffer: () => Promise.reject(new Error("gone")) });
+  check("an unreadable file hashes to blank, never throws", broken === "");
 }
 
 // Chained rather than top-level `await`: tsx transforms these scripts to CJS, which has
 // no top-level await. Everything above this line is synchronous and has already run.
 preparation()
+  .then(hashing)
   .catch((err: unknown) => {
     console.error(err);
     failures++;

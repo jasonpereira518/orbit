@@ -239,9 +239,23 @@ export function CaptureFlow({
   }, [job?.meetingSessionId, job?.status, meetingAnalysis]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────────────
+  /**
+   * Stop pressed while Extract's own request was still out — there is no job id to discard
+   * yet. Remembered here and honoured the moment the id arrives (see `startExtraction`).
+   *
+   * By attempt number rather than a boolean: Stop and then Extract again before the first
+   * request returns is two attempts in flight, and a flag the second one reset would let the
+   * first one's job survive the Stop that was meant for it.
+   */
+  const extractAttemptRef = useRef(0);
+  const stoppedAttemptRef = useRef(0);
+  type ExtractionInput = { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null; mentionPicks?: MentionPick[]; force?: boolean };
+  /** The duplicate toast's "Extract again" calls back in through this; synced below. */
+  const startExtractionRef = useRef<((input: ExtractionInput) => Promise<void>) | null>(null);
   const startExtraction = useCallback(
-    async (input: { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null; mentionPicks?: MentionPick[] }) => {
+    async (input: ExtractionInput) => {
       if (!input.text.trim() && !input.jobId) return;
+      const attempt = ++extractAttemptRef.current;
       setPendingStart(true);
       setReviewOpened(false);
       const res = await queueCaptureJob({
@@ -256,7 +270,23 @@ export function CaptureFlow({
         // a name the user typed and then deleted is still in it — and sending that would
         // link a note to somebody they took back out on purpose.
         mentionPicks: activePicks(input.text, input.mentionPicks ?? []),
+        force: input.force,
       });
+      if (stoppedAttemptRef.current === attempt) {
+        // Stopped before the job had an id. It has one now; discard it, and say nothing —
+        // the page already went back to the notes when Stop was pressed.
+        if (res.ok) void discardCaptureJob(res.job.id);
+        return;
+      }
+      if (!res.ok && "duplicate" in res) {
+        setPendingStart(false);
+        const when = new Date(res.duplicate.capturedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        toast.message(res.error, {
+          description: `First extracted on ${when}`,
+          action: { label: "Extract again", onClick: () => void startExtractionRef.current?.({ ...input, force: true }) },
+        });
+        return;
+      }
       if (!res.ok) {
         setPendingStart(false);
         const denial = aiDenialFromMessage(res.error);
@@ -282,6 +312,27 @@ export function CaptureFlow({
     },
     [initialContactId, messy, voice, userId]
   );
+  useEffect(() => {
+    startExtractionRef.current = startExtraction;
+  }, [startExtraction]);
+
+  /**
+   * Stop on the reading stage: discard the job and go back to the input — with the notes
+   * still in the box. Unlike Start over, nothing the person wrote is reset; Stop cancels the
+   * reading, not the note. The runner notices at its next heartbeat and stops before its
+   * next model pass (`claimWatch` in capture-job-runner.ts).
+   */
+  const stopExtraction = useCallback(() => {
+    if (pendingStart) {
+      stoppedAttemptRef.current = extractAttemptRef.current;
+      setPendingStart(false);
+      return;
+    }
+    const id = job?.id;
+    clearCaptureJob();
+    setReviewOpened(false);
+    if (id) void discardCaptureJob(id);
+  }, [pendingStart, job?.id]);
 
   const save = useCallback(async (jobId: string) => {
     const res = await saveCaptureJob(jobId);
@@ -460,6 +511,7 @@ export function CaptureFlow({
             phase={foundHold ? "found" : "reading"}
             foundCount={items.length}
             meta={sourceMeta(job, messy.fileName ?? voice.fileName)}
+            onStop={stopExtraction}
           />
         )}
 
