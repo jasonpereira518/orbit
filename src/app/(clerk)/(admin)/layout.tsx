@@ -6,6 +6,7 @@ import { unresolvedFeedbackCount } from "@/lib/admin-feedback";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import "./admin-console.css";
 
 /**
  * Its own route group, outside `(app)` — so it inherits neither the product shell nor the

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +27,15 @@ import { friendlyError } from "@/lib/errors";
  * `typedConfirmation` is for the irreversible ones. It is not ceremony: the roster is a list
  * of near-identical rows, and the failure this guards against is acting on the account next
  * to the one you meant.
+ *
+ * Pending state is a real `useState` flag, not `useTransition`. React 19's transitions stop
+ * reporting pending as soon as the async body hits its first `await`, which left Confirm
+ * re-enabled and Escape/backdrop free to `reset()` mid-flight — so a waitlist Remove or
+ * Delete could finish on the server while the UI looked cancelled and never refreshed.
+ * Same closed doors as `AddEmailDialog`: `disablePointerDismissal` for the backdrop, and
+ * `onOpenChange` refusing a close while `pending` for Escape and the header X. `runRef`
+ * drops late continuations after a reset so a stale success toast cannot fire for a dialog
+ * that is no longer on screen.
  */
 export function ConfirmActionDialog({
   trigger,
@@ -58,7 +67,10 @@ export function ConfirmActionDialog({
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [typed, setTyped] = useState("");
-  const [pending, startTransition] = useTransition();
+  const [pending, setPending] = useState(false);
+  // Bumped on every reset — a run started before the bump checks this after its await
+  // and drops itself if it no longer matches.
+  const runRef = useRef(0);
 
   const reasonOk = reason.trim().length >= minReason;
   const typedOk =
@@ -67,42 +79,51 @@ export function ConfirmActionDialog({
   const ready = reasonOk && typedOk && !pending;
 
   const reset = () => {
+    runRef.current += 1;
     setReason("");
     setTyped("");
+    setPending(false);
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!ready) return;
-    startTransition(async () => {
-      try {
-        await onConfirm(reason.trim());
-        toast.success(`${confirmLabel} — done`);
-        setOpen(false);
-        reset();
-        if (redirectTo) {
-          router.push(redirectTo);
-        } else {
-          router.refresh();
-        }
-      } catch (e) {
-        // Surfaced verbatim: these are the server's own guard messages ("Refusing to act on
-        // your own account"), and paraphrasing them would hide which guard fired.
-        toast.error(friendlyError(e, "That didn’t work — try again?"));
+    const runId = runRef.current;
+    setPending(true);
+    try {
+      await onConfirm(reason.trim());
+      if (runId !== runRef.current) return;
+      toast.success(`${confirmLabel} — done`);
+      setOpen(false);
+      reset();
+      if (redirectTo) {
+        router.push(redirectTo);
+      } else {
+        router.refresh();
       }
-    });
+    } catch (e) {
+      if (runId !== runRef.current) return;
+      // Surfaced verbatim when the server threw UserFacingError (guard messages like
+      // "That signup no longer exists"); otherwise the generic fallback.
+      toast.error(friendlyError(e, "That didn’t work — try again?"));
+      setPending(false);
+    }
   };
 
   return (
     <Dialog
       open={open}
+      disablePointerDismissal={pending}
       onOpenChange={(next) => {
+        // Escape and the header X reach here even with the backdrop blocked — refuse a
+        // close while the action is in flight so reset() cannot run under it.
+        if (!next && pending) return;
         setOpen(next);
         if (!next) reset();
       }}
     >
       <span onClick={() => setOpen(true)}>{trigger}</span>
 
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" showCloseButton={!pending}>
         <DialogHeader>
           <DialogTitle className={cn(danger && "text-destructive")}>
             {title}
@@ -119,6 +140,7 @@ export function ConfirmActionDialog({
               rows={2}
               placeholder="What prompted this? Goes in the audit log."
               className="text-sm"
+              disabled={pending}
             />
           </label>
 
@@ -133,6 +155,7 @@ export function ConfirmActionDialog({
                 placeholder={typedConfirmation}
                 className="h-8 text-sm"
                 autoComplete="off"
+                disabled={pending}
               />
             </label>
           )}

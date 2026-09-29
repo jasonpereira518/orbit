@@ -9,8 +9,8 @@ import {
 import { BODY_MAX, BODY_MIN, SUBJECT_MAX, SUBJECT_MIN } from "@/lib/broadcast-limits";
 import {
   ACCENT,
-  INK,
   SERIF_STACK,
+  TEXT,
   WAITLIST_FOOTER,
   buildUnsubscribeUrl,
   escapeHtml,
@@ -24,8 +24,9 @@ import {
  * Operator-composed notes to the waitlist.
  *
  * Same rules as every waitlist email (`lib/interest-list-email.ts`): sent from the
- * waitlist's own sender, with no product name, logo or app link in the shell. What the
- * operator writes in the body is theirs to keep equally quiet.
+ * waitlist's own sender. The shell may name Orbit; it must not pitch the product, show
+ * the app logo, or link off the waitlist host. What the operator writes in the body is
+ * theirs to keep equally quiet.
  */
 
 /** Ceiling on one send request, so a run cannot outlive its invocation. */
@@ -41,7 +42,7 @@ export type BroadcastSendStats = {
 };
 
 /**
- * Wraps operator prose in the same paper letter the welcome note uses.
+ * Wraps operator prose in the same night-sky letter the welcome note uses.
  *
  * The operator writes plain text and this builds the markup, which is what stops a broadcast
  * from drifting off the product's look or shipping broken HTML to an entire list at once.
@@ -76,7 +77,7 @@ export function buildBroadcastEmail(input: {
       .map((block, i) => {
         const content = escapeHtml(block).replace(/\n/g, "<br />");
         return i === 0
-          ? `<tr><td style="font-family:${SERIF_STACK};font-size:21px;line-height:1.35;color:${INK};padding-bottom:16px;">${content}</td></tr>`
+          ? `<tr><td style="font-family:${SERIF_STACK};font-size:21px;line-height:1.35;color:${TEXT};padding-bottom:16px;">${content}</td></tr>`
           : paperParagraph(content);
       })
       .join("\n            "),

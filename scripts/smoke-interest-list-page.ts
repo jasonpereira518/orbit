@@ -11,11 +11,12 @@
  */
 import "./smoke/_env";
 
-import { like } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { interestListSignups } from "../src/db/schema";
+import { interestListSignups, waitlistPollVotes } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 import { invalidateInterestProof } from "../src/lib/interest-list-ticket";
+import { POLL_OPTIONS } from "../src/lib/waitlist-poll";
 
 const PREFIX = "smoke-page-";
 const TOKEN = "smoke-page-token";
@@ -41,6 +42,31 @@ function findProp(node: unknown, name: string): unknown {
   for (const value of Object.values(el.props)) {
     const hit = findProp(value, name);
     if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * The poll's `initial` prop. `findProp` cannot reach it: the hero's `initial` comes first and
+ * a plain-object prop has no `.props` to descend into, so find the element whose `initial`
+ * carries a `choice` key.
+ */
+function pollInitial(node: unknown): { results?: { counts?: unknown }; choice?: unknown } | undefined {
+  if (node == null || typeof node !== "object") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = pollInitial(child);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  const props = (node as { props?: Record<string, unknown> }).props;
+  if (!props) return undefined;
+  const init = props.initial as Record<string, unknown> | null | undefined;
+  if (init && typeof init === "object" && "choice" in init) return init;
+  for (const value of Object.values(props)) {
+    const hit = pollInitial(value);
+    if (hit) return hit;
   }
   return undefined;
 }
@@ -84,6 +110,13 @@ function hrefsOf(node: unknown, out: string[] = []): string[] {
 
 async function cleanup() {
   const db = await getDb();
+  const stale = await db
+    .select({ id: interestListSignups.id })
+    .from(interestListSignups)
+    .where(like(interestListSignups.email, `${PREFIX}%`));
+  for (const { id } of stale) {
+    await db.delete(waitlistPollVotes).where(eq(waitlistPollVotes.signupId, id));
+  }
   await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
   invalidateInterestProof();
 }
@@ -91,12 +124,19 @@ async function cleanup() {
 async function main() {
   await cleanup();
   const db = await getDb();
-  await db.insert(interestListSignups).values({
-    email: `${PREFIX}a@example.test`,
-    unsubscribeToken: generateUnsubscribeToken(),
-    shareToken: TOKEN,
-    welcomePlanet: "saturn",
-  });
+  const [seeded] = await db
+    .insert(interestListSignups)
+    .values({
+      email: `${PREFIX}a@example.test`,
+      unsubscribeToken: generateUnsubscribeToken(),
+      shareToken: TOKEN,
+      welcomePlanet: "saturn",
+    })
+    .returning();
+  const pollPick = POLL_OPTIONS[1].id;
+  await db
+    .insert(waitlistPollVotes)
+    .values({ optionId: pollPick, voterKey: `signup:${seeded.id}`, signupId: seeded.id });
 
   const mod = await import("../src/app/(site)/interest/page");
   const Page = mod.default;
@@ -112,10 +152,11 @@ async function main() {
   // it sees the hero's props (asserted above) and the server-rendered sections below it.
   const formText = textOf(form).join(" ");
   check("the FAQ keeps the product under wraps", formText.includes("under wraps"));
-  check("the front wave is explained", formText.includes("How do I get into the front wave?"));
-  // Its one sanctioned mark is the "Project: Orbit" header; nothing else names it.
-  const unmarked = formText.replace("Project: Orbit", "");
-  check("the header carries the product mark", formText.includes("Project: Orbit"));
+  check("moving up the line is explained", formText.includes("How do I move up the line?"));
+  check("the tracker section is on the page", formText.includes("Bring friends, move up."));
+  // Its one sanctioned mark is the "Orbit" header; nothing else names it.
+  const unmarked = formText.replace("Orbit", "");
+  check("the header carries the product mark", formText.includes("Orbit"));
   check("nothing else names the product", !/orbit/i.test(unmarked), unmarked.match(/.{0,40}orbit.{0,40}/i)?.[0]);
   check(
     "nothing says it is live, free or open for sign-up",
@@ -129,6 +170,18 @@ async function main() {
     hrefs.join(", ")
   );
   check("the hero gets the waitlist page URL, not the app's", String(findProp(form, "pageUrl")).endsWith("/interest"));
+
+  // The poll lives in a client component this walk cannot enter; its props are the contract.
+  check("the poll carries a tally", typeof pollInitial(form)?.results?.counts === "object");
+  // The tally is not per-viewer: the seeded signup's vote must show up for a no-pass visitor.
+  const tally = pollInitial(form)?.results?.counts as Record<string, number> | undefined;
+  check("…that counts the seeded vote", (tally?.[pollPick] ?? 0) >= 1, JSON.stringify(tally));
+  check("a visitor with no pass or cookie has not voted", pollInitial(form)?.choice === null);
+  check("…and hands the poll no pass token", findProp(form, "me") === null);
+
+  const passed = await Page(sp({ me: TOKEN }));
+  check("a pass that has voted opens on its pick", pollInitial(passed)?.choice === pollPick, String(pollInitial(passed)?.choice));
+  check("…and hands the poll its pass token", findProp(passed, "me") === TOKEN);
 
   // --- invited
   const invited = await Page(sp({ ref: TOKEN }));

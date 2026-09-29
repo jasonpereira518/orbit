@@ -212,7 +212,7 @@ export function DemoWindow() {
             <span className="size-3 rounded-full bg-[#febc2e]/85" />
             <span className="size-3 rounded-full bg-[#28c840]/85" />
           </div>
-          <p className="absolute left-1/2 -translate-x-1/2 text-xs text-[var(--d-dim)]">Project: Orbit — preview</p>
+          <p className="absolute left-1/2 -translate-x-1/2 text-xs text-[var(--d-dim)]">Orbit — preview</p>
           <div className="ml-auto" data-demo-modectl>
             {touring ? (
               <button

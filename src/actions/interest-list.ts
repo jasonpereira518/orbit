@@ -3,8 +3,15 @@
 import { clientIpFrom } from "@/lib/client-ip";
 import { cookies, headers } from "next/headers";
 import { ATTRIBUTION_COOKIE, parseAttribution } from "@/lib/attribution-parse";
-import type { InterestListInput, InterestListResult } from "@/lib/interest-list";
-import { joinInterestListCore } from "@/lib/interest-list-join";
+import type {
+  InterestListInput,
+  InterestListResult,
+  InterestNameInput,
+  InterestNameResult,
+} from "@/lib/interest-list";
+import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
+import { joinInterestListCore, saveInterestListNameCore } from "@/lib/interest-list-join";
+import { recordPassCheck } from "@/lib/interest-list-ticket";
 
 /**
  * The request-reading half of the join. Everything that decides what happens lives in
@@ -20,4 +27,26 @@ export async function joinInterestList(
   const attribution = parseAttribution(cookieStore.get(ATTRIBUTION_COOKIE)?.value ?? null);
 
   return joinInterestListCore(input, { ip, attribution });
+}
+
+/** The join's second step: the name for the pass. */
+export async function saveInterestListName(
+  input: InterestNameInput
+): Promise<InterestNameResult> {
+  const ip = clientIpFrom(await headers());
+  return saveInterestListNameCore(input, { ip });
+}
+
+/**
+ * Browser-only pass open. Called when the boarding pass mounts — not when an operator
+ * adds someone, and not from email prefetch of `?me=` HTML (no JS → no call).
+ */
+export async function recordPassCheckAction(shareToken: string): Promise<void> {
+  const token = typeof shareToken === "string" ? shareToken.trim() : "";
+  if (!token || token.length > SHARE_TOKEN_MAX) return;
+  try {
+    await recordPassCheck(token);
+  } catch (err) {
+    console.error("[interest-list] pass check failed", err);
+  }
 }

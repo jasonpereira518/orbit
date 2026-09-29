@@ -72,7 +72,7 @@ export function LandingPage({
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Watch the Orbit demo on YouTube"
-          className="flex h-9 w-9 items-center justify-center rounded-full text-[#9aada8] transition-[color,transform] duration-150 active:scale-125 motion-reduce:active:scale-100 hover:text-[#ff0000] focus-visible:text-[#ff0000]"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-[#9aada8] transition-[color,transform] duration-150 ease hover:scale-110 hover:text-[#ff0000] focus-visible:scale-110 focus-visible:text-[#ff0000] active:scale-125 motion-reduce:hover:scale-100 motion-reduce:focus-visible:scale-100 motion-reduce:active:scale-100"
         >
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="h-5 w-5">
             <path
@@ -86,7 +86,7 @@ export function LandingPage({
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Jason Pereira on LinkedIn"
-          className="flex h-9 w-9 items-center justify-center rounded-full text-[#9aada8] transition-[color,transform] duration-150 active:scale-125 motion-reduce:active:scale-100 hover:text-[#0a66c2] focus-visible:text-[#0a66c2]"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-[#9aada8] transition-[color,transform] duration-150 ease hover:scale-110 hover:text-[#0a66c2] focus-visible:scale-110 focus-visible:text-[#0a66c2] active:scale-125 motion-reduce:hover:scale-100 motion-reduce:focus-visible:scale-100 motion-reduce:active:scale-100"
         >
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="h-5 w-5">
             <path
