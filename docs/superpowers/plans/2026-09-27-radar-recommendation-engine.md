@@ -10,6 +10,60 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-27-radar-recommendation-engine-design.md`
 
+## Revision — 2026-09-29, before building P0
+
+`main` moved from `f36306a` (schema 120) to `12b62e2` (schema 129) between writing this plan and
+starting P0. A read-only pass over the new `main` changed the following. Where this section
+contradicts a task below, this section wins.
+
+**Schema (Task 1).** P0 takes **schema 130** (129 is the highest claim on any remote branch;
+121–124 belong to the Leads stack). `user_settings` columns go in three places: the
+`CREATE TABLE user_settings` body, `alters`, and `ensureColumn` in `migratePglite`. Every
+*named* Drizzle index must exist under the same name in the DDL (`scripts/lib/schema-coverage.ts`
+gates the Vercel build). P0 creates only what P0 writes: `recommendations`, `radar_runs`,
+`recommendation_feedback`, and `user_settings.radar_next_at`, `radar_lease_until`,
+`radar_last_run_at`, `radar_paused` (integer, the house flag convention).
+`contact_signals` moves to P1 with its first writer; `recommendations.draft`,
+`radar_autopilot` and `radar_capture_linkedin_activity` move to P2 with the features that use
+them. `recommendations.status` has no `auto_applied` value until P2.
+
+**Signals and scorer (Tasks 2–3).** The private thresholds in `src/lib/reminders.ts` move to a
+pure `src/lib/outreach-thresholds.ts` shared with the scorer. `countsAsTouch()` cannot be used
+inside aliased raw SQL; `attendedEventFilter()` needs the alias `e`; `ai_suggestions` has no
+`contact_id`, so the bridge filters on `related_contact_ids ->> 0`. `last_interaction_at` can be
+in the future (calendar sync writes meetings up to 60 days ahead), so the scorer clamps idle
+time at zero. Dismissed (contact, kind) pairs are excluded for 14 days and penalised to 30;
+accepted pairs are excluded for 7 days; a scheduled follow-up excludes every kind except prep
+and heads_up.
+
+**Run and ops (Tasks 4–5).** `runAtomicWrite` returns nothing, so run counts are computed before
+the write. `runSettledPool` swallows rejections, so the worker counts its own failures. While
+`page.radar` is coming-soon, the nightly claim only picks accounts that have opened Radar
+(`radar_last_run_at IS NOT NULL`), so nobody's AI key is spent on a page they cannot see.
+`radar.schedule_missed` alerts only after a run has started and then gone silent, so a deploy
+does not page before the first nightly run. The alert fixtures in `smoke-ops-alerts.ts`, the
+seeds in `smoke-ops-sweep.ts` and the handler list in `smoke-internal-auth.ts` all need the new
+job.
+
+**AI (Task 6).** The why-line prompt is pinned by a pure builder asserted in
+`smoke-radar-score.ts`, not by a draft-prompt golden (every golden is also asserted by
+`smoke-writing-instructions.ts`). AI availability is resolved once per run with
+`resolveAiAccess` and passed to every call.
+
+**Page and readers (Tasks 7–8).** The page awaits its visibility gate before starting any load.
+`consumeBucket` takes the scope first, and a refusal is returned as data. The dashboard loader
+is **not** changed: the page starts a separate Radar preview load only for viewers who can see
+Radar, so the behavior golden and the dashboard's statement budget stay as they are. Since
+PR #313 the notifications panel renders only due items and capture reviews, so Radar appears
+there as one badge-free summary row rather than as info-level items.
+
+**Lifecycle (Task 9).** `STEPS.preferences` is a no-op by design: the insights step deletes the
+Radar tables and clears the run columns itself. `radar_paused` joins
+`PRESERVED_SETTINGS_COLUMNS`. Guarded merge moves also join the hard-coded unmerge list.
+
+**Release (Task 10)** is not part of the P0 build: the page ships behind `comingSoon`, and an
+admin previews it from `/admin/product`.
+
 ## Global Constraints
 
 - **Never run `npm run db:push`.** DDL goes in `src/db/index.ts`: new tables in the `DDL` template; new `user_settings` columns ALSO in the `alters` list and the PGlite `ensureColumn` calls (`CREATE TABLE IF NOT EXISTS` is a no-op on existing databases); FK-leading indexes in `SCALE_DDL`. Bump `SCHEMA_VERSION` once per phase with a changelog line, then `npx tsx scripts/smoke-schema-ddl.ts --update`. Main is at 120; the phases plan for 121 / 122 / 123 — re-scan `origin/main` and every open branch before claiming a number, because a reused number silently skips one branch's DDL.
