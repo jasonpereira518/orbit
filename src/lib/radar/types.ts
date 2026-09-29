@@ -70,6 +70,11 @@ export type RecommendationStatus =
   | "dismissed"
   | "expired";
 
+/** One live card per (contact, kind): the key the run, the store and the rerank all use. */
+export function recommendationKey(contactId: string, kind: RecommendationKind): string {
+  return `${contactId}:${kind}`;
+}
+
 /** The statuses the live unique index covers. Kept beside the type so SQL and TS agree. */
 export const LIVE_RECOMMENDATION_STATUSES = ["pending", "snoozed", "auto_applied"] as const;
 

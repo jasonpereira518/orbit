@@ -16,7 +16,7 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
-import { and, eq, inArray, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   actionItems,
@@ -203,6 +203,11 @@ run(async () => {
   check("'not for this person' is left alone", kindOf(ids.never) === "");
   check("a guessed closeness is not dormancy", kindOf(ids.guessed) === "");
   check("one card per person", new Set(rows.map((r) => r.contactId)).size === rows.length);
+  const firstScores = await db
+    .select({ score: recommendations.score, base: recommendations.baseScore })
+    .from(recommendations)
+    .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")));
+  check("with no history, every card's score is its base score", firstScores.length > 0 && firstScores.every((r) => r.score === r.base));
   check("the counts add up", first.inserted === rows.length && first.updated === 0 && first.expired === 0);
   check("no statement selects notes",
     !queries.some((q) => selectsColumn(q, "notes") || selectsColumn(q, "raw_notes")),
@@ -224,15 +229,33 @@ run(async () => {
   console.log("\nwith an AI key (stubbed provider)");
   {
     const sent: string[] = [];
+    const reranks: string[] = [];
+    let rerankReply: "good" | "garbage" | "neutral" = "good";
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (!/generativelanguage/.test(url)) return realFetch(input, init);
-      sent.push(typeof init?.body === "string" ? init.body : "");
-      const reply = JSON.stringify({
-        why: "You met recently and have not followed up.",
-        opener: "Good to meet you at the summit. My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123",
-      });
+      const body = typeof init?.body === "string" ? init.body : "";
+      // The rerank is the one call that carries a CANDIDATES fence.
+      const isRerank = body.includes("<<<CANDIDATES_");
+      (isRerank ? reranks : sent).push(body);
+      const reply = isRerank
+        ? rerankReply === "garbage"
+          ? "not json at all"
+          : rerankReply === "neutral"
+            ? JSON.stringify({ items: Array.from({ length: 20 }, (_, i) => ({ id: `c${i + 1}`, adjust: 0, angle: "" })) })
+            : JSON.stringify({
+              items: [
+                { id: "c1", adjust: 40, angle: "Worth a message while it is fresh." },
+                { id: "c2", adjust: -9, angle: "Nothing is waiting on you here." },
+                { id: "c3", adjust: 3, angle: "Call them in 97 weeks." },
+                { id: "c99", adjust: 15, angle: "Not a candidate." },
+              ],
+            })
+        : JSON.stringify({
+            why: "You met recently and have not followed up.",
+            opener: "Good to meet you at the summit. My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123",
+          });
       return Response.json({
         candidates: [{ content: { role: "model", parts: [{ text: reply }] }, finishReason: "STOP" }],
         usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
@@ -248,6 +271,40 @@ run(async () => {
     check("one call per note", sent.length === withAi.aiNotes, `${sent.length} calls`);
     check("the facts reach the model fenced", sent.every((b) => b.includes("<<<FACTS_")));
     check("and no notes do", sent.every((b) => !/Met at|raw_notes/.test(b)));
+
+    check("one rerank call per run", reranks.length === 1, `${reranks.length}`);
+    check("it moved cards", withAi.reranked > 0 && !withAi.rerankFailed, JSON.stringify(withAi));
+    check("the goals and the candidates reach it fenced", reranks.every((b) => b.includes("<<<GOALS_") && b.includes("<<<CANDIDATES_")));
+    check("it never sees a name", reranks.every((b) => !/Dormant Dana|Intro Ivan|Inbound Ines|Meeting Mo/.test(b)));
+    const moved = await db
+      .select({ score: recommendations.score, base: recommendations.baseScore, delta: recommendations.aiDelta, angle: recommendations.aiAngle })
+      .from(recommendations)
+      .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")));
+    const touched = moved.filter((r) => r.delta !== null);
+    check("an adjustment is clamped to fifteen points", touched.every((r) => Math.abs(r.delta!) <= 15) && touched.some((r) => r.delta === 15),
+      JSON.stringify(touched));
+    check("the promoted card keeps its angle", touched.some((r) => r.delta === 15 && r.angle === "Worth a message while it is fresh."));
+    check("an angle that invents a number is dropped", touched.every((r) => !(r.angle ?? "").includes("97")));
+    check("a card the model was not shown is untouched", moved.some((r) => r.delta === null));
+
+    reranks.length = 0;
+    await claimRadarLease(USER, NOW);
+    const cachedRun = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    check("an unchanged shortlist reuses the answer without a call", reranks.length === 0 && cachedRun.rerankCached, JSON.stringify(cachedRun));
+
+    // A malformed reply leaves the rules' order: nothing moved, the run still fine.
+    await db.execute(sql`DELETE FROM ai_result_cache WHERE user_id = ${USER} AND operation = 'radar.rerank'`);
+    rerankReply = "garbage";
+    await claimRadarLease(USER, NOW);
+    const garbled = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    const afterGarbage = await db
+      .select({ delta: recommendations.aiDelta, score: recommendations.score, base: recommendations.baseScore })
+      .from(recommendations)
+      .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")));
+    check("a malformed rerank reply fails soft", garbled.ok && garbled.rerankFailed, JSON.stringify(garbled));
+    check("and moves nothing", afterGarbage.every((r) => r.delta === null && r.score === r.base));
+    // From here on the model agrees with the rules, so what follows tests the notes alone.
+    rerankReply = "neutral";
     const noted = (await db.select({ aiNote: recommendations.aiNote }).from(recommendations).where(eq(recommendations.userId, USER)))
       .map((r) => r.aiNote)
       .filter((n): n is NonNullable<typeof n> => n !== null);
@@ -415,13 +472,6 @@ run(async () => {
 
   console.log("\nwhat the account taught it");
   {
-    const [neutralRow] = await db
-      .select({ score: recommendations.score, base: recommendations.baseScore })
-      .from(recommendations)
-      .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")))
-      .limit(1);
-    check("with no history, every card's score is its base score", neutralRow !== undefined && neutralRow.score === neutralRow.base);
-
     const [learner] = await db
       .insert(contacts)
       .values({ userId: USER, fullName: "Learner Lee", closenessTier: "inner", closenessEvidence: 0.6, firstInteractionAt: ago(400), lastInteractionAt: ago(90) })

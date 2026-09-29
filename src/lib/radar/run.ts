@@ -41,6 +41,7 @@ import {
 } from "@/lib/radar/store";
 import type { RadarModel, RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
 import { buildRadarModel } from "@/lib/radar/model";
+import { RADAR_RERANK_TIMEOUT_MS, rerankPicks, rerankUnchanged } from "@/lib/radar/rerank";
 import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
@@ -60,8 +61,16 @@ const MIN_GAP_MS = 6 * HOUR_MS;
 const RETRY_AFTER_MS = 6 * HOUR_MS;
 /** A page view older than this since the last run refreshes in the background. */
 export const RADAR_STALE_MS = 24 * HOUR_MS;
-/** The most a run spends writing AI lines. Five fast-tier calls fit easily. */
-export const RADAR_AI_BUDGET_MS = 15_000;
+/**
+ * The most a run spends on AI, shared in order: the rerank (at most
+ * `RADAR_RERANK_TIMEOUT_MS`), then the why-lines with whatever is left.
+ */
+export const RADAR_AI_BUDGET_MS = 25_000;
+/**
+ * The AI rerank's off switch. If `/admin/analytics/radar` shows cards it moved up are not
+ * accepted more often than cards it moved down, it is noise: turn it off here.
+ */
+export const RADAR_RERANK_ENABLED = true;
 
 export type RadarRunOptions = {
   trigger: RadarRunTrigger;
@@ -84,6 +93,10 @@ export type RadarRunStats = {
   skippedNoKey: boolean;
   /** Accepted cards that led to a real conversation since the last run. */
   outcomes: number;
+  /** Cards the AI rerank moved, and whether it failed or reused a cached answer. */
+  reranked: number;
+  rerankFailed: boolean;
+  rerankCached: boolean;
   durationMs: number;
 };
 
@@ -168,6 +181,19 @@ export function scoreCandidates(
   now: Date,
   model: RadarModel | null = null
 ): NewRecommendation[] {
+  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model), RADAR_CAPS);
+}
+
+/** Every person's winning card, before the caps: what the rerank chooses its shortlist from. */
+export function scorePicks(
+  candidates: readonly RadarCandidateRow[],
+  signals: readonly RadarSignal[],
+  targetKeys: Map<string, number>,
+  goals: string[],
+  suppressions: Map<string, RadarSuppression>,
+  now: Date,
+  model: RadarModel | null = null
+): NewRecommendation[] {
   const byContact = new Map<string, RadarSignal[]>();
   for (const s of signals) {
     const list = byContact.get(s.contactId);
@@ -183,7 +209,7 @@ export function scoreCandidates(
     const pick = pickWinner(row.id, kinds, now);
     if (pick) picks.push(pick);
   }
-  return rankPicks(picks, RADAR_CAPS).map((pick) => {
+  return picks.map((pick) => {
     const row = rowById.get(pick.contactId)!;
     const inputsHash = radarNoteKey({
       contactName: (row.preferredName ?? "").trim() || row.fullName,
@@ -214,6 +240,9 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     aiNotes: 0,
     skippedNoKey: false,
     outcomes: 0,
+    reranked: 0,
+    rerankFailed: false,
+    rerankCached: false,
     durationMs: 0,
   };
   const db = await getDb();
@@ -253,23 +282,42 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           loadSuppressions(userId, live, now),
         ]);
 
-        const next = scoreCandidates(candidates, signals, targetKeys, goals, suppressions, now, model);
+        const picks = scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model);
+
+        // AI, on the account's own key, in one shared budget. First the rerank, which may
+        // nudge the shortlist before the caps choose the final list; then, once the list is
+        // safely written, the why-lines. A missing key or a slow provider costs the run its
+        // AI, never its list: every failure leaves the scorer's own order.
+        const aiDeadline = deadlineAfter(Math.min(opts.budgetMs ?? RADAR_AI_BUDGET_MS, RADAR_AI_BUDGET_MS));
+        const access = opts.ai ? await openRadarAi(userId) : null;
+        if (opts.ai && !access) stats.skippedNoKey = true;
+
+        let ranked: NewRecommendation[] = picks;
+        if (access && RADAR_RERANK_ENABLED) {
+          const profiles = new Map(candidates.map((c) => [c.id, { title: c.title, company: c.company, tier: c.tier }]));
+          const result = await rerankPicks(userId, access, picks, { goals, profiles }, now, {
+            timeoutMs: Math.min(RADAR_RERANK_TIMEOUT_MS, Math.max(1_000, aiDeadline - Date.now())),
+          }).catch((err) => {
+            reportUnlessQuiet(err, { where: "job.radar.rerank", userId, level: "warning" });
+            return rerankUnchanged(picks, "failed");
+          });
+          ranked = result.picks;
+          stats.reranked = result.adjusted;
+          stats.rerankFailed = result.status === "failed";
+          stats.rerankCached = result.status === "cached";
+        }
+
+        const next = rankPicks(ranked, RADAR_CAPS);
         const counts = planRunResult(live, next, now);
         await writeRunResult(userId, runId, next, now);
 
-        // The optional AI line, only once the list itself is safely written. A missing key
-        // or a slow provider costs the run its notes, never its list.
-        if (opts.ai) {
-          const access = await openRadarAi(userId);
-          if (!access) stats.skippedNoKey = true;
-          else {
-            stats.aiNotes = await explainTopForRun(userId, access, {
-              budgetMs: Math.min(opts.budgetMs ?? RADAR_AI_BUDGET_MS, RADAR_AI_BUDGET_MS),
-            }).catch((err) => {
-              reportUnlessQuiet(err, { where: "job.radar.why", userId, level: "warning" });
-              return 0;
-            });
-          }
+        if (access && !deadlineReached(aiDeadline)) {
+          stats.aiNotes = await explainTopForRun(userId, access, {
+            budgetMs: Math.max(1_000, aiDeadline - Date.now()),
+          }).catch((err) => {
+            reportUnlessQuiet(err, { where: "job.radar.why", userId, level: "warning" });
+            return 0;
+          });
         }
 
         stats.candidates = candidates.length;
@@ -378,10 +426,10 @@ export async function countRadarRuns(userId: string): Promise<number> {
 export const RADAR_PASS_BUDGET_MS = 270_000;
 /** Accounts claimed per pass. The route self-continues when a claim comes back full. */
 export const RADAR_USERS_PER_PASS = 25;
-/** Accounts run at once. Each is a different account's reads and, at most, five AI calls. */
+/** Accounts run at once. Each is a different account's reads and, at most, six AI calls (the rerank and five why-lines). */
 export const RADAR_CONCURRENCY = 4;
 /** No account starts unless this much of the budget is left. */
-export const RADAR_PER_USER_BUDGET_MS = 30_000;
+export const RADAR_PER_USER_BUDGET_MS = 45_000;
 /** Accounts nobody has used in this long are left alone; their first visit rebuilds. */
 export const RADAR_ACTIVE_WITHIN_DAYS = 60;
 

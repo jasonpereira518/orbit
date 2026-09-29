@@ -20,7 +20,7 @@ import type {
   RecommendationKind,
   RecommendationStatus,
 } from "@/lib/radar/types";
-import { LIVE_RECOMMENDATION_STATUSES } from "@/lib/radar/types";
+import { LIVE_RECOMMENDATION_STATUSES, recommendationKey } from "@/lib/radar/types";
 import { RADAR_MODEL_HISTORY_DAYS, RADAR_MODEL_VOTES, type RadarModelTallyRow } from "@/lib/radar/model";
 import { RADAR_IGNORED_MIN_SEEN } from "@/lib/radar/metrics";
 
@@ -42,9 +42,7 @@ export type LiveRecommendation = {
   aiNote: RadarAiNote | null;
 };
 
-export function recommendationKey(contactId: string, kind: RecommendationKind) {
-  return `${contactId}:${kind}`;
-}
+export { recommendationKey };
 
 export async function loadLiveRecommendations(userId: string): Promise<LiveRecommendation[]> {
   const db = await getDb();
@@ -198,6 +196,8 @@ export async function writeRunResult(
               kind: r.kind,
               score: r.score,
               baseScore: r.baseScore,
+              aiDelta: r.aiDelta ?? null,
+              aiAngle: r.aiAngle ?? null,
               bucket: r.bucket,
               reasons: r.reasons,
               evidence: r.evidence,
@@ -217,6 +217,8 @@ export async function writeRunResult(
             set: {
               score: sql`excluded.score`,
               baseScore: sql`excluded.base_score`,
+              aiDelta: sql`excluded.ai_delta`,
+              aiAngle: sql`excluded.ai_angle`,
               bucket: sql`excluded.bucket`,
               reasons: sql`excluded.reasons`,
               evidence: sql`excluded.evidence`,
@@ -272,6 +274,8 @@ export type RecommendationRow = {
   reasons: RadarReason[];
   evidence: RadarEvidence[];
   aiNote: RadarAiNote | null;
+  /** The AI rerank's one-line "why now", shown when there is no fuller AI note. */
+  aiAngle: string | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -296,6 +300,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
     reasons: RadarReason[];
     evidence: RadarEvidence[];
     ai_note: RadarAiNote | null;
+    ai_angle: string | null;
     full_name: string;
     preferred_name: string | null;
     title: string | null;
@@ -306,7 +311,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
     updated_at: string | Date;
   }>(
     await db.execute(sql`
-      SELECT r.id, r.contact_id, r.kind, r.score, r.bucket, r.reasons, r.evidence, r.ai_note, r.updated_at,
+      SELECT r.id, r.contact_id, r.kind, r.score, r.bucket, r.reasons, r.evidence, r.ai_note, r.ai_angle, r.updated_at,
              contacts.full_name, contacts.preferred_name, contacts.title, contacts.company,
              contacts.closeness_tier, contacts.last_interaction_at,
              ${clientAvatarUrlSql} AS avatar_url
@@ -327,6 +332,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
     reasons: r.reasons ?? [],
     evidence: r.evidence ?? [],
     aiNote: r.ai_note,
+    aiAngle: r.ai_angle,
     contactName: (r.preferred_name ?? "").trim() || r.full_name,
     title: r.title,
     company: r.company,

@@ -49,6 +49,8 @@ export type RecommendationCardData = {
   reasons: RadarReason[];
   evidence: RadarEvidence[];
   aiNote: RadarAiNote | null;
+  /** The AI rerank's one-line "why now". Shown only when there is no fuller note. */
+  aiAngle?: string | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -183,6 +185,13 @@ export function RecommendationCard({
                 </span>
               )}
             </div>
+          )}
+
+          {!(note && (note.why || note.opener)) && rec.aiAngle && (
+            <p className="mt-2 flex gap-1.5 text-sm text-ink/80">
+              <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
+              {rec.aiAngle}
+            </p>
           )}
 
           {note && (note.why || note.opener) ? (

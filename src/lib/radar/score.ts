@@ -185,6 +185,9 @@ export type RadarPick = {
   kind: RecommendationKind;
   score: number;
   baseScore: number;
+  /** What the AI rerank moved the score by, and its one-line angle. Unset without it. */
+  aiDelta?: number | null;
+  aiAngle?: string | null;
   bucket: RecommendationBucket;
   reasons: RadarReason[];
   evidence: RadarEvidence[];
@@ -548,12 +551,12 @@ export { CONTEXT_CODES };
  * The run's final list: best first, at most `perKind` of any kind, at most `pending` total.
  * Ties break on kind priority, then contact id, so the order is total and repeatable.
  */
-export function rankPicks(picks: readonly RadarPick[], caps: { pending: number; perKind: number } = RADAR_CAPS): RadarPick[] {
+export function rankPicks<T extends RadarPick>(picks: readonly T[], caps: { pending: number; perKind: number } = RADAR_CAPS): T[] {
   const sorted = [...picks].sort(
     (a, b) => b.score - a.score || KIND_PRIORITY[b.kind] - KIND_PRIORITY[a.kind] || a.contactId.localeCompare(b.contactId)
   );
   const perKind = new Map<RecommendationKind, number>();
-  const out: RadarPick[] = [];
+  const out: T[] = [];
   for (const pick of sorted) {
     if (out.length >= caps.pending) break;
     const n = perKind.get(pick.kind) ?? 0;
