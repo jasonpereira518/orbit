@@ -13,6 +13,12 @@
  * `caller.userId` and `targetUserId` count). Parsed, not grepped, so commented-out code can
  * neither satisfy nor trip it.
  *
+ * It also checks that every string-literal scope has a `BUCKET_LABELS` entry in
+ * `src/lib/rate-limit.ts`, since a missing one shows users the raw scope ("You've hit the
+ * interest.join limit"). Scopes whose error is caught and never shown are allowlisted below
+ * with the reason. Non-literal scopes (`apollo.${kind}`, `opts.bucket`) cannot be checked
+ * statically and are skipped.
+ *
  * Run: npx tsx scripts/smoke-consume-bucket-args.ts
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -23,6 +29,14 @@ const ROOT = "src";
 
 /** Same shape as smoke-action-user-scope's matcher. */
 const USER_ID_NAME = /(^|[a-z.])(userId|uid|accountId|ownerId|clerkId|clerkUserId)$/i;
+
+/** Literal scopes with no label on purpose: the RateLimitedError is caught, never shown. */
+const UNLABELED_OK: Record<string, string> = {
+  "avatarSource.user": "caught in claimAvatarSourceLookup, returned as AvatarSourceRateLimitError",
+  "avatarSource.shared": "caught in claimAvatarSourceLookup, returned as AvatarSourceRateLimitError",
+  global: "enrich-queue requeues the item; the error message is discarded",
+  timelineBackfill: "linkedin-timeline-backfill sets `capped` and stops; the message is discarded",
+};
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -45,7 +59,7 @@ function trailingName(expr: ts.Expression): string | null {
   return null;
 }
 
-type Call = { where: string; scopeText: string; swapped: boolean };
+type Call = { where: string; scopeText: string; swapped: boolean; literal: string | null };
 
 function consumeBucketCalls(file: string, source: string): Call[] {
   const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -65,6 +79,7 @@ function consumeBucketCalls(file: string, source: string): Call[] {
         where: `${file}:${line}`,
         scopeText: first.getText(sf),
         swapped: name !== null && USER_ID_NAME.test(name),
+        literal: ts.isStringLiteralLike(first) ? first.text : null,
       });
     }
     ts.forEachChild(node, visit);
@@ -102,6 +117,36 @@ for (const call of all.filter((c) => c.swapped)) {
   );
 }
 if (!all.some((c) => c.swapped)) check("no call passes a user id as the scope", true);
+
+console.log("\nBUCKET_LABELS coverage");
+function labelKeys(): Set<string> {
+  const file = "src/lib/rate-limit.ts";
+  const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const keys = new Set<string>();
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "BUCKET_LABELS") {
+      if (node.initializer && ts.isObjectLiteralExpression(node.initializer)) {
+        for (const prop of node.initializer.properties) {
+          if (prop.name && (ts.isIdentifier(prop.name) || ts.isStringLiteralLike(prop.name))) keys.add(prop.name.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return keys;
+}
+const labels = labelKeys();
+check("parsed BUCKET_LABELS", labels.size >= 20, `${labels.size} keys`);
+const literalScopes = new Set(all.flatMap((c) => (c.literal === null ? [] : [c.literal])));
+for (const scope of [...literalScopes].sort()) {
+  const ok = labels.has(scope) || scope in UNLABELED_OK;
+  check(`scope "${scope}" has a label`, ok, ok ? "" : "add it to BUCKET_LABELS, or to UNLABELED_OK with a reason");
+}
+for (const scope of Object.keys(UNLABELED_OK)) {
+  const ok = literalScopes.has(scope) && !labels.has(scope);
+  check(`UNLABELED_OK "${scope}" is still used and still unlabeled`, ok, ok ? "" : "remove the entry");
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
