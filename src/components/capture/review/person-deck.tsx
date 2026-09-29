@@ -17,7 +17,8 @@ import { DecisionStamp } from "@/components/capture/review/decision-stamp";
 import { PersonCardBody, type PersonDraft } from "@/components/capture/review/person-card";
 import { PlanetBadge } from "@/components/capture/review/planet-badge";
 import { clampCloseness } from "@/lib/capture/closeness";
-import { planetForIndex } from "@/lib/capture/planets";
+import { summaryToTakeaways } from "@/lib/capture/person-enrichment";
+import { planetForCloseness } from "@/lib/capture/planets";
 import { defaultMergeId, parseTagNames, peopleDecisions } from "@/lib/capture/review-reducer";
 import type { BulkNotePersonPreview, CaptureDecision, CaptureDecisionKind, CaptureDecisions } from "@/lib/capture/types";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
@@ -36,7 +37,27 @@ export function draftFromItem(item: BulkNotePersonPreview, decision: CaptureDeci
       role: edits.role ?? item.parsed.role ?? "",
       metAt: edits.metAt ?? item.parsed.met_at ?? "",
       tags: (decision?.tagNames?.length ? decision.tagNames : item.parsed.tags ?? []).join(", "),
-      summary: edits.summary ?? item.parsed.summary ?? "",
+      // A decision from before takeaways existed carries a `summary` edit instead.
+      takeaways:
+        edits.takeaways ??
+        (edits.summary != null ? summaryToTakeaways(edits.summary) : null) ??
+        (item.parsed.takeaways?.length ? item.parsed.takeaways : summaryToTakeaways(item.parsed.summary)),
+      personalDetails: edits.personalDetails ?? item.parsed.personal_details ?? [],
+      work: (() => {
+        const w = edits.work !== undefined ? edits.work : (item.parsed.work ?? null);
+        return {
+          team: w?.team ?? "",
+          building: w?.building ?? "",
+          priorities: w?.priorities ?? [],
+          hiring: w?.hiring ?? "",
+          lookingFor: w?.looking_for ?? "",
+        };
+      })(),
+      phone: edits.phone ?? item.parsed.phone ?? "",
+      xHandle: edits.xHandle ?? item.parsed.x_handle ?? "",
+      website: edits.website ?? item.parsed.website ?? "",
+      school: edits.school ?? item.parsed.school ?? "",
+      industry: edits.industry ?? item.parsed.industry ?? "",
     },
     mergeContactId: decision ? decision.mergeContactId : defaultMergeId(item, preferredContactId),
     closeness: clampCloseness(decision?.relationshipScore ?? item.parsed.relationship_score_suggestion),
@@ -55,7 +76,20 @@ export function decisionFromDraft(kind: CaptureDecisionKind, index: number, draf
       company: draft.fields.company.trim() || null,
       role: draft.fields.role.trim() || null,
       metAt: draft.fields.metAt.trim() || null,
-      summary: draft.fields.summary.trim() || null,
+      takeaways: draft.fields.takeaways.map((t) => t.trim()).filter(Boolean),
+      personalDetails: draft.fields.personalDetails.map((t) => t.trim()).filter(Boolean),
+      work: {
+        team: draft.fields.work.team.trim() || null,
+        building: draft.fields.work.building.trim() || null,
+        priorities: draft.fields.work.priorities.map((t) => t.trim()).filter(Boolean),
+        hiring: draft.fields.work.hiring.trim() || null,
+        looking_for: draft.fields.work.lookingFor.trim() || null,
+      },
+      phone: draft.fields.phone.trim() || null,
+      xHandle: draft.fields.xHandle.trim() || null,
+      website: draft.fields.website.trim() || null,
+      school: draft.fields.school.trim() || null,
+      industry: draft.fields.industry.trim() || null,
     },
     decidedAt: new Date().toISOString(),
   };
@@ -170,7 +204,7 @@ export function PersonDeck({
   }
 
   if (!current) return null;
-  const planet = planetForIndex(index);
+  const planet = planetForCloseness(draftFor(current).closeness, index);
 
   return (
     <div ref={rootRef} tabIndex={-1} onKeyDown={onKeyDown} className="space-y-3 outline-none">
@@ -228,7 +262,7 @@ export function PersonDeck({
                 <p className="truncate font-[family-name:var(--font-display)] text-xl text-ink">{next.parsed.name || "Unnamed person"}</p>
               </div>
             </div>
-            <PlanetBadge index={index + 1} size="sm" className="absolute right-5 top-4 opacity-80" />
+            <PlanetBadge index={index + 1} closeness={draftFor(next).closeness} size="sm" className="absolute right-5 top-4 opacity-80" />
           </motion.div>
         )}
 

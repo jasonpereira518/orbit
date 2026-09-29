@@ -41,6 +41,16 @@ const BUCKET_LABELS: Record<string, string> = {
   eventWhy: "attendee lookup",
   lifetimeConfirm: "checkout check",
   speechToken: "speech transcription",
+  // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
+  // rather than renaming the scope, which would reset those buckets' counters.
+  contactForm: "contact form",
+  "interest.join": "sign-up",
+  "interest.name": "sign-up",
+  "interest.progress": "progress check",
+  "avatar.resolve": "photo lookup",
+  "lifetime-confirm": "checkout check",
+  "poll.vote": "vote",
+  "work-history": "work-history lookup",
 };
 
 function formatRetryAfter(sec: number): string {

@@ -69,7 +69,7 @@ function EditBody({
     <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
       <DialogHeader>
         <div className="flex items-center gap-3 pr-8">
-          <PlanetBadge index={index} size="sm" />
+          <PlanetBadge index={index} closeness={draft.closeness} size="sm" />
           <div className="min-w-0">
             <DialogTitle className="truncate font-[family-name:var(--font-display)] text-xl font-normal text-ink">
               {draft.fields.name.trim() || "Unnamed person"}
@@ -86,6 +86,7 @@ function EditBody({
         topics={item.parsed.topics}
         sharedNoteTexts={item.sharedNoteTexts}
         sourceText={item.notes}
+        connections={item.parsed.connections ?? []}
         compact
       />
       <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-3">

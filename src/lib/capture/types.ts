@@ -203,7 +203,22 @@ export type CapturePersonEdits = {
   company: string | null;
   role: string | null;
   metAt: string | null;
+  /** Legacy: a decision recorded before takeaways replaced the one summary box. */
   summary: string | null;
+  takeaways: string[] | null;
+  personalDetails: string[] | null;
+  work: {
+    team: string | null;
+    building: string | null;
+    priorities: string[];
+    hiring: string | null;
+    looking_for: string | null;
+  } | null;
+  phone: string | null;
+  xHandle: string | null;
+  website: string | null;
+  school: string | null;
+  industry: string | null;
 };
 
 /**

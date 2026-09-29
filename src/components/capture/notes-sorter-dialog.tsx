@@ -22,12 +22,22 @@
  * and the `dataTransfer` carries only a marker, which is what lets a bin light up correctly
  * for a five-file drag.
  *
+ * ## Choosing what is read
+ *
+ * Every tile carries a checkbox, and an unticked file stays where it is but is not read
+ * (`setExcluded` — placement and inclusion are separate questions, so ticking it again puts
+ * it back exactly where it was). Files are hashed as they are staged, which does two
+ * things: two copies of the same bytes stage once, and a file this person has captured
+ * before comes back from `findCapturedFiles`, is marked "Already captured", and starts
+ * unticked. Ticking it reads it anyway — the check is a default, not a refusal.
+ *
  * The state model and its one invariant — every file in exactly one place — live in
  * `src/lib/capture/bins.ts`. Nothing here reaches into the arrays directly.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FolderPlus, Layers, Scissors, Trash2, X } from "lucide-react";
+import { FolderPlus, Layers, Loader2, Scissors, Trash2, X } from "lucide-react";
+import { findCapturedFiles } from "@/actions/capture-jobs";
 import {
   MAX_STAGED_FILES,
   addBin,
@@ -35,6 +45,7 @@ import {
   emptyState,
   fileById,
   invariantBroken,
+  isIncluded,
   moveFiles,
   oversizedUploads,
   planUploads,
@@ -43,12 +54,14 @@ import {
   renameBin,
   separateTray,
   setBinAnchor,
+  setExcluded,
   stageFiles,
   type PlannedUpload,
   type SorterState,
   type StagedFile,
 } from "@/lib/capture/bins";
 import { anchorForFile } from "@/lib/capture/file-date";
+import { hashFilesSequentially } from "@/lib/capture/file-hash";
 import {
   buildPreviews,
   revokePreview,
@@ -73,6 +86,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -90,6 +104,17 @@ function sizeLabel(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** "Sep 12" — when a file was captured before. Client-only (the dialog opens on a drop), so no hydration to agree with. */
+function capturedOn(iso: string) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? "earlier"
+    : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+
+/** What the dialog knows about a file captured before, by staged file id. */
+type CapturedBefore = { capturedAt: string; label: string | null };
 
 /** A bin's opening name and date, from the file that starts it. Pure — no refs, no state. */
 function seedFromFile(file: StagedFile) {
@@ -119,6 +144,12 @@ export function NotesSorterDialog({
   const [previews, setPreviews] = useState<Record<string, FilePreview>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rejected, setRejected] = useState(0);
+  /** Copies of bytes already staged, folded by `stageFiles` — said out loud, not swallowed. */
+  const [duplicates, setDuplicates] = useState(0);
+  /** Staged file id → the capture it was already part of. Filled once hashing is done. */
+  const [captured, setCaptured] = useState<Record<string, CapturedBefore>>({});
+  /** Hashing the drop. Nothing is staged until it is done, because hashes are the dedupe key. */
+  const [hashing, setHashing] = useState(true);
 
   /** The bytes, kept out of state for the reason the fan-out keeps them out: a re-render
    *  that retains forty photos is a re-render that costs forty photos. */
@@ -135,36 +166,63 @@ export function NotesSorterDialog({
     previewsRef.current = previews;
   }, [previews]);
 
-  // Stage whatever was dropped, and start building previews for it.
+  // Hash whatever was dropped, stage it, build previews, and ask which files were captured
+  // before. In that order: the hash is the dedupe key, so staging waits for it.
   useEffect(() => {
     if (!incoming.length) return;
-    const staged: StagedFile[] = incoming.map(({ file, path }) => {
-      const id = newId();
-      filesRef.current.set(id, file);
-      return {
-        id,
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified,
-        path,
-      };
-    });
-
-    // Staged into a fresh state, not merged into the previous one: this component is
-    // mounted once per drop and unmounted when it closes, so there is no previous one. Doing
-    // it outside a state updater matters — an updater that called `setRejected` would be a
-    // side effect in a function React is free to run twice.
-    const out = stageFiles(emptyState(), staged);
-    setState(out.state);
-    setRejected(out.rejected);
-
     const signal = { aborted: false };
-    void buildPreviews(
-      out.state.files.map((f) => ({ id: f.id, file: filesRef.current.get(f.id)! })),
-      (id, preview) => setPreviews((prev) => ({ ...prev, [id]: preview })),
-      signal
-    );
+    void (async () => {
+      const hashes = await hashFilesSequentially(incoming.map(({ file }) => file));
+      if (signal.aborted) return;
+      const staged: StagedFile[] = incoming.map(({ file, path }, i) => {
+        const id = newId();
+        filesRef.current.set(id, file);
+        return {
+          id,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+          path,
+          hash: hashes[i] ?? "",
+        };
+      });
+
+      // Staged into a fresh state, not merged into the previous one: this component is
+      // mounted once per drop and unmounted when it closes, so there is no previous one.
+      // Doing it outside a state updater matters — an updater that called `setRejected`
+      // would be a side effect in a function React is free to run twice.
+      const out = stageFiles(emptyState(), staged);
+      // A duplicate's `File` was never staged; keeping it would hold its bytes for nothing.
+      const kept = new Set(out.state.files.map((f) => f.id));
+      for (const f of staged) if (!kept.has(f.id)) filesRef.current.delete(f.id);
+      setState(out.state);
+      setRejected(out.rejected);
+      setDuplicates(out.duplicates);
+      setHashing(false);
+
+      void buildPreviews(
+        out.state.files.map((f) => ({ id: f.id, file: filesRef.current.get(f.id)! })),
+        (id, preview) => setPreviews((prev) => ({ ...prev, [id]: preview })),
+        signal
+      );
+
+      // Asked after staging rather than before, so the dialog is usable while it is out.
+      // A failure is silent on purpose: this is a courtesy check, and every file simply
+      // stays ticked — which is what happened before the check existed.
+      const byHash = new Map(out.state.files.filter((f) => f.hash).map((f) => [f.hash, f.id]));
+      if (!byHash.size) return;
+      const res = await findCapturedFiles([...byHash.keys()]).catch(() => null);
+      if (signal.aborted || !res?.ok || !res.matches.length) return;
+      const seen: Record<string, CapturedBefore> = {};
+      for (const m of res.matches) {
+        const id = byHash.get(m.hash);
+        if (id) seen[id] = { capturedAt: m.capturedAt, label: m.label };
+      }
+      setCaptured(seen);
+      // Functional, because the person may already have started sorting.
+      setState((prev) => setExcluded(prev, Object.keys(seen), true));
+    })();
     return () => {
       signal.aborted = true;
     };
@@ -257,6 +315,20 @@ export function NotesSorterDialog({
 
   const binCount = plans.length;
   const canRead = binCount > 0 && oversized.length === 0;
+  const excludedCount = state.excludedIds.length;
+
+  function toggleIncluded(fileId: string, include: boolean) {
+    // A tick on a selected tile applies to the whole selection, the way Move to does.
+    const ids = selected.has(fileId) ? [...selected] : [fileId];
+    apply(setExcluded(state, ids, !include));
+  }
+
+  function removeSelected() {
+    let next = state;
+    for (const id of selected) next = removeFile(next, id);
+    apply(next);
+    setSelected(new Set());
+  }
 
   return (
     <Dialog
@@ -268,7 +340,9 @@ export function NotesSorterDialog({
       <DialogContent className="max-h-[90vh] w-full max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>
-            {state.files.length} {state.files.length === 1 ? "file" : "files"} to sort
+            {hashing
+              ? `Checking ${incoming.length} ${incoming.length === 1 ? "file" : "files"}…`
+              : `${state.files.length} ${state.files.length === 1 ? "file" : "files"} to sort`}
           </DialogTitle>
           <DialogDescription>
             Each bin becomes one note — one summary, one date, one entry on the timeline. Put
@@ -278,10 +352,29 @@ export function NotesSorterDialog({
         </DialogHeader>
 
         <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
+          {hashing && (
+            <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" /> Checking for files you’ve added before…
+            </p>
+          )}
           {rejected > 0 && (
             <p className="rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-foreground">
               That folder held more than {MAX_STAGED_FILES} files. The first{" "}
               {MAX_STAGED_FILES} are here — sort these, then drop the rest.
+            </p>
+          )}
+          {duplicates > 0 && (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-foreground">
+              {duplicates === 1
+                ? "One file was an exact copy of another, so it’s here once."
+                : `${duplicates} files were exact copies of others, so each is here once.`}
+            </p>
+          )}
+          {Object.keys(captured).length > 0 && (
+            <p className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs text-foreground">
+              {Object.keys(captured).length === 1
+                ? "One file was already captured, so it’s unticked. Tick it to read it again."
+                : `${Object.keys(captured).length} files were already captured, so they’re unticked. Tick any to read it again.`}
             </p>
           )}
 
@@ -353,10 +446,13 @@ export function NotesSorterDialog({
                     file={fileById(state, id)!}
                     preview={previews[id]}
                     selected={selected.has(id)}
+                    included={isIncluded(state, id)}
+                    capturedBefore={captured[id] ?? null}
                     bins={state.bins}
                     currentBinId={null}
                     onClick={(e) => onTileClick(e, id)}
                     onDragStart={(e) => onDragStart(e, id)}
+                    onIncludedChange={(include) => toggleIncluded(id, include)}
                     onMove={(binId) => moveSelection(selected.has(id) ? [...selected] : [id], binId)}
                     onRemove={() => apply(removeFile(state, id))}
                   />
@@ -364,11 +460,18 @@ export function NotesSorterDialog({
               </ul>
             )}
 
-            {selected.size > 1 && (
-              <p className="mt-2 px-1 text-xs text-muted-foreground">
-                {selected.size} selected — drag any one of them to move all, or use Move to on
-                a tile.
-              </p>
+            {selected.size > 0 && (
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
+                <p className="text-xs text-muted-foreground">
+                  {selected.size > 1
+                    ? `${selected.size} selected — drag any one of them to move all, or use Move to on a tile.`
+                    : "1 selected"}
+                </p>
+                <Button type="button" size="sm" variant="ghost" onClick={removeSelected}>
+                  <X className="size-3.5" />
+                  Remove selected
+                </Button>
+              </div>
             )}
           </section>
 
@@ -419,6 +522,7 @@ export function NotesSorterDialog({
                     <span className="text-xs text-muted-foreground">
                       {bin.fileIds.length} {bin.fileIds.length === 1 ? "file" : "files"}
                       {plan ? ` · ${sizeLabel(plan.bytes)}` : ""}
+                      {bin.fileIds.length > 0 && !plan ? " · none ticked, so not read" : ""}
                     </span>
                   </div>
 
@@ -434,10 +538,13 @@ export function NotesSorterDialog({
                           file={fileById(state, id)!}
                           preview={previews[id]}
                           selected={selected.has(id)}
+                          included={isIncluded(state, id)}
+                          capturedBefore={captured[id] ?? null}
                           bins={state.bins}
                           currentBinId={bin.id}
                           onClick={(e) => onTileClick(e, id)}
                           onDragStart={(e) => onDragStart(e, id)}
+                          onIncludedChange={(include) => toggleIncluded(id, include)}
                           onMove={(binId) =>
                             moveSelection(selected.has(id) ? [...selected] : [id], binId)
                           }
@@ -460,10 +567,34 @@ export function NotesSorterDialog({
           </div>
         </div>
 
-        <DialogFooter className="flex-row items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">
-            {binCount} {binCount === 1 ? "note" : "notes"} will be read
-          </p>
+        <DialogFooter className="flex-row flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <p>
+              {binCount} {binCount === 1 ? "note" : "notes"} will be read
+              {excludedCount > 0 ? ` · ${excludedCount} ${excludedCount === 1 ? "file" : "files"} left out` : ""}
+            </p>
+            {/* Inclusion, not selection: these tick and untick every file for reading. */}
+            <span className="inline-flex items-center gap-1">
+              Read:
+              <button
+                type="button"
+                className="font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
+                disabled={!state.files.length || excludedCount === 0}
+                onClick={() => apply(setExcluded(state, state.files.map((f) => f.id), false))}
+              >
+                all
+              </button>
+              <span aria-hidden>·</span>
+              <button
+                type="button"
+                className="font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
+                disabled={!state.files.length || excludedCount === state.files.length}
+                onClick={() => apply(setExcluded(state, state.files.map((f) => f.id), true))}
+              >
+                none
+              </button>
+            </span>
+          </div>
           <div className="flex gap-2">
             <Button type="button" variant="ghost" onClick={onCancel}>
               Cancel
@@ -486,20 +617,28 @@ function FileTile({
   file,
   preview,
   selected,
+  included,
+  capturedBefore,
   bins,
   currentBinId,
   onClick,
   onDragStart,
+  onIncludedChange,
   onMove,
   onRemove,
 }: {
   file: StagedFile;
   preview: FilePreview | undefined;
   selected: boolean;
+  /** Ticked for reading. An unticked tile is dimmed but stays where it is. */
+  included: boolean;
+  /** Set when this exact file was captured before. */
+  capturedBefore: CapturedBefore | null;
   bins: { id: string; name: string }[];
   currentBinId: string | null;
   onClick: (e: React.MouseEvent) => void;
   onDragStart: (e: React.DragEvent) => void;
+  onIncludedChange: (included: boolean) => void;
   onMove: (binId: string | null) => void;
   onRemove: () => void;
 }) {
@@ -510,13 +649,25 @@ function FileTile({
         selected ? "border-primary ring-2 ring-primary/30" : "border-border/60"
       )}
     >
+      {/* A sibling of the tile's button, not inside it: a control nested in a button is
+          invalid HTML, and its click would also select the tile. */}
+      <span className="absolute top-1 left-1 z-10 inline-flex rounded-[5px] bg-background/85 p-0.5">
+        <Checkbox
+          checked={included}
+          onCheckedChange={(next) => onIncludedChange(next === true)}
+          aria-label={`${included ? "Don’t read" : "Read"} ${file.name}`}
+        />
+      </span>
       <button
         type="button"
         draggable
         onDragStart={onDragStart}
         onClick={onClick}
         aria-pressed={selected}
-        className="block w-full cursor-grab text-left active:cursor-grabbing"
+        className={cn(
+          "block w-full cursor-grab text-left transition-opacity active:cursor-grabbing",
+          !included && "opacity-45"
+        )}
       >
         <span className="flex h-20 w-full items-center justify-center overflow-hidden bg-muted/40">
           {preview?.kind === "image" ? (
@@ -540,6 +691,14 @@ function FileTile({
             {file.path ? `${file.path} · ` : ""}
             {sizeLabel(file.size)}
           </span>
+          {capturedBefore && (
+            <span
+              className="block truncate text-[10px] font-medium text-amber-700 dark:text-amber-400"
+              title={capturedBefore.label ? `Captured as “${capturedBefore.label}”` : undefined}
+            >
+              Already captured · {capturedOn(capturedBefore.capturedAt)}
+            </span>
+          )}
         </span>
       </button>
 

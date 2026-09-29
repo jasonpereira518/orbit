@@ -27,6 +27,20 @@ export type CaptureEvalFixture = {
         email?: string;
         /** Opportunity kinds that must appear on this person (e.g. "referral"). */
         opportunityKinds?: string[];
+        /** At least this many takeaways. */
+        minTakeaways?: number;
+        /** Each must appear (substring, case-insensitive) in some personal detail. */
+        personal?: string[];
+        /** Each must appear in the work block (team, building, priorities, hiring or looking_for). */
+        work?: string[];
+        /** Handles and background the notes state outright. Scored like the fields above. */
+        phone?: string;
+        xHandle?: string;
+        school?: string;
+        /** Names this person is linked to in the notes. */
+        connections?: string[];
+        /** Promises that must come back, by direction and a substring of their text. */
+        promises?: Array<{ direction: "you_owe" | "they_owe"; contains: string }>;
       }>;
       /** Named in the notes but NOT talked to: must never come back as a review card. */
       notParticipants?: string[];
