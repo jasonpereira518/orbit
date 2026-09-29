@@ -75,6 +75,13 @@ CREATE TABLE IF NOT EXISTS user_settings (
   comped_note text,
   comped_at timestamptz,
   comped_by text,
+  subscription_period_start timestamptz,
+  founding_eligible boolean NOT NULL DEFAULT false,
+  founding_redeemed_at timestamptz,
+  founding_window_ends_at timestamptz,
+  founding_subscription_id text,
+  ai_key_preference text,
+  max_nudge_seen_at timestamptz,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
@@ -1193,11 +1200,58 @@ CREATE TABLE IF NOT EXISTS gate_events (
   user_id text NOT NULL,
   feature text NOT NULL,
   plan text NOT NULL,
+  unlock_plan text,
   context jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS gate_events_feature_created_idx ON gate_events(feature, created_at);
 CREATE INDEX IF NOT EXISTS gate_events_user_created_idx ON gate_events(user_id, created_at);
+CREATE TABLE IF NOT EXISTS credit_grants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text,
+  kind text NOT NULL,
+  grant_key text NOT NULL,
+  plan text,
+  micros_granted integer NOT NULL,
+  micros_remaining integer NOT NULL,
+  period_start timestamptz,
+  period_end timestamptz,
+  amount_cents integer,
+  stripe_ref text,
+  status text NOT NULL DEFAULT 'active',
+  revoked_at timestamptz,
+  revoked_reason text,
+  micros_revoked integer,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS credit_grants_key_uidx ON credit_grants(grant_key);
+CREATE INDEX IF NOT EXISTS credit_grants_user_idx ON credit_grants(user_id, kind, status);
+CREATE INDEX IF NOT EXISTS credit_grants_stripe_ref_idx ON credit_grants(stripe_ref);
+CREATE TABLE IF NOT EXISTS credit_accounts (
+  user_id text PRIMARY KEY,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS credit_holds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  micros integer NOT NULL,
+  operation text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS credit_holds_user_idx ON credit_holds(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS credit_holds_expires_idx ON credit_holds(expires_at);
+CREATE TABLE IF NOT EXISTS plan_meter_usage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  meter text NOT NULL,
+  period_key text NOT NULL,
+  used integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS plan_meter_usage_uidx ON plan_meter_usage(user_id, meter, period_key);
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
 CREATE TABLE IF NOT EXISTS app_surface_flags (
   surface_key text PRIMARY KEY,
@@ -1228,6 +1282,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   stealth_enabled boolean,
   stealth_since timestamptz,
   waitlist_demo_enabled boolean,
+  managed_ai_paused boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -2170,7 +2225,14 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 129 = interest_list_signups.signup_event_label for operator-added event signups. Scanned
 // every local and remote ref on Sep 27 2026: 128 is the highest claimed anywhere, so 129
 // is the next free integer.
-export const SCHEMA_VERSION = 129;
+//
+// 130 = pricing v2: credit_grants, credit_accounts, credit_holds and plan_meter_usage (managed-AI
+// credits and the monthly Apollo enrichment meter); user_settings.subscription_period_start,
+// founding_eligible/_redeemed_at/_window_ends_at/_subscription_id, ai_key_preference and
+// max_nudge_seen_at; gate_events.unlock_plan; site_settings.managed_ai_paused. Scanned every
+// local and remote ref and all 48 worktrees' working src/db/index.ts on Sep 29 2026: 129 is
+// the highest claimed anywhere, so 130 is the next free integer.
+export const SCHEMA_VERSION = 130;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3625,6 +3687,19 @@ const alters = [
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS pass_check_count integer NOT NULL DEFAULT 0`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS pass_last_checked_at timestamptz`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS signup_event_label text`,
+  // v130: pricing v2 — founding pricing, the AI key preference, the Max nudge, the billing
+  // period start the credit allowance resets on, the plan a refused gate would unlock, and
+  // the admin console's managed-AI switch. The credit and meter tables are new, so the DDL
+  // template alone creates them.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_start timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_eligible boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_redeemed_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_window_ends_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_subscription_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_key_preference text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
+  `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go

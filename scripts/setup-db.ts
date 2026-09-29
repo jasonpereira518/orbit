@@ -11,6 +11,10 @@ import { sql } from "drizzle-orm";
 
   const EXPECTED_TABLES = [
   "user_settings",
+  "credit_grants",
+  "credit_accounts",
+  "credit_holds",
+  "plan_meter_usage",
   "stripe_processed_events",
   "data_purge_runs",
   "companies",
