@@ -854,6 +854,8 @@ export async function getDashboardData(
         id: true,
         company: true,
         school: true,
+        // Read by the constellation's role tier (role-function.ts), so the preview groups like /graph.
+        title: true,
         relationshipScore: true,
         statedCloseness: true,
         priorityLevel: true,

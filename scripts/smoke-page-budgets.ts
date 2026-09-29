@@ -752,8 +752,11 @@ async function main() {
   // `contacts`, so the scan has to be named by something only it asks for.
   const networkScan = dashboardScans.find((q) => selectsBare(q, "constellation_pin"));
   check("the dashboard's network scan is identifiable", Boolean(networkScan));
+  // `title` is deliberately absent: the scan reads it for the whole network because the
+  // constellation's role tier clusters on it (like company and school), not to display it.
+  // It is a clustering input, not a display column.
   for (const column of [
-    "full_name", "ai_summary", "email", "title", "last_interaction_at", "created_at",
+    "full_name", "ai_summary", "email", "last_interaction_at", "created_at",
   ]) {
     check(
       `the network scan does not select ${column}`,
