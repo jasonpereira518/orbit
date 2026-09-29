@@ -86,9 +86,11 @@ export const AI_OPERATIONS = {
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },
-  // The person's own model, not the fast tier: telling two people with one name apart from
-  // search snippets is judgment, and a wrong answer writes a stranger's career onto a contact.
-  "contact.work_history": { label: "Work history (web search)", tier: "user", background: true },
+  // The fast tier, like the other background extraction: nobody reads this answer directly,
+  // it runs unattended on the person's own key, and the costly part of a searched answer is
+  // the result pages it reads as input — which cost per token on the pricier model too. The
+  // namesake risk is carried by the prompt's "confident or nothing" rule, not model size.
+  "contact.work_history": { label: "Work history (web search)", tier: "fast", thinking: "minimal", background: true },
   "events.why": { label: "Events: why talk to them", tier: "fast", thinking: "minimal" },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },

@@ -14,6 +14,7 @@ import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, rateLimitBuckets } from "../src/db/schema";
 import { anthropicWebSearchToolType } from "../src/lib/ai";
+import { aiOperationThinking, aiOperationTier } from "../src/lib/ai-operations";
 import { getContactProfile, saveContactProfile, type IncomingExperience } from "../src/lib/contact-profile";
 import {
   contactsNeedingWorkHistory,
@@ -200,6 +201,10 @@ async function main() {
     ["c1", "c2", "c3", "c4"]
   );
   check("capture researches only the LinkedIn-linked cards", picked.join() === "c1,c4", picked.join());
+
+  // --- cost: background extraction runs on the cheap tier, thinking minimal ----------------
+  check("work-history research runs on the fast tier", aiOperationTier("contact.work_history") === "fast");
+  check("…with minimal thinking", aiOperationThinking("contact.work_history") === "minimal");
 
   // --- Anthropic's search tool version follows the model --------------------------------
   check("Opus 5.5 gets the dynamic-filtering search", anthropicWebSearchToolType("claude-opus-5-5") === "web_search_20260209");

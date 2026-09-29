@@ -2667,7 +2667,7 @@ export async function webSearchJson(
     system: string;
     user: string;
     operation: AiOperationId;
-    /** Upper bound on searches per call where the provider has one (Anthropic, OpenRouter). */
+    /** Upper bound on searches per call where the provider has one (Anthropic max_uses; OpenRouter results). */
     maxSearches?: number;
     maxOutputTokens?: number;
     signal?: AbortSignal;
@@ -2727,7 +2727,8 @@ export async function webSearchJson(
                 { role: "system" as const, content: system },
                 { role: "user" as const, content: input.user },
               ],
-              plugins: [{ id: "web", max_results: maxSearches }],
+              // Billed per result returned; three identify a person as well as five do.
+              plugins: [{ id: "web", max_results: Math.min(3, maxSearches + 1) }],
             }) as Parameters<typeof client.chat.completions.create>[0] & { stream?: false },
             { signal: callSignal() },
           );
@@ -2751,7 +2752,9 @@ export async function webSearchJson(
               model,
               instructions: system,
               input: input.user,
-              tools: [{ type: "web_search" }],
+              // "low" context: fewer result tokens fed to the model, and the cheaper search
+              // tier — enough to read a profile snippet, which is all a lookup needs.
+              tools: [{ type: "web_search", search_context_size: "low" }],
               max_output_tokens: maxOutputTokens,
             },
             { signal: callSignal() },

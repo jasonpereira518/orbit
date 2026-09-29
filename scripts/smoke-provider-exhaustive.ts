@@ -227,7 +227,7 @@ const ALLOWLIST: Record<string, string> = {
   // Responses API tool the openai arm uses), so neither literal below can receive it.
   "src/lib/ai.ts:2694": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
     "arm follows it, so the four arms are exhaustive over AiProvider.",
-  "src/lib/ai.ts:2746": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
+  "src/lib/ai.ts:2747": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
     "above (plugin-based search, not the Responses API), so it never reaches this one.",
   "src/lib/errors.ts:36": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
