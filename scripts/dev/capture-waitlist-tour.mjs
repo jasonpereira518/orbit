@@ -21,16 +21,20 @@ import sharp from "sharp";
 const BASE = process.argv[2] ?? "http://localhost:3000";
 const OUT = path.join(process.cwd(), "public", "waitlist", "tour");
 const SCALE = 2;
-/** Every crop is this size in CSS px of the 1072 × 640 demo window. */
+/** Every crop is this size in CSS px of the 1072 × 720 demo window. */
 const W = 420;
 const H = 315;
 
-/** Where each still is cut from the window, in CSS px. */
+/**
+ * Each still is cut around a `data-demo-target` element rather than at fixed offsets, so it
+ * follows the layout when the preview changes: `dx`/`dy` place the crop's top-left relative to
+ * the element's own top-left, before it is clamped inside the window.
+ */
 const CROPS = {
-  suggestion: { x: 240, y: 295 },
-  timeline: { x: 560, y: 295 },
-  draft: { x: 280, y: 224 },
-  constellation: { x: 620, y: 215 },
+  suggestion: { target: "suggestion-maya", dx: -28, dy: -64 },
+  timeline: { target: "profile-timeline", dx: -8, dy: -6 },
+  draft: { target: "chat-draft-card", dx: -14, dy: -22 },
+  constellation: { target: "star-card", dx: -190, dy: -10 },
 };
 
 const T = (id) => `[data-demo-target="${id}"]`;
@@ -48,15 +52,16 @@ async function main() {
   mkdirSync(OUT, { recursive: true });
   const browser = await chromium.launch();
   const page = await (
-    await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: SCALE, reducedMotion: "reduce" })
+    await browser.newContext({ viewport: { width: 1700, height: 1000 }, deviceScaleFactor: SCALE, reducedMotion: "reduce" })
   ).newPage();
   await page.goto(`${BASE}/interest`, { waitUntil: "networkidle" });
   await page.evaluate(() => document.getElementById("waitlist-demo")?.scrollIntoView({ block: "start" }));
   await page.waitForSelector(T("nav-dashboard"), { timeout: 60_000 });
 
+  /** The window's box in the viewport, with the window scrolled into view. */
   const windowBox = async () => {
     const box = await page.evaluate((sel) => {
-      const el = document.querySelector(sel)?.closest("[class*='h-[640px]']");
+      const el = document.querySelector(sel)?.closest(".dark");
       el?.scrollIntoView({ block: "center" });
       const r = el?.getBoundingClientRect();
       return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
@@ -66,10 +71,20 @@ async function main() {
   };
 
   const still = async (name) => {
-    await page.waitForTimeout(1200);
+    const { target, dx, dy } = CROPS[name];
+    // Bring the target to the upper part of the pane first, so there is room below it.
+    await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      const pane = el?.closest("main");
+      if (el && pane) pane.scrollTo({ top: pane.scrollTop + el.getBoundingClientRect().top - pane.getBoundingClientRect().top - 90 });
+    }, T(target));
+    await page.waitForTimeout(1400);
     const win = await windowBox();
-    const { x, y } = CROPS[name];
-    const png = await page.screenshot({ clip: { x: win.x + x, y: win.y + y, width: W, height: H } });
+    const el = await page.locator(T(target)).first().boundingBox();
+    if (!el) throw new Error(`target ${target} not on screen`);
+    const x = Math.min(Math.max(el.x + dx, win.x + 8), win.x + win.width - W - 8);
+    const y = Math.min(Math.max(el.y + dy, win.y + 44), win.y + win.height - H - 8);
+    const png = await page.screenshot({ clip: { x, y, width: W, height: H } });
     for (const width of [W, W * SCALE]) {
       await sharp(png).resize({ width }).webp({ quality: 82 }).toFile(path.join(OUT, `${name}-${width}.webp`));
     }
@@ -87,6 +102,7 @@ async function main() {
   await page.waitForTimeout(3000);
   await still("draft");
   await page.click(T("nav-constellation"));
+  await page.waitForTimeout(600);
   await page.click(T("star-maya"), { force: true });
   await still("constellation");
 

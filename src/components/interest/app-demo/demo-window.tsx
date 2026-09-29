@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useReducer, useRef, useSyncExternalStore, type ComponentType, type Dispatch } from "react";
+import { useEffect, useReducer, useRef, useSyncExternalStore, type ComponentType } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { LayoutDashboard, MessageSquare, MousePointerClick, Network, Plus, RotateCcw, Search, Users } from "lucide-react";
+import { ArrowUp, Bell, MessageSquarePlus, MousePointerClick, RotateCcw, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EASE_HOUSE } from "@/lib/motion";
+import { firstName, personById } from "./demo-cast";
 import { DemoContext } from "./demo-context";
 import { TourCursor, useDemoTour } from "./demo-cursor";
 import { LogSheet, SearchPalette } from "./demo-overlays";
-import { demoReducer, initialDemoState, type DemoAction, type DemoState, type Screen } from "./demo-state";
+import { demoReducer, initialDemoState, type Screen } from "./demo-state";
 import { TOUR } from "./demo-tour";
-import { BTN_PRIMARY, DEMO_TOKENS } from "./demo-ui";
+import { DemoSidebar } from "./demo-sidebar";
+import { Avatar } from "./demo-ui";
 import { ChatScreen } from "./screens/chat";
 import { ConstellationScreen } from "./screens/constellation";
 import { ContactProfileScreen } from "./screens/contact-profile";
@@ -25,13 +27,6 @@ function subscribeReduced(onChange: () => void) {
   return () => mq.removeEventListener("change", onChange);
 }
 
-const NAV: { screen: Exclude<Screen, "profile">; label: string; icon: ComponentType<{ className?: string }> }[] = [
-  { screen: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { screen: "contacts", label: "Contacts", icon: Users },
-  { screen: "chat", label: "Chat", icon: MessageSquare },
-  { screen: "constellation", label: "Constellation", icon: Network },
-];
-
 const SCREENS: Record<Screen, ComponentType> = {
   dashboard: DashboardScreen,
   contacts: ContactsScreen,
@@ -42,75 +37,6 @@ const SCREENS: Record<Screen, ComponentType> = {
 
 /** Screens that fill the pane (their own inner scroll) rather than scrolling as a page. */
 const FILL: Screen[] = ["chat", "constellation"];
-
-function Sidebar({ state, dispatch }: { state: DemoState; dispatch: Dispatch<DemoAction> }) {
-  const active = state.screen === "profile" ? "contacts" : state.screen;
-  return (
-    <aside className="h-full w-56 shrink-0 p-3">
-      <div className="flex h-full flex-col rounded-3xl border border-white/10 bg-[linear-gradient(165deg,rgba(43,57,86,0.72),rgba(26,36,56,0.55),rgba(14,21,36,0.48))] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
-        <div className="flex items-center gap-2.5 px-1">
-          {/* A plain img: the waitlist host serves /waitlist/ and nothing else, and next/image's optimizer would ask for more. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/waitlist/logo.png" alt="" width={30} height={30} className="size-[30px] rounded-full" />
-          <div className="min-w-0 flex-1 leading-tight">
-            <p className="font-[family-name:var(--font-display)] text-lg text-[var(--d-primary)]">Orbit</p>
-            <p className="text-[11px] text-[var(--d-dim)]">Network tracker</p>
-          </div>
-          <button
-            type="button"
-            aria-label="Search your network"
-            onClick={() => dispatch({ type: "overlay", overlay: "palette" })}
-            className="inline-flex size-8 items-center justify-center rounded-full border border-white/15 text-[var(--d-dim)] hover:text-[var(--d-ink)]"
-          >
-            <Search className="size-3.5" />
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => dispatch({ type: "overlay", overlay: "log", logFor: state.screen === "profile" ? state.profileId : null })}
-          className={cn(BTN_PRIMARY, "mt-4 w-full rounded-xl py-2 text-sm")}
-        >
-          <Plus className="size-4" aria-hidden="true" />
-          Log interaction
-        </button>
-
-        <nav className="mt-4 space-y-0.5" aria-label="Demo app">
-          {NAV.map(({ screen, label, icon: Icon }) => (
-            <button
-              key={screen}
-              type="button"
-              data-demo-target={`nav-${screen}`}
-              aria-current={active === screen ? "page" : undefined}
-              onClick={() => dispatch({ type: "go", screen })}
-              className={cn(
-                "relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors",
-                active === screen ? "text-[var(--d-ink)]" : "text-[var(--d-dim)] hover:text-[var(--d-ink)]"
-              )}
-            >
-              {active === screen && (
-                <motion.span
-                  layoutId="demo-nav-pill"
-                  className="absolute inset-0 rounded-xl bg-white/10 ring-1 ring-white/10"
-                  transition={{ type: "spring", stiffness: 420, damping: 36 }}
-                />
-              )}
-              <Icon className="relative size-4" />
-              <span className="relative">{label}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="mt-auto flex items-center gap-2.5 border-t border-white/10 px-1 pt-3">
-          <span className="inline-flex size-7 items-center justify-center rounded-full bg-[#f2c14e]/20 text-[11px] font-medium text-[#f2c14e]">
-            You
-          </span>
-          <span className="text-xs text-[var(--d-dim)]">Account</span>
-        </div>
-      </div>
-    </aside>
-  );
-}
 
 /**
  * The recreation: a window onto a made-up workspace. It plays `TOUR` until the visitor
@@ -179,12 +105,14 @@ export function DemoWindow() {
 
   const Screen = SCREENS[state.screen];
   const fill = FILL.includes(state.screen);
+  // On a profile the ask bar is about that person, as in the app: a chip above it says so, and
+  // the question is theirs.
+  const asked = state.screen === "profile" ? personById(state.profileId) : undefined;
 
   return (
     <DemoContext.Provider value={{ state, dispatch, reduced }}>
       <div
         ref={rootRef}
-        style={DEMO_TOKENS}
         onPointerDownCapture={takeOver}
         onKeyDownCapture={(e) => {
           takeOver(e);
@@ -194,16 +122,9 @@ export function DemoWindow() {
           }
           if (e.key === "Escape" && state.overlay) dispatch({ type: "overlay", overlay: null });
         }}
-        className="relative h-[640px] overflow-hidden rounded-[22px] border border-white/12 bg-[var(--d-bg)] text-left font-sans text-[var(--d-ink)] shadow-[0_40px_120px_-30px_rgba(0,0,0,0.8),0_0_0_1px_rgba(255,255,255,0.03)]"
+        className="dark relative h-[720px] overflow-hidden rounded-[22px] border border-white/12 bg-background text-left font-sans text-foreground shadow-[0_40px_120px_-30px_rgba(0,0,0,0.8),0_0_0_1px_rgba(255,255,255,0.03)]"
       >
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(900px 500px at 100% 0%, rgba(104,96,214,0.16), transparent 60%), radial-gradient(700px 500px at 0% 100%, rgba(46,122,158,0.14), transparent 60%)",
-          }}
-        />
+        <div aria-hidden="true" className="demo-starfield pointer-events-none absolute inset-0" />
 
         {/* Title bar */}
         <div className="relative flex h-10 items-center border-b border-white/[0.07] px-4">
@@ -212,13 +133,13 @@ export function DemoWindow() {
             <span className="size-3 rounded-full bg-[#febc2e]/85" />
             <span className="size-3 rounded-full bg-[#28c840]/85" />
           </div>
-          <p className="absolute left-1/2 -translate-x-1/2 text-xs text-[var(--d-dim)]">Orbit — preview</p>
+          <p className="absolute left-1/2 -translate-x-1/2 text-xs text-muted-foreground">Orbit — preview</p>
           <div className="ml-auto" data-demo-modectl>
             {touring ? (
               <button
                 type="button"
                 onClick={() => dispatch({ type: "mode", mode: "explore" })}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-2.5 py-1 text-[11px] text-[var(--d-dim)] hover:text-[var(--d-ink)]"
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-ink"
               >
                 <MousePointerClick className="size-3.5" aria-hidden="true" />
                 Explore it yourself
@@ -227,7 +148,7 @@ export function DemoWindow() {
               <button
                 type="button"
                 onClick={() => dispatch({ type: "mode", mode: "tour" })}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-2.5 py-1 text-[11px] text-[var(--d-dim)] hover:text-[var(--d-ink)]"
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-ink"
               >
                 <RotateCcw className="size-3.5" aria-hidden="true" />
                 {reduced ? "Play tour" : "Replay tour"}
@@ -237,8 +158,8 @@ export function DemoWindow() {
         </div>
 
         <div className="relative flex h-[calc(100%-2.5rem)]">
-          <Sidebar state={state} dispatch={dispatch} />
-          <main ref={paneRef} className="relative min-w-0 flex-1 overflow-y-auto px-6 pb-4 pt-6 pr-7" aria-label="Demo app screen">
+          <DemoSidebar state={state} dispatch={dispatch} />
+          <main ref={paneRef} className={cn("relative min-w-0 flex-1 overflow-y-auto pl-3 pt-6", fill ? "pr-4 pb-4" : "pr-16 pb-20")} aria-label="Demo app screen">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={state.screen === "profile" ? `profile-${state.profileId}` : state.screen}
@@ -254,6 +175,62 @@ export function DemoWindow() {
           </main>
         </div>
 
+        {/* The app's floating controls: notifications and feedback at the top right, and the ask
+            bar along the bottom of every screen that is not itself a chat or the star chart. */}
+        <div className="absolute right-3 top-[3.25rem] z-30 flex flex-col gap-2.5">
+          <button
+            type="button"
+            aria-label="Notifications"
+            className="relative inline-flex size-10 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:text-foreground"
+          >
+            <Bell className="size-4" />
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
+              3
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-label="Send feedback"
+            className="inline-flex size-10 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:text-foreground"
+          >
+            <MessageSquarePlus className="size-4" />
+          </button>
+        </div>
+        {!fill && (
+          <div className="absolute bottom-4 left-[calc(50%+4.5rem)] z-20 flex w-[340px] -translate-x-1/2 flex-col items-center gap-2">
+            {asked && (
+              <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card/90 py-1 pl-1.5 pr-2 text-xs text-muted-foreground shadow-lg backdrop-blur">
+                <Avatar person={asked} size={20} />
+                <span>
+                  Asking about <span className="text-ink">{asked.name}</span>
+                </span>
+                <X className="size-3" aria-hidden="true" />
+              </span>
+            )}
+            <button
+              type="button"
+              data-demo-target={asked ? "profile-ask" : undefined}
+              onClick={() =>
+                asked
+                  ? dispatch({
+                      type: "ask",
+                      q: asked.promise ? `What did I promise ${firstName(asked)}?` : `Where did I leave things with ${firstName(asked)}?`,
+                    })
+                  : dispatch({ type: "go", screen: "chat" })
+              }
+              className="flex w-full items-center gap-2.5 rounded-full border border-border bg-card/90 py-1.5 pl-4 pr-1.5 text-left shadow-xl backdrop-blur"
+              aria-label={asked ? `Ask about ${asked.name}` : "Ask your network"}
+            >
+              <Search className="size-4 text-muted-foreground" aria-hidden="true" />
+              <span className="flex-1 text-sm text-muted-foreground">Ask your network…</span>
+              <kbd className="rounded-md border border-border bg-muted/50 px-1.5 text-[11px] text-muted-foreground">⌘J</kbd>
+              <span className="inline-flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <ArrowUp className="size-4" aria-hidden="true" />
+              </span>
+            </button>
+          </div>
+        )}
+
         <AnimatePresence>
           {state.overlay === "palette" && <SearchPalette key="palette" />}
           {state.overlay === "log" && <LogSheet key="log" />}
@@ -267,7 +244,7 @@ export function DemoWindow() {
                 initial={reduced ? false : { opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={reduced ? undefined : { opacity: 0, y: 4 }}
-                className="rounded-xl border border-white/12 bg-[#212c42]/95 px-3.5 py-2 text-xs text-[var(--d-ink)] shadow-xl backdrop-blur"
+                className="rounded-xl border border-border bg-popover/95 px-3.5 py-2 text-xs text-ink shadow-xl backdrop-blur"
               >
                 {state.toast.text}
               </motion.p>
@@ -277,14 +254,14 @@ export function DemoWindow() {
 
         {touring && (
           <div
-            className="absolute bottom-4 left-[calc(50%+7rem)] z-40 flex max-w-[520px] -translate-x-1/2 items-center gap-3 rounded-full border border-[#f2c14e]/30 bg-[#0b1120]/90 py-2 pl-3 pr-4 shadow-xl backdrop-blur"
+            className="absolute bottom-[4.75rem] left-[calc(50%+4.5rem)] z-40 flex max-w-[520px] -translate-x-1/2 items-center gap-3 rounded-full border border-tier-lifetime/30 bg-background/90 py-2 pl-3 pr-4 shadow-xl backdrop-blur"
           >
             <span className="flex shrink-0 gap-1" aria-hidden="true">
               {TOUR.map((_, i) => (
-                <span key={i} className={cn("size-1.5 rounded-full", i === beat ? "bg-[#f2c14e]" : i < beat ? "bg-[#f2c14e]/45" : "bg-white/20")} />
+                <span key={i} className={cn("size-1.5 rounded-full", i === beat ? "bg-tier-lifetime" : i < beat ? "bg-tier-lifetime/45" : "bg-white/20")} />
               ))}
             </span>
-            <span className="min-w-0 text-xs text-[#e8f3f1]" aria-live="polite">
+            <span className="min-w-0 text-xs text-ink" aria-live="polite">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span
                   key={beat}

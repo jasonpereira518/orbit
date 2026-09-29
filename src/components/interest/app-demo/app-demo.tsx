@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState, type ComponentType } from "react";
 
-const DESKTOP_QUERY = "(min-width: 768px)";
+/** The window is a fixed-density copy of the real app, which needs about a thousand pixels: below
+ * this the page shows the swipeable stills instead (`demo-peek.tsx`, `lg:hidden`). */
+const DESKTOP_QUERY = "(min-width: 1024px)";
 
 /**
  * The waitlist's product preview. It holds a fixed-height slot so nothing shifts, and only
- * fetches the demo — a separate chunk — once the viewport is desktop-sized AND the slot is
- * near the screen. Phones never download it; the page hides the section below `md` too.
+ * fetches the demo — a separate chunk — once the viewport is wide enough (1024px) AND the slot is
+ * near the screen. Phones never download it; the page hides the section below `lg` too.
  */
 export function AppDemo() {
   const slotRef = useRef<HTMLDivElement>(null);
@@ -45,13 +47,13 @@ export function AppDemo() {
   }, []);
 
   return (
-    <div ref={slotRef} className="h-[640px]">
+    <div ref={slotRef} className="h-[720px]">
       {Demo ? (
         <Demo />
       ) : (
         <div
           aria-hidden="true"
-          className="h-full animate-pulse rounded-[22px] border border-white/10 bg-[#0e1524]/70"
+          className="h-full animate-pulse rounded-[22px] border border-white/10 bg-card/70"
         />
       )}
     </div>

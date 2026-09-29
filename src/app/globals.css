@@ -2183,6 +2183,27 @@
   }
 }
 
+/* The faint dotted sky behind the waitlist preview's window (`app-demo/demo-window.tsx`), like
+ * the real app's starfield but drawn once in CSS: no canvas, no loop. */
+.demo-starfield {
+  opacity: 0.85;
+  background-image:
+    radial-gradient(1px 1px at 8% 12%, rgba(231, 236, 241, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 22% 70%, rgba(231, 236, 241, 0.32), transparent),
+    radial-gradient(1px 1px at 34% 30%, rgba(242, 193, 78, 0.4), transparent),
+    radial-gradient(1px 1px at 47% 86%, rgba(231, 236, 241, 0.4), transparent),
+    radial-gradient(1.5px 1.5px at 58% 18%, rgba(231, 236, 241, 0.3), transparent),
+    radial-gradient(1px 1px at 66% 58%, rgba(231, 236, 241, 0.45), transparent),
+    radial-gradient(1px 1px at 74% 90%, rgba(242, 193, 78, 0.3), transparent),
+    radial-gradient(1.5px 1.5px at 83% 34%, rgba(231, 236, 241, 0.35), transparent),
+    radial-gradient(1px 1px at 91% 66%, rgba(231, 236, 241, 0.45), transparent),
+    radial-gradient(1px 1px at 96% 10%, rgba(231, 236, 241, 0.3), transparent),
+    radial-gradient(1px 1px at 15% 46%, rgba(231, 236, 241, 0.28), transparent),
+    radial-gradient(1px 1px at 41% 52%, rgba(231, 236, 241, 0.25), transparent),
+    radial-gradient(1.5px 1.5px at 52% 40%, rgba(231, 236, 241, 0.22), transparent),
+    radial-gradient(1px 1px at 79% 76%, rgba(231, 236, 241, 0.3), transparent);
+}
+
 /* The feature poll's icon field (`feature-poll.tsx`): an orb glides to its rank's slot and its
  * disc grows and glows with its share. In CSS rather than inline styles because inline ones
  * are decided during server rendering, where reduced motion is unknown, and React does not

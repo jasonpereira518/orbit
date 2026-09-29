@@ -1,35 +1,27 @@
 "use client";
 
-import { CalendarDays, Coffee, Mail, MessageSquare, Phone, StickyNote, UserRound, Users } from "lucide-react";
-import { useId, type CSSProperties } from "react";
+import { CalendarDays, Mail, UserRound } from "lucide-react";
+import { useId } from "react";
+import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { INTERACTION_FAMILIES, INTERACTION_TYPES, type InteractionTypeValue } from "@/lib/interaction-types";
 import { LOOKS, initials, tierOf, type DemoPerson, type Look, type SuggestionReason, type TimelineSource, type TimelineType } from "./demo-cast";
 
 /**
- * The app's dark theme, copied as values from `globals.css` `.dark`, scoped to the demo so
- * it looks like the real app whatever the page around it does.
+ * The preview's look is the app's own, not a copy of it: the window carries the real `dark`
+ * theme class (`globals.css` `.dark`), so `bg-card`, `border-border`, `text-ink` and the rest
+ * resolve to whatever the app's tokens are today, and the button classes come straight from
+ * the app's `buttonVariants`. Nothing here may hard-code a colour the app already defines —
+ * `scripts/smoke-waitlist-demo-fidelity.ts` enforces it.
  */
-export const DEMO_TOKENS = {
-  "--d-bg": "#0e1524",
-  "--d-card": "#1a2438",
-  "--d-card-2": "#212c42",
-  "--d-muted": "#151d2f",
-  "--d-border": "#333f5a",
-  "--d-ink": "#e4ebf6",
-  "--d-dim": "#96a8c4",
-  "--d-primary": "#7cc3e2",
-  "--d-primary-ink": "#04121b",
-  "--d-sidebar": "#080d18",
-} as CSSProperties;
-
-export const CARD = "rounded-2xl border border-[var(--d-border)]/70 bg-[var(--d-card)]/80";
-export const DISPLAY = "font-[family-name:var(--font-display)] tracking-tight text-[var(--d-ink)]";
-export const BTN =
-  "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--d-border)] bg-[var(--d-card-2)] px-2.5 py-1.5 text-xs font-medium text-[var(--d-ink)] transition-colors hover:border-[var(--d-primary)]/50 hover:bg-[var(--d-card-2)]/70";
-export const BTN_PRIMARY =
-  "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--d-primary)] px-2.5 py-1.5 text-xs font-medium text-[var(--d-primary-ink)] transition-opacity hover:opacity-90";
+export const CARD = "rounded-2xl border border-border/70 bg-card/80";
+export const DISPLAY = "font-[family-name:var(--font-display)] tracking-tight text-ink";
+export const BTN = buttonVariants({ variant: "outline" });
+export const BTN_PRIMARY = buttonVariants({ variant: "default" });
+export const BTN_GHOST = buttonVariants({ variant: "ghost", size: "sm" });
 export const INPUT =
-  "w-full rounded-lg border border-[var(--d-border)] bg-[var(--d-muted)] px-3 py-2 text-sm text-[var(--d-ink)] placeholder:text-[var(--d-dim)]/70 focus:border-[var(--d-primary)]/60 focus:outline-none";
+  "w-full rounded-lg border border-input bg-input/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none";
 
 /** Hair drawn behind the head (length that falls past it). */
 function HairBack({ look }: { look: Look }) {
@@ -157,9 +149,9 @@ const TIER_STYLE = {
   outer: { chip: "bg-amber-400/15 text-amber-200 ring-amber-300/25", label: "Outer orbit" },
 } as const;
 
+/** The app's own tier badge (`components/dashboard/closeness-tier-badge.tsx`). */
 export function TierBadge({ closeness }: { closeness: number }) {
-  const t = TIER_STYLE[tierOf(closeness)];
-  return <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium ring-1", t.chip)}>{t.label}</span>;
+  return <ClosenessTierBadge tier={tierOf(closeness)} />;
 }
 
 export function ClosenessChip({ closeness }: { closeness: number }) {
@@ -194,7 +186,7 @@ const SOURCE_STYLE: Record<TimelineSource, string> = {
   Gmail: "text-rose-200 bg-rose-400/10",
   "Google Calendar": "text-sky-200 bg-sky-400/10",
   LinkedIn: "text-blue-200 bg-blue-400/10",
-  You: "text-[var(--d-dim)] bg-white/5",
+  You: "text-muted-foreground bg-white/5",
 };
 
 export function SourceIcon({ source, className }: { source: TimelineSource; className?: string }) {
@@ -213,33 +205,30 @@ export function SourceBadge({ source }: { source: TimelineSource }) {
   );
 }
 
-const TYPE_ICON: Record<TimelineType, typeof Mail> = {
-  Email: Mail,
-  Meeting: Users,
-  Call: Phone,
-  LinkedIn: MessageSquare,
-  "In person": Coffee,
-  Note: StickyNote,
+/** The demo's timeline types, as the app's own interaction types (`lib/interaction-types.ts`). */
+const TYPE_VALUE: Record<TimelineType, InteractionTypeValue> = {
+  Email: "email",
+  Meeting: "meeting",
+  Call: "call",
+  LinkedIn: "linkedin_message",
+  "In person": "in_person",
+  Note: "note",
 };
 
-/** Interaction families, coloured like the app's `--interaction-*` tokens. */
-const TYPE_TINT: Record<TimelineType, string> = {
-  Meeting: "#f5cd7a",
-  "In person": "#f5cd7a",
-  Call: "#f5a3c0",
-  Email: "#8aa9f2",
-  LinkedIn: "#8aa9f2",
-  Note: "#8f9db2",
-};
+/** The app's icon, label and colour family for a timeline type — nothing copied by hand. */
+export function interactionOf(type: TimelineType) {
+  const spec = INTERACTION_TYPES.find((t) => t.value === TYPE_VALUE[type])!;
+  const family = INTERACTION_FAMILIES.find((f) => f.value === spec.family)!;
+  return { spec, family };
+}
 
-export function TypeIcon({ type }: { type: TimelineType }) {
-  const Icon = TYPE_ICON[type];
+/** A timeline node, drawn with the app's own family classes (a solid fill, so the spine passes behind it). */
+export function TypeIcon({ type, className }: { type: TimelineType; className?: string }) {
+  const { spec, family } = interactionOf(type);
+  const Icon = spec.icon;
   return (
-    <span
-      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full"
-      style={{ background: `${TYPE_TINT[type]}22`, color: TYPE_TINT[type] }}
-    >
-      <Icon className="size-3.5" aria-hidden="true" />
+    <span className={cn("relative z-10 inline-flex size-8 shrink-0 items-center justify-center rounded-full border", family.node, className)}>
+      <Icon className="size-4" aria-hidden="true" />
     </span>
   );
 }

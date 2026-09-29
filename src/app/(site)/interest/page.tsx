@@ -347,8 +347,8 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         {/* An admin can hide the demo from /admin/growth/interest-list. */}
         {showDemo && (
           <>
-            {/* Desktop only: the demo is a desktop window, and phones never fetch its chunk. */}
-            <section className="mt-32 hidden md:block" aria-labelledby="waitlist-demo">
+            {/* Wide screens only (lg): the demo is a desktop-sized window, and narrower ones never fetch its chunk. */}
+            <section className="mt-32 hidden lg:block" aria-labelledby="waitlist-demo">
               <Reveal className="reveal-celestial">
                 <h2 id="waitlist-demo" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
                   Take it for a spin.
@@ -364,8 +364,8 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
               </div>
             </section>
 
-            {/* Phones: stills of the same demo to swipe through. */}
-            <section className="mt-24 md:hidden" aria-labelledby="waitlist-peek">
+            {/* Phones and tablets: stills of the same demo to swipe through. */}
+            <section className="mt-24 lg:hidden" aria-labelledby="waitlist-peek">
               <Reveal className="reveal-celestial">
                 <h2 id="waitlist-peek" className={`${SECTION_TITLE} text-center`}>
                   Take a peek.
