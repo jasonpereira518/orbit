@@ -105,6 +105,25 @@ function titleKey(title: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Whether a freshly reported current role is one of the stored current roles: same
+ * employer family, and the same title when both sides name one. What the cheap re-check
+ * uses to decide that nothing moved.
+ */
+export function isStoredCurrentRole(
+  role: { organization: string; title: string | null },
+  stored: SnapshotRole[]
+): boolean {
+  const key = employerKey(role.organization);
+  if (!key) return false;
+  return stored.some(
+    (s) =>
+      s.isCurrent &&
+      employerKey(s.organization) === key &&
+      (!s.title || !role.title || titleKey(s.title) === titleKey(role.title))
+  );
+}
+
 /** Year-month as one comparable number; null when the year is unknown. */
 function startOrdinal(role: { startYear: number | null; startMonth: number | null }): number | null {
   if (role.startYear === null) return null;

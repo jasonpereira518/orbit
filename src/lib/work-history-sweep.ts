@@ -33,6 +33,7 @@ import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit
 import { utcDayKey } from "@/lib/timeline-cost";
 import {
   researchContactWorkHistory,
+  type CurrentRoleChecker,
   type WorkHistoryOutcome,
   type WorkHistoryResearcher,
 } from "@/lib/work-history-research";
@@ -66,6 +67,7 @@ export type WorkHistorySweepDeps = {
   /** Stop STARTING new checks after this (epoch ms). */
   deadline?: number;
   researcher?: WorkHistoryResearcher;
+  checker?: CurrentRoleChecker;
   canUseAi?: (userId: string) => Promise<boolean>;
   random?: () => number;
 };
@@ -201,6 +203,7 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
       }
       const outcome = await researchContactWorkHistory(userId, contactId, {
         researcher: deps.researcher,
+        checker: deps.checker,
         now,
         random: deps.random,
         spend: async () => {
