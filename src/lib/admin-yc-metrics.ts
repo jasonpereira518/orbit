@@ -12,7 +12,7 @@ import {
   startupExpenses,
   userSettings,
 } from "@/db/schema";
-import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { requireAdminUserId } from "@/lib/admin";
 import {
   computeCac,
@@ -186,7 +186,8 @@ export async function loadUnitEconomics(now = new Date()) {
   const estimatedMonthlyChurnPct = settings?.estimatedMonthlyChurnPct ?? null;
 
   const cac = computeCac(spend30dUsd, newSubscribers30d);
-  const ltv = computeLtv(MONTHLY_AMOUNT, estimatedMonthlyChurnPct);
+  // Pro's list price as the per-subscriber figure: the conservative one of the two tiers.
+  const ltv = computeLtv((PLAN_CONFIG.orbit.monthlyPriceCents ?? 0) / 100, estimatedMonthlyChurnPct);
 
   return {
     cac,

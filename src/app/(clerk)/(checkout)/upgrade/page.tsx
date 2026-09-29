@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Eye, KeyRound, RotateCcw } from "lucide-react";
+import { Eye, Sparkles, RotateCcw } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { WarpArrivalBeacon } from "@/components/warp/warp-arrival-beacon";
@@ -11,15 +11,17 @@ import {
   UpgradeTransition,
 } from "@/components/motion/upgrade-transition";
 import { UpgradePlanCards } from "@/components/pricing/upgrade-plan-cards";
-import { getLifetimeAvailability } from "@/actions/billing";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
-import { lifetimeOffer } from "@/lib/lifetime-offer";
-import { isProCheckoutConfigured } from "@/lib/stripe-config";
+import { foundingAppliesToNewSubscription } from "@/lib/founding";
+import { isCheckoutConfigured } from "@/lib/stripe-config";
 
 export const metadata: Metadata = {
   title: "Upgrade — Orbit",
-  description: "Move to Orbit Pro, or buy Orbit Lifetime once.",
+  description: "Move to Orbit Pro or Orbit Max. AI included on both.",
 };
 
 const HEADING =
@@ -31,7 +33,7 @@ const TRUST = [
   {
     icon: RotateCcw,
     title: "Cancel any time",
-    body: "You keep Orbit Pro until the period you paid for ends, then drop back to the Free Plan.",
+    body: "You keep your plan until the period you paid for ends, then drop back to the Free Plan.",
   },
   {
     icon: Eye,
@@ -39,38 +41,32 @@ const TRUST = [
     body: "Reaching a limit only stops new contacts. Everything already in your orbit stays visible and editable.",
   },
   {
-    icon: KeyRound,
-    title: "No markup on AI",
-    body: "Every plan runs on your own provider key, billed to you at cost. We never resell tokens.",
+    icon: Sparkles,
+    title: "AI included, never auto-charged",
+    body: "Run out of credits and AI pauses until you choose a $5 pack or your allowance resets. Nothing is charged automatically.",
   },
 ];
 
 /**
- * Assembly slots, one piece per slot, top to bottom: header 0, heading 1, billing toggle 2,
- * the two plan cards 3 and 4, trust row 5 — see `upgrade-transition.tsx` for the
+ * Assembly slots, one piece per slot, top to bottom: header 0, heading 1, (2 unused since the
+ * billing toggle went), the two plan cards 3 and 4, trust row 5 — see `upgrade-transition.tsx` for the
  * choreography itself. The toggle and cards live in `UpgradePlanCards`, so the numbering is
  * split across two files; `UpgradeTransition`'s `maxOrder` must stay in step with the
  * highest slot used anywhere in the tree (currently the trust row's 5).
  */
-export default async function UpgradePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ period?: string }>;
-}) {
+export default async function UpgradePage() {
   // Protected by proxy.ts, but resolved here too so the page never renders without a user
   // to attribute a purchase to.
   const userId = await requireUserId();
-  const [entitlements, lifetime, offer, params] = await Promise.all([
+  const db = await getDb();
+  const [entitlements, row] = await Promise.all([
     getEntitlements(userId),
-    getLifetimeAvailability(),
-    // The same resolution `/pricing` and `startLifetimeCheckout` use, so all three name
-    // one price.
-    lifetimeOffer(),
-    searchParams,
+    db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+      columns: { foundingEligible: true, foundingRedeemedAt: true },
+    }),
   ]);
-
-  const hasPro = entitlements.plan === "orbit";
-  const hasLifetime = entitlements.plan === "lifetime";
+  const onPaidPlan = entitlements.plan !== "free";
 
   return (
     // `landing-root` keeps the body deep-space on overscroll, exactly as
@@ -118,25 +114,17 @@ export default async function UpgradePage({
               into the star trails reads as the words giving way to the sky. */}
           <Panel order={1} exit="fade">
             <h1 className={`${HEADING} text-[clamp(28px,4vw,42px)]`}>
-              {hasPro || hasLifetime
-                ? "You're already on a paid plan."
-                : "Pick how you'd like to pay."}
+              {onPaidPlan ? "You're already on a paid plan." : "Pick your plan."}
             </h1>
           </Panel>
 
           <UpgradePlanCards
-            initialPeriod={params.period === "annual" ? "annual" : "monthly"}
-            hasPro={hasPro}
-            hasLifetime={hasLifetime}
-            proCheckoutConfigured={isProCheckoutConfigured()}
-            lifetimePurchasable={lifetime.purchasable}
-            lifetimeOffer={{
-              priceUsd: offer.priceUsd,
-              compareAtUsd: offer.compareAtUsd,
-            }}
+            currentPlan={entitlements.plan}
+            founding={foundingAppliesToNewSubscription(row)}
+            checkoutOpen={isCheckoutConfigured()}
           />
 
-          {!hasPro && !hasLifetime && (
+          {!onPaidPlan && (
             <Panel order={5} className="mt-14 block">
               <ul className="grid gap-6 sm:grid-cols-3">
                 {TRUST.map(({ icon: Icon, title, body }) => (

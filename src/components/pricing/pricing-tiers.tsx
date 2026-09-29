@@ -2,19 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { getCurrentPlan } from "@/actions/billing";
+import { getPricingViewer } from "@/actions/billing";
 import Link from "next/link";
 import { Check } from "lucide-react";
-import { BillingToggle } from "@/components/pricing/billing-toggle";
-import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
+import { SubscriptionCheckoutButton } from "@/components/pricing/subscription-checkout-button";
 import { cn } from "@/lib/utils";
-import { planCopyWithOffer, type BillingPeriod } from "@/lib/plan-copy";
-import { type Plan } from "@/lib/plan-limits";
+import { foundingPriceTerms, PUBLIC_PLAN_COPY } from "@/lib/plan-copy";
+import { isPurchasablePlan, type Plan } from "@/lib/plans/plan-config";
 
 /**
  * Where signed-out buyers land after creating the account they need to buy: back here,
- * with the toggle and cards fresh in mind, rather than into onboarding.
+ * with the cards fresh in mind, rather than into onboarding.
  */
 const SIGN_UP_FROM_PRICING = "/sign-up?redirect_url=/pricing";
 
@@ -22,131 +21,86 @@ function TierCta({
   planId,
   currentPlan,
   signedIn,
-  lifetimePurchasable,
-  lifetimePriceUsd,
-  period,
+  checkoutOpen,
 }: {
   planId: Plan;
   currentPlan: Plan | null;
   signedIn: boolean;
   /** Stripe is configured, so checkout can actually complete. */
-  lifetimePurchasable: boolean;
-  lifetimePriceUsd: number;
-  period: BillingPeriod;
+  checkoutOpen: boolean;
 }) {
   const base =
     "flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-medium transition-opacity";
 
   if (currentPlan === planId) {
     return (
-      <p
-        className={cn(
-          base,
-          "border border-[#e8f3f1]/[0.14] text-[#9aada8]"
-        )}
-      >
+      <p className={cn(base, "border border-[#e8f3f1]/[0.14] text-[#9aada8]")}>
         Your current plan
       </p>
     );
-  }
-
-  if (planId === "lifetime") {
-    if (!lifetimePurchasable) {
-      // Deliberately not a disabled <button>: with no checkout to attempt, a dead control
-      // reads as a broken product, while a stated wait reads as a date not yet reached.
-      return (
-        <div className="space-y-2">
-          <p
-            className={cn(
-              base,
-              "border border-dashed border-[#f2c14e]/35 text-[#f2c14e]"
-            )}
-          >
-            Not on sale yet
-          </p>
-          <p className="text-center text-xs text-[#6d807c]">
-            It unlocks when checkout opens.
-          </p>
-        </div>
-      );
-    }
-
-    if (!signedIn) {
-      // Checkout needs an account to attribute the purchase to, so send them to sign up
-      // rather than into a Stripe session with nobody to grant the plan to.
-      return (
-        <Link
-          href={SIGN_UP_FROM_PRICING}
-          className={cn(
-            base,
-            "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
-          )}
-        >
-          Create an account to buy
-        </Link>
-      );
-    }
-
-    if (currentPlan === "orbit") {
-      // One plan at a time: a Pro subscriber switches from Settings, where the dialog says
-      // Pro ends on the spot with no refund. Checkout refuses them from here anyway.
-      return (
-        <Link
-          href="/settings#settings-plan"
-          className={cn(
-            base,
-            "border border-[#f2c14e]/45 text-[#f2c14e] hover:opacity-90"
-          )}
-        >
-          Switch from Pro in Settings
-        </Link>
-      );
-    }
-
-    return <LifetimeCheckoutButton priceUsd={lifetimePriceUsd} />;
   }
 
   if (planId === "free") {
     return (
       <Link
         href={signedIn ? "/dashboard" : SIGN_UP_FROM_PRICING}
-        className={cn(
-          base,
-          "border border-[#e8f3f1]/[0.18] text-[#e8f3f1] hover:opacity-80"
-        )}
+        className={cn(base, "border border-[#e8f3f1]/[0.18] text-[#e8f3f1] hover:opacity-80")}
       >
         {signedIn ? "Go to your orbit" : "Start free"}
       </Link>
     );
   }
 
-  // The chosen period rides along in the URL, and /upgrade's Orbit Pro section honours
-  // it directly via ProCheckoutButton — real Stripe subscription checkout, not Clerk's
-  // PricingTable, which had no way to preselect a period at all.
-  const upgradeHref =
-    period === "annual" ? "/upgrade?period=annual" : "/upgrade";
+  if (!isPurchasablePlan(planId)) return null;
 
-  return (
-    <Link
-      href={signedIn ? upgradeHref : SIGN_UP_FROM_PRICING}
-      className={cn(
-        base,
-        "bg-[#eef7f4] text-[#0f2e28] hover:opacity-90"
-      )}
-    >
-      {signedIn ? "Upgrade to Orbit Pro" : "Start free, upgrade anytime"}
-    </Link>
-  );
+  if (!checkoutOpen) {
+    // Deliberately not a disabled <button>: with no checkout to attempt, a dead control
+    // reads as a broken product, while a stated wait reads as a date not yet reached.
+    return (
+      <p className={cn(base, "border border-dashed border-[#e8f3f1]/25 text-[#9aada8]")}>
+        Not on sale yet
+      </p>
+    );
+  }
+
+  if (!signedIn) {
+    // Checkout needs an account to attribute the purchase to.
+    return (
+      <Link href={SIGN_UP_FROM_PRICING} className={cn(base, "bg-[#eef7f4] text-[#0f2e28] hover:opacity-90")}>
+        Start free, upgrade anytime
+      </Link>
+    );
+  }
+
+  if (currentPlan === "lifetime") {
+    return (
+      <p className={cn(base, "border border-[#e8f3f1]/[0.14] text-[#9aada8]")}>
+        Included in your Lifetime plan
+      </p>
+    );
+  }
+
+  if (currentPlan === "orbit" || currentPlan === "max") {
+    // One plan at a time: a subscriber switches tier in Settings, on Stripe's confirmation
+    // page, never through a second checkout.
+    return (
+      <Link
+        href="/settings#settings-plan"
+        className={cn(base, "border border-[#e8f3f1]/[0.18] text-[#e8f3f1] hover:opacity-80")}
+      >
+        Switch in Settings
+      </Link>
+    );
+  }
+
+  return <SubscriptionCheckoutButton plan={planId} />;
 }
 
 /**
- * Each tier owns an accent rather than a single `featured` boolean, because the two paid
- * tiers now say different things: Orbit Pro is the default path (Orbit's own primary blue,
- * centred and lifted on wide screens, badged "Most popular"), while Orbit Lifetime is the
- * value play (the gold accent the rest of the marketing site reserves for offers, badged
- * "Best Value"). The two badges carry two different messages in two different colours —
- * social proof against value — so neither dilutes the other.
- * Free stays deliberately recessed — dimmer border, no glow, muted ticks.
+ * Each tier owns an accent: Free stays recessed (dimmer border, no glow, muted ticks), Pro
+ * wears the Pro blue and Max the gold. No popularity badge — nothing measures it, and an
+ * unbacked "Most popular" is exactly the kind of nudge the no-fake-urgency rule forbids.
+ * (Colors move to the plan tokens in the colour pass.)
  */
 const TIER_ACCENT: Record<
   Plan,
@@ -174,86 +128,81 @@ const TIER_ACCENT: Record<
     surface: "border-brand-pro/40 bg-[#070b18]/80 hover:border-brand-pro/75",
     tick: "text-brand-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: { label: "Most popular", className: "bg-brand-pro text-[#081326]" },
+    badge: null,
     raised: true,
   },
   max: {
     surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
     tick: "text-[#f2c14e]",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
-    badge: { label: "Max", className: "bg-[#f2c14e] text-[#241a00]" },
+    badge: null,
     raised: false,
   },
   lifetime: {
     surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
     tick: "text-[#f2c14e]",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
-    badge: { label: "Best Value", className: "bg-[#f2c14e] text-[#241a00]" },
+    badge: null,
     raised: false,
   },
 };
 
 type TiersProps = {
   clerkOn: boolean;
-  lifetimePurchasable: boolean;
-  /**
-   * Resolved on the server from the live sale count, because Lifetime's price rises after
-   * the introductory buyers. Passed in rather than read here so this stays a client
-   * component; the shape is deliberately minimal for the same reason.
-   */
-  lifetimeOffer: { priceUsd: number; compareAtUsd: number | null };
+  checkoutOpen: boolean;
 };
 
 /**
- * The page is static and shared, so "who is this" and "what plan are they on" resolve in
- * the browser after Clerk loads. `useAuth()` throws outside a <ClerkProvider>, which is
- * mounted only when Clerk is configured (also at build time, where this page is now
- * prerendered), so the hook lives in a child that only exists when Clerk does. Plan
- * awareness keys off a real Clerk user, never the demo user: without Clerk keys the header
- * renders signed-out, and crediting demo-user with a plan would put "Your current plan"
- * under a "Get Started" button.
+ * The page is static and shared, so "who is this", "what plan are they on" and "does a
+ * founding price apply" resolve in the browser after Clerk loads. `useAuth()` throws outside
+ * a <ClerkProvider>, which is mounted only when Clerk is configured, so the hook lives in a
+ * child that only exists when Clerk does. Signed out, nobody ever sees a founding price.
  */
 export function PricingTiers(props: TiersProps) {
-  if (!props.clerkOn) return <PricingTiersView {...props} signedIn={false} currentPlan={null} />;
+  if (!props.clerkOn) {
+    return <PricingTiersView {...props} signedIn={false} currentPlan={null} founding={false} />;
+  }
   return <ClerkAwareTiers {...props} />;
 }
 
 function ClerkAwareTiers(props: TiersProps) {
   const auth = useAuth();
   const signedIn = auth.isSignedIn === true;
-  const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
+  const [viewer, setViewer] = useState<{ plan: Plan; founding: boolean } | null>(null);
   useEffect(() => {
     if (!signedIn) return;
     let cancelled = false;
-    getCurrentPlan()
-      .then((plan) => {
-        if (!cancelled) setCurrentPlan(plan);
+    getPricingViewer()
+      .then((v) => {
+        if (!cancelled) setViewer(v);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [signedIn]);
-  return <PricingTiersView {...props} signedIn={signedIn} currentPlan={currentPlan} />;
+  return (
+    <PricingTiersView
+      {...props}
+      signedIn={signedIn}
+      currentPlan={viewer?.plan ?? null}
+      founding={signedIn && viewer?.founding === true}
+    />
+  );
 }
 
 function PricingTiersView({
-  lifetimePurchasable,
-  lifetimeOffer,
+  checkoutOpen,
   signedIn,
   currentPlan,
-}: TiersProps & { signedIn: boolean; currentPlan: Plan | null }) {
-  const [period, setPeriod] = useState<BillingPeriod>("monthly");
-  const plans = planCopyWithOffer(lifetimeOffer);
-
+  founding,
+}: TiersProps & { signedIn: boolean; currentPlan: Plan | null; founding: boolean }) {
   return (
     <div className="space-y-10">
-      <BillingToggle period={period} onChange={setPeriod} />
-
       <div className="grid items-start gap-5 lg:grid-cols-3 lg:gap-6">
-        {plans.map((plan) => {
+        {PUBLIC_PLAN_COPY.map((plan) => {
           const accent = TIER_ACCENT[plan.id];
-          const price = plan.price[period];
+          const price = plan.price;
 
           return (
             <section
@@ -299,14 +248,16 @@ function PricingTiersView({
                 {plan.name}
               </h2>
 
-              {/* The price carries no entrance animation on purpose. Anything that starts
-                  at opacity 0 and waits for a frame is invisible if frames never come —
-                  a backgrounded tab, a throttled device — and a price is the one thing on
-                  this page that must always be readable. PlanPriceDisplay honours that:
-                  it stays static until the visitor toggles the period, and only then
-                  animates the characters that genuinely changed. */}
+              {/* No entrance animation: a price must be readable in the first frame. */}
               <div className="mt-4 min-h-[4.25rem]">
                 <PlanPriceDisplay price={price} />
+                {/* Founding pricing: only for an eligible signed-in account, always with its
+                    full terms, never struck through. */}
+                {founding && isPurchasablePlan(plan.id) && (
+                  <p className="mt-2 text-xs leading-relaxed text-[#cfdcd8]">
+                    Your founding price: {foundingPriceTerms(plan.id)}.
+                  </p>
+                )}
               </div>
 
               <p className="mt-1 text-sm leading-relaxed text-[#9aada8]">
@@ -336,9 +287,7 @@ function PricingTiersView({
                   planId={plan.id}
                   currentPlan={currentPlan}
                   signedIn={signedIn}
-                  lifetimePurchasable={lifetimePurchasable}
-                  lifetimePriceUsd={lifetimeOffer.priceUsd}
-                  period={period}
+                  checkoutOpen={checkoutOpen}
                 />
               </div>
             </section>

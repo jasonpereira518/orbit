@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { AlertTriangle } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -16,7 +15,7 @@ import { MoneyTabs } from "@/components/admin/money-tabs";
 import { formatCents } from "@/lib/format-money";
 import { ADMIN_AGGREGATES_TTL_MS, loadAdminUserRows } from "@/lib/admin-metrics";
 import { MONTHLY_CENTS } from "@/lib/billing-events";
-import { lifetimeOffer } from "@/lib/lifetime-offer";
+import { countLifetimePurchases } from "@/lib/user-settings";
 import { compedForegoneCents, mrrMovementSeries } from "@/lib/money-metrics";
 
 export const metadata = { title: "Admin · Money · Movement" };
@@ -35,9 +34,9 @@ const MONTH = new Intl.DateTimeFormat("en", {
  * nothing happened" where an autoscaled shape would read as a dramatic month.
  */
 export default async function MoneyMovementPage() {
-  const [movements, offer, comps, rows] = await Promise.all([
+  const [movements, lifetimeSold, comps, rows] = await Promise.all([
     mrrMovementSeries("month", 6),
-    lifetimeOffer(),
+    countLifetimePurchases(),
     compedForegoneCents(MONTHLY_CENTS),
     // Only user_settings columns are read here, and those are always live.
     loadAdminUserRows({ aggregatesMaxAgeMs: ADMIN_AGGREGATES_TTL_MS }),
@@ -78,7 +77,7 @@ export default async function MoneyMovementPage() {
           <MetricTile
             label="One-time, 6mo"
             value={formatCents(totals.oneTimeCents)}
-            hint="Lifetime purchases"
+            hint="legacy Lifetime and credit packs"
           />
           <MetricTile
             label="Comped away"
@@ -87,30 +86,6 @@ export default async function MoneyMovementPage() {
             hint={`${comps.comped} accounts at list price`}
           />
         </div>
-
-        {/*
-         * `needsStandardPrice` goes true once the 100 intro seats are gone and the standard
-         * price id is still unset. The product then keeps charging $25 rather than advertise
-         * a price it cannot take, which is the right call and a standing $50-per-sale leak.
-         * Nothing else in the console says it has started.
-         */}
-        {offer.needsStandardPrice && (
-          <AdminPanel title="Lifetime pricing" className="border-destructive/50 bg-destructive/5">
-            <div className="flex items-start gap-3 text-sm">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
-              <p>
-                All {offer.sold} introductory seats are sold, but{" "}
-                <code className="font-mono text-xs">
-                  STRIPE_LIFETIME_STANDARD_PRICE_ID
-                </code>{" "}
-                is unset — so Lifetime is still being sold at $
-                {offer.priceUsd} instead of $75. That is the correct fallback (advertising a
-                price Stripe cannot charge would be worse) and it costs $50 on every sale
-                until the price id is configured.
-              </p>
-            </div>
-          </AdminPanel>
-        )}
 
         <AdminPanel title="Recurring movement by month">
           <TrendTable
@@ -136,23 +111,11 @@ export default async function MoneyMovementPage() {
 
         <AdminPanel title="One-time sales">
           <div className="grid gap-3 sm:grid-cols-3">
-            <MetricTile label="Sold" value={offer.sold} hint="Lifetime purchases" />
-            <MetricTile
-              label="Current price"
-              value={`$${offer.priceUsd}`}
-              hint={offer.isIntro ? "introductory rate" : "standard rate"}
-            />
-            <MetricTile
-              label="Intro seats left"
-              value={offer.introRemaining ?? "—"}
-              tone={offer.introRemaining === null ? "muted" : "default"}
-              hint={offer.introRemaining === null ? "intro period over" : "then $75"}
-            />
+            <MetricTile label="Lifetime sold" value={lifetimeSold} hint="before pricing v2; no longer on sale" />
           </div>
           <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-            Revenue is booked from what each buyer actually paid, not from today&apos;s
-            price — the offer moves at 100 sales, and the historical figure must not move
-            with it.
+            Revenue is booked from what each buyer actually paid. Credit packs are one-time
+            revenue too, never MRR.
           </p>
         </AdminPanel>
 
