@@ -129,6 +129,7 @@ Leave `DATABASE_URL` unset to use on-disk PGlite (`.data/pglite`). Schema change
 | `/knowledge` | Searchable knowledge base built from notes, imports, and summaries |
 | `/outreach` | Prospect search (Apollo) + tracked email/SMS campaigns |
 | `/reminders` | Follow-up reminders |
+| `/radar` | Who to reach out to this week, and why, rebuilt nightly (coming soon) |
 | `/settings` | BYOK, export, delete data |
 
 ## Demo path

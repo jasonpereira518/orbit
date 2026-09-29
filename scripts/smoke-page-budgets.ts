@@ -46,6 +46,10 @@ import { traced } from "../src/lib/perf-trace";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { scaleContactRows } from "./lib/scale-fixture";
 import { loadKnowledgeBase } from "../src/lib/knowledge-base";
+import { radarRuns, userSettings } from "../src/db/schema";
+import { claimRadarLease, runRadarForUser } from "../src/lib/radar/run";
+import { loadRadarPage } from "../src/lib/radar/page-data";
+import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-page-budgets-user";
 const N = 3000;
@@ -89,6 +93,8 @@ const DAY_MS = 86_400_000;
 async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
+  await db.delete(radarRuns).where(eq(radarRuns.userId, USER));
+  await db.delete(userSettings).where(eq(userSettings.userId, USER));
 }
 
 /** A second, smaller account. Its only job is to give the scaling section a comparison. */
@@ -236,6 +242,35 @@ async function main() {
     "dashboard still lists the due follow-up at row 2900",
     Boolean(dueId) && dashboard.dueFollowUps.some((c) => c.id === dueId)
   );
+
+  // ---- Radar -------------------------------------------------------------------------
+  console.log("\nRadar (runRadarForUser, loadRadarPage)…");
+  await ensureUserSettings(USER);
+  await claimRadarLease(USER);
+  startQueryCount();
+  const radarRun = await runRadarForUser(USER, { trigger: "manual", ai: false });
+  const radarRunCount = stopQueryCount();
+  const radarRunQueries = capturedQueries();
+  console.log(`  run statements: ${radarRunCount} (${radarRun.candidates} candidates, ${radarRun.recommendations} cards)`);
+  // The nightly pass runs this for every account. Seven windowed signal reads, the
+  // candidate scan, goals, targets, feedback, the live list, one atomic write and the
+  // finish: none of them per contact. smoke-radar-run pins that it is the same at 12
+  // contacts as at 312; this pins the ceiling at 3,000.
+  check("radar run succeeds at 3,000 contacts", radarRun.ok);
+  check("radar run issues ≤ 20 statements", radarRunCount <= 20, `got ${radarRunCount}`);
+  check(
+    "radar run never pulls notes",
+    radarRunQueries.every((q) => !selectsBare(q, "notes")),
+    radarRunQueries.find((q) => selectsBare(q, "notes"))?.slice(0, 200)
+  );
+  startQueryCount();
+  const radarPage = await loadRadarPage(USER);
+  const radarPageCount = stopQueryCount();
+  console.log(`  page statements: ${radarPageCount}`);
+  check("radar page issues ≤ 5 statements", radarPageCount <= 5, `got ${radarPageCount}`);
+  const radarJson = JSON.stringify(radarPage);
+  check("radar page payload carries no inline base64", !radarJson.includes("data:image/"));
+  check("radar page payload under 100 KB", radarJson.length < 100_000, `${(radarJson.length / 1024).toFixed(0)} KB`);
 
   // ---- Graph -------------------------------------------------------------------------
   console.log("\nConstellation (loadGraphData)…");

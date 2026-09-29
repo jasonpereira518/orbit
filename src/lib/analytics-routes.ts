@@ -76,6 +76,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/recruiters/compose",
   "/recruiters/[id]",
   "/reminders",
+  "/radar",
 ] as const;
 
 export { isTrackedPath } from "@/lib/analytics-redact";

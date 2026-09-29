@@ -29,8 +29,16 @@ import {
   radarRuns,
   recommendationFeedback,
   recommendations,
+  reminders,
   userSettings,
 } from "../src/db/schema";
+import {
+  dismissRecommendationForUser,
+  neverForContactForUser,
+  restoreRecommendationForUser,
+  scheduleRecommendationForUser,
+  snoozeRecommendationForUser,
+} from "../src/lib/radar/actions-core";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import {
   claimRadarLease,
@@ -307,6 +315,47 @@ run(async () => {
   await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
   const [itemAfter] = await db.select().from(recommendations).where(eq(recommendations.id, itemRec.id));
   check("an AI note is dropped when what it was written from changes", itemAfter?.aiNote === null);
+
+  console.log("\nthe card's buttons");
+  {
+    const live = await pending();
+    const pick = (contactId: string) => live.find((r) => r.contactId === contactId)!;
+
+    const job = pick(ids.job);
+    const scheduled = await scheduleRecommendationForUser(USER, job.id, 7);
+    const [jobRow] = await db.select().from(recommendations).where(eq(recommendations.id, job.id));
+    const [jobContact] = await db.select({ next: contacts.nextFollowUpAt }).from(contacts).where(eq(contacts.id, ids.job));
+    const jobReminders = await db.select({ id: reminders.id }).from(reminders).where(and(eq(reminders.userId, USER), eq(reminders.contactId, ids.job), eq(reminders.status, "pending")));
+    check("Schedule puts a follow-up on the calendar", scheduled.ok && jobContact?.next !== null && jobReminders.length === 1);
+    check("and retires the card", jobRow?.status === "accepted");
+    check("a second click does nothing", !(await scheduleRecommendationForUser(USER, job.id, 7)).ok);
+
+    const inbound = pick(ids.inbound);
+    await snoozeRecommendationForUser(USER, inbound.id, "1w");
+    const [snoozedRow] = await db.select().from(recommendations).where(eq(recommendations.id, inbound.id));
+    check("Snooze hides the card for a week",
+      snoozedRow?.status === "snoozed" && Math.round(((snoozedRow.snoozedUntil?.getTime() ?? 0) - Date.now()) / DAY) === 7);
+    check("Undo brings it back", (await restoreRecommendationForUser(USER, inbound.id)).restored);
+
+    const event = pick(ids.event);
+    await dismissRecommendationForUser(USER, event.id);
+    const dismissedFeedback = await db.select().from(recommendationFeedback).where(eq(recommendationFeedback.recommendationId, event.id));
+    check("Dismiss records why the next run should leave it", dismissedFeedback.some((f) => f.action === "dismissed"));
+    await restoreRecommendationForUser(USER, event.id);
+    const afterUndo = await db.select().from(recommendationFeedback).where(eq(recommendationFeedback.recommendationId, event.id));
+    check("and Undo forgets that", !afterUndo.some((f) => f.action === "dismissed"));
+
+    const opportunity = pick(ids.opportunity);
+    await neverForContactForUser(USER, opportunity.id);
+    await claimRadarLease(USER, later);
+    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    check("'Not for this person' survives the next run", !(await pending()).some((r) => r.contactId === ids.opportunity));
+    check("nor does the scheduled contact come back as a new card", !(await pending()).some((r) => r.contactId === ids.job));
+    check("Undo on 'not for this person' restores the card", (await restoreRecommendationForUser(USER, opportunity.id)).restored);
+    const neverLeft = await db.select().from(recommendationFeedback).where(and(eq(recommendationFeedback.contactId, ids.opportunity), eq(recommendationFeedback.action, "never")));
+    check("and lifts the ban", neverLeft.length === 0);
+    check("someone else's card is out of reach", !(await dismissRecommendationForUser("someone-else", event.id)).ok);
+  }
 
   console.log("\nfirst visit and stale page views");
   check("a first-visit build does not repeat once a run exists", !(await ensureRadarRun(USER, later)));

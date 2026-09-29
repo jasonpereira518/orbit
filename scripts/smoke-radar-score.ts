@@ -24,6 +24,10 @@ import {
 } from "../src/lib/radar/score";
 import { buildRadarWhyPrompt, radarNoteKey, radarWhyInputs } from "../src/lib/radar/why-prompt";
 import type { RadarSignal, RecommendationKind } from "../src/lib/radar/types";
+import { APP_NAV, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
+import { COMING_SOON_KEYS, surfaceForPathname } from "../src/lib/surfaces";
+import { ROUTE_PATTERNS } from "../src/lib/analytics-routes";
+import { featureAreaForPath } from "../src/lib/feedback-report";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -269,7 +273,18 @@ function main() {
   }
 }
 
+function registration() {
+  console.log("\nthe page is registered everywhere a route must be");
+  check("the surface registry maps /radar to page.radar", surfaceForPathname("/radar")?.key === "page.radar");
+  check("it ships as coming-soon", COMING_SOON_KEYS.has("page.radar"));
+  check("the sidebar lists it", APP_NAV.some((item) => item.href === "/radar"));
+  check("so does the phone's More menu", MOBILE_MORE_NAV.some((item) => item.href === "/radar"));
+  check("analytics tracks it as a pattern", ROUTE_PATTERNS.includes("/radar"));
+  check("feedback from it is filed under Radar", featureAreaForPath("/radar") === "radar");
+}
+
 main();
+registration();
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
