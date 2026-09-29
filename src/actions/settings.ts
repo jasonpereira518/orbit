@@ -98,6 +98,8 @@ export async function getSettings() {
      * this account's AI key. On unless switched off; see the column in schema.ts.
      */
     workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
+    /** Radar's Monday email. On unless switched off (Settings, or its one-click link). */
+    radarDigestEnabled: (settings?.radarDigestEnabled ?? 1) !== 0,
     /**
      * Whether AI features will run — NOT whether a key is saved. A Lifetime account on
      * Orbit's managed key is `true` with no key at all; a Lifetime account that has used its

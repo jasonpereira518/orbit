@@ -109,6 +109,10 @@ function main() {
     "/api/sync/run",
     "/api/radar/run",
     "/api/radar/feeds/sweep",
+    "/api/radar/digest",
+    // Radar's Monday email's off switch: a mail client (or Gmail's own unsubscribe button)
+    // has no session. The signed token in the query is the credential.
+    "/api/radar/digest/unsubscribe",
     "/api/webhooks/outbound/drain",
     // The public API and MCP server authenticate with a per-user API key, which Clerk cannot
     // see. They are listed here so an unauthenticated call gets a JSON 401 rather than a 302

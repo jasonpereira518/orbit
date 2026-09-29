@@ -5333,6 +5333,7 @@
     },
     "hasApolloKey": false,
     "workHistoryAutoEnabled": true,
+    "radarDigestEnabled": true,
     "hasApiKey": false,
     "providers": [
       {

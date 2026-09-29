@@ -40,6 +40,10 @@ on:
     # Radar's news sweep: public feeds into the global news tables. :53, clear of every
     # other hourly job above.
     - cron: "53 * * * *"
+    # Radar's Monday email: every hour of Sunday AND Monday UTC, because Auckland's Monday
+    # morning is Sunday evening in UTC. The route sends only to people whose own Monday
+    # 06:00–09:00 it is. :13, clear of every hourly job above.
+    - cron: "13 * * * 0,1"
     # Once a day: the Deepgram usage reconciliation. An arbitrary quiet hour, offset from
     # the hourly jobs above so it never runs alongside them.
     - cron: "41 5 * * *"
@@ -218,6 +222,19 @@ jobs:
           curl -sS --fail-with-body --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/radar/feeds/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Radar's Monday email. Sends to the people whose local Monday morning it is; the week
+      # claim makes every other run a no-op for them. 300s matches the route, which stops
+      # starting sends at 240s and continues itself once.
+      - name: Send Radar's Monday email (Sunday and Monday, hourly)
+        if: github.event.schedule == '13 * * * 0,1' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/radar/digest"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

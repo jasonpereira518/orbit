@@ -53,6 +53,8 @@ export type OpsSnapshot = {
     radarRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
     /** Radar's news sweep (`/api/radar/feeds/sweep`), hourly at :53. */
     radarFeeds: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's Monday email (`/api/radar/digest`), hourly at :13 through Sunday and Monday UTC. */
+    radarDigest: { lastStartedAt: Date | null; lastState: CronRunState | null };
     workHistory: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
@@ -197,6 +199,13 @@ const RADAR_SILENT_MS = 30 * 60 * 60 * 1000;
  * stand-down still records a run). `warning`: a headline noticed late costs nothing.
  */
 const RADAR_FEEDS_SILENT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Radar's Monday email runs every hour of Sunday and Monday UTC and not at all in between,
+ * so a normal gap is five days (Monday night to Sunday morning). Six days of silence means a
+ * whole Sunday passed without a run. As with the others, never having run is not an alert.
+ */
+const RADAR_DIGEST_SILENT_MS = 6 * 24 * 60 * 60 * 1000;
 
 /**
  * The work-history sweep runs hourly (ops.yml, :37); six hours of silence is five missed
@@ -440,6 +449,27 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Radar's news sweep ${radarFeeds.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${radarFeeds.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarFeeds.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // `partial` is a run where Resend refused someone; they are retried the next hour, and the
+  // error log carries the reason. Only a run that failed outright, or went quiet, is news.
+  const radarDigest = s.cron.radarDigest;
+  if (radarDigest.lastStartedAt && now.getTime() - radarDigest.lastStartedAt.getTime() > RADAR_DIGEST_SILENT_MS) {
+    out.push({
+      id: "radardigest.schedule_missed",
+      severity: "warning",
+      title: "Radar's Monday email has stopped running",
+      detail: `Last started ${radarDigest.lastStartedAt.toISOString()}; nobody is getting their weekly list by email.`,
+      href: "/admin/health",
+    });
+  } else if (radarDigest.lastState === "failed" || radarDigest.lastState === "stale") {
+    out.push({
+      id: "radardigest.run_failed",
+      severity: "warning",
+      title: `Radar's Monday email ${radarDigest.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarDigest.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarDigest.lastState}.`,
       href: "/admin/health",
     });
   }

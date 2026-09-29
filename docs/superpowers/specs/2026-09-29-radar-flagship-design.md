@@ -139,9 +139,27 @@ cannot bury a meeting tomorrow. Prep cards within 48 hours are exempt from negat
   card records what it set in `recommendations.autopilot`. An autopilot action is not the
   person's vote either: the learned model counts it only if a conversation followed.
   Nothing is ever sent.
-- **Weekly digest.** As the base spec describes: the Monday local-time window, a week claim,
-  Resend through the `broadcasts.ts` pattern, and one-click unsubscribe through the
-  `interest-list` token pattern. It adds the count of drafts ready.
+- **Weekly digest** (`src/lib/radar/digest.ts`, `digest-email.ts`). The base spec's shape,
+  with three corrections found while building it:
+  - **The cron runs Sundays too** (`13 * * * 0,1`). Monday 06:00–09:00 in Tokyo, Sydney or
+    Auckland is Sunday in UTC, so a Monday-only cron never reached anyone east of UTC+8. Each
+    run sends only to the zones whose local clock is in the window now.
+  - **The unsubscribe token is signed, not stored.** A random token kept only as a hash can't
+    be put in next week's email, so every old link would die. The token is an HMAC of the
+    account id under a per-purpose key derived from `ENCRYPTION_SECRET`; its hash is recorded
+    in `radar_digest_unsub_token_hash` when a digest is claimed, and the one-click route
+    honours only a token whose hash matches. The link's GET only asks; the POST (and RFC 8058
+    one-click) turns it off.
+  - **The timezone comes from the `orbit-tz` cookie**, which Radar and Settings now keep
+    current in the browser (`src/lib/tz-cookie.ts`); the server stores it after the response.
+  A person gets one when the email is on, Radar isn't paused, they were active in the last 30
+  days, and they hold a card for today or soon. The week claim is one statement per person,
+  won by exactly one caller; a send Resend refuses releases it for the next hour. The
+  message: top five (today first), each with the AI note's line when it is current or the
+  lead reason, a link to the card, and the count of drafts ready. Names stay out of the
+  subject; every link is the app's own. It stands down while `page.radar` is hidden or coming
+  soon, and before claiming anyone when Resend isn't configured. The toggle is in Settings →
+  Notifications (for viewers who can open Radar) and, in task 10, the Radar settings sheet.
 - **Bell.** The row reads "3 drafts ready · 5 people worth a message" when drafts exist. It
   still never becomes a due item.
 
@@ -254,7 +272,7 @@ The version is the next free integer after re-scanning every remote ref. It will
 |---|---|---|---|
 | Feed sweep (ingest-only) | `POST /api/radar/feeds/sweep` | `53 * * * *` | `radar.feeds` |
 | Social poll | inside the nightly run (deadline-checked) | — | — |
-| Weekly digest | `POST /api/radar/digest` | `13 * * * 1` | `radar.digest` |
+| Weekly digest | `POST /api/radar/digest` | `13 * * * 0,1` | `radar.digest` |
 
 Each job gets the base spec's full ops wiring: internal gate, ledger, `PUBLIC_ROUTES`, ops-sweep
 snapshot, alerts and RUNBOOK rows. While Radar is coming soon, all three stand down, as the

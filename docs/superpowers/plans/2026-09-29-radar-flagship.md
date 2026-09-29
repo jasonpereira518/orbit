@@ -112,7 +112,7 @@ Proves: `smoke-radar-run` (with a stubbed fetch); the extension contract smoke;
 
 ## Task 9 — Weekly digest
 
-- `src/lib/radar/digest.ts` and `POST /api/radar/digest` on `13 * * * 1`: the local-Monday
+- `src/lib/radar/digest.ts` and `POST /api/radar/digest` on `13 * * * 0,1` (Sunday too: Auckland's Monday morning is Sunday in UTC): the local-Monday
   window from `radar_digest_tz` (captured from the `orbit-tz` cookie on Radar and Settings
   visits), a single-statement week claim, Resend through the `broadcasts.ts` pattern, and
   unsubscribe through the `interest-list` token pattern.

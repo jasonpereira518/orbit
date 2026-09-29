@@ -20,6 +20,7 @@ export type CronJobName =
   | "imports.process-stalled"
   | "jobs.feed-sweep"
   | "ops.sweep"
+  | "radar.digest"
   | "radar.feeds"
   | "radar.run"
   | "sync.run"

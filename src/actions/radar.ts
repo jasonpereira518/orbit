@@ -5,6 +5,7 @@
  * the surface first (`requireUserForSurface`), then calls the request-free functions in
  * `src/lib/radar/actions-core.ts`, so the smoke drives the same code.
  */
+import { cookies } from "next/headers";
 import { after } from "next/server";
 import { friendlyError } from "@/lib/errors";
 import { requireUserForSurface } from "@/lib/plan-guards";
@@ -29,6 +30,8 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { undoAutopilotForUser } from "@/lib/radar/autopilot";
+import { captureRadarTimeZone } from "@/lib/radar/digest";
+import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
 import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
 import type { NetworkStats } from "@/lib/network-stats";
 
@@ -54,6 +57,9 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
   ]);
   const shown = page.recommendations.map((r) => r.id);
   after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
+  // The zone Radar's Monday email is timed by: the browser's, as the cookie last reported it.
+  const tz = (await cookies()).get(TZ_COOKIE)?.value;
+  after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));
   return { page, networkStats };
 }
 
@@ -178,4 +184,14 @@ export async function setRadarPaused(paused: boolean): Promise<RadarActionResult
   await db.update(userSettings).set({ radarPaused: paused ? 1 : 0 }).where(eq(userSettings.userId, userId));
   revalidateRadar();
   return { ok: true, message: paused ? "Radar paused" : "Radar resumed" };
+}
+
+/** Radar's Monday email on or off. Also reachable from Settings and the email's own link. */
+export async function setRadarDigest(on: boolean): Promise<RadarActionResult> {
+  const userId = await requireUserForSurface(SURFACE);
+  const db = await getDb();
+  await db.update(userSettings).set({ radarDigestEnabled: on ? 1 : 0 }).where(eq(userSettings.userId, userId));
+  revalidateRadar();
+  revalidatePathIfRequestScoped("/settings");
+  return { ok: true, message: on ? "Monday email on" : "Monday email off" };
 }

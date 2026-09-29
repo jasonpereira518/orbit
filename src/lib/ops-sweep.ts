@@ -56,6 +56,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     lastJobFeedRun,
     lastRadarRun,
     lastRadarFeeds,
+    lastRadarDigest,
     lastWorkHistoryRun,
     webhooks,
     issues,
@@ -104,6 +105,12 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "radar.feeds"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "radar.digest"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       db
@@ -226,6 +233,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const jobFeedRun = lastJobFeedRun[0];
   const radarRun = lastRadarRun[0];
   const radarFeeds = lastRadarFeeds[0];
+  const radarDigest = lastRadarDigest[0];
   const workHistoryRun = lastWorkHistoryRun[0];
   return {
     cron: {
@@ -252,6 +260,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       radarFeeds: {
         lastStartedAt: radarFeeds?.startedAt ?? null,
         lastState: radarFeeds ? deriveCronRunState(radarFeeds, now) : null,
+      },
+      radarDigest: {
+        lastStartedAt: radarDigest?.startedAt ?? null,
+        lastState: radarDigest ? deriveCronRunState(radarDigest, now) : null,
       },
       workHistory: {
         lastStartedAt: workHistoryRun?.startedAt ?? null,

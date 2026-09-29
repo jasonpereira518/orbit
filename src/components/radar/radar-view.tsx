@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
@@ -12,6 +12,7 @@ import { friendlyError } from "@/lib/errors";
 import { RADAR_CAPS } from "@/lib/radar/score";
 import { KIND_SECTION_TITLES, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
+import { syncTimeZoneCookie } from "@/lib/tz-cookie";
 
 export type RadarViewProps = {
   recommendations: RecommendationCardData[];
@@ -24,6 +25,9 @@ export type RadarViewProps = {
 export function RadarView({ recommendations, lastRunAt, paused, aiAvailable, hasContacts }: RadarViewProps) {
   const router = useRouter();
   const [pending, start] = useTransition();
+
+  // So the Monday email arrives on this person's Monday morning (`captureRadarTimeZone`).
+  useEffect(() => syncTimeZoneCookie(), []);
 
   // Best first, as the store returns them. Today is the top of the whole list; the rest
   // are grouped by kind so a person can work through one sort of thing at a time.

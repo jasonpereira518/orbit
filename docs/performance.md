@@ -24,7 +24,7 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 | `(app)/(main)/layout.tsx` | 60 | Every signed-in page unless it overrides. It was 300 as a stopgap; the dashboard payload is bounded now. |
 | `capture/page.tsx`, `imports/page.tsx` | 300 | Their server actions summarise a meeting (several model calls) or start a large import. |
 | `chat/page.tsx`, `/api/chat` | 60 | A full model completion on the user's own key. |
-| `/api/imports/process-stalled`, `/api/embeddings/backfill`, `/api/linkedin/timeline-events/backfill`, `/api/imports/[id]/continue`, `/api/sync/run`, `/api/radar/run`, `/api/radar/feeds/sweep`, `/api/capture/jobs`, `/api/capture/jobs/[id]/run`, `/api/scan/[token]/pages`, `/api/export` | 300 | Batch work that self-continues past the ceiling, or streams a whole account's export. |
+| `/api/imports/process-stalled`, `/api/embeddings/backfill`, `/api/linkedin/timeline-events/backfill`, `/api/imports/[id]/continue`, `/api/sync/run`, `/api/radar/run`, `/api/radar/feeds/sweep`, `/api/radar/digest`, `/api/capture/jobs`, `/api/capture/jobs/[id]/run`, `/api/scan/[token]/pages`, `/api/export` | 300 | Batch work that self-continues past the ceiling, or streams a whole account's export. |
 | `/api/capture/meetings/[id]/chunks` | 120 | One chunk's transcription, which can fall through Wispr's 60 s deadline before Whisper starts. |
 | `/api/ops/sweep`, `/api/webhooks/outbound/drain`, `/api/mcp`, `/api/mcp/[token]`, `/api/scan/[token]/finish` | 60 | Bounded reads, or network work inside its own 40 s budget. |
 | `/api/extension/parse`, `/api/extension/starters` | 30 | One small completion for the extension panel. |

@@ -39,6 +39,7 @@ const HEALTHY: OpsSnapshot = {
     jobFeed: { lastStartedAt: hoursAgo(1), lastState: "ok" },
     radarRun: { lastStartedAt: hoursAgo(10), lastState: "ok" },
     radarFeeds: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    radarDigest: { lastStartedAt: hoursAgo(30), lastState: "ok" },
     workHistory: { lastStartedAt: hoursAgo(1), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
@@ -207,6 +208,21 @@ function main() {
     Boolean(find(feeds({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "radarfeeds.run_failed")));
   check("  a partial sweep is not an alert",
     !find(feeds({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "radarfeeds.run_failed"));
+
+  const digest = (over: OpsSnapshot["cron"]["radarDigest"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, radarDigest: over },
+  });
+  check("radar digest never ran → no alert",
+    !find(digest({ lastStartedAt: null, lastState: null }), "radardigest.schedule_missed"));
+  check("radar digest's ordinary five-day gap → no alert",
+    !find(digest({ lastStartedAt: hoursAgo(5 * 24 + 1), lastState: "ok" }), "radardigest.schedule_missed"));
+  check("radar digest silent for a week → radardigest.schedule_missed",
+    find(digest({ lastStartedAt: hoursAgo(7 * 24), lastState: "ok" }), "radardigest.schedule_missed")?.severity === "warning");
+  check("radar digest failed → radardigest.run_failed",
+    Boolean(find(digest({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "radardigest.run_failed")));
+  check("radar digest partial (a refused send, retried next hour) → no alert",
+    !find(digest({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "radardigest.run_failed"));
   check("radar run failed → radar.run_failed",
     Boolean(find(radar({ lastStartedAt: hoursAgo(3), lastState: "failed" }), "radar.run_failed")));
   check("  a partial run is not an alert",

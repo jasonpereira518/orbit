@@ -97,6 +97,15 @@ export const CONTEXT_CODES: ReadonlySet<string> = new Set([
 export type RadarReason = { code: string; label: string; points: number };
 
 /**
+ * The reason a card exists: its first positive reason that is neither context (tier, goals)
+ * nor a folded-in "also". What a draft is written about, and the digest's line for a card
+ * without an AI note.
+ */
+export function leadReason(reasons: readonly RadarReason[]): RadarReason | undefined {
+  return reasons.find((r) => r.points > 0 && !CONTEXT_CODES.has(r.code) && !r.code.startsWith("also:"));
+}
+
+/**
  * The most specific fact behind a card, shown under the reasons ("Meeting · Thu 3 Oct").
  * `url` only for a public source (a headline), already through `safeHttpUrl`, and rendered
  * through it again.
