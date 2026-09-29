@@ -254,7 +254,7 @@ export function DemoWindow() {
 
         {touring && (
           <div
-            className="absolute bottom-[4.75rem] left-[calc(50%+4.5rem)] z-40 flex max-w-[520px] -translate-x-1/2 items-center gap-3 rounded-full border border-tier-lifetime/30 bg-background/90 py-2 pl-3 pr-4 shadow-xl backdrop-blur"
+            className="absolute bottom-[4.75rem] left-[16.5rem] z-40 flex max-w-[480px] items-center gap-3 rounded-full border border-tier-lifetime/30 bg-background/90 py-2 pl-3 pr-4 shadow-xl backdrop-blur"
           >
             <span className="flex shrink-0 gap-1" aria-hidden="true">
               {TOUR.map((_, i) => (

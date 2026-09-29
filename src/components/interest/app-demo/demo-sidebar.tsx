@@ -3,7 +3,7 @@
 import { useState, type Dispatch } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Plus, Search } from "lucide-react";
-import { APP_NAV_CORE, APP_NAV_EXTRAS, APP_NAV_SETTINGS, type AppNavItem } from "@/components/layout/app-nav";
+import { APP_NAV_CORE, APP_NAV_EXTRAS, type AppNavItem } from "@/components/layout/app-nav";
 import { cn } from "@/lib/utils";
 import { useDemo } from "./demo-context";
 import type { DemoAction, DemoState, Screen } from "./demo-state";
@@ -26,6 +26,10 @@ const SCREEN_OF: Record<string, Exclude<Screen, "profile"> | undefined> = {
   "/chat": "chat",
   "/graph": "constellation",
 };
+
+/** Real nav items the preview leaves out, to keep the sidebar short. */
+const HIDDEN = new Set(["/reminders", "/imports", "/knowledge", "/settings"]);
+const shown = (items: readonly AppNavItem[]) => items.filter((i) => !HIDDEN.has(i.href));
 
 /** The items under the divider that really are coming soon, and the poll option each is. */
 const SOON: Record<string, { label: string }> = {
@@ -138,15 +142,14 @@ export function DemoSidebar({ state, dispatch }: { state: DemoState; dispatch: D
           </button>
         </div>
 
-        <nav className="flex min-h-0 flex-1 flex-col px-2" aria-label="Demo app">
-          <ul className="space-y-0.5">{APP_NAV_CORE.map(item)}</ul>
+        <nav className="flex min-h-0 flex-1 flex-col overflow-hidden px-2" aria-label="Demo app">
+          <ul className="space-y-0.5">{shown(APP_NAV_CORE).map(item)}</ul>
           <div className="my-2 flex items-center gap-2 px-3" aria-hidden="true">
             <span className="h-px flex-1 bg-white/10" />
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Coming soon</span>
             <span className="h-px flex-1 bg-white/10" />
           </div>
-          <ul className="space-y-0.5">{APP_NAV_EXTRAS.map(item)}</ul>
-          <ul className="mt-auto pb-1">{item(APP_NAV_SETTINGS)}</ul>
+          <ul className="space-y-0.5">{shown(APP_NAV_EXTRAS).map(item)}</ul>
         </nav>
 
         <div className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3">

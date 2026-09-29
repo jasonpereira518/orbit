@@ -122,7 +122,7 @@ function main() {
   const sidebar = readFileSync(path.join(DEMO, "demo-sidebar.tsx"), "utf8");
   check(
     "the sidebar is drawn from the app's nav definition",
-    /from "@\/components\/layout\/app-nav"/.test(sidebar) && /APP_NAV_CORE/.test(sidebar) && /APP_NAV_EXTRAS/.test(sidebar) && /APP_NAV_SETTINGS/.test(sidebar)
+    /from "@\/components\/layout\/app-nav"/.test(sidebar) && /APP_NAV_CORE/.test(sidebar) && /APP_NAV_EXTRAS/.test(sidebar)
   );
 }
 
@@ -132,7 +132,9 @@ async function mainAsync() {
   // ── 2 (cont.) the "Soon" tags are the app's ────────────────────────────────────────────
   const nav = await import("../src/components/layout/app-nav");
   const surfaces = await import("../src/lib/surfaces");
+  const hidden = new Set([...readFileSync(path.join(DEMO, "demo-sidebar.tsx"), "utf8").matchAll(/HIDDEN = new Set\(\[([^\]]*)\]/g)].flatMap((m) => [...m[1]!.matchAll(/"(\/[a-z]+)"/g)].map((x) => x[1]!)));
   const appSoon = [...nav.APP_NAV_CORE, ...nav.APP_NAV_EXTRAS, nav.APP_NAV_SETTINGS]
+    .filter((i) => !hidden.has(i.href))
     .filter((i) => surfaces.isHrefComingSoon(i.href))
     .map((i) => i.href)
     .sort();
