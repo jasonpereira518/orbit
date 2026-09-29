@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 /**
  * The early-access waitlist at a glance, shared by the Overview and Growth pages.
  *
- * Four small tiles — how many are waiting, how many made the front wave, how fast it is
+ * Four small tiles — how many are waiting, how many earned early access, how fast it is
  * growing, and how much of that is word of mouth — then who is bringing people in and who
  * just arrived. Sized to sit at half width beside feature adoption on Growth. The roster
  * itself stays on /admin/growth/interest-list.
@@ -49,10 +49,10 @@ export function WaitlistStatsPanel({
               hint={`${stats.total.toLocaleString("en-US")} joined in all`}
             />
             <Tile
-              label="Front wave"
-              value={stats.frontWave.toLocaleString("en-US")}
+              label="Early access"
+              value={stats.earlyAccess.toLocaleString("en-US")}
               icon={Rocket}
-              hint="going in first"
+              hint="5+ friends brought in"
             />
             <Tile
               label="New, 7 days"

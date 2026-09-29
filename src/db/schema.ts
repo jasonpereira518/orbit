@@ -3736,14 +3736,70 @@ export const interestListSignups = pgTable(
      * on insert, never on a rejoin. No FK, like every other cross-row reference here.
      */
     referredById: uuid("referred_by_id"),
+    /**
+     * The name on the pass, collected in the join's second step. Null until then — and for
+     * every row from before the step existed, and for anyone who left after step one.
+     * Written once (`saveInterestListNameCore` only fills a null), so a shared link cannot
+     * be used to rename someone.
+     */
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    /**
+     * The public referral path, `/waitlist/<slug>`: the address's local part, with a numeric
+     * suffix when two addresses share one (`sam`, `sam-2`). Claimed lazily by
+     * `claimReferralSlug` the first time a ticket is read, so rows from before it existed get
+     * one too. Never changes once set — links already sent must keep working — and is kept
+     * after someone leaves, so their old link cannot be re-issued to a stranger.
+     */
+    referralSlug: text("referral_slug"),
+    /**
+     * How many times this person opened their own pass (`?me=` / re-entered their email to
+     * see standing). Debounced in `recordPassCheck` so a refresh or the progress poll cannot
+     * inflate it. Null `passLastCheckedAt` means they have never come back to look.
+     */
+    passCheckCount: integer("pass_check_count").default(0).notNull(),
+    passLastCheckedAt: timestamp("pass_last_checked_at", { withTimezone: true }),
+    /**
+     * When an operator adds someone from an in-person event, the event name shown in the
+     * welcome email ("you filled out the interest form at …"). Null for ordinary web signups.
+     */
+    signupEventLabel: text("signup_event_label"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     uniqueIndex("interest_list_signups_email_uidx").on(t.email),
+    uniqueIndex("interest_list_signups_referral_slug_uidx").on(t.referralSlug),
     uniqueIndex("interest_list_signups_token_uidx").on(t.unsubscribeToken),
     index("interest_list_signups_created_idx").on(t.createdAt),
     uniqueIndex("interest_list_signups_share_token_uidx").on(t.shareToken),
     index("interest_list_signups_referred_by_idx").on(t.referredById),
+  ]
+);
+
+/**
+ * One row per voter in the waitlist page's feature poll. `voterKey` is the identity:
+ * `signup:<interest_list_signups.id>` when the visitor came in on a resolving `?me=` pass,
+ * otherwise `cookie:<id>` from the `wp_voter` cookie. It is unique, so a vote is an upsert
+ * and changing your mind moves the row rather than adding one.
+ *
+ * `optionId` is validated against `POLL_OPTIONS` in `lib/waitlist-poll.ts` before insert, and
+ * is deliberately not constrained here: the option list is code, and retiring an option
+ * must not need a migration. Votes for an id no longer listed are ignored by the tally.
+ * `signupId` has no FK, like every other cross-row reference in the interest-list tables.
+ */
+export const waitlistPollVotes = pgTable(
+  "waitlist_poll_votes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    optionId: text("option_id").notNull(),
+    voterKey: text("voter_key").notNull(),
+    signupId: uuid("signup_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("waitlist_poll_votes_voter_uidx").on(t.voterKey),
+    index("waitlist_poll_votes_option_idx").on(t.optionId),
   ]
 );
 

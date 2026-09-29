@@ -1,11 +1,11 @@
 /**
- * Nothing the waitlist hands a recipient names the product, describes what it does, or
- * points at the app's domain (src/lib/waitlist-host.ts). The page itself carries exactly
- * one mark — "Project: Orbit", top left — and nothing else that names it.
+ * The waitlist may name Orbit ("Orbit", "Orbit waitlist") the way the page header
+ * does, but nothing it hands a recipient may describe what the product does or point at the
+ * app's domain (src/lib/waitlist-host.ts).
  *
  * WHY THIS EXISTS. The waitlist goes to a large audience before the product is public, and
  * emails are the easiest thing in the world to forward. A leak here is one careless string
- * — a logo URL built on `getAppBaseUrl()`, a "try it now" link, "Orbit" in a footer — and
+ * — a logo URL built on `getAppBaseUrl()`, a "try it now" link, a feature pitch — and
  * nothing else would catch it before it reached thousands of inboxes. So every email the
  * waitlist sends is built with the app's and the waitlist's domains set to different
  * values, and every URL in it must be on the waitlist's. The UI strings are checked at the
@@ -34,8 +34,15 @@ function check(label: string, ok: boolean, detail?: string) {
   }
 }
 
-/** Words that would describe what the product does. The pitch stays one line above them. */
-const FEATURE_WORDS = /\b(orbit|crm|contacts?|linkedin|gmail|calendar|follow-ups?|intros?|drifting|capture|reminders?|outreach|recruiters?|constellation|sign[- ]?up|start free|free for|pricing|already live)\b/i;
+/**
+ * Words that would describe what the product does. "Orbit" and the sanctioned phrases
+ * below are the brand mark — stripped before this runs so a real pitch still trips the check.
+ */
+const FEATURE_WORDS = /\b(crm|contacts?|linkedin|gmail|calendar|follow-ups?|intros?|drifting|capture|reminders?|outreach|recruiters?|constellation|sign[- ]?up|start free|free for|pricing|already live)\b/i;
+
+/** Sanctioned product-name phrases waitlist mail may use. */
+const SANCTIONED_ORBIT =
+  /\bOrbit\s*·|\bOrbit waitlist\b|\bOrbit pass\b|\bWelcome to Orbit\b|\bthe Orbit waitlist\b|\bon Orbit\b|\bOrbit — Personal Networking Intelligence\b/gi;
 
 function urlsIn(html: string) {
   return [...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]!.replace(/&amp;/g, "&"));
@@ -43,8 +50,11 @@ function urlsIn(html: string) {
 
 function assertClean(name: string, message: { subject: string; html: string; text: string }) {
   const all = `${message.subject}\n${message.html}\n${message.text}`;
-  const hit = all.match(new RegExp(`.{0,40}${FEATURE_WORDS.source}.{0,40}`, "i"));
-  check(`${name}: names nothing and describes nothing`, !hit, hit?.[0]);
+  const scrubbed = all.replace(SANCTIONED_ORBIT, "");
+  const hit = scrubbed.match(new RegExp(`.{0,40}${FEATURE_WORDS.source}.{0,40}`, "i"));
+  const orbitHit = scrubbed.match(/.{0,40}\borbit\b.{0,40}/i);
+  check(`${name}: names Orbit only in sanctioned phrases`, !orbitHit, orbitHit?.[0]);
+  check(`${name}: describes nothing about the product`, !hit, hit?.[0]);
   check(`${name}: never mentions the app's domain`, !all.includes("orbit-example"));
   const urls = urlsIn(message.html);
   check(
@@ -69,8 +79,9 @@ async function main() {
   console.log("Links point at the waitlist's own domain:");
   const page = getWaitlistPageUrl();
   check("the waitlist page is the waitlist domain's root", page === `https://${WAITLIST}/`, page);
-  const links = { ticketUrl: buildTicketUrl(page, "tok"), shareUrl: buildShareUrl(page, "tok") };
-  check("pass and invite links are on it", links.ticketUrl === `https://${WAITLIST}/?me=tok` && links.shareUrl === `https://${WAITLIST}/?ref=tok`);
+  const links = { ticketUrl: buildTicketUrl(page, "tok"), shareUrl: buildShareUrl(page, { referralSlug: "ada", shareToken: "tok" }) };
+  check("pass and invite links are on it", links.ticketUrl === `https://${WAITLIST}/?me=tok` && links.shareUrl === `https://${WAITLIST}/waitlist/ada`);
+  check("a row with no slug yet still gets a working link", buildShareUrl(page, { shareToken: "tok" }) === `https://${WAITLIST}/?ref=tok`);
   const leave = email.buildUnsubscribeUrl("tok");
   check("the leave link is on it", leave.startsWith(`https://${WAITLIST}/api/interest-list/unsubscribe`), leave);
 
@@ -78,15 +89,50 @@ async function main() {
   assertClean("welcome", email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: 1285 }));
   const numbered = email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: 1285 });
   check("welcome: states the place in line", numbered.text.includes("#1,285") && numbered.html.includes("No. 1,285"));
-  check("welcome: the subject is the paper letter's", numbered.subject === "You're on the list");
+  check(
+    "welcome: the subject names Orbit",
+    numbered.subject === "You're on the list | Orbit — Personal Networking Intelligence"
+  );
+  check("welcome: names Orbit in the body", /Orbit waitlist/.test(numbered.text) && /Orbit ·/.test(numbered.html));
   check("welcome: the referral URL stays on the pass page", !numbered.html.includes("?ref=") && !numbered.text.includes("?ref="));
+  check(
+    "welcome: invite link is /waitlist/<slug>",
+    numbered.html.includes(`href="https://${WAITLIST}/waitlist/ada"`) &&
+      numbered.html.includes(`${WAITLIST}/waitlist/ada`) &&
+      numbered.text.includes(`Your invite link: https://${WAITLIST}/waitlist/ada`)
+  );
   const anchors = [...numbered.html.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1]!);
-  check("welcome: one link besides the leave link", anchors.length === 2 && anchors[0]!.includes("?me=tok"), anchors.join(", "));
-  check("welcome: asks clients not to invert the paper", numbered.html.includes('content="light only"'));
+  const passAnchors = anchors.filter((a) => a.includes("?me=tok"));
+  const inviteAnchors = anchors.filter((a) => a.includes("/waitlist/ada"));
+  const leaveAnchors = anchors.filter((a) => a.includes("unsubscribe"));
+  check(
+    "welcome: pass CTA, invite link, and leave link",
+    passAnchors.length === 1 && inviteAnchors.length === 1 && leaveAnchors.length === 1 && anchors.length === 3,
+    anchors.join(", ")
+  );
+  check("welcome: Open your pass button hits the ?me= pass", numbered.html.includes("Open your pass") && passAnchors[0]!.includes("?me=tok"));
+  check("welcome: asks clients not to invert the night sky", numbered.html.includes('content="dark"'));
+  check("welcome: nests a dark pass ticket", numbered.html.includes("Your Orbit pass") && numbered.html.includes("#0e1524"));
+  check(
+    "welcome: shows the waitlist Orbit mark",
+    numbered.html.includes(`src="https://${WAITLIST}/waitlist/logo.png"`)
+  );
+  check(
+    "welcome: twinkles via the hosted starfield GIF",
+    numbered.html.includes(`src="https://${WAITLIST}/waitlist/starfield.gif"`) &&
+      numbered.html.includes(`background-color:#05070f`)
+  );
   const unnumbered = email.buildInterestListWelcomeEmail({ unsubscribeUrl: leave, planet: "saturn", links, position: null });
-  check("welcome: without a count, says no number rather than a wrong one", !/#\d/.test(unnumbered.subject + unnumbered.text));
-  check("welcome: explains the front wave", numbered.text.includes("front wave"));
-  assertClean("front wave", email.buildFrontWaveEmail({ unsubscribeUrl: leave, planet: "mars", links }));
+  check(
+    "welcome: without a count, subject stays the same",
+    unnumbered.subject === "You're on the list | Orbit — Personal Networking Intelligence"
+  );
+  check("welcome: without a count, says no number rather than a wrong one", !/#\d/.test(unnumbered.text));
+  check("welcome: explains moving up", numbered.text.includes("bumps you 5 spots"));
+  const { REFERRAL_TIERS } = await import("../src/lib/interest-list");
+  for (const tier of REFERRAL_TIERS.filter((t) => t.at > 0)) {
+    assertClean(`tier email (${tier.id})`, email.buildTierEmail({ unsubscribeUrl: leave, planet: "mars", links, tier }));
+  }
   assertClean("broadcast", buildBroadcastEmail({ subject: "An update", body: "Opening line.\n\nMore.", unsubscribeUrl: leave }));
 
   console.log("\nWho it comes from:");
@@ -123,16 +169,27 @@ async function main() {
     "src/components/interest/boarding-pass.tsx",
     "src/components/interest/share-row.tsx",
     "src/components/interest/proof-line.tsx",
-    "src/components/interest/moons.tsx",
+    "src/components/interest/referral-tracker.tsx",
     "src/components/interest/waitlist-skeleton.tsx",
     "src/app/api/interest-list/ticket-image/route.tsx",
     "src/app/api/interest-list/unsubscribe/route.ts",
     "src/lib/interest-list.ts",
   ];
   for (const file of surface) {
-    // The page's one sanctioned mark is its "Project: Orbit" header; nothing else may name it.
+    // The page's one sanctioned mark is its "Orbit" header; nothing else may name it.
     const raw = code(file);
-    const src = file === "src/app/(site)/interest/page.tsx" ? raw.replace(/>\s*Project: Orbit\s*</, "><") : raw;
+    // The other sanctioned mention: the message a sharer sends a friend (`SHARE_TEXT`) names the
+    // product on purpose, because a friend cannot be asked to join something unnamed. It is
+    // the sharer's own words going out from their own device, not something the waitlist
+    // shows or mails a stranger. The pass's "Want Orbit sooner?" is the third: it is shown
+    // only to someone already holding a pass, above their own invite link. Nothing else in
+    // the file may.
+    const src =
+      file === "src/app/(site)/interest/page.tsx"
+        ? raw.replace(/>\s*Orbit\s*</, "><")
+        : file === "src/lib/interest-list.ts"
+          ? raw.replace(/SHARE_TEXT\s*=\s*"[^"]*"/, "SHARE_TEXT = ''").replace(/"Want Orbit sooner\?"/, "''")
+          : raw;
     // Strings and JSX text only: identifiers are minified away.
     const literals = [...src.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map((m) => m[2]!);
     const jsxText = [...src.matchAll(/>([^<>{}]+)</g)].map((m) => m[1]!);
@@ -190,7 +247,7 @@ async function main() {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);
   }
-  console.log("\nThe waitlist names nothing and leads nowhere.");
+  console.log("\nThe waitlist names Orbit only where sanctioned, and leads nowhere.");
   process.exit(0);
 }
 

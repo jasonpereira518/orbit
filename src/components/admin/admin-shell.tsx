@@ -63,13 +63,17 @@ export function AdminShell({
   }, [pathname]);
 
   return (
-    <div className={cn("min-h-dvh bg-background text-sm", ycMode && "yc-theme")}>
-      {/* Mode signal. Gold is an existing Orbit token that is essentially unused in app
-          chrome, so peripheral vision catches it before a word has been read. */}
-      <div aria-hidden className="h-0.5 w-full bg-accent" />
-
-      <header className="sticky top-0 z-30 border-b border-border/70 bg-card/90 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-3 overflow-x-auto px-4 py-3 md:gap-6 md:px-6">
+    // Cream is intentional and load-bearing: the console stays on the light paper even
+    // when the product theme is dark. `.admin-console` re-asserts the light token ladder
+    // so a lingering `.dark` on <html> cannot paint cards graphite.
+    <div
+      className={cn(
+        "admin-console min-h-dvh bg-background text-sm text-foreground",
+        ycMode && "yc-theme"
+      )}
+    >
+      <header className="sticky top-0 z-30 border-b border-border/70 border-t-2 border-t-accent bg-background/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-3 overflow-x-auto px-4 py-2 md:gap-6 md:px-6">
           <Link href="/admin" className="flex shrink-0 items-center gap-2">
             <span className="font-[family-name:var(--font-display)] text-base text-ink">
               Orbit

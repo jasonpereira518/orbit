@@ -1191,6 +1191,7 @@ export async function getDashboardData(
     preferredName: string | null;
     title: string | null;
     company: string | null;
+    lastInteractionAt?: Date | null;
   }>();
   const contactNameById = new Map<string, string>();
   for (const [id, d] of detail) {
@@ -1200,6 +1201,7 @@ export async function getDashboardData(
       preferredName: d.preferredName,
       title: d.title,
       company: lightById.get(id)?.company ?? null,
+      lastInteractionAt: d.lastInteractionAt ?? null,
     });
     contactNameById.set(id, d.preferredName || d.fullName);
   }

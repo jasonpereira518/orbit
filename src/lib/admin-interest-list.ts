@@ -1,9 +1,32 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { interestListSignups, userSettings } from "@/db/schema";
+import { interestListSignups, userSettings, waitlistPollVotes } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
-import { FRONT_WAVE_REFERRALS } from "@/lib/interest-list";
-import { readStandings, type Standing } from "@/lib/interest-list-ticket";
+import { getWaitlistPageUrl } from "@/lib/app-url";
+import { UserFacingError } from "@/lib/errors";
+import {
+  REFERRAL_TIERS,
+  adminManualInterestListSchema,
+  buildShareUrl,
+  buildTicketUrl,
+  parseEventSignupPaste,
+  tierFor,
+  type AdminManualInterestListInput,
+  type ReferralTierId,
+} from "@/lib/interest-list";
+import {
+  buildUnsubscribeUrl,
+  generateUnsubscribeToken,
+  sendInterestListWelcomeEmail,
+} from "@/lib/interest-list-email";
+import { generateShareToken } from "@/lib/interest-list-join";
+import {
+  invalidateInterestProof,
+  readStandings,
+  ticketForRow,
+  type Standing,
+} from "@/lib/interest-list-ticket";
+import { asWelcomePlanet, planetForSignupNumber } from "@/lib/welcome-planets";
 
 /**
  * The waitlist roster: everyone who joined, when, and where they stand in line.
@@ -19,12 +42,29 @@ export const INTEREST_LIST_PAGE_SIZE = 50;
 export const INTEREST_LIST_FILTERS = [
   "all",
   "active",
-  "front-wave",
+  "priority-beta",
+  "early-access",
+  "founding",
   "unsubscribed",
   "converted",
 ] as const;
 
 export type InterestListFilter = (typeof INTEREST_LIST_FILTERS)[number];
+
+/** The referral count each tier filter starts at, read from the tier table so they cannot drift. */
+const TIER_FILTER_AT = {
+  "priority-beta": tierAt("priority-beta"),
+  "early-access": tierAt("early-access"),
+  founding: tierAt("founding"),
+} as const;
+
+function tierAt(id: ReferralTierId) {
+  return REFERRAL_TIERS.find((t) => t.id === id)?.at ?? Number.POSITIVE_INFINITY;
+}
+
+function isTierFilter(filter: InterestListFilter): filter is keyof typeof TIER_FILTER_AT {
+  return filter in TIER_FILTER_AT;
+}
 
 export function isInterestListFilter(value: string | undefined): value is InterestListFilter {
   return value != null && (INTEREST_LIST_FILTERS as readonly string[]).includes(value);
@@ -33,6 +73,9 @@ export function isInterestListFilter(value: string | undefined): value is Intere
 export type InterestListRow = {
   id: string;
   email: string;
+  /** From the name step or an admin event add; null for address-only signups. */
+  firstName: string | null;
+  lastName: string | null;
   createdAt: Date;
   unsubscribedAt: Date | null;
   followUpSentAt: Date | null;
@@ -48,18 +91,44 @@ export type InterestListRow = {
   referrals: number;
   /** Place in line, or null once they have left the waitlist. See `lineSql`. */
   position: number | null;
-  frontWave: boolean;
+  /** Place by join order alone: what `position` would be with no referrals. Null once they have left. */
+  joinRank: number | null;
+  /** The referral tier they hold, or null once they have left the waitlist. */
+  tier: ReferralTierId | null;
+  /** Times they opened their own pass. Debounced; see `recordPassCheck`. */
+  passCheckCount: number;
+  /** When they last opened their own pass, or null if never. */
+  passLastCheckedAt: Date | null;
+  /** Operator-added from an in-person event; referenced in the welcome email. */
+  signupEventLabel: string | null;
 };
 
-/** The two orders the roster can be read in. */
-export type InterestListSort = "newest" | "position";
+/** Display name for the roster: "First Last", or null when neither is set. */
+export function interestListDisplayName(row: {
+  firstName: string | null;
+  lastName: string | null;
+}): string | null {
+  const first = row.firstName?.trim() || "";
+  const last = row.lastName?.trim() || "";
+  if (!first && !last) return null;
+  // Event paste stores a single given name as both halves — show it once.
+  if (first && last && first.toLowerCase() === last.toLowerCase()) return first;
+  return [first, last].filter(Boolean).join(" ");
+}
+
+/**
+ * The orders the roster can be read in: by place in line, or by join time (newest or
+ * oldest first). The join-time orders never look at referrals.
+ */
+export type InterestListSort = "newest" | "oldest" | "position";
 
 export type InterestListSummary = {
   total: number;
   active: number;
   unsubscribed: number;
   converted: number;
-  frontWave: number;
+  /** Still-waiting rows with enough referrals for early access. */
+  earlyAccess: number;
 };
 
 /**
@@ -98,10 +167,10 @@ function whereFor(filter: InterestListFilter) {
     // converted is not a lost subscriber, but they are not an audience either.
     return and(isNull(interestListSignups.unsubscribedAt), sql`not ${convertedSql}`);
   }
-  if (filter === "front-wave") {
+  if (isTierFilter(filter)) {
     return and(
       isNull(interestListSignups.unsubscribedAt),
-      sql`${referralsSql} >= ${FRONT_WAVE_REFERRALS}`
+      sql`${referralsSql} >= ${TIER_FILTER_AT[filter]}`
     );
   }
   if (filter === "unsubscribed") return isNotNull(interestListSignups.unsubscribedAt);
@@ -116,8 +185,8 @@ export async function getInterestListSummary(): Promise<InterestListSummary> {
     .select({
       total: countInt,
       unsubscribed: sql<number>`count(*) filter (where ${interestListSignups.unsubscribedAt} is not null)::int`,
-      frontWave: sql<number>`count(*) filter (
-        where ${interestListSignups.unsubscribedAt} is null and ${referralsSql} >= ${FRONT_WAVE_REFERRALS}
+      earlyAccess: sql<number>`count(*) filter (
+        where ${interestListSignups.unsubscribedAt} is null and ${referralsSql} >= ${TIER_FILTER_AT["early-access"]}
       )::int`,
       converted: sql<number>`count(*) filter (where ${convertedSql})::int`,
       active: sql<number>`count(*) filter (
@@ -131,7 +200,7 @@ export async function getInterestListSummary(): Promise<InterestListSummary> {
     active: row?.active ?? 0,
     unsubscribed: row?.unsubscribed ?? 0,
     converted: row?.converted ?? 0,
-    frontWave: row?.frontWave ?? 0,
+    earlyAccess: row?.earlyAccess ?? 0,
   };
 }
 
@@ -190,6 +259,8 @@ function selection() {
   return {
     id: interestListSignups.id,
     email: interestListSignups.email,
+    firstName: interestListSignups.firstName,
+    lastName: interestListSignups.lastName,
     createdAt: interestListSignups.createdAt,
     unsubscribedAt: interestListSignups.unsubscribedAt,
     followUpSentAt: interestListSignups.followUpSentAt,
@@ -201,18 +272,23 @@ function selection() {
     landingPath: interestListSignups.landingPath,
     converted: convertedSql,
     referrals: referralsSql,
+    passCheckCount: interestListSignups.passCheckCount,
+    passLastCheckedAt: interestListSignups.passLastCheckedAt,
+    signupEventLabel: interestListSignups.signupEventLabel,
   };
 }
 
-type SelectedRow = Omit<InterestListRow, "position" | "frontWave">;
+type SelectedRow = Omit<InterestListRow, "position" | "joinRank" | "tier">;
 
 function withStanding(row: SelectedRow, standings: Map<string, Standing>): InterestListRow {
   const standing = row.unsubscribedAt ? undefined : standings.get(row.id);
   return {
     ...row,
     referrals: Number(row.referrals ?? 0),
+    passCheckCount: Number(row.passCheckCount ?? 0),
     position: standing?.position ?? null,
-    frontWave: standing?.frontWave ?? false,
+    joinRank: standing?.joinRank ?? null,
+    tier: row.unsubscribedAt ? null : tierFor(Number(row.referrals ?? 0)).current.id,
   };
 }
 
@@ -225,22 +301,28 @@ function byPosition(a: InterestListRow, b: InterestListRow) {
 }
 
 /**
- * Free-text match on the address.
+ * Free-text match on the address or name.
  *
- * `ILIKE` with both wildcards, so a partial local part or a bare domain both work — the two
- * things you actually type when hunting for someone. The term is escaped first: `%` and `_`
- * are wildcards in LIKE, so an unescaped `_` in an address would silently widen the match.
+ * `ILIKE` with both wildcards, so a partial local part, a bare domain, or a first name all
+ * work. The term is escaped first: `%` and `_` are wildcards in LIKE, so an unescaped `_`
+ * in an address would silently widen the match.
  */
 function searchFor(q: string | undefined) {
   const term = q?.trim();
   if (!term) return undefined;
   const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
-  return sql`${interestListSignups.email} ilike ${`%${escaped}%`}`;
+  const like = `%${escaped}%`;
+  return sql`(
+    ${interestListSignups.email} ilike ${like}
+    or coalesce(${interestListSignups.firstName}, '') ilike ${like}
+    or coalesce(${interestListSignups.lastName}, '') ilike ${like}
+  )`;
 }
 
 /**
- * One page of signups — newest first (who just joined) or by place in line (who gets in
- * first). Position is a window over the whole line, so the position order is sorted here
+ * One page of signups — by join time, newest or oldest first (who just joined; the order
+ * people signed up in), or by place in line (who gets in first). Position is a window over
+ * the whole line, so the position order is sorted here
  * from `readStandings` over the filtered set rather than in SQL; the roster is a few
  * thousand rows at most, and this keeps `lineSql` the single definition of the line.
  */
@@ -278,7 +360,10 @@ export async function loadInterestList(options: {
     .select(selection())
     .from(interestListSignups)
     .where(where)
-    .orderBy(desc(interestListSignups.createdAt))
+    .orderBy(
+      options.sort === "oldest" ? asc(interestListSignups.createdAt) : desc(interestListSignups.createdAt),
+      options.sort === "oldest" ? asc(interestListSignups.id) : desc(interestListSignups.id)
+    )
     .limit(INTEREST_LIST_PAGE_SIZE)
     .offset((page - 1) * INTEREST_LIST_PAGE_SIZE)) as SelectedRow[];
 
@@ -401,7 +486,11 @@ export async function unsubscribeInterestListRow(
     })
     .where(eq(interestListSignups.id, id))
     .returning();
-  return rows[0] ? { email: rows[0].email } : null;
+  if (!rows[0]) return null;
+  // The public proof memo is module-level; without this the waitlist page keeps counting
+  // them as waiting for up to a minute on this instance.
+  invalidateInterestProof();
+  return { email: rows[0].email };
 }
 
 /**
@@ -419,7 +508,9 @@ export async function resubscribeInterestListRow(
     .set({ unsubscribedAt: null, followUpSentAt: null })
     .where(eq(interestListSignups.id, id))
     .returning();
-  return rows[0] ? { email: rows[0].email } : null;
+  if (!rows[0]) return null;
+  invalidateInterestProof();
+  return { email: rows[0].email };
 }
 
 /**
@@ -429,16 +520,35 @@ export async function resubscribeInterestListRow(
  * which `unsubscribeInterestListRow` does while keeping the acquisition record. Deleting
  * loses the signup date and source permanently, and lets that address rejoin later as a
  * brand-new signup with a fresh planet.
+ *
+ * Child cleanup runs first even though the schema declares no FKs: friends still point at
+ * this id via `referred_by_id`, and a poll vote may still key on `signup:<id>`. Clearing
+ * those keeps the roster and tallies coherent after the row is gone. Broadcast recipient
+ * rows are left alone — they denormalise the address so a send record survives deletion.
  */
 export async function deleteInterestListRow(
   id: string
 ): Promise<{ email: string } | null> {
   const db = await getDb();
-  const rows = await db
-    .delete(interestListSignups)
-    .where(eq(interestListSignups.id, id))
-    .returning();
-  return rows[0] ? { email: rows[0].email } : null;
+  const deleted = await db.transaction(async (tx) => {
+    await tx
+      .update(interestListSignups)
+      .set({ referredById: null })
+      .where(eq(interestListSignups.referredById, id));
+    await tx
+      .delete(waitlistPollVotes)
+      .where(
+        or(eq(waitlistPollVotes.signupId, id), eq(waitlistPollVotes.voterKey, `signup:${id}`))
+      );
+    const rows = await tx
+      .delete(interestListSignups)
+      .where(eq(interestListSignups.id, id))
+      .returning();
+    return rows[0] ?? null;
+  });
+  if (!deleted) return null;
+  invalidateInterestProof();
+  return { email: deleted.email };
 }
 
 /** Ceiling on one bulk action, so a mis-click cannot take out the whole list in one go. */
@@ -461,17 +571,36 @@ export async function bulkUnsubscribeInterestListRows(ids: string[]): Promise<st
     })
     .where(inArray(interestListSignups.id, ids.slice(0, BULK_LIMIT)))
     .returning();
+  if (rows.length > 0) invalidateInterestProof();
   return rows.map((r) => r.email);
 }
 
 export async function bulkDeleteInterestListRows(ids: string[]): Promise<string[]> {
   if (ids.length === 0) return [];
+  const capped = ids.slice(0, BULK_LIMIT);
   const db = await getDb();
-  const rows = await db
-    .delete(interestListSignups)
-    .where(inArray(interestListSignups.id, ids.slice(0, BULK_LIMIT)))
-    .returning();
-  return rows.map((r) => r.email);
+  const emails = await db.transaction(async (tx) => {
+    await tx
+      .update(interestListSignups)
+      .set({ referredById: null })
+      .where(inArray(interestListSignups.referredById, capped));
+    const voterKeys = capped.map((id) => `signup:${id}`);
+    await tx
+      .delete(waitlistPollVotes)
+      .where(
+        or(
+          inArray(waitlistPollVotes.signupId, capped),
+          inArray(waitlistPollVotes.voterKey, voterKeys)
+        )
+      );
+    const rows = await tx
+      .delete(interestListSignups)
+      .where(inArray(interestListSignups.id, capped))
+      .returning();
+    return rows.map((r) => r.email);
+  });
+  if (emails.length > 0) invalidateInterestProof();
+  return emails;
 }
 
 /**
@@ -481,8 +610,178 @@ export async function bulkDeleteInterestListRows(ids: string[]): Promise<string[
  * whereas the referrer is whatever the browser happened to send.
  */
 export function sourceLabel(row: InterestListRow): string {
+  if (row.signupEventLabel) return `Event · ${row.signupEventLabel}`;
   const utm = [row.utmSource, row.utmMedium, row.utmCampaign].filter(Boolean).join(" · ");
   if (utm) return utm;
   if (row.referrer) return row.referrer;
   return "direct";
+}
+
+/**
+ * Adds someone from an in-person event: names on the pass, a stored event label, and the
+ * welcome note that names the event. Refuses active duplicates; someone who left can rejoin.
+ */
+export async function addManualInterestListSignup(
+  input: AdminManualInterestListInput
+): Promise<{ email: string; id: string }> {
+  const parsed = adminManualInterestListSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new UserFacingError(parsed.error.issues[0]?.message ?? "Could not add that signup.");
+  }
+  const { firstName, lastName, eventLabel, createdAt } = parsed.data;
+  const email = parsed.data.email.trim().toLowerCase();
+
+  const db = await getDb();
+  const [existing] = await db
+    .select()
+    .from(interestListSignups)
+    .where(eq(interestListSignups.email, email))
+    .limit(1);
+
+  if (existing && !existing.unsubscribedAt) {
+    throw new UserFacingError("That address is already on the waitlist.");
+  }
+
+  let row = existing;
+  if (!existing) {
+    const [before] = await db.select({ n: sql<number>`count(*)::int` }).from(interestListSignups);
+    const [inserted] = await db
+      .insert(interestListSignups)
+      .values({
+        email,
+        firstName,
+        lastName,
+        signupEventLabel: eventLabel,
+        utmSource: "admin",
+        utmMedium: "event",
+        utmCampaign: eventLabel,
+        landingPath: "/admin/growth/interest-list",
+        unsubscribeToken: generateUnsubscribeToken(),
+        shareToken: generateShareToken(),
+        welcomePlanet: planetForSignupNumber((before?.n ?? 0) + 1),
+        ...(createdAt ? { createdAt } : {}),
+      })
+      .onConflictDoNothing({ target: interestListSignups.email })
+      .returning();
+    if (inserted) {
+      row = inserted;
+      invalidateInterestProof();
+    } else {
+      [row] = await db
+        .select()
+        .from(interestListSignups)
+        .where(eq(interestListSignups.email, email))
+        .limit(1);
+      if (row && !row.unsubscribedAt) {
+        throw new UserFacingError("That address is already on the waitlist.");
+      }
+    }
+  }
+
+  if (row?.unsubscribedAt) {
+    [row] = await db
+      .update(interestListSignups)
+      .set({
+        unsubscribedAt: null,
+        followUpSentAt: null,
+        firstName,
+        lastName,
+        signupEventLabel: eventLabel,
+        utmSource: "admin",
+        utmMedium: "event",
+        utmCampaign: eventLabel,
+        shareToken: row.shareToken ?? generateShareToken(),
+        // Keep their original join time on rejoin — do not rewrite with the event stamp.
+      })
+      .where(eq(interestListSignups.id, row.id))
+      .returning();
+    invalidateInterestProof();
+  }
+
+  if (!row?.shareToken) {
+    throw new UserFacingError("Could not add that signup — try again.");
+  }
+
+  const ticket = await ticketForRow({
+    id: row.id,
+    email: row.email,
+    referralSlug: row.referralSlug,
+    createdAt: row.createdAt,
+    welcomePlanet: row.welcomePlanet,
+    shareToken: row.shareToken,
+  });
+
+  const pageUrl = getWaitlistPageUrl();
+  await sendInterestListWelcomeEmail(
+    row.email,
+    buildUnsubscribeUrl(row.unsubscribeToken),
+    asWelcomePlanet(row.welcomePlanet),
+    {
+      ticketUrl: buildTicketUrl(pageUrl, row.shareToken),
+      shareUrl: buildShareUrl(pageUrl, { referralSlug: ticket.referralSlug, shareToken: row.shareToken }),
+    },
+    ticket.position,
+    eventLabel
+  );
+
+  return { email: row.email, id: row.id };
+}
+
+export type BulkManualInterestListResult = {
+  added: Array<{ email: string; id: string }>;
+  skipped: Array<{ email: string; reason: string }>;
+  parseErrors: string[];
+};
+
+/**
+ * Paste from an event spreadsheet: timestamp, name, email. Adds in spreadsheet order
+ * (by timestamp when every row has one, otherwise paste order) so join order matches the
+ * line at the event.
+ */
+export async function addManualInterestListSignupsFromPaste(input: {
+  paste: string;
+  eventLabel: string;
+}): Promise<BulkManualInterestListResult> {
+  const eventLabel = input.eventLabel.trim();
+  const labelOk = adminManualInterestListSchema.shape.eventLabel.safeParse(eventLabel);
+  if (!labelOk.success) {
+    throw new UserFacingError(labelOk.error.issues[0]?.message ?? "Event name is required.");
+  }
+
+  const { rows, errors: parseErrors } = parseEventSignupPaste(input.paste);
+  if (rows.length === 0) {
+    if (parseErrors.length > 0) {
+      throw new UserFacingError(parseErrors[0]!);
+    }
+    throw new UserFacingError("Paste at least one row: timestamp, name, and email.");
+  }
+
+  // Prefer event time order when every row carried a timestamp; otherwise keep paste order.
+  const ordered =
+    rows.every((r) => r.signedAt) ?
+      [...rows].sort((a, b) => a.signedAt!.getTime() - b.signedAt!.getTime() || a.line - b.line)
+    : rows;
+
+  const added: BulkManualInterestListResult["added"] = [];
+  const skipped: BulkManualInterestListResult["skipped"] = [];
+
+  // Sequential so each insert sees the previous row and join order stays stable.
+  for (const row of ordered) {
+    try {
+      const result = await addManualInterestListSignup({
+        email: row.email,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        eventLabel,
+        createdAt: row.signedAt ?? undefined,
+      });
+      added.push(result);
+    } catch (err) {
+      const message =
+        err instanceof UserFacingError ? err.message : "Could not add that signup.";
+      skipped.push({ email: row.email, reason: message });
+    }
+  }
+
+  return { added, skipped, parseErrors };
 }

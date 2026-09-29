@@ -8,7 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-const PREVIEW_COUNT = 5;
+const PREVIEW_COUNT = 4;
 
 /** Shared by the preview list and its collapsed overflow so both lay out alike. */
 const LIST_CLASS =
@@ -22,6 +22,7 @@ export type SuggestedOutreachItem = {
   contactName: string;
   contactTitle?: string | null;
   contactCompany?: string | null;
+  lastInteractionAt?: Date | string | null;
   tier?: "inner" | "mid" | "outer";
 };
 
@@ -91,6 +92,7 @@ export function SuggestedOutreachCard({
                   contactName={s.contactName}
                   contactTitle={s.contactTitle}
                   contactCompany={s.contactCompany}
+                  lastInteractionAt={s.lastInteractionAt}
                   tier={s.tier}
                 />
               ))}
@@ -124,6 +126,7 @@ export function SuggestedOutreachCard({
                           contactName={s.contactName}
                           contactTitle={s.contactTitle}
                           contactCompany={s.contactCompany}
+                  lastInteractionAt={s.lastInteractionAt}
                           tier={s.tier}
                         />
                       ))}

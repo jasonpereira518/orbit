@@ -2,6 +2,7 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
+import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 
 function followUpDueLabel(nextFollowUpAt?: Date | string | null) {
@@ -53,11 +54,25 @@ export function DueFollowUpRow({
 }) {
   const due = followUpDueLabel(nextFollowUpAt);
   const lastTouch = lastTouchLabel(lastInteractionAt);
-  const meta = [
-    [title, company].filter(Boolean).join(" · "),
-    due?.text,
-    lastTouch,
-  ].filter(Boolean);
+  const companyColor = companyBrandColor(company);
+  // The role line carries the company, tinted; it stays index 0 so the overdue styling
+  // below (index 1) keeps pointing at the due label.
+  const role: React.ReactNode =
+    title || company ? (
+      <>
+        {title}
+        {title && company ? " · " : ""}
+        {company && (
+          <span
+            className="font-medium"
+            style={companyColor ? { color: companyColor } : undefined}
+          >
+            {company}
+          </span>
+        )}
+      </>
+    ) : null;
+  const meta = [role, due?.text, lastTouch].filter(Boolean);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">

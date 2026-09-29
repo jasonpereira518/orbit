@@ -16,6 +16,9 @@ export const PUBLIC_ROUTES = [
   "/interest",
   // The waitlist's own privacy notice (served at /privacy on the waitlist domain).
   "/interest/privacy",
+  // A person's referral link, `/waitlist/<slug>`, which next.config rewrites to /interest.
+  // The proxy sees the path as requested, before the rewrite.
+  "/waitlist/(.*)",
   "/privacy",
   // How to connect an assistant. A setup guide whose whole audience is people deciding
   // whether to sign up, so it must be readable signed out.
@@ -34,6 +37,9 @@ export const PUBLIC_ROUTES = [
   // The boarding-pass link preview. Fetched by X, LinkedIn and iMessage, which carry no
   // session; authenticated by nothing, because it reveals only a number and a planet.
   "/api/interest-list/ticket-image",
+  // The referral tracker's poll. The share token in the query is the credential, exactly as
+  // on the pass page; the answer is that pass's own referral count and place.
+  "/api/interest-list/progress",
   // Not actually public: these authenticate via requireExtensionUserId, which reads the
   // Clerk state clerkMiddleware populates. They are exempted from auth.protect() only so
   // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302

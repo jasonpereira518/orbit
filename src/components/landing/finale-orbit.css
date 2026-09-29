@@ -1,0 +1,24 @@
+/* Finale closer: yellow marker rides the outer ellipse. Path radii match the
+ * SVG ring (rx=49, ry=46 in a 100×100 viewBox → 49%/46% of the frame). */
+.finale-orbit-dot {
+  offset-path: ellipse(49% 46% at 50% 50%);
+  offset-anchor: center;
+  offset-rotate: 0deg;
+  offset-distance: 41.67%; /* ~150° — same resting spot as the old static pin */
+  animation: finale-orbit-spin 18s linear infinite;
+}
+
+@keyframes finale-orbit-spin {
+  from {
+    offset-distance: 41.67%;
+  }
+  to {
+    offset-distance: 141.67%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .finale-orbit-dot {
+    animation: none;
+  }
+}

@@ -118,6 +118,9 @@ export async function loadNotificationPanel(
     suggestionId?: string;
     suggestedReminderId?: string;
     contactId?: string | null;
+    /** Follow-ups only: the contact's role and company, so the UI can tint the company. */
+    contactTitle?: string | null;
+    company?: string | null;
   };
 
   const items: PanelItem[] = [];
@@ -152,6 +155,8 @@ export async function loadNotificationPanel(
       dueAt: dueAt.toISOString(),
       urgency: isDue ? "due" : "upcoming",
       contactId: c.id,
+      contactTitle: c.title,
+      company: c.company,
     });
   }
 
