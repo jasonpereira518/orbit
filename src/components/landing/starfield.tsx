@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { STAR_GOLD, STAR_WHITE, paintSpace } from "@/lib/sky-palette";
 import {
+  announceStarfieldFigure,
   STARFIELD_PULSE_EVENT,
   type StarfieldPulseDetail,
 } from "@/lib/starfield-events";
@@ -388,6 +389,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         endedAt: null,
       };
       figureScrollY = window.scrollY;
+      // For the waitlist's one-time hint, which retires itself once a figure is found.
+      announceStarfieldFigure(match.name);
     }
 
     /**

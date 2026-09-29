@@ -9,6 +9,7 @@ import { ReferralTracker } from "@/components/interest/referral-tracker";
 import { RingsBackdrop } from "@/components/interest/rings-backdrop";
 import { AppDemo } from "@/components/interest/app-demo/app-demo";
 import { DemoPeek } from "@/components/interest/demo-peek";
+import { SkyHint } from "@/components/interest/sky-hint";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
@@ -273,6 +274,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
     // left that overhang as dead scroll under the page.
     <div className="landing-root relative overflow-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield interactive />
+      <SkyHint />
 
       {/* Overlaid, not in flow: the page below sits exactly where it did without it. The
           hero's eyebrow starts 64px down on phones (main pt-6 + hero pt-10) and 104px from

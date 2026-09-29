@@ -24,3 +24,14 @@ export function pulseStarfield(x: number, y: number) {
     })
   );
 }
+
+/** The other direction: the interactive sky found and drew a named constellation. */
+export const STARFIELD_FIGURE_EVENT = "orbit:starfield-figure";
+export type StarfieldFigureDetail = { name: string };
+
+export function announceStarfieldFigure(name: string) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<StarfieldFigureDetail>(STARFIELD_FIGURE_EVENT, { detail: { name } })
+  );
+}
