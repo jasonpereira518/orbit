@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://myorbitnetwork.com"><strong>Join the waitlist →</strong></a><br/>
+  <a href="https://waitlist.jasonpereira.live/"><strong>Join the waitlist →</strong></a> · <a href="https://www.youtube.com/watch?v=uD0LsrTr_wo"><strong>Watch the demo ▶</strong></a><br/>
   <sub>Private beta. Invitations go out in waves.</sub>
 </p>
 
@@ -20,6 +20,14 @@
 </p>
 
 ---
+
+## See it in action
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=uD0LsrTr_wo">
+    <img src="https://img.youtube.com/vi/uD0LsrTr_wo/maxresdefault.jpg" width="720" alt="Watch the Orbit demo on YouTube" />
+  </a>
+</p>
 
 ## The problem
 
@@ -101,7 +109,7 @@ On every plan, AI runs on your own provider account and is billed to you at cost
 ---
 
 <p align="center">
-  <a href="https://myorbitnetwork.com"><strong>Join the waitlist →</strong></a>
+  <a href="https://waitlist.jasonpereira.live/"><strong>Join the waitlist →</strong></a>
 </p>
 
 <p align="center"><sub>MIT licensed. See <a href="LICENSE">LICENSE</a>.</sub></p>
