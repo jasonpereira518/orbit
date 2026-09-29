@@ -13,7 +13,7 @@ import { SkyHint } from "@/components/interest/sky-hint";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
-import { EarlyAccessPath } from "@/components/interest/early-access-path";
+import { EarlyAccessPath, JourneyTitle } from "@/components/interest/early-access-path";
 import { PillarArt, type PillarArtKind } from "@/components/interest/pillar-art";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
 import {
@@ -178,15 +178,6 @@ const PILLARS: readonly { art: PillarArtKind; title: string; body: string }[] = 
     title: "Works with the tools you already use",
     body: "It plugs into your inbox, your calendar and the apps you rely on every day. No starting from scratch.",
   },
-];
-
-const STEPS = [
-  { title: "Join the waitlist", body: "One email address. That's all it takes to hold your place." },
-  {
-    title: "We open in waves",
-    body: "Spots open a few at a time, in line order. Friends you invite move you up.",
-  },
-  { title: "Your invite arrives", body: "When your wave opens, your invite lands in your inbox." },
 ];
 
 function faq(privacyHref: string): readonly FaqItem[] {
@@ -395,12 +386,17 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         {/* A lighter band than the panels around it, so a slightly shorter lead-in. */}
         <section className="mt-24 md:mt-28" aria-labelledby="waitlist-how">
           <Reveal className="reveal-celestial">
-            <h2 id="waitlist-how" className={`${SECTION_TITLE} text-center`}>
-              How early access works.
-            </h2>
+            <JourneyTitle token={ticket?.shareToken ?? null} className={`${SECTION_TITLE} text-center`} />
           </Reveal>
           <Reveal className="reveal-celestial mt-12 block" delay={80}>
-            <EarlyAccessPath steps={STEPS} />
+            <EarlyAccessPath
+              token={ticket?.shareToken ?? null}
+              referrals={ticket?.referrals ?? 0}
+              position={ticket?.position ?? null}
+              planet={ticket?.planet ?? null}
+              joinHref="#interest-join"
+              tiersHref="#waitlist-referrals"
+            />
           </Reveal>
         </section>
 

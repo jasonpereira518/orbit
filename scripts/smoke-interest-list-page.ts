@@ -244,7 +244,9 @@ async function main() {
   check("the demo shows by default (never set reads as on)", shows(form) && (await demo.getWaitlistDemoEnabled({ fresh: true })) === true);
   await demo.setWaitlistDemoEnabled("smoke-admin", false);
   check("turning it off hides the section", !shows(await Page(sp({}))));
-  check("…and the rest of the page is untouched", textOf(await Page(sp({}))).join(" ").includes("How early access works"));
+  // A heading written in the page itself: the journey section's title is a client component
+  // now (it follows the live pass), so its words are not in this tree.
+  check("…and the rest of the page is untouched", textOf(await Page(sp({}))).join(" ").includes("Bring friends, move up."));
   await demo.setWaitlistDemoEnabled("smoke-admin", true);
   check("turning it back on shows it again", shows(await Page(sp({}))));
   const [row] = await (await getDb()).select().from(siteSettings).where(eq(siteSettings.id, 1));
