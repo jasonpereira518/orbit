@@ -2077,6 +2077,42 @@
   }
 }
 
+/* The waitlist's feature-pillar pictures (`pillar-art.tsx`): drawn by default, traced
+ * once when <Reveal> brings the row in, glow brightened on hover. SVG children scale
+ * about their own box only with fill-box — the default origin is the canvas corner. */
+.pillar-draw {
+  stroke-dasharray: 1;
+}
+
+.pillar-pop {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.pillar-glow {
+  opacity: 0.55;
+  transition: opacity var(--transition-duration-slow) var(--ease-house);
+}
+
+.pillar-card:hover .pillar-glow {
+  opacity: 1;
+}
+
+[data-reveal="in"] .pillar-draw {
+  animation: early-path-draw 1s var(--ease-house) 0.15s both;
+}
+
+[data-reveal="in"] .pillar-pop {
+  animation: early-path-stop 0.5s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal="in"] .pillar-draw,
+  [data-reveal="in"] .pillar-pop {
+    animation: none;
+  }
+}
+
 .landing-scene {
   content-visibility: auto;
   /* Placeholder must approximate the real height — a big mismatch makes

@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { cookies, headers } from "next/headers";
-import { Network, Plug, Sparkles } from "lucide-react";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { InterestHero, type HeroInitial } from "@/components/interest/interest-hero";
@@ -13,6 +12,7 @@ import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
 import { EarlyAccessPath } from "@/components/interest/early-access-path";
+import { PillarArt, type PillarArtKind } from "@/components/interest/pillar-art";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
 import {
   REFERRAL_TIERS,
@@ -159,19 +159,19 @@ const EMPTY_PROOF: InterestProof = { count: 0, total: 0, recent: [] };
 /** What the poll degrades to if the database read fails: nothing voted, nothing tallied. */
 const EMPTY_POLL: FeaturePollInitial = { results: { counts: {} }, choice: null };
 
-const PILLARS = [
+const PILLARS: readonly { art: PillarArtKind; title: string; body: string }[] = [
   {
-    icon: Network,
+    art: "network",
     title: "One intelligence, your whole network",
     body: "Everyone you know, finally in one place that understands them.",
   },
   {
-    icon: Sparkles,
+    art: "ahead",
     title: "Always a step ahead",
     body: "An advanced recommendation engine reads your whole network and tells you who to reach, and when — before the moment slips by.",
   },
   {
-    icon: Plug,
+    art: "tools",
     title: "Works with the tools you already use",
     body: "It plugs into your inbox, your calendar and the apps you rely on every day. No starting from scratch.",
   },
@@ -299,14 +299,19 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         </div>
 
         <Reveal className="reveal-celestial mt-20 block">
-          <ul className="grid gap-6 sm:grid-cols-3">
-            {PILLARS.map(({ icon: Icon, title, body }) => (
-              <li key={title} className="flex gap-3.5">
-                <Icon className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]" aria-hidden="true" />
-                <div>
-                  <h3 className="text-sm font-medium text-[#e8f3f1]">{title}</h3>
-                  <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">{body}</p>
-                </div>
+          {/* No backdrop blur: the sky under these moves every frame (see the panel note in
+              globals.css). A faint fill reads as a surface without it. */}
+          <ul className="grid gap-4 sm:grid-cols-3">
+            {PILLARS.map(({ art, title, body }) => (
+              <li
+                key={title}
+                className="pillar-card rounded-2xl border border-[#e8f3f1]/[0.07] bg-[linear-gradient(180deg,rgba(232,243,241,0.04),rgba(232,243,241,0.01))] p-5 transition-colors duration-300 hover:border-[#f2c14e]/25"
+              >
+                <PillarArt kind={art} />
+                <h3 className="mt-4 font-[family-name:var(--font-display)] text-lg leading-snug text-[#e8f3f1]">
+                  {title}
+                </h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">{body}</p>
               </li>
             ))}
           </ul>
