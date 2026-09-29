@@ -2,7 +2,6 @@ import { Check, Minus } from "lucide-react";
 import {
   PLAN_CONFIG,
   PLAN_LABELS,
-  type Plan,
   type PurchasablePlan,
 } from "@/lib/plans/plan-config";
 import { cn } from "@/lib/utils";
