@@ -87,6 +87,8 @@ async function danglingReferences(contactId: string): Promise<string[]> {
     ["contact_profiles", "contact_id"],
     ["contact_embeddings", "contact_id"],
     ["contact_briefs", "contact_id"],
+    ["recommendations", "contact_id"],
+    ["recommendation_feedback", "contact_id"],
   ];
   const found: string[] = [];
   for (const [table, column] of tables) {
@@ -394,6 +396,49 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------------
+  console.log("\nRadar: a ban follows the merge, a colliding card is archived, unmerge restores both...");
+  {
+    await reset();
+    const winner = await newContact({ full_name: "Grace Hopper", email: "grace@navy.mil" });
+    const loser = await newContact({ full_name: "Grace Hopper", email: "grace@cobol.org" });
+    const expires = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    // Both sides hold a LIVE reconnect card: moving the loser's would break the live unique index.
+    await db.execute(
+      sql`INSERT INTO recommendations (user_id, contact_id, kind, score, bucket, expires_at, inputs_hash)
+          VALUES (${USER}, ${winner}::uuid, 'reconnect', 40, 'soon', ${expires}, 'w'),
+                 (${USER}, ${loser}::uuid, 'reconnect', 35, 'soon', ${expires}, 'l')`
+    );
+    await db.execute(
+      sql`INSERT INTO recommendation_feedback (user_id, contact_id, kind, action)
+          VALUES (${USER}, ${loser}::uuid, NULL, 'never')`
+    );
+    const { mergeId } = await mergeContacts(USER, winner, loser, { reason: "Same person", confidence: 0.95 });
+    const dangling = await danglingReferences(loser);
+    check("nothing Radar keeps still points at the loser", dangling.length === 0, dangling.join(", "));
+    check(
+      "'not for this person' now applies to the merged contact",
+      (await scalar<number>(
+        sql`SELECT count(*)::int AS v FROM recommendation_feedback WHERE contact_id = ${winner}::uuid AND action = 'never'`
+      )) === 1
+    );
+    check(
+      "the winner keeps its own card",
+      (await scalar<number>(sql`SELECT count(*)::int AS v FROM recommendations WHERE contact_id = ${winner}::uuid`)) === 1
+    );
+    await unmergeContacts(USER, mergeId);
+    check(
+      "unmerge restores the loser's card",
+      (await scalar<number>(sql`SELECT count(*)::int AS v FROM recommendations WHERE contact_id = ${loser}::uuid`)) === 1
+    );
+    check(
+      "and moves the ban back",
+      (await scalar<number>(
+        sql`SELECT count(*)::int AS v FROM recommendation_feedback WHERE contact_id = ${loser}::uuid AND action = 'never'`
+      )) === 1
+    );
+    await reset();
+  }
+
   console.log("\nGuards...");
   await reset();
   {

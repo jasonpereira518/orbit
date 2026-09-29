@@ -65,6 +65,9 @@ import {
   outreachCampaigns,
   pageViews,
   planUpgradeEvents,
+  radarRuns,
+  recommendationFeedback,
+  recommendations,
   recruiterMessages,
   recruiters,
   recruiterScanState,
@@ -132,6 +135,9 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *                               global and never deleted with an account). The match is the
  *                               only per-user row in the job-feed trio; the feed itself and
  *                               its postings are global and carry no `user_id`.
+ * `recommendations` and `recommendation_feedback` also cascade from `contacts`, but are
+ * deleted explicitly by `insights`, which can run without deleting contacts. `radar_runs`
+ * has no parent and is always deleted explicitly.
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly. `suggested_reminders` looks like it would cascade
@@ -215,8 +221,8 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
-    counts: [aiSuggestions, contactEmbeddings, memoryChunks, closenessCohorts],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
+    counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
       // holding this person's prompts, and deleting our row would only lose the handle to
@@ -233,6 +239,17 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // in the product — leaving these behind after a deletion would leave the notes behind.
       await db.delete(memoryChunks).where(eq(memoryChunks.userId, userId));
       await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
+      // Radar's list, what the person did with it, and its run history. The first two also
+      // cascade from contacts, but an insights-only delete keeps the contacts. `radar_runs`
+      // has no parent at all. The schedule columns are cleared so the next visit rebuilds
+      // from scratch; the pause flag is a preference and survives (see below).
+      await db.delete(recommendations).where(eq(recommendations.userId, userId));
+      await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
+      await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
+      await db
+        .update(userSettings)
+        .set({ radarLastRunAt: null, radarNextAt: null, radarLeaseUntil: null })
+        .where(eq(userSettings.userId, userId));
     },
   },
   notes: {
@@ -726,6 +743,8 @@ const PRESERVED_SETTINGS_COLUMNS = {
   termsAcceptedAt: true,
   termsVersion: true,
   timelineBackfillEnabled: true,
+  // A person who paused Radar did not ask for it back by deleting their data.
+  radarPaused: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
