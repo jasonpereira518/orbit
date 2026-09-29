@@ -31,7 +31,7 @@ import {
   type Interaction,
 } from "@/db/schema";
 import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
-import { recordGateHit } from "@/lib/gate-events";
+import { recordGateHit, recordGateHitThrottled } from "@/lib/gate-events";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -593,9 +593,20 @@ export async function createContactsBulkForUser(
     options?.headroom !== undefined
       ? options.headroom
       : await contactHeadroomForUser(userId);
-  if (headroom !== null && headroom < 1) return [];
   const admitted =
-    headroom === null ? inputs : inputs.slice(0, headroom);
+    headroom === null ? inputs : inputs.slice(0, Math.max(0, headroom));
+  if (admitted.length < inputs.length) {
+    // The cap truncated an import. Throttled: a large import runs as many batches, and
+    // each one would otherwise record the same wall.
+    const { plan } = await getEntitlements(userId);
+    await recordGateHitThrottled({
+      userId,
+      feature: "contacts",
+      plan,
+      context: { bulk: true, refused: inputs.length - admitted.length },
+    });
+  }
+  if (admitted.length === 0) return [];
 
   const db = await getDb();
   const now = new Date();

@@ -177,6 +177,13 @@ const TIER_ACCENT: Record<
     badge: { label: "Most popular", className: "bg-brand-pro text-[#081326]" },
     raised: true,
   },
+  max: {
+    surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
+    tick: "text-[#f2c14e]",
+    glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
+    badge: { label: "Max", className: "bg-[#f2c14e] text-[#241a00]" },
+    raised: false,
+  },
   lifetime: {
     surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
     tick: "text-[#f2c14e]",

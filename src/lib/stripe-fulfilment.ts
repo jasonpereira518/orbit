@@ -9,6 +9,7 @@ import {
 } from "@/lib/billing-events";
 import { resolveChargePurpose } from "@/lib/stripe-charge-purpose";
 import { checkoutSessionVerdict, syntheticCheckoutEvent } from "@/lib/checkout-confirm";
+import { isPurchasablePlan } from "@/lib/plans/plan-config";
 import {
   decideStripeEvent,
   revocationPaymentIntent,
@@ -72,7 +73,7 @@ export async function readDecideContext(
     },
   });
   const beforeCents =
-    row?.subscriptionPlan === "orbit"
+    isPurchasablePlan(row?.subscriptionPlan) && row
       ? monthlyValueCents(
           row.subscriptionStatus,
           row.subscriptionPeriodEnd,

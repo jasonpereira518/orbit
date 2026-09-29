@@ -241,7 +241,7 @@ run(async () => {
     await db.update(userSettings).set({ lifetimePurchasedAt: new Date() }).where(eq(userSettings.userId, SUBSCRIBER));
     const ent = await getEntitlements(SUBSCRIBER);
     check("Lifetime plus a leftover live subscription resolves to Lifetime alone",
-      ent.plan === "lifetime" && ent.source === "lifetime" && ent.canUseHostedEnrichment === false, JSON.stringify(ent));
+      ent.plan === "lifetime" && ent.source === "lifetime" && ent.canUseHostedAi === false, JSON.stringify(ent));
     const f = fakeStripe([fakeSub()]);
     const r = await sm.cancelSubscription(SUBSCRIBER, { stripe: f.stripe });
     check("and the card no longer treats it as a subscription", !r.ok && f.calls.list.length === 0);

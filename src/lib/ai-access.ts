@@ -11,7 +11,7 @@ import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
-import { resolvePlan } from "@/lib/entitlements";
+import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
 import type { SessionRetriever } from "@/lib/lifetime-checkout";
@@ -837,12 +837,7 @@ export function aiReadyFromSettings(
     openaiApiKeyEncrypted?: string | null;
     anthropicApiKeyEncrypted?: string | null;
     openrouterApiKeyEncrypted?: string | null;
-    compedPlan?: "orbit" | "lifetime" | null;
-    lifetimePurchasedAt?: Date | null;
-    subscriptionPlan?: "orbit" | null;
-    subscriptionStatus?: "active" | "past_due" | "canceled" | null;
-    subscriptionPeriodEnd?: Date | null;
-  } | null,
+  } & BillingColumns | null,
 ): boolean {
   const selectedProvider = resolveAiProvider(row?.aiProvider);
   const { plan } = resolvePlan(row);

@@ -68,8 +68,8 @@ async function seedKey(db: Awaited<ReturnType<typeof getDb>>, userId: string, na
   `);
   await db.execute(sql`
     INSERT INTO user_settings (user_id, comped_plan, comped_at)
-    VALUES (${userId}, 'orbit', now())
-    ON CONFLICT (user_id) DO UPDATE SET comped_plan = 'orbit', comped_at = now()
+    VALUES (${userId}, 'max', now())
+    ON CONFLICT (user_id) DO UPDATE SET comped_plan = 'max', comped_at = now()
   `);
   return key;
 }

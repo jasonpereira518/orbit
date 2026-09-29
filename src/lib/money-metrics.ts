@@ -4,6 +4,7 @@ import { billingEvents, usageEvents, userSettings } from "@/db/schema";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
 import { series, type Grain } from "@/lib/admin-trends";
 import { mrrMovement, type MrrMovement } from "@/lib/billing-events";
+import { FEATURE_KEYS } from "@/lib/plans/plan-config";
 import { monthlyCostSeries, type MonthlyCosts } from "@/lib/money-costs";
 
 /**
@@ -435,12 +436,4 @@ export async function recentMovements(limit = 25) {
 }
 
 /** Gate features that exist in the product, so an unhit wall shows as an empty row. */
-export const KNOWN_GATES = [
-  "contacts",
-  "outreach",
-  "hostedSending",
-  "hostedEnrichment",
-  "recruiters",
-  "sync",
-  "extension",
-] as const;
+export const KNOWN_GATES = ["contacts", ...FEATURE_KEYS] as const;

@@ -15,6 +15,7 @@ import * as adminFeedback from "@/lib/admin-feedback";
 import * as broadcast from "@/lib/broadcasts";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
+import type { Plan } from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
@@ -49,7 +50,7 @@ import { UserFacingError } from "@/lib/errors";
 
 export type CompResult = {
   ok: true;
-  plan: "free" | "orbit" | "lifetime";
+  plan: Plan;
 };
 
 /**

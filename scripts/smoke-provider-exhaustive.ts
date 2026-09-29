@@ -233,10 +233,10 @@ const ALLOWLIST: Record<string, string> = {
     "\"gemini\": Orbit holds no managed OpenRouter key (facts.managed.openrouter is " +
     "hardcoded false and MANAGED_PROVIDER_ORDER excludes it), so no selected provider — " +
     "openrouter included — ever needs a third slot here.",
-  "src/lib/admin-user-detail.ts:577": "the \"openai\" arm of the four-way ternary that now " +
+  "src/lib/admin-user-detail.ts:570": "the \"openai\" arm of the four-way ternary that now " +
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
-  "src/lib/admin-user-detail.ts:579": "the \"anthropic\" arm of the same ternary — see line 577.",
+  "src/lib/admin-user-detail.ts:572": "the \"anthropic\" arm of the same ternary — see line 570.",
   "src/actions/settings.ts:109": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +

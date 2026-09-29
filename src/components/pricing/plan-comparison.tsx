@@ -18,6 +18,7 @@ const COLUMN_ACCENT: Record<Plan, { heading: string; tick: string; tint?: string
     tick: "text-brand-pro",
     tint: "bg-brand-pro/5",
   },
+  max: { heading: "text-[#f2c14e]", tick: "text-[#f2c14e]" },
   lifetime: { heading: "text-[#f2c14e]", tick: "text-[#f2c14e]" },
 };
 

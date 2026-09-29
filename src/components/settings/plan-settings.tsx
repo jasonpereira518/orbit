@@ -68,6 +68,17 @@ const TIER_ACCENT: Record<
     meter: "bg-brand-pro",
     glint: true,
   },
+  max: {
+    ring: "border-[#e0a52e]/60 dark:border-[#f2c14e]/40",
+    wash: "bg-[#f2c14e]/25 dark:bg-[#f2c14e]/15",
+    // A vertical ramp rather than one flat fill: gold reads as metal only when
+    // it has a light edge and a shaded one for the glint to travel between.
+    badge:
+      "bg-gradient-to-b from-[#f7d15f] to-[#e0a52e] text-[#3d2c00] shadow-sm",
+    ink: "text-[#a06a00] dark:text-[#f2c14e]",
+    meter: "bg-[#e0a52e] dark:bg-[#f2c14e]",
+    glint: true,
+  },
   lifetime: {
     ring: "border-[#e0a52e]/60 dark:border-[#f2c14e]/40",
     wash: "bg-[#f2c14e]/25 dark:bg-[#f2c14e]/15",

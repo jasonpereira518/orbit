@@ -36,6 +36,7 @@ const SIZES = {
 const PLAN_RING: Record<Plan, string | null> = {
   free: null,
   orbit: "ring-[2.5px] ring-inset ring-brand-pro",
+  max: "ring-[2.5px] ring-inset ring-[#f2c14e]",
   lifetime: "ring-[2.5px] ring-inset ring-[#f2c14e]",
 };
 
