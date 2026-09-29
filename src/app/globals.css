@@ -2113,6 +2113,30 @@
   }
 }
 
+/* The waitlist's tier-unlock moment (`tier-celebration.tsx`): two gold rings roll out
+ * from the tier's planet once. Transform and opacity only. */
+@keyframes tier-celebration-ring {
+  from {
+    transform: scale(0.8);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+.tier-celebration-ring {
+  animation: tier-celebration-ring 1.4s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tier-celebration-ring {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 .landing-scene {
   content-visibility: auto;
   /* Placeholder must approximate the real height — a big mismatch makes

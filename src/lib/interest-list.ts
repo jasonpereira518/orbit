@@ -388,6 +388,13 @@ export function describePassChange(before: PassStanding, after: PassStanding): s
   return null;
 }
 
+/** The highest tier unlocked by going from `before` to `after` friends, or null. */
+export function tierCrossed(before: number, after: number): ReferralTier | null {
+  let top: ReferralTier | null = null;
+  for (const t of REFERRAL_TIERS) if (t.at > 0 && t.at > before && t.at <= after) top = t;
+  return top;
+}
+
 /** The pass's line when friends join while the page is open. */
 export function liveJoinLine(friends: number): string {
   const who = friends === 1 ? "A friend" : `${friends} ${friendsWord(friends)}`;

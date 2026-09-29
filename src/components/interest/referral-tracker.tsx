@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useInView } from "motion/react";
 import { Lock } from "lucide-react";
 import { PlanetArt } from "@/components/interest/planet-art";
+import { TIER_ART } from "@/components/interest/tier-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import {
   REFERRAL_TIERS,
@@ -38,24 +39,24 @@ const MILESTONES = new Set(REFERRAL_TIERS.filter((t) => t.at > 0).map((t) => t.a
 /** Bright yellow fill — brighter than the landing gold accent alone. */
 const FILLED_GLOW =
   "bg-[#ffe566] shadow-[0_0_28px_rgba(255,229,102,0.95),0_0_10px_rgba(242,193,78,0.7)]";
+/** A filled circle that knows whose it is: the friend's planet on a dark disc, gold-ringed. */
+const FRIEND_DISC =
+  "flex items-center justify-center bg-[#0b1120] ring-1 ring-[#ffe566]/70 shadow-[0_0_16px_rgba(255,229,102,0.5)]";
 const EMPTY_RING =
   "border border-[#f2c14e]/55 shadow-[0_0_10px_rgba(242,193,78,0.22),inset_0_0_6px_rgba(242,193,78,0.14)]";
 
-/**
- * One planet per tier, escalating: a small dull Mercury for the waitlist itself, up through
- * Earth, Jupiter and ringed Saturn, to the sun for founding member. Same art the pass and the
- * landing hero use (`PlanetArt`, `public/landing/planets/`) — this is not a signup's planet,
- * so it never touches `WelcomePlanet`'s join-order meaning. Box sizes stay fixed so the row
- * aligns; the art itself grows tier over tier.
- */
-const TIER_ART: Record<ReferralTierId, { planet: WelcomePlanet | "sun"; size: number }> = {
-  joined: { planet: "mercury", size: 20 },
-  "move-up": { planet: "earth", size: 26 },
-  "priority-beta": { planet: "jupiter", size: 34 },
-  "early-access": { planet: "saturn", size: 44 },
-  founding: { planet: "sun", size: 48 },
-};
 const PLANET_BOX = 52;
+/** One empty list for every render: `usePassProgress` needs a stable server snapshot. */
+const NO_PLANETS: readonly WelcomePlanet[] = [];
+
+/** A friend's planet sized to its circle: drawn at the desktop size, scaled down on phones. */
+function FriendPlanet({ planet }: { planet: WelcomePlanet }) {
+  return (
+    <span className="flex scale-[0.625] items-center justify-center sm:scale-100">
+      <PlanetArt planet={planet} size={30} />
+    </span>
+  );
+}
 
 function TierPlanet({
   tierId,
@@ -155,23 +156,27 @@ export function ReferralTracker({
   token,
   referrals: initialReferrals,
   position: initialPosition,
+  friendPlanets: initialPlanets = NO_PLANETS,
   joinHref,
 }: {
   /** The visitor's pass token, or null before they have joined. */
   token: string | null;
   referrals: number;
   position: number | null;
+  /** Friends' planets in join order, from the server render; the poll keeps them current. */
+  friendPlanets?: readonly WelcomePlanet[];
   /** Where "join" points: the hero's form, on this page. */
   joinHref: string;
 }) {
   const serverProgress = useMemo(
-    () => ({ token, referrals: initialReferrals, position: initialPosition }),
-    [token, initialReferrals, initialPosition]
+    () => ({ token, referrals: initialReferrals, position: initialPosition, friendPlanets: initialPlanets }),
+    [token, initialReferrals, initialPosition, initialPlanets]
   );
   const progress = usePassProgress(serverProgress);
   const activeToken = progress.token;
   const referrals = Math.min(Math.max(progress.referrals, 0), TRACKER_SLOTS);
   const position = progress.position;
+  const planets = progress.friendPlanets ?? [];
   /** Completed shares still waiting on a friend: drawn as "invited" circles after the filled. */
   const invited = Math.min(usePendingInvites(activeToken), TRACKER_SLOTS - referrals);
 
@@ -244,9 +249,19 @@ export function ReferralTracker({
           return;
         }
         if (!res.ok) return;
-        const data = (await res.json()) as { ok?: boolean; referrals?: number; position?: number };
+        const data = (await res.json()) as {
+          ok?: boolean;
+          referrals?: number;
+          position?: number;
+          friendPlanets?: WelcomePlanet[];
+        };
         if (data.ok && typeof data.referrals === "number" && typeof data.position === "number") {
-          publishProgress({ token: activeToken, referrals: data.referrals, position: data.position });
+          publishProgress({
+            token: activeToken,
+            referrals: data.referrals,
+            position: data.position,
+            friendPlanets: Array.isArray(data.friendPlanets) ? data.friendPlanets : [],
+          });
         }
       } catch {
         // Offline or aborted: the next tick tries again.
@@ -296,7 +311,7 @@ export function ReferralTracker({
                   {/* Vessel stays visible so the gold reads as filling the ring, not popping in. */}
                   <span className={cn("absolute inset-0 rounded-full", EMPTY_RING)} />
                   <motion.span
-                    className={cn("absolute inset-0 rounded-full", FILLED_GLOW)}
+                    className={cn("absolute inset-0 rounded-full", planets[i] ? FRIEND_DISC : FILLED_GLOW)}
                     initial={{ transform: "scale(0.55)", opacity: 0 }}
                     animate={
                       inView
@@ -309,7 +324,9 @@ export function ReferralTracker({
                       times: [0, 0.62, 1],
                       delay: fillDelay,
                     }}
-                  />
+                  >
+                    {planets[i] ? <FriendPlanet planet={planets[i]} /> : null}
+                  </motion.span>
                   <motion.span
                     className="absolute inset-0 rounded-full border-2 border-[#ffe566]"
                     initial={{ transform: "scale(1)", opacity: 0 }}
@@ -333,7 +350,14 @@ export function ReferralTracker({
                   <span className="size-1.5 rounded-full bg-[#f2c14e] shadow-[0_0_6px_rgba(242,193,78,0.9)]" />
                 </motion.span>
               ) : (
-                <span className={cn("absolute inset-0 rounded-full", filled ? FILLED_GLOW : EMPTY_RING)} />
+                <span
+                  className={cn(
+                    "absolute inset-0 rounded-full",
+                    filled ? (planets[i] ? FRIEND_DISC : FILLED_GLOW) : EMPTY_RING
+                  )}
+                >
+                  {filled && planets[i] ? <FriendPlanet planet={planets[i]} /> : null}
+                </span>
               )}
               {milestone ? (
                 <span className="absolute -bottom-6 text-[11px] tabular-nums text-[#9aada8]">{i + 1}</span>

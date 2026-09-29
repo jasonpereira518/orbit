@@ -6,7 +6,8 @@ import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit
 
 // Polled by the referral tracker on someone's own pass, which carries no session: the share
 // token in the query is the credential, same as the pass page. It answers with the caller's
-// own referral count and place and nothing else — no email, no other row.
+// own referral count, place and their friends' planets, and nothing else — no email, no
+// name, no other row.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

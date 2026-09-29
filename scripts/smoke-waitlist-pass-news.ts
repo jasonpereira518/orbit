@@ -13,7 +13,9 @@ import {
   SPOTS_PER_REFERRAL,
   describePassChange,
   liveJoinLine,
+  tierCrossed,
 } from "../src/lib/interest-list";
+import { joinNotification } from "../src/lib/join-notify";
 import { readSeen, writeSeen } from "../src/lib/pass-seen";
 import { nextInvites, readInvites } from "../src/lib/pass-invites";
 
@@ -134,6 +136,24 @@ function main() {
   }
   check("throwing storage write is swallowed", !threw);
   eq("no window → null (server)", readSeen("tok"), null);
+
+  console.log("tierCrossed");
+  eq("0 → 1 unlocks move-up", tierCrossed(0, 1)?.id, "move-up");
+  eq("1 → 2 unlocks nothing", tierCrossed(1, 2), null);
+  eq("2 → 3 unlocks priority beta", tierCrossed(2, 3)?.id, "priority-beta");
+  eq("several at once: the highest", tierCrossed(0, 5)?.id, "early-access");
+  eq("to ten: founding", tierCrossed(9, 10)?.id, "founding");
+  eq("no change: nothing", tierCrossed(3, 3), null);
+  eq("going down: nothing", tierCrossed(5, 3), null);
+
+  console.log("joinNotification");
+  const one = joinNotification(1, 1234, null);
+  eq("one friend: title", one.title, "A friend joined through your link");
+  eq("one friend: body", one.body, "You moved up 5 spots — you're now #1,234.");
+  const two = joinNotification(2, 40, tierCrossed(1, 3));
+  eq("two friends: title", two.title, "2 friends joined through your link");
+  eq("with a tier: body", two.body, "You moved up 10 spots — you're now #40. Priority beta unlocked.");
+  check("notifications never name the product", !/orbit/i.test(`${one.title} ${one.body} ${two.title} ${two.body}`));
 
   console.log("pass-invites");
   const share = nextInvites(null, "t", 0, "share");

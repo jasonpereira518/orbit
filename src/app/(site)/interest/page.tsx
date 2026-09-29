@@ -27,6 +27,7 @@ import {
 import {
   getInterestProof,
   getInviterPlanet,
+  getProgressByShareToken,
   getTicketByShareToken,
   type InterestProof,
 } from "@/lib/interest-list-ticket";
@@ -233,7 +234,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
 
   // The proof line never depends on either token, so it runs alongside the pass.
   const voterId = await readVoterId();
-  const [proof, ticket, showDemo, poll] = await Promise.all([
+  const [proof, ticket, showDemo, poll, friendPlanets] = await Promise.all([
     getInterestProof().catch((err: unknown) => {
       console.error("[interest] proof read failed", err);
       return EMPTY_PROOF;
@@ -250,6 +251,15 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
       console.error("[interest] poll read failed", err);
       return EMPTY_POLL;
     }),
+    // The tracker draws each friend's planet; without them it falls back to plain gold.
+    me
+      ? getProgressByShareToken(me)
+          .then((p) => p?.friendPlanets ?? [])
+          .catch((err: unknown) => {
+            console.error("[interest] friend planets read failed", err);
+            return [];
+          })
+      : Promise.resolve([]),
   ]);
 
   // `?ref=` loses to a pass that actually RESOLVED, not to the mere presence of `?me=`: a
@@ -337,6 +347,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
               token={ticket?.shareToken ?? null}
               referrals={ticket?.referrals ?? 0}
               position={ticket?.position ?? null}
+              friendPlanets={ticket ? friendPlanets : []}
               joinHref="#interest-join"
             />
           </Reveal>
