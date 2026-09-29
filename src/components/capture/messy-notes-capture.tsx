@@ -9,6 +9,10 @@
  * place here and not only in chat: extraction otherwise works out who a note is about from
  * the prose, and a guess is exactly what you do not want for the person whose name you were
  * about to type anyway. A pick skips the guessing — see `resolveMentionsWithPicks`.
+ *
+ * Two or more files at once open the notes sorter first, as the Notes Library tab does.
+ * Sorted into one note, they land in the box exactly as a single file would; sorted into
+ * several, each note is read as its own background job and joins the upload's queue.
  */
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -26,6 +30,11 @@ import {
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { extractLinkedInProfileRefs, isLinkedInOnlyPaste } from "@/lib/linkedin-paste";
 import type { CaptureIngest } from "@/lib/capture/use-capture-ingest";
+import { isIgnorableFile } from "@/lib/capture/file-drop";
+import { useCaptureFanout } from "@/lib/capture/use-capture-fanout";
+import type { PlannedUpload } from "@/lib/capture/bins";
+import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
+import { NotesFanoutList } from "@/components/capture/notes-library-upload";
 import { cn } from "@/lib/utils";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
@@ -41,6 +50,7 @@ export function MessyNotesCapture({
   tabId,
   draftKey,
   acceptsHandoff = false,
+  onQueued,
 }: {
   ingest: CaptureIngest;
   onExtract: () => void;
@@ -52,8 +62,12 @@ export function MessyNotesCapture({
   draftKey?: string | null;
   /** The command palette's "Capture this" text lands here. Off when logging with one person. */
   acceptsHandoff?: boolean;
+  /** The jobs a multi-note sort created, once every note has settled. */
+  onQueued?: (jobIds: string[]) => void;
 }) {
-  const busy = ingest.busy || extracting;
+  const fanout = useCaptureFanout({ onSettled: onQueued });
+  const [incoming, setIncoming] = useState<{ file: File; path: string }[]>([]);
+  const busy = ingest.busy || extracting || fanout.running;
   const { notes, setNotes, mentionPicks, setMentionPicks } = ingest;
   // A paste of nothing but profile URLs is looked up directly, with no model pass — so it
   // has to stay available when there is no AI key, which is exactly when it matters most.
@@ -133,10 +147,32 @@ export function MessyNotesCapture({
   });
 
   async function acceptDropped(files: File[]) {
+    if (files.length > 1) return openSorter(files);
+    await ingestIntoBox(files);
+  }
+
+  /** The single-note path: whatever the files say lands in the box, ready to extract. */
+  async function ingestIntoBox(files: File[]) {
     if (!files.length) return;
     const { pages, raw } = await sortAndNormalizeScanFiles(files);
     if (raw.length) ingest.handleFilesSelected(raw);
     if (pages.length) ingest.ingestScanPages(pages);
+  }
+
+  function openSorter(files: File[]) {
+    const kept = files.filter((f) => !isIgnorableFile(f.name));
+    if (kept.length === 1) return void ingestIntoBox(kept);
+    if (kept.length) setIncoming(kept.map((file) => ({ file, path: "" })));
+  }
+
+  function onSorted(plans: PlannedUpload[], resolve: (fileId: string) => File | undefined) {
+    setIncoming([]);
+    if (plans.length === 1) {
+      const files = plans[0]!.fileIds.map(resolve).filter((f): f is File => Boolean(f));
+      void ingestIntoBox(files);
+      return;
+    }
+    fanout.start(plans, resolve);
   }
 
   return (
@@ -216,6 +252,7 @@ export function MessyNotesCapture({
           disabled={busy}
           onRawFiles={ingest.handleFilesSelected}
           onPages={ingest.ingestScanPages}
+          onMultipleFiles={openSorter}
           onTranscript={(text, sources, jobId) => ingest.onPhoneTranscript(text, sources, jobId ?? null)}
         />
         <div className="flex flex-wrap items-center gap-2">
@@ -244,6 +281,12 @@ export function MessyNotesCapture({
             ? "Reading…"
             : "Extract people"}
       </Button>
+
+      {/* Mounted only while open: closing unmounts it, which is what revokes its previews. */}
+      {incoming.length > 0 && (
+        <NotesSorterDialog incoming={incoming} onCancel={() => setIncoming([])} onConfirm={onSorted} />
+      )}
+      <NotesFanoutList fanout={fanout} />
     </div>
   );
 }

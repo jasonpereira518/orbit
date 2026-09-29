@@ -106,6 +106,7 @@ export function ScanControls({
   disabled = false,
   onRawFiles,
   onPages,
+  onMultipleFiles,
   onTranscript,
   compact = false,
 }: {
@@ -121,6 +122,11 @@ export function ScanControls({
   onRawFiles: (files: File[]) => void;
   /** Images and PDF pages, already downscaled and re-encoded to JPEG. */
   onPages: (pages: ScanPage[]) => void;
+  /**
+   * Two or more files at once, untouched — for a host that sorts them into notes before
+   * anything is read. Absent, they go through `onRawFiles`/`onPages` like a single file.
+   */
+  onMultipleFiles?: (files: File[]) => void;
   /** The phone handoff returns text the server already transcribed, and the job it sits on. */
   onTranscript: (text: string, sources: string[], captureJobId?: string) => void;
 }) {
@@ -132,6 +138,10 @@ export function ScanControls({
   const acceptFiles = useCallback(
     async (files: File[]) => {
       if (!files.length) return;
+      if (onMultipleFiles && files.length > 1) {
+        onMultipleFiles(files);
+        return;
+      }
       setNormalizing(true);
       try {
         const { pages, raw } = await sortAndNormalizeScanFiles(files);
@@ -142,7 +152,7 @@ export function ScanControls({
         setNormalizing(false);
       }
     },
-    [onPages, onRawFiles]
+    [onMultipleFiles, onPages, onRawFiles]
   );
 
   // Paste a screenshot straight in. A screenshot of a conference badge or a LinkedIn

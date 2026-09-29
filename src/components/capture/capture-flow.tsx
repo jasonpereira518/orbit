@@ -129,6 +129,13 @@ export function CaptureFlow({
    * only one job.
    */
   const [queue, setQueue] = useState<CaptureJobView[]>(initialJobs);
+  /** After a sorted multi-note upload settles: pull its jobs into the queue panel. */
+  const refreshQueue = useCallback(() => {
+    void getActiveCaptureJobs()
+      .then(setQueue)
+      .catch(() => null);
+    router.refresh();
+  }, [router]);
   /**
    * ONE upload's jobs, not every job that is still open.
    *
@@ -383,6 +390,7 @@ export function CaptureFlow({
                 tabId={captureTabId("messy")}
                 draftKey={userId ? captureDraftKey(userId, initialContactId) : null}
                 acceptsHandoff={!initialContactId}
+                onQueued={refreshQueue}
                 onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy", mentionPicks: messy.mentionPicks })}
               />
             )}
@@ -435,12 +443,7 @@ export function CaptureFlow({
                 hasApiKey={hasApiKey}
                 panelId={capturePanelId("library")}
                 tabId={captureTabId("library")}
-                onQueued={() => {
-                  void getActiveCaptureJobs()
-                    .then(setQueue)
-                    .catch(() => null);
-                  router.refresh();
-                }}
+                onQueued={refreshQueue}
               />
             )}
             {mode === "structured" && (
