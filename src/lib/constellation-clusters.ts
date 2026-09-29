@@ -84,7 +84,7 @@ function countBy<T>(items: T[], key: (item: T) => string | null) {
 }
 
 /** Most common raw spelling per school group; ties go to the alphabetically first. */
-function schoolDisplayNames(
+export function schoolDisplayNames(
   members: ClusterContact[],
   groupOf: (c: ClusterContact) => string | null
 ) {
@@ -117,29 +117,62 @@ export function buildConstellationClusters(
 ): { clusters: BuiltCluster[]; byContactId: Map<string, ClusterRef> } {
   const byContactId = new Map<string, ClusterRef>();
 
-  // 1–2. Company clusters, and lone members of a family that has one.
-  const companyOf = new Map(contacts.map((c) => [c.id, companyClusterLabel(c.company)]));
+  // 1–2. Company clusters, and lone members of a family that has one. The label and family
+  // lookups are alias-table scans, so each is memoised for the call: at 10k contacts they were
+  // the bulk of the grouping time, and most contacts repeat a small set of companies.
+  const labelCache = new Map<string, string>();
+  const labelOf = (raw: string | null | undefined) => {
+    const key = raw ?? "";
+    let label = labelCache.get(key);
+    if (label === undefined) {
+      label = companyClusterLabel(raw);
+      labelCache.set(key, label);
+    }
+    return label;
+  };
+  const rootCache = new Map<string, string | null>();
+  const rootOf = (company: string) => {
+    let root = rootCache.get(company);
+    if (root === undefined) {
+      root = companyFamilyRoot(company);
+      rootCache.set(company, root);
+    }
+    return root;
+  };
+
+  const companyOf = new Map(contacts.map((c) => [c.id, labelOf(c.company)]));
   const companyCounts = countBy(contacts, (c) => companyOf.get(c.id) || null);
   const familiesWithCluster = new Set<string>();
   for (const [company, count] of companyCounts) {
     if (count < 2) continue;
-    const root = companyFamilyRoot(company);
+    const root = rootOf(company);
     if (root) familiesWithCluster.add(root);
   }
 
   const afterCompany: ClusterContact[] = [];
   for (const c of contacts) {
     const company = companyOf.get(c.id) || "";
-    const root = company ? companyFamilyRoot(company) : null;
-    if (company && ((companyCounts.get(company) ?? 0) >= 2 || (root && familiesWithCluster.has(root)))) {
-      byContactId.set(c.id, companyRef(company));
-    } else {
-      afterCompany.push(c);
-    }
+    // A root only matters to a lone company, and only when some family has a cluster.
+    const inCluster =
+      !!company &&
+      ((companyCounts.get(company) ?? 0) >= 2 ||
+        (familiesWithCluster.size > 0 && familiesWithCluster.has(rootOf(company) ?? "")));
+    if (inCluster) byContactId.set(c.id, companyRef(company));
+    else afterCompany.push(c);
   }
 
-  // 3. Role clusters across companies.
-  const roleOf = new Map(afterCompany.map((c) => [c.id, roleClusterKey(classifyTitle(c.title))]));
+  // 3. Role clusters across companies. Titles repeat heavily, so classify each once.
+  const roleByTitle = new Map<string, RoleClusterKey | null>();
+  const roleOf = new Map<string, RoleClusterKey | null>();
+  for (const c of afterCompany) {
+    const title = trimLabel(c.title);
+    let role = roleByTitle.get(title);
+    if (role === undefined) {
+      role = roleClusterKey(classifyTitle(title));
+      roleByTitle.set(title, role);
+    }
+    roleOf.set(c.id, role);
+  }
   const roleCounts = countBy(afterCompany, (c) => roleOf.get(c.id) ?? null);
   const afterRole: ClusterContact[] = [];
   for (const c of afterCompany) {
@@ -148,7 +181,9 @@ export function buildConstellationClusters(
     else afterRole.push(c);
   }
 
-  // 4. School clusters, spellings grouped; 5. fallbacks.
+  // 4. School clusters, spellings grouped; 5. fallbacks. Acronym uniqueness (MIT vs a second
+  // "MIT") is judged over the people who reach this tier only, which is deterministic; people
+  // a role cluster absorbed do not affect school merges.
   const schoolGroups = schoolGroupKeys(
     afterRole.map((c) => trimLabel(c.school)).filter(Boolean)
   );
