@@ -34,7 +34,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts } from "../src/db/schema";
+import { contacts, userSettings } from "../src/db/schema";
 import { generateApiKey } from "../src/lib/api/keys";
 import { seedDemoWorkspace } from "../src/lib/demo-data/seed";
 import { POST as MCP_POST } from "../src/app/api/mcp/route";
@@ -46,6 +46,7 @@ import {
 } from "../src/app/api/extension/contacts/route";
 import { POST as EXT_INTERACTIONS } from "../src/app/api/extension/interactions/route";
 import { POST as EXT_FOLLOW_UPS } from "../src/app/api/extension/follow-ups/route";
+import { POST as EXT_SIGNALS } from "../src/app/api/extension/signals/route";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
@@ -423,6 +424,32 @@ run(async () => {
       ext(EXT_INTERACTIONS, "POST", "/api/extension/interactions", { contactId: sarah.id, rawNotes: " " })],
     ["ext follow-up", () =>
       ext(EXT_FOLLOW_UPS, "POST", "/api/extension/follow-ups", { contactId: sarah.id, inDays: 5 })],
+    // Saving a LinkedIn post to Radar: refused until the person turns it on in Radar's
+    // settings, then saved once, and a second save of the same post is a duplicate.
+    ["ext save post to radar, capture off (route)", () =>
+      ext(EXT_SIGNALS, "POST", "/api/extension/signals", {
+        contactId: sarah.id,
+        excerpt: "Golden: we just shipped the thing we talked about.",
+        url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      })],
+    ["ext save post to radar (route)", async () => {
+      await (await getDb())
+        .update(userSettings)
+        .set({ radarCaptureLinkedinActivity: 1 })
+        .where(eq(userSettings.userId, USER));
+      return ext(EXT_SIGNALS, "POST", "/api/extension/signals", {
+        contactId: sarah.id,
+        excerpt: "Golden: we just shipped the thing we talked about.",
+        url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      });
+    }],
+    ["ext save post to radar again (route)", () =>
+      ext(EXT_SIGNALS, "POST", "/api/extension/signals", {
+        contactId: sarah.id,
+        excerpt: "Golden: we just shipped the thing we talked about.",
+        url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      })],
+    ["ext me, post saving on", () => ext(EXT_ME, "GET", "/api/extension/me")],
     ["mcp log_interaction", () => tool("log_interaction", { contactId: sarah.id, notes: "Golden MCP note", externalId: "golden-1" })],
     ["mcp add_note", () => tool("add_note", { contactId: sarah.id, note: "Golden add_note", externalId: "golden-2" })],
     ["mcp add_note (repeat)", () => tool("add_note", { contactId: sarah.id, note: "Golden add_note", externalId: "golden-2" })],

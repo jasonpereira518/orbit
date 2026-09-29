@@ -100,6 +100,12 @@ export type PageText = {
   charCount: number;
   /** True when the blob came from the user's selection rather than the page. */
   fromSelection: boolean;
+  /**
+   * On a LinkedIn post page, the post's own text: the blob is the whole update, author
+   * header and reactions included, which is right for parsing and wrong for quoting. Absent
+   * elsewhere, and from older extension builds.
+   */
+  postBody?: string;
 };
 
 export type PageContext = {
@@ -452,6 +458,8 @@ export type MeResponse = {
     hasAiKey: boolean;
     hasApolloKey: boolean;
     aiProvider: string;
+    /** The person let the extension save LinkedIn posts to Radar (Radar's settings). */
+    radarCaptureLinkedinActivity: boolean;
   };
   stats: {
     contactCount: number;
