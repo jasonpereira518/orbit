@@ -251,10 +251,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(recommendations).where(eq(recommendations.userId, userId));
       await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
       await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
-      // What Radar learned from the outside world about these contacts (job changes,
-      // headlines, posts). Also cascades from contacts; deleted here for the same reason.
+      // What Radar learned from the outside world about these contacts (headlines, posts).
+      // Also cascades from contacts; deleted here for the same reason.
       await db.delete(contactSignals).where(eq(contactSignals.userId, userId));
-      // The learned model and the Apollo cursor are derived from the data just deleted.
+      // The learned model is derived from the data just deleted.
       await db
         .update(userSettings)
         .set({
@@ -262,7 +262,6 @@ const STEPS: Record<DataCategory, CategoryStep> = {
           radarNextAt: null,
           radarLeaseUntil: null,
           radarModel: null,
-          radarApolloCursor: null,
         })
         .where(eq(userSettings.userId, userId));
     },
