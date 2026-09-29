@@ -264,6 +264,19 @@ run(async () => {
     check("the account resolves to Max, with the REST API", ent.plan === "max" && ent.canUseApi, ent.plan);
   }
 
+  console.log("\nWhen the founding discount ends");
+  {
+    const terms = { offCents: 200, until: 2_000_000_000 };
+    const early = 1_000_000_000;
+    check("a subscription still carrying its coupon is valued with the discount",
+      billing.foundingOffNow(terms, { discounts: ["di_1"] }, early) === 200);
+    check("once Stripe removes the coupon it is full price, whatever the event's clock says",
+      billing.foundingOffNow(terms, { discounts: [] }, early) === 0);
+    check("a payload without the field falls back to the window",
+      billing.foundingOffNow(terms, {}, early) === 200 && billing.foundingOffNow(terms, {}, terms.until) === 0);
+    check("no founding terms, no discount", billing.foundingOffNow(null, { discounts: ["di_1"] }, early) === 0);
+  }
+
   await db.delete(creditGrants).where(eq(creditGrants.userId, USER));
   await db.delete(billingEvents).where(eq(billingEvents.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));

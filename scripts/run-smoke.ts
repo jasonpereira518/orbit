@@ -457,6 +457,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
+  "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {

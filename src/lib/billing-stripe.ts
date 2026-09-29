@@ -413,6 +413,26 @@ export function foundingTerms(
   return { offCents: Math.round(off), until };
 }
 
+/**
+ * Cents off a subscription's price right now. The subscription's own `discounts` list is the
+ * authority: Stripe empties it when a repeating coupon runs out, and every
+ * `customer.subscription.*` payload carries it (as ids, unexpanded — enough to know one is
+ * there). Only a payload without the field falls back to comparing `atSeconds` with the
+ * window, and that comparison is only as good as the event's clock, which on a Stripe test
+ * clock is wall time, months behind the subscription's.
+ */
+export function foundingOffNow(
+  terms: ReturnType<typeof foundingTerms>,
+  subscription: { discounts?: unknown; discount?: unknown },
+  atSeconds: number
+): number {
+  if (!terms) return 0;
+  if (Array.isArray(subscription.discounts)) {
+    return subscription.discounts.length > 0 || subscription.discount ? terms.offCents : 0;
+  }
+  return foundingOffAt(terms, atSeconds);
+}
+
 /** Cents off at `atSeconds`: the founding discount while its window is open, else 0. */
 export function foundingOffAt(
   terms: ReturnType<typeof foundingTerms>,
@@ -777,13 +797,14 @@ export function decideStripeEvent(
           mirrorStatus = null;
       }
 
-      // List price less the founding discount while its window is open at this event.
+      // List price less the founding discount, while the subscription still carries it.
       const terms = foundingTerms(
         subscription.metadata,
         (subscription as { start_date?: number }).start_date ?? null
       );
       const listCents = shape.monthlyCents ?? MONTHLY_CENTS;
-      const monthlyCents = Math.max(0, listCents - foundingOffAt(terms, Math.floor(eventAt.getTime() / 1000)));
+      const offCents = foundingOffNow(terms, subscription, Math.floor(eventAt.getTime() / 1000));
+      const monthlyCents = Math.max(0, listCents - offCents);
 
       /*
        * A terminal event forces the recurring value to zero rather than re-deriving it.
@@ -837,7 +858,7 @@ export function decideStripeEvent(
                   interval: shape.interval,
                   priceId: shape.priceId,
                   plan,
-                  ...(terms ? { foundingOffCents: foundingOffAt(terms, Math.floor(eventAt.getTime() / 1000)) } : {}),
+                  ...(terms ? { foundingOffCents: offCents } : {}),
                   ...(terminal ? { terminal: true } : {}),
                 },
               },
