@@ -273,7 +273,10 @@ run(async () => {
     await claimRadarLease(USER, NOW);
     const withAi = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
     check("the run writes notes for the top cards", withAi.aiNotes > 0 && withAi.aiNotes <= 5, JSON.stringify(withAi));
-    check("one call per note", sent.length === withAi.aiNotes, `${sent.length} calls`);
+    // When it fails, say what the unexpected calls were: a count alone sent the last
+    // investigation through a whole CI shard to find out.
+    const unexpected = sent.filter((b) => !b.includes("<<<FACTS_")).map((b) => b.slice(0, 600));
+    check("one call per note", sent.length === withAi.aiNotes, `${sent.length} calls${unexpected.length ? `; not notes: ${JSON.stringify(unexpected)}` : ""}`);
     check("the facts reach the model fenced", sent.every((b) => b.includes("<<<FACTS_")));
     check("and no notes do", sent.every((b) => !/Met at|raw_notes/.test(b)));
 
