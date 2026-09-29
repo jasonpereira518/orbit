@@ -33,11 +33,14 @@ const SIZES = {
  * the disc itself (not the canvas) inside the ring, which is what a viewer actually judges
  * "centred" against.
  */
+// Plan colors (pricing v2): the bright metals read on both the light sidebar and the dark
+// one, so Pro and Max use their fixed "night" values; Lifetime's silver is theme-aware,
+// because a pale silver ring would vanish against the light sidebar.
 const PLAN_RING: Record<Plan, string | null> = {
   free: null,
-  orbit: "ring-[2.5px] ring-inset ring-brand-pro",
-  max: "ring-[2.5px] ring-inset ring-[#f2c14e]",
-  lifetime: "ring-[2.5px] ring-inset ring-[#f2c14e]",
+  orbit: "ring-[2.5px] ring-inset ring-night-pro",
+  max: "ring-[2.5px] ring-inset ring-night-max",
+  lifetime: "ring-[2.5px] ring-inset ring-tier-lifetime",
 };
 
 // Transparent breathing room between the mark's edge and the ring stroke, plus the stroke's

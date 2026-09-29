@@ -1,6 +1,6 @@
 import { ArrowUpRight, Rocket, Sparkles } from "lucide-react";
 import { WarpLink } from "@/components/warp/warp-link";
-import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/plan-limits";
+import { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
 
 /**
  * A porthole onto the destination.
@@ -12,19 +12,21 @@ import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/plan-limits";
  * becomes a non-sequitur.
  *
  * Paid plans get a single quiet line instead: they have already bought the
- * thing, and a full-width upsell pointed at someone holding Lifetime is just
- * noise on their own dashboard.
+ * thing, and a full-width upsell pointed at a paying account is just noise on
+ * their own dashboard. That line wears the plan's own color (Pro blue, Max
+ * gold, Lifetime silver).
  */
 export function PlanLaunchCard({ plan }: { plan: Plan }) {
   if (plan !== "free") {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card/80 px-4 py-3 backdrop-blur">
+      <div
+        data-plan={plan}
+        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-tier-border bg-card/80 px-4 py-3 backdrop-blur"
+      >
         <p className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-          <Sparkles className="size-4 shrink-0 text-primary" aria-hidden="true" />
+          <Sparkles className="size-4 shrink-0 text-tier-accent" aria-hidden="true" />
           You&apos;re on{" "}
-          <span className="font-medium text-foreground">
-            {plan === "lifetime" ? "Orbit Lifetime" : "Orbit Pro"}
-          </span>
+          <span className="font-medium text-tier-accent">{PLAN_LABELS[plan]}</span>
         </p>
         <WarpLink
           href="/pricing"
@@ -82,7 +84,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
 
       <div className="relative flex flex-wrap items-center justify-between gap-5">
         <div className="min-w-0 max-w-md space-y-2">
-          <span className="inline-flex items-center gap-2 rounded-full border border-[#f2c14e]/30 bg-[#f2c14e]/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-[#f2c14e]">
+          <span className="inline-flex items-center gap-2 rounded-full border border-night-free/30 bg-night-free/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-night-free">
             <Rocket className="size-3" aria-hidden="true" />
             Free plan
           </span>
@@ -90,8 +92,8 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
             Your first {FREE_CONTACT_LIMIT} contacts are on us.
           </h2>
           <p className="text-sm leading-relaxed text-[#9aada8]">
-            Past that, five dollars a month keeps every contact, follow-up, and
-            warm intro in one place — or pay once and keep it for good.
+            Past that, Orbit Pro keeps every contact, follow-up, and warm intro
+            in one place — with AI included.
           </p>
         </div>
 

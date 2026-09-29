@@ -16,11 +16,11 @@ const COLUMNS: Column[] = ["free", "orbit", "max"];
 const COLUMN_ACCENT: Record<Column, { heading: string; tick: string; tint?: string }> = {
   free: { heading: "text-[#e8f3f1]", tick: "text-[#6f8b84]" },
   orbit: {
-    heading: "text-brand-pro",
-    tick: "text-brand-pro",
-    tint: "bg-brand-pro/5",
+    heading: "text-night-pro",
+    tick: "text-night-pro",
+    tint: "bg-night-pro/5",
   },
-  max: { heading: "text-[#f2c14e]", tick: "text-[#f2c14e]", tint: "bg-[#f2c14e]/5" },
+  max: { heading: "text-night-max", tick: "text-night-max", tint: "bg-night-max/5" },
 };
 
 const hours = (seconds: number) =>

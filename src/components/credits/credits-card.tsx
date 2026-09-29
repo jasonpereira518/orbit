@@ -179,6 +179,8 @@ function UpgradeToMaxButton({ label = "Upgrade to Max" }: { label?: string }) {
     <Button
       size="sm"
       variant="ghost"
+      data-plan="max"
+      className="text-tier-accent hover:bg-tier-accent/10"
       disabled={pending}
       onClick={() =>
         start(async () => {

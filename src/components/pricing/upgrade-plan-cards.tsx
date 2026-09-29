@@ -17,13 +17,13 @@ import { cn } from "@/lib/utils";
  */
 const ACCENT = {
   orbit: {
-    surface: "border-brand-pro/40 bg-[#070b18]/80",
-    tick: "text-brand-pro",
+    surface: "border-night-pro/40 bg-[#070b18]/80",
+    tick: "text-night-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
   },
   max: {
-    surface: "border-[#f2c14e]/40 bg-[#070b18]/80",
-    tick: "text-[#f2c14e]",
+    surface: "border-night-max/40 bg-[#070b18]/80",
+    tick: "text-night-max",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
   },
 } as const;
@@ -92,7 +92,7 @@ function PlanCard({
 function CardNotice({ children }: { children: ReactNode }) {
   return (
     <p className="flex items-center gap-2.5 rounded-xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/50 p-4 text-sm text-[#9aada8]">
-      <Check className="size-4 shrink-0 text-[#f2c14e]" aria-hidden="true" />
+      <Check className="size-4 shrink-0 text-night-max" aria-hidden="true" />
       {children}
     </p>
   );

@@ -123,25 +123,26 @@ const TIER_ACCENT: Record<
     raised: false,
   },
   orbit: {
-    // `--brand-pro` is the Orbit Pro tier's own blue (see plan-badge.tsx), fixed
+    // `night-pro` is Orbit Pro's blue in its fixed, always-dark form, fixed
     // rather than theme-aware because this card only ever sits on the starfield.
-    surface: "border-brand-pro/40 bg-[#070b18]/80 hover:border-brand-pro/75",
-    tick: "text-brand-pro",
+    surface: "border-night-pro/40 bg-[#070b18]/80 hover:border-night-pro/75",
+    tick: "text-night-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
     badge: null,
     raised: true,
   },
   max: {
-    surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
-    tick: "text-[#f2c14e]",
+    surface: "border-night-max/40 bg-[#070b18]/80 hover:border-night-max/75",
+    tick: "text-night-max",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
     badge: null,
     raised: false,
   },
+  // Not on sale (admin-granted), so never rendered here; kept so the map covers every plan.
   lifetime: {
-    surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
-    tick: "text-[#f2c14e]",
-    glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
+    surface: "border-night-lifetime/40 bg-[#070b18]/80 hover:border-night-lifetime/75",
+    tick: "text-night-lifetime",
+    glow: "radial-gradient(circle, rgba(201,209,219,0.14), transparent 68%)",
     badge: null,
     raised: false,
   },

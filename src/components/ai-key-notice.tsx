@@ -78,7 +78,8 @@ export function AiKeyNotice({
           {plan === "orbit" && (
             <Link
               href="/settings#settings-plan"
-              className="inline-flex h-7 items-center rounded-md border border-border px-2.5 text-xs font-medium text-foreground hover:bg-muted"
+              data-plan="max"
+              className="inline-flex h-7 items-center rounded-md border border-tier-border bg-tier-surface px-2.5 text-xs font-medium text-tier-accent hover:bg-tier-accent/15"
             >
               Upgrade to Max
             </Link>
