@@ -14,7 +14,7 @@ import {
 import { MoneyTabs } from "@/components/admin/money-tabs";
 import { formatCents } from "@/lib/format-money";
 import { ADMIN_AGGREGATES_TTL_MS, loadAdminUserRows } from "@/lib/admin-metrics";
-import { MONTHLY_CENTS } from "@/lib/billing-events";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { countLifetimePurchases } from "@/lib/user-settings";
 import { compedForegoneCents, mrrMovementSeries } from "@/lib/money-metrics";
 
@@ -37,7 +37,7 @@ export default async function MoneyMovementPage() {
   const [movements, lifetimeSold, comps, rows] = await Promise.all([
     mrrMovementSeries("month", 6),
     countLifetimePurchases(),
-    compedForegoneCents(MONTHLY_CENTS),
+    compedForegoneCents(),
     // Only user_settings columns are read here, and those are always live.
     loadAdminUserRows({ aggregatesMaxAgeMs: ADMIN_AGGREGATES_TTL_MS }),
   ]);
@@ -154,7 +154,9 @@ export default async function MoneyMovementPage() {
                     <RelativeTime date={row.compedAt} />
                   </Td>
                   <Td numeric>
-                    {row.plan === "orbit" ? `${formatCents(MONTHLY_CENTS)}/mo` : "—"}
+                    {row.plan === "orbit" || row.plan === "max"
+                      ? `${formatCents(PLAN_CONFIG[row.plan].monthlyPriceCents ?? 0)}/mo`
+                      : "—"}
                   </Td>
                 </tr>
               ))}

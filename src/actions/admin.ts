@@ -31,6 +31,7 @@ import {
   type ConstellationConfig,
 } from "@/lib/constellation-config";
 import { setStealth } from "@/lib/site-access";
+import { setManagedAiPaused, type ManagedAiSwitchState } from "@/lib/managed-ai-switch";
 import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   inviteToSite,
@@ -1045,4 +1046,18 @@ export async function revokeSiteInviteAction(input: {
   const { email } = await revokeSiteInvite({ adminUserId, invitationId: input.invitationId });
   revalidateAccess();
   return { ok: true, email };
+}
+
+/**
+ * Pause or resume included AI on Pro and Max. Audited; takes effect on this instance at once
+ * and on every other within 30 seconds. Free and Lifetime are never affected.
+ */
+export async function setManagedAiPausedAction(input: {
+  paused: boolean;
+  reason: string;
+}): Promise<ManagedAiSwitchState> {
+  const adminUserId = await requireAdminUserId();
+  const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
+  revalidatePath("/admin/billing");
+  return state;
 }

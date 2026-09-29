@@ -306,7 +306,11 @@ export async function getCreditBalance(
   ]);
   const inPeriod = (g: (typeof grants)[number]) =>
     g.periodStart !== null && g.periodEnd !== null && g.periodStart <= now && g.periodEnd > now;
-  const allowanceGrant = grants.find((g) => g.kind === "allowance" && inPeriod(g)) ?? null;
+  // The newest covering grant: the one `ensureAllowance` adopts, should an overlap ever exist.
+  const allowanceGrant =
+    grants
+      .filter((g) => g.kind === "allowance" && inPeriod(g))
+      .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0] ?? null;
   const packs = grants.filter((g) => g.kind === "pack");
   const packRemaining = packs.reduce((sum, g) => sum + g.microsRemaining, 0);
   const adjustments = grants.filter((g) => g.kind === "adjustment").reduce((sum, g) => sum + g.microsRemaining, 0);

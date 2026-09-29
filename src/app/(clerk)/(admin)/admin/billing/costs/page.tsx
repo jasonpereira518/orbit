@@ -10,7 +10,6 @@ import { MoneyTabs } from "@/components/admin/money-tabs";
 import { RankedBars, RevenueCostChart } from "@/components/admin/charts";
 import { CostEntryForm } from "@/components/admin/money/cost-forms";
 import { formatCents, formatMicros } from "@/lib/format-money";
-import { MONTHLY_CENTS } from "@/lib/billing-events";
 import { breakEvenSubscribers, infraBreakdown, monthStart } from "@/lib/infra-costs";
 import {
   acquisitionByChannel,
@@ -59,11 +58,12 @@ export default async function MoneyCostsPage() {
   const grossCents = thisMonth?.cashInCents ?? 0;
   const feeCents = estimatedStripeFeesCents(grossCents, grossCents > 0 ? 1 : 0);
 
-  // Contribution per subscriber is revenue less the variable cost of serving them. Orbit
-  // has essentially none — BYOK means the AI bill is the user's — so it is the price less
-  // Stripe's cut, and the fixed infrastructure is what has to be cleared.
+  // Contribution per subscriber is revenue less the variable cost of serving them: Pro's
+  // list price, less Stripe's cut, less the whole included-AI allowance (200 credits = $2).
+  // Assuming every credit is spent is the ceiling, so break-even here is never flattering.
+  const proCents = PLAN_CONFIG.orbit.monthlyPriceCents ?? 0;
   const contributionPerSubscriberCents =
-    MONTHLY_CENTS - Math.round(MONTHLY_CENTS * 0.029 + 30);
+    proCents - Math.round(proCents * 0.029 + 30) - (PLAN_CONFIG.orbit.monthlyCredits ?? 0);
   const breakEven = breakEvenSubscribers(
     fixedMonthlyCents,
     contributionPerSubscriberCents
