@@ -3,9 +3,9 @@
 # Vercel Hobby runs crons at most once a day, so this workflow drives everything that needs
 # to happen more often: the known-condition ops sweep and the webhook drain (every ten
 # minutes), the process-stalled job (hourly, so a lost import continuation stalls for an
-# hour, not a day), the connector sync (every fifteen minutes) and the job-feed sweep
-# (hourly). vercel.json schedules nothing; when Vercel Pro lands, move them all there and
-# delete them here in one change.
+# hour, not a day), the connector sync (every fifteen minutes), the job-feed sweep
+# (hourly) and the work-history sweep (hourly). vercel.json schedules nothing; when Vercel
+# Pro lands, move them all there and delete them here in one change.
 # It also tells the ops sweep where `main` is, so production pinned to an old deploy by a
 # failed build shows up as `deploy.drift`.
 #
@@ -34,6 +34,8 @@ on:
     # Offset from the :07 import backstop so the two long-running hourly jobs are never in
     # flight together.
     - cron: "23 * * * *"
+    # The work-history sweep: offset from :07 and :23 so no two long hourly jobs overlap.
+    - cron: "37 * * * *"
     # Once a day: the Deepgram usage reconciliation. An arbitrary quiet hour, offset from
     # the hourly jobs above so it never runs alongside them.
     - cron: "41 5 * * *"
@@ -171,6 +173,20 @@ jobs:
           curl -sS --fail-with-body --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/jobs/feed/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Contacts' work history, re-checked by web search on each account's own AI key when
+      # due (inner orbit monthly, the long tail twice a year, staggered), logging job moves.
+      # Hourly and on its own line for the same reason as the feed above. 300s to match the
+      # route; it stops starting checks at 150s and hands the rest to the next run.
+      - name: Run the work-history sweep (hourly)
+        if: github.event.schedule == '37 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/work-history/sweep"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

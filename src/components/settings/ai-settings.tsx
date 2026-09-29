@@ -6,7 +6,9 @@ import {
   clearApiKey,
   getSettings,
   saveAiSettings,
+  saveWorkHistoryAutoEnabled,
 } from "@/actions/settings";
+import { cn } from "@/lib/utils";
 import {
   AI_PROVIDERS,
   SELECTABLE_AI_PROVIDERS,
@@ -194,6 +196,53 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           </button>
         </p>
       ) : null}
+
+      {/* The background half of work history. LinkedIn pulls and the profile's own button
+          search regardless; this only governs the unattended re-checks, because they spend
+          this account's key without anyone clicking. */}
+      <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 p-3">
+        <div className="space-y-0.5">
+          <p id="work-history-auto-label" className="text-sm font-medium text-ink">
+            Keep work history current
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Re-checks contacts&rsquo; jobs with a web search on your AI key — closest people
+            monthly, everyone else less often, at most 20 lookups a day — and notes when
+            someone changes jobs.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={settings.workHistoryAutoEnabled}
+          aria-labelledby="work-history-auto-label"
+          disabled={pending}
+          onClick={() => {
+            const next = !settings.workHistoryAutoEnabled;
+            setSettings({ ...settings, workHistoryAutoEnabled: next });
+            start(async () => {
+              try {
+                await saveWorkHistoryAutoEnabled(next);
+              } catch (err) {
+                setSettings({ ...settings, workHistoryAutoEnabled: !next });
+                toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+              }
+            });
+          }}
+          className={cn(
+            "tap-target relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
+            settings.workHistoryAutoEnabled ? "bg-primary" : "bg-muted-foreground/30"
+          )}
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform duration-fast ease-house",
+              settings.workHistoryAutoEnabled ? "translate-x-[1.125rem]" : "translate-x-0.5"
+            )}
+          />
+        </button>
+      </div>
 
       <Disclosure label="Advanced">
         <p className="text-sm text-muted-foreground">

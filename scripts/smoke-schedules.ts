@@ -29,6 +29,12 @@ check("process-stalled is called from exactly one step",
   (ops.match(/\/api\/imports\/process-stalled/g) ?? []).length === 1);
 check("that step is gated on the hourly schedule",
   /if: github\.event\.schedule == '7 \* \* \* \*'[\s\S]{0,400}\/api\/imports\/process-stalled/.test(ops));
+// The work-history sweep spends people's own AI keys: exactly one caller, on its own line.
+check("the work-history sweep is called from exactly one step",
+  (ops.match(/\/api\/work-history\/sweep/g) ?? []).length === 1);
+check("that step is gated on its own :37 schedule",
+  ops.includes(`- cron: "37 * * * *"`) &&
+    /if: github\.event\.schedule == '37 \* \* \* \*'[\s\S]{0,400}\/api\/work-history\/sweep/.test(ops));
 check("the route no longer says it runs once a day", !/once\/day|Runs once/i.test(route));
 check("the runbook carries the 60-day re-enable steps",
   runbook.includes("gh workflow enable ops.yml") && runbook.includes("disabled_inactivity"));

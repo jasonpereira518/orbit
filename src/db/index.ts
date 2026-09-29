@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   terms_accepted_at timestamptz,
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
+  work_history_auto_enabled integer NOT NULL DEFAULT 1,
   timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
@@ -147,6 +148,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   ai_summary text,
   notes text,
   embedding_stale_at timestamptz,
+  work_history_due_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -495,6 +497,21 @@ CREATE TABLE IF NOT EXISTS contact_experiences (
   sort_index integer NOT NULL DEFAULT 0,
   source text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_career_moves (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  from_org text,
+  from_title text,
+  to_org text,
+  to_title text,
+  started_year integer,
+  started_month integer,
+  source text NOT NULL,
+  dedupe_key text NOT NULL,
+  detected_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS calendar_subscriptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2226,13 +2243,35 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // every local and remote ref on Sep 27 2026: 128 is the highest claimed anywhere, so 129
 // is the next free integer.
 //
-// 130 = pricing v2: credit_grants, credit_accounts, credit_holds and plan_meter_usage (managed-AI
+// 132 = capture_jobs.source_file_hashes (text[], GIN-indexed): the SHA-256 of every original
+// file a capture was read from, so the same file dropped again is flagged "Already captured"
+// instead of being read and billed twice. In SCALE_DDL, which both engines run. NOT 130 or
+// 131: scanned every local and remote ref and every worktree's working src/db/index.ts on
+// Sep 29 2026 — every ref is at 129, but the orbit-pricing-plans worktree claims 130 and
+// the linkedin-work-history worktree claims 131, so 132 is the next free integer.
+//
+// 133 = contact_career_moves (the job-movement log — not "contact_job_changes", which open
+// PR #187 already created with another shape on the shared preview database),
+// contacts.work_history_due_at (the
+// staggered re-check schedule) and user_settings.work_history_auto_enabled. This branch
+// first claimed 131, but main moved to 132 meanwhile; a database already stamped 132 would
+// treat 131 as current and never add these, so it takes a new number. Scanned every local
+// and remote ref and every worktree's working src/db/index.ts on Sep 29 2026: 132 is the
+// highest claimed anywhere, so 133 is the next free integer.
+// 130 = pricing v2 as first claimed (never on main; main skipped 130 and 131 for it): credit_grants, credit_accounts, credit_holds and plan_meter_usage (managed-AI
 // credits and the monthly Apollo enrichment meter); user_settings.subscription_period_start,
 // founding_eligible/_redeemed_at/_window_ends_at/_subscription_id, ai_key_preference and
 // max_nudge_seen_at; gate_events.unlock_plan; site_settings.managed_ai_paused. Scanned every
 // local and remote ref and all 48 worktrees' working src/db/index.ts on Sep 29 2026: 129 is
 // the highest claimed anywhere, so 130 is the next free integer.
-export const SCHEMA_VERSION = 130;
+//
+// 137 = merging main at 133 into pricing v2 (130). Both sides' DDL and alters are kept; only the
+// version is new, so a database stamped 130 from this branch's previews still re-sweeps for
+// main's 132/133 columns, and main's databases pick up the pricing tables. NOT 134–136:
+// scanned every local and remote ref and every worktree's working src/db/index.ts on Sep 29
+// 2026 — waitlist-pass-news claims 134 and inspiring-fermi-npcgb7 claims 136, so 137 is the
+// next free integer.
+export const SCHEMA_VERSION = 137;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2303,6 +2342,11 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS mention_picks jsonb NOT NULL DEFAULT '[]'`,
   `CREATE INDEX IF NOT EXISTS capture_jobs_user_batch_idx ON capture_jobs(user_id, batch_group_id)`,
+  // v132: what each capture was read from, by content hash, so a file dropped a second time
+  // is recognised (`findCapturedFiles`). GIN because the one question asked of it is an
+  // `&&` overlap against a handful of hashes, across every job the user has.
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_file_hashes text[] NOT NULL DEFAULT '{}'`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_source_file_hashes_idx ON capture_jobs USING gin (source_file_hashes)`,
 
   // --- Generated columns -----------------------------------------------------------
   //
@@ -2559,6 +2603,11 @@ export const SCALE_DDL: string[] = [
   // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
+  // The job-movement log. The unique key makes re-detecting the same move a no-op.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_career_moves_dedupe_uidx
+     ON contact_career_moves(user_id, contact_id, dedupe_key)`,
+  `CREATE INDEX IF NOT EXISTS contact_career_moves_contact_idx
+     ON contact_career_moves(user_id, contact_id, detected_at)`,
 
   // --- Duplicate prevention --------------------------------------------------------
   //
@@ -3244,6 +3293,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // unconstrained — which matches the writer, since `upsertContactEmbedding` skips its
   // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
+  await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
 
   try {
     await client.exec(
@@ -4027,6 +4078,11 @@ const alters = [
   // Schema v117: learned brand colors for companies and schools outside the curated table.
   `CREATE TABLE IF NOT EXISTS org_brand_colors (name_key text NOT NULL, kind text NOT NULL, name text NOT NULL, hex text, domain text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,
+  // Schema v133: the staggered work-history re-check schedule and its per-account switch.
+  // NULL due = never checked = due now; the sweep orders NULLs first, closest people first.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_due_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS contacts_work_history_due_idx ON contacts(user_id, work_history_due_at) WHERE linkedin_url IS NOT NULL`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS work_history_auto_enabled integer NOT NULL DEFAULT 1`,
 ];
 
 /**

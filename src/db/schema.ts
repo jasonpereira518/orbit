@@ -429,6 +429,13 @@ export const userSettings = pgTable("user_settings", {
    */
   timelineBackfillEnabled: integer("timeline_backfill_enabled").default(1).notNull(),
   /**
+   * Whether the hourly sweep keeps this account's contacts' work history current with web
+   * searches on their own AI key (`/api/work-history/sweep`). Only the background sweep:
+   * LinkedIn pulls and the profile's "Find work history" button run regardless. Integer
+   * 0/1, not boolean, per this table's convention (see `timelineBackfillEnabled`).
+   */
+  workHistoryAutoEnabled: integer("work_history_auto_enabled").default(1).notNull(),
+  /**
    * One-shot marker: has this row already been force-flipped to
    * `timeline_backfill_enabled = 1` by the v108 migration? Exists only so that migration's
    * `UPDATE` runs exactly once per row rather than every time `alters` re-runs (every future
@@ -534,6 +541,14 @@ export const contacts = pgTable(
      * skips a contact whose last attempt is inside AVATAR_RECHECK_DAYS.
      */
     profileImageCheckedAt: timestamp("profile_image_checked_at"),
+    /**
+     * When this contact's work history is next due a web-search re-check. NULL = never
+     * checked, which the sweep treats as due now. Also the sweep's lease: a claim pushes it
+     * ten minutes out, so an abandoned claim comes back on its own. Set after every
+     * research outcome by `researchContactWorkHistory` (lib/work-history-research.ts), on a
+     * closeness-tiered, jittered interval — see `nextWorkHistoryDue`.
+     */
+    workHistoryDueAt: timestamp("work_history_due_at", { withTimezone: true }),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —
@@ -1474,8 +1489,11 @@ export const contactBriefs = pgTable("contact_briefs", {
 export type ContactExperienceKind = "role" | "education";
 /**
  * Where a stored profile came from. Drives precedence in `saveContactProfile`: an
- * extension capture is a page the user actually looked at and always outranks Apollo,
- * which is a third-party inference.
+ * extension capture is a page the user actually looked at and always outranks the two
+ * inferences — `"web"`, a work history the person's own AI model assembled from a web
+ * search (`lib/work-history-research.ts`, the producer every LinkedIn pull uses), and
+ * `"apollo"`, a third-party dataset that no longer has a producer but whose stored rows
+ * remain. The inferences replace each other; neither replaces an extension capture.
  *
  * `"extension"` currently has NO producer — the browser capture path was removed before
  * merge because its DOM readers had never run against a real LinkedIn page. The value and
@@ -1483,7 +1501,7 @@ export type ContactExperienceKind = "role" | "education";
  * `scripts/smoke-contact-profile.ts`, so restoring that path is additive rather than
  * another change to the stored shape.
  */
-export type ContactProfileSource = "extension" | "apollo";
+export type ContactProfileSource = "extension" | "web" | "apollo";
 
 export type ProfileSkill = { name: string };
 export type ProfileCertification = { name: string; issuer: string | null; year: number | null };
@@ -1564,6 +1582,47 @@ export const contactExperiences = pgTable(
   (t) => [
     index("contact_experiences_contact_idx").on(t.userId, t.contactId, t.sortIndex),
     index("contact_experiences_org_idx").on(t.userId, t.organizationNormalized),
+  ]
+);
+
+export type ContactJobChangeKind = "joined" | "left" | "title_change";
+
+/**
+ * The durable log of a contact's job moves — "left Stripe, joined Ramp as Staff PM".
+ *
+ * `contact_experiences` is replaced wholesale on every capture, so it only ever holds the
+ * latest snapshot; this table is what remembers the transitions between snapshots. Rows
+ * are written by `recordJobChanges` (lib/job-changes.ts) and never rewritten. The unique
+ * `dedupe_key` makes re-detecting the same move a no-op.
+ *
+ * NOT named `contact_job_changes`: open PR #187 (sub-agent-testing-feedback, schema v66)
+ * defines a table by that name with a different shape, and its preview build already
+ * created it on the shared preview database — where `CREATE TABLE IF NOT EXISTS` then
+ * silently kept the other shape and this table's indexes failed the migration. The same
+ * collision would reach production if both merged.
+ */
+export const contactCareerMoves = pgTable(
+  "contact_career_moves",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .references(() => contacts.id, { onDelete: "cascade" })
+      .notNull(),
+    kind: text("kind").$type<ContactJobChangeKind>().notNull(),
+    fromOrg: text("from_org"),
+    fromTitle: text("from_title"),
+    toOrg: text("to_org"),
+    toTitle: text("to_title"),
+    startedYear: integer("started_year"),
+    startedMonth: integer("started_month"),
+    source: text("source").$type<ContactProfileSource>().notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("contact_career_moves_dedupe_uidx").on(t.userId, t.contactId, t.dedupeKey),
+    index("contact_career_moves_contact_idx").on(t.userId, t.contactId, t.detectedAt),
   ]
 );
 
@@ -3171,6 +3230,17 @@ export const captureJobs = pgTable(
     mentionPicks: jsonb("mention_picks").$type<MentionPick[]>().default([]).notNull(),
     /** `capture_photos` ids stored at upload, attached to the batch when the job saves. */
     photoIds: jsonb("photo_ids").$type<string[]>().default([]).notNull(),
+    /**
+     * SHA-256 (hex) of each ORIGINAL file this job was read from, hashed in the browser
+     * before any preparation (`src/lib/capture/file-hash.ts`). Appended per upload part.
+     *
+     * What lets a file dropped again be recognised as already captured
+     * (`findCapturedFiles`) instead of being read, billed and filed twice. A text[] with a
+     * GIN index rather than a side table because the only question ever asked of it is "do
+     * any of these hashes appear in any of this user's jobs" — an `&&` overlap, which GIN
+     * answers from the index.
+     */
+    sourceFileHashes: text("source_file_hashes").array().default(sql`'{}'`).notNull(),
     transcriptionEngine: text("transcription_engine"),
     /** The assembled corpus the model read, and its dedupe hash. Written by the runner only. */
     sourceText: text("source_text"),
@@ -3191,6 +3261,7 @@ export const captureJobs = pgTable(
     index("capture_jobs_user_status_idx").on(t.userId, t.status, t.updatedAt),
     index("capture_jobs_stall_idx").on(t.status, t.updatedAt),
     index("capture_jobs_user_batch_idx").on(t.userId, t.batchGroupId),
+    index("capture_jobs_source_file_hashes_idx").using("gin", t.sourceFileHashes),
   ]
 );
 

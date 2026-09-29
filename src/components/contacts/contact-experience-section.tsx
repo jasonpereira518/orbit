@@ -2,12 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { format } from "date-fns";
-import { Building2, GraduationCap, Sparkles } from "lucide-react";
+import { ArrowRightLeft, Building2, GraduationCap, Sparkles } from "lucide-react";
 import {
   formatExperienceDates,
+  jobChangeSentence,
   type ExperienceEntry,
 } from "@/lib/contact-profile-format";
-import { fillContactProfileFromApollo } from "@/actions/contact-profile";
+import { findContactWorkHistory } from "@/actions/contact-profile";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ExpandableText } from "@/components/ui/expandable-text";
@@ -30,7 +31,7 @@ export type ExperienceSectionProps = {
   contactId: string;
   /** Null when nothing has been captured yet — the empty state is the entry point. */
   profile: {
-    source: "extension" | "apollo";
+    source: "extension" | "web" | "apollo";
     capturedAt: string;
     warnings: string[];
     headline: string | null;
@@ -43,8 +44,76 @@ export type ExperienceSectionProps = {
     experiences: ProfileExperienceEntry[];
   } | null;
   linkedinUrl: string | null;
-  canUseApollo: boolean;
+  /** Work history is found by a web search on the person's own AI key. */
+  canSearchWeb: boolean;
+  /** Logged job moves, newest first — survives every history refresh. */
+  moves: Array<{
+    id: string;
+    kind: "joined" | "left" | "title_change";
+    fromOrg: string | null;
+    fromTitle: string | null;
+    toOrg: string | null;
+    toTitle: string | null;
+    detectedAt: string;
+  }>;
+  /**
+   * When the background check looks at this contact again. Null unless it is a real date
+   * ahead — the loader drops a lease or an overdue check (`getWorkHistoryTracking`).
+   */
+  nextCheckAt: string | null;
 };
+
+/** What to say when a search came back with nothing to store. */
+function searchFailureCopy(outcome: string): string {
+  switch (outcome) {
+    case "unsure":
+      return "Found pages that might be someone else with this name, so nothing was saved.";
+    case "not_found":
+      return "Couldn’t find their work history on the web.";
+    case "no_anchor":
+      return "Add a LinkedIn URL to this contact first.";
+    case "no_ai":
+      return "Add an AI key in Settings to search the web for this.";
+    case "rate_limited":
+      return "That’s today’s work-history searches — try again tomorrow.";
+    case "outranked":
+      return "This profile came from LinkedIn directly and is kept as is.";
+    default:
+      return "Couldn’t search for their work history — try again?";
+  }
+}
+
+function FindHistoryButton({
+  contactId,
+  label,
+}: {
+  contactId: string;
+  label: string;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="space-y-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={pending}
+        onClick={() => {
+          setError(null);
+          startTransition(async () => {
+            const { outcome } = await findContactWorkHistory(contactId);
+            if (outcome !== "saved") setError(searchFailureCopy(outcome));
+          });
+        }}
+      >
+        <Sparkles className="size-3.5" aria-hidden />
+        {pending ? "Searching the web…" : label}
+      </Button>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </div>
+  );
+}
 
 function ChipRow({ label, items }: { label: string; items: string[] }) {
   if (!items.length) return null;
@@ -93,10 +162,10 @@ export function ContactExperienceSection({
   contactId,
   profile,
   linkedinUrl,
-  canUseApollo,
+  canSearchWeb,
+  moves,
+  nextCheckAt,
 }: ExperienceSectionProps) {
-  const [pending, startTransition] = useTransition();
-  const [fillError, setFillError] = useState<string | null>(null);
 
   // --- empty state: this section is the feature's entry point, not a blank card ---
   if (!profile) {
@@ -115,55 +184,24 @@ export function ContactExperienceSection({
               Add a LinkedIn URL to this contact to fill their profile.
             </p>
           )}
-          {linkedinUrl && canUseApollo && (
+          {linkedinUrl && canSearchWeb && (
             <div className="pt-1">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => {
-                  setFillError(null);
-                  startTransition(async () => {
-                    const result = await fillContactProfileFromApollo(contactId);
-                    if (!result.filled) {
-                      // "no_match" conflates two cases the action cannot tell apart:
-                      // Apollo found nobody, or found them but has no employment
-                      // history on file. Naming a specific cause here would claim
-                      // certainty the action doesn't have, so the copy stays true
-                      // of both.
-                      setFillError(
-                        result.reason === "no_match"
-                          ? "Apollo has no usable employment history for them."
-                          : result.reason === "no_url"
-                            ? "Add a LinkedIn URL to this contact first."
-                            : "Couldn't fill this profile."
-                      );
-                    }
-                  });
-                }}
-              >
-                <Sparkles className="size-3.5" aria-hidden />
-                {pending ? "Filling…" : "Fill from Apollo"}
-              </Button>
+              <FindHistoryButton contactId={contactId} label="Find work history" />
             </div>
           )}
-          {/* Honest rather than silent: without this, a contact with no Apollo key
-              configured just looks like Apollo isn't an option here at all. */}
-          {linkedinUrl && !canUseApollo && (
+          {/* Honest rather than silent: without this, a contact with no AI key configured
+              just looks like there is no way to fill this in. */}
+          {linkedinUrl && !canSearchWeb && (
             <p className="text-sm text-muted-foreground">
-              Add an Apollo API key in{" "}
+              Add an AI key in{" "}
               <a
                 href="/settings"
                 className="font-medium text-ink underline-offset-2 hover:underline"
               >
                 Settings
               </a>{" "}
-              to fill this in from Apollo.
+              to find their work history with a web search.
             </p>
-          )}
-          {fillError && (
-            <p className="text-sm text-destructive">{fillError}</p>
           )}
         </CardContent>
       </Card>
@@ -186,6 +224,27 @@ export function ContactExperienceSection({
           <p className="text-sm font-medium leading-snug text-ink">{profile.headline}</p>
         )}
         {profile.about && <ExpandableText text={profile.about} lines={4} />}
+
+        {moves.length > 0 && (
+          <div>
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <ArrowRightLeft className="size-3.5" aria-hidden /> Career moves
+            </p>
+            <ul>
+              {moves.map((move) => (
+                <li
+                  key={move.id}
+                  className="border-b border-border/50 py-2.5 last:border-b-0 last:pb-0"
+                >
+                  <p className="text-sm font-medium text-ink">{jobChangeSentence(move)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Noticed {format(new Date(move.detectedAt), "MMM yyyy")}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {roles.length > 0 && (
           <div>
@@ -221,16 +280,24 @@ export function ContactExperienceSection({
         </div>
 
         {/*
-          Provenance, stated plainly. An Apollo profile has no About and no
+          Provenance, stated plainly. An inferred profile has no About and no
           skills, and without this line it reads as a person who wrote
-          nothing about themselves.
+          nothing about themselves — or as their LinkedIn page, which it is not.
         */}
-        <p className="border-t border-border/50 pt-3 text-xs text-muted-foreground">
-          {profile.source === "extension"
-            ? `From LinkedIn · captured ${format(new Date(profile.capturedAt), "MMM d, yyyy")}`
-            : "From Apollo, not their LinkedIn page directly"}
-          {profile.warnings.length > 0 && " · This capture may be incomplete."}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-3">
+          <p className="text-xs text-muted-foreground">
+            {profile.source === "extension"
+              ? `From LinkedIn · captured ${format(new Date(profile.capturedAt), "MMM d, yyyy")}`
+              : profile.source === "web"
+                ? `Found by web search · checked ${format(new Date(profile.capturedAt), "MMM d, yyyy")} · may be incomplete`
+                : "From Apollo, not their LinkedIn page directly"}
+            {nextCheckAt && ` · next check ~${format(new Date(nextCheckAt), "MMM yyyy")}`}
+            {profile.warnings.length > 0 && " · This capture may be incomplete."}
+          </p>
+          {profile.source !== "extension" && linkedinUrl && canSearchWeb && (
+            <FindHistoryButton contactId={contactId} label="Search again" />
+          )}
+        </div>
       </CardContent>
     </Card>
   );

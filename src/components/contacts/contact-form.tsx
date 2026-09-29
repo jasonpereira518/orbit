@@ -11,6 +11,7 @@ import {
   type ContactFieldSuggestions,
   type ContactInput,
 } from "@/actions/contacts";
+import { queueContactWorkHistory } from "@/actions/contact-profile";
 import { MET_CONTEXTS, MET_CONTEXT_LABELS, type MetContext } from "@/lib/met-context";
 import { SuggestInput } from "@/components/contacts/suggest-input";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,9 @@ export function ContactForm({
   const [pending, start] = useTransition();
   const [lookingUp, setLookingUp] = useState(false);
   const lastLookupUrl = useRef<string>("");
+  // The LinkedIn URL the contact had when the form opened, so a save only searches for work
+  // history when the profile is new or changed — not on every edit of an unrelated field.
+  const initialLinkedInUrl = useRef((initial?.linkedinUrl || "").trim());
   const [suggestions, setSuggestions] =
     useState<ContactFieldSuggestions>(EMPTY_SUGGESTIONS);
   const [form, setForm] = useState({
@@ -146,6 +150,18 @@ export function ContactForm({
       }
       return next;
     });
+  }
+
+  /**
+   * A saved LinkedIn URL is a LinkedIn pull: queue a web search for their work history.
+   * Returns at once; the history lands on the profile when the search finishes.
+   * Best-effort — the contact itself is already saved.
+   */
+  async function queueWorkHistory(savedId: string, linkedinUrl: string | undefined) {
+    const url = linkedinUrl?.trim();
+    if (!url || url === initialLinkedInUrl.current) return;
+    initialLinkedInUrl.current = url;
+    await queueContactWorkHistory(savedId).catch(() => null);
   }
 
   async function autofillFromLinkedIn(url: string) {
@@ -241,11 +257,13 @@ export function ContactForm({
             };
             if (contactId) {
               await updateContact(contactId, payload);
+              await queueWorkHistory(contactId, payload.linkedinUrl);
               toast.success("Contact updated");
               onSuccess?.({ id: contactId });
               if (redirectOnSuccess) router.push(`/contacts/${contactId}`);
             } else {
               const c = await createContact(payload);
+              await queueWorkHistory(c.id, payload.linkedinUrl);
               toast.success("Added to your orbit");
               onSuccess?.({ id: c.id });
               if (redirectOnSuccess) router.push(`/contacts/${c.id}`);

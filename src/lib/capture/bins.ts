@@ -21,6 +21,14 @@
  * start, or dropping them — would be a regression dressed up as validation. `planUploads`
  * is where that is decided, and it is the only place that gets to decide it.
  *
+ * ## Excluded is not removed
+ *
+ * A file can be staged and still not be read: unticked in the dialog, or already captured
+ * once before (see `StagedFile.hash`). It stays in its place — tray or bin — so ticking it
+ * again puts it back exactly where it was, and the invariant above still counts it.
+ * `planUploads` is what skips it, and a bin whose every file is excluded produces no note
+ * at all, for the same reason an empty bin does not.
+ *
  * Pure: no React, no DOM, no `File`. The dialog holds the actual `File` objects in a ref and
  * passes ids, because a re-render that retains forty photos is a re-render that costs
  * forty photos.
@@ -50,6 +58,17 @@ export type StagedFile = {
    * a loose file. Shown in the tile so two files called `notes.md` are tellable apart.
    */
   path: string;
+  /**
+   * SHA-256 of the file's bytes, lowercase hex, computed in the browser when the file is
+   * staged (`hashFileBytes` in `src/lib/capture/file-hash.ts`).
+   *
+   * Two jobs. It is the dedupe key here — the SAME bytes dropped twice, in one drop or by
+   * re-adding, are one file whatever they are called and whatever their mtime says — and it
+   * travels with the upload to `capture_jobs.source_file_hashes`, which is how a file read
+   * last week is recognised when it comes back this week. Empty when hashing failed; such a
+   * file dedupes by id only, which is what staging did before hashes existed.
+   */
+  hash: string;
 };
 
 export type NoteBin = {
@@ -67,13 +86,18 @@ export type SorterState = {
   bins: NoteBin[];
   /** Ids in no bin yet — the tray. */
   trayIds: string[];
+  /**
+   * Staged, placed, and NOT to be read. A subset of `files`, orthogonal to placement: an
+   * excluded file keeps its spot in the tray or its bin. See "Excluded is not removed".
+   */
+  excludedIds: string[];
 };
 
 /** A folder drop is a folder, not a disk. Past this the dialog would be unusable anyway. */
 export const MAX_STAGED_FILES = 60;
 
 export function emptyState(): SorterState {
-  return { files: [], bins: [], trayIds: [] };
+  return { files: [], bins: [], trayIds: [], excludedIds: [] };
 }
 
 /** The bin holding `fileId`, or null when it is in the tray. */
@@ -86,19 +110,46 @@ export function fileById(state: SorterState, fileId: string): StagedFile | null 
 }
 
 /**
+ * What makes two staged files the same file: their bytes when we know them, their id when
+ * we do not. Never the name — a folder drop routinely holds two different `notes.md`, and
+ * the same photo exported twice arrives as `IMG_0412.jpg` and `IMG_0412 (1).jpg`.
+ */
+function identityOf(file: StagedFile): string {
+  return file.hash ? `h:${file.hash}` : `id:${file.id}`;
+}
+
+/**
  * Add newly dropped files to the tray.
  *
  * Capped rather than rejected: taking the first `MAX_STAGED_FILES` and saying so beats
  * refusing the drop outright, because the person can sort those and drop the rest after.
- * Ids already staged are ignored, so dropping the same folder twice does not double it.
+ *
+ * Deduped by CONTENT (see `identityOf`): the same bytes twice — two copies in one drop, or
+ * a file dropped again after it is already here — stage once, and `duplicates` says how
+ * many were folded so the dialog can say so rather than the count quietly coming up short.
+ * Dedupe runs before the cap, so a duplicate never spends one of the `MAX_STAGED_FILES`.
  */
 export function stageFiles(
   state: SorterState,
   incoming: readonly StagedFile[]
-): { state: SorterState; rejected: number } {
-  const known = new Set(state.files.map((f) => f.id));
+): { state: SorterState; rejected: number; duplicates: number } {
+  const seen = new Set(state.files.map(identityOf));
+  const knownIds = new Set(state.files.map((f) => f.id));
+  const fresh: StagedFile[] = [];
+  let duplicates = 0;
+  for (const f of incoming) {
+    const key = identityOf(f);
+    if (seen.has(key)) {
+      // The same ID again is a caller re-staging what it already staged, not a second copy
+      // the person dropped — not worth telling anyone about.
+      if (!knownIds.has(f.id)) duplicates++;
+      continue;
+    }
+    seen.add(key);
+    knownIds.add(f.id);
+    fresh.push(f);
+  }
   const room = Math.max(0, MAX_STAGED_FILES - state.files.length);
-  const fresh = incoming.filter((f) => !known.has(f.id));
   const taken = fresh.slice(0, room);
   return {
     state: {
@@ -107,7 +158,36 @@ export function stageFiles(
       trayIds: [...state.trayIds, ...taken.map((f) => f.id)],
     },
     rejected: fresh.length - taken.length,
+    duplicates,
   };
+}
+
+/** Whether `fileId` will be read when Read is pressed. */
+export function isIncluded(state: SorterState, fileId: string): boolean {
+  return !state.excludedIds.includes(fileId);
+}
+
+/**
+ * Tick or untick files for reading. Ids that are not staged are ignored — an exclusion for
+ * a file that is not here would be a phantom the invariant has to explain.
+ *
+ * Placement is untouched: see "Excluded is not removed" in the header.
+ */
+export function setExcluded(
+  state: SorterState,
+  fileIds: readonly string[],
+  excluded: boolean
+): SorterState {
+  const staged = new Set(state.files.map((f) => f.id));
+  const targets = new Set(fileIds.filter((id) => staged.has(id)));
+  if (!targets.size) return state;
+  const current = new Set(state.excludedIds);
+  for (const id of targets) {
+    if (excluded) current.add(id);
+    else current.delete(id);
+  }
+  // Kept in staging order rather than click order, so two routes to the same set are equal.
+  return { ...state, excludedIds: state.files.map((f) => f.id).filter((id) => current.has(id)) };
 }
 
 /** Remove a file entirely — from the tray or from whichever bin holds it. */
@@ -115,6 +195,7 @@ export function removeFile(state: SorterState, fileId: string): SorterState {
   return {
     files: state.files.filter((f) => f.id !== fileId),
     trayIds: state.trayIds.filter((id) => id !== fileId),
+    excludedIds: state.excludedIds.filter((id) => id !== fileId),
     // An emptied bin is kept, not swept: it may be the one the person is about to drag the
     // next file into, and having it disappear under the cursor is its own small betrayal.
     bins: state.bins.map((b) => ({ ...b, fileIds: b.fileIds.filter((id) => id !== fileId) })),
@@ -220,14 +301,20 @@ export function separateTray(
   return { ...state, bins: [...state.bins, ...added], trayIds: [] };
 }
 
-/** Everything, tray and bins alike, into one bin. The other half of `separateTray`. */
+/**
+ * Everything, tray and bins alike, into one bin. The other half of `separateTray`.
+ *
+ * Excluded files move too — placement and inclusion are separate questions — but the bin is
+ * named after the first file that will actually be READ, so a note is never titled after
+ * the one photo in it that was left out.
+ */
 export function combineAll(
   state: SorterState,
   mintId: () => string,
   seed: (file: StagedFile) => { name: string; anchorIso: string | null }
 ): SorterState {
   if (!state.files.length) return state;
-  const first = state.files[0]!;
+  const first = state.files.find((f) => isIncluded(state, f.id)) ?? state.files[0]!;
   const { name, anchorIso } = seed(first);
   return {
     ...state,
@@ -244,6 +331,12 @@ export type PlannedUpload = {
   anchorIso: string | null;
   /** What the person picked, added up. The honest number to show beside a list of files. */
   bytes: number;
+  /**
+   * The `StagedFile.hash` of every file in `fileIds`, in the same order, blanks dropped.
+   * Sent with the upload and stored on the job, so this note's files are recognised if they
+   * are ever dropped again.
+   */
+  fileHashes: string[];
   /**
    * What the request will weigh once the files have been prepared — the number the size cap
    * is checked against, and usually not the one above.
@@ -269,32 +362,41 @@ const sumSizes: WeighUpload = (files) => files.reduce((n, f) => n + f.size, 0);
 /**
  * What pressing Read will actually upload: one entry per bin, then one per leftover file.
  *
- * Empty bins produce nothing — an empty bin is a bin somebody made and did not use, not a
- * note about nothing.
+ * Only INCLUDED files count. Empty bins produce nothing — an empty bin is a bin somebody
+ * made and did not use, not a note about nothing — and neither does a bin whose every file
+ * is excluded, which is the same bin as far as the upload is concerned.
  */
 export function planUploads(
   state: SorterState,
   seed: (file: StagedFile) => { name: string; anchorIso: string | null },
   weigh: WeighUpload = sumSizes
 ): PlannedUpload[] {
+  const excluded = new Set(state.excludedIds);
   const filesOf = (ids: readonly string[]) =>
-    ids.map((id) => fileById(state, id)).filter((f): f is StagedFile => Boolean(f));
+    ids
+      .filter((id) => !excluded.has(id))
+      .map((id) => fileById(state, id))
+      .filter((f): f is StagedFile => Boolean(f));
+  const hashesOf = (files: readonly StagedFile[]) => files.map((f) => f.hash).filter(Boolean);
 
-  const fromBins = state.bins
-    .filter((b) => b.fileIds.length > 0)
-    .map<PlannedUpload>((b) => {
-      const files = filesOf(b.fileIds);
-      return {
+  const fromBins = state.bins.flatMap<PlannedUpload>((b) => {
+    const files = filesOf(b.fileIds);
+    if (!files.length) return [];
+    return [
+      {
         binId: b.id,
-        label: b.name.trim() || fileById(state, b.fileIds[0]!)?.name || "Untitled note",
-        fileIds: [...b.fileIds],
+        label: b.name.trim() || files[0]!.name || "Untitled note",
+        fileIds: files.map((f) => f.id),
         anchorIso: b.anchorIso,
         bytes: files.reduce((n, f) => n + f.size, 0),
+        fileHashes: hashesOf(files),
         uploadBytes: weigh(files),
-      };
-    });
+      },
+    ];
+  });
 
   const loose = state.trayIds.flatMap<PlannedUpload>((id) => {
+    if (excluded.has(id)) return [];
     const file = fileById(state, id);
     if (!file) return [];
     const { name, anchorIso } = seed(file);
@@ -305,6 +407,7 @@ export function planUploads(
         fileIds: [id],
         anchorIso,
         bytes: file.size,
+        fileHashes: hashesOf([file]),
         uploadBytes: weigh([file]),
       },
     ];
@@ -349,6 +452,12 @@ export function invariantBroken(state: SorterState): string | null {
   }
   for (const id of placed) {
     if (!state.files.some((f) => f.id === id)) return `id ${id} is placed but not staged`;
+  }
+  const excluded = new Set<string>();
+  for (const id of state.excludedIds) {
+    if (excluded.has(id)) return `file ${id} is excluded twice`;
+    excluded.add(id);
+    if (!state.files.some((f) => f.id === id)) return `id ${id} is excluded but not staged`;
   }
   return null;
 }

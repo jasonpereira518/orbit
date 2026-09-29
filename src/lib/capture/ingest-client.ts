@@ -68,7 +68,14 @@ export type CaptureUploadResult =
       sources: string[];
       transcriptionEngine: string | null;
     }
-  | { ok: false; error: string; status: number; retryAfterSec: number | null };
+  | {
+      ok: false;
+      error: string;
+      status: number;
+      retryAfterSec: number | null;
+      /** The caller's signal fired. Nothing went wrong, so nothing should be said. */
+      aborted?: boolean;
+    };
 
 type UploadFile = File | { filename: string; mimeType: string; blob: Blob };
 
@@ -93,6 +100,20 @@ type UploadInput = {
    * it has a transcript-editing step in between; a folder of meeting notes does not.
    */
   autoQueue?: boolean;
+  /**
+   * SHA-256 of each ORIGINAL file this note is read from (`hashFileBytes`), stored on the
+   * job so the same file dropped again is recognised. Sent once, with the first part: the
+   * parts are prepared files (pages of a PDF), and the hashes name the originals.
+   */
+  fileHashes?: string[];
+  /**
+   * A uuid minted here for the job the first request creates. Set it when the caller may
+   * need to STOP this upload: the response is what normally names the job, and Stop comes
+   * before the response. See `createCaptureJobWithId`.
+   */
+  jobId?: string | null;
+  /** Aborts the request(s). An aborted upload resolves `{ ok: false, aborted: true }`. */
+  signal?: AbortSignal;
 };
 
 const asFile = (f: UploadFile): File =>
@@ -127,7 +148,7 @@ export async function uploadCaptureMedia(input: UploadInput): Promise<CaptureUpl
   const isPage = (f: File) => f.type.startsWith("image/");
   const pageTotal = files.filter(isPage).length;
   let pageOffset = 0;
-  let jobId: string | null = null;
+  let jobId: string | null = input.jobId ?? null;
   let last: Extract<CaptureUploadResult, { ok: true }> | null = null;
   const texts: string[] = [];
   const sources: string[] = [];
@@ -138,7 +159,9 @@ export async function uploadCaptureMedia(input: UploadInput): Promise<CaptureUpl
     const batch = batches[i]!;
     const res = await postCapturePart(input, batch, {
       final: i === batches.length - 1,
-      continueJobId: jobId,
+      // The first part creates the job — under `input.jobId` when one was minted — and every
+      // later part names it.
+      continueJobId: i === 0 ? null : jobId,
       pageOffset,
       pageTotal,
     });
@@ -174,6 +197,8 @@ async function postCapturePart(
     // The job already carries the note's text, label, date and picks from the first part.
     form.set("continueJobId", part.continueJobId);
   } else {
+    if (input.jobId) form.set("jobId", input.jobId);
+    if (input.fileHashes?.length) form.set("fileHashes", JSON.stringify(input.fileHashes));
     if (input.text) form.set("text", input.text);
     if (input.batchGroupId) form.set("batchGroupId", input.batchGroupId);
     if (input.sourceLabel) form.set("sourceLabel", input.sourceLabel);
@@ -187,12 +212,26 @@ async function postCapturePart(
     form.set("pageTotal", String(part.pageTotal));
   }
   for (const f of files) form.append("files", f, f.name);
-  const res = await fetch("/api/capture/jobs", {
-    method: "POST",
-    body: form,
-    headers: { "x-orbit-capture": "1" },
-  });
-  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  let res: Response;
+  let body: Record<string, unknown>;
+  try {
+    res = await fetch("/api/capture/jobs", {
+      method: "POST",
+      body: form,
+      headers: { "x-orbit-capture": "1" },
+      signal: input.signal,
+    });
+    body = (await res.json().catch((err: unknown) => {
+      // An abort that lands while the body is being read surfaces here, not at `fetch`.
+      if (input.signal?.aborted) throw err;
+      return {};
+    })) as Record<string, unknown>;
+  } catch (err) {
+    if (input.signal?.aborted) {
+      return { ok: false, aborted: true, status: 0, retryAfterSec: null, error: "Stopped" };
+    }
+    throw err;
+  }
   if (!res.ok) {
     // Carried out so the queue can wait rather than drop the file. A 429 in the middle of a
     // twelve-file drop must never mean "that one silently did not upload".

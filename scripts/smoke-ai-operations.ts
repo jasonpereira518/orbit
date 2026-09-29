@@ -140,6 +140,7 @@ console.log("\nDerived lists");
     [...BACKGROUND_AI_OPERATIONS].sort().join(",") ===
       [
         "calendar.kind",
+        "contact.work_history",
         "duplicates.same_person",
         "duplicates.same_person.llm",
         "import.enrich",

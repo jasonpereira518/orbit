@@ -48,8 +48,21 @@ import { resolveMentionsWithPicks, type MentionCandidate } from "@/lib/mention-r
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type { PreviewMention } from "@/lib/note-batches";
 import { hashSourceNote, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
-import { emptyOpportunityResult, validateOpportunities } from "@/lib/opportunity-extract";
+import { emptyOpportunityResult, resolveDuePhrase, validateOpportunities } from "@/lib/opportunity-extract";
 import { emptyImpliedResult, validateImpliedNextSteps } from "@/lib/implied-next-steps";
+import {
+  MAX_PERSONAL_DETAILS,
+  MAX_TAKEAWAYS,
+  cleanLines,
+  normalizePhone,
+  normalizeWebsite,
+  normalizeXHandle,
+  promiseReminderTitle,
+  promisesNeedingReminders,
+  summaryToTakeaways,
+  validateConnections,
+  validatePromises,
+} from "@/lib/capture/person-enrichment";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { DEFAULT_FOLLOW_UP_WINDOW_DAYS, windowDueDate } from "@/lib/note-batches";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
@@ -329,11 +342,34 @@ export async function runCaptureParse(
     const { source_excerpt, ...parsedBase } = person;
     const sharedForPerson = sharedNotesForPerson(parsedBase.name, shared_notes);
 
+    // Same haystack choice the commitments pass makes above, for the same reason: a
+    // meeting's corpus is AI-written, so containment in it would only prove the digest
+    // wrote it. The transcript is what was actually said.
+    const haystack = meeting ? meeting.text : corpus;
+
+    const takeaways = cleanLines(
+      parsedBase.takeaways?.length ? parsedBase.takeaways : summaryToTakeaways(parsedBase.summary),
+      MAX_TAKEAWAYS
+    );
     const parsed: ParsedNote = {
       ...parsedBase,
       met_at: parsedBase.met_at || sharedForPerson.find((s) => s.met_at)?.met_at || null,
       topics: mergeTopics(parsedBase.topics, sharedForPerson),
       interaction_date: parsedBase.interaction_date || defaultDate,
+      // Cleaned and verified here, once, so the review card and the save path read the
+      // same thing — see person-enrichment.ts for what each check is for.
+      takeaways,
+      personal_details: cleanLines(parsedBase.personal_details, MAX_PERSONAL_DETAILS),
+      work: parsedBase.work
+        ? { ...parsedBase.work, priorities: cleanLines(parsedBase.work.priorities, 5) }
+        : null,
+      phone: normalizePhone(parsedBase.phone),
+      x_handle: normalizeXHandle(parsedBase.x_handle),
+      website: normalizeWebsite(parsedBase.website),
+      school: parsedBase.school ?? null,
+      industry: parsedBase.industry ?? null,
+      connections: validateConnections(parsedBase.connections, haystack, parsedBase.name),
+      promises: validatePromises(parsedBase.promises, haystack),
     };
 
     const duplicates = findDuplicateCandidatesIndexed(duplicateIndex, {
@@ -349,10 +385,6 @@ export async function runCaptureParse(
       pickedByName.get(parsed.name?.trim().toLowerCase() ?? "") ??
       (top && top.confidence >= 0.85 ? top.contact.id : null);
 
-    // Same haystack choice the commitments pass makes above, for the same reason: a
-    // meeting's corpus is AI-written, so containment in it would only prove the digest
-    // wrote it. The transcript is what was actually said.
-    const haystack = meeting ? meeting.text : corpus;
     const opportunityResult = (() => {
       try {
         return validateOpportunities(parsed.opportunities, haystack, { today, anchor });
@@ -522,6 +554,45 @@ export async function runCaptureParse(
     }))
   );
 
+  // Promises said out loud, in either direction. Explicit, so they ride with the dated
+  // commitments — but only the ones no other pass has already drafted: the person pass's
+  // action items and the dates pass read the same sentence and agree constantly.
+  const draftedTitles = [
+    ...suggestedReminders.map((r) => r.title),
+    ...impliedReminders.map((r) => r.title),
+  ];
+  const promiseReminders: SuggestedReminderPreview[] = items.flatMap((item, personIndex) =>
+    promisesNeedingReminders(item.parsed.promises ?? [], [...item.parsed.action_items, ...draftedTitles]).map(
+      (promise, promiseIndex) => {
+        const title = promiseReminderTitle(promise, item.parsed.name);
+        const resolved = promise.due_phrase ? resolveDuePhrase(promise.due_phrase, { today, anchor }) : null;
+        const due = resolved ?? windowDueDate(anchor, DEFAULT_FOLLOW_UP_WINDOW_DAYS);
+        return {
+          key: `promise-${personIndex}-${promiseIndex}`,
+          title,
+          description: null,
+          rawDatePhrase: promise.due_phrase,
+          dueDateIso: isoDay(due),
+          yearInferred: false,
+          personName: item.parsed.name,
+          actionKind: inferReminderActionKind({
+            title,
+            description: null,
+            reminderType: "ai_suggested",
+            contactId: item.suggestedMergeId,
+          }),
+          // What you owe arrives ticked; chasing what they owe is offered, not assumed.
+          confidenceScore: promise.direction === "you_owe" ? 75 : 55,
+          sourceExcerpt: promise.source_excerpt,
+          dateBasis: resolved ? ("absolute" as const) : ("vague" as const),
+          anchorIso: isoDay(anchor),
+          origin: "explicit" as const,
+          rationale: null,
+        };
+      }
+    )
+  );
+
   return {
     items,
     sharedNotes: shared_notes,
@@ -532,7 +603,7 @@ export async function runCaptureParse(
     hints: mergedHints,
     sourceText: corpus,
     sourceHash,
-    suggestedReminders: [...suggestedReminders, ...impliedReminders],
+    suggestedReminders: [...suggestedReminders, ...impliedReminders, ...promiseReminders],
     suggestionsSkipped: commitmentResult.rejected as RejectedCounts,
     mentions,
     mentionedOnly,

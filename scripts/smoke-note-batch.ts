@@ -302,6 +302,55 @@ async function main() {
     })
   );
 
+  // Enrichment: takeaways become the summary, handles fill gaps and never overwrite, and key
+  // facts accumulate across notes instead of the newest list replacing the rest.
+  {
+    const enrichNote = "Lunch with Nia Park. She's at nia.dev, runs the ML team, and is training for a marathon.";
+    const [nia] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Nia Park", phone: "+1 415 555 0100", keyFacts: ["Personal: two kids"] })
+      .returning();
+    const enrichInput: SaveNoteBatchInput = {
+      sourceText: enrichNote,
+      sourceHash: hashSourceNote(enrichNote),
+      anchorIso: "2026-09-01",
+      anchorBasis: "note",
+      entryPoint: "capture",
+      participants: [
+        {
+          notes: enrichNote,
+          parsed: {
+            ...parsed("Nia Park", null, [], null),
+            takeaways: ["Runs the ML team", "Training for a marathon"],
+            personal_details: ["Training for a marathon", "Two kids"],
+            work: { team: "ML", building: null, priorities: [], hiring: null, looking_for: null },
+            phone: "+1 212 555 0199",
+            website: "https://nia.dev",
+            x_handle: null,
+            school: null,
+            industry: null,
+          },
+          mergeContactId: nia.id,
+          createReminder: false,
+          relationshipScore: 3,
+          tagNames: [],
+        },
+      ],
+      commitments: [],
+      skipped: { relative: 0, unverifiable: 0, past: 0 },
+    };
+    await saveNoteBatch(USER, enrichInput);
+    const after = await db.query.contacts.findFirst({ where: eq(contacts.id, nia.id) });
+    check("enrich: takeaways become the contact's summary", after?.aiSummary === "• Runs the ML team\n• Training for a marathon", after?.aiSummary ?? "");
+    check("enrich: a phone already on the contact is not overwritten", after?.phone === "+1 415 555 0100", after?.phone ?? "");
+    check("enrich: an empty website is filled", after?.website === "https://nia.dev", after?.website ?? "");
+    check(
+      "enrich: key facts accumulate, labelled, without repeats",
+      JSON.stringify(after?.keyFacts) === JSON.stringify(["Personal: two kids", "Personal: Training for a marathon", "Team: ML"]),
+      JSON.stringify(after?.keyFacts)
+    );
+  }
+
   await reset();
   console.log("\nsmoke-note-batch: all checks passed");
   process.exit(0);
