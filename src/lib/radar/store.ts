@@ -21,6 +21,8 @@ import type {
   RecommendationStatus,
 } from "@/lib/radar/types";
 import { LIVE_RECOMMENDATION_STATUSES } from "@/lib/radar/types";
+import { RADAR_MODEL_HISTORY_DAYS, RADAR_MODEL_VOTES, type RadarModelTallyRow } from "@/lib/radar/model";
+import { RADAR_IGNORED_MIN_SEEN } from "@/lib/radar/metrics";
 
 const DAY_MS = 86_400_000;
 
@@ -195,6 +197,7 @@ export async function writeRunResult(
               contactId: r.contactId,
               kind: r.kind,
               score: r.score,
+              baseScore: r.baseScore,
               bucket: r.bucket,
               reasons: r.reasons,
               evidence: r.evidence,
@@ -213,6 +216,7 @@ export async function writeRunResult(
             targetWhere: sql`${recommendations.status} in ('pending', 'snoozed', 'auto_applied')`,
             set: {
               score: sql`excluded.score`,
+              baseScore: sql`excluded.base_score`,
               bucket: sql`excluded.bucket`,
               reasons: sql`excluded.reasons`,
               evidence: sql`excluded.evidence`,
@@ -331,6 +335,48 @@ export async function listPendingRecommendations(userId: string, limit: number):
     lastInteractionAt: r.last_interaction_at ? new Date(r.last_interaction_at) : null,
     updatedAt: new Date(r.updated_at),
   }));
+}
+
+/**
+ * This account's votes, grouped: per kind and per positive reason code, summed accepts
+ * (a conversion counts double) and dismissals (an ignored card counts half), over
+ * `RADAR_MODEL_HISTORY_DAYS`. One statement, a few dozen rows at most; `buildRadarModel`
+ * turns them into multipliers. Snoozes are neither: a snooze is "not now", not "not this".
+ */
+export async function loadModelTallies(userId: string, now: Date): Promise<RadarModelTallyRow[]> {
+  const db = await getDb();
+  const since = new Date(now.getTime() - RADAR_MODEL_HISTORY_DAYS * DAY_MS).toISOString();
+  const V = RADAR_MODEL_VOTES;
+  const rows = rowsOf<{ scope: "kind" | "reason"; key: string; a: number | string; d: number | string }>(
+    await db.execute(sql`
+      WITH votes AS (
+        SELECT kind, reasons,
+               CASE
+                 WHEN status IN ('accepted', 'auto_applied') AND outcome_at IS NOT NULL THEN ${V.converted}::numeric
+                 WHEN status IN ('accepted', 'auto_applied') THEN ${V.accepted}::numeric
+                 ELSE 0
+               END AS a,
+               CASE
+                 WHEN status = 'dismissed' THEN ${V.dismissed}::numeric
+                 WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN} THEN ${V.ignored}::numeric
+                 ELSE 0
+               END AS d
+          FROM recommendations
+         WHERE user_id = ${userId}
+           AND updated_at >= ${since}::timestamptz
+           AND status IN ('accepted', 'auto_applied', 'dismissed', 'expired')
+      )
+      SELECT 'kind' AS scope, kind AS key, sum(a) AS a, sum(d) AS d
+        FROM votes
+       GROUP BY kind
+      UNION ALL
+      SELECT 'reason' AS scope, e ->> 'code' AS key, sum(v.a) AS a, sum(v.d) AS d
+        FROM votes v, jsonb_array_elements(v.reasons) AS e
+       WHERE (e ->> 'points')::numeric > 0
+       GROUP BY e ->> 'code'
+    `)
+  );
+  return rows.map((r) => ({ scope: r.scope, key: r.key, a: Number(r.a ?? 0), d: Number(r.d ?? 0) }));
 }
 
 /** A card counts as seen again only after this long, so a reload is not a second look. */

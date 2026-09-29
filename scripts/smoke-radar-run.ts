@@ -274,8 +274,9 @@ run(async () => {
   const biggerStatements = stopQueryCount();
   check("the run still succeeds", bigger.ok);
   check("the same statements at 312 contacts as at 12", biggerStatements === statements, `${biggerStatements} vs ${statements}`);
-  // 21 with the outcome check (`detectRadarOutcomes`); see smoke-page-budgets.
-  check("and a bounded number of them", statements <= 21, String(statements));
+  // 22: the outcome check (`detectRadarOutcomes`) and the model's tallies
+  // (`loadModelTallies`); see smoke-page-budgets.
+  check("and a bounded number of them", statements <= 22, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);
@@ -411,6 +412,57 @@ run(async () => {
   check("a brand-new account gets its first build inline", await ensureRadarRun(fresh, NOW));
   await db.delete(radarRuns).where(inArray(radarRuns.userId, [fresh]));
   await db.delete(userSettings).where(eq(userSettings.userId, fresh));
+
+  console.log("\nwhat the account taught it");
+  {
+    const [neutralRow] = await db
+      .select({ score: recommendations.score, base: recommendations.baseScore })
+      .from(recommendations)
+      .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")))
+      .limit(1);
+    check("with no history, every card's score is its base score", neutralRow !== undefined && neutralRow.score === neutralRow.base);
+
+    const [learner] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Learner Lee", closenessTier: "inner", closenessEvidence: 0.6, firstInteractionAt: ago(400), lastInteractionAt: ago(90) })
+      .returning();
+    const [history] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "History Hal", firstInteractionAt: ago(400), lastInteractionAt: ago(20) })
+      .returning();
+    // Six reconnect cards this account dismissed. Rows only, no feedback: they teach the
+    // model without suppressing anyone.
+    const learnAt = new Date(later.getTime() + 3 * DAY);
+    await db.insert(recommendations).values(
+      Array.from({ length: 6 }, () => ({
+        userId: USER,
+        contactId: history!.id,
+        kind: "reconnect" as const,
+        score: 30,
+        baseScore: 30,
+        bucket: "later" as const,
+        reasons: [{ code: "dormant", label: "A while", points: 30 }],
+        status: "dismissed" as const,
+        expiresAt: learnAt,
+        inputsHash: "h",
+        updatedAt: new Date(learnAt.getTime() - DAY),
+      }))
+    );
+    await db.update(userSettings).set({ radarPaused: 0 }).where(eq(userSettings.userId, USER));
+    await claimRadarLease(USER, learnAt);
+    const taught = await runRadarForUser(USER, { trigger: "schedule", now: learnAt, ai: false });
+    check("the run succeeds with a model", taught.ok, JSON.stringify(taught));
+    const [lee] = await db
+      .select({ score: recommendations.score, base: recommendations.baseScore, kind: recommendations.kind })
+      .from(recommendations)
+      .where(and(eq(recommendations.contactId, learner!.id), eq(recommendations.status, "pending")));
+    check("a reconnect scores below its base score for an account that dismisses them",
+      lee?.kind === "reconnect" && lee.base !== null && lee.score < lee.base, JSON.stringify(lee));
+    const [saved] = await db.select({ model: userSettings.radarModel }).from(userSettings).where(eq(userSettings.userId, USER));
+    check("the model is saved on the account", saved?.model?.kinds.reconnect?.d === 6 && saved.model.reasons.dormant?.d === 6,
+      JSON.stringify(saved?.model));
+    await db.delete(contacts).where(inArray(contacts.id, [learner!.id, history!.id]));
+  }
 
   console.log("\nwho the nightly pass claims");
   {

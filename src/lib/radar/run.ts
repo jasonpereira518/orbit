@@ -32,13 +32,15 @@ import {
 import { loadCandidates, produceInternalSignals, type RadarCandidateRow } from "@/lib/radar/signals/internal";
 import {
   detectRadarOutcomes,
+  loadModelTallies,
   loadLiveRecommendations,
   loadSuppressions,
   planRunResult,
   writeRunResult,
   type NewRecommendation,
 } from "@/lib/radar/store";
-import type { RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
+import type { RadarModel, RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
+import { buildRadarModel } from "@/lib/radar/model";
 import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
@@ -163,7 +165,8 @@ export function scoreCandidates(
   targetKeys: Map<string, number>,
   goals: string[],
   suppressions: Map<string, RadarSuppression>,
-  now: Date
+  now: Date,
+  model: RadarModel | null = null
 ): NewRecommendation[] {
   const byContact = new Map<string, RadarSignal[]>();
   for (const s of signals) {
@@ -176,7 +179,7 @@ export function scoreCandidates(
   for (const row of candidates) {
     rowById.set(row.id, row);
     const contact = toRadarContact(row, targetKeys, goals);
-    const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now);
+    const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now, model);
     const pick = pickWinner(row.id, kinds, now);
     if (pick) picks.push(pick);
   }
@@ -216,6 +219,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   const db = await getDb();
   let runId: string | null = null;
   let error: unknown = null;
+  let learned: RadarModel | null = null;
 
   try {
     await traced(
@@ -224,7 +228,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
 
-        const [signals, goals, targetKeys, live, outcomes] = await Promise.all([
+        const [signals, goals, targetKeys, live, outcomes, tallies] = await Promise.all([
           produceInternalSignals(userId, now),
           listActiveGoalTextsForUser(userId, { limit: 8 }),
           loadTargetKeys(userId),
@@ -235,14 +239,21 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
             reportUnlessQuiet(err, { where: "job.radar.outcomes", userId, level: "warning" });
             return 0;
           }),
+          // What this account has taught Radar. A failure scores neutrally, never fails the run.
+          loadModelTallies(userId, now).catch((err) => {
+            reportUnlessQuiet(err, { where: "job.radar.model", userId, level: "warning" });
+            return null;
+          }),
         ]);
         stats.outcomes = outcomes;
+        const model = tallies ? buildRadarModel(tallies, now) : null;
+        learned = model;
         const [candidates, suppressions] = await Promise.all([
           loadCandidates(userId, signals.map((s) => s.contactId), now),
           loadSuppressions(userId, live, now),
         ]);
 
-        const next = scoreCandidates(candidates, signals, targetKeys, goals, suppressions, now);
+        const next = scoreCandidates(candidates, signals, targetKeys, goals, suppressions, now, model);
         const counts = planRunResult(live, next, now);
         await writeRunResult(userId, runId, next, now);
 
@@ -277,13 +288,20 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   }
 
   stats.durationMs = Date.now() - startedMs;
-  await finishRun(userId, runId, stats, error, now).catch((err) =>
+  await finishRun(userId, runId, stats, error, now, learned).catch((err) =>
     reportError(err, { where: "job.radar.finish", userId, level: "warning" })
   );
   return stats;
 }
 
-async function finishRun(userId: string, runId: string | null, stats: RadarRunStats, error: unknown, now: Date) {
+async function finishRun(
+  userId: string,
+  runId: string | null,
+  stats: RadarRunStats,
+  error: unknown,
+  now: Date,
+  model: RadarModel | null
+) {
   const db = await getDb();
   const { ok, ...counts } = stats;
   await runAtomicWrite(db, (tx) => {
@@ -307,7 +325,14 @@ async function finishRun(userId: string, runId: string | null, stats: RadarRunSt
         .update(userSettings)
         .set(
           ok
-            ? { radarLastRunAt: now, radarNextAt: nextNightlyRunAt(now), radarLeaseUntil: null }
+            ? {
+                radarLastRunAt: now,
+                radarNextAt: nextNightlyRunAt(now),
+                radarLeaseUntil: null,
+                // Saved for the admin view and the next reader; the run itself always
+                // rebuilds from rows, so a stale copy here can never steer a ranking.
+                ...(model ? { radarModel: model } : {}),
+              }
             : { radarNextAt: new Date(now.getTime() + RETRY_AFTER_MS), radarLeaseUntil: null }
         )
         .where(eq(userSettings.userId, userId))

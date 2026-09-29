@@ -23,6 +23,12 @@ import {
   type RadarSuppression,
 } from "../src/lib/radar/score";
 import { buildRadarWhyPrompt, radarNoteKey, radarWhyInputs } from "../src/lib/radar/why-prompt";
+import {
+  NEUTRAL_RADAR_MODEL,
+  RADAR_MODEL_BOUNDS,
+  buildRadarModel,
+  multiplierFrom,
+} from "../src/lib/radar/model";
 import type { RadarSignal, RecommendationKind } from "../src/lib/radar/types";
 import { APP_NAV, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
 import { COMING_SOON_KEYS, surfaceForPathname } from "../src/lib/surfaces";
@@ -201,28 +207,29 @@ function main() {
   console.log("\none card per person, caps, determinism");
   {
     const tie: KindScore[] = [
-      { kind: "reach_out", score: 40, reasons: [{ code: "recent_intro", label: "Intro", points: 40 }], evidence: [], anchorAt: null },
-      { kind: "prep", score: 40, reasons: [{ code: "upcoming_meeting", label: "Meeting", points: 40 }], evidence: [], anchorAt: ahead(2) },
+      { kind: "reach_out", score: 40, baseScore: 40, reasons: [{ code: "recent_intro", label: "Intro", points: 40 }], evidence: [], anchorAt: null },
+      { kind: "prep", score: 40, baseScore: 40, reasons: [{ code: "upcoming_meeting", label: "Meeting", points: 40 }], evidence: [], anchorAt: ahead(2) },
     ];
     const winner = pickWinner("c1", tie, NOW);
     check("a tie goes to the more time-bound kind", winner?.kind === "prep");
     check("the runner-up rides along as a zero-point line",
       winner?.reasons.some((r) => r.code === "also:recent_intro" && r.points === 0) === true);
     const quiet: KindScore[] = [
-      { kind: "reach_out", score: 40, reasons: [{ code: "inbound_unanswered", label: "They messaged you", points: 40 }], evidence: [], anchorAt: null },
-      { kind: "reconnect", score: 30, reasons: [{ code: "dormant", label: "43 days since you last spoke", points: 30 }], evidence: [], anchorAt: null },
+      { kind: "reach_out", score: 40, baseScore: 40, reasons: [{ code: "inbound_unanswered", label: "They messaged you", points: 40 }], evidence: [], anchorAt: null },
+      { kind: "reconnect", score: 30, baseScore: 30, reasons: [{ code: "dormant", label: "43 days since you last spoke", points: 30 }], evidence: [], anchorAt: null },
     ];
     check("a reach-out does not repeat the silence as an also line",
       pickWinner("c1", quiet, NOW)?.reasons.every((r) => !r.code.startsWith("also:")) === true);
     check("…but a prep card still carries it",
       pickWinner("c1", [tie[1], quiet[1]], NOW)?.reasons.some((r) => r.code === "also:dormant") === true);
     check("nothing below the lowest bucket becomes a card",
-      pickWinner("c1", [{ kind: "reconnect", score: RADAR_BUCKETS.later - 1, reasons: [], evidence: [], anchorAt: null }], NOW) === null);
+      pickWinner("c1", [{ kind: "reconnect", score: RADAR_BUCKETS.later - 1, baseScore: RADAR_BUCKETS.later - 1, reasons: [], evidence: [], anchorAt: null }], NOW) === null);
 
     const picks: RadarPick[] = Array.from({ length: 30 }, (_, i) => ({
       contactId: `c${String(i).padStart(2, "0")}`,
       kind: (i % 2 === 0 ? "reconnect" : "reach_out") as RecommendationKind,
       score: 20 + i,
+      baseScore: 20 + i,
       bucket: "later",
       reasons: [],
       evidence: [],
@@ -244,6 +251,65 @@ function main() {
     ];
     const runs = Array.from({ length: 5 }, () => JSON.stringify(pickWinner("c1", kinds(contact({ tier: "inner", targetPriority: 2 }), signals), NOW)));
     check("the same input scores identically every time", new Set(runs).size === 1);
+  }
+
+  console.log("\nwhat the account taught it");
+  {
+    check("no history is a multiplier of exactly 1", multiplierFrom(undefined) === 1 && multiplierFrom({ a: 0, d: 0 }) === 1);
+    check("two dismissals nudge, they do not silence", Math.abs(multiplierFrom({ a: 0, d: 2 }) - 0.75) < 1e-9);
+    check("two accepts nudge up", Math.abs(multiplierFrom({ a: 2, d: 0 }) - 1.25) < 1e-9);
+    check("no amount of history leaves the bounds",
+      multiplierFrom({ a: 0, d: 500 }) === RADAR_MODEL_BOUNDS.min && multiplierFrom({ a: 500, d: 0 }) === RADAR_MODEL_BOUNDS.max);
+
+    const model = buildRadarModel(
+      [
+        { scope: "kind", key: "reconnect", a: 0, d: 6 },
+        { scope: "kind", key: "reach_out", a: 5, d: 0 },
+        { scope: "reason", key: "linkedin_thread_quiet", a: 5, d: 0 },
+        { scope: "kind", key: "not_a_kind", a: 9, d: 0 },
+        { scope: "reason", key: "dormant", a: 0, d: 6 },
+        { scope: "reason", key: "tier", a: 0, d: 9 },
+        { scope: "reason", key: "also:dormant", a: 0, d: 9 },
+        { scope: "reason", key: "recent_intro", a: 0, d: 0 },
+      ],
+      NOW
+    );
+    check("it learns kinds and signal reasons", model.kinds.reconnect?.d === 6 && model.reasons.dormant?.d === 6);
+    check("never the person's context, an also line, an unknown kind, or an empty tally",
+      !("tier" in model.reasons) && !("also:dormant" in model.reasons) && !("not_a_kind" in model.kinds) && !("recent_intro" in model.reasons));
+
+    const dormant = contact({ tier: "inner", lastInteractionAt: ago(90) });
+    const neutral = scoreContactKinds(dormant, [], NO_SUPPRESSION, NOW, NEUTRAL_RADAR_MODEL);
+    const plain = kinds(dormant);
+    check("a neutral model scores exactly as no model", JSON.stringify(neutral) === JSON.stringify(plain));
+    const r = neutral.find((k) => k.kind === "reconnect")!;
+    check("and its score is its base score", r.score === r.baseScore);
+    const taught = scoreContactKinds(dormant, [], NO_SUPPRESSION, NOW, model).find((k) => k.kind === "reconnect")!;
+    check("a person who keeps dismissing reconnects sees them score lower", taught.score < taught.baseScore, `${taught.score} vs ${taught.baseScore}`);
+    check("the base score, the reasons and their points do not move",
+      taught.baseScore === r.baseScore && JSON.stringify(taught.reasons) === JSON.stringify(r.reasons));
+    const tierPoints = r.reasons.find((x) => x.code === "tier")?.points ?? 0;
+    const signalPoints = r.baseScore - tierPoints;
+    check("learning moves signal points by at most ×0.7, and never the person's context",
+      taught.score === Math.round(signalPoints * RADAR_MODEL_BOUNDS.min + tierPoints), `${taught.score}`);
+
+    // A reach-out just below a reconnect trades places once the account has shown it acts
+    // on reach-outs and not on reconnects.
+    const quiet = contact({ id: "c2", tier: "mid", lastInteractionAt: ago(14) });
+    const thread: RadarSignal[] = [{ kind: "linkedin_thread_quiet", contactId: "c2", at: ago(20), count: 4 }];
+    const close = contact({ id: "c3", tier: "inner", statedCloseness: 4, lastInteractionAt: ago(70) });
+    const before = [pickWinner("c2", kinds(quiet, thread), NOW)!, pickWinner("c3", kinds(close), NOW)!];
+    const after = [
+      pickWinner("c2", scoreContactKinds(quiet, thread, NO_SUPPRESSION, NOW, model), NOW)!,
+      pickWinner("c3", scoreContactKinds(close, [], NO_SUPPRESSION, NOW, model), NOW)!,
+    ];
+    check("before learning the reconnect leads", rankPicks(before)[0]?.contactId === "c3",
+      before.map((p) => `${p.contactId}:${p.score}`).join(" "));
+    check("after it, the reach-out does", rankPicks(after)[0]?.contactId === "c2",
+      after.map((p) => `${p.contactId}:${p.score}`).join(" "));
+    check("the same model and data always score the same",
+      JSON.stringify(scoreContactKinds(close, [], NO_SUPPRESSION, NOW, model)) ===
+        JSON.stringify(scoreContactKinds(close, [], NO_SUPPRESSION, NOW, model)));
   }
 
   console.log("\nthe why prompt");

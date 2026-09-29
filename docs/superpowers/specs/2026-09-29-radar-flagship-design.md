@@ -74,12 +74,16 @@ Each account gets a small model in `user_settings.radar_model jsonb`:
 The multiplier is a Beta-smoothed ratio pulled toward 1 with a prior of 6:
 `m = clamp(0.7, 1.3, (a + 3) / (a + d + 6) / 0.5)`.
 
-The scorer applies the kind multiplier to the kind's total, and each reason multiplier to that
-reason's points, before bucketing. Context codes (tier, priority, goals) are not learned. They
-describe the person, not the signal.
+The scorer scales each signal reason's points by the geometric mean of its kind's multiplier
+and its own, before bucketing. A reconnect card nearly always carries the dormancy reason, so
+multiplying by both would count the same votes twice. With the mean, a card's signal points
+stay within ×0.7–1.3. Context codes (tier, priority, goals) and penalties are not learned: they
+describe the person, or what the person already did, not the signal.
 
-The model is recomputed at the end of each nightly run from the last 90 days of rows. That is one
-aggregate statement. Nothing is updated on the click path.
+The model is built from one grouped statement at the start of each run, so tonight's list
+already uses it. It is saved to `user_settings.radar_model` in the run's final atomic write.
+
+The model covers the last 90 days of rows. Nothing is updated on the click path.
 
 The scorer stays pure. The model is an input, and the harness asserts both that it is bounded and
 that the same model plus the same data scores the same way.

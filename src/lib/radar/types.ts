@@ -73,6 +73,21 @@ export type RecommendationStatus =
 /** The statuses the live unique index covers. Kept beside the type so SQL and TS agree. */
 export const LIVE_RECOMMENDATION_STATUSES = ["pending", "snoozed", "auto_applied"] as const;
 
+/**
+ * Reasons that describe the person (or what the person already did) rather than a fact
+ * about now. Never an "also" line, never learned by the model.
+ */
+export const CONTEXT_CODES: ReadonlySet<string> = new Set([
+  "tier",
+  "priority",
+  "stated_close",
+  "target_company",
+  "goal_match",
+  "touched_recently",
+  "dismissed_recently",
+  "already_scheduled",
+]);
+
 /** One line of "why", with the points that produced it. The UI shows the label only. */
 export type RadarReason = { code: string; label: string; points: number };
 

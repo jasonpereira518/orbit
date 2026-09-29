@@ -26,7 +26,17 @@
  *
  * Pure: no database, no network, no AI, and `now` is always an argument.
  */
-import { KIND_PRIORITY, type RadarEvidence, type RadarReason, type RadarSignal, type RecommendationBucket, type RecommendationKind } from "@/lib/radar/types";
+import {
+  CONTEXT_CODES,
+  KIND_PRIORITY,
+  type RadarEvidence,
+  type RadarModel,
+  type RadarReason,
+  type RadarSignal,
+  type RecommendationBucket,
+  type RecommendationKind,
+} from "@/lib/radar/types";
+import { isLearnableReason, kindMultiplier, reasonMultiplier } from "@/lib/radar/model";
 import {
   DORMANT_DAYS,
   LINKEDIN_QUIET_MAX_DAYS,
@@ -160,7 +170,10 @@ export const NO_SUPPRESSION: RadarSuppression = Object.freeze({
 
 export type KindScore = {
   kind: RecommendationKind;
+  /** After this account's learned multipliers. What ranks and buckets the card. */
   score: number;
+  /** The scorer's own number, before learning: what a neutral model would have given. */
+  baseScore: number;
   reasons: RadarReason[];
   evidence: RadarEvidence[];
   /** The date the most time-bound reason is about, for expiry (a meeting's start). */
@@ -171,6 +184,7 @@ export type RadarPick = {
   contactId: string;
   kind: RecommendationKind;
   score: number;
+  baseScore: number;
   bucket: RecommendationBucket;
   reasons: RadarReason[];
   evidence: RadarEvidence[];
@@ -248,7 +262,9 @@ export function scoreContactKinds(
   contact: RadarContact,
   signals: readonly RadarSignal[],
   suppression: RadarSuppression,
-  now: Date
+  now: Date,
+  /** What this account has taught Radar (`src/lib/radar/model.ts`). Null scores neutrally. */
+  model: RadarModel | null = null
 ): KindScore[] {
   if (contact.constellationPin === "out") return [];
   if (suppression.never === "all") return [];
@@ -445,12 +461,37 @@ export function scoreContactKinds(
     }
     if (scheduled) reasons.push({ code: "already_scheduled", label: "A follow-up is already set", points: W.scheduledPenalty });
 
-    const score = Math.max(0, Math.min(100, reasons.reduce((sum, r) => sum + r.points, 0)));
+    const baseScore = clampScore(reasons.reduce((sum, r) => sum + r.points, 0));
+    const score = learnedScore(reasons, kind, model);
     reasons.sort((a, b) => b.points - a.points || a.code.localeCompare(b.code));
-    out.push({ kind, score, reasons, evidence: draft.evidence, anchorAt: draft.anchorAt });
+    out.push({ kind, score, baseScore, reasons, evidence: draft.evidence, anchorAt: draft.anchorAt });
   }
 
   return out.sort(compareKindScores);
+}
+
+function clampScore(n: number): number {
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+/**
+ * The score after learning. Each learnable (signal) reason's points are scaled by the
+ * geometric mean of its kind's multiplier and its own: a reconnect card nearly always
+ * carries the dormancy reason, so multiplying by both would count the same votes twice.
+ * The mean keeps each reason inside the model's bounds. Context reasons and penalties are
+ * added back unchanged. With a neutral model every multiplier is 1 and this is exactly the
+ * base score. Reason `points` stay the scorer's own, so the card, the "also" line and the AI
+ * note key never move with it.
+ */
+function learnedScore(reasons: readonly RadarReason[], kind: RecommendationKind, model: RadarModel | null): number {
+  if (!model) return clampScore(reasons.reduce((sum, r) => sum + r.points, 0));
+  const k = kindMultiplier(model, kind);
+  let total = 0;
+  for (const r of reasons) {
+    if (r.points > 0 && isLearnableReason(r.code)) total += r.points * Math.sqrt(k * reasonMultiplier(model, r.code));
+    else total += r.points;
+  }
+  return clampScore(total);
 }
 
 function compareKindScores(a: KindScore, b: KindScore): number {
@@ -483,6 +524,7 @@ export function pickWinner(contactId: string, kinds: readonly KindScore[], now: 
     contactId,
     kind: winner.kind,
     score: winner.score,
+    baseScore: winner.baseScore,
     bucket,
     reasons,
     evidence: winner.evidence.slice(0, 2),
@@ -499,17 +541,8 @@ const REDUNDANT_ALSO: Partial<Record<RecommendationKind, ReadonlySet<string>>> =
   reach_out: new Set(["dormant"]),
 };
 
-/** Reasons that describe the person rather than a fact about now. Never an "also" line. */
-export const CONTEXT_CODES: ReadonlySet<string> = new Set([
-  "tier",
-  "priority",
-  "stated_close",
-  "target_company",
-  "goal_match",
-  "touched_recently",
-  "dismissed_recently",
-  "already_scheduled",
-]);
+/** Re-exported from the vocabulary module, where the model can read it without a cycle. */
+export { CONTEXT_CODES };
 
 /**
  * The run's final list: best first, at most `perKind` of any kind, at most `pending` total.
