@@ -26,6 +26,8 @@ import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/que
 import { NO_SUPPRESSION, scoreContactKinds, type RadarContact } from "../src/lib/radar/score";
 import { probeCompanyNews, RADAR_NEWS_PER_RUN } from "../src/lib/radar/signals/news";
 import type { RadarCandidateRow } from "../src/lib/radar/signals/internal";
+import { loadPostSignals, saveLinkedinActivity } from "../src/lib/radar/signals/activity";
+import { handlesForTonight, pollSocialPosts } from "../src/lib/radar/signals/social";
 
 const USER = "smoke-radar-feeds-user";
 const NOW = new Date("2031-06-10T12:00:00Z");
@@ -223,6 +225,85 @@ run(async () => {
     } else {
       check("the Ramp headline was among tonight's three", false, JSON.stringify(signals.map((s) => s.company)));
     }
+  }
+
+  console.log("\nposts");
+  {
+    const [bsky, masto, masto2, other] = await db
+      .insert(contacts)
+      .values([
+        { userId: USER, fullName: "Sky Sam", blueskyHandle: "sam.bsky.social" },
+        { userId: USER, fullName: "Toot Tia", mastodonAcct: "tia@example.com" },
+        { userId: USER, fullName: "Toot Two", mastodonAcct: "two@example.com" },
+        { userId: "someone-else-feeds", fullName: "Not Mine" },
+      ])
+      .returning();
+    const cands = [bsky!, masto!, masto2!].map((c) => ({
+      ...candidate(c.id, "Acme"),
+      blueskyHandle: c.blueskyHandle,
+      mastodonAcct: c.mastodonAcct,
+    }));
+    const at = (h: number) => new Date(NOW.getTime() - h * HOUR).toISOString();
+    const requests: string[] = [];
+    const fetchDeps = {
+      fetch: (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        requests.push(url);
+        const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+        if (url.includes("/xrpc/app.bsky.feed.getAuthorFeed")) {
+          return json({
+            feed: [
+              { post: { uri: "at://did:plc:x/app.bsky.feed.post/new1", record: { text: "Shipping our v2 today", createdAt: at(5) } } },
+              { post: { uri: "at://did:plc:x/app.bsky.feed.post/old1", record: { text: "Last month", createdAt: at(24 * 20) } } },
+            ],
+          });
+        }
+        if (url.includes("/api/v1/accounts/lookup")) return json({ id: "42" });
+        if (url.includes("/api/v1/accounts/42/statuses")) {
+          return json([{ id: "s1", url: "https://example.com/@tia/1", content: "<p>Hiring <b>two</b> engineers</p>", created_at: at(3) }]);
+        }
+        return new Response("no", { status: 404 });
+      }) as typeof fetch,
+    };
+    const stored = await pollSocialPosts(USER, cands, NOW, { fetchDeps, blueskyApi: "https://example.com" });
+    check("each person's newest recent post is kept", stored === 2, `${stored}`);
+    check("a request carries only the handle", requests.every((u) => !/Acme|smoke-radar|someone-else/i.test(u)));
+    check("no host is asked more than three times a night", requests.filter((u) => u.startsWith("https://example.com")).length <= 3, requests.join(" "));
+    const again = await pollSocialPosts(USER, cands, NOW, { fetchDeps, blueskyApi: "https://example.com" });
+    check("a post already kept is not kept twice", again === 0, `${again}`);
+    const posts = await loadPostSignals(USER, new Set(cands.map((c) => c.id)), NOW);
+    const sky = posts.find((p) => p.contactId === bsky!.id);
+    // Whichever Mastodon account tonight's per-host cap let through: both live on example.com
+    // here, with the Bluesky stand-in, so only one of the two was checked.
+    const toot = posts.find((p) => p.network === "mastodon");
+    check("the run reads them back", Boolean(sky) && Boolean(toot), JSON.stringify(posts.map((p) => p.excerpt)));
+    check("markup is stripped", toot?.excerpt === "Hiring two engineers", toot?.excerpt);
+    check("with a link to the post", sky?.url === "https://bsky.app/profile/sam.bsky.social/post/new1", sky?.url ?? "");
+    check("only for the people being scored", (await loadPostSignals(USER, new Set([bsky!.id]), NOW)).every((p) => p.contactId === bsky!.id));
+
+    const saved = await saveLinkedinActivity(USER, { contactId: masto2!.id, excerpt: "  A long post. ".repeat(40), url: "javascript:alert(1)" }, NOW);
+    check("a saved LinkedIn post is stored", saved.saved && !saved.duplicate);
+    const dup = await saveLinkedinActivity(USER, { contactId: masto2!.id, excerpt: "  A long post. ".repeat(40), url: "javascript:alert(1)" }, NOW);
+    check("once", dup.saved && dup.duplicate);
+    const linked = (await loadPostSignals(USER, new Set([masto2!.id]), NOW))[0];
+    check("capped at 280 characters, with no unsafe link", (linked?.excerpt.length ?? 999) <= 280 && linked?.url === null && linked?.network === "linkedin");
+    check("never onto someone else's contact", (await saveLinkedinActivity(USER, { contactId: other!.id, excerpt: "x" }, NOW)).reason === "not_found");
+    check("never an empty post", (await saveLinkedinActivity(USER, { contactId: masto2!.id, excerpt: "   " }, NOW)).reason === "empty");
+
+    const contact: RadarContact = {
+      id: "x", company: null, tier: "mid", priorityLevel: 0, relationshipScore: 2, statedCloseness: null,
+      firstInteractionAt: null, lastInteractionAt: new Date(NOW.getTime() - 10 * DAY), nextFollowUpAt: null, constellationPin: null,
+      cadenceDays: null, cadencePhrase: null, targetPriority: null, goalFit: 0, hasEvidence: true,
+    };
+    const skyCard = scoreContactKinds(contact, [{ ...sky!, contactId: "x" }], NO_SUPPRESSION, NOW).find((k) => k.kind === "heads_up");
+    const liCard = scoreContactKinds(contact, [{ ...linked!, contactId: "x", at: sky!.at }], NO_SUPPRESSION, NOW).find((k) => k.kind === "heads_up");
+    check("a post is a heads-up quoting it", skyCard?.reasons[0]?.label.startsWith("Posted on Bluesky: “Shipping our v2 today”") === true, skyCard?.reasons[0]?.label);
+    check("a post the person chose to save counts more", (liCard?.score ?? 0) > (skyCard?.score ?? 0));
+    const many = Array.from({ length: 25 }, (_, i) => ({ ...candidate(`00000000-0000-0000-0000-${String(i).padStart(12, "0")}`, "Acme"), blueskyHandle: `p${i}.bsky.social` }));
+    const tonight = handlesForTonight(many, NOW).map((h) => h.contactId);
+    const tomorrow = handlesForTonight(many, new Date(NOW.getTime() + DAY)).map((h) => h.contactId);
+    check("ten handles a night, rotating", tonight.length === 10 && tonight.join() !== tomorrow.join());
+    await db.delete(contacts).where(eq(contacts.userId, "someone-else-feeds"));
   }
 
   console.log("\npruning");

@@ -23,6 +23,7 @@ import {
   type RadarSuppression,
 } from "../src/lib/radar/score";
 import { buildRadarWhyPrompt, radarNoteKey, radarWhyInputs } from "../src/lib/radar/why-prompt";
+import { normalizeBlueskyHandle, normalizeMastodonAcct } from "../src/lib/social-handles";
 import {
   RADAR_RERANK_MAX_ADJUST,
   applyRerank,
@@ -275,6 +276,19 @@ function main() {
     check("a month-old move is history", kinds(quiet, [{ ...joined, at: ago(40) }]).every((k) => k.kind !== "heads_up"));
     check("news still reaches someone with a follow-up already set",
       kinds(contact({ nextFollowUpAt: ahead(3) }), [joined]).some((k) => k.kind === "heads_up"));
+  }
+
+  console.log("\nsocial handles");
+  {
+    check("a Bluesky handle, however it is pasted",
+      normalizeBlueskyHandle("@Sam.Bsky.Social") === "sam.bsky.social" &&
+        normalizeBlueskyHandle("https://bsky.app/profile/sam.bsky.social") === "sam.bsky.social");
+    check("and not something that is not one", normalizeBlueskyHandle("sam") === null && normalizeBlueskyHandle("a b.com") === null);
+    check("a Mastodon account, however it is pasted",
+      normalizeMastodonAcct("@tia@Mastodon.Social") === "tia@mastodon.social" &&
+        normalizeMastodonAcct("https://hachyderm.io/@tia") === "tia@hachyderm.io");
+    check("and never an internal or malformed host",
+      normalizeMastodonAcct("tia@localhost") === null && normalizeMastodonAcct("tia") === null && normalizeMastodonAcct("a@b@c.com") === null);
   }
 
   console.log("\nwhat the account taught it");

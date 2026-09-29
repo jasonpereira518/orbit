@@ -20,6 +20,7 @@ import type {
   LogInteractionRequest,
   PageContext,
   ResolveRequest,
+  SaveActivityRequest,
   SaveContactRequest,
   StartersRequest,
 } from "./contract";
@@ -188,6 +189,13 @@ export const followUpRequestSchema = z.intersection(
   followUpSchema
 );
 
+export const saveActivityRequestSchema = z.object({
+  contactId: z.uuid(),
+  excerpt: z.string().trim().min(1).max(4000),
+  url: z.string().trim().max(2000).nullish(),
+  seenAt: z.iso.datetime().nullish(),
+});
+
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
@@ -196,6 +204,7 @@ const _starters: Exact<z.infer<typeof startersRequestSchema>, StartersRequest> =
 const _save: Exact<z.infer<typeof saveContactRequestSchema>, SaveContactRequest> = true;
 const _log: Exact<z.infer<typeof logInteractionRequestSchema>, LogInteractionRequest> = true;
 const _followUp: Exact<z.infer<typeof followUpRequestSchema>, FollowUpRequest> = true;
-void [_resolve, _page, _parse, _starters, _save, _log, _followUp];
+const _activity: Exact<z.infer<typeof saveActivityRequestSchema>, SaveActivityRequest> = true;
+void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _activity];
 
 export type { ContactSearchResponse };

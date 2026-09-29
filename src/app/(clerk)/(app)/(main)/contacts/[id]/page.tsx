@@ -256,6 +256,8 @@ export default async function ContactDetailPage({
     phone: contact.phone || "",
     linkedinUrl: contact.linkedinUrl || "",
     website: contact.website || "",
+    blueskyHandle: contact.blueskyHandle || "",
+    mastodonAcct: contact.mastodonAcct || "",
     notes: contact.notes || "",
     industry: contact.industry || "",
     sharedInterests: contact.sharedInterests || [],

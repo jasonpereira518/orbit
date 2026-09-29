@@ -45,6 +45,8 @@ import { RADAR_RERANK_TIMEOUT_MS, rerankPicks, rerankUnchanged } from "@/lib/rad
 import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
 import { draftTodayForRun } from "@/lib/radar/drafts";
 import { probeCompanyNews } from "@/lib/radar/signals/news";
+import { loadPostSignals } from "@/lib/radar/signals/activity";
+import { pollSocialPosts } from "@/lib/radar/signals/social";
 import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
@@ -105,6 +107,8 @@ export type RadarRunStats = {
   autopilot: number;
   /** Headlines about someone's company that became signals this run. */
   news: number;
+  /** New public posts found by tonight's check. */
+  posts: number;
   durationMs: number;
 };
 
@@ -254,6 +258,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     drafts: 0,
     autopilot: 0,
     news: 0,
+    posts: 0,
     durationMs: 0,
   };
   const db = await getDb();
@@ -300,7 +305,19 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           return [];
         });
         stats.news = news.length;
-        const picks = scorePicks(candidates, [...signals, ...news], targetKeys, goals, suppressions, now, model);
+        // Public posts, checked on the nightly pass only (it talks to other servers), then
+        // read back with the LinkedIn activity the extension saved: one read either way.
+        if (opts.trigger === "schedule") {
+          stats.posts = await pollSocialPosts(userId, candidates, now).catch((err) => {
+            reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
+            return 0;
+          });
+        }
+        const posts = await loadPostSignals(userId, new Set(candidates.map((c) => c.id)), now).catch((err) => {
+          reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
+          return [];
+        });
+        const picks = scorePicks(candidates, [...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model);
 
         // AI, on the account's own key, in one shared budget. First the rerank, which may
         // nudge the shortlist before the caps choose the final list; then, once the list is

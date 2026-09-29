@@ -179,12 +179,22 @@ as the base spec's `heads_up` table describes (points and half-lives unchanged).
     links the source through `safeHttpUrl`.
   - Known weakness: a company named with an ordinary word at the start of a sentence-case
     headline. The card shows the headline, and dismissals teach the model.
-- **Social.** A daily per-handle poll of public Bluesky and Mastodon for contacts with the new
-  columns. It covers at most 10 handles per user, uses per-host rate buckets and
-  `guardedFetchText`, caps excerpts at 280 characters, and passes URLs through `safeHttpUrl`.
-  The handle fields go on the contact page.
-- **LinkedIn activity (extension).** `POST /api/extension/signals`, an additive route. It is
-  refused unless `radar_capture_linkedin_activity` is on.
+- **Social.** Two contact fields, Bluesky and Mastodon, on the contact form, normalized by
+  `src/lib/social-handles.ts` (a pasted `@handle` or profile URL becomes the canonical form;
+  anything else is cleared, so a typo never becomes a request). On the nightly pass only, the
+  run checks at most 10 handles (rotating across nights), at most 3 requests per host,
+  inside a 12 s budget, through `guardedFetchText`: Bluesky's public AppView
+  (`getAuthorFeed`) and each Mastodon server's public API (`accounts/lookup`, then
+  `statuses`). Each request carries only the public handle. Each person's newest post from
+  the last week is kept once in `contact_signals` as a sanitized 280-character excerpt with
+  its link through `safeHttpUrl`, and becomes a `heads_up` card quoting it (12 points,
+  4-day half-life). Anyone with a handle counts as a candidate.
+- **LinkedIn activity (extension).** `POST /api/extension/signals`, additive to contract v1
+  (`SaveActivityRequest`, with a drift guard on its schema). It is refused unless the person
+  turned on `radar_capture_linkedin_activity`, and only for their own contact. The excerpt
+  is capped at 280 characters and deduplicated; a saved post counts more than a polled one
+  (16 points). The extension's own "Save as Radar activity" button is a follow-up in the
+  extension package.
 
 ## 5. Feel and polish
 

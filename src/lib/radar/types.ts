@@ -210,6 +210,15 @@ export type RadarSignal =
       itemId: string;
       company: string;
     }
+  /** A post of theirs: public Bluesky or Mastodon, or LinkedIn saved via the extension. */
+  | {
+      kind: "social_post";
+      contactId: string;
+      at: Date;
+      excerpt: string;
+      network: "bluesky" | "mastodon" | "linkedin";
+      url: string | null;
+    }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
   | { kind: "job_change"; contactId: string; at: Date; move: "joined" | "left" | "title_change"; text: string };
 
