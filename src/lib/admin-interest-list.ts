@@ -6,14 +6,16 @@ import { getWaitlistPageUrl } from "@/lib/app-url";
 import { UserFacingError } from "@/lib/errors";
 import {
   REFERRAL_TIERS,
-  adminManualInterestListSchema,
   buildShareUrl,
   buildTicketUrl,
   parseEventSignupPaste,
   tierFor,
-  type AdminManualInterestListInput,
   type ReferralTierId,
 } from "@/lib/interest-list";
+import {
+  adminManualInterestListSchema,
+  type AdminManualInterestListInput,
+} from "@/lib/interest-list-schema";
 import {
   buildUnsubscribeUrl,
   generateUnsubscribeToken,
