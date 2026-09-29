@@ -42,6 +42,8 @@ import {
 import type { RadarModel, RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
 import { buildRadarModel } from "@/lib/radar/model";
 import { RADAR_RERANK_TIMEOUT_MS, rerankPicks, rerankUnchanged } from "@/lib/radar/rerank";
+import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
+import { draftTodayForRun } from "@/lib/radar/drafts";
 import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
@@ -63,7 +65,7 @@ const RETRY_AFTER_MS = 6 * HOUR_MS;
 export const RADAR_STALE_MS = 24 * HOUR_MS;
 /**
  * The most a run spends on AI, shared in order: the rerank (at most
- * `RADAR_RERANK_TIMEOUT_MS`), then the why-lines with whatever is left.
+ * `RADAR_RERANK_TIMEOUT_MS`), then Today's drafts, then the why-lines with whatever is left.
  */
 export const RADAR_AI_BUDGET_MS = 25_000;
 /**
@@ -97,6 +99,9 @@ export type RadarRunStats = {
   reranked: number;
   rerankFailed: boolean;
   rerankCached: boolean;
+  /** Drafts written for Today's cards, and follow-ups autopilot scheduled. */
+  drafts: number;
+  autopilot: number;
   durationMs: number;
 };
 
@@ -243,6 +248,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     reranked: 0,
     rerankFailed: false,
     rerankCached: false,
+    drafts: 0,
+    autopilot: 0,
     durationMs: 0,
   };
   const db = await getDb();
@@ -311,6 +318,20 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const counts = planRunResult(live, next, now);
         await writeRunResult(userId, runId, next, now);
 
+        // Autopilot, for the kinds this person opted into: schedules, never sends. Only on
+        // the nightly pass and an explicit refresh, never while someone is opening the page.
+        if (opts.trigger === "schedule" || opts.trigger === "manual") {
+          const autopilot = await loadRadarAutopilot(userId).catch(() => ({}));
+          stats.autopilot = await applyAutopilot(userId, autopilot, now);
+        }
+
+        // Drafts for Today's cards, then the why-lines with whatever budget is left.
+        if (access && !deadlineReached(aiDeadline)) {
+          stats.drafts = await draftTodayForRun(userId, access, { deadline: aiDeadline }).catch((err) => {
+            reportUnlessQuiet(err, { where: "job.radar.draft", userId, level: "warning" });
+            return 0;
+          });
+        }
         if (access && !deadlineReached(aiDeadline)) {
           stats.aiNotes = await explainTopForRun(userId, access, {
             budgetMs: Math.max(1_000, aiDeadline - Date.now()),

@@ -133,7 +133,11 @@ cannot bury a meeting tomorrow. Prep cards within 48 hours are exempt from negat
     before the meeting), and marks the row `status = 'auto_applied'`;
   - drafts it.
 
-  The card moves to an "Autopilot did this" strip with Undo, which clears the follow-up.
+  The card moves to an "Autopilot did this" strip with Undo. Undo removes the reminder only
+  while it is still the one autopilot set (a follow-up the person has since moved stays), and
+  retires the card as `expired`, not `dismissed`, so it is not a vote against the kind. The
+  card records what it set in `recommendations.autopilot`. An autopilot action is not the
+  person's vote either: the learned model counts it only if a conversation followed.
   Nothing is ever sent.
 - **Weekly digest.** As the base spec describes: the Monday local-time window, a week claim,
   Resend through the `broadcasts.ts` pattern, and one-click unsubscribe through the

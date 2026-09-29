@@ -98,6 +98,10 @@ export const AI_OPERATIONS = {
   // One call per nightly run: nudges the scorer's shortlist within ±15 points, given the
   // account's goals. It can reorder cards the rules already chose; it can never add one.
   "radar.rerank": { label: "Radar: ranking the shortlist", tier: "fast", thinking: "minimal", background: true },
+  // A follow-up written overnight for a Today card, on the account's own key, so acting on
+  // the card is review-and-send. The same prompt as "followup.draft"; background because
+  // nobody is waiting on it.
+  "radar.draft": { label: "Radar: drafts for Today", tier: "user", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },

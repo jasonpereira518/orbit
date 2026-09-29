@@ -355,7 +355,9 @@ export function NotificationsPanelButton({
                 </Section>
 
                 <Section title="Radar" count={radar ? 1 : 0}>
-                  {radar && <RadarRow count={radar.count} names={radar.names} onNavigate={() => setOpen(false)} />}
+                  {radar && (
+                    <RadarRow count={radar.count} drafts={radar.drafts} names={radar.names} onNavigate={() => setOpen(false)} />
+                  )}
                 </Section>
 
                 {/* Background work, below the things the user is actually being asked to
@@ -621,7 +623,18 @@ function JobRow({ job }: { job: BackgroundJob }) {
 }
 
 /** One line for Radar's whole list: how many people, and who is first. */
-function RadarRow({ count, names, onNavigate }: { count: number; names: string[]; onNavigate: () => void }) {
+function RadarRow({
+  count,
+  drafts,
+  names,
+  onNavigate,
+}: {
+  count: number;
+  /** Today's cards with a message already written. Leads the line when there are any. */
+  drafts: number;
+  names: string[];
+  onNavigate: () => void;
+}) {
   const shown = names.slice(0, 3);
   const rest = count - shown.length;
   return (
@@ -631,6 +644,7 @@ function RadarRow({ count, names, onNavigate }: { count: number; names: string[]
       </IconDisc>
       <Link href="/radar" onClick={onNavigate} className="min-w-0 flex-1 hover:underline">
         <span className="block truncate text-sm font-medium text-ink">
+          {drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}
           {count} {count === 1 ? "person" : "people"} worth a message
         </span>
         <span className="mt-0.5 block truncate text-xs text-muted-foreground">

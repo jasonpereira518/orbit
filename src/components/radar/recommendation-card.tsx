@@ -32,7 +32,14 @@ import {
 } from "@/actions/radar";
 import { companyBrandColor } from "@/lib/company-brand";
 import { friendlyError } from "@/lib/errors";
-import { KIND_LABELS, type RadarAiNote, type RadarEvidence, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
+import {
+  KIND_LABELS,
+  type RadarAiNote,
+  type RadarDraft,
+  type RadarEvidence,
+  type RadarReason,
+  type RecommendationKind,
+} from "@/lib/radar/types";
 import { runToastAction, toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { KIND_STYLES } from "@/components/radar/kind-styles";
@@ -51,6 +58,8 @@ export type RecommendationCardData = {
   aiNote: RadarAiNote | null;
   /** The AI rerank's one-line "why now". Shown only when there is no fuller note. */
   aiAngle?: string | null;
+  /** A message Radar wrote overnight. The sheet opens with it, no model call. */
+  draft?: RadarDraft | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -140,6 +149,11 @@ export function RecommendationCard({
             <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide", KIND_STYLES[rec.kind])}>
               {KIND_LABELS[rec.kind]}
             </span>
+            {rec.draft && (
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                Draft ready
+              </span>
+            )}
           </div>
           {(rec.title || rec.company) && (
             <p className="mt-0.5 text-xs text-muted-foreground">
@@ -262,7 +276,7 @@ export function RecommendationCard({
               onClick={() => setDraftOpen(true)}
             >
               <PenLine className="size-3.5" aria-hidden />
-              Draft message
+              {rec.draft ? "Review draft" : "Draft message"}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger className={triggerClass} disabled={pending} aria-label={`Snooze ${rec.contactName}`}>
@@ -305,7 +319,13 @@ export function RecommendationCard({
         </Button>
       </div>
       {draftOpen && (
-        <FollowUpDraftSheetLazy open={draftOpen} onOpenChange={setDraftOpen} contactId={rec.contactId} contactName={rec.contactName} />
+        <FollowUpDraftSheetLazy
+          open={draftOpen}
+          onOpenChange={setDraftOpen}
+          contactId={rec.contactId}
+          contactName={rec.contactName}
+          initialDraft={rec.draft?.body}
+        />
       )}
     </article>
   );

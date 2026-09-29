@@ -27,7 +27,9 @@ import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, runRadarForUser } f
 import { markRecommendationsSeen } from "@/lib/radar/store";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { undoAutopilotForUser } from "@/lib/radar/autopilot";
+import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
 import type { NetworkStats } from "@/lib/network-stats";
 
 const SURFACE = "page.radar";
@@ -142,6 +144,32 @@ export async function explainRecommendationAction(id: string): Promise<RadarActi
   if (result.reason === "no_key") return { ok: false, message: "Add your AI API key in Settings to use this" };
   if (result.reason === "not_found") return { ok: false, message: "That card has already changed — refresh to see the latest" };
   return { ok: false, message: result.message ?? friendlyError(null, "Couldn’t write that just now — try again?") };
+}
+
+/** Undo one autopilot action: the follow-up it set goes, and so does the card. */
+export async function undoAutopilot(id: string): Promise<RadarActionResult> {
+  const userId = await requireUserForSurface(SURFACE);
+  const result = await undoAutopilotForUser(userId, id);
+  if (!result.ok) return { ok: false, message: "That card has already changed — refresh to see the latest" };
+  revalidateReminderPaths();
+  revalidateRadar();
+  return {
+    ok: true,
+    message: result.cleared ? "Follow-up removed" : "Card cleared — the follow-up had already changed, so it stays",
+  };
+}
+
+/** Turn autopilot on or off for one kind of card. Autopilot schedules; it never sends. */
+export async function setRadarAutopilot(kind: RecommendationKind, on: boolean): Promise<RadarActionResult> {
+  const userId = await requireUserForSurface(SURFACE);
+  if (!RECOMMENDATION_KINDS.includes(kind)) return { ok: false, message: "That isn’t a kind of card Radar makes" };
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ radarAutopilot: sql`coalesce(${userSettings.radarAutopilot}, '{}'::jsonb) || ${JSON.stringify({ [kind]: on === true })}::jsonb` })
+    .where(eq(userSettings.userId, userId));
+  revalidateRadar();
+  return { ok: true, message: on ? `Autopilot on for ${KIND_LABELS[kind]}` : `Autopilot off for ${KIND_LABELS[kind]}` };
 }
 
 export async function setRadarPaused(paused: boolean): Promise<RadarActionResult> {

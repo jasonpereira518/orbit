@@ -12,6 +12,7 @@ import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { RADAR_WINDOWS, type RadarPick, type RadarSuppression } from "@/lib/radar/score";
 import type {
+  RadarDraft,
   RadarAiNote,
   RadarEvidence,
   RadarFeedbackAction,
@@ -123,19 +124,24 @@ export type WriteCounts = { inserted: number; updated: number; expired: number }
  */
 export function planRunResult(live: readonly LiveRecommendation[], next: readonly NewRecommendation[], now: Date): WriteCounts {
   const nextKeys = new Set(next.map((r) => recommendationKey(r.contactId, r.kind)));
-  const liveAfterWake = new Set(
+  // Rows the run can expire: pending, and snoozes that have just woken.
+  const expirable = new Set(
     live
       .filter((r) => r.status === "pending" || (r.status === "snoozed" && r.snoozedUntil !== null && r.snoozedUntil <= now))
       .map((r) => recommendationKey(r.contactId, r.kind))
   );
+  // An autopilot card is updated in place if produced again, and otherwise left to settle.
+  const autopiloted = new Set(
+    live.filter((r) => r.status === "auto_applied").map((r) => recommendationKey(r.contactId, r.kind))
+  );
   let inserted = 0;
   let updated = 0;
   for (const key of nextKeys) {
-    if (liveAfterWake.has(key)) updated++;
+    if (expirable.has(key) || autopiloted.has(key)) updated++;
     else inserted++;
   }
   let expired = 0;
-  for (const key of liveAfterWake) if (!nextKeys.has(key)) expired++;
+  for (const key of expirable) if (!nextKeys.has(key)) expired++;
   return { inserted, updated, expired };
 }
 
@@ -169,19 +175,31 @@ export async function writeRunResult(
             lte(recommendations.snoozedUntil, now)
           )
         ),
+      // Retire what this run did not produce, and in the same statement settle autopilot
+      // cards whose time has passed: those end `accepted` (the follow-up autopilot set
+      // stands) and leave the "Autopilot did this" strip; pending ones end `expired`.
       tx
         .update(recommendations)
-        .set({ status: "expired", resolvedAt: now, updatedAt: now })
+        .set({
+          status: sql`CASE WHEN ${recommendations.status} = 'auto_applied' THEN 'accepted' ELSE 'expired' END`,
+          resolvedAt: now,
+          updatedAt: now,
+        })
         .where(
           and(
             eq(recommendations.userId, userId),
-            eq(recommendations.status, "pending"),
-            keys.length
-              ? sql`NOT ((${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
-                  keys.map((k) => sql`${k}`),
-                  sql`, `
-                )}]::text[]))`
-              : undefined
+            or(
+              and(
+                eq(recommendations.status, "pending"),
+                keys.length
+                  ? sql`NOT ((${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
+                      keys.map((k) => sql`${k}`),
+                      sql`, `
+                    )}]::text[]))`
+                  : undefined
+              ),
+              and(eq(recommendations.status, "auto_applied"), lte(recommendations.expiresAt, now))
+            )
           )
         ),
     ];
@@ -276,6 +294,8 @@ export type RecommendationRow = {
   aiNote: RadarAiNote | null;
   /** The AI rerank's one-line "why now", shown when there is no fuller AI note. */
   aiAngle: string | null;
+  /** A draft written overnight, only while it still matches the card's facts. */
+  draft: RadarDraft | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -301,6 +321,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
     evidence: RadarEvidence[];
     ai_note: RadarAiNote | null;
     ai_angle: string | null;
+    draft: RadarDraft | null;
     full_name: string;
     preferred_name: string | null;
     title: string | null;
@@ -312,6 +333,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
   }>(
     await db.execute(sql`
       SELECT r.id, r.contact_id, r.kind, r.score, r.bucket, r.reasons, r.evidence, r.ai_note, r.ai_angle, r.updated_at,
+             CASE WHEN r.draft ->> 'inputsHash' = r.inputs_hash THEN r.draft END AS draft,
              contacts.full_name, contacts.preferred_name, contacts.title, contacts.company,
              contacts.closeness_tier, contacts.last_interaction_at,
              ${clientAvatarUrlSql} AS avatar_url
@@ -333,6 +355,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
     evidence: r.evidence ?? [],
     aiNote: r.ai_note,
     aiAngle: r.ai_angle,
+    draft: r.draft,
     contactName: (r.preferred_name ?? "").trim() || r.full_name,
     title: r.title,
     company: r.company,
@@ -359,7 +382,11 @@ export async function loadModelTallies(userId: string, now: Date): Promise<Radar
         SELECT kind, reasons,
                CASE
                  WHEN status IN ('accepted', 'auto_applied') AND outcome_at IS NOT NULL THEN ${V.converted}::numeric
-                 WHEN status IN ('accepted', 'auto_applied') THEN ${V.accepted}::numeric
+                 -- Autopilot's action is not the person's vote; only what followed it counts.
+                 WHEN status = 'accepted' AND NOT EXISTS (
+                   SELECT 1 FROM recommendation_feedback f
+                    WHERE f.recommendation_id = recommendations.id AND f.reason = 'autopilot'
+                 ) THEN ${V.accepted}::numeric
                  ELSE 0
                END AS a,
                CASE

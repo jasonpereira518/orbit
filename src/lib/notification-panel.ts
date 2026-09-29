@@ -116,6 +116,7 @@ export async function loadNotificationPanel(
     opts.radar
       ? db.execute(sql`
           SELECT count(*)::int AS n,
+                 count(*) FILTER (WHERE r.draft ->> 'inputsHash' = r.inputs_hash)::int AS drafts,
                  (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names
             FROM recommendations r
             JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
@@ -123,7 +124,7 @@ export async function loadNotificationPanel(
         `)
       : null,
   ]);
-  const radarRow = radarRows ? rowsOf<{ n: number; names: string[] | null }>(radarRows)[0] : undefined;
+  const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
@@ -260,7 +261,10 @@ export async function loadNotificationPanel(
      * `alerts` below: a suggestion must never be "due". Absent (not null) when empty, so
      * the payload is byte-identical for everyone Radar has never run for.
      */
-    radar: radarCount > 0 ? { count: radarCount, names: radarRow?.names ?? [] } : undefined,
+    radar:
+      radarCount > 0
+        ? { count: radarCount, drafts: Number(radarRow?.drafts ?? 0), names: radarRow?.names ?? [] }
+        : undefined,
     /**
      * Account health, as a SIBLING of `items` and never an entry in it. That placement is
      * the structural guarantee that alerts can never become OS desktop notifications:

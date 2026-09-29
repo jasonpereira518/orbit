@@ -255,11 +255,12 @@ async function main() {
   // The nightly pass runs this for every account. Seven windowed signal reads, the
   // candidate scan, goals, targets, feedback, the live list, one atomic write and the
   // finish: none of them per contact. smoke-radar-run pins that it is the same at 12
-  // contacts as at 312; this pins the ceiling at 3,000. 22, up from 20: the outcome check
-  // (one UPDATE over the account's recent accepts, `detectRadarOutcomes`) and the learned
-  // model's tallies (one grouped read over 90 days of resolved cards, `loadModelTallies`).
+  // contacts as at 312; this pins the ceiling at 3,000. 23, up from 20: the outcome check
+  // (one UPDATE over the account's recent accepts, `detectRadarOutcomes`), the learned
+  // model's tallies (one grouped read over 90 days of resolved cards, `loadModelTallies`),
+  // and the autopilot settings (one read, on nightly and manual runs only).
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
-  check("radar run issues ≤ 22 statements", radarRunCount <= 22, `got ${radarRunCount}`);
+  check("radar run issues ≤ 23 statements", radarRunCount <= 23, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),

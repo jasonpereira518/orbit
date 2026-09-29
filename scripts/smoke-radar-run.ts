@@ -56,6 +56,10 @@ import { getAttentionBrief } from "../src/lib/chat-attention";
 import { isSurfaceLive } from "../src/lib/surface-visibility";
 import { COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { loadRadarPreview } from "../src/lib/radar/page-data";
+import { applyAutopilot, undoAutopilotForUser } from "../src/lib/radar/autopilot";
+import { draftChannel, draftTodayForRun } from "../src/lib/radar/drafts";
+import { openRadarAi } from "../src/lib/radar/explain";
+import { listPendingRecommendations, loadModelTallies } from "../src/lib/radar/store";
 import { scaleContactRows } from "./lib/scale-fixture";
 
 const USER = "smoke-radar-run-user";
@@ -331,9 +335,9 @@ run(async () => {
   const biggerStatements = stopQueryCount();
   check("the run still succeeds", bigger.ok);
   check("the same statements at 312 contacts as at 12", biggerStatements === statements, `${biggerStatements} vs ${statements}`);
-  // 22: the outcome check (`detectRadarOutcomes`) and the model's tallies
-  // (`loadModelTallies`); see smoke-page-budgets.
-  check("and a bounded number of them", statements <= 22, String(statements));
+  // 23: the outcome check (`detectRadarOutcomes`), the model's tallies
+  // (`loadModelTallies`) and the autopilot settings; see smoke-page-budgets.
+  check("and a bounded number of them", statements <= 23, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);
@@ -512,6 +516,125 @@ run(async () => {
     check("the model is saved on the account", saved?.model?.kinds.reconnect?.d === 6 && saved.model.reasons.dormant?.d === 6,
       JSON.stringify(saved?.model));
     await db.delete(contacts).where(inArray(contacts.id, [learner!.id, history!.id]));
+  }
+
+  console.log("\ndrafts and autopilot");
+  {
+    const [draftee] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Draft Dee", email: "dee@x.test", closenessTier: "mid", closenessEvidence: 0.5, firstInteractionAt: ago(300), lastInteractionAt: ago(60) })
+      .returning();
+    const [pilot] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Pilot Pia", closenessTier: "mid", closenessEvidence: 0.5, firstInteractionAt: ago(300), lastInteractionAt: ago(60) })
+      .returning();
+    const today = (contactId: string, kind: "reach_out" | "reconnect", hash: string) =>
+      db
+        .insert(recommendations)
+        .values({
+          userId: USER,
+          contactId,
+          kind,
+          score: 60,
+          baseScore: 60,
+          bucket: "today",
+          reasons: [{ code: "inbound_unanswered", label: "They messaged you and haven’t heard back", points: 60 }],
+          evidence: [],
+          expiresAt: ahead(7),
+          inputsHash: hash,
+        })
+        .returning()
+        .then((r) => r[0]!);
+    const draftCard = await today(draftee!.id, "reconnect", "draft-h1");
+    const pilotCard = await today(pilot!.id, "reach_out", "pilot-h1");
+
+    // Drafts, on a stubbed provider.
+    const draftCalls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!/generativelanguage/.test(url)) return realFetch(input, init);
+      draftCalls.push(typeof init?.body === "string" ? init.body : "");
+      const reply = JSON.stringify({ body: "Hi Dee, it has been a while. Coffee next week? My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123" });
+      return Response.json({
+        candidates: [{ content: { role: "model", parts: [{ text: reply }] }, finishReason: "STOP" }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+      });
+    }) as typeof fetch;
+    await db
+      .update(userSettings)
+      .set({ aiProvider: "gemini", aiModel: "gemini-3.5-flash", geminiApiKeyEncrypted: encrypt("fake-gemini") })
+      .where(eq(userSettings.userId, USER));
+    const access = await openRadarAi(USER);
+    check("an account with a key can draft", access !== null);
+    const drafted = await draftTodayForRun(USER, access!, { deadline: Date.now() + 30_000 });
+    const [withDraft] = await db.select().from(recommendations).where(eq(recommendations.id, draftCard.id));
+    check("Today's cards get a draft", drafted >= 1 && withDraft?.draft?.body.startsWith("Hi Dee") === true, `${drafted}`);
+    check("sent through the background operation", draftCalls.length >= 1);
+    check("a draft goes where the conversation is: an unanswered LinkedIn message gets a LinkedIn draft",
+      withDraft?.draft?.channel === "linkedin", withDraft?.draft?.channel);
+    check("otherwise email when there is an address",
+      draftChannel({ reasons: [{ code: "dormant", label: "A while", points: 30 }], hasEmail: true }) === "email");
+    check("and LinkedIn when there is not",
+      draftChannel({ reasons: [{ code: "dormant", label: "A while", points: 30 }], hasEmail: false }) === "linkedin");
+    check("a secret in the reply never reaches the card", !(withDraft?.draft?.body ?? "").includes("sk-ant-api03"));
+    check("the draft is tied to the card's facts", withDraft?.draft?.inputsHash === "draft-h1");
+    draftCalls.length = 0;
+    const again = await draftTodayForRun(USER, access!, { deadline: Date.now() + 30_000 });
+    check("unchanged facts cost no second draft", again === 0 && draftCalls.length === 0, `${again} / ${draftCalls.length}`);
+    const pageRows = await listPendingRecommendations(USER, 50);
+    check("the page gets the draft", pageRows.find((r) => r.id === draftCard.id)?.draft?.body.startsWith("Hi Dee") === true);
+    await db.update(recommendations).set({ inputsHash: "draft-h2" }).where(eq(recommendations.id, draftCard.id));
+    check("and drops it once the facts move", (await listPendingRecommendations(USER, 50)).find((r) => r.id === draftCard.id)?.draft === null);
+    const bell = await loadNotificationPanel(USER, new Date(), { withAlerts: false, radar: true });
+    check("the bell counts drafts ready", typeof bell.radar?.drafts === "number");
+    globalThis.fetch = realFetch;
+    await db.update(userSettings).set({ geminiApiKeyEncrypted: null }).where(eq(userSettings.userId, USER));
+
+    // Autopilot.
+    check("autopilot off does nothing", (await applyAutopilot(USER, {}, NOW)) === 0);
+    const applied = await applyAutopilot(USER, { reach_out: true }, NOW);
+    const [piloted] = await db.select().from(recommendations).where(eq(recommendations.id, pilotCard.id));
+    const [pilotContact] = await db.select({ next: contacts.nextFollowUpAt }).from(contacts).where(eq(contacts.id, pilot!.id));
+    check("autopilot schedules an opted-in kind", applied === 1 && piloted?.status === "auto_applied", `${applied} ${piloted?.status}`);
+    check("and remembers exactly what it set", Boolean(piloted?.autopilot?.reminderId) && pilotContact?.next?.toISOString() === piloted?.autopilot?.dueDate);
+    const [otherKind] = await db.select({ status: recommendations.status }).from(recommendations).where(eq(recommendations.id, draftCard.id));
+    check("but not a kind left off", otherKind?.status === "pending");
+    check("it never acts twice", (await applyAutopilot(USER, { reach_out: true }, NOW)) === 0);
+
+    const undone = await undoAutopilotForUser(USER, pilotCard.id);
+    const [afterUndo] = await db.select().from(recommendations).where(eq(recommendations.id, pilotCard.id));
+    const [contactAfter] = await db.select({ next: contacts.nextFollowUpAt }).from(contacts).where(eq(contacts.id, pilot!.id));
+    const leftover = await db.select().from(reminders).where(eq(reminders.contactId, pilot!.id));
+    check("Undo removes the follow-up it set", undone.ok && undone.cleared && leftover.length === 0 && contactAfter?.next === null);
+    check("and retires the card without a vote against it", afterUndo?.status === "expired");
+    const feedbackLeft = await db.select().from(recommendationFeedback).where(eq(recommendationFeedback.recommendationId, pilotCard.id));
+    check("leaving no feedback behind", feedbackLeft.length === 0);
+
+    // A follow-up the person has since moved is theirs: Undo leaves it.
+    await db.update(recommendations).set({ status: "pending", autopilot: null, actedAt: null, resolvedAt: null }).where(eq(recommendations.id, pilotCard.id));
+    await applyAutopilot(USER, { reach_out: true }, NOW);
+    const [again2] = await db.select().from(recommendations).where(eq(recommendations.id, pilotCard.id));
+    await db.update(reminders).set({ dueDate: ahead(20) }).where(eq(reminders.id, again2!.autopilot!.reminderId));
+    const kept = await undoAutopilotForUser(USER, pilotCard.id);
+    const stillThere = await db.select().from(reminders).where(eq(reminders.id, again2!.autopilot!.reminderId));
+    check("a follow-up the person moved survives Undo", kept.ok && !kept.cleared && stillThere.length === 1);
+
+    // An autopilot card settles as accepted once its time has passed, and is not a vote.
+    await db.update(recommendations).set({ status: "pending", autopilot: null, actedAt: null, resolvedAt: null }).where(eq(recommendations.id, pilotCard.id));
+    await db.delete(reminders).where(eq(reminders.contactId, pilot!.id));
+    await db.update(contacts).set({ nextFollowUpAt: null }).where(eq(contacts.id, pilot!.id));
+    await applyAutopilot(USER, { reach_out: true }, NOW);
+    await db.update(recommendations).set({ expiresAt: ago(1) }).where(eq(recommendations.id, pilotCard.id));
+    await claimRadarLease(USER, NOW);
+    await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+    const [settled] = await db.select({ status: recommendations.status }).from(recommendations).where(eq(recommendations.id, pilotCard.id));
+    check("an autopilot card settles as accepted when it expires", settled?.status === "accepted", settled?.status);
+    const tallies = await loadModelTallies(USER, NOW);
+    const reachVotes = tallies.find((t) => t.scope === "kind" && t.key === "reach_out");
+    check("autopilot's own action is not counted as the person's accept", (reachVotes?.a ?? 0) === 0, JSON.stringify(reachVotes));
+
+    await db.delete(contacts).where(inArray(contacts.id, [draftee!.id, pilot!.id]));
   }
 
   console.log("\nwho the nightly pass claims");
