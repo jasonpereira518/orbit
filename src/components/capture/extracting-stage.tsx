@@ -5,6 +5,9 @@
  * what is happening, and — once the result is in — a beat of "Found 3 people" before the
  * deck slides in. Pure CSS for the orbit so it keeps turning pre-hydration and in a hidden
  * tab; `motion-reduce:animate-none` is the whole reduced-motion story.
+ *
+ * While reading, `onStop` renders a Stop. The host decides what stopping means (capture-flow
+ * discards the job and hands the notes back untouched); this only offers it.
  */
 import { motion } from "motion/react";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
@@ -17,6 +20,7 @@ export function ExtractingStage({
   error,
   onRetry,
   onStartOver,
+  onStop,
 }: {
   phase: "reading" | "found" | "failed";
   foundCount?: number | null;
@@ -25,6 +29,8 @@ export function ExtractingStage({
   error?: string | null;
   onRetry?: () => void;
   onStartOver?: () => void;
+  /** Stop reading and go back to the notes. Shown only while `phase` is "reading". */
+  onStop?: () => void;
 }) {
   const heading =
     phase === "failed"
@@ -61,6 +67,11 @@ export function ExtractingStage({
         <p className="max-w-sm text-xs text-muted-foreground">
           This keeps going if you leave the page — you can come back to it from the bell.
         </p>
+      )}
+      {phase === "reading" && onStop && (
+        <button type="button" onClick={onStop} className="rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted">
+          Stop
+        </button>
       )}
       {phase === "failed" && (
         <div className="flex flex-wrap justify-center gap-2">

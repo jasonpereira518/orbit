@@ -61,6 +61,16 @@ import {
 } from "@/lib/note-batch-save";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import {
+  MAX_PERSONAL_DETAILS,
+  MAX_TAKEAWAYS,
+  cleanLines,
+  cleanWork,
+  normalizePhone,
+  normalizeWebsite,
+  normalizeXHandle,
+  summaryToTakeaways,
+} from "@/lib/capture/person-enrichment";
 
 export type CaptureRunnerDeps = {
   parse?: typeof runCaptureParse;
@@ -95,31 +105,94 @@ export async function runCaptureJobById(id: string, deps: CaptureRunnerDeps = {}
   }
 }
 
+/** Thrown inside `runExtraction` when the claim is gone — see `claimWatch`. Never reported. */
+class ClaimLostError extends Error {
+  constructor() {
+    super("capture job claim lost");
+    this.name = "ClaimLostError";
+  }
+}
+
+/**
+ * A promise that never settles; awaiting it parks the caller for good (see `claimWatch`).
+ * A FRESH one each time, never a shared constant: a module-level promise would hold every
+ * parked continuation — and the parse state it closes over — for the life of the process.
+ */
+const parked = () => new Promise<void>(() => {});
+
+/**
+ * The heartbeat, wired so that losing the claim STOPS the parse rather than merely being
+ * noticed at the end of it.
+ *
+ * The claim is lost when the person presses Stop or Start over (`discardCaptureJobRow`
+ * clears the token) or another runner took a stale row. Either way every model call after
+ * that point is billed to the person's key for a result nobody will see. Two things happen
+ * at the first heartbeat that finds the claim gone:
+ *
+ *   1. `lost` rejects, and `runExtraction` races the parse against it, so the runner
+ *      returns at once instead of waiting for the parse to finish.
+ *   2. This and every later heartbeat PARKS — returns a promise that never settles. The
+ *      parse awaits its heartbeat between model passes (`beat` in `src/lib/ai.ts`), and it
+ *      swallows a heartbeat that throws, so throwing would not stop anything; one that
+ *      never returns means the next pass is never started. A never-settling promise holds
+ *      no timer or socket, so it keeps nothing alive — the parked chain is garbage once the
+ *      runner has returned.
+ *
+ * A call already in flight when the claim goes (and the dates pass, which runs beside the
+ * people parse without heartbeats) finishes; there is no signal to hand it. What this buys
+ * is that nothing NEW starts.
+ */
+function claimWatch(id: string, token: string) {
+  let gone = false;
+  let reject!: (err: ClaimLostError) => void;
+  const lost = new Promise<never>((_, rej) => {
+    reject = rej;
+  });
+  // Handled here so a race that settles the other way never leaves an unhandled rejection.
+  lost.catch(() => {});
+  const heartbeat = async (): Promise<void> => {
+    if (gone) return parked();
+    const held = await heartbeatCaptureJob(id, token);
+    if (held) return;
+    gone = true;
+    reject(new ClaimLostError());
+    return parked();
+  };
+  return { heartbeat, lost };
+}
+
 async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobRow | null> {
   const claim = await claimCaptureJob(id, "extracting", { now: deps.now });
   if (!claim) return getCaptureJobById(id);
   const { row, token } = claim;
   const parse = deps.parse ?? runCaptureParse;
+  const watch = claimWatch(id, token);
 
   try {
     const corpus = assembleCaptureCorpus(row);
     if (!corpus) throw new Error("Nothing to read yet");
-    const parsed = await parse(row.userId, corpus, row.inputHints, {
-      meetingSessionId: row.meetingSessionId,
-      // Stored on the job rather than folded into `inputHints`, because a contact id is not
-      // a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
-      mentionPicks: row.mentionPicks ?? [],
-      now: deps.now,
-      // Keep the claim alive between the parse's model calls: a long two-pass parse used to
-      // outlast CAPTURE_CLAIM_STALE_MS in silence and get re-claimed — and re-billed — while
-      // still running.
-      onProgress: () => heartbeatCaptureJob(id, token),
-    });
-    await heartbeatCaptureJob(id, token);
+    const parsed = await Promise.race([
+      parse(row.userId, corpus, row.inputHints, {
+        meetingSessionId: row.meetingSessionId,
+        // Stored on the job rather than folded into `inputHints`, because a contact id is
+        // not a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
+        mentionPicks: row.mentionPicks ?? [],
+        now: deps.now,
+        // Keep the claim alive between the parse's model calls: a long two-pass parse used
+        // to outlast CAPTURE_CLAIM_STALE_MS in silence and get re-claimed — and re-billed —
+        // while still running. And stop between them once the claim is gone: `claimWatch`.
+        onProgress: watch.heartbeat,
+      }),
+      watch.lost,
+    ]);
+    if (!(await heartbeatCaptureJob(id, token))) throw new ClaimLostError();
     const { sourceText, sourceHash, ...rest } = parsed;
     const result: CaptureJobResult = rest;
     await settleCaptureJob(id, token, { status: "ready", result, sourceText, sourceHash, error: null });
   } catch (err) {
+    // Stopped, not failed: the row is discarded (or someone else's now), and there is no
+    // outcome to write — `settleCaptureJob` would refuse it anyway — and nothing to report.
+    if (err instanceof ClaimLostError) return getCaptureJobById(id);
     // The job row keeps the person's copy; the real error is reported with its reference
     // so "Couldn’t read those notes" is never the only trace of what went wrong.
     await settleCaptureJob(id, token, {
@@ -305,6 +378,23 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
       role: edits.role === undefined ? item.parsed.role : edits.role?.trim() || null,
       met_at: edits.metAt === undefined ? item.parsed.met_at : edits.metAt?.trim() || null,
       summary: edits.summary === undefined ? item.parsed.summary : edits.summary?.trim() || null,
+      // The card's richer fields. Absent means "as parsed"; present is what the person left,
+      // cleaned the same way the parse cleaned the model's version — the decision is stored
+      // as the browser sent it, so this is the first place it is trusted.
+      ...(edits.takeaways !== undefined
+        ? { takeaways: cleanLines(edits.takeaways ?? [], MAX_TAKEAWAYS) }
+        : edits.summary !== undefined
+          ? { takeaways: summaryToTakeaways(edits.summary) }
+          : {}),
+      ...(edits.personalDetails !== undefined
+        ? { personal_details: cleanLines(edits.personalDetails ?? [], MAX_PERSONAL_DETAILS) }
+        : {}),
+      ...(edits.work !== undefined ? { work: cleanWork(edits.work) } : {}),
+      ...(edits.phone !== undefined ? { phone: normalizePhone(edits.phone) } : {}),
+      ...(edits.xHandle !== undefined ? { x_handle: normalizeXHandle(edits.xHandle) } : {}),
+      ...(edits.website !== undefined ? { website: normalizeWebsite(edits.website) } : {}),
+      ...(edits.school !== undefined ? { school: edits.school?.trim().slice(0, 200) || null } : {}),
+      ...(edits.industry !== undefined ? { industry: edits.industry?.trim().slice(0, 200) || null } : {}),
     };
     const top =
       !decision.mergeContactId && index

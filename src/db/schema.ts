@@ -3197,6 +3197,17 @@ export const captureJobs = pgTable(
     mentionPicks: jsonb("mention_picks").$type<MentionPick[]>().default([]).notNull(),
     /** `capture_photos` ids stored at upload, attached to the batch when the job saves. */
     photoIds: jsonb("photo_ids").$type<string[]>().default([]).notNull(),
+    /**
+     * SHA-256 (hex) of each ORIGINAL file this job was read from, hashed in the browser
+     * before any preparation (`src/lib/capture/file-hash.ts`). Appended per upload part.
+     *
+     * What lets a file dropped again be recognised as already captured
+     * (`findCapturedFiles`) instead of being read, billed and filed twice. A text[] with a
+     * GIN index rather than a side table because the only question ever asked of it is "do
+     * any of these hashes appear in any of this user's jobs" — an `&&` overlap, which GIN
+     * answers from the index.
+     */
+    sourceFileHashes: text("source_file_hashes").array().default(sql`'{}'`).notNull(),
     transcriptionEngine: text("transcription_engine"),
     /** The assembled corpus the model read, and its dedupe hash. Written by the runner only. */
     sourceText: text("source_text"),
@@ -3217,6 +3228,7 @@ export const captureJobs = pgTable(
     index("capture_jobs_user_status_idx").on(t.userId, t.status, t.updatedAt),
     index("capture_jobs_stall_idx").on(t.status, t.updatedAt),
     index("capture_jobs_user_batch_idx").on(t.userId, t.batchGroupId),
+    index("capture_jobs_source_file_hashes_idx").using("gin", t.sourceFileHashes),
   ]
 );
 

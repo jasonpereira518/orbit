@@ -62,3 +62,26 @@ export function planetForIndex(index: number): PlanetDef {
   const i = ((Math.floor(index) % n) + n) % n;
   return PLANETS[PLANET_ORDER[i]!];
 }
+
+/**
+ * The bodies at each orbit, by closeness (1-5, `lib/capture/closeness.ts`): the people you
+ * are closest to sit on the inner planets, acquaintances out past Neptune. So the planet on
+ * a card says something about the person — and moves when you change how close you are.
+ *
+ * Each ring has several bodies so two people at the same distance still look different;
+ * which one a card gets is its position in the deck, wrapped around the ring.
+ */
+export const PLANET_RINGS: Record<1 | 2 | 3 | 4 | 5, readonly PlanetId[]> = {
+  5: ["mercury", "venus"],
+  4: ["earth", "moon", "mars"],
+  3: ["ceres", "jupiter", "europa", "ganymede"],
+  2: ["saturn", "titan", "uranus"],
+  1: ["neptune", "pluto", "eris"],
+};
+
+export function planetForCloseness(closeness: number, index: number): PlanetDef {
+  const level = Math.min(5, Math.max(1, Math.round(closeness) || 2)) as 1 | 2 | 3 | 4 | 5;
+  const ring = PLANET_RINGS[level];
+  const i = ((Math.floor(index) % ring.length) + ring.length) % ring.length;
+  return PLANETS[ring[i]!];
+}

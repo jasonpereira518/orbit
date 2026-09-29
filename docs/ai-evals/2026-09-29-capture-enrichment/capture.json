@@ -1,0 +1,85 @@
+{
+  "label": "gemini-gemini-3.8-flash",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-29T17:34:31.175Z",
+  "commit": "0a31f7ac",
+  "fixtures": "3e68468978ea",
+  "runs": 2,
+  "decisions": null,
+  "tasks": {
+    "capture": {
+      "cases": 23,
+      "metrics": {
+        "personRecall": 1,
+        "personPrecision": 1,
+        "fieldAccuracy": 1,
+        "opportunityRecall": 1,
+        "referralRecall": 1,
+        "reminderRecall": 1,
+        "takeawayRate": 1,
+        "personalRecall": 1,
+        "workRecall": 1,
+        "handleAccuracy": 1,
+        "connectionRecall": 1,
+        "promiseRecall": 0.9285714285714286,
+        "phantomParticipants": 0,
+        "forbiddenHits": 0
+      },
+      "misses": [],
+      "p50LatencyMs": 5205.5,
+      "costMicros": 251979,
+      "costPerCaseMicros": 10955.608695652174,
+      "usage": [
+        {
+          "operation": "capture.dates",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 46,
+          "failures": 0,
+          "inputTokens": 67724,
+          "outputTokens": 11133,
+          "cachedInputTokens": 0,
+          "costMicros": 33637,
+          "unpriced": 0,
+          "p50Ms": 1227
+        },
+        {
+          "operation": "capture.parse",
+          "model": "gemini-3.8-flash",
+          "calls": 42,
+          "failures": 0,
+          "inputTokens": 118712,
+          "outputTokens": 60359,
+          "cachedInputTokens": 0,
+          "costMicros": 315386,
+          "unpriced": 0,
+          "p50Ms": 4820
+        },
+        {
+          "operation": "capture.parse.details",
+          "model": "gemini-3.8-flash",
+          "calls": 14,
+          "failures": 0,
+          "inputTokens": 39397,
+          "outputTokens": 30176,
+          "cachedInputTokens": 0,
+          "costMicros": 142708,
+          "unpriced": 0,
+          "p50Ms": 9193
+        },
+        {
+          "operation": "capture.parse.identify",
+          "model": "gemini-3.8-flash",
+          "calls": 4,
+          "failures": 0,
+          "inputTokens": 4672,
+          "outputTokens": 2326,
+          "cachedInputTokens": 0,
+          "costMicros": 12227,
+          "unpriced": 0,
+          "p50Ms": 2687
+        }
+      ]
+    }
+  }
+}

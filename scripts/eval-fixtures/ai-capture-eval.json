@@ -10,7 +10,20 @@
           {
             "name": "Mateo Villanueva",
             "company": "Quillfeather Bank",
-            "role": "data engineer"
+            "role": "data engineer",
+            "minTakeaways": 3,
+            "personal": [
+              "half marathon"
+            ],
+            "work": [
+              "fraud"
+            ],
+            "promises": [
+              {
+                "direction": "they_owe",
+                "contains": "style guide"
+              }
+            ]
           }
         ],
         "forbidden": [
@@ -503,6 +516,140 @@
           "Marguerite Delacroix-Lang",
           "Sunita Balakrishnan",
           "Bram de Vries"
+        ]
+      }
+    },
+    {
+      "id": "cap-rich-01-founder-dinner",
+      "kind": "rich",
+      "today": "2026-09-20",
+      "notes": "Dinner at Osteria Lume with Hana Okafor, cofounder and CEO of Brightkiln (they make kiln-control software for small ceramics studios). Her cofounder Tomasz Wren handles the hardware side. They just closed a $2M seed and are hiring their first two full-stack engineers — she said the biggest headache right now is flaky firmware updates in the field. Hana grew up in Lagos, has a golden retriever named Biscuit, and is getting married in Lisbon next June. We're both Carnegie Mellon alums. Her cell is (412) 555-0187 and she's @hanabuilds on X. I promised to send her my notes on OTA update rollouts by next Friday. She offered to intro me to their lead investor, Priscilla Vance at Northgate Ventures.",
+      "expect": {
+        "people": [
+          {
+            "name": "Hana Okafor",
+            "company": "Brightkiln",
+            "role": "CEO",
+            "minTakeaways": 3,
+            "personal": [
+              "Lagos",
+              "Biscuit",
+              "Lisbon"
+            ],
+            "work": [
+              "full-stack",
+              "firmware"
+            ],
+            "phone": "4125550187",
+            "xHandle": "hanabuilds",
+            "school": "Carnegie Mellon",
+            "connections": [
+              "Tomasz Wren",
+              "Priscilla Vance"
+            ],
+            "promises": [
+              {
+                "direction": "you_owe",
+                "contains": "OTA"
+              },
+              {
+                "direction": "they_owe",
+                "contains": "intro"
+              }
+            ],
+            "opportunityKinds": [
+              "introduction"
+            ]
+          }
+        ],
+        "notParticipants": [
+          "Tomasz Wren",
+          "Priscilla Vance"
+        ],
+        "forbidden": [
+          "linkedin.com/in"
+        ]
+      }
+    },
+    {
+      "id": "cap-rich-02-two-at-meetup",
+      "kind": "rich",
+      "today": "2026-09-25",
+      "notes": "Rust Chicago meetup tonight.\n\nOwen Castellanos — staff engineer at Ferrowave, on their storage team. They're rewriting the write-ahead log in Rust and he's frustrated by compile times. Looking for a new role by spring, ideally remote. Has twin daughters, coaches their soccer team on weekends. He'll send me the link to his talk slides tomorrow.\n\nDeepa Raman — recruiter at Ferrowave, works with Owen. Hiring for three backend roles on the storage team, applications close Oct 15. I said I'd email her my resume this weekend. She runs a pottery studio on the side.",
+      "expect": {
+        "people": [
+          {
+            "name": "Owen Castellanos",
+            "company": "Ferrowave",
+            "role": "staff engineer",
+            "minTakeaways": 2,
+            "personal": [
+              "daughters",
+              "soccer"
+            ],
+            "work": [
+              "write-ahead log"
+            ],
+            "promises": [
+              {
+                "direction": "they_owe",
+                "contains": "slides"
+              }
+            ]
+          },
+          {
+            "name": "Deepa Raman",
+            "company": "Ferrowave",
+            "role": "recruiter",
+            "minTakeaways": 2,
+            "personal": [
+              "pottery"
+            ],
+            "work": [
+              "backend"
+            ],
+            "connections": [
+              "Owen"
+            ],
+            "promises": [
+              {
+                "direction": "you_owe",
+                "contains": "resume"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-rich-03-mentor-checkin",
+      "kind": "rich",
+      "today": "2026-09-28",
+      "notes": "Monthly call with my mentor Grace Liu (VP Eng at Palisade Health). Fourth time we've talked this year. Her advice: stop polishing the side project and ship it to ten users; pick one metric. She's worried about a reorg at Palisade and might move to an advisory role. Her son just started at Michigan. She reminded me her personal site gracel.io has her reading list. She'll review my promo packet if I send it before the 10th, and I owe her the book recommendation I mentioned (Working in Public).",
+      "expect": {
+        "people": [
+          {
+            "name": "Grace Liu",
+            "company": "Palisade Health",
+            "role": "VP",
+            "minTakeaways": 3,
+            "personal": [
+              "son"
+            ],
+            "work": [
+              "reorg"
+            ],
+            "promises": [
+              {
+                "direction": "they_owe",
+                "contains": "promo"
+              },
+              {
+                "direction": "you_owe",
+                "contains": "book"
+              }
+            ]
+          }
         ]
       }
     }

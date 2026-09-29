@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { motion } from "motion/react";
 import { Loader2, Upload } from "lucide-react";
 import { VoiceRecorder } from "@/components/capture/voice-recorder";
-import { IngestMeta, MissingKeyNotice } from "@/components/capture/messy-notes-capture";
+import { IngestMeta, MissingKeyNotice, StopReadingButton } from "@/components/capture/messy-notes-capture";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -98,11 +98,16 @@ export function VoiceCapture({
       </motion.div>
 
       {ingest.busy && !hasTranscript && (
-        <div className="space-y-2" aria-hidden>
-          <Skeleton className="h-4 w-11/12" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-9/12" />
-          <Skeleton className="h-4 w-4/12" />
+        <div className="space-y-2">
+          <div className="space-y-2" aria-hidden>
+            <Skeleton className="h-4 w-11/12" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-9/12" />
+            <Skeleton className="h-4 w-4/12" />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Transcribing… <StopReadingButton onStop={ingest.cancel} />
+          </p>
         </div>
       )}
 
@@ -127,6 +132,7 @@ export function VoiceCapture({
             {ingest.busy && (
               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" /> Transcribing…
+                <StopReadingButton onStop={ingest.cancel} />
               </span>
             )}
             <IngestMeta fileName={ingest.fileName} sources={ingest.sources} />
