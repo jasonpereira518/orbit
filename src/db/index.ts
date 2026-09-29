@@ -3700,6 +3700,10 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
   `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
+  // v130 backfill: accounts created through a beta invitation BEFORE pricing v2 carry the comp
+  // note the invitation wrote. They are founding-eligible (their comp itself is untouched).
+  // Idempotent, and never un-sets a flag.
+  `UPDATE user_settings SET founding_eligible = true WHERE comped_note = 'Invited by an admin' AND founding_eligible = false`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
