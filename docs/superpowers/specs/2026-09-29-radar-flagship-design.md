@@ -150,18 +150,16 @@ cannot bury a meeting tomorrow. Prep cards within 48 hours are exempt from negat
 All of these write `contact_signals` rows, as in the base spec's data model. The scorer reads them
 as the base spec's `heads_up` table describes (points and half-lives unchanged).
 
-- **Job changes.** `recordJobChangeSignals(userId, contactId, changes, source)` is called from
-  three places:
-  - the `diffPageAgainstContact` call sites in `src/lib/extension/resolve.ts` (the extension
-    already computes `FieldChange[]`);
-  - `refreshContactsFromLinkedIn` in `src/actions/contacts.ts` (old values are in the loaded
-    rows);
-  - `updateContactForUser` in `src/lib/contact-writes.ts`, which reads the prior title and
-    company only when the input touches them.
-
-  A nightly Apollo re-check covers at most 10 inner or mid contacts per run, uses the person's
-  own key only, keyset-rotates with 30-day spacing, and never overwrites the contact. "Update
-  record" on the card is the human click.
+- **Job changes.** Main already notices them: the work-history sweep (PR #367/#369) re-checks
+  contacts on the person's own AI key on a staggered schedule, and `recordJobChanges`
+  (`src/lib/job-changes.ts`) writes every move to `contact_career_moves`, updates the contact's
+  title and company, and adds a timeline entry. Radar reads that log (one windowed read in
+  `produceInternalSignals`) and turns a move from the last 30 days into a `heads_up` card in
+  the move's own words ("Joined Ramp as Staff PM (from Stripe)"): 32 points for a new
+  employer, 24 for leaving, 18 for a new title, decaying with a 10-day half-life. No Radar
+  hooks, no Radar-owned Apollo re-check, and no "Update record" action: the contact is
+  already updated. `radar_apollo_cursor` and the `job_change` kind of `contact_signals` are
+  left over from the earlier design and are removed with the next schema change.
 - **Company news.** Global ingest-only tables: `external_sources`, `external_items` and
   `external_item_companies`.
   - An hourly sweep at `/api/radar/feeds/sweep` follows the `src/lib/jobs/feed-sweep.ts`

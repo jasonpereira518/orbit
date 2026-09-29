@@ -16,6 +16,7 @@ import { EVIDENCE_FLOOR } from "@/lib/closeness-evidence";
 import { attendedEventFilter } from "@/lib/events/store";
 import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { JOB_SIGNAL_SUGGESTION_TYPE } from "@/lib/jobs/matcher";
+import { jobChangeSentence } from "@/lib/contact-profile-format";
 import { OPEN_OPPORTUNITY_STATUSES } from "@/lib/opportunity-kinds";
 import { LINKEDIN_QUIET_MAX_DAYS } from "@/lib/outreach-thresholds";
 import { RADAR_WINDOWS, type RadarTier } from "@/lib/radar/score";
@@ -51,7 +52,7 @@ function asDate(value: string | Date | null | undefined): Date | null {
 
 export async function produceInternalSignals(userId: string, now: Date): Promise<RadarSignal[]> {
   const db = await getDb();
-  const [messages, meetings, events, items, opportunities, briefs, jobs] = await Promise.all([
+  const [messages, meetings, events, items, opportunities, briefs, jobs, moves] = await Promise.all([
     // LinkedIn threads, one row per contact whose latest message is in the window. Direction
     // is only ever set on linkedin_message rows, which is what separates "they are waiting
     // on you" from "the thread went quiet".
@@ -129,6 +130,15 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
          AND status = 'pending'
          AND suggestion_type = ${JOB_SIGNAL_SUGGESTION_TYPE}
     `),
+    // Job moves the work-history check logged (`recordJobChanges`, lib/job-changes.ts): the
+    // newest per contact in the window. Read, never re-derived, and already sanitized there.
+    db.execute(sql`
+      SELECT DISTINCT ON (contact_id) contact_id, kind, from_org, from_title, to_org, to_title, detected_at
+        FROM contact_career_moves
+       WHERE user_id = ${userId}
+         AND detected_at >= ${daysBefore(now, RADAR_WINDOWS.jobChangeMax)}
+       ORDER BY contact_id, detected_at DESC
+    `),
   ]);
 
   const out: RadarSignal[] = [];
@@ -186,6 +196,27 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
     if (!r.contact_id || !r.text || !at || jobSeen.has(r.contact_id)) continue;
     jobSeen.add(r.contact_id);
     out.push({ kind: "job_posting", contactId: r.contact_id, at, text: r.text });
+  }
+
+  for (const r of rowsOf<{
+    contact_id: string;
+    kind: "joined" | "left" | "title_change";
+    from_org: string | null;
+    from_title: string | null;
+    to_org: string | null;
+    to_title: string | null;
+    detected_at: string | Date;
+  }>(moves)) {
+    const at = asDate(r.detected_at);
+    if (!at) continue;
+    const text = jobChangeSentence({
+      kind: r.kind,
+      fromOrg: r.from_org,
+      fromTitle: r.from_title,
+      toOrg: r.to_org,
+      toTitle: r.to_title,
+    }).slice(0, 200);
+    out.push({ kind: "job_change", contactId: r.contact_id, at, move: r.kind, text });
   }
 
   return out;

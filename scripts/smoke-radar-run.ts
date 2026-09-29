@@ -21,6 +21,7 @@ import { getDb } from "../src/db";
 import {
   actionItems,
   aiSuggestions,
+  contactCareerMoves,
   contactOpportunities,
   contacts,
   eventAttendees,
@@ -335,9 +336,9 @@ run(async () => {
   const biggerStatements = stopQueryCount();
   check("the run still succeeds", bigger.ok);
   check("the same statements at 312 contacts as at 12", biggerStatements === statements, `${biggerStatements} vs ${statements}`);
-  // 23: the outcome check (`detectRadarOutcomes`), the model's tallies
-  // (`loadModelTallies`) and the autopilot settings; see smoke-page-budgets.
-  check("and a bounded number of them", statements <= 23, String(statements));
+  // 24: the outcome check (`detectRadarOutcomes`), the model's tallies
+  // (`loadModelTallies`), the autopilot settings and the job-move read; see smoke-page-budgets.
+  check("and a bounded number of them", statements <= 24, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);
@@ -516,6 +517,34 @@ run(async () => {
     check("the model is saved on the account", saved?.model?.kinds.reconnect?.d === 6 && saved.model.reasons.dormant?.d === 6,
       JSON.stringify(saved?.model));
     await db.delete(contacts).where(inArray(contacts.id, [learner!.id, history!.id]));
+  }
+
+  console.log("\njob moves");
+  {
+    const [mover] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Mover Max", company: "Ramp", title: "Staff PM", firstInteractionAt: ago(400), lastInteractionAt: ago(40) })
+      .returning();
+    await db.insert(contactCareerMoves).values({
+      userId: USER,
+      contactId: mover!.id,
+      kind: "joined",
+      fromOrg: "Stripe",
+      toOrg: "Ramp",
+      toTitle: "Staff PM",
+      source: "web",
+      dedupeKey: "smoke-radar-move",
+      detectedAt: new Date(later.getTime() - 2 * DAY),
+    });
+    await claimRadarLease(USER, later);
+    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    const [card] = await db
+      .select({ kind: recommendations.kind, reasons: recommendations.reasons })
+      .from(recommendations)
+      .where(and(eq(recommendations.contactId, mover!.id), eq(recommendations.status, "pending")));
+    check("a logged job move becomes a heads-up card", card?.kind === "heads_up", JSON.stringify(card));
+    check("that says what happened", card?.reasons.some((r) => r.label === "Joined Ramp as Staff PM (from Stripe)") === true);
+    await db.delete(contacts).where(eq(contacts.id, mover!.id));
   }
 
   console.log("\ndrafts and autopilot");

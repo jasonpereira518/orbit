@@ -63,6 +63,8 @@ export const RADAR_WEIGHTS = {
   briefNextStep: 10,
   // opportunity
   jobPosting: 28,
+  // heads_up: a job move. A new employer is news; a new title at the same one, less so.
+  jobChange: { joined: 32, left: 24, title_change: 18 },
   // reach_out
   inboundUnanswered: 34,
   recentIntro: 30,
@@ -86,7 +88,7 @@ export const RADAR_WEIGHTS = {
 } as const;
 
 /** Half-lives for facts whose value fades. Everything else holds until it stops being true. */
-export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21 } as const;
+export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10 } as const;
 
 export const RADAR_BUCKETS = { today: 50, soon: 32, later: 18 } as const;
 
@@ -116,6 +118,8 @@ export const RADAR_WINDOWS = {
   inboundMax: LINKEDIN_QUIET_MAX_DAYS,
   /** A contact added at an event is not a follow-up; a touch a day or more after it is. */
   postEventGrace: 1,
+  /** A job move older than this is history, not a reason to write. */
+  jobChangeMax: 30,
 } as const;
 
 /** A reason below this after decay is not worth a line. */
@@ -355,6 +359,17 @@ export function scoreContactKinds(
           "opportunity",
           { code: "job_posting", label: s.text, points: decayed(W.jobPosting, age, RADAR_HALF_LIFE_DAYS.jobPosting) },
           { label: "New roles at their company", at: iso(s.at) }
+        );
+        break;
+      }
+      case "job_change": {
+        const age = daysSince(s.at, now) ?? 0;
+        if (age > RADAR_WINDOWS.jobChangeMax) break;
+        add(
+          drafts,
+          "heads_up",
+          { code: "job_change", label: s.text, points: decayed(W.jobChange[s.move], age, RADAR_HALF_LIFE_DAYS.jobChange) },
+          { label: "Job move", at: iso(s.at) }
         );
         break;
       }

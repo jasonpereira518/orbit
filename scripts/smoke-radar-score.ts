@@ -261,6 +261,22 @@ function main() {
     check("the same input scores identically every time", new Set(runs).size === 1);
   }
 
+  console.log("\njob moves");
+  {
+    const joined: RadarSignal = { kind: "job_change", contactId: "c1", at: ago(2), move: "joined", text: "Joined Ramp as Staff PM (from Stripe)" };
+    const retitled: RadarSignal = { kind: "job_change", contactId: "c1", at: ago(2), move: "title_change", text: "New role at Stripe: Director" };
+    const quiet = contact({ lastInteractionAt: ago(10) });
+    const j = kinds(quiet, [joined]).find((k) => k.kind === "heads_up");
+    const t = kinds(quiet, [retitled]).find((k) => k.kind === "heads_up");
+    check("a job move is a heads-up, in its own words", j?.reasons[0]?.label === "Joined Ramp as Staff PM (from Stripe)");
+    check("a new employer outranks a new title", (j?.score ?? 0) > (t?.score ?? 0), `${j?.score} vs ${t?.score}`);
+    const stale = kinds(quiet, [{ ...joined, at: ago(20) }]).find((k) => k.kind === "heads_up");
+    check("and fades as it ages", (stale?.score ?? 0) < (j?.score ?? 0));
+    check("a month-old move is history", kinds(quiet, [{ ...joined, at: ago(40) }]).every((k) => k.kind !== "heads_up"));
+    check("news still reaches someone with a follow-up already set",
+      kinds(contact({ nextFollowUpAt: ahead(3) }), [joined]).some((k) => k.kind === "heads_up"));
+  }
+
   console.log("\nwhat the account taught it");
   {
     check("no history is a multiplier of exactly 1", multiplierFrom(undefined) === 1 && multiplierFrom({ a: 0, d: 0 }) === 1);

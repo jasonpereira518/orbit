@@ -194,6 +194,8 @@ export type RadarSignal =
   | { kind: "brief_next_step"; contactId: string; at: Date | null; text: string }
   | { kind: "inbound_unanswered"; contactId: string; at: Date }
   | { kind: "linkedin_thread_quiet"; contactId: string; at: Date; count: number }
-  | { kind: "job_posting"; contactId: string; at: Date; text: string };
+  | { kind: "job_posting"; contactId: string; at: Date; text: string }
+  /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
+  | { kind: "job_change"; contactId: string; at: Date; move: "joined" | "left" | "title_change"; text: string };
 
 export type RadarSignalKind = RadarSignal["kind"];
