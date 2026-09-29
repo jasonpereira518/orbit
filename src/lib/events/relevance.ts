@@ -28,6 +28,7 @@
  * Pure: no network, no database, no AI.
  */
 import type { EventKind } from "@/lib/events/company-list-parse";
+import { FOUNDER_EXEC, LEADER, RECRUITER } from "@/lib/role-function";
 
 /**
  * Every weight in one object, because they only make sense relative to each other.
@@ -113,12 +114,6 @@ export type RelevanceResult = {
   bucket: RelevanceBucket;
   reasons: RelevanceReason[];
 };
-
-const FOUNDER_EXEC =
-  /\b(founder|co-?founder|ceo|cto|coo|cfo|cpo|cmo|chief|president|partner|managing director|owner)\b/i;
-const LEADER = /\b(head of|vp|vice president|director|principal|lead|manager|staff)\b/i;
-const RECRUITER =
-  /\b(recruit(?:er|ing)|talent|sourcer|people ops|hr|human resources|campus|university relations|hiring)\b/i;
 
 export type Seniority = keyof typeof RELEVANCE_WEIGHTS.seniority;
 

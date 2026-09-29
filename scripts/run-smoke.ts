@@ -212,6 +212,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-recruiter-query": "pure",
   "smoke-recruiter-scan": "pure",
   "smoke-recruiter-triage": "pure",
+  "smoke-role-function": "pure",
   "smoke-relative-date": "pure",
   "smoke-reveal-reduced-motion": "pure",
   "smoke-scan-image": "pure",
