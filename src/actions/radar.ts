@@ -24,6 +24,7 @@ import {
 import { explainRecommendation } from "@/lib/radar/explain";
 import { loadRadarPage, loadRadarPreview, type RadarPageData, type RadarPreview } from "@/lib/radar/page-data";
 import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, runRadarForUser } from "@/lib/radar/run";
+import { markRecommendationsSeen } from "@/lib/radar/store";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -49,6 +50,8 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
     loadRadarPage(userId),
     getNetworkStats(userId).catch(() => null),
   ]);
+  const shown = page.recommendations.map((r) => r.id);
+  after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
   return { page, networkStats };
 }
 
@@ -59,6 +62,8 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
 export async function fetchRadarPreview(): Promise<RadarPreview> {
   const userId = await requireUserForSurface(SURFACE);
   const preview = await loadRadarPreview(userId);
+  const shown = preview.items.map((r) => r.id);
+  after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
   after(() =>
     (preview.hasRun ? maybeRefreshRadar(userId) : ensureRadarRun(userId).then(() => undefined)).catch(() => undefined)
   );

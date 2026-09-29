@@ -31,6 +31,7 @@ import {
 } from "@/lib/radar/score";
 import { loadCandidates, produceInternalSignals, type RadarCandidateRow } from "@/lib/radar/signals/internal";
 import {
+  detectRadarOutcomes,
   loadLiveRecommendations,
   loadSuppressions,
   planRunResult,
@@ -79,6 +80,8 @@ export type RadarRunStats = {
   expired: number;
   aiNotes: number;
   skippedNoKey: boolean;
+  /** Accepted cards that led to a real conversation since the last run. */
+  outcomes: number;
   durationMs: number;
 };
 
@@ -207,6 +210,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     expired: 0,
     aiNotes: 0,
     skippedNoKey: false,
+    outcomes: 0,
     durationMs: 0,
   };
   const db = await getDb();
@@ -220,12 +224,19 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
 
-        const [signals, goals, targetKeys, live] = await Promise.all([
+        const [signals, goals, targetKeys, live, outcomes] = await Promise.all([
           produceInternalSignals(userId, now),
           listActiveGoalTextsForUser(userId, { limit: 8 }),
           loadTargetKeys(userId),
           loadLiveRecommendations(userId),
+          // Measurement, not ranking: which accepts turned into conversations. It never
+          // blocks the list, so a failure here costs the stat, not the run.
+          detectRadarOutcomes(userId, now).catch((err) => {
+            reportUnlessQuiet(err, { where: "job.radar.outcomes", userId, level: "warning" });
+            return 0;
+          }),
         ]);
+        stats.outcomes = outcomes;
         const [candidates, suppressions] = await Promise.all([
           loadCandidates(userId, signals.map((s) => s.contactId), now),
           loadSuppressions(userId, live, now),

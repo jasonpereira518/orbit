@@ -9,6 +9,7 @@ import { and, desc, eq, gte, inArray, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite, type AtomicStatement } from "@/db";
 import { radarRuns, recommendationFeedback, recommendations } from "@/db/schema";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { RADAR_WINDOWS, type RadarPick, type RadarSuppression } from "@/lib/radar/score";
 import type {
   RadarAiNote,
@@ -330,6 +331,73 @@ export async function listPendingRecommendations(userId: string, limit: number):
     lastInteractionAt: r.last_interaction_at ? new Date(r.last_interaction_at) : null,
     updatedAt: new Date(r.updated_at),
   }));
+}
+
+/** A card counts as seen again only after this long, so a reload is not a second look. */
+export const RADAR_SEEN_DEBOUNCE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Impressions: stamp the cards a person was just shown. One statement, fired after the
+ * response (`after()` in the server action), so it never costs the page. "Ignored" in the
+ * metrics means seen at least three times and then expired untouched, which is only
+ * meaningful because a burst of reloads counts once.
+ */
+export async function markRecommendationsSeen(userId: string, ids: readonly string[], now: Date = new Date()): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  const at = now.toISOString();
+  const debounceCutoff = new Date(now.getTime() - RADAR_SEEN_DEBOUNCE_MS);
+  await db
+    .update(recommendations)
+    .set({
+      seenCount: sql`${recommendations.seenCount} + 1`,
+      lastSeenAt: now,
+      firstSeenAt: sql`coalesce(${recommendations.firstSeenAt}, ${at}::timestamptz)`,
+    })
+    .where(
+      and(
+        eq(recommendations.userId, userId),
+        inArray(recommendations.id, [...ids]),
+        or(sql`${recommendations.lastSeenAt} is null`, lt(recommendations.lastSeenAt, debounceCutoff))
+      )
+    );
+}
+
+/** A conversation this soon after an accept is what the accept was for. */
+export const RADAR_OUTCOME_WINDOW_DAYS = 14;
+
+/**
+ * Outcomes: an accepted (or autopilot-applied) card whose contact then had a real
+ * interaction within `RADAR_OUTCOME_WINDOW_DAYS` gets `outcome_at`. One statement per run,
+ * over the account's recent accepts only. "Real" is `countsAsTouch`: an AI-derived row is
+ * not a conversation. Returns how many cards converted this time.
+ */
+export async function detectRadarOutcomes(userId: string, now: Date): Promise<number> {
+  const db = await getDb();
+  const at = now.toISOString();
+  const rows = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      UPDATE recommendations r
+         SET outcome_at = t.at
+        FROM (
+          SELECT r2.id, min(i.interaction_date) AS at
+            FROM recommendations r2
+            JOIN interactions i ON i.user_id = r2.user_id AND i.contact_id = r2.contact_id
+           WHERE r2.user_id = ${userId}
+             AND r2.status IN ('accepted', 'auto_applied')
+             AND r2.outcome_at IS NULL
+             AND r2.acted_at IS NOT NULL
+             AND r2.acted_at > ${at}::timestamptz - make_interval(days => ${RADAR_OUTCOME_WINDOW_DAYS * 2})
+             AND i.interaction_date >= r2.acted_at
+             AND i.interaction_date <= LEAST(r2.acted_at + make_interval(days => ${RADAR_OUTCOME_WINDOW_DAYS}), ${at}::timestamptz)
+             AND (i.source IS NULL OR i.source <> ${AI_DERIVED_SOURCE})
+           GROUP BY r2.id
+        ) t
+       WHERE r.id = t.id
+      RETURNING r.id
+    `)
+  );
+  return rows.length;
 }
 
 /** The latest completed run, for the page's "Updated 6h ago" stamp. */

@@ -274,7 +274,8 @@ run(async () => {
   const biggerStatements = stopQueryCount();
   check("the run still succeeds", bigger.ok);
   check("the same statements at 312 contacts as at 12", biggerStatements === statements, `${biggerStatements} vs ${statements}`);
-  check("and a bounded number of them", statements <= 20, String(statements));
+  // 21 with the outcome check (`detectRadarOutcomes`); see smoke-page-budgets.
+  check("and a bounded number of them", statements <= 21, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);

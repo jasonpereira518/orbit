@@ -38,7 +38,7 @@ export async function scheduleRecommendationForUser(userId: string, id: string, 
   const now = new Date();
   await db
     .update(recommendations)
-    .set({ status: "accepted", resolvedAt: now, updatedAt: now })
+    .set({ status: "accepted", resolvedAt: now, actedAt: now, updatedAt: now })
     .where(and(eq(recommendations.id, id), eq(recommendations.userId, userId)));
   await recordFeedback(userId, { contactId: rec.contactId, recommendationId: id, kind: rec.kind, action: "accepted" });
   return { ok: true as const, contactId: rec.contactId, dueDate: result.dueDate };
@@ -51,7 +51,7 @@ export async function snoozeRecommendationForUser(userId: string, id: string, le
   const now = new Date();
   await db
     .update(recommendations)
-    .set({ status: "snoozed", snoozedUntil: new Date(now.getTime() + SNOOZE_DAYS[length] * DAY_MS), updatedAt: now })
+    .set({ status: "snoozed", snoozedUntil: new Date(now.getTime() + SNOOZE_DAYS[length] * DAY_MS), actedAt: now, updatedAt: now })
     .where(and(eq(recommendations.id, id), eq(recommendations.userId, userId)));
   await recordFeedback(userId, { contactId: rec.contactId, recommendationId: id, kind: rec.kind, action: "snoozed" });
   return { ok: true as const };
@@ -64,7 +64,7 @@ export async function dismissRecommendationForUser(userId: string, id: string) {
   const now = new Date();
   await db
     .update(recommendations)
-    .set({ status: "dismissed", resolvedAt: now, updatedAt: now })
+    .set({ status: "dismissed", resolvedAt: now, actedAt: now, updatedAt: now })
     .where(and(eq(recommendations.id, id), eq(recommendations.userId, userId)));
   await recordFeedback(userId, { contactId: rec.contactId, recommendationId: id, kind: rec.kind, action: "dismissed" });
   return { ok: true as const };
@@ -78,7 +78,7 @@ export async function neverForContactForUser(userId: string, id: string) {
   const now = new Date();
   await db
     .update(recommendations)
-    .set({ status: "dismissed", resolvedAt: now, updatedAt: now })
+    .set({ status: "dismissed", resolvedAt: now, actedAt: now, updatedAt: now })
     .where(
       and(
         eq(recommendations.userId, userId),
@@ -106,7 +106,7 @@ export async function restoreRecommendationForUser(userId: string, id: string) {
   try {
     await db
       .update(recommendations)
-      .set({ status: "pending", snoozedUntil: null, resolvedAt: null, updatedAt: new Date() })
+      .set({ status: "pending", snoozedUntil: null, resolvedAt: null, actedAt: null, updatedAt: new Date() })
       .where(and(eq(recommendations.id, id), eq(recommendations.userId, userId)));
   } catch {
     // The live unique index: a later run already raised this person again.
