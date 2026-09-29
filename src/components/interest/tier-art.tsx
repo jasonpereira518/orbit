@@ -14,7 +14,9 @@ export const TIER_ART: Record<ReferralTierId, { planet: WelcomePlanet | "sun"; s
   "move-up": { planet: "earth", size: 26 },
   "priority-beta": { planet: "jupiter", size: 34 },
   "early-access": { planet: "saturn", size: 44 },
-  founding: { planet: "sun", size: 48 },
+  // The prize. The sun image carries its rays as padding, so its box runs larger than a
+  // planet's for the disc to read bigger than ringed Saturn's; it glows even while locked.
+  founding: { planet: "sun", size: 88 },
 };
 
 /** A tier's art at any size: the sun as its own image, every other tier through `PlanetArt`. */

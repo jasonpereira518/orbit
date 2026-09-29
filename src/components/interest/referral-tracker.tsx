@@ -45,7 +45,8 @@ const FRIEND_DISC =
 const EMPTY_RING =
   "border border-[#f2c14e]/55 shadow-[0_0_10px_rgba(242,193,78,0.22),inset_0_0_6px_rgba(242,193,78,0.14)]";
 
-const PLANET_BOX = 52;
+/** Every tier's art sits in a box this tall; the sun alone spills past it. */
+const PLANET_BOX = 64;
 /** One empty list for every render: `usePassProgress` needs a stable server snapshot. */
 const NO_PLANETS: readonly WelcomePlanet[] = [];
 
@@ -75,21 +76,30 @@ function TierPlanet({
   floatIndex: number;
 }) {
   const art = TIER_ART[tierId];
-  const glow = unlocked
-    ? art.planet === "sun"
-      ? "drop-shadow(0 0 16px rgba(242,193,78,0.75))"
-      : "drop-shadow(0 0 10px rgba(242,193,78,0.45))"
-    : "none";
+  const sun = art.planet === "sun";
+  // The sun is the prize, so it is never greyed out like the other locked tiers: a warm,
+  // slightly muted glow until it is won, full blaze after.
+  const glow = sun
+    ? unlocked
+      ? "drop-shadow(0 0 26px rgba(242,193,78,0.95))"
+      : "drop-shadow(0 0 16px rgba(242,193,78,0.55))"
+    : unlocked
+      ? "drop-shadow(0 0 10px rgba(242,193,78,0.45))"
+      : "none";
+  const opacity = unlocked ? 1 : sun ? 0.92 : isNext ? 0.75 : 0.32;
+  const tone = unlocked ? "none" : sun ? "saturate(0.8)" : isNext ? "grayscale(0.35)" : "grayscale(1)";
 
   return (
     <motion.span
       aria-hidden="true"
-      className="relative inline-flex shrink-0 items-center justify-center transition-[opacity,filter] duration-700"
+      // Block-level on purpose: as inline-flex its baseline followed the art, so the sun (taller
+      // than the box) pushed the founding card's text below every other card's.
+      className="relative flex shrink-0 items-center justify-center transition-[opacity,filter] duration-700"
       style={{
-        width: PLANET_BOX,
+        width: Math.max(PLANET_BOX, art.size),
         height: PLANET_BOX,
-        opacity: unlocked ? 1 : isNext ? 0.75 : 0.32,
-        filter: unlocked ? "none" : isNext ? "grayscale(0.35)" : "grayscale(1)",
+        opacity,
+        filter: tone,
       }}
       animate={flashing ? { scale: [1, 1.08, 1] } : { scale: 1 }}
       transition={
@@ -426,11 +436,16 @@ export function ReferralTracker({
                 "relative rounded-2xl border px-4 py-3.5 transition-[color,background-color,border-color,box-shadow,transform] duration-700",
                 isFlash
                   ? "border-[#f2c14e] bg-[#f2c14e]/22 shadow-[0_0_28px_rgba(242,193,78,0.35),inset_0_0_20px_rgba(242,193,78,0.08)]"
+                  : unlocked && t.id === "founding"
+                    ? "border-[#f2c14e] bg-[radial-gradient(ellipse_at_30%_20%,rgba(255,229,102,0.28),rgba(242,193,78,0.1)_60%)] shadow-[0_0_36px_rgba(242,193,78,0.45)]"
                   : unlocked
                     ? "border-[#f2c14e]/50 bg-[#f2c14e]/[0.12] motion-safe:hover:-translate-y-0.5 motion-safe:hover:border-[#f2c14e]/70 motion-safe:hover:duration-(--transition-duration-fast)"
                     : isNext
                       ? "border-[#f2c14e]/75 bg-[#f2c14e]/[0.04] shadow-[0_0_20px_rgba(242,193,78,0.18)] motion-safe:hover:-translate-y-0.5 motion-safe:hover:border-[#f2c14e] motion-safe:hover:duration-(--transition-duration-fast)"
-                      : "border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.02] opacity-75"
+                      : t.id === "founding"
+                        ? // The prize stays lit while locked: a warm card the eye lands on last.
+                          "border-[#f2c14e]/40 bg-[radial-gradient(ellipse_at_30%_20%,rgba(242,193,78,0.16),rgba(242,193,78,0.03)_65%)] shadow-[0_0_24px_rgba(242,193,78,0.14)]"
+                        : "border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.02] opacity-75"
               )}
             >
               {!unlocked ? (
@@ -439,20 +454,20 @@ export function ReferralTracker({
                   className="pointer-events-none absolute bottom-3 right-3 size-3.5 text-[#9aada8]"
                 />
               ) : null}
-              <div className="flex items-center justify-between gap-2">
-                <TierPlanet
-                  tierId={t.id}
-                  unlocked={unlocked}
-                  isNext={isNext}
-                  float={motionOk && (unlocked || isNext)}
-                  flashing={isFlash && motionOk}
-                  floatIndex={i}
-                />
-                <p className="text-[11px] uppercase tracking-[0.14em] text-[#9aada8]">
-                  {t.at === 0 ? "Start" : `${t.at} ${t.at === 1 ? "friend" : "friends"}`}
-                </p>
-              </div>
-              <p className="mt-2.5 text-sm font-medium text-[#e8f3f1]">{t.label}</p>
+              {/* Planet, then the count on its own line: side by side, the letter-spaced
+                  count ran out of room at five columns and clipped against the card edge. */}
+              <TierPlanet
+                tierId={t.id}
+                unlocked={unlocked}
+                isNext={isNext}
+                float={motionOk && (unlocked || isNext)}
+                flashing={isFlash && motionOk}
+                floatIndex={i}
+              />
+              <p className="mt-2 whitespace-nowrap text-[11px] uppercase tracking-[0.14em] text-[#9aada8]">
+                {t.at === 0 ? "Start" : `${t.at} ${t.at === 1 ? "friend" : "friends"}`}
+              </p>
+              <p className="mt-1.5 text-sm font-medium text-[#e8f3f1]">{t.label}</p>
               <p className="mt-1 text-xs leading-relaxed text-[#9aada8]">{t.blurb}</p>
               {unlocked ? (
                 <p className="mt-3 text-xs text-[#f2c14e]">Unlocked</p>

@@ -12,6 +12,9 @@ import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 /** How long the moment holds before it fades on its own. */
 const HOLD_MS = 3200;
 const ART = 120;
+/** Founding member is the top prize. The sun image's rays are padding, so its box is
+ * much larger than a planet's for the sun itself to arrive bigger. */
+const SUN_ART = 220;
 
 /**
  * The tier-unlock moment: friends joining through your link just crossed 1, 3, 5 or 10.
@@ -61,6 +64,7 @@ export function TierCelebration({
   }, [open, onDone]);
 
   const who = friends === 1 ? "A friend" : `${friends} friends`;
+  const art = tier.id === "founding" ? SUN_ART : ART;
 
   return createPortal(
     <div
@@ -77,14 +81,14 @@ export function TierCelebration({
         className="absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(242,193,78,0.14),transparent_45%)]"
       />
       <div className="relative flex flex-col items-center text-center">
-        <div className="relative flex items-center justify-center" style={{ width: ART * 1.6, height: ART * 1.6 }}>
+        <div className="relative flex items-center justify-center" style={{ width: art * 1.6, height: art * 1.6 }}>
           {!reduced ? (
             <>
-              <span aria-hidden="true" className="tier-celebration-ring absolute rounded-full border border-[#f2c14e]/70" style={{ width: ART, height: ART }} />
+              <span aria-hidden="true" className="tier-celebration-ring absolute rounded-full border border-[#f2c14e]/70" style={{ width: art, height: art }} />
               <span
                 aria-hidden="true"
                 className="tier-celebration-ring absolute rounded-full border border-[#f2c14e]/50"
-                style={{ width: ART, height: ART, animationDelay: "0.25s" }}
+                style={{ width: art, height: art, animationDelay: "0.25s" }}
               />
             </>
           ) : null}
@@ -94,7 +98,7 @@ export function TierCelebration({
             animate={{ scale: 1, opacity: 1 }}
             transition={reduced ? { duration: 0 } : SPRING_SOFT}
           >
-            <TierArt tierId={tier.id} size={ART} />
+            <TierArt tierId={tier.id} size={art} />
           </motion.span>
         </div>
         <motion.div
