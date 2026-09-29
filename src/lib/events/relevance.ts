@@ -29,6 +29,7 @@
  */
 import type { EventKind } from "@/lib/events/company-list-parse";
 import { FOUNDER_EXEC, LEADER, RECRUITER } from "@/lib/role-function";
+import { schoolKeys } from "@/lib/school-key";
 
 /**
  * Every weight in one object, because they only make sense relative to each other.
@@ -136,38 +137,6 @@ export function seniorityOf(title: string | null | undefined): Seniority {
 function monthsSince(date: Date | null | undefined, now: Date): number | null {
   if (!date) return null;
   return (now.getTime() - date.getTime()) / (30 * 86_400_000);
-}
-
-/** Words that carry no identity in a school's name. */
-const SCHOOL_NOISE = /\b(the|of|at|and|for|a)\b/g;
-
-/**
- * The forms one school might be written in.
- *
- * Two, because people write both: "University of North Carolina" on a LinkedIn profile and
- * "UNC" in conversation. Matching only the long form would miss the case this signal is most
- * often useful in — a roster row that says "MIT" against a contact who wrote it out.
- *
- * The acronym is built from the full name INCLUDING "University", because that is where the
- * U in UNC comes from.
- */
-function schoolKeys(value: string): string[] {
-  const cleaned = value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!cleaned) return [];
-
-  const words = cleaned.replace(SCHOOL_NOISE, " ").split(/\s+/).filter(Boolean);
-  const keys = new Set<string>();
-  // The whole name, minus the filler that varies between spellings.
-  if (words.length > 0) keys.add(words.join(" "));
-  // The acronym, when there is more than one significant word — "mit", "unc", "nyu".
-  if (words.length > 1) keys.add(words.map((word) => word[0]).join(""));
-  // A short form as written ("unc") is already its own key.
-  if (words.length === 1) keys.add(words[0]!);
-  return [...keys];
 }
 
 function sharesSchool(a: string[], b: string[]): boolean {
