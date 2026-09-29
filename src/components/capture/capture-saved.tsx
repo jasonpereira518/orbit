@@ -63,7 +63,7 @@ export function CaptureSaved({
 
       {single && saved?.contactIdByKey[single.item.key] && (
         <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2">
-          <PlanetBadge index={single.index} size="sm" />
+          <PlanetBadge index={single.index} closeness={single.decision.relationshipScore} size="sm" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{single.decision.edits?.name || single.item.parsed.name}</p>
             <p className="truncate text-xs text-muted-foreground">
@@ -83,7 +83,7 @@ export function CaptureSaved({
             const name = decision.edits?.name || item.parsed.name || "Unnamed";
             return (
               <li key={item.key} className="flex items-center gap-3 rounded-xl bg-card px-3 py-1.5 text-sm">
-                <PlanetBadge index={index} size="xs" />
+                <PlanetBadge index={index} closeness={decision.relationshipScore} size="xs" />
                 {id ? (
                   <IntentLink href={`/contacts/${id}`} className="min-w-0 flex-1 truncate font-medium text-primary hover:underline">
                     {name}

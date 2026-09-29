@@ -202,3 +202,13 @@ mean something was silently lost stay at 0 — `recruiter.gateWrongSkips`, `dupl
 and `lostMerges`, `mentions.wrongLinks`, `calendar.lostKeeps`, `skip-gates.wrongSkips`. The
 chat task's `retrievalRecall` / `mentionRecall` stay within their thresholds.
 The rerank's chunk size (`RERANK_TUNING.chunkSize`) comes from the spike's billing answer.
+
+## Capture enrichment baseline
+
+`2026-09-29-capture-enrichment/` — Gemini, 23 cases (the original 20 plus three `rich`
+cases), 2 runs, after the capture prompt started asking for takeaways, personal and work
+detail, handles, connections and promises. It adds six metrics the older baseline lacks:
+`takeawayRate`, `personalRecall`, `workRecall`, `handleAccuracy`, `connectionRecall` and
+`promiseRecall`. Every existing capture metric held at 100% against `2026-09-19-gemini-baseline`
+(`GATE: PASS`); promise recall was 92.9% (13/14). Compare capture changes against this one.
+

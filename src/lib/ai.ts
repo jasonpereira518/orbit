@@ -37,6 +37,7 @@ import {
   opportunityListSchema,
 } from "@/lib/ai-opportunity-schema";
 import { closenessLegend } from "@/lib/capture/closeness";
+import { personEnrichmentFields } from "@/lib/capture/person-enrichment";
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 import {
   recordUsage,
@@ -234,6 +235,11 @@ export const noteParseSchema = z.object({
   interaction_date: nullStr,
   /** Field names (matching this object's keys) the model was unsure about. */
   low_confidence_fields: strList,
+  /**
+   * Takeaways, personal and work detail, handles, connections and promises. Optional on
+   * the output as well — a job parsed before they existed has none (person-enrichment.ts).
+   */
+  ...personEnrichmentFields,
 });
 
 export type ParsedNote = z.infer<typeof noteParseSchema>;
@@ -329,8 +335,12 @@ const TWO_PASS_CHAR_THRESHOLD = 2500;
  * People per details call. Every batch re-reads the whole note, so a wider batch is fewer
  * copies of it; too wide and the answer runs into `CAPTURE_MAX_OUTPUT_TOKENS`.
  */
-const DETAIL_BATCH_SIZE = 6;
-const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
+const DETAIL_BATCH_SIZE = 4;
+/**
+ * A person is roughly twice the JSON it was before takeaways, personal/work detail,
+ * connections and promises — hence the narrower batch above and the wider budget here.
+ */
+const CAPTURE_MAX_OUTPUT_TOKENS = 12_288;
 
 const GEMINI_EMBEDDING_MODEL = EMBEDDING_MODELS.gemini;
 
@@ -1251,8 +1261,18 @@ const PERSON_FIELD_SHAPE = `{
   "relationship_score_suggestion": 1-5|null,
   "relevance": 1-5|null,
   "tags": string[],
+  "takeaways": string[],
   "summary": string|null,
   "key_facts": string[],
+  "personal_details": string[],
+  "work": { "team": string|null, "building": string|null, "priorities": string[], "hiring": string|null, "looking_for": string|null }|null,
+  "phone": string|null,
+  "x_handle": string|null,
+  "website": string|null,
+  "school": string|null,
+  "industry": string|null,
+  "connections": [ { "name": string, "relation": string|null, "source_excerpt": string } ],
+  "promises": [ { "direction": "you_owe"|"they_owe", "text": string, "due_phrase": string|null, "source_excerpt": string } ],
   "opportunities": [ { "kind": "internship"|"job"|"referral"|"introduction"|"startup_lead"|"mentor"|"investor"|"speaker"|"customer"|"collaboration"|"advice"|"other", "label": string, "direction": "they_offer"|"you_ask"|null, "due_phrase": string|null, "source_excerpt": string, "confidence": 0-1 } ],
   "implied_next_steps": [ { "text": string, "rationale": string, "source_excerpt": string, "confidence": 0-1 } ],
   "shared_interests": string[],
@@ -1262,6 +1282,34 @@ const PERSON_FIELD_SHAPE = `{
   "low_confidence_fields": string[],
   "source_excerpt": string
 }`;
+
+/**
+ * The per-person field rules, shared by the single pass and the details pass. They used to
+ * be restated by hand in both prompts, which is how one of them quietly drifts.
+ *
+ * Most fields here had no guidance at all before — the model saw only a type — which is
+ * why a card came back with a one-line summary and little else. Each rule says what the
+ * field is FOR, because "what would you want before the next conversation" produces a
+ * different takeaway than "summarize".
+ */
+const PERSON_FIELD_RULES = `- relationship_score_suggestion: ${closenessLegend()}. Calibrate on what the notes show, not on how friendly the tone is: a badge scan or a two-line hello is 1; a first real conversation at an event is 2-3 ("talked for 20 minutes about her startup" is 3); someone they already know well, work with, or have met repeatedly is 4; a mentor, sponsor or close friend who actively helps them is 5. Null only when the notes give nothing to go on.
+- relevance: how directly this person advances the user's stated goals: 1=unrelated, 2=tangential, 3=plausibly useful, 4=clearly useful, 5=directly advances a goal. Null when no goals are listed.
+- takeaways: 3-6 short bullets (each under 25 words, no leading bullet character) the user would want to reread right before their next conversation with this person. Each is a SPECIFIC fact, insight, opinion, plan or piece of advice from the notes — what they said, what they care about, what they are working through. Never restate their name, role or company; never filler like "great conversation" or "seems nice". Fewer than 3 only when the notes genuinely hold less.
+- summary: one sentence with the conversation's gist, or null.
+- personal_details: things about their life outside work worth remembering — family, partner, kids, pets, hometown, where they live, school, hobbies, sports, travel, upcoming life events ("moving to Austin in March", "training for the Chicago marathon"). Short phrases in the notes' vocabulary. [] when none.
+- work: what they are doing at work right now, or null when the notes say nothing. team = their team or group; building = the product or project they are on; priorities = what they are focused on or struggling with; hiring = who or what they are hiring for, if stated; looking_for = what THEY are looking for (a job, a cofounder, customers, funding, advice).
+- phone, x_handle, website: only when written in the notes (x_handle without the @). school and industry: when stated or unambiguous from the notes ("fellow Michigan grad" → school "University of Michigan"). Never infer contact details.
+- key_facts: durable facts about them that fit no field above (career history, notable achievements, languages). [] when none.
+- shared_interests: what the USER and this person have in common, stated or clearly implied. topics: subjects discussed. tags: 1-4 short lowercase labels useful for filtering a contact list later ("recruiter", "founder", "ml", "nyc"), never phrases.
+- connections: other people this person is linked to in the notes — a colleague, cofounder, manager, someone they offered to introduce, someone you both know. name = that person's name as written; relation = the link in a few words ("her cofounder", "offered to intro me"); source_excerpt = the sentence, VERBATIM. [] when none.
+- promises: everything either side said they would do. direction "you_owe" = the user promised it; "they_owe" = this person promised it. text = a verb phrase with no subject ("send the Q3 deck", "intro me to their VP of Eng"); due_phrase = the deadline in the notes' own words, or null; source_excerpt = the sentence, VERBATIM. Only explicit promises — inferences belong in implied_next_steps.
+- location: where they are based, when stated.
+- follow_up_recommendation: one short line on the best reason to reach out next, grounded in the notes, or null. follow_up_days: days until that makes sense, or null. suggested_next_message: a 1-2 sentence message the user could send, in first person, referencing something specific from the notes, or null.
+- opportunities: CONCRETE possibilities the notes describe — a named internship, a referral offered, an intro promised, a company worth chasing, an investor who might be interested. NOT interests, NOT topics, NOT "seems friendly". label = 3-10 words in the notes' own vocabulary, never a full sentence and never the date. due_phrase = the deadline in the notes' own words when one is stated ("applications close Oct 15"), else null — never rewrite it into a calendar date. source_excerpt = the sentence it came from, copied VERBATIM from the notes. An opportunity with no verbatim sentence is dropped, so copy exactly.
+- implied_next_steps: what this discussion CALLS FOR that nobody said out loud — e.g. "she mentioned her team is hiring two backend engineers" implies offering a referral. At most two per person. An empty array is a correct and very common answer; do not invent one to fill the field. rationale = one short clause naming what in the notes implies it. source_excerpt = the sentence it was inferred from, VERBATIM. confidence below 0.6 when you are guessing at intent rather than reading it.
+- action_items stays ONLY things the notes explicitly state someone will do. Anything you inferred belongs in implied_next_steps, never in action_items.
+- REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").
+- Be thorough: read every line about this person and put each fact in the most specific field that fits. Everything must still be supported by the notes — when a field has nothing, use null or [].`;
 
 function hintsPreamble(hints?: CaptureParseHints | null) {
   if (!hints) return "";
@@ -1381,14 +1429,9 @@ Rules:
 - If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
 - If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
 - interaction_date: YYYY-MM-DD when the notes/calendar imply a specific past event date; otherwise null.
-- relationship_score_suggestion: ${closenessLegend()}.
-- relevance: how directly this person advances the user's stated goals: 1=unrelated, 2=tangential, 3=plausibly useful, 4=clearly useful, 5=directly advances a goal. Null when no goals are listed.
 - If the notes only cover one person, return a single-item people array and an empty shared_notes array.
 - When seed people/hints are provided, include them if they appear in or clearly belong to this meeting, and prefer their emails when matching.
-- opportunities: CONCRETE possibilities the notes describe — a named internship, a referral offered, an intro promised, a company worth chasing, an investor who might be interested. NOT interests, NOT topics, NOT "seems friendly". label = 3-10 words in the notes' own vocabulary, never a full sentence and never the date. due_phrase = the deadline in the notes' own words when one is stated ("applications close Oct 15"), else null — never rewrite it into a calendar date. source_excerpt = the sentence it came from, copied VERBATIM from the notes. An opportunity with no verbatim sentence is dropped, so copy exactly.
-- implied_next_steps: what this discussion CALLS FOR that nobody said out loud — e.g. "she mentioned her team is hiring two backend engineers" implies offering a referral. At most two per person. An empty array is a correct and very common answer; do not invent one to fill the field. rationale = one short clause naming what in the notes implies it. source_excerpt = the sentence it was inferred from, VERBATIM. confidence below 0.6 when you are guessing at intent rather than reading it.
-- action_items stays ONLY things the notes explicitly state someone will do. Anything you inferred belongs in implied_next_steps, never in action_items.
-- REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").`,
+${PERSON_FIELD_RULES}`,
   });
 
   const parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
@@ -1585,13 +1628,8 @@ Rules:
 - Never invent people or facts. Prefer emails/companies from the request when the notes don't contradict them.
 - low_confidence_fields: list field names you had to guess or infer rather than read directly from the notes. Use [] when every extracted field is directly supported.
 - interaction_date: YYYY-MM-DD when known for this person/event; else null.
-- relationship_score_suggestion: ${closenessLegend()}.
-- relevance: how directly this person advances the user's stated goals: 1=unrelated, 2=tangential, 3=plausibly useful, 4=clearly useful, 5=directly advances a goal. Null when no goals are listed.
 - met_at may use shared event place when the person was clearly there.
-- opportunities: CONCRETE possibilities the notes describe — a named internship, a referral offered, an intro promised, a company worth chasing, an investor who might be interested. NOT interests, NOT topics, NOT "seems friendly". label = 3-10 words in the notes' own vocabulary, never a full sentence and never the date. due_phrase = the deadline in the notes' own words when one is stated ("applications close Oct 15"), else null — never rewrite it into a calendar date. source_excerpt = the sentence it came from, copied VERBATIM from the notes. An opportunity with no verbatim sentence is dropped, so copy exactly.
-- implied_next_steps: what this discussion CALLS FOR that nobody said out loud — e.g. "she mentioned her team is hiring two backend engineers" implies offering a referral. At most two per person. An empty array is a correct and very common answer; do not invent one to fill the field. rationale = one short clause naming what in the notes implies it. source_excerpt = the sentence it was inferred from, VERBATIM. confidence below 0.6 when you are guessing at intent rather than reading it.
-- action_items stays ONLY things the notes explicitly state someone will do. Anything you inferred belongs in implied_next_steps, never in action_items.
-- REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").`,
+${PERSON_FIELD_RULES}`,
     });
 
     await beat(onProgress);
@@ -1631,6 +1669,16 @@ Rules:
         confidence: found?.confidence || null,
         interaction_date: found?.interaction_date || defaultDate,
         low_confidence_fields: found?.low_confidence_fields || [],
+        takeaways: found?.takeaways ?? [],
+        personal_details: found?.personal_details ?? [],
+        work: found?.work ?? null,
+        phone: found?.phone ?? null,
+        x_handle: found?.x_handle ?? null,
+        website: found?.website ?? null,
+        school: found?.school ?? null,
+        industry: found?.industry ?? null,
+        connections: found?.connections ?? [],
+        promises: found?.promises ?? [],
         source_excerpt: found?.source_excerpt || "",
       };
 

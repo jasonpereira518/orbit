@@ -13,9 +13,13 @@
  *
  * The pump is driven from an effect rather than a loop so a 429's wait does not block the
  * other slot: each completed upload re-renders, the effect runs again, and whatever is ready
- * starts. That also means `cancel` is just "stop starting new ones" — an upload already in
- * flight is finishing on the server whatever the tab does, which is the promise every other
- * capture path makes.
+ * starts. That also means `cancelPending` is first "stop starting new ones" — an upload
+ * already in flight is finishing on the server whatever the tab does. It is not ONLY that:
+ * each such upload is also discarded the moment its job id lands, because under `autoQueue`
+ * the request that is still running will queue that job and start reading it, and a note
+ * the person cancelled must not turn up for review anyway. The request is left to finish
+ * rather than aborted on purpose — aborting would lose the id, and the id is the only
+ * handle there is on the job it creates.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -29,6 +33,7 @@ import {
   type FanoutSummary,
   type UploadOutcome,
 } from "@/lib/capture/fanout";
+import { discardCaptureJob } from "@/actions/capture-jobs";
 import { uploadCaptureMedia } from "@/lib/capture/ingest-client";
 import { prepareNotice, prepareUploadFiles } from "@/lib/capture/prepare-upload";
 import type { PlannedUpload } from "@/lib/capture/bins";
@@ -38,7 +43,14 @@ export type FanoutUploader = (input: {
   label: string;
   batchGroupId: string;
   anchorIso: string | null;
+  /** `PlannedUpload.fileHashes` — the originals' hashes, stored on the job. */
+  fileHashes?: string[];
 }) => Promise<UploadOutcome>;
+
+/** Throws a cancelled note's job away. Injected alongside the uploader, for the same reason. */
+export type FanoutDiscarder = (jobId: string) => Promise<unknown>;
+
+const defaultDiscarder: FanoutDiscarder = (jobId) => discardCaptureJob(jobId).catch(() => null);
 
 /**
  * The real uploader. Injected so the hook can be driven by a stub in a story or a test.
@@ -58,7 +70,7 @@ export type FanoutUploader = (input: {
  * request with no files would leave a capture job with nothing in it, which reads on the
  * timeline as a meeting about nothing.
  */
-const defaultUploader: FanoutUploader = async ({ files, label, batchGroupId, anchorIso }) => {
+const defaultUploader: FanoutUploader = async ({ files, label, batchGroupId, anchorIso, fileHashes }) => {
   const prepared = await prepareUploadFiles(files);
   if (!prepared.files.length) {
     const why = prepared.failures[0]?.message ?? "Nothing in this note could be read";
@@ -71,6 +83,7 @@ const defaultUploader: FanoutUploader = async ({ files, label, batchGroupId, anc
     sourceLabel: label,
     anchorDate: anchorIso,
     autoQueue: true,
+    fileHashes,
   });
   if (res.ok) return { ok: true, jobId: res.job.id, notice: prepareNotice(prepared) };
   return { ok: false, error: res.error, status: res.status, retryAfterSec: res.retryAfterSec };
@@ -85,11 +98,13 @@ function newId() {
 export function useCaptureFanout(opts?: {
   concurrency?: number;
   uploader?: FanoutUploader;
+  discarder?: FanoutDiscarder;
   /** Called once every bin has settled, with the job ids that were created. */
   onSettled?: (jobIds: string[]) => void;
 }) {
   const concurrency = opts?.concurrency ?? DEFAULT_FANOUT_CONCURRENCY;
   const uploader = opts?.uploader ?? defaultUploader;
+  const discarder = opts?.discarder ?? defaultDiscarder;
 
   const [entries, setEntries] = useState<FanoutEntry[]>([]);
   const [running, setRunning] = useState(false);
@@ -97,6 +112,14 @@ export function useCaptureFanout(opts?: {
   // The File objects never enter React state: they are large, and storing them there means
   // every re-render of the queue retains the whole drop in memory.
   const filesRef = useRef(new Map<string, File[]>());
+  /** Per entry, the originals' hashes — beside the files, and kept out of state for the same reason. */
+  const hashesRef = useRef(new Map<string, string[]>());
+  /**
+   * Entry ids whose upload was in flight when the run was cancelled. Their jobs are
+   * discarded as the ids land — see the header. A ref, not state: it is read in the upload's
+   * own completion, which must see the cancel however many renders ago it happened.
+   */
+  const cancelledRef = useRef(new Set<string>());
   const settledRef = useRef(false);
   // Kept in a ref and synced in an effect rather than assigned during render: the callback
   // is usually an inline arrow, so depending on it directly would re-arm the settle effect
@@ -122,10 +145,12 @@ export function useCaptureFanout(opts?: {
       if (!plans.length) return;
       const next: FanoutEntry[] = [];
       const files = new Map<string, File[]>();
+      const hashes = new Map<string, string[]>();
       for (const plan of plans) {
         const id = newId();
         const resolved = plan.fileIds.map(resolve).filter((f): f is File => Boolean(f));
         files.set(id, resolved);
+        hashes.set(id, plan.fileHashes ?? []);
         next.push({
           id,
           label: plan.label,
@@ -141,6 +166,8 @@ export function useCaptureFanout(opts?: {
         });
       }
       filesRef.current = files;
+      hashesRef.current = hashes;
+      cancelledRef.current = new Set();
       batchIdRef.current = newId();
       settledRef.current = false;
       setEntries(next);
@@ -151,17 +178,27 @@ export function useCaptureFanout(opts?: {
 
   const reset = useCallback(() => {
     filesRef.current.clear();
+    hashesRef.current.clear();
     settledRef.current = false;
     batchIdRef.current = null;
     setEntries([]);
     setRunning(false);
   }, []);
 
+  /** Ids started and not yet settled — see `startableEntries` for why the list alone won't do. */
+  const inFlightRef = useRef(new Set<string>());
+
   const cancelPending = useCallback(() => {
     setRunning(false);
+    // In flight right now: let each request finish, then discard what it made (see the
+    // header). Read from the ref, not `entries` — an upload the pump started this very
+    // render may not show as `uploading` in the list yet.
+    for (const id of inFlightRef.current) cancelledRef.current.add(id);
     setEntries((prev) =>
       prev.map((e) =>
-        e.status === "pending" || e.status === "waiting" ? { ...e, status: "skipped" } : e
+        e.status === "pending" || e.status === "waiting" || cancelledRef.current.has(e.id)
+          ? { ...e, status: "skipped" }
+          : e
       )
     );
   }, []);
@@ -179,8 +216,6 @@ export function useCaptureFanout(opts?: {
       mountedRef.current = false;
     };
   }, []);
-  /** Ids started and not yet settled — see `startableEntries` for why the list alone won't do. */
-  const inFlightRef = useRef(new Set<string>());
 
   // The pump.
   useEffect(() => {
@@ -201,13 +236,26 @@ export function useCaptureFanout(opts?: {
       setEntries((prev) => replaceEntry(prev, markUploading(entry)));
       const settle = (outcome: UploadOutcome) => {
         inFlightRef.current.delete(entry.id);
+        if (cancelledRef.current.has(entry.id)) {
+          // Cancelled while it was uploading. The job exists now, and under `autoQueue` it
+          // is already queued to be read — so it goes, whether or not anyone is still
+          // mounted to see it go. The row stays `skipped`, which is what the person chose.
+          if (outcome.ok) void discarder(outcome.jobId);
+          return;
+        }
         if (!mountedRef.current) return;
         setEntries((prev) => {
           const current = prev.find((e) => e.id === entry.id) ?? entry;
           return replaceEntry(prev, applyOutcome(current, outcome, Date.now()));
         });
       };
-      void uploader({ files, label: entry.label, batchGroupId, anchorIso: entry.anchorIso })
+      void uploader({
+        files,
+        label: entry.label,
+        batchGroupId,
+        anchorIso: entry.anchorIso,
+        fileHashes: hashesRef.current.get(entry.id),
+      })
         // Two-argument `then`, so a throw inside `settle` is not mistaken for a failed upload.
         .then(settle, (err: unknown) => {
           const message = err instanceof Error ? err.message : "That upload didn’t go through";
@@ -216,7 +264,7 @@ export function useCaptureFanout(opts?: {
           settle({ ok: false, error: message, status: 0, retryAfterSec: null });
         });
     }
-  }, [running, entries, concurrency, uploader]);
+  }, [running, entries, concurrency, uploader, discarder]);
 
   // A `waiting` entry has no event of its own to wake it, so the pump needs a nudge when its
   // retry falls due. One timer for the soonest, re-armed as the list changes.

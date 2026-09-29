@@ -41,6 +41,16 @@ import { formatElapsed } from "@/lib/voice-recording";
 
 const CORPUS_SEPARATOR = "\n\n---\n\n";
 
+function newJobId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : null;
+}
+
+/** Extra facts about what is being uploaded, beyond the bytes. */
+export type IngestExtras = {
+  /** `hashFileBytes` of the ORIGINAL files, stored on the job — see `uploadCaptureMedia`. */
+  fileHashes?: string[];
+};
+
 export type CaptureIngest = ReturnType<typeof useCaptureIngest>;
 
 export function useCaptureIngest({
@@ -166,12 +176,19 @@ export function useCaptureIngest({
     []
   );
 
+  /**
+   * The upload in flight, so Stop can reach it: its abort controller, the id minted for
+   * its job, and the background-job row it opened. One at a time — `busy` already makes a
+   * second upload wait for the first — so one ref, not a map.
+   */
+  const inFlightRef = useRef<{ controller: AbortController; jobId: string | null; bgId: string | null } | null>(null);
+
   const upload = useCallback(
     async (
       files: Parameters<typeof uploadCaptureMedia>[0]["files"],
       label: string,
       mode: "replace" | "merge",
-      opts: { successMessage?: string; backgroundLabel?: string; failureFallback: string }
+      opts: { successMessage?: string; backgroundLabel?: string; failureFallback: string } & IngestExtras
     ) => {
       setBusy(true);
       const bgId = opts.backgroundLabel ? `capture-ingest-${Date.now()}` : null;
@@ -180,8 +197,24 @@ export function useCaptureIngest({
         // on the far side, so the browser learns nothing until it is all back.
         startBackgroundJob({ id: bgId, kind: "scan-notes", label: opts.backgroundLabel!, startedAt: Date.now(), done: 0, total: 0 });
       }
+      const flight = { controller: new AbortController(), jobId: newJobId(), bgId };
+      inFlightRef.current = flight;
+      // Whether THIS upload is still the one that owns `busy`. A Stop hands `busy` back at
+      // once, and a new upload may start before this one's request has finished unwinding;
+      // the old one must not then clear the new one's spinner.
+      const current = () => inFlightRef.current === flight;
       try {
-        const res = await uploadCaptureMedia({ sourceKind, files });
+        const res = await uploadCaptureMedia({
+          sourceKind,
+          files,
+          fileHashes: opts.fileHashes,
+          jobId: flight.jobId,
+          signal: flight.controller.signal,
+        });
+        // Stopped: `cancel` already discarded the job, cleared `busy` and closed the
+        // background row. An abort is something the person did, not something that failed —
+        // it gets no toast.
+        if (flight.controller.signal.aborted || (!res.ok && res.aborted)) return;
         if (!res.ok) {
           const denial = aiDenialFromMessage(res.error);
           if (denial) noteAiRefusal(res.error);
@@ -201,19 +234,43 @@ export function useCaptureIngest({
         landTranscript(res.text, { hints: res.hints, sources: res.sources, label, jobId: res.job.id }, mode);
         if (opts.successMessage) toast.success(opts.successMessage);
       } catch (err) {
+        if (flight.controller.signal.aborted) return;
         const message = friendlyError(err, opts.failureFallback);
         if (bgId) finishBackgroundJob(bgId, { status: "failed", error: message });
         toast.error(message);
       } finally {
-        setBusy(false);
+        if (current()) {
+          inFlightRef.current = null;
+          setBusy(false);
+        }
       }
     },
     [sourceKind, landTranscript, noteAiRefusal]
   );
 
+  /**
+   * Stop reading. Aborts the request, hands the box back straight away, and discards the
+   * job the upload was creating so it cannot come back — finished and `transcribed` — on
+   * the next visit.
+   *
+   * `stopping` because the id was minted here and the server may not have inserted the row
+   * yet; the discard then leaves a tombstone that makes the late insert give up (see
+   * `discardCaptureJob`). Whatever was already in the box stays: Stop cancels the upload,
+   * not the note.
+   */
+  const cancel = useCallback(() => {
+    const flight = inFlightRef.current;
+    if (!flight) return;
+    inFlightRef.current = null;
+    flight.controller.abort();
+    setBusy(false);
+    if (flight.bgId) finishBackgroundJob(flight.bgId, { status: "failed", error: "Stopped" });
+    if (flight.jobId) void discardCaptureJob(flight.jobId, { stopping: true }).catch(() => {});
+  }, []);
+
   /** Text, calendar, email, audio and other raw files from a picker or a drop. */
   const handleFilesSelected = useCallback(
-    (files: File[]) => {
+    (files: File[], extras: IngestExtras = {}) => {
       if (!files.length) return;
       const tooBig = oversizeMessage(files);
       if (tooBig) {
@@ -223,6 +280,7 @@ export function useCaptureIngest({
       void upload(files, files.length === 1 ? files[0]!.name : `${files.length} files`, "merge", {
         successMessage: "Ready — check the text, then extract people",
         failureFallback: TOAST_COPY.fileReadFailed,
+        fileHashes: extras.fileHashes,
       });
     },
     [upload]
@@ -234,7 +292,7 @@ export function useCaptureIngest({
    * .txt still merges, because that is additive by nature.
    */
   const ingestScanPages = useCallback(
-    (pages: ScanPage[]) => {
+    (pages: ScanPage[], extras: IngestExtras = {}) => {
       if (!pages.length) return;
       const totalBytes = pages.reduce((sum, page) => sum + page.bytes, 0);
       if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
@@ -253,6 +311,7 @@ export function useCaptureIngest({
         backgroundLabel: pages.length === 1 ? "Reading your page" : `Reading ${pages.length} pages`,
         successMessage: pages.length === 1 ? "Read 1 page" : `Read ${pages.length} pages`,
         failureFallback: "Couldn’t read those pages — try again?",
+        fileHashes: extras.fileHashes,
       }).finally(() => {
         // The blobs only ever backed thumbnails; the bytes have been sent.
         for (const page of pages) releaseScanPage(page);
@@ -309,6 +368,7 @@ export function useCaptureIngest({
     jobId,
     setJobId,
     busy,
+    cancel,
     hasApiKey,
     setHasApiKey,
     aiReason,
