@@ -60,6 +60,16 @@ import {
 } from "@/lib/note-batch-save";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import {
+  MAX_PERSONAL_DETAILS,
+  MAX_TAKEAWAYS,
+  cleanLines,
+  cleanWork,
+  normalizePhone,
+  normalizeWebsite,
+  normalizeXHandle,
+  summaryToTakeaways,
+} from "@/lib/capture/person-enrichment";
 
 export type CaptureRunnerDeps = {
   parse?: typeof runCaptureParse;
@@ -297,6 +307,23 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
       role: edits.role === undefined ? item.parsed.role : edits.role?.trim() || null,
       met_at: edits.metAt === undefined ? item.parsed.met_at : edits.metAt?.trim() || null,
       summary: edits.summary === undefined ? item.parsed.summary : edits.summary?.trim() || null,
+      // The card's richer fields. Absent means "as parsed"; present is what the person left,
+      // cleaned the same way the parse cleaned the model's version — the decision is stored
+      // as the browser sent it, so this is the first place it is trusted.
+      ...(edits.takeaways !== undefined
+        ? { takeaways: cleanLines(edits.takeaways ?? [], MAX_TAKEAWAYS) }
+        : edits.summary !== undefined
+          ? { takeaways: summaryToTakeaways(edits.summary) }
+          : {}),
+      ...(edits.personalDetails !== undefined
+        ? { personal_details: cleanLines(edits.personalDetails ?? [], MAX_PERSONAL_DETAILS) }
+        : {}),
+      ...(edits.work !== undefined ? { work: cleanWork(edits.work) } : {}),
+      ...(edits.phone !== undefined ? { phone: normalizePhone(edits.phone) } : {}),
+      ...(edits.xHandle !== undefined ? { x_handle: normalizeXHandle(edits.xHandle) } : {}),
+      ...(edits.website !== undefined ? { website: normalizeWebsite(edits.website) } : {}),
+      ...(edits.school !== undefined ? { school: edits.school?.trim().slice(0, 200) || null } : {}),
+      ...(edits.industry !== undefined ? { industry: edits.industry?.trim().slice(0, 200) || null } : {}),
     };
     const top =
       !decision.mergeContactId && index

@@ -1,7 +1,12 @@
 "use client";
 
 /**
- * The planet in the corner of a review card — one per person, in solar-system order.
+ * The planet in the corner of a review card — one per person.
+ *
+ * With `closeness`, the planet is the person's orbit ring: inner planets for the people
+ * you're closest to, the outer system for acquaintances (`planetForCloseness`). Without it
+ * — a resume notice counting heads before anyone is scored — it falls back to
+ * solar-system order by position.
  *
  * The first eight are the landing page's art, drawn with the same `<picture>` markup as
  * `PlanetSphere`; the rest are CSS spheres from the palette in `lib/capture/planets.ts`.
@@ -9,24 +14,27 @@
  * makes a CSS Pluto sit next to a painted Neptune without looking like a different kit.
  * Decorative: `aria-hidden`, with the body's name as a title for the curious.
  */
-import { planetForIndex, type PlanetDef } from "@/lib/capture/planets";
+import { planetForCloseness, planetForIndex, type PlanetDef } from "@/lib/capture/planets";
 import { cn } from "@/lib/utils";
 
 const SIZES = { xs: "size-6", sm: "size-10", md: "size-16", lg: "size-24" } as const;
 
 export function PlanetBadge({
   index,
+  closeness,
   size = "md",
   className,
   title,
 }: {
   index: number;
+  /** 1-5. Picks the orbit ring; `index` then picks the body within it. */
+  closeness?: number | null;
   size?: keyof typeof SIZES;
   className?: string;
   /** Overrides the body's name — e.g. "Mercury · card 1 of 5". */
   title?: string;
 }) {
-  const planet = planetForIndex(index);
+  const planet = closeness != null ? planetForCloseness(closeness, index) : planetForIndex(index);
   return (
     <span
       aria-hidden

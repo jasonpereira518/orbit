@@ -74,6 +74,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-api-connector-routes": "pure",
   "smoke-capture-body-limits": "pure",
   "smoke-capture-planets": "pure",
+  "smoke-capture-enrichment": "pure",
   "smoke-capture-review-reducer": "pure",
   "smoke-capture-skipped-phrases": "pure",
   "smoke-reminder-dedupe": "pure",
