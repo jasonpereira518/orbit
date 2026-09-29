@@ -1,7 +1,8 @@
 /**
  * The pass's news line: what a returning visitor is told changed since their last visit
  * (`describePassChange`), the live "a friend just joined" line (`liveJoinLine`), and the
- * device-local record they are computed from (`pass-seen.ts`).
+ * device-local record they are computed from (`pass-seen.ts`), and the invites-out count
+ * behind the tracker's "invited" circles (`pass-invites.ts`).
  *
  * Pure — `pass-seen` runs against stub storages, including one that throws the way a
  * blocked or full storage does. No browser, no database.
@@ -14,6 +15,7 @@ import {
   liveJoinLine,
 } from "../src/lib/interest-list";
 import { readSeen, writeSeen } from "../src/lib/pass-seen";
+import { nextInvites, readInvites } from "../src/lib/pass-invites";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -132,6 +134,27 @@ function main() {
   }
   check("throwing storage write is swallowed", !threw);
   eq("no window → null (server)", readSeen("tok"), null);
+
+  console.log("pass-invites");
+  const share = nextInvites(null, "t", 0, "share");
+  eq("first share → 1 invited", share.pending, 1);
+  const three = nextInvites(nextInvites(share, "t", 0, "share"), "t", 0, "share");
+  eq("three shares → 3", three.pending, 3);
+  eq("a join consumes one", nextInvites(three, "t", 1, "sync").pending, 2);
+  eq("more joins than invites floor at 0", nextInvites(three, "t", 5, "sync").pending, 0);
+  eq("a join then a share", nextInvites(three, "t", 2, "share").pending, 2);
+  let capped = nextInvites(null, "t", 8, "share");
+  for (let i = 0; i < 5; i++) capped = nextInvites(capped, "t", 8, "share");
+  eq("capped at the empty circles left", capped.pending, 2);
+  eq("no room at 10 friends", nextInvites(null, "t", 10, "share").pending, 0);
+  eq("another pass starts fresh", nextInvites(three, "other", 0, "share").pending, 1);
+  eq("referrals never go backwards in the record", nextInvites(nextInvites(share, "t", 3, "sync"), "t", 1, "sync").referrals, 3);
+  const inv = memoryStorage();
+  inv.setItem("waitlist-pass-invites", JSON.stringify({ token: "t", pending: 2, referrals: 1 }));
+  eq("stored record reads back", readInvites(inv)?.pending, 2);
+  inv.setItem("waitlist-pass-invites", JSON.stringify({ token: "t", pending: -1, referrals: 1 }));
+  eq("invalid record → null", readInvites(inv), null);
+  eq("throwing storage → null", readInvites(throwing), null);
 
   if (failures > 0) {
     console.error(`\nsmoke-waitlist-pass-news: ${failures} failure(s)`);

@@ -14,6 +14,7 @@ import {
   type ReferralTierId,
 } from "@/lib/interest-list";
 import { publishProgress, usePassProgress } from "@/lib/interest-progress-store";
+import { usePendingInvites } from "@/lib/pass-invites";
 import { pulseStarfield } from "@/lib/starfield-events";
 import { EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -171,6 +172,8 @@ export function ReferralTracker({
   const activeToken = progress.token;
   const referrals = Math.min(Math.max(progress.referrals, 0), TRACKER_SLOTS);
   const position = progress.position;
+  /** Completed shares still waiting on a friend: drawn as "invited" circles after the filled. */
+  const invited = Math.min(usePendingInvites(activeToken), TRACKER_SLOTS - referrals);
 
   const rowRef = useRef<HTMLDivElement>(null);
   const inView = useInView(rowRef, { once: true, amount: 0.6 });
@@ -269,7 +272,7 @@ export function ReferralTracker({
       <div
         ref={rowRef}
         role="img"
-        aria-label={`${referrals} of ${TRACKER_SLOTS} friends joined`}
+        aria-label={`${referrals} of ${TRACKER_SLOTS} friends joined${invited > 0 ? `, ${invited} invited` : ""}`}
         className="flex justify-center gap-2 pb-7 sm:gap-3"
       >
         {Array.from({ length: TRACKER_SLOTS }, (_, i) => {
@@ -318,6 +321,17 @@ export function ReferralTracker({
                     transition={{ duration: 0.65, ease: EASE_HOUSE, delay: fillDelay + 0.2 }}
                   />
                 </>
+              ) : !filled && i < referrals + invited ? (
+                // Invited: a share went out for this circle. It draws in when it appears,
+                // and the fill above takes over when the friend joins.
+                <motion.span
+                  className="absolute inset-0 flex items-center justify-center rounded-full border-2 border-dashed border-[#f2c14e] bg-[#f2c14e]/[0.08] shadow-[0_0_12px_rgba(242,193,78,0.3)]"
+                  initial={motionOk ? { opacity: 0, scale: 0.6 } : false}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.4, ease: EASE_HOUSE }}
+                >
+                  <span className="size-1.5 rounded-full bg-[#f2c14e] shadow-[0_0_6px_rgba(242,193,78,0.9)]" />
+                </motion.span>
               ) : (
                 <span className={cn("absolute inset-0 rounded-full", filled ? FILLED_GLOW : EMPTY_RING)} />
               )}
@@ -353,6 +367,12 @@ export function ReferralTracker({
           <p aria-live="polite" className="mt-3 text-sm text-[#9aada8]">
             {referralLine(referrals)}
           </p>
+          {invited > 0 ? (
+            <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-[#f2c14e]/90">
+              <span aria-hidden="true" className="size-1.5 rounded-full bg-[#f2c14e]" />
+              {invited === 1 ? "1 invite out" : `${invited} invites out`} — each friend who joins fills one.
+            </p>
+          ) : null}
         </div>
       ) : (
         <p aria-live="polite" className="mt-2 text-center text-base text-[#e8f3f1]">

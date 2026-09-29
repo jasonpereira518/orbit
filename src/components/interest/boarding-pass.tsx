@@ -15,8 +15,9 @@ import {
 } from "@/lib/interest-list";
 import { usePassProgress } from "@/lib/interest-progress-store";
 import { DUR, EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
+import { recordShare, syncInvites } from "@/lib/pass-invites";
 import { readSeen, writeSeen } from "@/lib/pass-seen";
-import { pulseStarfield } from "@/lib/starfield-events";
+import { lightThreadStars, pulseStarfield, threadStarfield } from "@/lib/starfield-events";
 import { bumpTitleBadge } from "@/lib/tab-title-badge";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { planetLabel } from "@/lib/welcome-planets";
@@ -53,6 +54,10 @@ function joinedLabel(iso: string) {
  * friend joining through the link (`liveJoinLine`), with a starfield burst from the planet
  * and a "(+1)" tab-title badge if the tab is in the background. Other people's referrals
  * move the number silently — only your own friends get a celebration.
+ *
+ * SHARES. A completed native share draws a thread from the planet into the sky, ending in a
+ * hollow star, and marks the next tracker circle "invited" (`pass-invites.ts`). A friend
+ * joining lights the oldest waiting star and consumes one invite.
  */
 export function BoardingPass({
   ticket,
@@ -96,6 +101,7 @@ export function BoardingPass({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reads client-only storage
     if (text) setNews({ text, key: 0 });
     writeSeen(token, now);
+    syncInvites(token, live.referrals);
     shownReferrals.current = live.referrals;
     // Once per pass: live changes are the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -107,8 +113,10 @@ export function BoardingPass({
     if (before === null) return;
     shownReferrals.current = live.referrals;
     writeSeen(token, { referrals: live.referrals, position });
+    syncInvites(token, live.referrals);
     const gained = live.referrals - before;
     if (gained <= 0) return;
+    lightThreadStars(gained);
     setNews((prev) => ({ text: liveJoinLine(gained), key: (prev?.key ?? 0) + 1 }));
     bumpTitleBadge(gained);
     if (document.visibilityState === "visible") burstFromPlanet(planetRef.current);
@@ -223,7 +231,18 @@ export function BoardingPass({
           ) : null}
         </p>
 
-        <ShareRow ticket={ticket} pageUrl={pageUrl} play={full} />
+        <ShareRow
+          ticket={ticket}
+          pageUrl={pageUrl}
+          play={full}
+          onShared={() => {
+            recordShare(token, live.referrals);
+            const r = planetRef.current?.getBoundingClientRect();
+            if (r && r.bottom > 0 && r.top < window.innerHeight) {
+              threadStarfield(r.left + r.width / 2, r.top + r.height / 2);
+            }
+          }}
+        />
 
         <motion.p {...rise(1.5)} className="mt-4 text-xs leading-[1.6] text-[#6d807c]">
           This is your pass. Your invite arrives by email when your wave opens.
