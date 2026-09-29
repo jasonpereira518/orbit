@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { getCreditBalance } from "@/lib/credits/ledger";
 import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import {
   appleConnections,
   calendarSubscriptions,
@@ -389,7 +389,23 @@ export async function loadAccountHealthInput(
     contactLimit: entitlements.contactLimit,
     contactCount: needContacts ? num(row.contactCount) : null,
     credits: await creditFacts(userId, entitlements.plan, settings, now),
+    pausedApiItems: entitlements.canUseApi ? 0 : await pausedApiItems(userId),
   };
+}
+
+/** REST API keys and webhook endpoints this account still holds, live, without the API. */
+async function pausedApiItems(userId: string): Promise<number> {
+  try {
+    const db = await getDb();
+    const result = await db.execute(sql`
+      SELECT
+        (SELECT count(*) FROM api_keys WHERE user_id = ${userId} AND kind = 'api' AND revoked_at IS NULL)::int
+        + (SELECT count(*) FROM webhook_endpoints WHERE user_id = ${userId} AND status <> 'disabled')::int AS n
+    `);
+    return rowsOf<{ n: number }>(result)[0]?.n ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** The credit balance for the 80% / 100% notices — Pro and Max on included AI only. */

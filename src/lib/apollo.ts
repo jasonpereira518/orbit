@@ -1,4 +1,7 @@
 import { eq } from "drizzle-orm";
+import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { consumePlanMeter, meterResetsAt } from "@/lib/plan-meters";
+import { recordGateHitThrottled } from "@/lib/gate-events";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -124,6 +127,13 @@ export type LinkedInProfileEnrichment = {
 export const APOLLO_DAILY_LIMIT_MESSAGE =
   "You’ve used today’s Apollo lookups on Orbit’s key — add your own Apollo key in Settings, or try again tomorrow";
 
+/** Shown when a plan's monthly enrichments on Orbit's Apollo key are used. */
+export function apolloMonthlyLimitMessage(plan: Plan, limit: number): string {
+  const resets = meterResetsAt().toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+  const upgrade = plan === "orbit" ? ", move to Max for 25 a month," : "";
+  return `You’ve used this month’s ${limit} contact enrichments on Orbit’s key — add your own Apollo key in Settings${upgrade} or wait until ${resets}`;
+}
+
 /** A caller's already-loaded `user_settings` row, so the key check need not re-read it. */
 type LoadedSettingsRow = typeof userSettings.$inferSelect;
 
@@ -141,11 +151,9 @@ async function resolveApolloKey(
   const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
   if (personal) return { apiKey: personal, hosted: false };
 
-  // Enrichment has no quota anywhere else in the product — unlike sending, which every plan
-  // caps at DAILY_SEND_LIMIT — so Orbit's shared Apollo key is the one cost a one-time
-  // payment cannot fund forever. It stays subscription-only (Lifetime and Free users add
-  // their own key in Settings, which the short-circuit above already prefers), and is now
-  // also capped per day (`spendHostedApollo`).
+  // Orbit's shared Apollo key: Pro, Max and Lifetime, capped per month by plan
+  // (`spendHostedApollo`). Free adds its own key in Settings, which the short-circuit above
+  // already prefers on every plan.
   const { canUseHostedEnrichment } = loadedSettings
     ? entitlementsFromSettings(userId, loadedSettings)
     : await getEntitlements(userId);
@@ -161,8 +169,23 @@ export async function getApolloApiKey(
   return (await resolveApolloKey(userId, loadedSettings))?.apiKey ?? null;
 }
 
-/** Counts `units` hosted calls against the user's day. A user's own key never gets here. */
+/**
+ * Counts `units` hosted calls. A user's own key never gets here.
+ *
+ * Enrichments are capped per MONTH by plan (`PLAN_CONFIG[plan].hostedEnrichmentsPerMonth`:
+ * Pro 10, Max and Lifetime 25) — the number the pricing page promises. Searches only run in
+ * the unshipped Outreach and Leads surfaces and keep just the daily abuse ceiling, which
+ * also stays under enrichments.
+ */
 async function spendHostedApollo(userId: string, kind: "search" | "enrich", units = 1): Promise<void> {
+  if (kind === "enrich") {
+    const { plan } = await getEntitlements(userId);
+    const limit = PLAN_CONFIG[plan].hostedEnrichmentsPerMonth;
+    if (!(await consumePlanMeter(userId, "hosted_enrichment", units, limit))) {
+      await recordGateHitThrottled({ userId, feature: "hostedEnrichment", plan, context: { monthly: limit } });
+      throw new UserFacingError(apolloMonthlyLimitMessage(plan, limit));
+    }
+  }
   const policy = kind === "search" ? RATE_LIMITS.apolloSearch : RATE_LIMITS.apolloEnrich;
   try {
     for (let i = 0; i < units; i++) {

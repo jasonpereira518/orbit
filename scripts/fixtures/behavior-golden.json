@@ -6661,6 +6661,11 @@
         "stats": {
           "contactCount": 25,
           "dueFollowUpCount": 6
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
         }
       }
     }

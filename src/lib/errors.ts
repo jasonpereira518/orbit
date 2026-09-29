@@ -1,4 +1,5 @@
 import { isGooglePurpose, missingScopeMessage } from "@/lib/google-scopes";
+import { EXTRA_CONNECTION_DENIAL } from "@/lib/plans/plan-config";
 import {
   isMicrosoftPurpose,
   missingScopeMessage as missingMicrosoftScopeMessage,
@@ -576,6 +577,9 @@ export function describeOAuthReason(
       cancelled: true,
       message: `${provider} connection cancelled — connect again whenever you’re ready`,
     };
+  }
+  if (reason === "plan_limit") {
+    return { cancelled: false, message: EXTRA_CONNECTION_DENIAL };
   }
   if (reason === "missing_scope") {
     // The purpose names overlap ("contacts", "calendar", "recruiter_scan"), so the provider

@@ -91,6 +91,8 @@ export type HealthCode =
   | "plan.credits_on_packs"
   /** Nothing spendable left: included AI is paused until renewal or a pack. */
   | "plan.credits_out"
+  /** REST API keys or webhooks kept on a plan without them (Pro, or Free after a downgrade). */
+  | "plan.api_paused"
   | "billing.past_due";
 
 /**
@@ -172,6 +174,8 @@ export type HealthInput = {
    * The AI credit balance, in micros — Pro and Max accounts on included AI only. Absent or
    * null means the credit predicates do not apply.
    */
+  /** Live REST API keys + webhook endpoints held on a plan that no longer includes them. */
+  pausedApiItems?: number;
   credits?: {
     allowanceGranted: number;
     allowanceRemaining: number;
@@ -378,6 +382,11 @@ export function evaluateAccountHealth(
     }
   }
 
+  // --- REST API and webhooks on a plan without them ------------------------------------
+  if ((input.pausedApiItems ?? 0) > 0) {
+    findings.push({ code: "plan.api_paused", severity: "warn", data: { count: input.pausedApiItems ?? 0 } });
+  }
+
   // --- AI credits ---------------------------------------------------------------------
   // Mutually exclusive by construction, most severe first. 80% and 100% of the allowance
   // are the two notices the plan promises; running on packs is the 100% notice for an
@@ -462,6 +471,8 @@ const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
   // Advisory too: AI still runs (on the rest of the allowance, or on pack credits).
   "plan.credits_near",
   "plan.credits_on_packs",
+  // The keys and endpoints are kept; nothing is lost by hiding the reminder.
+  "plan.api_paused",
 ]);
 
 /**
@@ -494,6 +505,7 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "plan.credits_near": "plan_limit",
   "plan.credits_on_packs": "plan_limit",
   "plan.credits_out": "plan_limit",
+  "plan.api_paused": "plan_limit",
   "billing.past_due": "billing",
 };
 
@@ -526,6 +538,7 @@ const CODE_RANK: HealthCode[] = [
   "plan.credits_on_packs",
   "plan.credits_near",
   "plan.contact_cap_near",
+  "plan.api_paused",
   "import.failed",
   "import.stalled",
   "calendar.sync_error",
@@ -768,6 +781,17 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
                 : `You’ve used 80% of this cycle’s AI credits${when ? `; they reset on ${when}` : ""}.`,
           cta: { label: "View credits", href: integrationHref("ai"), external: false },
           surfaceKey: "settings.ai",
+        });
+        break;
+      }
+
+      case "plan.api_paused": {
+        alerts.push({
+          ...base,
+          title: "Your API keys and webhooks are paused",
+          body: "The REST API and webhooks are part of Orbit Max. Your keys and endpoints are kept exactly as they are and start working again the moment you move to Max. The Claude and ChatGPT connector is unaffected.",
+          cta: { label: "See Orbit Max", href: "/upgrade", external: true },
+          surfaceKey: null,
         });
         break;
       }

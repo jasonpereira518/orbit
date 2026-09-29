@@ -4,6 +4,7 @@ import { recordGateHit } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
 import {
   FEATURE_KEYS,
+  EXTRA_CONNECTION_DENIAL,
   FREE_CONTACT_LIMIT,
   PLAN_CONFIG,
   PLAN_LABELS,
@@ -235,7 +236,7 @@ export const FEATURE_DENIAL: Record<FeatureKey, string> = {
   meetings: `Meeting transcription is available on ${availableOn("meetings")}.`,
   hostedAi: `AI on Orbit's keys is included on ${availableOn("hostedAi")}. On the Free Plan, add your own AI key in Settings.`,
   creditPacks: `Credit packs are available on ${availableOn("creditPacks")}.`,
-  extraConnections: `The Free Plan includes one Google or Microsoft account. Connecting more is available on ${availableOn("extraConnections")}.`,
+  extraConnections: EXTRA_CONNECTION_DENIAL,
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {

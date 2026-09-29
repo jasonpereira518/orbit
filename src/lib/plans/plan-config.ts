@@ -205,6 +205,10 @@ export function unlockPlanFor(feature: FeatureKey | "contacts"): PurchasablePlan
   return PURCHASABLE_PLANS.find((plan) => PLAN_CONFIG[plan].features[feature]) ?? "max";
 }
 
+/** The refusal for a Free account's second Google or Microsoft account. */
+export const EXTRA_CONNECTION_DENIAL =
+  "The Free Plan includes one Google or Microsoft account. Connecting both is available on Orbit Pro and Orbit Max.";
+
 /** Display money: 899 → "$8.99". */
 export function formatPlanPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
