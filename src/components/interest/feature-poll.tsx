@@ -124,7 +124,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
             const selected = choice === opt.id;
             const Icon = POLL_ICONS[opt.id];
             return (
-              <motion.li key={opt.id} layout="position" transition={glide}>
+              <motion.li key={opt.id} layout="position" transition={glide} className="min-w-0">
                 <button
                   type="button"
                   aria-pressed={selected}

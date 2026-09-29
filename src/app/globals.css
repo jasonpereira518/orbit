@@ -2031,6 +2031,52 @@
   animation-duration: var(--transition-duration-celestial);
 }
 
+/* The waitlist's "How early access works" orbit (`early-access-path.tsx`). Drawn by
+ * default; only when <Reveal> brings the section in does the arc trace itself, the gold
+ * cadence follow, and each stop light up in turn. One-shot, no loop. */
+@keyframes early-path-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+@keyframes early-path-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes early-path-stop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+
+.early-path-draw {
+  stroke-dasharray: 1;
+}
+
+[data-reveal="in"] .early-path-draw {
+  animation: early-path-draw 1.2s var(--ease-house) 0.15s both;
+}
+
+[data-reveal="in"] .early-path-cadence {
+  animation: early-path-fade 0.8s var(--ease-house) 1s both;
+}
+
+[data-reveal="in"] .early-path-stop {
+  animation: early-path-stop 0.6s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal="in"] .early-path-draw,
+  [data-reveal="in"] .early-path-cadence,
+  [data-reveal="in"] .early-path-stop {
+    animation: none;
+  }
+}
+
 .landing-scene {
   content-visibility: auto;
   /* Placeholder must approximate the real height — a big mismatch makes

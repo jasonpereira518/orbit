@@ -12,6 +12,7 @@ import { AppDemo } from "@/components/interest/app-demo/app-demo";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
+import { EarlyAccessPath } from "@/components/interest/early-access-path";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
 import {
   REFERRAL_TIERS,
@@ -101,6 +102,55 @@ export async function generateMetadata({
 
 const HEADING =
   "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
+
+const SECTION_TITLE = `${HEADING} text-[clamp(26px,3.4vw,38px)]`;
+
+/**
+ * A section with its heading beside the content rather than above it, used to break the
+ * page's run of centred stacks. `side` is where the heading sits from `lg`; below that the
+ * two stack, heading first and centred, like every other section. The heading is always
+ * first in the DOM — only the visual order flips — so a screen reader or a keyboard meets
+ * it before the content. It sticks beside a long column (the FAQ, answers open).
+ */
+function SplitSection({
+  id,
+  title,
+  blurb,
+  side,
+  children,
+}: {
+  id: string;
+  title: string;
+  blurb: string;
+  side: "left" | "right";
+  children: React.ReactNode;
+}) {
+  const right = side === "right";
+  return (
+    <section
+      className={`mt-24 md:mt-32 lg:grid lg:items-start lg:gap-16 ${
+        right ? "lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]" : "lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
+      }`}
+      aria-labelledby={id}
+    >
+      <div className={`text-center lg:sticky lg:top-24 lg:text-left ${right ? "lg:order-2" : ""}`}>
+        <Reveal className="reveal-celestial">
+          <h2 id={id} className={SECTION_TITLE}>
+            {title}
+          </h2>
+        </Reveal>
+        <Reveal className="reveal-celestial" delay={80}>
+          <p className="mx-auto mt-3 max-w-[48ch] text-base leading-relaxed text-[#9aada8] lg:mx-0">
+            {blurb}
+          </p>
+        </Reveal>
+      </div>
+      <Reveal className="reveal-celestial mt-10 block lg:mt-0" delay={120}>
+        {children}
+      </Reveal>
+    </section>
+  );
+}
 
 /** What the proof line degrades to if the database read fails: count 0 stays below the
  * floor, so the count itself is hidden. */
@@ -306,53 +356,35 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
           </>
         )}
 
-        <section className="mt-24 md:mt-32" aria-labelledby="waitlist-how">
+        {/* A lighter band than the panels around it, so a slightly shorter lead-in. */}
+        <section className="mt-24 md:mt-28" aria-labelledby="waitlist-how">
           <Reveal className="reveal-celestial">
-            <h2 id="waitlist-how" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
+            <h2 id="waitlist-how" className={`${SECTION_TITLE} text-center`}>
               How early access works.
             </h2>
           </Reveal>
-          <Reveal className="reveal-celestial mt-10 block" delay={80}>
-            <ol className="grid gap-4 sm:grid-cols-3">
-              {STEPS.map((step, i) => (
-                <li key={step.title} className="landing-glass rounded-2xl p-5">
-                  <p className="font-[family-name:var(--font-display)] text-2xl text-landing-accent">
-                    {i + 1}
-                  </p>
-                  <h3 className="mt-2 text-sm font-medium text-[#e8f3f1]">{step.title}</h3>
-                  <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">{step.body}</p>
-                </li>
-              ))}
-            </ol>
+          <Reveal className="reveal-celestial mt-12 block" delay={80}>
+            <EarlyAccessPath steps={STEPS} />
           </Reveal>
         </section>
 
-        <section className="mt-24 md:mt-32" aria-labelledby="waitlist-poll">
-          <Reveal className="reveal-celestial">
-            <h2 id="waitlist-poll" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
-              What should we release first?
-            </h2>
-          </Reveal>
-          <Reveal className="reveal-celestial" delay={80}>
-            <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
-              Vote for the one you want most, and see what everyone else picked.
-            </p>
-          </Reveal>
-          <Reveal className="reveal-celestial mt-10 block" delay={120}>
-            <FeaturePoll initial={poll} me={me} />
-          </Reveal>
-        </section>
+        <SplitSection
+          id="waitlist-poll"
+          side="left"
+          title="What should we release first?"
+          blurb="Vote for the one you want most, and see what everyone else picked."
+        >
+          <FeaturePoll initial={poll} me={me} />
+        </SplitSection>
 
-        <section className="mt-24 md:mt-32" aria-labelledby="waitlist-faq">
-          <Reveal className="reveal-celestial">
-            <h2 id="waitlist-faq" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
-              A few answers.
-            </h2>
-          </Reveal>
-          <Reveal className="reveal-celestial mt-10 block" delay={80}>
-            <FaqList items={faq(privacyHref)} />
-          </Reveal>
-        </section>
+        <SplitSection
+          id="waitlist-faq"
+          side="right"
+          title="A few answers."
+          blurb="What to expect while you wait for your wave."
+        >
+          <FaqList items={faq(privacyHref)} columns={1} />
+        </SplitSection>
 
         <section className="relative mt-24 text-center md:mt-32">
           <div
