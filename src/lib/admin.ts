@@ -32,22 +32,62 @@ function adminIds(): Set<string> {
 }
 
 /**
+ * The one deliberate hole: the console, reachable as `demo-user`, for local development.
+ *
+ * The console cannot otherwise be opened without Clerk keys, which makes it the one part
+ * of Orbit nobody can look at while building it — you cannot check a layout, a hover
+ * state, or a panel's empty case against a screen that 404s.
+ *
+ * THREE CONDITIONS, ALL REQUIRED, and each closes a different door:
+ *
+ *   ADMIN_DEMO_ACCESS === "1"   Opt-in. Never a default, so this cannot be arrived at by
+ *                               forgetting something — it has to be typed on purpose.
+ *   NODE_ENV === "development"  Never a built artifact. `next build` sets "production",
+ *                               so a production bundle ignores the flag entirely even if
+ *                               the variable is set in its environment.
+ *   !isClerkConfigured()        Only where there is no real identity to check against.
+ *                               With Clerk keys present the `ADMIN_USER_IDS` allowlist
+ *                               governs and this returns false, so the flag can never
+ *                               widen access on a real deployment.
+ *
+ * Production is additionally unreachable from here for a structural reason: `src/proxy.ts`
+ * answers 503 to every request when Clerk is unconfigured and NODE_ENV is "production", so
+ * "demo mode in production" is not a state the app can be in.
+ *
+ * WHAT IT DOES NOT DO: grant anything to a real account. It admits exactly the literal
+ * `demo-user`, which only exists when there is no authentication at all and whose data is
+ * the local PGlite database.
+ */
+export function demoAdminEnabled(): boolean {
+  return (
+    process.env.ADMIN_DEMO_ACCESS === "1" &&
+    process.env.NODE_ENV === "development" &&
+    !isClerkConfigured()
+  );
+}
+
+/**
  * Gated on `isClerkConfigured()` rather than `!isDemoMode()` on purpose.
  *
  * `isDemoMode()` is only true when NODE_ENV === "development", so it would let a production
  * build run locally without Clerk keys slip through. "Admin requires a real, Clerk-verified
  * identity" is the strictly stronger rule, and it is one condition instead of two.
+ *
+ * `demoAdminEnabled()` is the single, explicitly opt-in exception — see above for why it
+ * cannot be reached by accident or in a built artifact.
  */
 export function adminAccessEnabled(): boolean {
+  if (demoAdminEnabled()) return true;
   return isClerkConfigured() && adminIds().size > 0;
 }
 
 export function isAdminUser(userId: string | null | undefined): boolean {
   if (!adminAccessEnabled()) return false;
-  // Belt and braces: in demo mode every caller resolves to this literal, so even a
-  // mistaken ADMIN_USER_IDS=demo-user must not grant access. `adminAccessEnabled()`
-  // already covers it; this survives that check being loosened later.
-  if (!userId || userId === "demo-user") return false;
+  // In demo mode every caller resolves to this literal. It is admitted ONLY through the
+  // explicit development flag — never because somebody put `demo-user` in
+  // ADMIN_USER_IDS, which stays meaningless.
+  if (userId === "demo-user") return demoAdminEnabled();
+  if (!userId) return false;
   return adminIds().has(userId);
 }
 

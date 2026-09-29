@@ -13,7 +13,7 @@ import { toUserFacingError } from "@/lib/errors";
  * and because the finish write must land before the lambda freezes.
  */
 
-export type CronJobName = "imports.process-stalled";
+export type CronJobName = "imports.process-stalled" | "admin.metrics-snapshot";
 
 export type CronRunStatus = "ok" | "partial" | "failed";
 

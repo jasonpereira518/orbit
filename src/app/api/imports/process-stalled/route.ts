@@ -37,10 +37,12 @@ const USAGE_EVENT_RETENTION_DAYS = 180;
 const RECALIBRATE_BATCH = 25;
 
 /**
- * Shorter than usage events, because the two answer different questions: usage feeds cost
- * and adoption rollups that look backwards, while this one answers "what is broken now".
+ * Was 30 days ("what is broken now" answers a shorter question than usage/cost rollups).
+ * Bumped to 90 to match the console's trend-chart window — `errorTrend()` in
+ * `admin-trends.ts` reads this table directly for the /admin/health error history, so its
+ * window is only as long as this retention allows.
  */
-const ERROR_EVENT_RETENTION_DAYS = 30;
+const ERROR_EVENT_RETENTION_DAYS = 90;
 
 async function pruneOlderThan(
   table: typeof usageEvents | typeof errorEvents,

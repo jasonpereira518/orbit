@@ -86,8 +86,21 @@ export default configured
       //
       // `/api/admin` is listed separately rather than caught by the same prefix: the export
       // handler lives under /api and would otherwise fall through this branch entirely.
+      //
+      // ADMIN_DEMO_ACCESS opens it for local development, and mirrors `demoAdminEnabled()`
+      // in `src/lib/admin.ts` — which still checks independently, so this relaxing the
+      // route does not by itself admit anyone. The conditions are inlined rather than
+      // imported because middleware that reaches `@/db` fails the build with a `node:fs`
+      // chunking error naming neither file. This branch only runs when Clerk is
+      // unconfigured, so that third condition already holds structurally.
+      const demoAdmin =
+        process.env.ADMIN_DEMO_ACCESS === "1" &&
+        process.env.NODE_ENV === "development";
       const { pathname } = new URL(req.url);
-      if (pathname.startsWith("/admin") || pathname.startsWith("/api/admin")) {
+      if (
+        !demoAdmin &&
+        (pathname.startsWith("/admin") || pathname.startsWith("/api/admin"))
+      ) {
         return new NextResponse(null, { status: 404 });
       }
       return withPathname(req);

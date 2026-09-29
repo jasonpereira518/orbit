@@ -554,6 +554,15 @@ CREATE TABLE IF NOT EXISTS infra_costs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS infra_costs_provider_month_uidx ON infra_costs(provider, period_month);
 CREATE INDEX IF NOT EXISTS infra_costs_month_idx ON infra_costs(period_month);
+CREATE TABLE IF NOT EXISTS admin_metric_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  metric text NOT NULL,
+  value integer NOT NULL,
+  captured_at date NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS admin_metric_snapshots_metric_day_uidx ON admin_metric_snapshots(metric, captured_at);
+CREATE INDEX IF NOT EXISTS admin_metric_snapshots_captured_idx ON admin_metric_snapshots(captured_at);
 CREATE TABLE IF NOT EXISTS gate_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -587,7 +596,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a

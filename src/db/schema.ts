@@ -8,6 +8,7 @@ import {
   uuid,
   index,
   uniqueIndex,
+  date,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -1415,6 +1416,32 @@ export const gateEvents = pgTable(
   (t) => [
     index("gate_events_feature_created_idx").on(t.feature, t.createdAt),
     index("gate_events_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+
+/**
+ * The only history the console cannot reconstruct from an existing ledger.
+ *
+ * MRR and signups are derived live from `billingEvents`/`userSettings` timestamps —
+ * see `src/lib/admin-trends.ts`. This table exists solely for the handful of metrics
+ * that are a fact about a moment ("how many were active in the last 7 days") rather
+ * than an event with a timestamp, and so have no other way to be known historically.
+ * One row per `(metric, capturedAt)` per day; the unique index makes a retried cron
+ * invocation a no-op instead of a duplicate.
+ */
+export const adminMetricSnapshots = pgTable(
+  "admin_metric_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Dotted name, e.g. "users.active_7d", "health.data_protection_issues". */
+    metric: text("metric").notNull(),
+    value: integer("value").notNull(),
+    capturedAt: date("captured_at").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("admin_metric_snapshots_metric_day_uidx").on(t.metric, t.capturedAt),
+    index("admin_metric_snapshots_captured_idx").on(t.capturedAt),
   ]
 );
 

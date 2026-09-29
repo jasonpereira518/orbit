@@ -21,18 +21,36 @@ type Env = {
   clerkKey?: string;
   adminIds?: string;
   nodeEnv?: string;
+  demoAccess?: string;
 };
 
-/** Re-imports the gate with a fresh module registry so env reads are re-evaluated. */
+/**
+ * Re-imports the gate with a fresh module registry so env reads are re-evaluated.
+ *
+ * `demoAccess` and `nodeEnv` are set explicitly on EVERY call — including to `undefined`,
+ * which deletes them. Without that, a developer who has `ADMIN_DEMO_ACCESS=1` in their
+ * own `.env.local` (which is the point of the flag) would inherit it here, and the cases
+ * below that assert the gate is CLOSED would quietly start testing the open one.
+ */
 async function withEnv(env: Env) {
   const prevClerk = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   const prevAdmin = process.env.ADMIN_USER_IDS;
+  const prevDemo = process.env.ADMIN_DEMO_ACCESS;
+  const prevNodeEnv = process.env.NODE_ENV;
 
   if (env.clerkKey === undefined) delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   else process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = env.clerkKey;
 
   if (env.adminIds === undefined) delete process.env.ADMIN_USER_IDS;
   else process.env.ADMIN_USER_IDS = env.adminIds;
+
+  if (env.demoAccess === undefined) delete process.env.ADMIN_DEMO_ACCESS;
+  else process.env.ADMIN_DEMO_ACCESS = env.demoAccess;
+
+  // Defaults to "development" so the flag cases are testing the environment the flag is
+  // actually for; the production case sets it explicitly.
+  (process.env as Record<string, string | undefined>).NODE_ENV =
+    env.nodeEnv ?? "development";
 
   const mod = await import("../src/lib/admin");
 
@@ -41,6 +59,9 @@ async function withEnv(env: Env) {
     else process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = prevClerk;
     if (prevAdmin === undefined) delete process.env.ADMIN_USER_IDS;
     else process.env.ADMIN_USER_IDS = prevAdmin;
+    if (prevDemo === undefined) delete process.env.ADMIN_DEMO_ACCESS;
+    else process.env.ADMIN_DEMO_ACCESS = prevDemo;
+    (process.env as Record<string, string | undefined>).NODE_ENV = prevNodeEnv;
   };
 
   return { mod, restore };
@@ -122,6 +143,63 @@ async function main() {
     check(
       "ADMIN_USER_IDS=demo-user grants nothing (with Clerk)",
       mod.isAdminUser("demo-user") === false
+    );
+    restore();
+  }
+
+  /* ------------------------------------------------------- ADMIN_DEMO_ACCESS ------ */
+
+  // The console is unreachable without Clerk keys, which makes it the one screen nobody
+  // can look at while building it. This flag opens it for local development only. Every
+  // condition below is one of the doors that has to stay shut.
+
+  {
+    const { mod, restore } = await withEnv({ demoAccess: "1" });
+    check("demo access opens the gate in development", mod.adminAccessEnabled() === true);
+    check("...and admits demo-user", mod.isAdminUser("demo-user") === true);
+    check(
+      "...but still nobody else, since no allowlist can apply",
+      mod.isAdminUser("user_jason") === false
+    );
+    restore();
+  }
+
+  // THE ONE THAT MATTERS: a built artifact ignores the flag. `next build` sets
+  // NODE_ENV=production, so this is the state any real deployment is in.
+  {
+    const { mod, restore } = await withEnv({
+      demoAccess: "1",
+      nodeEnv: "production",
+    });
+    check("demo access is inert in a production build", mod.demoAdminEnabled() === false);
+    check("...so the gate stays closed", mod.adminAccessEnabled() === false);
+    check("...and demo-user is denied", mod.isAdminUser("demo-user") === false);
+    restore();
+  }
+
+  // With Clerk configured the allowlist governs and the flag must not widen anything.
+  {
+    const { mod, restore } = await withEnv({
+      clerkKey: "pk_test_fake",
+      adminIds: "user_jason",
+      demoAccess: "1",
+    });
+    check(
+      "demo access does nothing once Clerk is configured",
+      mod.demoAdminEnabled() === false
+    );
+    check("...the allowlist still governs", mod.isAdminUser("user_jason") === true);
+    check("...and demo-user is still denied", mod.isAdminUser("demo-user") === false);
+    restore();
+  }
+
+  // Opt-in means opt-in: only the exact value counts, so a stray "0"/"false"/"true" in an
+  // environment does not quietly open the console.
+  for (const value of ["0", "false", "true", "yes", ""]) {
+    const { mod, restore } = await withEnv({ demoAccess: value });
+    check(
+      `ADMIN_DEMO_ACCESS=${JSON.stringify(value)} does not open the gate`,
+      mod.demoAdminEnabled() === false && mod.isAdminUser("demo-user") === false
     );
     restore();
   }
