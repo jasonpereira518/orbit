@@ -11,7 +11,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-capture-jobs";
 
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { captureJobs, contactOpportunities, contacts, ignoredPeople, noteBatches, reminders, userSettings } from "../src/db/schema";
+import { captureJobs, contactOpportunities, contacts, ignoredPeople, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
 import {
   CAPTURE_CLAIM_STALE_MS,
   claimCaptureJob,
@@ -30,6 +30,7 @@ import {
   markCaptureJobTranscribed,
   captureJobLooksStuck,
   settleCaptureJob,
+  mergeCaptureBatchRows,
 } from "../src/lib/capture-jobs";
 import { randomUUID } from "node:crypto";
 import { assembleCaptureCorpus, runCaptureJobById } from "../src/lib/capture-job-runner";
@@ -338,6 +339,66 @@ async function main() {
     check("a job is never its own duplicate", (await findJobBySourceHash(USER, hashSourceNote(text), read.id)) === null);
     await discardCaptureJobRow(USER, read.id);
     check("a discarded extraction no longer counts", (await findJobBySourceHash(USER, hashSourceNote(text))) === null);
+  }
+
+  console.log("\nAn upload is reviewed together…");
+  {
+    await reset();
+    // Two notes both about Maya, one also about Leo — each read as its own job.
+    const byNote = (corpus: string): CaptureParseResult => {
+      const base = fakeParse(corpus);
+      const card = (key: string, name: string) => ({ ...base.items[1]!, key, notes: `${name}: ${corpus}`, parsed: person(name) });
+      return {
+        ...base,
+        items: corpus.includes("Leo") ? [card("0-Maya Chen", "Maya Chen"), card("1-Leo Park", "Leo Park")] : [card("0-Maya Chen", "Maya Chen")],
+        suggestedReminders: [],
+        mentions: [],
+        mentionedOnly: [],
+      };
+    };
+    const batchDeps = { parse: async (_u: string, corpus: string) => byNote(corpus), enrich: false };
+    const batch = randomUUID();
+    const one = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Met Maya at the summit.", batchGroupId: batch, sourceLabel: "summit.txt" });
+    const two = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Coffee with Maya and Leo.", batchGroupId: batch, sourceLabel: "coffee.txt" });
+    const summitHash = "a".repeat(64);
+    await appendSourceFileHashes(one.id, [summitHash]);
+    await runCaptureJobById(one.id, batchDeps);
+
+    check("a file of an upload is never resumed on its own", (await findActiveCaptureJob(USER)) === null);
+    check("nothing folds while a file is still being read", (await mergeCaptureBatchRows(USER, batch)) === null);
+    await runCaptureJobById(two.id, batchDeps);
+
+    const combined = await mergeCaptureBatchRows(USER, batch);
+    check("once every file is read, the upload folds into one job", combined?.status === "ready" && combined.batchGroupId === null, `${combined?.status}`);
+    check("  a card per person per note, the same person twice", combined?.result?.items.map((i) => i.parsed.name).join() === "Maya Chen,Maya Chen,Leo Park", combined?.result?.items.map((i) => i.parsed.name).join());
+    check("  with keys unique across notes", new Set(combined?.result?.items.map((i) => i.key)).size === 3);
+    check("  each card naming its note", combined?.result?.items.map((i) => i.noteLabel).join() === "summit.txt,coffee.txt,coffee.txt");
+    check("  and carrying its note's hash", combined?.result?.items[0]?.noteHash === hashSourceNote("Met Maya at the summit."));
+    check("  the files' hashes move with it", combined?.sourceFileHashes.includes(summitHash) ?? false);
+    const sources = await db.query.captureJobs.findMany({ where: inArray(captureJobs.id, [one.id, two.id]) });
+    check("the files are kept as merged, not discarded", sources.every((r) => r.status === "merged"));
+    check("a second fold finds nothing left to claim", (await mergeCaptureBatchRows(USER, batch)) === null);
+    check("the combined job is the one the page resumes", (await findActiveCaptureJob(USER))?.id === combined!.id);
+
+    for (const [index, item] of combined!.result!.items.entries()) {
+      await recordCaptureDecisionRow(USER, combined!.id, item.key, {
+        decision: "accept", index, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: new Date().toISOString(),
+      });
+    }
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, combined!.id));
+    const saved = await runCaptureJobById(combined!.id, batchDeps);
+    check("the combined review saves", saved?.status === "saved", `${saved?.status} ${saved?.error}`);
+    const people = await db.query.contacts.findMany({ where: eq(contacts.userId, USER) });
+    check("the same new person from two notes is one contact", people.map((p) => p.fullName).sort().join() === "Leo Park,Maya Chen", people.map((p) => p.fullName).join());
+    const maya = people.find((p) => p.fullName === "Maya Chen")!;
+    const mayaNotes = await db.query.interactions.findMany({ where: eq(interactions.contactId, maya.id) });
+    check("  with both conversations on their timeline", mayaNotes.length === 2, String(mayaNotes.length));
+
+    const lone = randomUUID();
+    const solo = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Met Maya at the summit again.", batchGroupId: lone });
+    await runCaptureJobById(solo.id, batchDeps);
+    const unbatched = await mergeCaptureBatchRows(USER, lone);
+    check("one ready file just leaves the batch", unbatched?.id === solo.id && unbatched.batchGroupId === null && unbatched.status === "ready");
   }
 
   await db.delete(captureJobs).where(and(eq(captureJobs.userId, USER), eq(captureJobs.status, "discarded")));

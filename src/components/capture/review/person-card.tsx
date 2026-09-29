@@ -72,6 +72,12 @@ export function PersonCardBody({
                   Already in your network
                 </Badge>
               )}
+              {/* A combined upload has a card per person per note — say which note. */}
+              {item.noteLabel && (
+                <Badge variant="outline" className="max-w-full truncate text-[10px] font-normal">
+                  From {item.noteLabel}
+                </Badge>
+              )}
               {item.sharedNoteTexts.length > 0 && (
                 <Badge variant="secondary" className="text-[10px]">
                   Includes shared note

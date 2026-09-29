@@ -442,6 +442,7 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
     const facts = reminderFactsFor(item, decision);
     return {
       notes: item.notes,
+      ...(item.noteHash ? { sourceHash: item.noteHash } : {}),
       parsed,
       mergeContactId,
       createReminder: facts.createReminder,
