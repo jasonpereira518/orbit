@@ -63,6 +63,8 @@ export const PUBLIC_ROUTES = [
   "/api/ops/speech-usage",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
+  // Radar's nightly pass — same CRON_SECRET gate, same reasons.
+  "/api/radar/run",
   "/api/webhooks/outbound/drain",
   "/api/connectors/outbox/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key

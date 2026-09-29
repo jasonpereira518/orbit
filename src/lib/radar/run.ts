@@ -40,6 +40,8 @@ import {
 import type { RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError } from "@/lib/report-error";
+import { runSettledPool } from "@/lib/sync-scheduler";
+import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 
 const HOUR_MS = 3_600_000;
@@ -314,4 +316,106 @@ export async function countRadarRuns(userId: string): Promise<number> {
     await db.execute(sql`SELECT count(*)::int AS n FROM radar_runs WHERE user_id = ${userId}`)
   );
   return Number(row?.n ?? 0);
+}
+
+/* ------------------------------------------------------------------ the nightly pass ----- */
+
+/** Under the route's 300 s ceiling, with room for the ledger write. */
+export const RADAR_PASS_BUDGET_MS = 270_000;
+/** Accounts claimed per pass. The route self-continues when a claim comes back full. */
+export const RADAR_USERS_PER_PASS = 25;
+/** Accounts run at once. Each is a different account's reads and, at most, five AI calls. */
+export const RADAR_CONCURRENCY = 4;
+/** No account starts unless this much of the budget is left. */
+export const RADAR_PER_USER_BUDGET_MS = 30_000;
+/** Accounts nobody has used in this long are left alone; their first visit rebuilds. */
+export const RADAR_ACTIVE_WITHIN_DAYS = 60;
+
+/**
+ * Claim accounts that are due, in one statement. While Radar is coming-soon, only accounts
+ * that have opened it (`radar_last_run_at IS NOT NULL`) are eligible, so nobody's AI key is
+ * spent on a page they cannot see. `last_active_at` is null for accounts that predate the
+ * column; they are treated as inactive until their next visit, which builds inline.
+ */
+export async function claimRadarUsers(limit: number, now: Date, opts: { includeUnopened: boolean }): Promise<string[]> {
+  const db = await getDb();
+  const lease = new Date(now.getTime() + RADAR_LEASE_MS);
+  const activeSince = new Date(now.getTime() - RADAR_ACTIVE_WITHIN_DAYS * 24 * HOUR_MS);
+  const rows = rowsOf<{ user_id: string }>(
+    await db.execute(sql`
+      UPDATE user_settings SET radar_lease_until = ${lease}
+       WHERE id IN (
+         SELECT id FROM user_settings
+          WHERE radar_paused = 0
+            AND (radar_next_at IS NULL OR radar_next_at <= ${now})
+            AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
+            AND last_active_at > ${activeSince}
+            AND ${opts.includeUnopened ? sql`TRUE` : sql`radar_last_run_at IS NOT NULL`}
+          ORDER BY radar_next_at NULLS FIRST, id
+          LIMIT ${limit})
+      RETURNING user_id
+    `)
+  );
+  return rows.map((r) => r.user_id);
+}
+
+/** Give an account back without running it, due at `dueAt` so the continuation takes it. */
+export async function releaseRadarLease(userId: string, dueAt: Date): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ radarLeaseUntil: null, radarNextAt: dueAt })
+    .where(eq(userSettings.userId, userId));
+}
+
+export type RadarPassStats = {
+  claimed: number;
+  ran: number;
+  failed: number;
+  recommendations: number;
+  aiNotes: number;
+  budgetExhausted: boolean;
+  claimFull: boolean;
+};
+
+/**
+ * One nightly pass: claim due accounts, run each under a shared deadline, and report
+ * whether more are waiting. A per-account failure is counted and never rethrown, because
+ * `runSettledPool` would swallow it silently otherwise.
+ */
+export async function runRadarPass(opts: { now?: Date; budgetMs?: number; includeUnopened: boolean }): Promise<RadarPassStats> {
+  const now = opts.now ?? new Date();
+  const deadline = deadlineAfter(opts.budgetMs ?? RADAR_PASS_BUDGET_MS);
+  const startCutoff = deadline - RADAR_PER_USER_BUDGET_MS;
+  const stats: RadarPassStats = {
+    claimed: 0,
+    ran: 0,
+    failed: 0,
+    recommendations: 0,
+    aiNotes: 0,
+    budgetExhausted: false,
+    claimFull: false,
+  };
+  const claimed = await claimRadarUsers(RADAR_USERS_PER_PASS, now, { includeUnopened: opts.includeUnopened });
+  stats.claimed = claimed.length;
+  stats.claimFull = claimed.length >= RADAR_USERS_PER_PASS;
+
+  await runSettledPool(claimed, RADAR_CONCURRENCY, async (userId) => {
+    if (deadlineReached(startCutoff)) {
+      stats.budgetExhausted = true;
+      await releaseRadarLease(userId, now).catch(() => undefined);
+      return;
+    }
+    const result = await runRadarForUser(userId, {
+      trigger: "schedule",
+      now: opts.now,
+      ai: true,
+      budgetMs: RADAR_PER_USER_BUDGET_MS,
+    });
+    if (result.ok) stats.ran++;
+    else stats.failed++;
+    stats.recommendations += result.recommendations;
+    stats.aiNotes += result.aiNotes;
+  });
+  return stats;
 }

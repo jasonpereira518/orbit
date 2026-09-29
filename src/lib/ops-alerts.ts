@@ -49,6 +49,8 @@ export type OpsSnapshot = {
      * a feed that stopped being read is indistinguishable from a quiet hiring season.
      */
     jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's nightly pass (`/api/radar/run`), once a day at 04:17 UTC. */
+    radarRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
   processStalledRecent: CronRunState[];
@@ -174,6 +176,17 @@ export const CALENDAR_DISARM_BURST = 5;
  * `warning`, never `critical`: nobody is paged because an internship notification is late.
  */
 const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Radar's nightly pass: daily, so a day and a quarter plus GitHub's lag.
+ *
+ * Unlike the job feed, a pass that has NEVER run is not an alert. The first run is up to a
+ * day after the deploy that adds it, and a condition that opens on every deploy and closes
+ * the next morning trains whoever reads these to ignore them. A pass that ran and then went
+ * quiet is the failure worth a message. `warning`: a late list of people to write to is not
+ * an outage.
+ */
+const RADAR_SILENT_MS = 30 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -373,6 +386,25 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Job feed sweep ${jobFeed.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${jobFeed.lastStartedAt?.toISOString() ?? "unknown"} ended ${jobFeed.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  const radarRun = s.cron.radarRun;
+  if (radarRun.lastStartedAt && now.getTime() - radarRun.lastStartedAt.getTime() > RADAR_SILENT_MS) {
+    out.push({
+      id: "radar.schedule_missed",
+      severity: "warning",
+      title: "Radar's nightly pass has stopped running",
+      detail: `Last started ${radarRun.lastStartedAt.toISOString()}; nobody's Radar list is being refreshed overnight.`,
+      href: "/admin/health",
+    });
+  } else if (radarRun.lastState === "failed" || radarRun.lastState === "stale") {
+    out.push({
+      id: "radar.run_failed",
+      severity: "warning",
+      title: `Radar's nightly pass ${radarRun.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarRun.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarRun.lastState}.`,
       href: "/admin/health",
     });
   }

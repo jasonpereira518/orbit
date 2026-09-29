@@ -34,6 +34,7 @@ import {
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import {
   claimRadarLease,
+  claimRadarUsers,
   ensureRadarRun,
   loadRadarState,
   maybeRefreshRadar,
@@ -275,6 +276,38 @@ run(async () => {
   check("a brand-new account gets its first build inline", await ensureRadarRun(fresh, NOW));
   await db.delete(radarRuns).where(inArray(radarRuns.userId, [fresh]));
   await db.delete(userSettings).where(eq(userSettings.userId, fresh));
+
+  console.log("\nwho the nightly pass claims");
+  {
+    const opened = USER;
+    const unopened = "smoke-radar-run-unopened";
+    await db.delete(userSettings).where(eq(userSettings.userId, unopened));
+    await ensureUserSettings(unopened);
+    const passNow = new Date(later.getTime() + 90 * 3_600_000);
+    await db
+      .update(userSettings)
+      .set({ radarPaused: 0, radarLeaseUntil: null, radarNextAt: later, lastActiveAt: passNow })
+      .where(inArray(userSettings.userId, [opened, unopened]));
+    // The runner shares one PGlite across scripts: hand back any other account a claim
+    // touches, and never run anyone but this script's own users.
+    const handBack = async (claimed: string[]) => {
+      const others = claimed.filter((u) => u !== opened && u !== unopened);
+      if (others.length) await db.update(userSettings).set({ radarLeaseUntil: null }).where(inArray(userSettings.userId, others));
+      await db.update(userSettings).set({ radarLeaseUntil: null }).where(inArray(userSettings.userId, [opened, unopened]));
+    };
+    const gated = await claimRadarUsers(100, passNow, { includeUnopened: false });
+    await handBack(gated);
+    check("while coming-soon, an account that opened Radar is claimed", gated.includes(opened));
+    check("and one that never did is not", !gated.includes(unopened));
+    const released = await claimRadarUsers(100, passNow, { includeUnopened: true });
+    await handBack(released);
+    check("after release, both are", released.includes(opened) && released.includes(unopened));
+    await db.update(userSettings).set({ lastActiveAt: new Date(passNow.getTime() - 90 * DAY) }).where(eq(userSettings.userId, unopened));
+    const idle = await claimRadarUsers(100, passNow, { includeUnopened: true });
+    await handBack(idle);
+    check("an account idle for months is left alone", !idle.includes(unopened));
+    await db.delete(userSettings).where(eq(userSettings.userId, unopened));
+  }
 
   await reset();
   if (failures) throw new Error(`${failures} check(s) failed`);

@@ -37,6 +37,7 @@ const HEALTHY: OpsSnapshot = {
     syncRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
     drain: { lastStartedAt: hoursAgo(0.2), lastState: "ok" },
     jobFeed: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    radarRun: { lastStartedAt: hoursAgo(10), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
@@ -179,6 +180,23 @@ function main() {
   // Nobody gets paged because an internship notification is late.
   check("  and none of it is critical",
     find(jobFeed({ lastStartedAt: null, lastState: null }), "jobfeed.schedule_missed")?.severity === "warning");
+
+  // Radar's nightly pass. Never-ran is deliberately NOT an alert: the first run is up to a
+  // day after the deploy that adds it.
+  const radar = (over: OpsSnapshot["cron"]["radarRun"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, radarRun: over },
+  });
+  check("radar never ran → no alert",
+    !find(radar({ lastStartedAt: null, lastState: null }), "radar.schedule_missed"));
+  check("radar silent for 32h → radar.schedule_missed",
+    find(radar({ lastStartedAt: hoursAgo(32), lastState: "ok" }), "radar.schedule_missed")?.severity === "warning");
+  check("  but 26h is within tolerance",
+    !find(radar({ lastStartedAt: hoursAgo(26), lastState: "ok" }), "radar.schedule_missed"));
+  check("radar run failed → radar.run_failed",
+    Boolean(find(radar({ lastStartedAt: hoursAgo(3), lastState: "failed" }), "radar.run_failed")));
+  check("  a partial run is not an alert",
+    !find(radar({ lastStartedAt: hoursAgo(3), lastState: "partial" }), "radar.run_failed"));
 
   check("three invalid Clerk deliveries in a row → critical",
     find({ ...HEALTHY, webhooks: { ...HEALTHY.webhooks, clerk: ["invalid", "invalid", "invalid"] } }, "webhook.invalid_streak:clerk")?.severity === "critical");

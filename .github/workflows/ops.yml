@@ -3,9 +3,10 @@
 # Vercel Hobby runs crons at most once a day, so this workflow drives everything that needs
 # to happen more often: the known-condition ops sweep and the webhook drain (every ten
 # minutes), the process-stalled job (hourly, so a lost import continuation stalls for an
-# hour, not a day), the connector sync (every fifteen minutes) and the job-feed sweep
-# (hourly). vercel.json schedules nothing; when Vercel Pro lands, move them all there and
-# delete them here in one change.
+# hour, not a day), the connector sync (every fifteen minutes), the job-feed sweep
+# (hourly), the Deepgram usage reconciliation (daily) and Radar's nightly pass (daily).
+# vercel.json schedules nothing; when Vercel Pro lands, move them all there and delete them
+# here in one change.
 # It also tells the ops sweep where `main` is, so production pinned to an old deploy by a
 # failed build shows up as `deploy.drift`.
 #
@@ -37,6 +38,9 @@ on:
     # Once a day: the Deepgram usage reconciliation. An arbitrary quiet hour, offset from
     # the hourly jobs above so it never runs alongside them.
     - cron: "41 5 * * *"
+    # Once a day: Radar's nightly pass. Accounts aim at 04:00 UTC (radar_next_at), and :17
+    # sits clear of the hourly :07 and :23 jobs and of the Deepgram reconciliation above.
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
 # One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
@@ -171,6 +175,20 @@ jobs:
           curl -sS --fail-with-body --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/jobs/feed/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Radar's nightly pass (daily). Its own line and its own route, for the same reason as
+      # the job feed: model calls on people's own keys must never make the alerting path's
+      # cadence hostage to a provider being slow. 300s to match the route's own ceiling; the
+      # route self-continues when more accounts are waiting.
+      - name: Run the Radar nightly pass (daily)
+        if: github.event.schedule == '17 4 * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/radar/run"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
