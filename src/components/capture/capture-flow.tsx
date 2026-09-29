@@ -242,15 +242,20 @@ export function CaptureFlow({
   /**
    * Stop pressed while Extract's own request was still out — there is no job id to discard
    * yet. Remembered here and honoured the moment the id arrives (see `startExtraction`).
+   *
+   * By attempt number rather than a boolean: Stop and then Extract again before the first
+   * request returns is two attempts in flight, and a flag the second one reset would let the
+   * first one's job survive the Stop that was meant for it.
    */
-  const stopRequestedRef = useRef(false);
+  const extractAttemptRef = useRef(0);
+  const stoppedAttemptRef = useRef(0);
   type ExtractionInput = { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null; mentionPicks?: MentionPick[]; force?: boolean };
   /** The duplicate toast's "Extract again" calls back in through this; synced below. */
   const startExtractionRef = useRef<((input: ExtractionInput) => Promise<void>) | null>(null);
   const startExtraction = useCallback(
     async (input: ExtractionInput) => {
       if (!input.text.trim() && !input.jobId) return;
-      stopRequestedRef.current = false;
+      const attempt = ++extractAttemptRef.current;
       setPendingStart(true);
       setReviewOpened(false);
       const res = await queueCaptureJob({
@@ -267,10 +272,9 @@ export function CaptureFlow({
         mentionPicks: activePicks(input.text, input.mentionPicks ?? []),
         force: input.force,
       });
-      if (stopRequestedRef.current) {
+      if (stoppedAttemptRef.current === attempt) {
         // Stopped before the job had an id. It has one now; discard it, and say nothing —
         // the page already went back to the notes when Stop was pressed.
-        stopRequestedRef.current = false;
         if (res.ok) void discardCaptureJob(res.job.id);
         return;
       }
@@ -320,7 +324,7 @@ export function CaptureFlow({
    */
   const stopExtraction = useCallback(() => {
     if (pendingStart) {
-      stopRequestedRef.current = true;
+      stoppedAttemptRef.current = extractAttemptRef.current;
       setPendingStart(false);
       return;
     }
