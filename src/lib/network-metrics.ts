@@ -11,6 +11,7 @@ import {
 
 export type PeerEdgeReason =
   | "company"
+  | "role"
   | "school"
   | "event"
   | "howMet"
@@ -20,6 +21,7 @@ export type PeerEdgeReason =
 
 export const PEER_REASON_LABELS: Record<PeerEdgeReason, string> = {
   company: "Same company",
+  role: "Same role",
   school: "Same school",
   event: "Same event",
   howMet: "Met together",
@@ -167,6 +169,7 @@ function addPeerEdge(
 
 function clusterReason(kind: string): PeerEdgeReason {
   if (kind === "company") return "company";
+  if (kind === "role") return "role";
   if (kind === "school") return "school";
   return "howMet";
 }
