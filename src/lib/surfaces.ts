@@ -113,6 +113,14 @@ const PAGES: Surface[] = [
     comingSoon: true,
   },
   {
+    key: "page.leads",
+    kind: "page",
+    label: "Leads",
+    description: "Warm paths to the people you want to reach, through your teammates' networks.",
+    href: "/leads",
+    comingSoon: true,
+  },
+  {
     key: "page.knowledge",
     kind: "page",
     label: "Knowledge",
@@ -277,6 +285,9 @@ export const COMING_SOON_KEYS: ReadonlySet<string> = new Set(
  */
 export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
+  // `page.leads` has none yet. Its future CRM tabs in the Integrations dialog follow
+  // `surface: "page.leads"` rather than a settings key, and the Contacts "Work" pill is
+  // gated at page level — neither is expressible here.
 };
 
 export function isHrefComingSoon(href: string): boolean {

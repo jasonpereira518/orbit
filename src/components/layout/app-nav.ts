@@ -12,6 +12,7 @@ import {
   Bell,
   BookOpen,
   PartyPopper,
+  Handshake,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -89,6 +90,13 @@ const OUTREACH: AppNavItem = {
   label: "Outreach",
   icon: Send,
 };
+const LEADS: AppNavItem = {
+  href: "/leads",
+  label: "Leads",
+  // An intro through a colleague, which is what the page is for. Not `Target`: Settings
+  // already uses that for target companies, a different idea.
+  icon: Handshake,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -110,11 +118,12 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * Items under the "Coming soon" divider (Settings is rendered separately).
  *
  * The name is stale for Knowledge, which has shipped — it stays in this group rather than
- * moving up to `APP_NAV_CORE` because the divider's label describes Events and Outreach,
- * the two items that actually are coming soon (`comingSoon` in `src/lib/surfaces.ts`), and
- * splitting the group over one released item was a deliberate no per product decision.
+ * moving up to `APP_NAV_CORE` because the divider's label describes Events, Outreach and
+ * Leads, the items that actually are coming soon (`comingSoon` in `src/lib/surfaces.ts`),
+ * and splitting the group over one released item was a deliberate no per product decision.
+ * Knowledge stays last so the released item sits after the announced ones.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, LEADS, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -144,6 +153,7 @@ export const MOBILE_MORE_NAV = [
   CONSTELLATION,
   EVENTS,
   OUTREACH,
+  LEADS,
   KNOWLEDGE,
 ];
 
