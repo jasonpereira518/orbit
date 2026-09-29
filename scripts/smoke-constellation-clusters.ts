@@ -8,6 +8,9 @@ import {
   toNamedGraphClusters,
   type ClusterContact,
 } from "../src/lib/constellation-clusters";
+import type { GraphContactInput } from "../src/lib/graph-layout";
+import { buildPeerEdges } from "../src/lib/network-metrics";
+import { isExactClusterShortcut } from "../src/lib/graph/search-match";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -67,6 +70,54 @@ check(
 );
 const again = buildConstellationClusters(people);
 check("deterministic", JSON.stringify(again.clusters) === JSON.stringify(clusters));
+
+console.log("\nFamily satellite needs a family cluster");
+const noGoogle = buildConstellationClusters([
+  { id: "lone-dm", company: "DeepMind", title: "Software Engineer" },
+  { id: "lone-eng", company: "Acme Robotics", title: "Backend Engineer" },
+]).byContactId;
+check(
+  "lone DeepMind engineer with no Google cluster joins Engineers",
+  noGoogle.get("lone-dm")!.id === "role:engineering" &&
+    noGoogle.get("lone-eng")!.id === "role:engineering"
+);
+
+console.log("\nDashboard metrics keep school links");
+const metricContact = (id: string, company: string, school: string): GraphContactInput => ({
+  id,
+  fullName: id,
+  company,
+  school,
+  title: "Software Engineer",
+  relationshipScore: 50,
+  lastInteractionAt: null,
+  nextFollowUpAt: null,
+  tags: [],
+  aiSummary: null,
+  keyFacts: null,
+});
+const metricEdges = buildPeerEdges(
+  [
+    metricContact("m1", "Acme Robotics", "Massachusetts Institute of Technology"),
+    metricContact("m2", "Nimbus Labs", "MIT"),
+    metricContact("m3", "Third Co", "Stanford"),
+  ],
+  { metrics: true }
+);
+check(
+  "engineers at one-off companies sharing a school get a school metrics edge",
+  metricEdges.some(
+    (e) =>
+      e.reason === "school" &&
+      [e.source, e.target].sort().join() === "m1,m2"
+  ) && !metricEdges.some((e) => e.reason === "school" && (e.source === "m3" || e.target === "m3"))
+);
+
+console.log("\nSearch: function words still find people");
+const roleCluster = { id: "role:product", name: "Product", company: "Product", kind: "role" as const, count: 2, contactIds: ["a", "b"] };
+const companyCluster = { ...roleCluster, id: "company:google", name: "Google", company: "Google", kind: "company" as const };
+check("role cluster name does not replace person hits", !isExactClusterShortcut(roleCluster, "product"));
+check("company cluster name still highlights the whole cluster", isExactClusterShortcut(companyCluster, "google"));
 
 console.log("\nconstellation-clusters: all checks passed");
 process.exit(0);

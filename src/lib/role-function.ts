@@ -51,10 +51,23 @@ export const RECRUITER =
  * a lead or a staff engineer is not who the core of a 300-person company should be.
  */
 const EXECUTIVE = /\b(head of|s?vp|evp|vice president|director)\b/i;
+/** Junior "Director"/"VP" titles that carry the word without the seniority. */
+const JUNIOR_EXEC =
+  /\b(associate director|assistant director|assistant vice president|avp|account director|art director|creative director)\b/i;
 /** For recruiters, "partner" is a job title ("Talent Partner"), not an ownership stake. */
 const RECRUITER_EXEC = /\b(chief|co-?founder|founder)\b/i;
-/** Titles that match FOUNDER_EXEC but are not actually leaders — "Product Owner" not ownership, "Partner" not a stake. */
+/**
+ * Titles that match FOUNDER_EXEC only through a weak word — "Product Owner" is not ownership,
+ * "Partner" is not a stake. It never cancels a strong word (STRONG_EXEC): a "Founder & Product
+ * Owner" and a "Student Founder" still founded something.
+ */
 const NOT_LEADER = /\b(product owner|partner (?:engineer|manager|marketing|success|solutions?)|(?:channel|client|business|strategic) partner|student)\b/i;
+
+const STRONG_EXEC = /\b(founder|co-?founder|ceo|cto|coo|cfo|cpo|cmo|chief)\b/i;
+
+function isExecutive(value: string) {
+  return EXECUTIVE.test(value) && !JUNIOR_EXEC.test(value);
+}
 
 const FUNCTION_RULES: Array<[RoleClusterKey, RegExp]> = [
   ["design", /\b(design(?:er)?|ux|creative director|art director|illustrator)\b/i],
@@ -76,9 +89,12 @@ export function classifyTitle(title: string | null | undefined): TitleRole {
   const value = title?.trim();
   if (!value) return { fn: "other", isLeader: false };
   if (RECRUITER.test(value)) {
-    return { fn: "people", isLeader: EXECUTIVE.test(value) || RECRUITER_EXEC.test(value) };
+    return { fn: "people", isLeader: isExecutive(value) || RECRUITER_EXEC.test(value) };
   }
-  const isLeader = (FOUNDER_EXEC.test(value) && !NOT_LEADER.test(value)) || EXECUTIVE.test(value);
+  const isLeader =
+    STRONG_EXEC.test(value) ||
+    (FOUNDER_EXEC.test(value) && !NOT_LEADER.test(value) && !JUNIOR_EXEC.test(value)) ||
+    isExecutive(value);
   for (const [fn, pattern] of FUNCTION_RULES) {
     if (pattern.test(value)) return { fn, isLeader };
   }

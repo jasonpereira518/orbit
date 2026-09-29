@@ -58,6 +58,16 @@ const TABLE: Array<[string | null, RoleFunction, boolean]> = [
   ["Student", "other", false],
   ["", "other", false],
   [null, "other", false],
+  // Weak-owner exclusions must not cancel a strong exec word; junior "Director" titles lead nobody.
+  ["Founder & Product Owner", "product", true],
+  ["Student Founder", "founders", true],
+  ["Associate Director", "other", false],
+  ["Assistant Vice President", "other", false],
+  ["Art Director", "design", false],
+  ["Chief People Officer", "founders", true],
+  ["Head of Recruiting", "people", true],
+  ["EVP Marketing", "marketing", true],
+  ["SVP Engineering", "engineering", true],
 ];
 
 console.log("\nclassifyTitle");
