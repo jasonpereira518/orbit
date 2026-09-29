@@ -43,3 +43,21 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
     hasContacts,
   };
 }
+
+/** Cards the dashboard previews, matching the legacy card's four. */
+export const RADAR_PREVIEW_COUNT = 4;
+
+export type RadarPreview = {
+  /** False until the account's first run: the dashboard keeps its legacy card until then. */
+  hasRun: boolean;
+  items: RecommendationRow[];
+  total: number;
+};
+
+/** The dashboard's Radar card, in two statements. Never builds anything itself. */
+export async function loadRadarPreview(userId: string): Promise<RadarPreview> {
+  const state = await loadRadarState(userId);
+  if (!state?.lastRunAt) return { hasRun: false, items: [], total: 0 };
+  const pending = await listPendingRecommendations(userId, RADAR_CAPS.pending);
+  return { hasRun: true, items: pending.slice(0, RADAR_PREVIEW_COUNT), total: pending.length };
+}

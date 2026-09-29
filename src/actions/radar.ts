@@ -22,7 +22,7 @@ import {
   type SnoozeLength,
 } from "@/lib/radar/actions-core";
 import { explainRecommendation } from "@/lib/radar/explain";
-import { loadRadarPage, type RadarPageData } from "@/lib/radar/page-data";
+import { loadRadarPage, loadRadarPreview, type RadarPageData, type RadarPreview } from "@/lib/radar/page-data";
 import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, runRadarForUser } from "@/lib/radar/run";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -50,6 +50,19 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
     getNetworkStats(userId).catch(() => null),
   ]);
   return { page, networkStats };
+}
+
+/**
+ * The dashboard's Radar card. Never blocks the dashboard on a build: an account that has
+ * never run gets its first build after the response and keeps the legacy card until then.
+ */
+export async function fetchRadarPreview(): Promise<RadarPreview> {
+  const userId = await requireUserForSurface(SURFACE);
+  const preview = await loadRadarPreview(userId);
+  after(() =>
+    (preview.hasRun ? maybeRefreshRadar(userId) : ensureRadarRun(userId).then(() => undefined)).catch(() => undefined)
+  );
+  return preview;
 }
 
 export type RadarActionResult = { ok: true; message?: string } | { ok: false; message: string };

@@ -305,7 +305,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
         FROM recommendations r
         -- Not aliased: clientAvatarUrlSql names the contacts table in full.
         JOIN contacts ON contacts.id = r.contact_id AND contacts.user_id = r.user_id
-       WHERE r.user_id = ${userId} AND r.status = 'pending'
+       WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > now()
        ORDER BY r.score DESC, r.id
        LIMIT ${limit}
     `)

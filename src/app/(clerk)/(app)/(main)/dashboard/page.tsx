@@ -20,6 +20,7 @@ import { listPendingAgentSends } from "@/lib/agent-sends";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { fetchRadarPreview } from "@/actions/radar";
 
 async function AgentDraftsSection() {
   const drafts = await listPendingAgentSends(await requireUserId());
@@ -36,8 +37,16 @@ export default async function DashboardPage() {
   // Unhandled until a section awaits it; an early rejection must not crash the render.
   bundle.catch(() => {});
 
-  const { hidden } = await resolveSurfaceVisibility(await requireUserId());
+  const { hidden, comingSoon } = await resolveSurfaceVisibility(await requireUserId());
   const show = (key: string) => !hidden.has(key);
+
+  // Radar's top cards take the suggestions slot for viewers who can see Radar. Started only
+  // for them, so everyone else pays nothing, and never awaited ahead of the bundle.
+  const radarPreview =
+    show("dashboard.suggested-outreach") && !hidden.has("page.radar") && !comingSoon.has("page.radar")
+      ? fetchRadarPreview()
+      : null;
+  radarPreview?.catch(() => {});
 
   // The outreach summary streams independently, and is not started at all when its card
   // is hidden — it is the one query on this page that no other card shares.
@@ -95,7 +104,7 @@ export default async function DashboardPage() {
             <Suspense
               fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
             >
-              <SuggestedOutreachSection bundle={bundle} />
+              <SuggestedOutreachSection bundle={bundle} radar={radarPreview} />
             </Suspense>
           )}
           {outreachSummary && (

@@ -17,6 +17,7 @@ import {
   Clock,
   Loader2,
   NotebookPen,
+  Radar,
   Shield,
   UserRound,
   X,
@@ -141,12 +142,16 @@ export function NotificationsPanelButton({
     [data]
   );
   const alerts = data?.alerts ?? [];
+  // Radar's list as one line, never an item: a suggestion is not something due, so it
+  // neither counts toward the badge nor lives under "Due now".
+  const radar = data?.radar ?? null;
   // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
   // alert-only account should still see the scroll area say there is nothing due rather
   // than render an empty region with no explanation.
   const hasAnything =
     dueItems.length > 0 ||
     captureItems.length > 0 ||
+    radar !== null ||
     jobs.length > 0 ||
     kept.length > 0;
 
@@ -347,6 +352,10 @@ export function NotificationsPanelButton({
                       onNavigate={() => setOpen(false)}
                     />
                   ))}
+                </Section>
+
+                <Section title="Radar" count={radar ? 1 : 0}>
+                  {radar && <RadarRow count={radar.count} names={radar.names} onNavigate={() => setOpen(false)} />}
                 </Section>
 
                 {/* Background work, below the things the user is actually being asked to
@@ -607,6 +616,28 @@ function JobRow({ job }: { job: BackgroundJob }) {
           <X className="h-3.5 w-3.5" />
         </Button>
       )}
+    </div>
+  );
+}
+
+/** One line for Radar's whole list: how many people, and who is first. */
+function RadarRow({ count, names, onNavigate }: { count: number; names: string[]; onNavigate: () => void }) {
+  const shown = names.slice(0, 3);
+  const rest = count - shown.length;
+  return (
+    <div className={cn(ROW, "bg-popover")}>
+      <IconDisc>
+        <Radar className="h-4 w-4 text-muted-foreground" />
+      </IconDisc>
+      <Link href="/radar" onClick={onNavigate} className="min-w-0 flex-1 hover:underline">
+        <span className="block truncate text-sm font-medium text-ink">
+          {count} {count === 1 ? "person" : "people"} worth a message
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+          {shown.join(", ")}
+          {rest > 0 ? ` and ${rest} more` : ""}
+        </span>
+      </Link>
     </div>
   );
 }

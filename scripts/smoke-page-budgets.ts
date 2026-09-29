@@ -48,7 +48,7 @@ import { scaleContactRows } from "./lib/scale-fixture";
 import { loadKnowledgeBase } from "../src/lib/knowledge-base";
 import { radarRuns, userSettings } from "../src/db/schema";
 import { claimRadarLease, runRadarForUser } from "../src/lib/radar/run";
-import { loadRadarPage } from "../src/lib/radar/page-data";
+import { loadRadarPage, loadRadarPreview } from "../src/lib/radar/page-data";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-page-budgets-user";
@@ -271,6 +271,13 @@ async function main() {
   const radarJson = JSON.stringify(radarPage);
   check("radar page payload carries no inline base64", !radarJson.includes("data:image/"));
   check("radar page payload under 100 KB", radarJson.length < 100_000, `${(radarJson.length / 1024).toFixed(0)} KB`);
+  startQueryCount();
+  const radarPreview = await loadRadarPreview(USER);
+  const radarPreviewCount = stopQueryCount();
+  // The dashboard's Radar card is its own load, started beside the dashboard bundle, so the
+  // dashboard's own budget above does not move.
+  check("dashboard's Radar card issues ≤ 2 statements", radarPreviewCount <= 2, `got ${radarPreviewCount}`);
+  check("and shows at most four cards", radarPreview.hasRun && radarPreview.items.length <= 4);
 
   // ---- Graph -------------------------------------------------------------------------
   console.log("\nConstellation (loadGraphData)…");
@@ -348,7 +355,10 @@ async function main() {
   const panelCount = stopQueryCount();
   const panelScans = contactScans(capturedQueries());
   console.log(`  statements: ${panelCount}`);
-  check("panel issues ≤ 8 statements", panelCount <= 8, `got ${panelCount}`);
+  // 9, up from 8, and deliberately: Radar's one-line summary (a count and three names off
+  // the recommendations index). It is a sibling of `items`, never an item, so it adds a
+  // statement but no rows to the scaling bound below.
+  check("panel issues ≤ 9 statements", panelCount <= 9, `got ${panelCount}`);
   check(
     "panel contacts scan filters on next_follow_up_at",
     panelScans.some((s) => /where[\s\S]*"next_follow_up_at"/i.test(s)),

@@ -1,5 +1,5 @@
-import { and, eq, inArray, isNotNull, lte } from "drizzle-orm";
-import { getDb } from "@/db";
+import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
 import { aiSuggestions, captureJobs, contacts, reminders, suggestedReminders } from "@/db/schema";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
 import {
@@ -47,6 +47,7 @@ export async function loadNotificationPanel(
     entitlements,
     alerts,
     captureRows,
+    radarRows,
   ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
@@ -104,7 +105,19 @@ export async function loadNotificationPanel(
       orderBy: (j, { desc: descOrder }) => [descOrder(j.updatedAt)],
       limit: 3,
     }),
+    // Radar's live list, as one summary line: how many and who's first. Never items, so
+    // never "due", so never a badge or a desktop notification (an unconfirmed guess must
+    // not reach either). One indexed read; empty for anyone Radar has never run for.
+    db.execute(sql`
+      SELECT count(*)::int AS n,
+             (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names
+        FROM recommendations r
+        JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
+       WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
+    `),
   ]);
+  const radarRow = rowsOf<{ n: number; names: string[] | null }>(radarRows)[0];
+  const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
     id: string;
@@ -235,6 +248,12 @@ export async function loadNotificationPanel(
     // Drives the extension promo in the panel: paid plans get an install link,
     // everyone else gets the pitch and a route to the plans page.
     canUseExtension: entitlements.canUseExtension,
+    /**
+     * Radar's list in one line, beside `items` rather than in it for the same reason as
+     * `alerts` below: a suggestion must never be "due". Absent (not null) when empty, so
+     * the payload is byte-identical for everyone Radar has never run for.
+     */
+    radar: radarCount > 0 ? { count: radarCount, names: radarRow?.names ?? [] } : undefined,
     /**
      * Account health, as a SIBLING of `items` and never an entry in it. That placement is
      * the structural guarantee that alerts can never become OS desktop notifications:
