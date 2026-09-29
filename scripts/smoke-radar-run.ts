@@ -240,6 +240,9 @@ run(async () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (!/generativelanguage/.test(url)) return realFetch(input, init);
+      // Only text generation is a Radar call. An embedding request (background indexing for
+      // the account whose key this block just set) shares the host; answer it, don't count it.
+      if (!/:(stream)?generateContent/i.test(url)) return Response.json({ embedding: { values: [] }, embeddings: [] });
       const body = typeof init?.body === "string" ? init.body : "";
       // The rerank is the one call that carries a CANDIDATES fence.
       const isRerank = body.includes("<<<CANDIDATES_");
@@ -595,6 +598,8 @@ run(async () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (!/generativelanguage/.test(url)) return realFetch(input, init);
+      // As above: an embedding request is background indexing, not a draft.
+      if (!/:(stream)?generateContent/i.test(url)) return Response.json({ embedding: { values: [] }, embeddings: [] });
       draftCalls.push(typeof init?.body === "string" ? init.body : "");
       const reply = JSON.stringify({ body: "Hi Dee, it has been a while. Coffee next week? My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123" });
       return Response.json({
