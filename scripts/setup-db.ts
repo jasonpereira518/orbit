@@ -52,6 +52,9 @@ import { sql } from "drizzle-orm";
   "feedback_screenshots",
   "broadcasts",
   "broadcast_recipients",
+  "recommendations",
+  "radar_runs",
+  "recommendation_feedback",
 ] as const;
 
 async function main() {

@@ -11,6 +11,17 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+import type {
+  RadarAiNote,
+  RadarEvidence,
+  RadarFeedbackAction,
+  RadarReason,
+  RadarRunStatus,
+  RadarRunTrigger,
+  RecommendationBucket,
+  RecommendationKind,
+  RecommendationStatus,
+} from "@/lib/radar/types";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
@@ -434,6 +445,17 @@ export const userSettings = pgTable("user_settings", {
    * Null means "never checked", not "held" — held accounts are recomputed, never stored.
    */
   stealthClearedAt: timestamp("stealth_cleared_at", { withTimezone: true }),
+  /**
+   * Radar's nightly schedule for this account (`src/lib/radar/run.ts`). `radarNextAt` is a
+   * floor, not a promise: GitHub's scheduler lags. `radarLeaseUntil` is the claim that stops
+   * two overlapping passes from running one account twice. `radarLastRunAt` is also the
+   * "has opened Radar" marker the claim reads while the page is coming-soon.
+   */
+  radarNextAt: timestamp("radar_next_at", { withTimezone: true }),
+  radarLeaseUntil: timestamp("radar_lease_until", { withTimezone: true }),
+  radarLastRunAt: timestamp("radar_last_run_at", { withTimezone: true }),
+  /** 1 = the person paused Radar: no nightly run, no AI spend. Integer, per house convention. */
+  radarPaused: integer("radar_paused").default(0).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -1969,6 +1991,93 @@ export const aiSuggestions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("ai_suggestions_user_idx").on(t.userId, t.status)]
+);
+
+/**
+ * Radar's ranked recommendations: at most one live row per (user, contact, kind).
+ *
+ * Written only by the per-user run (`src/lib/radar/run.ts`) and by the person's own clicks.
+ * `reasons` and `evidence` are what the deterministic scorer produced; `ai_note` is the
+ * optional one-line why, kept while `inputs_hash` is unchanged. Terminal rows (accepted,
+ * dismissed, expired) are history for suppression and are pruned after 90 days.
+ */
+export const recommendations = pgTable(
+  "recommendations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<RecommendationKind>().notNull(),
+    score: integer("score").notNull(),
+    bucket: text("bucket").$type<RecommendationBucket>().notNull(),
+    reasons: jsonb("reasons").$type<RadarReason[]>().default([]).notNull(),
+    evidence: jsonb("evidence").$type<RadarEvidence[]>().default([]).notNull(),
+    status: text("status").$type<RecommendationStatus>().default("pending").notNull(),
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    runId: uuid("run_id"),
+    inputsHash: text("inputs_hash").notNull(),
+    aiNote: jsonb("ai_note").$type<RadarAiNote>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("recommendations_live_uidx")
+      .on(t.userId, t.contactId, t.kind)
+      .where(sql`${t.status} in ('pending', 'snoozed')`),
+    index("recommendations_user_status_score_idx").on(t.userId, t.status, t.score.desc()),
+  ]
+);
+
+/**
+ * One row per Radar run for one account: when, why it ran, and what it wrote. The page's
+ * "Updated 6h ago" stamp and the operator's view of the nightly pass both read it. No FK:
+ * it outlives nothing, and the account purge deletes it explicitly.
+ */
+export const radarRuns = pgTable(
+  "radar_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    trigger: text("trigger").$type<RadarRunTrigger>().notNull(),
+    status: text("status").$type<RadarRunStatus>().default("running").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    stats: jsonb("stats").$type<Record<string, number | boolean>>().default({}).notNull(),
+    error: text("error"),
+  },
+  (t) => [index("radar_runs_user_started_idx").on(t.userId, t.startedAt.desc())]
+);
+
+/**
+ * What a person did with a recommendation. The next run reads it so a dismissal sticks and
+ * "not for this person" is permanent. `kind` null means every kind for that contact.
+ */
+export const recommendationFeedback = pgTable(
+  "recommendation_feedback",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    recommendationId: uuid("recommendation_id"),
+    kind: text("kind").$type<RecommendationKind>(),
+    action: text("action").$type<RadarFeedbackAction>().notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recommendation_feedback_user_contact_idx").on(
+      t.userId,
+      t.contactId,
+      t.createdAt.desc()
+    ),
+  ]
 );
 
 export type AudienceFilters = {
