@@ -2098,6 +2098,16 @@
           ]
         },
         {
+          "id": "company:innovate carolina",
+          "name": "Innovate Carolina",
+          "company": "Innovate Carolina",
+          "kind": "company",
+          "count": 1,
+          "contactIds": [
+            "<contacts:Maya Thompson>"
+          ]
+        },
+        {
           "id": "company:linear",
           "name": "Linear",
           "company": "Linear",
@@ -2135,16 +2145,6 @@
           "count": 1,
           "contactIds": [
             "<contacts:Leo Fernandez>"
-          ]
-        },
-        {
-          "id": "school:unc chapel hill",
-          "name": "UNC Chapel Hill",
-          "company": "UNC Chapel Hill",
-          "kind": "school",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Maya Thompson>"
           ]
         }
       ],
@@ -3088,6 +3088,19 @@
     ],
     "clusters": [
       {
+        "id": "role:founders",
+        "name": "Founders & Execs",
+        "company": "Founders & Execs",
+        "kind": "role",
+        "count": 4,
+        "contactIds": [
+          "<contacts:Maya Thompson>",
+          "<contacts:Nina Petrova>",
+          "<contacts:Leo Fernandez>",
+          "<contacts:Daniel Osei>"
+        ]
+      },
+      {
         "id": "company:google",
         "name": "Google",
         "company": "Google",
@@ -3196,46 +3209,6 @@
         "count": 1,
         "contactIds": [
           "<contacts:Marcus Webb>"
-        ]
-      },
-      {
-        "id": "company:lumen health",
-        "name": "Lumen Health",
-        "company": "Lumen Health",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Nina Petrova>"
-        ]
-      },
-      {
-        "id": "company:northlight robotics",
-        "name": "Northlight Robotics",
-        "company": "Northlight Robotics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Daniel Osei>"
-        ]
-      },
-      {
-        "id": "company:tidepool analytics",
-        "name": "Tidepool Analytics",
-        "company": "Tidepool Analytics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Leo Fernandez>"
-        ]
-      },
-      {
-        "id": "school:unc chapel hill",
-        "name": "UNC Chapel Hill",
-        "company": "UNC Chapel Hill",
-        "kind": "school",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Maya Thompson>"
         ]
       }
     ],
@@ -9510,6 +9483,16 @@
           ]
         },
         {
+          "id": "company:innovate carolina",
+          "name": "Innovate Carolina",
+          "company": "Innovate Carolina",
+          "kind": "company",
+          "count": 1,
+          "contactIds": [
+            "<contacts:Maya Thompson>"
+          ]
+        },
+        {
           "id": "company:linear",
           "name": "Linear",
           "company": "Linear",
@@ -9547,16 +9530,6 @@
           "count": 1,
           "contactIds": [
             "<contacts:Leo Fernandez>"
-          ]
-        },
-        {
-          "id": "school:unc chapel hill",
-          "name": "UNC Chapel Hill",
-          "company": "UNC Chapel Hill",
-          "kind": "school",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Maya Thompson>"
           ]
         }
       ],
@@ -10531,6 +10504,19 @@
     ],
     "clusters": [
       {
+        "id": "role:founders",
+        "name": "Founders & Execs",
+        "company": "Founders & Execs",
+        "kind": "role",
+        "count": 4,
+        "contactIds": [
+          "<contacts:Maya Thompson>",
+          "<contacts:Nina Petrova>",
+          "<contacts:Leo Fernandez>",
+          "<contacts:Daniel Osei>"
+        ]
+      },
+      {
         "id": "company:google",
         "name": "Google",
         "company": "Google",
@@ -10622,12 +10608,13 @@
         ]
       },
       {
-        "id": "company:acme",
-        "name": "Acme",
-        "company": "Acme",
-        "kind": "company",
-        "count": 1,
+        "id": "role:engineering",
+        "name": "Engineers",
+        "company": "Engineers",
+        "kind": "role",
+        "count": 2,
         "contactIds": [
+          "<contacts:Marcus Webb>",
           "<contacts:Golden Newperson>"
         ]
       },
@@ -10639,56 +10626,6 @@
         "count": 1,
         "contactIds": [
           "<contacts:Grace Whitfield>"
-        ]
-      },
-      {
-        "id": "company:linear",
-        "name": "Linear",
-        "company": "Linear",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Marcus Webb>"
-        ]
-      },
-      {
-        "id": "company:lumen health",
-        "name": "Lumen Health",
-        "company": "Lumen Health",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Nina Petrova>"
-        ]
-      },
-      {
-        "id": "company:northlight robotics",
-        "name": "Northlight Robotics",
-        "company": "Northlight Robotics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Daniel Osei>"
-        ]
-      },
-      {
-        "id": "company:tidepool analytics",
-        "name": "Tidepool Analytics",
-        "company": "Tidepool Analytics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Leo Fernandez>"
-        ]
-      },
-      {
-        "id": "school:unc chapel hill",
-        "name": "UNC Chapel Hill",
-        "company": "UNC Chapel Hill",
-        "kind": "school",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Maya Thompson>"
         ]
       }
     ],
