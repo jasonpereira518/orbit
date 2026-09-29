@@ -127,6 +127,10 @@ for (const path of [
 }
 check("the pure allowlist agrees with the config", ["/", "/privacy", "/api/track", "/landing/planets/earth.png"].every(waitlistServesPath) && !waitlistServesPath("/pricing") && !waitlistServesPath("/landing/earth.png"));
 check(
+  "the poll's live-results read is served on the waitlist host",
+  waitlistServesPath("/api/waitlist-poll/results") && !waitlistServesPath("/api/waitlist-poll/anything-else")
+);
+check(
   "the phone demo stills are served as files, never read as a referral slug",
   waitlistServesPath("/waitlist/tour/suggestion-420.webp") &&
     waitlistSlugFromPath("/waitlist/tour/suggestion-420.webp") === null

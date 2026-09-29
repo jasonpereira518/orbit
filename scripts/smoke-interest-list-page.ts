@@ -16,7 +16,7 @@ import { getDb } from "../src/db";
 import { interestListSignups, waitlistPollVotes } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 import { invalidateInterestProof } from "../src/lib/interest-list-ticket";
-import { POLL_OPTIONS } from "../src/lib/waitlist-poll";
+import { BASE_STARS, POLL_OPTIONS } from "../src/lib/waitlist-poll";
 
 const PREFIX = "smoke-page-";
 const TOKEN = "smoke-page-token";
@@ -49,9 +49,11 @@ function findProp(node: unknown, name: string): unknown {
 /**
  * The poll's `initial` prop. `findProp` cannot reach it: the hero's `initial` comes first and
  * a plain-object prop has no `.props` to descend into, so find the element whose `initial`
- * carries a `choice` key.
+ * carries an `allocation` key (the visitor's stars).
  */
-function pollInitial(node: unknown): { results?: { counts?: unknown }; choice?: unknown } | undefined {
+function pollInitial(
+  node: unknown
+): { results?: { counts?: unknown; voters?: unknown }; allocation?: Record<string, number>; budget?: number } | undefined {
   if (node == null || typeof node !== "object") return undefined;
   if (Array.isArray(node)) {
     for (const child of node) {
@@ -63,7 +65,7 @@ function pollInitial(node: unknown): { results?: { counts?: unknown }; choice?: 
   const props = (node as { props?: Record<string, unknown> }).props;
   if (!props) return undefined;
   const init = props.initial as Record<string, unknown> | null | undefined;
-  if (init && typeof init === "object" && "choice" in init) return init;
+  if (init && typeof init === "object" && "allocation" in init) return init;
   for (const value of Object.values(props)) {
     const hit = pollInitial(value);
     if (hit) return hit;
@@ -175,12 +177,20 @@ async function main() {
   check("the poll carries a tally", typeof pollInitial(form)?.results?.counts === "object");
   // The tally is not per-viewer: the seeded signup's vote must show up for a no-pass visitor.
   const tally = pollInitial(form)?.results?.counts as Record<string, number> | undefined;
-  check("…that counts the seeded vote", (tally?.[pollPick] ?? 0) >= 1, JSON.stringify(tally));
-  check("a visitor with no pass or cookie has not voted", pollInitial(form)?.choice === null);
+  check("…that counts the seeded (pre-stars) vote as the whole base budget", (tally?.[pollPick] ?? 0) >= BASE_STARS, JSON.stringify(tally));
+  check("…and counts its voter", Number(pollInitial(form)?.results?.voters) >= 1);
+  check(
+    "a visitor with no pass or cookie has spent no stars, with the base budget",
+    Object.keys(pollInitial(form)?.allocation ?? { x: 1 }).length === 0 && pollInitial(form)?.budget === BASE_STARS
+  );
   check("…and hands the poll no pass token", findProp(form, "me") === null);
 
   const passed = await Page(sp({ me: TOKEN }));
-  check("a pass that has voted opens on its pick", pollInitial(passed)?.choice === pollPick, String(pollInitial(passed)?.choice));
+  check(
+    "a pass that has voted opens on its stars (a pre-stars vote reads as the whole budget on its pick)",
+    pollInitial(passed)?.allocation?.[pollPick] === BASE_STARS,
+    JSON.stringify(pollInitial(passed)?.allocation)
+  );
   check("…and hands the poll its pass token", findProp(passed, "me") === TOKEN);
 
   // --- invited

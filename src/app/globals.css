@@ -2183,6 +2183,34 @@
   }
 }
 
+/* The feature poll's icon field (`feature-poll.tsx`): an orb glides to its rank's slot and its
+ * disc grows and glows with its share. In CSS rather than inline styles because inline ones
+ * are decided during server rendering, where reduced motion is unknown, and React does not
+ * repair a mismatched style attribute on hydration. */
+.poll-orb {
+  transition:
+    left 700ms var(--ease-house),
+    top 700ms var(--ease-house);
+}
+
+.poll-orb-disc {
+  transition:
+    transform 700ms var(--ease-house),
+    box-shadow 700ms var(--ease-house);
+}
+
+.poll-orb-label {
+  transition: transform 700ms var(--ease-house);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .poll-orb,
+  .poll-orb-disc,
+  .poll-orb-label {
+    transition: none;
+  }
+}
+
 .landing-scene {
   content-visibility: auto;
   /* Placeholder must approximate the real height — a big mismatch makes

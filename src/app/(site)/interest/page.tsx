@@ -33,7 +33,7 @@ import {
 } from "@/lib/interest-list-ticket";
 import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import { getPollInitial } from "@/lib/waitlist-poll-votes";
-import { POLL_VOTER_COOKIE } from "@/lib/waitlist-poll";
+import { BASE_STARS, POLL_VOTER_COOKIE } from "@/lib/waitlist-poll";
 import { isWaitlistHostHeader } from "@/lib/waitlist-host";
 
 // The proof line, the invited strip and the pass all come from the URL and the database
@@ -159,8 +159,8 @@ function SplitSection({
  * floor, so the count itself is hidden. */
 const EMPTY_PROOF: InterestProof = { count: 0, total: 0, recent: [] };
 
-/** What the poll degrades to if the database read fails: nothing voted, nothing tallied. */
-const EMPTY_POLL: FeaturePollInitial = { results: { counts: {} }, choice: null };
+/** What the poll degrades to if the database read fails: nothing tallied, no stars spent. */
+const EMPTY_POLL: FeaturePollInitial = { results: { counts: {}, voters: 0 }, allocation: {}, budget: BASE_STARS };
 
 const PILLARS: readonly { art: PillarArtKind; title: string; body: string }[] = [
   {
