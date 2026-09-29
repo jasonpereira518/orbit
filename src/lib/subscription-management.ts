@@ -11,7 +11,7 @@ import {
   getStripe,
   planForLookupKey,
 } from "@/lib/stripe";
-import { resolvePortalConfigurationId, resolvePriceIds } from "@/lib/stripe-prices";
+import { resolvePortalConfigurationId, resolvePriceIds, subscriptionPriceId } from "@/lib/stripe-prices";
 import { getAppBaseUrl } from "@/lib/app-url";
 import type { PurchasablePlan } from "@/lib/plans/plan-config";
 
@@ -67,8 +67,8 @@ export type SubscriptionStripe = {
   list: (customer: string) => Promise<Stripe.Subscription[]>;
   update: (id: string, params: Stripe.SubscriptionUpdateParams) => Promise<Stripe.Subscription>;
   portal: (params: Stripe.BillingPortal.SessionCreateParams) => Promise<{ url: string | null }>;
-  /** Price id for a tier, resolved by lookup key. */
-  priceFor: (plan: PurchasablePlan) => Promise<string>;
+  /** Price id for a tier and billing period, resolved by lookup key. */
+  priceFor: (plan: PurchasablePlan, period: "monthly" | "annual") => Promise<string>;
   portalConfiguration: () => Promise<string | undefined>;
 };
 
@@ -78,7 +78,7 @@ function liveStripe(): SubscriptionStripe {
       (await getStripe().subscriptions.list({ customer, status: "all", limit: 20 })).data,
     update: (id, params) => getStripe().subscriptions.update(id, params),
     portal: (params) => getStripe().billingPortal.sessions.create(params),
-    priceFor: async (plan) => (await resolvePriceIds())[plan],
+    priceFor: async (plan, period) => subscriptionPriceId(await resolvePriceIds(), plan, period),
     portalConfiguration: () => resolvePortalConfigurationId(),
   };
 }
@@ -200,7 +200,8 @@ export function resumeSubscription(userId: string, deps: { stripe?: Subscription
  * A Stripe-hosted confirmation page for switching between Pro and Max. Stripe shows the
  * prorated amount (upgrade) or the date it takes effect (downgrade) before anything changes;
  * the webhook then mirrors the new tier, and `reconcileFoundingDiscount` carries a founding
- * discount across to it.
+ * discount across to it. The switch keeps the billing period: an annual subscriber moves to
+ * the other tier's annual price. (Monthly ↔ annual is the portal's own choice.)
  */
 export async function createPlanSwitchUrl(
   userId: string,
@@ -214,14 +215,14 @@ export async function createPlanSwitchUrl(
   if (details.cancelAtPeriodEnd) return { ok: false, error: SUBSCRIPTION_COPY.cancelPending };
   const item = found.sub.items?.data?.[0];
   if (!item) return { ok: false, error: SUBSCRIPTION_COPY.unavailable };
-  // A legacy annual Pro subscriber switching to Pro would be a price change, not a tier
-  // change; only a real tier change is offered here.
-  if (details.plan === target && details.period === "monthly") {
+  // Only a real tier change is offered here. That includes a legacy $5/$50 Pro subscriber
+  // asking for Pro: moving them onto a v2 price would be a price rise, not a switch.
+  if (details.plan === target) {
     return { ok: false, error: SUBSCRIPTION_COPY.alreadyOnPlan };
   }
   try {
     const [price, configuration] = await Promise.all([
-      found.stripe.priceFor(target),
+      found.stripe.priceFor(target, details.period),
       found.stripe.portalConfiguration(),
     ]);
     const returnUrl = `${getAppBaseUrl()}/settings?upgraded=${target === "max" ? "max" : "pro"}#settings-plan`;

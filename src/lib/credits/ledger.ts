@@ -58,10 +58,38 @@ function minusOneMonth(d: Date): Date {
   );
 }
 
+/** `d` moved by `months` calendar months, clamped to the target month's last day (as Stripe does). */
+function addMonthsClamped(d: Date, months: number): Date {
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() + months;
+  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return new Date(
+    Date.UTC(y, m, Math.min(d.getUTCDate(), lastDay), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds())
+  );
+}
+
+/** Anything longer than this is not a monthly billing period (an annual plan). */
+const MONTHLY_PERIOD_MAX_MS = 35 * 86_400_000;
+
 /**
- * The allowance's current cycle. A subscriber's is their Stripe billing period, so the
- * allowance resets at each renewal. A comped account has no billing cycle and resets on the
- * calendar month (UTC).
+ * The month of a long (annual) billing period that contains `now`, counted back from the
+ * renewal date so the slices land on the subscription's own monthly anniversaries.
+ */
+function monthSliceOf(end: Date, now: Date): CreditPeriod {
+  for (let k = 0; k < 14; k++) {
+    const sliceEnd = addMonthsClamped(end, -k);
+    const sliceStart = addMonthsClamped(end, -(k + 1));
+    if (sliceStart <= now && now < sliceEnd) return { start: sliceStart, end: sliceEnd };
+  }
+  return monthWindow(now);
+}
+
+/**
+ * The allowance's current cycle. A monthly subscriber's is their Stripe billing period, so the
+ * allowance resets at each renewal. An ANNUAL subscriber still gets a monthly allowance: the
+ * year is cut into months on the subscription's own anniversaries, so a year's credits never
+ * arrive as one lump. A comped account has no billing cycle and resets on the calendar month
+ * (UTC).
  */
 export function creditPeriodFor(
   row: {
@@ -73,9 +101,12 @@ export function creditPeriodFor(
 ): CreditPeriod {
   if (!row?.compedPlan && row?.subscriptionPeriodEnd && row.subscriptionPeriodEnd > now) {
     const end = row.subscriptionPeriodEnd;
-    const start =
-      row.subscriptionPeriodStart && row.subscriptionPeriodStart <= now ? row.subscriptionPeriodStart : minusOneMonth(end);
-    return { start, end };
+    const known = row.subscriptionPeriodStart && row.subscriptionPeriodStart <= now ? row.subscriptionPeriodStart : null;
+    // A long period, or an unknown start with more than a month still to run: an annual plan.
+    if (known ? end.getTime() - known.getTime() > MONTHLY_PERIOD_MAX_MS : end.getTime() - now.getTime() > MONTHLY_PERIOD_MAX_MS) {
+      return monthSliceOf(end, now);
+    }
+    return { start: known ?? minusOneMonth(end), end };
   }
   return monthWindow(now);
 }

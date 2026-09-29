@@ -29,7 +29,13 @@ const PERIOD_END = Math.floor(Date.now() / 1000) + 20 * 86_400;
 
 function fakeSub(over: Partial<Stripe.Subscription> & { price?: string; interval?: "month" | "year"; amount?: number } = {}) {
   const { price = "price_smoke_pro", interval = "month", amount = 899, ...rest } = over;
-  const lookupKey = price === "price_smoke_max" ? "orbit_max_monthly_v2" : price === "price_smoke_pro" ? "orbit_pro_monthly_v2" : null;
+  const LOOKUP: Record<string, string> = {
+    price_smoke_pro: "orbit_pro_monthly_v2",
+    price_smoke_max: "orbit_max_monthly_v2",
+    price_smoke_pro_annual: "orbit_pro_annual_v2",
+    price_smoke_max_annual: "orbit_max_annual_v2",
+  };
+  const lookupKey = LOOKUP[price] ?? null;
   return {
     id: "sub_smoke",
     object: "subscription",
@@ -83,7 +89,8 @@ function fakeStripe(subs: Stripe.Subscription[]) {
         if (state.updateError) throw state.updateError;
         return { url: "https://billing.stripe.test/session" };
       },
-      priceFor: async (plan: "orbit" | "max") => (plan === "max" ? "price_smoke_max" : "price_smoke_pro"),
+      priceFor: async (plan: "orbit" | "max", period: "monthly" | "annual") =>
+        `price_smoke_${plan === "max" ? "max" : "pro"}${period === "annual" ? "_annual" : ""}`,
       portalConfiguration: async () => "bpc_smoke",
     },
   };
@@ -182,11 +189,19 @@ run(async () => {
     check("Max → Pro offers the Pro price", down.ok &&
       onMax.calls.portal[0]?.flow_data?.subscription_update_confirm?.items[0]?.price === "price_smoke_pro");
 
+    const annual = fakeStripe([fakeSub({ price: "price_smoke_pro_annual", interval: "year", amount: 8999 })]);
+    const annualUp = await sm.createPlanSwitchUrl(SUBSCRIBER, "max", { stripe: annual.stripe });
+    check("an annual Pro subscriber moving to Max is offered Max's ANNUAL price",
+      annualUp.ok && annual.calls.portal[0]?.flow_data?.subscription_update_confirm?.items[0]?.price === "price_smoke_max_annual");
+
     const legacy = fakeStripe([fakeSub({ price: "price_legacy_annual", interval: "year", amount: 5000 })]);
     const legacyDetails = await sm.getSubscriptionDetails(SUBSCRIBER, { stripe: legacy.stripe });
     check("a legacy $50/yr subscription reads as annual Pro, at its own price",
       legacyDetails.ok && legacyDetails.subscription.plan === "orbit" && legacyDetails.subscription.period === "annual" &&
         legacyDetails.subscription.amountCents === 5000, JSON.stringify(legacyDetails));
+    const legacyToPro = await sm.createPlanSwitchUrl(SUBSCRIBER, "orbit", { stripe: legacy.stripe });
+    check("…and asking for Pro is refused: that would be a price rise, not a switch",
+      !legacyToPro.ok && legacyToPro.error === sm.SUBSCRIPTION_COPY.alreadyOnPlan && legacy.calls.portal.length === 0);
 
     const bogus = await sm.createPlanSwitchUrl(SUBSCRIBER, "lifetime" as never, { stripe: f.stripe });
     check("Lifetime is never a switch target", !bogus.ok && f.calls.portal.length === 1);

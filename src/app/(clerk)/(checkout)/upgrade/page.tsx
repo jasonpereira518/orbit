@@ -48,8 +48,8 @@ const TRUST = [
 ];
 
 /**
- * Assembly slots, one piece per slot, top to bottom: header 0, heading 1, (2 unused since the
- * billing toggle went), the two plan cards 3 and 4, trust row 5 — see `upgrade-transition.tsx` for the
+ * Assembly slots, one piece per slot, top to bottom: header 0, heading 1, the monthly/annual
+ * toggle 2, the two plan cards 3 and 4, trust row 5 — see `upgrade-transition.tsx` for the
  * choreography itself. The toggle and cards live in `UpgradePlanCards`, so the numbering is
  * split across two files; `UpgradeTransition`'s `maxOrder` must stay in step with the
  * highest slot used anywhere in the tree (currently the trust row's 5).

@@ -18,6 +18,7 @@ import type { PurchasablePlan } from "@/lib/plans/plan-config";
  *    created through a beta invitation. Never inferred later.
  *  - It applies to the account's FIRST paid subscription only (`founding_redeemed_at`).
  *  - It lasts three billing cycles: $2 off Pro, $4 off Max, via Stripe `repeating` coupons.
+ *  - It is for MONTHLY billing only; annual is already two months free.
  *  - A tier switch inside the window keeps the discount for the whole months that remain,
  *    by swapping to the matching coupon (`reconcileFoundingDiscount`).
  *
@@ -84,6 +85,20 @@ export function planFoundingReconcile(
 
   const shape = subscriptionShape(sub as Stripe.Subscription);
   const tier = planForLookupKey(shape.lookupKey);
+
+  // Founding pricing is monthly only. A founding subscription moved to annual (in the portal)
+  // drops the discount rather than taking $2/$4 off a yearly invoice: annual is already two
+  // months free. Zeroing the metadata is what makes every later event value it at list.
+  if (shape.interval === "year") {
+    return {
+      update: {
+        metadata: { ...metadata, [FOUNDING_OFF_METADATA_KEY]: "0" },
+        discounts: [],
+        proration_behavior: "none",
+      },
+      result: { action: "swapped", coupon: null, tier },
+    };
+  }
   const discountedTier = sub.metadata?.[FOUNDING_TIER_METADATA_KEY];
   const switched = discountedTier !== tier;
   if (!switched) {

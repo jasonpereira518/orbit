@@ -94,6 +94,8 @@ export type PlanConfig = {
   label: string;
   /** Monthly price in cents, or null when the plan is not sold. */
   monthlyPriceCents: number | null;
+  /** Price for a year paid up front, in cents (two months free), or null when not sold yearly. */
+  annualPriceCents: number | null;
   /** null = unlimited. Gates contact *creation* only; existing contacts are never hidden. */
   contactLimit: number | null;
   /** Managed-AI credits granted each cycle, or null when AI runs only on the user's key. */
@@ -129,6 +131,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
   free: {
     label: PLAN_LABELS.free,
     monthlyPriceCents: 0,
+    annualPriceCents: 0,
     contactLimit: FREE_CONTACT_LIMIT,
     monthlyCredits: null,
     speech: { meetingSeconds: 0, shortformSeconds: 1 * HOUR },
@@ -152,6 +155,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
   orbit: {
     label: PLAN_LABELS.orbit,
     monthlyPriceCents: 899,
+    annualPriceCents: 8999,
     contactLimit: null,
     monthlyCredits: 200,
     speech: { meetingSeconds: 5 * HOUR, shortformSeconds: 5 * HOUR },
@@ -164,6 +168,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
   max: {
     label: PLAN_LABELS.max,
     monthlyPriceCents: 1999,
+    annualPriceCents: 19999,
     contactLimit: null,
     monthlyCredits: 500,
     speech: { meetingSeconds: 10 * HOUR, shortformSeconds: 10 * HOUR },
@@ -177,6 +182,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
   lifetime: {
     label: PLAN_LABELS.lifetime,
     monthlyPriceCents: null,
+    annualPriceCents: null,
     contactLimit: null,
     monthlyCredits: null,
     speech: { meetingSeconds: 10 * HOUR, shortformSeconds: 10 * HOUR },
@@ -186,6 +192,28 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     features: { ...PAID_FEATURES, hostedAi: false, creditPacks: false },
   },
 };
+
+/**
+ * How a paid plan is billed. Annual is two months free; the included AI allowance still
+ * arrives MONTHLY on an annual plan (see `creditPeriodFor`), never as one yearly lump.
+ */
+export type BillingPeriod = "monthly" | "annual";
+export const BILLING_PERIODS: readonly BillingPeriod[] = ["monthly", "annual"];
+
+/** The recurring value of an annual plan per month, as MRR books it (Stripe's own rounding). */
+export function annualMonthlyEquivalentCents(plan: PurchasablePlan): number {
+  return Math.round((PLAN_CONFIG[plan].annualPriceCents ?? 0) / 12);
+}
+
+/** What a year of the plan costs, in cents, for the period chosen. */
+export function planPriceCents(plan: PurchasablePlan, period: BillingPeriod): number {
+  return (period === "annual" ? PLAN_CONFIG[plan].annualPriceCents : PLAN_CONFIG[plan].monthlyPriceCents) ?? 0;
+}
+
+/** Whole percent saved by paying yearly, from Pro's prices (Max rounds to the same). */
+export const ANNUAL_SAVING_PERCENT = Math.round(
+  (1 - (PLAN_CONFIG.orbit.annualPriceCents ?? 0) / ((PLAN_CONFIG.orbit.monthlyPriceCents ?? 1) * 12)) * 100
+);
 
 export function planConfig(plan: Plan): PlanConfig {
   return PLAN_CONFIG[plan];

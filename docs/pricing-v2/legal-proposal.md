@@ -45,27 +45,29 @@ Line numbers refer to this branch (`claude/pricing-v2`).
 
 **Opening paragraph.** Remove the Lifetime intro-price sentence and the `LIFETIME_*` imports. Proposed text:
 
-> "The Free Plan covers up to {FREE_CONTACT_LIMIT} contacts and costs nothing; AI on it runs on a key you supply. Orbit Pro and Orbit Max are monthly subscriptions that lift that cap and include AI, along with the other allowances listed on the pricing page. Current prices are on the pricing page and apply from the moment you subscribe. Orbit Lifetime is no longer sold. Accounts that already have it keep it, with every Orbit Max feature and AI on their own key."
+> "The Free Plan covers up to {FREE_CONTACT_LIMIT} contacts and costs nothing; AI on it runs on a key you supply. Orbit Pro and Orbit Max are subscriptions, billed monthly or yearly (a year paid up front is two months free), that lift that cap and include AI, along with the other allowances listed on the pricing page. Current prices are on the pricing page and apply from the moment you subscribe. Orbit Lifetime is no longer sold. Accounts that already have it keep it, with every Orbit Max feature and AI on their own key."
 
 **Bullets:**
 - **Keep as they are:** "Reaching a limit only stops you adding people", and "Refunds and chargebacks end what they paid for".
 - **Cancel whenever you like:** change "Orbit Pro ends" to "your subscription ends". Add a sentence on switching:
-  > "Moving from Pro to Max takes effect at once and you pay the difference for the rest of the period; moving from Max to Pro takes effect when the period you've paid for ends."
+  > "Moving from Pro to Max, or from monthly to annual billing, takes effect at once and you pay the difference for the rest of the period; moving from Max to Pro, or from annual to monthly, takes effect when the period you've paid for ends. This applies to annual plans too: cancelling an annual plan ends it at the close of the year already paid for, without a pro-rated refund."
 - **Payments are handled by Stripe:** change "Both Orbit Pro and Orbit Lifetime are sold through Stripe" to "Orbit Pro, Orbit Max and credit packs are sold through Stripe".
 - **AI, enrichment, and sending costs are separate:** change to
   > "Where a feature runs on your own provider key, that provider bills you directly and no Orbit plan covers it. Included AI on Pro and Max is covered by your plan's credits."
 
 **New bullet: credits.**
-> "**Credits.** Included AI is measured in credits: one credit is one cent of the provider's list price for the work done. Your plan's monthly credits reset each time it renews and do not roll over. When your credits run out, included AI stops until they reset or you add a pack. At most the one request already in progress finishes. Orbit never charges you automatically for more."
+> "**Credits.** Included AI is measured in credits: one credit is one cent of the provider's list price for the work done. Your plan's monthly credits reset each month — on an annual plan too, on the same day each month — and do not roll over. When your credits run out, included AI stops until they reset or you add a pack. At most the one request already in progress finishes. Orbit never charges you automatically for more."
 
 **New bullet: credit packs.**
 > "**Credit packs.** On Pro and Max you can buy 250 credits for $5. Pack credits are used after your monthly credits, and they do not expire while you're on Pro or Max. If you move to a plan without included AI, unused pack credits are kept but can't be used; they come back if you subscribe to Pro or Max again. If a pack's payment is refunded or reversed after a lost dispute, the pack's unused credits are removed."
+
+**Decision for Jason:** should annual plans have a refund window (for example, 14 days after an annual charge)? The code books no refund on cancellation either way; a refund you issue in Stripe ends the plan, as for monthly.
 
 **Decision for Jason:** are packs refundable? The code revokes unused credits on any refund; it does not decide whether you refund. Suggested wording:
 > "Packs are not refundable once any of their credits are used, except where the law requires it or a charge was made in error."
 
 **New bullet: founding pricing.** Only applies to invited accounts. Keep the wording neutral: no scarcity, no countdown.
-> "**Founding pricing.** An account created from a beta invitation gets its first paid subscription at a founding price for its first three monthly invoices: $2 off Orbit Pro or $4 off Orbit Max. If you switch between Pro and Max during those months, the founding price for the new plan applies to the invoices that remain. After that, the regular price applies. Founding pricing applies once per account."
+> "**Founding pricing.** An account created from a beta invitation gets its first paid subscription, if billed monthly, at a founding price for its first three monthly invoices: $2 off Orbit Pro or $4 off Orbit Max. Founding pricing does not apply to annual billing, which is already discounted, and ends if a founding subscription moves to annual billing. If you switch between Pro and Max during those months, the founding price for the new plan applies to the invoices that remain. After that, the regular price applies. Founding pricing applies once per account."
 
 **Keep:** the "Prices may change…" paragraph, unchanged.
 

@@ -11,7 +11,6 @@ import { WarpArrivalBeacon } from "@/components/warp/warp-arrival-beacon";
 import { PlanComparison } from "@/components/pricing/plan-comparison";
 import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
-import { CreditExplainer } from "@/components/pricing/credit-explainer";
 import { AI_POSITIONING } from "@/lib/plan-copy";
 import { FREE_CONTACT_LIMIT, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
 import { isCheckoutConfigured } from "@/lib/stripe-config";
@@ -138,12 +137,6 @@ export default function PricingPage() {
           </Reveal>
           <Reveal className="reveal-celestial mt-8 block" delay={80}>
             <PlanComparison />
-          </Reveal>
-        </section>
-
-        <section className="mt-24 md:mt-32" aria-labelledby="pricing-credits">
-          <Reveal className="reveal-celestial block">
-            <CreditExplainer />
           </Reveal>
         </section>
 

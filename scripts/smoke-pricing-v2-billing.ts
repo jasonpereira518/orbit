@@ -87,6 +87,34 @@ run(async () => {
       !founding.foundingAppliesToNewSubscription(row));
   }
 
+  console.log("\nAnnual checkouts");
+  {
+    const annualSession = (plan: "orbit" | "max", total: number) => ({
+      id: `cs_pv2_${plan}_annual`,
+      client_reference_id: USER,
+      payment_status: "paid",
+      amount_total: total,
+      currency: "usd",
+      customer: "cus_pv2",
+      subscription: "sub_pv2_annual",
+      metadata: { orbit_plan: plan, orbit_interval: "year" },
+    });
+    const proYear = billing.decideStripeEvent(event("checkout.session.completed", annualSession("orbit", 8999)), ctx());
+    check("annual Pro books a twelfth of $89.99 ($7.50) as MRR, billed yearly",
+      proYear.mirror?.type === "subscription" && proYear.mirror.monthlyCents === 750 && proYear.mirror.interval === "year" &&
+        proYear.bookings[0]?.mrrDeltaCents === 750, proYear);
+    const maxYear = billing.decideStripeEvent(event("checkout.session.completed", annualSession("max", 19999)), ctx());
+    check("annual Max books $16.67", maxYear.mirror?.type === "subscription" && maxYear.mirror.plan === "max" &&
+      maxYear.mirror.monthlyCents === 1667, maxYear.mirror);
+    const shape = billing.subscriptionShape({
+      items: { data: [{ quantity: 1, price: { lookup_key: "orbit_max_annual_v2", unit_amount: 19999, recurring: { interval: "year", interval_count: 1 } } }] },
+    } as unknown as Stripe.Subscription);
+    check("…the same value the subscription events derive, so the first event books no movement",
+      shape.monthlyCents === 1667 && shape.interval === "year");
+    const { planForLookupKey } = await import("../src/lib/stripe-config");
+    check("annual prices sell the same tiers", planForLookupKey("orbit_max_annual_v2") === "max" && planForLookupKey("orbit_pro_annual_v2") === "orbit");
+  }
+
   console.log("\nThe subscription events value the founding window and read the tier off the price");
   const start = nowS - 10 * DAY;
   const until = billing.addMonthsSeconds(start, 3);
@@ -153,6 +181,15 @@ run(async () => {
       && Array.isArray(late.update?.discounts) && late.update.discounts.length === 0, late);
     const plain = founding.planFoundingReconcile(withPeriod("orbit_max_monthly_v2", 1999, {}), nowS);
     check("a subscription without founding pricing is left alone", plain.result.action === "none" && plain.update === null);
+    const toAnnual = withPeriod("orbit_pro_annual_v2", 8999, { orbit_founding_off: "200", orbit_founding_tier: "orbit", orbit_founding_until: String(until) });
+    toAnnual.items.data[0].price.recurring = { interval: "year", interval_count: 1 } as Stripe.Price.Recurring;
+    const annualSwitch = founding.planFoundingReconcile(toAnnual, nowS);
+    check("founding is monthly only: a switch to annual drops the discount, never discounts a yearly invoice",
+      annualSwitch.result.action === "swapped" && annualSwitch.result.coupon === null &&
+        Array.isArray(annualSwitch.update?.discounts) && annualSwitch.update.discounts.length === 0 &&
+        (annualSwitch.update?.metadata as Record<string, string>).orbit_founding_off === "0", annualSwitch);
+    const cleared = { ...toAnnual, metadata: { ...toAnnual.metadata, orbit_founding_off: "0" } } as Stripe.Subscription;
+    check("…and once dropped it stays dropped (no update loop)", founding.planFoundingReconcile(cleared, nowS).update === null);
     check("remaining invoices never exceed the 3-month window",
       founding.remainingFoundingInvoices(start, billing.addMonthsSeconds(start, 12)) === 3 &&
         founding.remainingFoundingInvoices(until, until) === 0);

@@ -1,40 +1,44 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Check } from "lucide-react";
 import { Panel } from "@/components/motion/upgrade-transition";
+import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { SubscriptionCheckoutButton } from "@/components/pricing/subscription-checkout-button";
 import { foundingPriceTerms, planCopy, type PlanCopy } from "@/lib/plan-copy";
-import type { Plan, PurchasablePlan } from "@/lib/plans/plan-config";
+import type { BillingPeriod, Plan, PurchasablePlan } from "@/lib/plans/plan-config";
 import { cn } from "@/lib/utils";
 
 /**
  * Same accent language as the tier grid on /pricing (see `TIER_ACCENT` in
- * `pricing-tiers.tsx`), narrowed to the two plans actually sold here. No badges: nothing
- * measures popularity, so the page does not claim any.
+ * `pricing-tiers.tsx`), narrowed to the two plans actually sold here, badges included.
  */
 const ACCENT = {
   orbit: {
     surface: "border-night-pro/40 bg-[#070b18]/80",
     tick: "text-night-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
+    badge: { label: "Most popular", className: "bg-night-pro text-[#081326]" },
   },
   max: {
     surface: "border-night-max/40 bg-[#070b18]/80",
     tick: "text-night-max",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
+    badge: { label: "Best value", className: "bg-night-max text-[#241a00]" },
   },
 } as const;
 
 function PlanCard({
   plan,
+  period,
   accent,
   footer,
   founding,
 }: {
   plan: PlanCopy;
+  period: BillingPeriod;
   accent: (typeof ACCENT)[keyof typeof ACCENT];
   footer: ReactNode;
   founding?: string | null;
@@ -52,6 +56,9 @@ function PlanCard({
         className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[360px] w-[360px] -translate-x-1/2 -translate-y-1/3 rounded-full"
         style={{ background: accent.glow }}
       />
+      <p className={cn("absolute -top-3 left-6 rounded-full px-3 py-1 text-xs font-medium", accent.badge.className)}>
+        {accent.badge.label}
+      </p>
       <h2
         id={`upgrade-${plan.id}`}
         className="font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]"
@@ -61,10 +68,14 @@ function PlanCard({
       <p className="mt-1 text-sm leading-relaxed text-[#9aada8]">{plan.tagline}</p>
 
       <div className="mt-4">
-        <PlanPriceDisplay price={plan.price} />
-        {/* Founding pricing: eligible accounts only, always with the full terms. */}
+        <PlanPriceDisplay price={plan.price[period]} />
+        {/* Founding pricing: eligible accounts only, always with the full terms. It is for
+            monthly billing, which the annual view says rather than hides. */}
         {founding && (
-          <p className="mt-2 text-xs leading-relaxed text-[#cfdcd8]">Your founding price: {founding}.</p>
+          <p className="mt-2 text-xs leading-relaxed text-[#cfdcd8]">
+            {period === "monthly" ? "Your founding price: " : "Your founding price, on monthly billing: "}
+            {founding}.
+          </p>
         )}
       </div>
 
@@ -109,6 +120,7 @@ export function UpgradePlanCards({
   /** Stripe is configured, so checkout can actually complete. */
   checkoutOpen: boolean;
 }) {
+  const [period, setPeriod] = useState<BillingPeriod>("monthly");
   const footerFor = (plan: PurchasablePlan): ReactNode => {
     if (currentPlan === plan) {
       return (
@@ -142,16 +154,20 @@ export function UpgradePlanCards({
         </p>
       );
     }
-    return <SubscriptionCheckoutButton plan={plan} />;
+    return <SubscriptionCheckoutButton plan={plan} period={period} />;
   };
 
   return (
-    <div className="mt-12 space-y-8">
+    <div className="mt-10 space-y-10">
+      <Panel order={2}>
+        <BillingToggle period={period} onChange={setPeriod} />
+      </Panel>
       <div className="grid gap-5 md:grid-cols-2 md:gap-6">
         {(["orbit", "max"] as const).map((plan, index) => (
           <Panel key={plan} order={3 + index} className="h-full">
             <PlanCard
               plan={planCopy(plan)}
+              period={period}
               accent={ACCENT[plan]}
               founding={founding && currentPlan === "free" ? foundingPriceTerms(plan) : null}
               footer={footerFor(plan)}

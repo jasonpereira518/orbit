@@ -1,6 +1,6 @@
 import { Plus } from "lucide-react";
 import { CREDIT_PACK_CREDITS } from "@/lib/stripe-config";
-import { FREE_CONTACT_LIMIT, PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { FREE_CONTACT_LIMIT, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
 
 const pro = PLAN_CONFIG.orbit;
 const max = PLAN_CONFIG.max;
@@ -27,6 +27,10 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: `Max includes more of everything that costs Orbit money to run: ${max.monthlyCredits} AI credits a month instead of ${pro.monthlyCredits}, ${h(max.speech.meetingSeconds)} of meeting transcription instead of ${h(pro.speech.meetingSeconds)}, ${h(max.speech.shortformSeconds)} of voice notes instead of ${h(pro.speech.shortformSeconds)}, and ${max.hostedEnrichmentsPerMonth} contact enrichments a month instead of ${pro.hostedEnrichmentsPerMonth}. Max also includes the REST API and webhooks. Everything else is the same.`,
   },
   {
+    q: "What is a credit?",
+    a: `One credit is one cent of what the AI actually costs Orbit at its provider's rates, measured from the work each request really did — a quick chat answer is a fraction of a credit, a long meeting summary more. Orbit Pro includes ${pro.monthlyCredits} a month and Orbit Max ${max.monthlyCredits}, on monthly and annual billing alike; the allowance resets each month and does not roll over.`,
+  },
+  {
     q: "What happens when my AI credits run out?",
     a: "AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews; to keep going before then, add a $5 pack, move to Max, or switch to your own key. Everything else in Orbit keeps working.",
   },
@@ -35,8 +39,12 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: `A pack is ${CREDIT_PACK_CREDITS} credits for $5, bought whenever you choose, on Pro or Max. Pack credits are used only after your monthly credits run out, and they roll over from month to month while you're subscribed. If you move to the Free Plan they're kept, frozen, and come back when you subscribe again. If a pack's payment is refunded or disputed, its unused credits are removed.`,
   },
   {
+    q: "Is there annual billing?",
+    a: `Yes. Paying for a year up front is two months free: ${formatPlanPrice(pro.annualPriceCents ?? 0)} a year for Orbit Pro and ${formatPlanPrice(max.annualPriceCents ?? 0)} for Orbit Max. Your AI credits still arrive every month, and you can move between monthly and annual billing from Settings.`,
+  },
+  {
     q: "Can I switch plans or cancel?",
-    a: "Any time. Moving from Pro to Max takes effect at once, and you pay only the difference for the rest of the month; moving from Max to Pro takes effect when the month you've paid for ends. If you cancel, you keep your plan until that period runs out, then your account returns to the Free Plan — still holding every contact you added while subscribed, even past the free limit. Canceling does not trigger a pro-rated refund.",
+    a: "Any time. Moving from Pro to Max, or from monthly to annual, takes effect at once, and you pay only the difference for the rest of the period; moving from Max to Pro, or from annual to monthly, takes effect when the period you've paid for ends. If you cancel, you keep your plan until that period runs out, then your account returns to the Free Plan — still holding every contact you added while subscribed, even past the free limit. Canceling does not trigger a pro-rated refund.",
   },
   {
     q: "What happens to my data if I stop paying?",

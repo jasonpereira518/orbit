@@ -115,6 +115,10 @@ function matrix() {
     row("MCP connector", ent.canUseMcp === true);
   }
   check("Pro and Max are the only priced plans", PLAN_CONFIG.orbit.monthlyPriceCents === 899 && PLAN_CONFIG.max.monthlyPriceCents === 1999 && PLAN_CONFIG.lifetime.monthlyPriceCents === null);
+  check("annual is two months free: Pro $89.99, Max $199.99, and nothing else sold yearly",
+    PLAN_CONFIG.orbit.annualPriceCents === 8999 && PLAN_CONFIG.max.annualPriceCents === 19999 &&
+      PLAN_CONFIG.lifetime.annualPriceCents === null &&
+      (["orbit", "max"] as const).every((p) => PLAN_CONFIG[p].annualPriceCents! < PLAN_CONFIG[p].monthlyPriceCents! * 12));
   check("the API unlocks on Max, never Lifetime", unlockPlanFor("api") === "max");
   check("recruiters unlock on Pro", unlockPlanFor("recruiters") === "orbit");
   check("the contact cap unlocks on Pro", unlockPlanFor("contacts") === "orbit");

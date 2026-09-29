@@ -110,7 +110,7 @@ export function CreditsCard() {
         <h3 id="credits-heading" className="font-heading text-base text-ink">
           AI credits
         </h3>
-        <Link href="/pricing#pricing-credits" className="text-xs text-muted-foreground underline-offset-2 hover:underline">
+        <Link href="/pricing#pricing-faq" className="text-xs text-muted-foreground underline-offset-2 hover:underline">
           What’s a credit?
         </Link>
       </div>

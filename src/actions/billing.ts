@@ -10,17 +10,24 @@ import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import {
   CREDIT_PACK_CREDITS,
   CREDIT_PACK_METADATA_VALUE,
+  INTERVAL_METADATA_KEY,
   PLAN_METADATA_KEY,
   SUBSCRIPTION_USER_METADATA_KEY,
   getStripe,
   isCheckoutConfigured,
 } from "@/lib/stripe";
-import { resolvePriceIds } from "@/lib/stripe-prices";
+import { resolvePriceIds, subscriptionPriceId } from "@/lib/stripe-prices";
 import { confirmCheckoutForUser } from "@/lib/stripe-fulfilment";
 import { createBillingPortalUrl, type BillingPortalResult } from "@/lib/billing-portal";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { foundingAppliesToNewSubscription, foundingCheckoutTerms } from "@/lib/founding";
-import { isPurchasablePlan, PLAN_LABELS, type Plan, type PurchasablePlan } from "@/lib/plans/plan-config";
+import {
+  isPurchasablePlan,
+  PLAN_LABELS,
+  type BillingPeriod,
+  type Plan,
+  type PurchasablePlan,
+} from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
 import { reportError } from "@/lib/report-error";
 import { withReference } from "@/lib/errors";
@@ -66,16 +73,21 @@ async function checkoutFailed(err: unknown, userId: string, what: string): Promi
 }
 
 /**
- * Opens a Stripe Checkout Session for Orbit Pro or Orbit Max, monthly.
+ * Opens a Stripe Checkout Session for Orbit Pro or Orbit Max, billed monthly or annually.
  *
  * Returns the URL rather than redirecting, so a refusal (already subscribed, not on sale)
  * renders inline beside the button. An account eligible for founding pricing that has never
- * had a paid subscription gets the founding coupon; Stripe's checkout page then shows the
+ * had a paid subscription gets the founding coupon on a MONTHLY plan (annual is already two
+ * months free, and founding pricing is monthly only); Stripe's checkout page then shows the
  * discounted first months and the full price after, which is the disclosure.
  */
-export async function startSubscriptionCheckout(plan: PurchasablePlan): Promise<CheckoutResult> {
+export async function startSubscriptionCheckout(
+  plan: PurchasablePlan,
+  period: BillingPeriod = "monthly"
+): Promise<CheckoutResult> {
   const userId = await requireUserId();
   if (!isPurchasablePlan(plan)) return { error: CHECKOUT_COPY.notOpen };
+  if (period !== "monthly" && period !== "annual") return { error: CHECKOUT_COPY.notOpen };
   if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
 
   // `getEntitlements` resolves comps too, so a comped account gets the same refusal a paying
@@ -85,16 +97,21 @@ export async function startSubscriptionCheckout(plan: PurchasablePlan): Promise<
   if (entitlements.plan !== "free") return { error: CHECKOUT_COPY.switchInSettings };
 
   const row = await billingRow(userId);
-  const founding = foundingAppliesToNewSubscription(row) ? foundingCheckoutTerms(plan) : null;
+  const founding =
+    period === "monthly" && foundingAppliesToNewSubscription(row) ? foundingCheckoutTerms(plan) : null;
   const baseUrl = getAppBaseUrl();
   const profile = await getCurrentUserProfile();
 
   try {
     const prices = await resolvePriceIds();
-    const planMeta = { [PLAN_METADATA_KEY]: plan, ...(founding?.metadata ?? {}) };
+    const planMeta = {
+      [PLAN_METADATA_KEY]: plan,
+      [INTERVAL_METADATA_KEY]: period === "annual" ? "year" : "month",
+      ...(founding?.metadata ?? {}),
+    };
     const session = await getStripe().checkout.sessions.create({
       mode: "subscription",
-      line_items: [{ price: prices[plan], quantity: 1 }],
+      line_items: [{ price: subscriptionPriceId(prices, plan, period), quantity: 1 }],
       // How the webhook knows who paid. Checkout collects its own email, which need not
       // match the Orbit account, so the Clerk id is the only reliable link.
       client_reference_id: userId,

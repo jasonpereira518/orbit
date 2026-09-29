@@ -51,6 +51,18 @@ run(async () => {
   check("a comp (no billing cycle) resets on the calendar month", comp.start.toISOString() === "2026-10-01T00:00:00.000Z" && comp.end.toISOString() === "2026-11-01T00:00:00.000Z");
   const noStart = ledger.creditPeriodFor({ subscriptionPeriodEnd: sub.subscriptionPeriodEnd }, now);
   check("a period end with no recorded start reads as the month before it", noStart.start.toISOString() === "2026-10-03T09:00:00.000Z");
+  const annual = { subscriptionPeriodStart: new Date("2026-03-31T09:00:00Z"), subscriptionPeriodEnd: new Date("2027-03-31T09:00:00Z") };
+  const slice = ledger.creditPeriodFor(annual, now);
+  check("an ANNUAL plan still gets a monthly allowance, on its own anniversaries",
+    slice.start.toISOString() === "2026-09-30T09:00:00.000Z" && slice.end.toISOString() === "2026-10-31T09:00:00.000Z",
+    [slice.start.toISOString(), slice.end.toISOString()]);
+  const feb = ledger.creditPeriodFor(annual, new Date("2027-02-15T00:00:00Z"));
+  check("…clamped to short months the way Stripe bills (the 31st renews on Feb 28)",
+    feb.start.toISOString() === "2027-01-31T09:00:00.000Z" && feb.end.toISOString() === "2027-02-28T09:00:00.000Z",
+    [feb.start.toISOString(), feb.end.toISOString()]);
+  const annualNoStart = ledger.creditPeriodFor({ subscriptionPeriodEnd: annual.subscriptionPeriodEnd }, now);
+  check("…and without a recorded start it still slices by month, never a year-long allowance",
+    annualNoStart.end.getTime() - annualNoStart.start.getTime() < 32 * DAY && annualNoStart.start <= now && now < annualNoStart.end);
 
   console.log("\nReset at renewal, no rollover");
   const cycle1 = { start: new Date(Date.now() - 20 * DAY), end: new Date(Date.now() + 10 * DAY) };

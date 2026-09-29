@@ -1,10 +1,15 @@
 import {
   FREE_CONTACT_LIMIT,
   PLAN_CONFIG,
+  annualMonthlyEquivalentCents,
   formatPlanPrice,
+  type BillingPeriod,
   type Plan,
   type PurchasablePlan,
 } from "@/lib/plans/plan-config";
+
+export type { BillingPeriod } from "@/lib/plans/plan-config";
+export { ANNUAL_SAVING_PERCENT } from "@/lib/plans/plan-config";
 import { FOUNDING_AMOUNT_OFF_CENTS, FOUNDING_MONTHS } from "@/lib/stripe-config";
 import type { DemoAccountReason } from "@/lib/demo-account";
 
@@ -39,7 +44,8 @@ export type PlanCopy = {
   id: Plan;
   name: string;
   tagline: string;
-  price: PlanPrice;
+  /** What the card shows for each billing period the toggle offers. */
+  price: Record<BillingPeriod, PlanPrice>;
   features: string[];
   /** Shown under the feature list where a tier deliberately excludes something. */
   caveat?: string;
@@ -54,8 +60,21 @@ const max = PLAN_CONFIG.max;
 const lifetime = PLAN_CONFIG.lifetime;
 const free = PLAN_CONFIG.free;
 
-function monthly(plan: PurchasablePlan): PlanPrice {
-  return { amount: formatPlanPrice(PLAN_CONFIG[plan].monthlyPriceCents ?? 0), cadence: "per month" };
+/** A paid plan's two prices. Annual is two months free, and says what that works out to. */
+function prices(plan: PurchasablePlan): Record<BillingPeriod, PlanPrice> {
+  return {
+    monthly: { amount: formatPlanPrice(PLAN_CONFIG[plan].monthlyPriceCents ?? 0), cadence: "per month" },
+    annual: {
+      amount: formatPlanPrice(PLAN_CONFIG[plan].annualPriceCents ?? 0),
+      cadence: "per year",
+      // One line on the narrowest card: the saving first, then what it works out to.
+      footnote: `Two months free · ${formatPlanPrice(annualMonthlyEquivalentCents(plan))}/mo`,
+    },
+  };
+}
+
+function samePrice(price: PlanPrice): Record<BillingPeriod, PlanPrice> {
+  return { monthly: price, annual: price };
 }
 
 export const PLAN_COPY: PlanCopy[] = [
@@ -63,7 +82,7 @@ export const PLAN_COPY: PlanCopy[] = [
     id: "free",
     name: "Free Plan",
     tagline: "The whole core product, for a network you can hold in your head.",
-    price: { amount: "$0", cadence: "forever" },
+    price: samePrice({ amount: "$0", cadence: "forever" }),
     features: [
       `Up to ${FREE_CONTACT_LIMIT} contacts`,
       "Capture notes, chat with your network, and summaries, on your own AI key",
@@ -81,7 +100,7 @@ export const PLAN_COPY: PlanCopy[] = [
     id: "orbit",
     name: "Orbit Pro",
     tagline: "For a network worth more than the price of a coffee.",
-    price: monthly("orbit"),
+    price: prices("orbit"),
     features: [
       "Everything in the Free Plan, uncapped",
       "Unlimited contacts",
@@ -100,7 +119,7 @@ export const PLAN_COPY: PlanCopy[] = [
     id: "max",
     name: "Orbit Max",
     tagline: "For the people whose network is the job.",
-    price: monthly("max"),
+    price: prices("max"),
     features: [
       "Everything in Orbit Pro",
       `AI included: ${max.monthlyCredits} credits a month`,
@@ -116,7 +135,7 @@ export const PLAN_COPY: PlanCopy[] = [
     id: "lifetime",
     name: "Orbit Lifetime",
     tagline: "Yours for as long as Orbit exists.",
-    price: { amount: "Granted", cadence: "by Orbit" },
+    price: samePrice({ amount: "Granted", cadence: "by Orbit" }),
     features: [
       "Unlimited contacts",
       "Recruiter tracking, with Google and Microsoft together",
@@ -139,7 +158,8 @@ export const PUBLIC_PLAN_COPY: PlanCopy[] = PLAN_COPY.filter((p) => p.id !== "li
 /**
  * Founding pricing for an eligible account, always stated with its full terms — e.g.
  * "$6.99/month for your first 3 months, then $8.99/month". Only ever rendered for a
- * signed-in account whose `founding_eligible` is set and not yet redeemed.
+ * signed-in account whose `founding_eligible` is set and not yet redeemed. Monthly billing
+ * only: an annual plan is already two months free.
  */
 export function foundingPriceTerms(plan: PurchasablePlan): string {
   const list = PLAN_CONFIG[plan].monthlyPriceCents ?? 0;

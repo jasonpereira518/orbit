@@ -12,8 +12,16 @@
 export const PRICE_LOOKUP_KEYS = {
   orbit: "orbit_pro_monthly_v2",
   max: "orbit_max_monthly_v2",
+  orbitAnnual: "orbit_pro_annual_v2",
+  maxAnnual: "orbit_max_annual_v2",
   creditPack: "orbit_credit_pack_250",
 } as const;
+
+/** The lookup key that sells `plan` billed `period`. */
+export function subscriptionLookupKey(plan: "orbit" | "max", period: "monthly" | "annual"): string {
+  if (plan === "max") return period === "annual" ? PRICE_LOOKUP_KEYS.maxAnnual : PRICE_LOOKUP_KEYS.max;
+  return period === "annual" ? PRICE_LOOKUP_KEYS.orbitAnnual : PRICE_LOOKUP_KEYS.orbit;
+}
 
 /** Credits in one $5 pack. */
 export const CREDIT_PACK_CREDITS = 250;
@@ -52,10 +60,17 @@ export const CREDIT_PACK_METADATA_VALUE = "credit_pack";
 export const SUBSCRIPTION_USER_METADATA_KEY = "orbit_user_id";
 
 /**
- * Which cadence a legacy Pro checkout was for. Pricing v2 is monthly only; the key is still
- * read so an old annual session replayed by the backfill books its real value.
+ * Which cadence a LEGACY ($5/$50) Pro checkout was for. Still read so an old annual session
+ * replayed by the backfill books its real value — and its presence is what marks a session
+ * as legacy, which is why pricing v2 does not reuse it.
  */
 export const PRO_BILLING_PERIOD_METADATA_KEY = "orbit_billing_period";
+
+/**
+ * The billing period of a pricing-v2 subscription checkout: `month` or `year`. A separate key
+ * from the legacy one above, so a v2 annual session is never mistaken for a $50 one.
+ */
+export const INTERVAL_METADATA_KEY = "orbit_interval";
 
 /**
  * Founding pricing, carried on the subscription's metadata so the PURE webhook decision can
@@ -85,5 +100,5 @@ export function isCheckoutConfigured() {
  * get the Pro plan.
  */
 export function planForLookupKey(lookupKey: string | null | undefined): "orbit" | "max" {
-  return lookupKey === PRICE_LOOKUP_KEYS.max ? "max" : "orbit";
+  return lookupKey === PRICE_LOOKUP_KEYS.max || lookupKey === PRICE_LOOKUP_KEYS.maxAnnual ? "max" : "orbit";
 }

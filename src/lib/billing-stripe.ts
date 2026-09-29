@@ -11,6 +11,7 @@ import {
   FOUNDING_MONTHS,
   FOUNDING_OFF_METADATA_KEY,
   FOUNDING_UNTIL_METADATA_KEY,
+  INTERVAL_METADATA_KEY,
   LIFETIME_METADATA_KEY,
   LIFETIME_METADATA_VALUE,
   MAX_METADATA_VALUE,
@@ -19,7 +20,7 @@ import {
   SUBSCRIPTION_USER_METADATA_KEY,
   planForLookupKey,
 } from "@/lib/stripe-config";
-import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { annualMonthlyEquivalentCents, PLAN_CONFIG } from "@/lib/plans/plan-config";
 
 /**
  * What a Stripe event means, decided without touching anything.
@@ -672,24 +673,31 @@ export function decideStripeEvent(
         // value, and if it books $5 while the subscription is really annual, the next
         // `customer.subscription.updated` computes 417 against 500 and books a spurious
         // -83 contraction on every single annual signup.
-        const interval =
-          (session.metadata?.[PRO_BILLING_PERIOD_METADATA_KEY] === "annual"
-            ? "year"
-            : session.metadata?.[PRO_BILLING_PERIOD_METADATA_KEY] === "monthly"
-              ? "month"
-              : null) ?? intervalFromAmountTotal(session.amount_total);
+        const v2Interval = session.metadata?.[INTERVAL_METADATA_KEY];
+        const interval: BillingInterval | null =
+          v2Interval === "year" || v2Interval === "month"
+            ? v2Interval
+            : ((session.metadata?.[PRO_BILLING_PERIOD_METADATA_KEY] === "annual"
+                ? "year"
+                : session.metadata?.[PRO_BILLING_PERIOD_METADATA_KEY] === "monthly"
+                  ? "month"
+                  : null) ?? intervalFromAmountTotal(session.amount_total));
         const plan = planMeta === MAX_METADATA_VALUE ? "max" : "orbit";
         // Valued exactly the way the subscription events will value it — list price less the
-        // founding discount — so the first `customer.subscription.*` finds no movement.
+        // founding discount, or a twelfth of the annual price (founding is monthly only) — so
+        // the first `customer.subscription.*` finds no movement.
         // Never `amount_total`: that carries tax and prorations, which are not MRR.
         // A LEGACY session (the $5/$50 era, which always carried a billing period, or whose
         // total gives it away) keeps its legacy value, so a backfill replay stays exact.
         const legacy =
-          Boolean(session.metadata?.[PRO_BILLING_PERIOD_METADATA_KEY]) ||
-          intervalFromAmountTotal(session.amount_total) !== null;
+          !v2Interval &&
+          (Boolean(session.metadata?.[PRO_BILLING_PERIOD_METADATA_KEY]) ||
+            intervalFromAmountTotal(session.amount_total) !== null);
         const monthlyCents = legacy
           ? monthlyCentsForInterval(interval)
-          : Math.max(
+          : interval === "year"
+            ? annualMonthlyEquivalentCents(plan)
+            : Math.max(
               0,
               (PLAN_CONFIG[plan].monthlyPriceCents ?? MONTHLY_CENTS) -
                 (Number(session.metadata?.[FOUNDING_OFF_METADATA_KEY]) || 0)

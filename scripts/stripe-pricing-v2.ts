@@ -15,6 +15,8 @@
  *  - Prices, found by lookup key so the app never needs a new env var:
  *      orbit_pro_monthly_v2   $8.99 / month
  *      orbit_max_monthly_v2   $19.99 / month
+ *      orbit_pro_annual_v2    $89.99 / year  (two months free)
+ *      orbit_max_annual_v2    $199.99 / year (two months free)
  *      orbit_credit_pack_250  $5.00 once (250 credits)
  *  - Founding coupons with fixed ids, `repeating`:
  *      orbit-founding-pro-{3,2,1}m   $2.00 off Pro for 3 / 2 / 1 months
@@ -22,7 +24,8 @@
  *    Three lengths per tier, not one: a repeating coupon's clock restarts whenever it is
  *    applied, so when a founding subscriber switches tier inside their window the app swaps
  *    to the coupon for the whole months that remain (`src/lib/founding.ts`).
- *  - A customer-portal configuration (metadata orbit_config=pricing_v2): Pro ↔ Max switching,
+ *  - A customer-portal configuration (metadata orbit_config=pricing_v2): Pro ↔ Max and
+ *    monthly ↔ annual switching,
  *    upgrades invoiced immediately and prorated, downgrades scheduled at period end, cancel at
  *    period end, card and invoice history. Lifetime is never in it.
  *  - Archives (never deletes) the old prices: Pro $5/month, Pro $50/year, Lifetime $25 and $75.
@@ -52,6 +55,8 @@ const APP_URL = (appUrlIdx >= 0 ? args[appUrlIdx + 1] : "https://myorbitnetwork.
 const PRICE_LOOKUP_KEYS = {
   pro: "orbit_pro_monthly_v2",
   max: "orbit_max_monthly_v2",
+  proAnnual: "orbit_pro_annual_v2",
+  maxAnnual: "orbit_max_annual_v2",
   pack: "orbit_credit_pack_250",
 } as const;
 
@@ -77,10 +82,13 @@ const PRODUCTS = {
   },
 } as const;
 
+/** Each price, and the product it sells. Annual is two months free. */
 const PRICES = {
-  pro: { unit_amount: 899, recurring: { interval: "month" as const }, nickname: "Orbit Pro monthly (v2)" },
-  max: { unit_amount: 1999, recurring: { interval: "month" as const }, nickname: "Orbit Max monthly (v2)" },
-  pack: { unit_amount: 500, recurring: null, nickname: "Orbit credit pack (250 credits)" },
+  pro: { product: "pro", unit_amount: 899, recurring: { interval: "month" as const }, nickname: "Orbit Pro monthly (v2)" },
+  max: { product: "max", unit_amount: 1999, recurring: { interval: "month" as const }, nickname: "Orbit Max monthly (v2)" },
+  proAnnual: { product: "pro", unit_amount: 8999, recurring: { interval: "year" as const }, nickname: "Orbit Pro annual (v2)" },
+  maxAnnual: { product: "max", unit_amount: 19999, recurring: { interval: "year" as const }, nickname: "Orbit Max annual (v2)" },
+  pack: { product: "pack", unit_amount: 500, recurring: null, nickname: "Orbit credit pack (250 credits)" },
 } as const;
 
 const COUPONS = (["pro", "max"] as const).flatMap((tier) =>
@@ -157,9 +165,12 @@ async function main() {
   // --- Products and prices ---------------------------------------------------------------
   const productIds: Partial<Record<keyof typeof PRODUCTS, string>> = {};
   const priceIds: Partial<Record<keyof typeof PRICES, string>> = {};
-  for (const which of ["pro", "max", "pack"] as const) {
+  // Product steps are planned once per product, however many of its prices need creating.
+  const productPlanned = new Set<keyof typeof PRODUCTS>();
+  for (const which of ["pro", "max", "proAnnual", "maxAnnual", "pack"] as const) {
     const lookupKey = PRICE_LOOKUP_KEYS[which];
     const spec = PRICES[which];
+    const productKey = spec.product;
     const existingPrice = await findPriceByLookupKey(stripe, lookupKey);
     if (existingPrice) {
       const interval = existingPrice.recurring?.interval ?? null;
@@ -175,23 +186,28 @@ async function main() {
       priceIds[which] = existingPrice.id;
       const productId =
         typeof existingPrice.product === "string" ? existingPrice.product : existingPrice.product.id;
-      productIds[which] = productId;
+      productIds[productKey] = productId;
       console.log(`  ok  price ${lookupKey} = ${existingPrice.id}`);
+      if (productPlanned.has(productKey)) continue;
+      productPlanned.add(productKey);
       const product = await stripe.products.retrieve(productId);
-      const wantedDescription = PRODUCTS[which].description;
+      const wantedDescription = PRODUCTS[productKey].description;
       if (product.description !== wantedDescription) {
         steps.push({
-          describe: `set the ${PRODUCTS[which].name} description (customer-facing: shipped features only)`,
+          describe: `set the ${PRODUCTS[productKey].name} description (customer-facing: shipped features only)`,
           run: () => stripe.products.update(productId, { description: wantedDescription }),
         });
       }
       continue;
     }
 
-    const product = await findProduct(stripe, which);
-    const productSpec = PRODUCTS[which];
-    let productId = product?.id;
-    if (product) {
+    const product = productIds[productKey] || productPlanned.has(productKey) ? null : await findProduct(stripe, productKey);
+    const productSpec = PRODUCTS[productKey];
+    let productId = productIds[productKey] ?? product?.id;
+    if (productPlanned.has(productKey)) {
+      // Already found or planned by this product's other price.
+    } else if (product) {
+      productPlanned.add(productKey);
       console.log(`  ok  product ${productSpec.name} = ${product.id}`);
       if (
         product.metadata?.orbit_product !== productSpec.metadata.orbit_product ||
@@ -204,21 +220,22 @@ async function main() {
         });
       }
     } else {
+      productPlanned.add(productKey);
       steps.push({
         describe: `create product "${productSpec.name}"`,
         run: async () => {
           const created = await stripe.products.create({ ...productSpec });
           productId = created.id;
-          productIds[which] = created.id;
+          productIds[productKey] = created.id;
         },
       });
     }
-    productIds[which] = productId;
+    if (productId) productIds[productKey] = productId;
     steps.push({
       describe: `create price ${lookupKey}: $${(spec.unit_amount / 100).toFixed(2)}${spec.recurring ? `/${spec.recurring.interval}` : " once"}`,
       run: async () => {
         const created = await stripe.prices.create({
-          product: productIds[which] ?? productId!,
+          product: productIds[productKey] ?? productId!,
           currency: "usd",
           unit_amount: spec.unit_amount,
           nickname: spec.nickname,
@@ -298,10 +315,11 @@ async function main() {
         enabled: true,
         default_allowed_updates: ["price"],
         products: [
-          { product: productIds.pro!, prices: [priceIds.pro!] },
-          { product: productIds.max!, prices: [priceIds.max!] },
+          { product: productIds.pro!, prices: [priceIds.pro!, priceIds.proAnnual!] },
+          { product: productIds.max!, prices: [priceIds.max!, priceIds.maxAnnual!] },
         ],
-        // Pro → Max: immediately, prorated, invoiced now. Max → Pro: at period end.
+        // Anything that costs more (Pro → Max, monthly → annual): now, prorated, invoiced now.
+        // Anything that costs less (Max → Pro, annual → monthly): at the period end.
         proration_behavior: "always_invoice",
         schedule_at_period_end: { conditions: [{ type: "decreasing_item_amount" }] },
       },
@@ -309,8 +327,8 @@ async function main() {
   });
   steps.push({
     describe: portal
-      ? `update portal configuration ${portal.id} (Pro ↔ Max, downgrades at period end)`
-      : "create portal configuration (Pro ↔ Max, downgrades at period end)",
+      ? `update portal configuration ${portal.id} (Pro ↔ Max, monthly ↔ annual, downgrades at period end)`
+      : "create portal configuration (Pro ↔ Max, monthly ↔ annual, downgrades at period end)",
     run: () =>
       portal
         ? stripe.billingPortal.configurations.update(portal.id, portalParams())

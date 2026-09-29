@@ -5,11 +5,12 @@ import { useAuth } from "@clerk/nextjs";
 import { getPricingViewer } from "@/actions/billing";
 import Link from "next/link";
 import { Check } from "lucide-react";
+import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { SubscriptionCheckoutButton } from "@/components/pricing/subscription-checkout-button";
 import { cn } from "@/lib/utils";
 import { foundingPriceTerms, PUBLIC_PLAN_COPY } from "@/lib/plan-copy";
-import { isPurchasablePlan, type Plan } from "@/lib/plans/plan-config";
+import { isPurchasablePlan, type BillingPeriod, type Plan } from "@/lib/plans/plan-config";
 
 /**
  * Where signed-out buyers land after creating the account they need to buy: back here,
@@ -19,11 +20,13 @@ const SIGN_UP_FROM_PRICING = "/sign-up?redirect_url=/pricing";
 
 function TierCta({
   planId,
+  period,
   currentPlan,
   signedIn,
   checkoutOpen,
 }: {
   planId: Plan;
+  period: BillingPeriod;
   currentPlan: Plan | null;
   signedIn: boolean;
   /** Stripe is configured, so checkout can actually complete. */
@@ -93,14 +96,14 @@ function TierCta({
     );
   }
 
-  return <SubscriptionCheckoutButton plan={planId} />;
+  return <SubscriptionCheckoutButton plan={planId} period={period} />;
 }
 
 /**
  * Each tier owns an accent: Free stays recessed (dimmer border, no glow, muted ticks), Pro
- * wears the Pro blue and Max the gold. No popularity badge — nothing measures it, and an
- * unbacked "Most popular" is exactly the kind of nudge the no-fake-urgency rule forbids.
- * (Colors move to the plan tokens in the colour pass.)
+ * wears the Pro blue and Max the gold. Pro is the recommendation — raised in the centre and
+ * badged "Most popular" — and Max is badged "Best value", each badge in its own plan's colour
+ * so the two messages never blur into one.
  */
 const TIER_ACCENT: Record<
   Plan,
@@ -128,14 +131,14 @@ const TIER_ACCENT: Record<
     surface: "border-night-pro/40 bg-[#070b18]/80 hover:border-night-pro/75",
     tick: "text-night-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: null,
+    badge: { label: "Most popular", className: "bg-night-pro text-[#081326]" },
     raised: true,
   },
   max: {
     surface: "border-night-max/40 bg-[#070b18]/80 hover:border-night-max/75",
     tick: "text-night-max",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
-    badge: null,
+    badge: { label: "Best value", className: "bg-night-max text-[#241a00]" },
     raised: false,
   },
   // Not on sale (admin-granted), so never rendered here; kept so the map covers every plan.
@@ -198,12 +201,14 @@ function PricingTiersView({
   currentPlan,
   founding,
 }: TiersProps & { signedIn: boolean; currentPlan: Plan | null; founding: boolean }) {
+  const [period, setPeriod] = useState<BillingPeriod>("monthly");
   return (
     <div className="space-y-10">
+      <BillingToggle period={period} onChange={setPeriod} />
       <div className="grid items-start gap-5 lg:grid-cols-3 lg:gap-6">
         {PUBLIC_PLAN_COPY.map((plan) => {
           const accent = TIER_ACCENT[plan.id];
-          const price = plan.price;
+          const price = plan.price[period];
 
           return (
             <section
@@ -256,7 +261,8 @@ function PricingTiersView({
                     full terms, never struck through. */}
                 {founding && isPurchasablePlan(plan.id) && (
                   <p className="mt-2 text-xs leading-relaxed text-[#cfdcd8]">
-                    Your founding price: {foundingPriceTerms(plan.id)}.
+                    {period === "monthly" ? "Your founding price: " : "Your founding price, on monthly billing: "}
+                    {foundingPriceTerms(plan.id)}.
                   </p>
                 )}
               </div>
@@ -286,6 +292,7 @@ function PricingTiersView({
               <div className="mt-6">
                 <TierCta
                   planId={plan.id}
+                  period={period}
                   currentPlan={currentPlan}
                   signedIn={signedIn}
                   checkoutOpen={checkoutOpen}

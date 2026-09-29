@@ -4,11 +4,11 @@ import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { startSubscriptionCheckout } from "@/actions/billing";
 import { planCopy } from "@/lib/plan-copy";
-import type { PurchasablePlan } from "@/lib/plans/plan-config";
+import type { BillingPeriod, PurchasablePlan } from "@/lib/plans/plan-config";
 import { cn } from "@/lib/utils";
 
 /**
- * Sends the buyer to Stripe Checkout for Orbit Pro or Orbit Max, monthly.
+ * Sends the buyer to Stripe Checkout for Orbit Pro or Orbit Max, billed monthly or yearly.
  *
  * The action returns a URL rather than redirecting so refusals (already subscribed, not on
  * sale yet) show right here, next to the button that caused them. A founding discount, when
@@ -17,15 +17,17 @@ import { cn } from "@/lib/utils";
  */
 export function SubscriptionCheckoutButton({
   plan,
+  period = "monthly",
   className,
 }: {
   plan: PurchasablePlan;
+  period?: BillingPeriod;
   className?: string;
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const copy = planCopy(plan);
-  const label = `Start ${copy.name.replace("Orbit ", "")} — ${copy.price.amount}/month`;
+  const label = `Start ${copy.name.replace("Orbit ", "")} — ${copy.price[period].amount}/${period === "annual" ? "year" : "month"}`;
 
   return (
     <div className="space-y-2">
@@ -35,7 +37,7 @@ export function SubscriptionCheckoutButton({
         onClick={() => {
           setError(null);
           start(async () => {
-            const result = await startSubscriptionCheckout(plan);
+            const result = await startSubscriptionCheckout(plan, period);
             if ("url" in result) {
               // A full navigation, not router.push: the destination is Stripe's domain.
               window.location.href = result.url;
