@@ -82,6 +82,8 @@ export function ContactForm({
     phone: initial?.phone || "",
     linkedinUrl: initial?.linkedinUrl || "",
     website: initial?.website || "",
+    blueskyHandle: initial?.blueskyHandle || "",
+    mastodonAcct: initial?.mastodonAcct || "",
     notes: initial?.notes || "",
     industry: initial?.industry || "",
     sharedInterests: (initial?.sharedInterests || []).join("\n"),
@@ -234,6 +236,8 @@ export function ContactForm({
               phone: form.phone.trim(),
               linkedinUrl: form.linkedinUrl.trim(),
               website: form.website.trim(),
+              blueskyHandle: form.blueskyHandle.trim(),
+              mastodonAcct: form.mastodonAcct.trim(),
               notes: form.notes.trim(),
               industry: form.industry.trim(),
               sharedInterests: form.sharedInterests
@@ -321,6 +325,26 @@ export function ContactForm({
             value={form.website}
             onChange={(e) => set("website", e.target.value)}
             placeholder="https://jasonpereira.live"
+          />
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Bluesky" hint="Radar reads their public posts">
+          <Input
+            value={form.blueskyHandle}
+            onChange={(e) => set("blueskyHandle", e.target.value)}
+            placeholder="name.bsky.social"
+            autoCapitalize="none"
+            spellCheck={false}
+          />
+        </Field>
+        <Field label="Mastodon" hint="Radar reads their public posts">
+          <Input
+            value={form.mastodonAcct}
+            onChange={(e) => set("mastodonAcct", e.target.value)}
+            placeholder="name@mastodon.social"
+            autoCapitalize="none"
+            spellCheck={false}
           />
         </Field>
       </div>
