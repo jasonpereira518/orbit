@@ -258,10 +258,11 @@ async function main() {
   // contacts as at 312; this pins the ceiling at 3,000. 24, up from 20: the outcome check
   // (one UPDATE over the account's recent accepts, `detectRadarOutcomes`), the learned
   // model's tallies (one grouped read over 90 days of resolved cards, `loadModelTallies`),
-  // the autopilot settings (one read, on nightly and manual runs only), and job moves (one
-  // windowed read of `contact_career_moves`).
+  // the autopilot settings (one read, on nightly and manual runs only), job moves (one
+  // windowed read of `contact_career_moves`), and the news probe (one indexed read of the
+  // global news tables with the account's company keys; a write only when it finds news).
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
-  check("radar run issues ≤ 24 statements", radarRunCount <= 24, `got ${radarRunCount}`);
+  check("radar run issues ≤ 25 statements", radarRunCount <= 25, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),

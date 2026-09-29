@@ -96,8 +96,12 @@ export const CONTEXT_CODES: ReadonlySet<string> = new Set([
 /** One line of "why", with the points that produced it. The UI shows the label only. */
 export type RadarReason = { code: string; label: string; points: number };
 
-/** The most specific fact behind a card, shown under the reasons ("Meeting · Thu 3 Oct"). */
-export type RadarEvidence = { label: string; at: string | null };
+/**
+ * The most specific fact behind a card, shown under the reasons ("Meeting · Thu 3 Oct").
+ * `url` only for a public source (a headline), already through `safeHttpUrl`, and rendered
+ * through it again.
+ */
+export type RadarEvidence = { label: string; at: string | null; url?: string | null };
 
 /** The optional AI line, cached against the inputs it was written from. */
 export type RadarAiNote = { why: string; opener: string; inputsHash: string; generatedAt: string };
@@ -195,6 +199,17 @@ export type RadarSignal =
   | { kind: "inbound_unanswered"; contactId: string; at: Date }
   | { kind: "linkedin_thread_quiet"; contactId: string; at: Date; count: number }
   | { kind: "job_posting"; contactId: string; at: Date; text: string }
+  /** A headline about the company they work at (`src/lib/radar/signals/news.ts`). */
+  | {
+      kind: "company_news";
+      contactId: string;
+      at: Date;
+      title: string;
+      source: string;
+      url: string | null;
+      itemId: string;
+      company: string;
+    }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
   | { kind: "job_change"; contactId: string; at: Date; move: "joined" | "left" | "title_change"; text: string };
 

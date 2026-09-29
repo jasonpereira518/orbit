@@ -31,6 +31,7 @@ import {
   snoozeRecommendation,
 } from "@/actions/radar";
 import { companyBrandColor } from "@/lib/company-brand";
+import { safeHttpUrl } from "@/lib/safe-links";
 import { friendlyError } from "@/lib/errors";
 import {
   KIND_LABELS,
@@ -90,6 +91,7 @@ export function RecommendationCard({
   const also = rec.reasons.filter((r) => r.code.startsWith("also:"));
   const lead = facts[0];
   const evidence = rec.evidence[0];
+  const evidenceUrl = safeHttpUrl(evidence?.url);
   const companyColor = companyBrandColor(rec.company);
 
   const act = (run: () => Promise<{ ok: boolean; message?: string }>, success: string) =>
@@ -189,7 +191,20 @@ export function RecommendationCard({
               {evidence && (
                 <span className="inline-flex items-center gap-1">
                   <Clock className="size-3" aria-hidden />
-                  {evidence.label}
+                  {evidenceUrl ? (
+                    // A public source (a headline). The domain stays visible in the label, and
+                    // the link is re-checked here rather than trusted from the row.
+                    <a
+                      href={evidenceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      className="underline decoration-border underline-offset-2 hover:text-ink"
+                    >
+                      {evidence.label}
+                    </a>
+                  ) : (
+                    evidence.label
+                  )}
                   {evidence.at && (
                     <span suppressHydrationWarning>
                       {" · "}

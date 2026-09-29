@@ -162,13 +162,23 @@ as the base spec's `heads_up` table describes (points and half-lives unchanged).
   left over from the earlier design and are removed with the next schema change.
 - **Company news.** Global ingest-only tables: `external_sources`, `external_items` and
   `external_item_companies`.
-  - An hourly sweep at `/api/radar/feeds/sweep` follows the `src/lib/jobs/feed-sweep.ts`
-    structure (`fetchFeedDocument`, `guardedFetchText`, `fast-xml-parser`).
-  - Sources: HN (Algolia), SEC EDGAR 8-K/S-1 (only when `SEC_EDGAR_CONTACT_EMAIL` is set), and
-    curated RSS.
-  - The nightly per-user probe runs one indexed statement against `external_item_companies`
-    with the user's `jobCompanyBucketKey`s, confirmed by `companiesMatch`. At most 3 new news
-    signals per run.
+  - An hourly sweep at `/api/radar/feeds/sweep` (`53 * * * *`, ledger `radar.feeds`) follows
+    the `src/lib/jobs/feed-sweep.ts` structure: conditional GETs through `guardedFetchText`, a
+    loud 3 MB cap, every outcome recorded on its source row, a feed being down is never a
+    throw. It stands down when `page.radar` is hidden and until someone has opened Radar.
+  - Sources: Hacker News (Algolia JSON) and the TechCrunch, The Verge and Ars Technica feeds.
+    SEC EDGAR is out: it requires a contact address in the User-Agent, and `guardedFetchText`
+    fixes its own agent string by design.
+  - Each headline is filed under the bucket keys of every run of one to three capitalized
+    words in it (`src/lib/radar/feeds/companies.ts`). Candidates, not verdicts.
+  - The nightly per-user probe (`probeCompanyNews`) runs one indexed statement against
+    `external_item_companies` with the account's candidates' company keys, confirms each hit
+    with `companiesMatch`, keeps at most 3 a night (one per person), and writes them to
+    `contact_signals`. A headline becomes a `heads_up` card naming the company, 20 points
+    (+6 for money or a deal), decaying with a 5-day half-life, gone after 7 days. The card
+    links the source through `safeHttpUrl`.
+  - Known weakness: a company named with an ordinary word at the start of a sentence-case
+    headline. The card shows the headline, and dismissals teach the model.
 - **Social.** A daily per-handle poll of public Bluesky and Mastodon for contacts with the new
   columns. It covers at most 10 handles per user, uses per-host rate buckets and
   `guardedFetchText`, caps excerpts at 280 characters, and passes URLs through `safeHttpUrl`.
@@ -232,7 +242,7 @@ The version is the next free integer after re-scanning every remote ref. It will
 
 | Job | Route | Schedule | Ledger |
 |---|---|---|---|
-| Feed sweep (ingest-only) | `POST /api/radar/feeds/sweep` | `37 * * * *` | `radar.feeds` |
+| Feed sweep (ingest-only) | `POST /api/radar/feeds/sweep` | `53 * * * *` | `radar.feeds` |
 | Social poll | inside the nightly run (deadline-checked) | — | — |
 | Weekly digest | `POST /api/radar/digest` | `13 * * * 1` | `radar.digest` |
 

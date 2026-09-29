@@ -44,6 +44,7 @@ import { buildRadarModel } from "@/lib/radar/model";
 import { RADAR_RERANK_TIMEOUT_MS, rerankPicks, rerankUnchanged } from "@/lib/radar/rerank";
 import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
 import { draftTodayForRun } from "@/lib/radar/drafts";
+import { probeCompanyNews } from "@/lib/radar/signals/news";
 import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
@@ -102,6 +103,8 @@ export type RadarRunStats = {
   /** Drafts written for Today's cards, and follow-ups autopilot scheduled. */
   drafts: number;
   autopilot: number;
+  /** Headlines about someone's company that became signals this run. */
+  news: number;
   durationMs: number;
 };
 
@@ -250,6 +253,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     rerankCached: false,
     drafts: 0,
     autopilot: 0,
+    news: 0,
     durationMs: 0,
   };
   const db = await getDb();
@@ -289,7 +293,14 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           loadSuppressions(userId, live, now),
         ]);
 
-        const picks = scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model);
+        // Headlines about the companies these people work at, from the global news tables.
+        // One indexed read; a failure costs the run its news, never its list.
+        const news = await probeCompanyNews(userId, candidates, now).catch((err) => {
+          reportUnlessQuiet(err, { where: "job.radar.news", userId, level: "warning" });
+          return [];
+        });
+        stats.news = news.length;
+        const picks = scorePicks(candidates, [...signals, ...news], targetKeys, goals, suppressions, now, model);
 
         // AI, on the account's own key, in one shared budget. First the rerank, which may
         // nudge the shortlist before the caps choose the final list; then, once the list is

@@ -51,6 +51,8 @@ export type OpsSnapshot = {
     jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
     /** Radar's nightly pass (`/api/radar/run`), once a day at 04:17 UTC. */
     radarRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's news sweep (`/api/radar/feeds/sweep`), hourly at :53. */
+    radarFeeds: { lastStartedAt: Date | null; lastState: CronRunState | null };
     workHistory: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
@@ -188,6 +190,13 @@ const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
  * an outage.
  */
 const RADAR_SILENT_MS = 30 * 60 * 60 * 1000;
+
+/**
+ * Radar's news sweep: hourly, so six hours is five missed runs. As with the nightly pass, a
+ * sweep that has never run is not an alert (it stands down until someone opens Radar, and a
+ * stand-down still records a run). `warning`: a headline noticed late costs nothing.
+ */
+const RADAR_FEEDS_SILENT_MS = 6 * 60 * 60 * 1000;
 
 /**
  * The work-history sweep runs hourly (ops.yml, :37); six hours of silence is five missed
@@ -412,6 +421,25 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Radar's nightly pass ${radarRun.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${radarRun.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarRun.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  const radarFeeds = s.cron.radarFeeds;
+  if (radarFeeds.lastStartedAt && now.getTime() - radarFeeds.lastStartedAt.getTime() > RADAR_FEEDS_SILENT_MS) {
+    out.push({
+      id: "radarfeeds.schedule_missed",
+      severity: "warning",
+      title: "Radar's news sweep has stopped running",
+      detail: `Last started ${radarFeeds.lastStartedAt.toISOString()}; headlines about people's companies are not arriving.`,
+      href: "/admin/health",
+    });
+  } else if (radarFeeds.lastState === "failed" || radarFeeds.lastState === "stale") {
+    out.push({
+      id: "radarfeeds.run_failed",
+      severity: "warning",
+      title: `Radar's news sweep ${radarFeeds.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarFeeds.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarFeeds.lastState}.`,
       href: "/admin/health",
     });
   }

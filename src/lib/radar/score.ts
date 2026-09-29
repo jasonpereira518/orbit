@@ -65,6 +65,9 @@ export const RADAR_WEIGHTS = {
   jobPosting: 28,
   // heads_up: a job move. A new employer is news; a new title at the same one, less so.
   jobChange: { joined: 32, left: 24, title_change: 18 },
+  // heads_up: their company in the news; more when it is money or a deal.
+  companyNews: 20,
+  companyNewsBig: 6,
   // reach_out
   inboundUnanswered: 34,
   recentIntro: 30,
@@ -88,7 +91,7 @@ export const RADAR_WEIGHTS = {
 } as const;
 
 /** Half-lives for facts whose value fades. Everything else holds until it stops being true. */
-export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10 } as const;
+export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, companyNews: 5 } as const;
 
 export const RADAR_BUCKETS = { today: 50, soon: 32, later: 18 } as const;
 
@@ -120,7 +123,12 @@ export const RADAR_WINDOWS = {
   postEventGrace: 1,
   /** A job move older than this is history, not a reason to write. */
   jobChangeMax: 30,
+  /** A headline older than this is not news. */
+  newsMax: 7,
 } as const;
+
+/** Headlines about money or a deal: worth a little more than a product launch. */
+const BIG_NEWS = /\b(raises?|raised|funding|series [a-f]\b|seed round|acquir\w*|merg\w*|ipo|goes public|files? for|valuation)/i;
 
 /** A reason below this after decay is not worth a line. */
 const MIN_REASON_POINTS = 4;
@@ -359,6 +367,18 @@ export function scoreContactKinds(
           "opportunity",
           { code: "job_posting", label: s.text, points: decayed(W.jobPosting, age, RADAR_HALF_LIFE_DAYS.jobPosting) },
           { label: "New roles at their company", at: iso(s.at) }
+        );
+        break;
+      }
+      case "company_news": {
+        const age = daysSince(s.at, now) ?? 0;
+        if (age > RADAR_WINDOWS.newsMax) break;
+        const base = W.companyNews + (BIG_NEWS.test(s.title) ? W.companyNewsBig : 0);
+        add(
+          drafts,
+          "heads_up",
+          { code: "company_news", label: `${s.company} in the news: ${s.title}`.slice(0, 200), points: decayed(base, age, RADAR_HALF_LIFE_DAYS.companyNews) },
+          { label: s.source, at: iso(s.at), url: s.url }
         );
         break;
       }
