@@ -87,6 +87,9 @@ export const AI_OPERATIONS = {
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },
   "events.why": { label: "Events: why talk to them", tier: "fast", thinking: "minimal" },
+  // One sentence about a Radar card the scorer already chose, written during the nightly
+  // pass on the account's own key: work on the person's behalf, not something they wait on.
+  "radar.why": { label: "Radar: why this person", tier: "fast", thinking: "minimal", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },

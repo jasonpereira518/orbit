@@ -38,8 +38,9 @@ import {
   type NewRecommendation,
 } from "@/lib/radar/store";
 import type { RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
+import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
-import { reportError } from "@/lib/report-error";
+import { reportError, reportUnlessQuiet } from "@/lib/report-error";
 import { runSettledPool } from "@/lib/sync-scheduler";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
@@ -56,6 +57,8 @@ const MIN_GAP_MS = 6 * HOUR_MS;
 const RETRY_AFTER_MS = 6 * HOUR_MS;
 /** A page view older than this since the last run refreshes in the background. */
 export const RADAR_STALE_MS = 24 * HOUR_MS;
+/** The most a run spends writing AI lines. Five fast-tier calls fit easily. */
+export const RADAR_AI_BUDGET_MS = 15_000;
 
 export type RadarRunOptions = {
   trigger: RadarRunTrigger;
@@ -231,6 +234,21 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const next = scoreCandidates(candidates, signals, targetKeys, goals, suppressions, now);
         const counts = planRunResult(live, next, now);
         await writeRunResult(userId, runId, next, now);
+
+        // The optional AI line, only once the list itself is safely written. A missing key
+        // or a slow provider costs the run its notes, never its list.
+        if (opts.ai) {
+          const access = await openRadarAi(userId);
+          if (!access) stats.skippedNoKey = true;
+          else {
+            stats.aiNotes = await explainTopForRun(userId, access, {
+              budgetMs: Math.min(opts.budgetMs ?? RADAR_AI_BUDGET_MS, RADAR_AI_BUDGET_MS),
+            }).catch((err) => {
+              reportUnlessQuiet(err, { where: "job.radar.why", userId, level: "warning" });
+              return 0;
+            });
+          }
+        }
 
         stats.candidates = candidates.length;
         stats.signals = signals.length;

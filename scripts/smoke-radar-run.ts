@@ -41,6 +41,7 @@ import {
   nextNightlyRunAt,
   runRadarForUser,
 } from "../src/lib/radar/run";
+import { encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { scaleContactRows } from "./lib/scale-fixture";
 
@@ -199,6 +200,58 @@ run(async () => {
   check("the next run is the next nightly slot", state?.nextAt?.getTime() === nextNightlyRunAt(NOW).getTime());
   const [settings] = await db.select({ lease: userSettings.radarLeaseUntil }).from(userSettings).where(eq(userSettings.userId, USER));
   check("the lease is released", settings?.lease === null);
+
+  console.log("\nno AI key");
+  await claimRadarLease(USER, NOW);
+  const noKey = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+  check("a run asked for AI without a key still succeeds", noKey.ok);
+  check("and says it skipped the notes", noKey.skippedNoKey && noKey.aiNotes === 0);
+  check("every card still has its reasons", (await db.select({ reasons: recommendations.reasons }).from(recommendations).where(eq(recommendations.userId, USER))).every((r) => r.reasons.length > 0));
+
+  console.log("\nwith an AI key (stubbed provider)");
+  {
+    const sent: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!/generativelanguage/.test(url)) return realFetch(input, init);
+      sent.push(typeof init?.body === "string" ? init.body : "");
+      const reply = JSON.stringify({
+        why: "You met recently and have not followed up.",
+        opener: "Good to meet you at the summit. My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123",
+      });
+      return Response.json({
+        candidates: [{ content: { role: "model", parts: [{ text: reply }] }, finishReason: "STOP" }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+      });
+    }) as typeof fetch;
+    await db
+      .update(userSettings)
+      .set({ aiProvider: "gemini", aiModel: "gemini-3.5-flash", geminiApiKeyEncrypted: encrypt("fake-gemini") })
+      .where(eq(userSettings.userId, USER));
+    await claimRadarLease(USER, NOW);
+    const withAi = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    check("the run writes notes for the top cards", withAi.aiNotes > 0 && withAi.aiNotes <= 5, JSON.stringify(withAi));
+    check("one call per note", sent.length === withAi.aiNotes, `${sent.length} calls`);
+    check("the facts reach the model fenced", sent.every((b) => b.includes("<<<FACTS_")));
+    check("and no notes do", sent.every((b) => !/Met at|raw_notes/.test(b)));
+    const noted = (await db.select({ aiNote: recommendations.aiNote }).from(recommendations).where(eq(recommendations.userId, USER)))
+      .map((r) => r.aiNote)
+      .filter((n): n is NonNullable<typeof n> => n !== null);
+    check("the why is stored", noted.some((n) => n.why.startsWith("You met recently")));
+    check("a secret in the reply never reaches the row", noted.every((n) => !n.opener.includes("sk-ant-api03")));
+    sent.length = 0;
+    await claimRadarLease(USER, NOW);
+    const again = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    check("unchanged facts cost no second call", again.aiNotes === 0 && sent.length === 0, `${sent.length} calls`);
+    const nextDay = new Date(NOW.getTime() + DAY);
+    await claimRadarLease(USER, nextDay);
+    await runRadarForUser(USER, { trigger: "schedule", now: nextDay, ai: true });
+    check("nor does a day passing", sent.length === 0, `${sent.length} calls`);
+    globalThis.fetch = realFetch;
+    await db.update(userSettings).set({ geminiApiKeyEncrypted: null }).where(eq(userSettings.userId, USER));
+    await db.update(recommendations).set({ aiNote: null }).where(eq(recommendations.userId, USER));
+  }
 
   console.log("\nstatements do not grow with the network");
   await db.insert(contacts).values(scaleContactRows(USER, 300, {}));
