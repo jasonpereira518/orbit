@@ -43,6 +43,7 @@ import { useCaptureFanout } from "@/lib/capture/use-capture-fanout";
 import type { PlannedUpload } from "@/lib/capture/bins";
 import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
 import { NotesFanoutList } from "@/components/capture/notes-library-upload";
+import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { cn } from "@/lib/utils";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
@@ -59,6 +60,8 @@ export function MessyNotesCapture({
   draftKey,
   acceptsHandoff = false,
   onQueued,
+  drive = null,
+  canUseSync = false,
 }: {
   ingest: CaptureIngest;
   onExtract: () => void;
@@ -72,6 +75,9 @@ export function MessyNotesCapture({
   acceptsHandoff?: boolean;
   /** The jobs a multi-note sort created, once every note has settled. */
   onQueued?: (jobIds: string[]) => void;
+  /** Google Picker config; the Drive button hides itself when this is incomplete. */
+  drive?: DriveCaptureConfig | null;
+  canUseSync?: boolean;
 }) {
   const fanout = useCaptureFanout({ onSettled: onQueued });
   const [incoming, setIncoming] = useState<{ file: File; path: string }[]>([]);
@@ -291,6 +297,14 @@ export function MessyNotesCapture({
           onTranscript={(text, sources, jobId) => ingest.onPhoneTranscript(text, sources, jobId ?? null)}
         />
         <div className="flex flex-wrap items-center gap-2">
+          {/* Each picked doc becomes its own job in this upload's queue, never box text —
+              the same rule as a multi-file drop. */}
+          <DriveCaptureButton
+            drive={drive}
+            canUseSync={canUseSync}
+            disabled={busy || !ingest.hasApiKey}
+            onQueued={(ids) => onQueued?.(ids)}
+          />
           {(ingest.busy || preparing) && (
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" /> Reading…

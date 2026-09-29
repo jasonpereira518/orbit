@@ -27,6 +27,7 @@ import {
   type DroppedFile,
 } from "@/lib/capture/file-drop";
 import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
+import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -52,12 +53,16 @@ export function NotesLibraryUpload({
   panelId,
   tabId,
   onQueued,
+  drive = null,
+  canUseSync = false,
 }: {
   hasApiKey: boolean;
   panelId: string;
   tabId: string;
   /** The jobs this drop created, once every bin has settled. */
   onQueued: (jobIds: string[]) => void;
+  drive?: DriveCaptureConfig | null;
+  canUseSync?: boolean;
 }) {
   const filePickerRef = useRef<HTMLInputElement>(null);
   const folderPickerRef = useRef<HTMLInputElement>(null);
@@ -183,6 +188,7 @@ export function NotesLibraryUpload({
             <FolderOpen className="size-4" />
             Choose a folder
           </Button>
+          <DriveCaptureButton drive={drive} canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
         </div>
 
         {reading && (

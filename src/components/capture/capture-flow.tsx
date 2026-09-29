@@ -27,6 +27,7 @@ import { CaptureSummary, choicesFromSuggestions, suggestionsFromChoices } from "
 import type { OpportunityReviewItem } from "@/lib/capture/types";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
 import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
+import type { DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { CaptureQueuePanel } from "@/components/capture/capture-queue-panel";
 import { discardCaptureBatch, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { ExtractingStage } from "@/components/capture/extracting-stage";
@@ -81,6 +82,8 @@ export function CaptureFlow({
   quota,
   userId = null,
   history = null,
+  canUseSync = false,
+  drive = null,
 }: {
   initialJob: CaptureJobView | null;
   /** Every reachable job, so a multi-file drop can render its queue. */
@@ -103,6 +106,10 @@ export function CaptureFlow({
   userId?: string | null;
   /** The capture history feed, shown under the input UI only. */
   history?: React.ReactNode;
+  /** Drive import is part of sync; with no plan for it the Drive button is not shown. */
+  canUseSync?: boolean;
+  /** Google Picker config, from the server's env. Any gap hides the Drive button. */
+  drive?: DriveCaptureConfig | null;
 }) {
   const router = useRouter();
   const { job: storeJob } = useCaptureJob();
@@ -442,6 +449,8 @@ export function CaptureFlow({
                 draftKey={userId ? captureDraftKey(userId, initialContactId) : null}
                 acceptsHandoff={!initialContactId}
                 onQueued={refreshQueue}
+                drive={drive}
+                canUseSync={canUseSync}
                 onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy", mentionPicks: messy.mentionPicks })}
               />
             )}
@@ -495,6 +504,8 @@ export function CaptureFlow({
                 panelId={capturePanelId("library")}
                 tabId={captureTabId("library")}
                 onQueued={refreshQueue}
+                drive={drive}
+                canUseSync={canUseSync}
               />
             )}
             {mode === "structured" && (
