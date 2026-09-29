@@ -2170,7 +2170,14 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 129 = interest_list_signups.signup_event_label for operator-added event signups. Scanned
 // every local and remote ref on Sep 27 2026: 128 is the highest claimed anywhere, so 129
 // is the next free integer.
-export const SCHEMA_VERSION = 129;
+//
+// 132 = capture_jobs.source_file_hashes (text[], GIN-indexed): the SHA-256 of every original
+// file a capture was read from, so the same file dropped again is flagged "Already captured"
+// instead of being read and billed twice. In SCALE_DDL, which both engines run. NOT 130 or
+// 131: scanned every local and remote ref and every worktree's working src/db/index.ts on
+// Sep 29 2026 — every ref is at 129, but the orbit-pricing-plans worktree claims 130 and
+// the linkedin-work-history worktree claims 131, so 132 is the next free integer.
+export const SCHEMA_VERSION = 132;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2241,6 +2248,11 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS mention_picks jsonb NOT NULL DEFAULT '[]'`,
   `CREATE INDEX IF NOT EXISTS capture_jobs_user_batch_idx ON capture_jobs(user_id, batch_group_id)`,
+  // v132: what each capture was read from, by content hash, so a file dropped a second time
+  // is recognised (`findCapturedFiles`). GIN because the one question asked of it is an
+  // `&&` overlap against a handful of hashes, across every job the user has.
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_file_hashes text[] NOT NULL DEFAULT '{}'`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_source_file_hashes_idx ON capture_jobs USING gin (source_file_hashes)`,
 
   // --- Generated columns -----------------------------------------------------------
   //
