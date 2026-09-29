@@ -36,6 +36,7 @@ import { listContactMentions } from "@/lib/contact-mentions";
 import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
 import { listJobMatchesForContact } from "@/lib/jobs/contact-matches";
 import { getContactProfile } from "@/lib/contact-profile";
+import { getWorkHistoryTracking } from "@/lib/job-changes";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
@@ -109,6 +110,9 @@ export default async function ContactDetailPage({
   const profilePromise = userIdPromise
     .then((u) => getContactProfile(u, id))
     .catch(() => null);
+  const trackingPromise = userIdPromise
+    .then((u) => getWorkHistoryTracking(u, id))
+    .catch(() => ({ moves: [], nextCheckAt: null }));
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -372,6 +376,7 @@ export default async function ContactDetailPage({
       <Suspense fallback={null}>
         <StreamedExperience
           data={profilePromise}
+          tracking={trackingPromise}
           settings={settingsPromise}
           contactId={contact.id}
           linkedinUrl={contact.linkedinUrl}
@@ -507,11 +512,13 @@ async function StreamedTimeline({
 
 async function StreamedExperience({
   data,
+  tracking,
   settings,
   contactId,
   linkedinUrl,
 }: {
   data: Promise<Awaited<ReturnType<typeof getContactProfile>>>;
+  tracking: Promise<Awaited<ReturnType<typeof getWorkHistoryTracking>>>;
   // Consumed here rather than awaited in the parent (unlike the brief's original
   // sketch): `settingsPromise` is meant to stream — StreamedAddNotes below awaits
   // the same promise inside its own Suspense boundary for the same reason — so
@@ -521,13 +528,23 @@ async function StreamedExperience({
   contactId: string;
   linkedinUrl: string | null;
 }) {
-  const [profile, { hasApiKey }] = await Promise.all([data, settings]);
+  const [profile, { moves, nextCheckAt }, { hasApiKey }] = await Promise.all([data, tracking, settings]);
   return (
     <div className="reveal-mount">
       <ContactExperienceSection
         contactId={contactId}
         linkedinUrl={linkedinUrl}
         canSearchWeb={hasApiKey}
+        moves={moves.map((m) => ({
+          id: m.id,
+          kind: m.kind,
+          fromOrg: m.fromOrg,
+          fromTitle: m.fromTitle,
+          toOrg: m.toOrg,
+          toTitle: m.toTitle,
+          detectedAt: m.detectedAt.toISOString(),
+        }))}
+        nextCheckAt={nextCheckAt ? nextCheckAt.toISOString() : null}
         profile={
           profile && {
             source: profile.source,

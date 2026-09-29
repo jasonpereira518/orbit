@@ -54,6 +54,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     lastNightly,
     lastSyncRun,
     lastJobFeedRun,
+    lastWorkHistoryRun,
     webhooks,
     issues,
     outreach,
@@ -89,6 +90,12 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "jobs.feed-sweep"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "work-history.sweep"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       recentWebhookOutcomes(5, now),
@@ -203,6 +210,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const syncRun = lastSyncRun[0];
   const drainRun = lastDrain[0];
   const jobFeedRun = lastJobFeedRun[0];
+  const workHistoryRun = lastWorkHistoryRun[0];
   return {
     cron: {
       processStalled: {
@@ -220,6 +228,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       jobFeed: {
         lastStartedAt: jobFeedRun?.startedAt ?? null,
         lastState: jobFeedRun ? deriveCronRunState(jobFeedRun, now) : null,
+      },
+      workHistory: {
+        lastStartedAt: workHistoryRun?.startedAt ?? null,
+        lastState: workHistoryRun ? deriveCronRunState(workHistoryRun, now) : null,
       },
     },
     processStalledRecent: lastNightly.map((r) => deriveCronRunState(r, now)),

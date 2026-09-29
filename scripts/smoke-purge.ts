@@ -236,6 +236,17 @@ async function seed() {
     source: "extension",
   });
 
+  // Cascade-covered (from `contacts`), seeded anyway: the job-movement log.
+  await db.insert(schema.contactCareerMoves).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "joined",
+    fromOrg: "Initech",
+    toOrg: "Acme",
+    source: "web",
+    dedupeKey: "purge-smoke-move",
+  });
+
   await db.insert(schema.actionItems).values({
     userId: USER,
     contactId: contact.id,

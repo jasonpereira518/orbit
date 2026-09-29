@@ -18,6 +18,7 @@ import { GET as processStalled } from "../src/app/api/imports/process-stalled/ro
 import { POST as continueImport } from "../src/app/api/imports/[id]/continue/route";
 import { POST as embeddingBackfill } from "../src/app/api/embeddings/backfill/route";
 import { POST as workHistoryResearch } from "../src/app/api/work-history/research/route";
+import { POST as workHistorySweep } from "../src/app/api/work-history/sweep/route";
 import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-events/backfill/route";
 import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
 
@@ -125,6 +126,8 @@ async function main() {
   check("embeddings/backfill → 401", emb.status === 401, `got ${emb.status}`);
   const wh = await workHistoryResearch(req());
   check("work-history/research → 401", wh.status === 401, `got ${wh.status}`);
+  const whs = await workHistorySweep(req());
+  check("work-history/sweep → 401", whs.status === 401, `got ${whs.status}`);
   const tl = await timelineBackfill(req());
   check("linkedin/timeline-events/backfill → 401", tl.status === 401, `got ${tl.status}`);
   const cap = await runCaptureJob(req(), { params: Promise.resolve({ id: "smoke-capture" }) });

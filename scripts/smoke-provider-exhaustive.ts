@@ -244,12 +244,12 @@ const ALLOWLIST: Record<string, string> = {
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
   "src/lib/admin-user-detail.ts:579": "the \"anthropic\" arm of the same ternary — see line 577.",
-  "src/actions/settings.ts:109": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
+  "src/actions/settings.ts:113": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
     "anthropic key for an openrouter row) — exhaustive over AiProvider.",
-  "src/actions/settings.ts:111": "the \"openai\" arm of the same ternary — see line 109.",
-  "src/actions/settings.ts:113": "the \"anthropic\" arm of the same ternary — see line 109; " +
+  "src/actions/settings.ts:115": "the \"openai\" arm of the same ternary — see line 113.",
+  "src/actions/settings.ts:117": "the \"anthropic\" arm of the same ternary — see line 113; " +
     "this is the comparison that was added, moving openrouter off the anthropic default.",
   "src/lib/ai-settings-write.ts:97": "one of four INDEPENDENT `provider === X && encrypted` " +
     "ternaries, one per key column of nextKeyState — each keys off its own literal with no " +
@@ -260,16 +260,16 @@ const ALLOWLIST: Record<string, string> = {
     "Action despite taking a caller-supplied userId.)",
   "src/lib/ai-settings-write.ts:101": "same independent-ternary shape as line 97 — see that entry.",
   "src/lib/ai-settings-write.ts:105": "same independent-ternary shape as line 97 — see that entry.",
-  "src/actions/settings.ts:223": "clearApiKey's `patch` ternary — the final `else` arm is " +
+  "src/actions/settings.ts:241": "clearApiKey's `patch` ternary — the final `else` arm is " +
     "the literal `{ openrouterApiKeyEncrypted: null }`, so the three narrowed comparisons " +
     "plus that default are exhaustive over AiProvider. (Line shifted again by Task 5's fix " +
     "round 1, which moved applyAiKeyChange and its helpers out of this file entirely — " +
     "was line 339, originally line 314.)",
-  "src/actions/settings.ts:225": "same ternary as line 223 — see that entry.",
-  "src/actions/settings.ts:227": "same ternary as line 223 — see that entry.",
+  "src/actions/settings.ts:243": "same ternary as line 241 — see that entry.",
+  "src/actions/settings.ts:245": "same ternary as line 241 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:225": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx:274": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +

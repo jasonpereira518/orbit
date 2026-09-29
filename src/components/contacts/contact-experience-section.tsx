@@ -2,9 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { format } from "date-fns";
-import { Building2, GraduationCap, Sparkles } from "lucide-react";
+import { ArrowRightLeft, Building2, GraduationCap, Sparkles } from "lucide-react";
 import {
   formatExperienceDates,
+  jobChangeSentence,
   type ExperienceEntry,
 } from "@/lib/contact-profile-format";
 import { findContactWorkHistory } from "@/actions/contact-profile";
@@ -45,6 +46,21 @@ export type ExperienceSectionProps = {
   linkedinUrl: string | null;
   /** Work history is found by a web search on the person's own AI key. */
   canSearchWeb: boolean;
+  /** Logged job moves, newest first — survives every history refresh. */
+  moves: Array<{
+    id: string;
+    kind: "joined" | "left" | "title_change";
+    fromOrg: string | null;
+    fromTitle: string | null;
+    toOrg: string | null;
+    toTitle: string | null;
+    detectedAt: string;
+  }>;
+  /**
+   * When the background check looks at this contact again. Null unless it is a real date
+   * ahead — the loader drops a lease or an overdue check (`getWorkHistoryTracking`).
+   */
+  nextCheckAt: string | null;
 };
 
 /** What to say when a search came back with nothing to store. */
@@ -147,6 +163,8 @@ export function ContactExperienceSection({
   profile,
   linkedinUrl,
   canSearchWeb,
+  moves,
+  nextCheckAt,
 }: ExperienceSectionProps) {
 
   // --- empty state: this section is the feature's entry point, not a blank card ---
@@ -207,6 +225,27 @@ export function ContactExperienceSection({
         )}
         {profile.about && <ExpandableText text={profile.about} lines={4} />}
 
+        {moves.length > 0 && (
+          <div>
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <ArrowRightLeft className="size-3.5" aria-hidden /> Career moves
+            </p>
+            <ul>
+              {moves.map((move) => (
+                <li
+                  key={move.id}
+                  className="border-b border-border/50 py-2.5 last:border-b-0 last:pb-0"
+                >
+                  <p className="text-sm font-medium text-ink">{jobChangeSentence(move)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Noticed {format(new Date(move.detectedAt), "MMM yyyy")}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {roles.length > 0 && (
           <div>
             <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -250,8 +289,9 @@ export function ContactExperienceSection({
             {profile.source === "extension"
               ? `From LinkedIn · captured ${format(new Date(profile.capturedAt), "MMM d, yyyy")}`
               : profile.source === "web"
-                ? `Found by web search · ${format(new Date(profile.capturedAt), "MMM d, yyyy")} · may be incomplete`
+                ? `Found by web search · checked ${format(new Date(profile.capturedAt), "MMM d, yyyy")} · may be incomplete`
                 : "From Apollo, not their LinkedIn page directly"}
+            {nextCheckAt && ` · next check ~${format(new Date(nextCheckAt), "MMM yyyy")}`}
             {profile.warnings.length > 0 && " · This capture may be incomplete."}
           </p>
           {profile.source !== "extension" && linkedinUrl && canSearchWeb && (
