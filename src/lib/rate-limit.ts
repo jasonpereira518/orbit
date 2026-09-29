@@ -133,6 +133,13 @@ export const RATE_LIMITS = {
    * out — so a day has a ceiling that no ordinary use of LinkedIn pulls comes near.
    */
   workHistoryResearch: { limit: 60, windowSec: 86_400 },
+  /**
+   * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
+   * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
+   * up the lookups a person clicks for; every sweep search also counts against that one,
+   * so the two together still stop at its 60.
+   */
+  workHistoryBackground: { limit: 20, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**

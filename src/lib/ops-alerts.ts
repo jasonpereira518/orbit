@@ -49,6 +49,7 @@ export type OpsSnapshot = {
      * a feed that stopped being read is indistinguishable from a quiet hiring season.
      */
     jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    workHistory: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
   processStalledRecent: CronRunState[];
@@ -174,6 +175,12 @@ export const CALENDAR_DISARM_BURST = 5;
  * `warning`, never `critical`: nobody is paged because an internship notification is late.
  */
 const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * The work-history sweep runs hourly (ops.yml, :37); six hours of silence is five missed
+ * runs, not GitHub's ordinary lag. `warning`: a job move noticed a day late costs nothing.
+ */
+const WORK_HISTORY_SILENT_MS = 6 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -373,6 +380,32 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Job feed sweep ${jobFeed.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${jobFeed.lastStartedAt?.toISOString() ?? "unknown"} ended ${jobFeed.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // And the same pair for the work-history sweep. `partial` is its ordinary shape too — a
+  // run that handed unstarted claims back when its time ran out.
+  const workHistory = s.cron.workHistory;
+  const workHistorySilentFor = workHistory.lastStartedAt
+    ? now.getTime() - workHistory.lastStartedAt.getTime()
+    : null;
+  if (workHistorySilentFor === null || workHistorySilentFor > WORK_HISTORY_SILENT_MS) {
+    out.push({
+      id: "workhistory.schedule_missed",
+      severity: "warning",
+      title: "Work-history sweep has stopped running",
+      detail: workHistory.lastStartedAt
+        ? `Last started ${workHistory.lastStartedAt.toISOString()}; contacts' job moves are not being noticed.`
+        : "No run has ever been recorded; contacts' job moves are not being noticed.",
+      href: "/admin/health",
+    });
+  } else if (workHistory.lastState === "failed" || workHistory.lastState === "stale") {
+    out.push({
+      id: "workhistory.run_failed",
+      severity: "warning",
+      title: `Work-history sweep ${workHistory.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${workHistory.lastStartedAt?.toISOString() ?? "unknown"} ended ${workHistory.lastState}.`,
       href: "/admin/health",
     });
   }

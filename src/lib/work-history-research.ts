@@ -35,6 +35,8 @@ import {
 } from "@/lib/contact-profile";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
 import { internalFetch } from "@/lib/internal-auth";
+import { detectJobChanges, loadJobBaseline, recordJobChanges } from "@/lib/job-changes";
+import { updateContactForUser } from "@/lib/contact-writes";
 import { reportError } from "@/lib/report-error";
 
 /** A web-found history is re-researched at most this often on its own. */
@@ -143,8 +145,72 @@ export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subje
   };
 };
 
+/** Re-check intervals by closeness tier, in days. See `nextWorkHistoryDue`. */
+export const WORK_HISTORY_INTERVAL_DAYS = {
+  inner: 30,
+  mid: 60,
+  outer: 120,
+  /** Never talked to and never rated: a name from an import. */
+  cold: 180,
+} as const;
+
+/** ±20% — the same spread `backoffMs` uses, so contacts checked together drift apart. */
+const DUE_JITTER = 0.2;
+
+export type WorkHistoryCadenceSubject = {
+  closenessTier: "inner" | "mid" | "outer" | null;
+  lastInteractionAt: Date | null;
+  statedCloseness: number | null;
+  priorityLevel: number;
+};
+
+/** The re-check interval for one contact, in days, before jitter. */
+export function workHistoryIntervalDays(contact: WorkHistoryCadenceSubject): number {
+  if (contact.priorityLevel > 0) return WORK_HISTORY_INTERVAL_DAYS.inner;
+  if (contact.closenessTier) return WORK_HISTORY_INTERVAL_DAYS[contact.closenessTier];
+  if (!contact.lastInteractionAt && contact.statedCloseness === null) return WORK_HISTORY_INTERVAL_DAYS.cold;
+  return WORK_HISTORY_INTERVAL_DAYS.outer;
+}
+
+function jittered(ms: number, random: () => number): number {
+  return Math.round(ms * (1 - DUE_JITTER + random() * 2 * DUE_JITTER));
+}
+
 /**
- * Research and store one contact's work history.
+ * When this contact is next due a re-check, given how the last attempt ended.
+ *
+ * The jitter is the stagger: a thousand contacts imported in one afternoon are all first
+ * checked within days of each other, and without it they would stay in lockstep forever —
+ * the same thousand searches landing on the same day every cycle.
+ */
+export function nextWorkHistoryDue(
+  contact: WorkHistoryCadenceSubject,
+  outcome: WorkHistoryOutcome,
+  now: Date,
+  options: { from?: Date; random?: () => number } = {},
+): Date {
+  const random = options.random ?? Math.random;
+  const day = 86_400_000;
+  switch (outcome) {
+    case "error":
+      return new Date(now.getTime() + jittered(day, random));
+    case "rate_limited": {
+      // The day's allowance is spent: the next UTC day, spread over its first hours.
+      const tomorrow = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+      return new Date(tomorrow + Math.round(random() * 6 * 3_600_000));
+    }
+    case "no_ai":
+      return new Date(now.getTime() + jittered(7 * day, random));
+    default: {
+      const from = options.from ?? now;
+      return new Date(from.getTime() + jittered(workHistoryIntervalDays(contact) * day, random));
+    }
+  }
+}
+
+/**
+ * Research and store one contact's work history, log any job move it reveals, and set when
+ * the contact is next due a re-check.
  *
  * `force` (the profile's own button) skips the freshness check; nothing skips identity.
  * Never throws — every outcome is a value, because the callers run it in the background
@@ -153,79 +219,179 @@ export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subje
 export async function researchContactWorkHistory(
   userId: string,
   contactId: string,
-  options: { force?: boolean; researcher?: WorkHistoryResearcher; now?: Date } = {},
+  options: {
+    force?: boolean;
+    researcher?: WorkHistoryResearcher;
+    now?: Date;
+    random?: () => number;
+    /**
+     * An extra allowance to spend just before searching — the sweep's background budget.
+     * False means it is spent, reported as `rate_limited`. Called only when a search will
+     * really run, so a fresh or extension-owned contact costs nothing from it.
+     */
+    spend?: () => Promise<boolean>;
+  } = {},
 ): Promise<WorkHistoryOutcome> {
-  const research = options.researcher ?? researchWithWebSearch;
   const now = options.now ?? new Date();
+  let cadence: WorkHistoryCadenceSubject | null = null;
+  let freshFrom: Date | undefined;
+  let outcome: WorkHistoryOutcome;
   try {
-    const db = await getDb();
-    const contact = await db.query.contacts.findFirst({
-      where: and(eq(contacts.userId, userId), eq(contacts.id, contactId)),
-      columns: {
-        fullName: true,
-        title: true,
-        company: true,
-        location: true,
-        school: true,
-        linkedinUrl: true,
-      },
-    });
-    if (!contact) return "missing";
-    // A LinkedIn URL is what makes this a lookup rather than a guess about a name.
-    if (!contact.linkedinUrl?.trim()) return "no_anchor";
-
-    const stored = await db.query.contactProfiles.findFirst({
-      where: and(eq(contactProfiles.userId, userId), eq(contactProfiles.contactId, contactId)),
-      columns: { source: true, capturedAt: true },
-    });
-    if (stored?.source === "extension") return "outranked";
-    if (
-      !options.force &&
-      stored?.source === "web" &&
-      now.getTime() - stored.capturedAt.getTime() < WORK_HISTORY_REFRESH_DAYS * 86_400_000
-    ) {
-      return "fresh";
-    }
-
-    if (!options.researcher && !(await userCanUseAi(userId))) return "no_ai";
-
-    try {
-      await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
-    } catch (err) {
-      if (isRateLimitedError(err)) return "rate_limited";
-      throw err;
-    }
-
-    const answer = await research(userId, {
-      fullName: contact.fullName,
-      title: contact.title,
-      company: contact.company,
-      location: contact.location,
-      school: contact.school,
-      linkedinUrl: contact.linkedinUrl,
-    });
-    if (!answer.confident) return answer.experiences.length ? "unsure" : "not_found";
-    if (!answer.experiences.length) return "not_found";
-
-    const result = await saveContactProfile(userId, contactId, {
-      source: "web",
-      sourceUrl: contact.linkedinUrl,
-      adapterVersion: "web-search-1",
-      capturedAt: now,
-      warnings: [],
-      headline: answer.headline,
-      about: null,
-      skills: [],
-      certifications: [],
-      volunteering: [],
-      publications: [],
-      experiences: answer.experiences,
-    });
-    if (result.written) return "saved";
-    return result.reason === "outranked" ? "outranked" : "not_found";
+    const run = await researchOnce(userId, contactId, { ...options, now });
+    outcome = run.outcome;
+    cadence = run.cadence;
+    freshFrom = run.freshFrom;
   } catch {
-    return "error";
+    outcome = "error";
   }
+
+  // Every outcome reschedules, whoever asked: a contact pulled from LinkedIn today is not
+  // due again tomorrow just because the sweep has not seen it yet.
+  if (outcome !== "missing") {
+    try {
+      const db = await getDb();
+      if (!cadence) {
+        const row = await db.query.contacts.findFirst({
+          where: and(eq(contacts.userId, userId), eq(contacts.id, contactId)),
+          columns: { closenessTier: true, lastInteractionAt: true, statedCloseness: true, priorityLevel: true },
+        });
+        cadence = row ?? null;
+      }
+      if (cadence) {
+        await db
+          .update(contacts)
+          .set({
+            workHistoryDueAt: nextWorkHistoryDue(cadence, outcome, now, {
+              from: freshFrom,
+              random: options.random,
+            }),
+          })
+          .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)));
+      }
+    } catch {
+      // A missed reschedule leaves the lease to expire, which makes it due again: safe.
+    }
+  }
+  return outcome;
+}
+
+async function researchOnce(
+  userId: string,
+  contactId: string,
+  options: {
+    force?: boolean;
+    researcher?: WorkHistoryResearcher;
+    now: Date;
+    spend?: () => Promise<boolean>;
+  },
+): Promise<{ outcome: WorkHistoryOutcome; cadence: WorkHistoryCadenceSubject | null; freshFrom?: Date }> {
+  const research = options.researcher ?? researchWithWebSearch;
+  const now = options.now;
+  const db = await getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.userId, userId), eq(contacts.id, contactId)),
+    columns: {
+      fullName: true,
+      title: true,
+      company: true,
+      location: true,
+      school: true,
+      linkedinUrl: true,
+      closenessTier: true,
+      lastInteractionAt: true,
+      statedCloseness: true,
+      priorityLevel: true,
+    },
+  });
+  if (!contact) return { outcome: "missing", cadence: null };
+  const cadence: WorkHistoryCadenceSubject = contact;
+  // A LinkedIn URL is what makes this a lookup rather than a guess about a name.
+  if (!contact.linkedinUrl?.trim()) return { outcome: "no_anchor", cadence };
+
+  const stored = await db.query.contactProfiles.findFirst({
+    where: and(eq(contactProfiles.userId, userId), eq(contactProfiles.contactId, contactId)),
+    columns: { source: true, capturedAt: true },
+  });
+  if (stored?.source === "extension") return { outcome: "outranked", cadence };
+  if (
+    !options.force &&
+    stored?.source === "web" &&
+    now.getTime() - stored.capturedAt.getTime() < WORK_HISTORY_REFRESH_DAYS * 86_400_000
+  ) {
+    // Next check counts from the search that made it fresh, not from now.
+    return { outcome: "fresh", cadence, freshFrom: stored.capturedAt };
+  }
+
+  if (!options.researcher && !(await userCanUseAi(userId))) return { outcome: "no_ai", cadence };
+  if (options.spend && !(await options.spend())) return { outcome: "rate_limited", cadence };
+
+  try {
+    await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
+  } catch (err) {
+    if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
+    throw err;
+  }
+
+  const answer = await research(userId, {
+    fullName: contact.fullName,
+    title: contact.title,
+    company: contact.company,
+    location: contact.location,
+    school: contact.school,
+    linkedinUrl: contact.linkedinUrl,
+  });
+  if (!answer.confident) {
+    return { outcome: answer.experiences.length ? "unsure" : "not_found", cadence };
+  }
+  if (!answer.experiences.length) return { outcome: "not_found", cadence };
+
+  // Read BEFORE the save: the save replaces the snapshot this compares against.
+  const baseline = await loadJobBaseline(userId, contactId, now);
+
+  const result = await saveContactProfile(userId, contactId, {
+    source: "web",
+    sourceUrl: contact.linkedinUrl,
+    adapterVersion: "web-search-1",
+    capturedAt: now,
+    warnings: [],
+    headline: answer.headline,
+    about: null,
+    skills: [],
+    certifications: [],
+    volunteering: [],
+    publications: [],
+    experiences: answer.experiences,
+  });
+  if (!result.written) {
+    return { outcome: result.reason === "outranked" ? "outranked" : "not_found", cadence };
+  }
+
+  // The log is best-effort relative to the history itself, which is already saved.
+  try {
+    const moves = await recordJobChanges(
+      userId,
+      contactId,
+      detectJobChanges(baseline, answer.experiences),
+      { source: "web", now }
+    );
+    // Nothing known about where they work until now: fill it in, without calling it a move.
+    if (!moves.length && !baseline.hasBaseline) {
+      const current = answer.experiences.find((e) => e.kind === "role" && e.isCurrent);
+      if (current) {
+        await updateContactForUser(
+          userId,
+          contactId,
+          { company: current.organization, ...(current.title ? { title: current.title } : {}) },
+          { skipRevalidate: true, skipEmbedding: true, skipSummary: true }
+        );
+      }
+    }
+  } catch (err) {
+    // The history is stored, and the snapshot a later check compares against is now the
+    // new one — so a move missed here is not re-detected. Reported, not swallowed.
+    reportError(err, { where: "job.work-history.job-changes", userId, level: "warning" });
+  }
+  return { outcome: "saved", cadence };
 }
 
 /**

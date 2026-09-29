@@ -284,6 +284,35 @@ export async function mergeContacts(
       )
     );
 
+    // 4b'. contact_job_changes: unique on (user_id, contact_id, dedupe_key), so a move both
+    //      contacts logged (the same person, researched twice) collides. Same shape as
+    //      contact_tags: move what does not collide, archive-and-drop the duplicate.
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "contact_job_changes",
+        sql`UPDATE contact_job_changes j SET contact_id = ${winnerId}::uuid
+             WHERE j.contact_id = ${loserId}::uuid AND j.user_id = ${userId}
+               AND NOT EXISTS (
+                 SELECT 1 FROM contact_job_changes w
+                  WHERE w.user_id = ${userId}
+                    AND w.contact_id = ${winnerId}::uuid
+                    AND w.dedupe_key = j.dedupe_key)
+         RETURNING id`
+      )
+    );
+    statements.push(
+      recordDeleted(
+        tx,
+        mergeId,
+        "contact_job_changes",
+        sql`DELETE FROM contact_job_changes
+             WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
+         RETURNING to_jsonb(contact_job_changes) AS row`
+      )
+    );
+
     // 4c. interaction_mentions: unique on (interaction_id, contact_id). The interactions
     //     repoint above may have just produced pairs that now collide.
     statements.push(
@@ -728,6 +757,7 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
     }
     for (const table of [
       "contact_tags",
+      "contact_job_changes",
       "interaction_mentions",
       "contact_profiles",
       "contact_embeddings",

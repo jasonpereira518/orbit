@@ -103,6 +103,7 @@ function main() {
     "/api/avatars/encode",
     "/api/embeddings/backfill",
     "/api/work-history/research",
+    "/api/work-history/sweep",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
     "/api/sync/run",

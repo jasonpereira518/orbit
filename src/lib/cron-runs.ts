@@ -21,7 +21,8 @@ export type CronJobName =
   | "jobs.feed-sweep"
   | "ops.sweep"
   | "sync.run"
-  | "webhooks.drain";
+  | "webhooks.drain"
+  | "work-history.sweep";
 
 export type CronRunStatus = "ok" | "partial" | "failed";
 
