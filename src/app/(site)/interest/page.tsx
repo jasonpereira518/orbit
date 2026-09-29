@@ -8,6 +8,7 @@ import { InterestHero, type HeroInitial } from "@/components/interest/interest-h
 import { ReferralTracker } from "@/components/interest/referral-tracker";
 import { RingsBackdrop } from "@/components/interest/rings-backdrop";
 import { AppDemo } from "@/components/interest/app-demo/app-demo";
+import { DemoPeek } from "@/components/interest/demo-peek";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
@@ -357,6 +358,23 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
               <div className="mt-10">
                 <AppDemo />
               </div>
+            </section>
+
+            {/* Phones: stills of the same demo to swipe through. */}
+            <section className="mt-24 md:hidden" aria-labelledby="waitlist-peek">
+              <Reveal className="reveal-celestial">
+                <h2 id="waitlist-peek" className={`${SECTION_TITLE} text-center`}>
+                  Take a peek.
+                </h2>
+              </Reveal>
+              <Reveal className="reveal-celestial" delay={80}>
+                <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
+                  A preview with a made-up network. Swipe through.
+                </p>
+              </Reveal>
+              <Reveal className="reveal-celestial mt-8 block" delay={120}>
+                <DemoPeek />
+              </Reveal>
             </section>
           </>
         )}
