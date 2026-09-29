@@ -53,6 +53,8 @@ export const RECRUITER =
 const EXECUTIVE = /\b(head of|s?vp|evp|vice president|director)\b/i;
 /** For recruiters, "partner" is a job title ("Talent Partner"), not an ownership stake. */
 const RECRUITER_EXEC = /\b(chief|co-?founder|founder)\b/i;
+/** Titles that match FOUNDER_EXEC but are not actually leaders — "Product Owner" not ownership, "Partner" not a stake. */
+const NOT_LEADER = /\b(product owner|partner (?:engineer|manager|marketing|success|solutions?)|(?:channel|client|business|strategic) partner|student)\b/i;
 
 const FUNCTION_RULES: Array<[RoleClusterKey, RegExp]> = [
   ["design", /\b(design(?:er)?|ux|creative director|art director|illustrator)\b/i],
@@ -76,7 +78,7 @@ export function classifyTitle(title: string | null | undefined): TitleRole {
   if (RECRUITER.test(value)) {
     return { fn: "people", isLeader: EXECUTIVE.test(value) || RECRUITER_EXEC.test(value) };
   }
-  const isLeader = FOUNDER_EXEC.test(value) || EXECUTIVE.test(value);
+  const isLeader = (FOUNDER_EXEC.test(value) && !NOT_LEADER.test(value)) || EXECUTIVE.test(value);
   for (const [fn, pattern] of FUNCTION_RULES) {
     if (pattern.test(value)) return { fn, isLeader };
   }
