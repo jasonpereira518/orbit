@@ -72,7 +72,7 @@ export function CreditsCard() {
       if (result?.status === "granted") toast.success("250 credits added");
       else if (result?.status === "processing") toast.info("Your payment is still clearing — the credits arrive the moment it does");
       await load();
-      if (confirm) router.replace("/settings#settings-ai", { scroll: false });
+      if (confirm) router.replace("/settings?integration=ai", { scroll: false });
     })();
     return () => {
       live = false;

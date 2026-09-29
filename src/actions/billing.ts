@@ -152,8 +152,9 @@ export async function startCreditPackCheckout(): Promise<CheckoutResult> {
       ...(row?.stripeCustomerId
         ? { customer: row.stripeCustomerId }
         : { customer_email: profile?.email || undefined, customer_creation: "always" as const }),
-      success_url: `${baseUrl}/settings?credits=added&session_id={CHECKOUT_SESSION_ID}#settings-ai`,
-      cancel_url: `${baseUrl}/settings#settings-ai`,
+      // The AI settings are a dialog opened by `?integration=ai` (see `integrationHref`).
+      success_url: `${baseUrl}/settings?integration=ai&credits=added&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/settings?integration=ai`,
     });
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
     return { url: session.url };

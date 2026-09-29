@@ -69,6 +69,22 @@ run(async () => {
   check("the new cycle starts from a full 200", bal.allowance?.granted === 200 * 10_000 && bal.allowance.remaining === 200 * 10_000, bal.allowance);
   check("…and last cycle's 150 unused credits do not roll over", bal.spendable === 200 * 10_000, bal.spendable);
 
+  console.log("\nThe real billing period adopts the provisional grant");
+  await reset();
+  // Verify-on-return mirrored the plan before Stripe sent the period: calendar fallback.
+  const provisional = ledger.creditPeriodFor({ subscriptionPeriodEnd: null }, new Date());
+  await ledger.ensureAllowance(USER, "orbit", provisional);
+  await db.update(creditGrants).set({ microsRemaining: 170 * 10_000 }).where(eq(creditGrants.userId, USER));
+  const real = { start: new Date(Date.now() - DAY), end: new Date(Date.now() + 29 * DAY) };
+  await ledger.ensureAllowance(USER, "max", real);
+  grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
+  check("still one allowance grant — never a second, overlapping one", grants.length === 1, grants.length);
+  check("…moved onto the real billing period", grants[0].periodStart?.getTime() === real.start.getTime() && grants[0].periodEnd?.getTime() === real.end.getTime());
+  check("…raised to Max's 500, with the 30 already used still used",
+    grants[0].microsGranted === 500 * 10_000 && grants[0].microsRemaining === 470 * 10_000, grants[0]);
+  bal = await ledger.getCreditBalance(USER, "max", { subscriptionPeriodStart: real.start, subscriptionPeriodEnd: real.end });
+  check("…and the balance resets on the real renewal date", bal.allowance?.periodEnd === real.end.toISOString() && bal.spendable === 470 * 10_000, bal);
+
   console.log("\nPro → Max mid-cycle");
   await reset();
   await ledger.ensureAllowance(USER, "orbit", cycle1);

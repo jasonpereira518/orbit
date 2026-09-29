@@ -55,9 +55,21 @@ const PRICE_LOOKUP_KEYS = {
   pack: "orbit_credit_pack_250",
 } as const;
 
+/**
+ * Descriptions show on Stripe's checkout page and invoices, so they follow the same rule as
+ * the pricing page: shipped features only (no Outreach, Events or extension).
+ */
 const PRODUCTS = {
-  pro: { name: "Orbit Pro", metadata: { orbit_product: "pro" } },
-  max: { name: "Orbit Max", metadata: { orbit_product: "max" } },
+  pro: {
+    name: "Orbit Pro",
+    description: "Unlimited contacts, AI included (200 credits a month), recruiter tracking, and meeting transcription.",
+    metadata: { orbit_product: "pro" },
+  },
+  max: {
+    name: "Orbit Max",
+    description: "Everything in Orbit Pro with 500 AI credits a month, more transcription and enrichment, and the REST API.",
+    metadata: { orbit_product: "max" },
+  },
   pack: {
     name: "Orbit credit pack",
     description: "250 AI credits for Orbit Pro or Orbit Max. Credits roll over while you're subscribed.",
@@ -161,9 +173,18 @@ async function main() {
         });
       }
       priceIds[which] = existingPrice.id;
-      productIds[which] =
+      const productId =
         typeof existingPrice.product === "string" ? existingPrice.product : existingPrice.product.id;
+      productIds[which] = productId;
       console.log(`  ok  price ${lookupKey} = ${existingPrice.id}`);
+      const product = await stripe.products.retrieve(productId);
+      const wantedDescription = PRODUCTS[which].description;
+      if (product.description !== wantedDescription) {
+        steps.push({
+          describe: `set the ${PRODUCTS[which].name} description (customer-facing: shipped features only)`,
+          run: () => stripe.products.update(productId, { description: wantedDescription }),
+        });
+      }
       continue;
     }
 
@@ -172,10 +193,14 @@ async function main() {
     let productId = product?.id;
     if (product) {
       console.log(`  ok  product ${productSpec.name} = ${product.id}`);
-      if (product.metadata?.orbit_product !== productSpec.metadata.orbit_product) {
+      if (
+        product.metadata?.orbit_product !== productSpec.metadata.orbit_product ||
+        product.description !== productSpec.description
+      ) {
         steps.push({
-          describe: `tag product ${product.id} with orbit_product=${productSpec.metadata.orbit_product}`,
-          run: () => stripe.products.update(product.id, { metadata: productSpec.metadata }),
+          describe: `tag product ${product.id} with orbit_product=${productSpec.metadata.orbit_product} and its description`,
+          run: () =>
+            stripe.products.update(product.id, { metadata: productSpec.metadata, description: productSpec.description }),
         });
       }
     } else {

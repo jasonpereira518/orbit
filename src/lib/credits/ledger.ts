@@ -1,4 +1,4 @@
-import { and, eq, gt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { creditGrants, creditHolds } from "@/db/schema";
 import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
@@ -81,18 +81,76 @@ export function creditPeriodFor(
 }
 
 /**
- * Make sure this cycle's allowance grant exists — the reset. Idempotent on
- * `allowance:<user>:<period start>`. When the plan's allowance is larger than the grant
- * (Pro → Max mid-cycle, which Stripe applies immediately), the difference is added to the
- * cycle: credits already used stay used, and the rest of the cycle runs on Max's allowance.
- * Never lowers a grant: a Max → Pro switch takes effect at the next renewal.
+ * Make sure this cycle's allowance grant exists — the reset.
+ *
+ * ONE allowance covers any moment. When a grant already covers `now`, it is ADOPTED rather
+ * than joined by a second: the first grant of a new subscription is often made on the
+ * calendar-month fallback (verify-on-return mirrors the plan before Stripe has sent the
+ * billing period), and when the real period arrives that grant moves onto it — credits
+ * already used stay used. Two overlapping grants would both be spendable, which is exactly
+ * the double allowance this rule exists to prevent. Once a cycle has ended no grant covers
+ * `now`, so the next call creates the new cycle's: the reset, with nothing rolled over.
+ *
+ * When the plan's allowance is larger than the grant (Pro → Max mid-cycle, which Stripe
+ * applies immediately) the difference is added to the cycle. Never lowered: a Max → Pro
+ * switch takes effect at the next renewal.
  */
-export async function ensureAllowance(userId: string, plan: Plan, period: CreditPeriod): Promise<void> {
+export async function ensureAllowance(
+  userId: string,
+  plan: Plan,
+  period: CreditPeriod,
+  now = new Date()
+): Promise<void> {
   const credits = PLAN_CONFIG[plan].monthlyCredits;
   if (!credits || (plan !== "orbit" && plan !== "max")) return;
   const micros = creditsToMicros(credits);
-  const db = await getDb();
   const grantKey = `allowance:${userId}:${period.start.toISOString()}`;
+  const db = await getDb();
+  const [current] = await db
+    .select()
+    .from(creditGrants)
+    .where(
+      and(
+        eq(creditGrants.userId, userId),
+        eq(creditGrants.kind, "allowance"),
+        eq(creditGrants.status, "active"),
+        lte(creditGrants.periodStart, now),
+        gt(creditGrants.periodEnd, now)
+      )
+    )
+    .orderBy(desc(creditGrants.createdAt))
+    .limit(1);
+
+  if (current) {
+    const samePeriod =
+      current.periodStart?.getTime() === period.start.getTime() && current.periodEnd?.getTime() === period.end.getTime();
+    const raise = current.microsGranted < micros;
+    if (samePeriod && !raise) return;
+    // Only move onto a period that also covers now; a stale mirror never drags a grant
+    // somewhere it would stop counting.
+    const adopt = !samePeriod && period.start <= now && period.end > now;
+    if (!adopt && !raise) return;
+    await db
+      .update(creditGrants)
+      .set({
+        ...(adopt ? { periodStart: period.start, periodEnd: period.end, grantKey } : {}),
+        ...(raise
+          ? {
+              plan,
+              microsGranted: micros,
+              microsRemaining: sql`${creditGrants.microsRemaining} + (${micros} - ${creditGrants.microsGranted})`,
+            }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(creditGrants.id, current.id))
+      .catch(async (err) => {
+        // A concurrent call adopted the same period first (grant_key is unique): fine.
+        if (!String(err).includes("credit_grants_key_uidx")) throw err;
+      });
+    return;
+  }
+
   await db
     .insert(creditGrants)
     .values({
@@ -106,21 +164,6 @@ export async function ensureAllowance(userId: string, plan: Plan, period: Credit
       periodEnd: period.end,
     })
     .onConflictDoNothing({ target: creditGrants.grantKey });
-  await db
-    .update(creditGrants)
-    .set({
-      plan,
-      microsRemaining: sql`${creditGrants.microsRemaining} + (${micros} - ${creditGrants.microsGranted})`,
-      microsGranted: micros,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(creditGrants.grantKey, grantKey),
-        eq(creditGrants.status, "active"),
-        sql`${creditGrants.microsGranted} < ${micros}`
-      )
-    );
 }
 
 /** SQL: spendable micros for `userId` now, before holds. */
@@ -249,7 +292,7 @@ export async function getCreditBalance(
   const period = creditPeriodFor(row, now);
   // Read-only callers (the notification poll) pass `ensure: false`: a missing allowance just
   // reads as none yet, and the next AI call or visit to the card creates it.
-  if (opts.ensure !== false && PLAN_CONFIG[plan].features.hostedAi) await ensureAllowance(userId, plan, period);
+  if (opts.ensure !== false && PLAN_CONFIG[plan].features.hostedAi) await ensureAllowance(userId, plan, period, now);
   const db = await getDb();
   const [grants, holds] = await Promise.all([
     db
