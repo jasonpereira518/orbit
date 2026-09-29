@@ -32,6 +32,7 @@ import {
   contactEmbeddings,
   memoryChunks,
   contactExperiences,
+  contactCareerMoves,
   contactIdentities,
   contactMerges,
   contactProfiles,
@@ -120,7 +121,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * the same bug class `scripts/smoke-purge.ts` exists to catch.
  *
  * Every table carrying a `user_id` must be handled by some step here, either by an explicit
- * delete or by a cascade from one. The nine covered by cascade, so deliberately absent:
+ * delete or by a cascade from one. The ten covered by cascade, so deliberately absent:
  *   - `chat_messages`        -> cascades from `chat_threads`
  *   - `import_job_rows`      -> cascades from `imports`
  *   - `action_items`         -> cascades from `contacts` and `interactions`
@@ -129,6 +130,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *   - `contact_profiles`     -> cascades from `contacts` (verified by `scripts/smoke-purge.ts`,
  *                               not assumed — see that script's header)
  *   - `contact_experiences`  -> cascades from `contacts` (same)
+ *   - `contact_career_moves`  -> cascades from `contacts` (same)
  *   - `contact_opportunities`-> cascades from `contacts`. Its `source_interaction_id` is
  *                               `on delete set null`, so the interaction FK is NOT what
  *                               covers it — the contact one is.
@@ -603,6 +605,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(contactBriefs, "contact_id"),
       own(contactProfiles),
       own(contactExperiences),
+      own(contactCareerMoves),
       joined("contact_tags", (userId, limit, offset) => sql`SELECT ct.* FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.user_id = ${userId} ORDER BY ct.id LIMIT ${limit} OFFSET ${offset}`),
     ],
     // The `implies` list in `DATA_CATEGORY_META` is what stops this step from quietly

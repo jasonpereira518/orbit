@@ -18,6 +18,7 @@ import type {
   RadarAiNote,
   RadarApolloCursor,
   RadarAutopilot,
+  RadarAutopilotAction,
   RadarDraft,
   RadarEvidence,
   RadarFeedbackAction,
@@ -420,6 +421,13 @@ export const userSettings = pgTable("user_settings", {
    */
   timelineBackfillEnabled: integer("timeline_backfill_enabled").default(1).notNull(),
   /**
+   * Whether the hourly sweep keeps this account's contacts' work history current with web
+   * searches on their own AI key (`/api/work-history/sweep`). Only the background sweep:
+   * LinkedIn pulls and the profile's "Find work history" button run regardless. Integer
+   * 0/1, not boolean, per this table's convention (see `timelineBackfillEnabled`).
+   */
+  workHistoryAutoEnabled: integer("work_history_auto_enabled").default(1).notNull(),
+  /**
    * One-shot marker: has this row already been force-flipped to
    * `timeline_backfill_enabled = 1` by the v108 migration? Exists only so that migration's
    * `UPDATE` runs exactly once per row rather than every time `alters` re-runs (every future
@@ -558,6 +566,14 @@ export const contacts = pgTable(
      * skips a contact whose last attempt is inside AVATAR_RECHECK_DAYS.
      */
     profileImageCheckedAt: timestamp("profile_image_checked_at"),
+    /**
+     * When this contact's work history is next due a web-search re-check. NULL = never
+     * checked, which the sweep treats as due now. Also the sweep's lease: a claim pushes it
+     * ten minutes out, so an abandoned claim comes back on its own. Set after every
+     * research outcome by `researchContactWorkHistory` (lib/work-history-research.ts), on a
+     * closeness-tiered, jittered interval — see `nextWorkHistoryDue`.
+     */
+    workHistoryDueAt: timestamp("work_history_due_at", { withTimezone: true }),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —
@@ -1498,8 +1514,11 @@ export const contactBriefs = pgTable("contact_briefs", {
 export type ContactExperienceKind = "role" | "education";
 /**
  * Where a stored profile came from. Drives precedence in `saveContactProfile`: an
- * extension capture is a page the user actually looked at and always outranks Apollo,
- * which is a third-party inference.
+ * extension capture is a page the user actually looked at and always outranks the two
+ * inferences — `"web"`, a work history the person's own AI model assembled from a web
+ * search (`lib/work-history-research.ts`, the producer every LinkedIn pull uses), and
+ * `"apollo"`, a third-party dataset that no longer has a producer but whose stored rows
+ * remain. The inferences replace each other; neither replaces an extension capture.
  *
  * `"extension"` currently has NO producer — the browser capture path was removed before
  * merge because its DOM readers had never run against a real LinkedIn page. The value and
@@ -1507,7 +1526,7 @@ export type ContactExperienceKind = "role" | "education";
  * `scripts/smoke-contact-profile.ts`, so restoring that path is additive rather than
  * another change to the stored shape.
  */
-export type ContactProfileSource = "extension" | "apollo";
+export type ContactProfileSource = "extension" | "web" | "apollo";
 
 export type ProfileSkill = { name: string };
 export type ProfileCertification = { name: string; issuer: string | null; year: number | null };
@@ -1588,6 +1607,47 @@ export const contactExperiences = pgTable(
   (t) => [
     index("contact_experiences_contact_idx").on(t.userId, t.contactId, t.sortIndex),
     index("contact_experiences_org_idx").on(t.userId, t.organizationNormalized),
+  ]
+);
+
+export type ContactJobChangeKind = "joined" | "left" | "title_change";
+
+/**
+ * The durable log of a contact's job moves — "left Stripe, joined Ramp as Staff PM".
+ *
+ * `contact_experiences` is replaced wholesale on every capture, so it only ever holds the
+ * latest snapshot; this table is what remembers the transitions between snapshots. Rows
+ * are written by `recordJobChanges` (lib/job-changes.ts) and never rewritten. The unique
+ * `dedupe_key` makes re-detecting the same move a no-op.
+ *
+ * NOT named `contact_job_changes`: open PR #187 (sub-agent-testing-feedback, schema v66)
+ * defines a table by that name with a different shape, and its preview build already
+ * created it on the shared preview database — where `CREATE TABLE IF NOT EXISTS` then
+ * silently kept the other shape and this table's indexes failed the migration. The same
+ * collision would reach production if both merged.
+ */
+export const contactCareerMoves = pgTable(
+  "contact_career_moves",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .references(() => contacts.id, { onDelete: "cascade" })
+      .notNull(),
+    kind: text("kind").$type<ContactJobChangeKind>().notNull(),
+    fromOrg: text("from_org"),
+    fromTitle: text("from_title"),
+    toOrg: text("to_org"),
+    toTitle: text("to_title"),
+    startedYear: integer("started_year"),
+    startedMonth: integer("started_month"),
+    source: text("source").$type<ContactProfileSource>().notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("contact_career_moves_dedupe_uidx").on(t.userId, t.contactId, t.dedupeKey),
+    index("contact_career_moves_contact_idx").on(t.userId, t.contactId, t.detectedAt),
   ]
 );
 
@@ -2056,6 +2116,8 @@ export const recommendations = pgTable(
     aiAngle: text("ai_angle"),
     /** A message written ahead of time for a Today card (`RadarDraft`). */
     draft: jsonb("draft").$type<RadarDraft>(),
+    /** What autopilot scheduled for this card, so Undo can reverse exactly that. */
+    autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
     /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),

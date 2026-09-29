@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   terms_accepted_at timestamptz,
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
+  work_history_auto_enabled integer NOT NULL DEFAULT 1,
   timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
@@ -154,6 +155,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   ai_summary text,
   notes text,
   embedding_stale_at timestamptz,
+  work_history_due_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -417,6 +419,7 @@ CREATE TABLE IF NOT EXISTS recommendations (
   ai_delta integer,
   ai_angle text,
   draft jsonb,
+  autopilot jsonb,
   first_seen_at timestamptz,
   last_seen_at timestamptz,
   seen_count integer NOT NULL DEFAULT 0,
@@ -605,6 +608,21 @@ CREATE TABLE IF NOT EXISTS contact_experiences (
   sort_index integer NOT NULL DEFAULT 0,
   source text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_career_moves (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  from_org text,
+  from_title text,
+  to_org text,
+  to_title text,
+  started_year integer,
+  started_month integer,
+  source text NOT NULL,
+  dedupe_key text NOT NULL,
+  detected_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS calendar_subscriptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2295,23 +2313,33 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // Sep 29 2026 — every ref is at 129, but the orbit-pricing-plans worktree claims 130 and
 // the linkedin-work-history worktree claims 131, so 132 is the next free integer.
 //
-// 133 = Radar P0: recommendations, radar_runs, recommendation_feedback, and
-// user_settings.radar_next_at + radar_lease_until + radar_last_run_at + radar_paused. This
-// branch first stamped 130, which collided with the orbit-pricing-plans worktree and sits
-// below main's 132, and a database at 132 would never have created the Radar tables. So the
-// merge of main at 132 takes its own number, and every database re-runs the full list once.
-// Scanned every remote ref on Sep 29 2026: 132 is the highest claimed anywhere, so 133 is
-// the next free integer.
+// 133 = contact_career_moves (the job-movement log — not "contact_job_changes", which open
+// PR #187 already created with another shape on the shared preview database),
+// contacts.work_history_due_at (the
+// staggered re-check schedule) and user_settings.work_history_auto_enabled. This branch
+// first claimed 131, but main moved to 132 meanwhile; a database already stamped 132 would
+// treat 131 as current and never add these, so it takes a new number. Scanned every local
+// and remote ref and every worktree's working src/db/index.ts on Sep 29 2026: 132 is the
+// highest claimed anywhere, so 133 is the next free integer.
 //
-// 135 = the Radar flagship: contact_signals, external_sources + external_items +
-// external_item_companies (global news), recommendations.base_score / ai_delta / ai_angle /
-// draft / first_seen_at / last_seen_at / seen_count / acted_at / outcome_at and the v2 live
-// index that covers auto_applied, contacts.bluesky_handle + mastodon_acct, and user_settings
-// radar_model / radar_autopilot / radar_capture_linkedin_activity / radar_digest_* /
-// radar_apollo_cursor. NOT 134: scanned every remote ref on Sep 29 2026 — main is at 132,
-// claude/linkedin-work-history-fdd22e also claims 133, and claude/waitlist-pass-news claims
-// 134, so 135 is the next free integer.
-export const SCHEMA_VERSION = 135;
+// Radar P0 (recommendations, radar_runs, recommendation_feedback, and
+// user_settings.radar_next_at + radar_lease_until + radar_last_run_at + radar_paused) was
+// stamped 133 on its own branch, and the Radar flagship 135 on top of it (contact_signals,
+// external_sources + external_items + external_item_companies for global news,
+// recommendations.base_score / ai_delta / ai_angle / draft / first_seen_at / last_seen_at /
+// seen_count / acted_at / outcome_at and the v2 live index that covers auto_applied,
+// contacts.bluesky_handle + mastodon_acct, and user_settings radar_model / radar_autopilot /
+// radar_capture_linkedin_activity / radar_digest_* / radar_apollo_cursor). Main took 133 for
+// the work-history log above while that branch was open, and claude/waitlist-pass-news
+// claims 134.
+//
+// 136 = merging main at 133 into the Radar branch at 135, plus recommendations.autopilot
+// (what autopilot scheduled, so its Undo reverses exactly that). A database stamped 135 by
+// the branch's preview never ran main's 133, and one stamped 133 by main never ran Radar's,
+// so the merge takes its own number and every database re-runs the full list once. Scanned
+// every remote ref on Sep 29 2026: 135 is the highest claimed anywhere, so 136 is the next
+// free integer.
+export const SCHEMA_VERSION = 136;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2643,6 +2671,11 @@ export const SCALE_DDL: string[] = [
   // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
+  // The job-movement log. The unique key makes re-detecting the same move a no-op.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_career_moves_dedupe_uidx
+     ON contact_career_moves(user_id, contact_id, dedupe_key)`,
+  `CREATE INDEX IF NOT EXISTS contact_career_moves_contact_idx
+     ON contact_career_moves(user_id, contact_id, detected_at)`,
 
   // --- Duplicate prevention --------------------------------------------------------
   //
@@ -3335,6 +3368,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // unconstrained — which matches the writer, since `upsertContactEmbedding` skips its
   // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
+  await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
 
   try {
     await client.exec(
@@ -3446,6 +3481,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "recommendations", "seen_count", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "recommendations", "acted_at", "timestamptz");
   await ensureColumn(client, "recommendations", "outcome_at", "timestamptz");
+  // v136: what autopilot scheduled for a card.
+  await ensureColumn(client, "recommendations", "autopilot", "jsonb");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -4129,6 +4166,11 @@ const alters = [
   // Schema v117: learned brand colors for companies and schools outside the curated table.
   `CREATE TABLE IF NOT EXISTS org_brand_colors (name_key text NOT NULL, kind text NOT NULL, name text NOT NULL, hex text, domain text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,
+  // Schema v133: the staggered work-history re-check schedule and its per-account switch.
+  // NULL due = never checked = due now; the sweep orders NULLs first, closest people first.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_due_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS contacts_work_history_due_idx ON contacts(user_id, work_history_due_at) WHERE linkedin_url IS NOT NULL`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS work_history_auto_enabled integer NOT NULL DEFAULT 1`,
   // Schema v133: Radar's nightly schedule, lease and pause flag for each account.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_next_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_lease_until timestamptz`,
@@ -4157,6 +4199,8 @@ const alters = [
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS acted_at timestamptz`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
   `DROP INDEX IF EXISTS recommendations_live_uidx`,
+  // Schema v136: what autopilot scheduled for a card, so its Undo reverses exactly that.
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,
 ];
 
 /**

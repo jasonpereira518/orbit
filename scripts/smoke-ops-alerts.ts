@@ -38,6 +38,7 @@ const HEALTHY: OpsSnapshot = {
     drain: { lastStartedAt: hoursAgo(0.2), lastState: "ok" },
     jobFeed: { lastStartedAt: hoursAgo(1), lastState: "ok" },
     radarRun: { lastStartedAt: hoursAgo(10), lastState: "ok" },
+    workHistory: { lastStartedAt: hoursAgo(1), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
@@ -197,6 +198,21 @@ function main() {
     Boolean(find(radar({ lastStartedAt: hoursAgo(3), lastState: "failed" }), "radar.run_failed")));
   check("  a partial run is not an alert",
     !find(radar({ lastStartedAt: hoursAgo(3), lastState: "partial" }), "radar.run_failed"));
+
+  const workHistory = (over: OpsSnapshot["cron"]["workHistory"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, workHistory: over },
+  });
+  check("the work-history sweep never ran → workhistory.schedule_missed",
+    Boolean(find(workHistory({ lastStartedAt: null, lastState: null }), "workhistory.schedule_missed")));
+  check("  silent for 8h → workhistory.schedule_missed",
+    Boolean(find(workHistory({ lastStartedAt: hoursAgo(8), lastState: "ok" }), "workhistory.schedule_missed")));
+  check("  a failed run → workhistory.run_failed",
+    Boolean(find(workHistory({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "workhistory.run_failed")));
+  check("  a partial run (claims handed back at the deadline) is not an alert",
+    !find(workHistory({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "workhistory.run_failed"));
+  check("  healthy → silent",
+    !find(HEALTHY, "workhistory.schedule_missed") && !find(HEALTHY, "workhistory.run_failed"));
 
   check("three invalid Clerk deliveries in a row → critical",
     find({ ...HEALTHY, webhooks: { ...HEALTHY.webhooks, clerk: ["invalid", "invalid", "invalid"] } }, "webhook.invalid_streak:clerk")?.severity === "critical");

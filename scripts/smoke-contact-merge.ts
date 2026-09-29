@@ -76,6 +76,7 @@ async function danglingReferences(contactId: string): Promise<string[]> {
     ["suggested_reminders", "contact_id"],
     ["action_items", "contact_id"],
     ["contact_experiences", "contact_id"],
+    ["contact_career_moves", "contact_id"],
     ["outreach_prospects", "contact_id"],
     ["user_recruiter_links", "contact_id"],
     ["event_attendees", "contact_id"],

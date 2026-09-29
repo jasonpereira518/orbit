@@ -1,4 +1,5 @@
 import {
+  BriefcaseBusiness,
   Coffee,
   Handshake,
   Mail,
@@ -42,6 +43,17 @@ export const INTERACTION_TYPES = [
     family: "written",
     retired: true,
   },
+  {
+    // Written by the work-history check (lib/job-changes.ts) when a contact changes jobs.
+    // Nobody talked to anybody, so its rows carry AI_DERIVED_SOURCE and never count as a
+    // touch; "yours" because it is a note about them, not an exchange with them.
+    value: "job_change",
+    label: "Job change",
+    hint: "They moved to a new job or role",
+    icon: BriefcaseBusiness,
+    family: "yours",
+    system: true,
+  },
 ] as const satisfies readonly {
   value: string;
   label: string;
@@ -57,6 +69,8 @@ export const INTERACTION_TYPES = [
    * and there is no honest target for it. So it stays readable and stops being writable.
    */
   retired?: true;
+  /** Written only by Orbit itself, never offered when logging — see `job_change`. */
+  system?: true;
 }[];
 
 /**
@@ -66,7 +80,7 @@ export const INTERACTION_TYPES = [
  * to render a value already in the database.
  */
 export const SELECTABLE_INTERACTION_TYPES = INTERACTION_TYPES.filter(
-  (t) => !("retired" in t && t.retired)
+  (t) => !("retired" in t && t.retired) && !("system" in t && t.system)
 );
 
 export type InteractionTypeValue = (typeof INTERACTION_TYPES)[number]["value"];
@@ -228,6 +242,7 @@ const NOUN_BY_VALUE: Record<InteractionTypeValue, string> = {
   reach_out: "note",
   note: "note",
   message: "message",
+  job_change: "job change",
 };
 
 export function interactionTypeNoun(raw: string | null | undefined): string {

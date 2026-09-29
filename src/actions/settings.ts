@@ -91,9 +91,13 @@ export async function getSettings() {
      * "add your key" or "Orbit covers AI" renders from this, never from key presence alone.
      */
     ai,
-    // Whether "Fill from Apollo" on the contact page has anything to call — computed via
-    // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
+    // Whether an Apollo key is configured, via the same resolver the Apollo calls use.
     hasApolloKey,
+    /**
+     * Whether the hourly sweep keeps contacts' work history current with web searches on
+     * this account's AI key. On unless switched off; see the column in schema.ts.
+     */
+    workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
     /**
      * Whether AI features will run — NOT whether a key is saved. A Lifetime account on
      * Orbit's managed key is `true` with no key at all; a Lifetime account that has used its
@@ -172,6 +176,20 @@ export async function saveThemePreference(theme: ThemePreference) {
     .onConflictDoUpdate({
       target: userSettings.userId,
       set: { theme, updatedAt: new Date() },
+    });
+}
+
+/** The "Keep work history current" switch on the AI settings page. */
+export async function saveWorkHistoryAutoEnabled(enabled: boolean) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const value = enabled ? 1 : 0;
+  await db
+    .insert(userSettings)
+    .values({ userId, workHistoryAutoEnabled: value })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { workHistoryAutoEnabled: value, updatedAt: new Date() },
     });
 }
 

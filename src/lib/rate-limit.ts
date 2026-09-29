@@ -51,6 +51,8 @@ const BUCKET_LABELS: Record<string, string> = {
   "avatar.resolve": "photo lookup",
   "lifetime-confirm": "checkout check",
   "poll.vote": "vote",
+  "work-history": "work-history lookup",
+  "work-history-background": "background work-history check",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -137,6 +139,19 @@ export const RATE_LIMITS = {
   apolloSearch: { limit: 20, windowSec: 86_400 },
   /** Person matches (one Apollo credit each) per user per day on the hosted key. */
   apolloEnrich: { limit: 50, windowSec: 86_400 },
+  /**
+   * Web-search work-history lookups. They run on the person's own AI key, but each one is
+   * several paid searches the person never clicked for — a pasted list or a refresh fans
+   * out — so a day has a ceiling that no ordinary use of LinkedIn pulls comes near.
+   */
+  workHistoryResearch: { limit: 60, windowSec: 86_400 },
+  /**
+   * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
+   * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
+   * up the lookups a person clicks for; every sweep search also counts against that one,
+   * so the two together still stop at its 60.
+   */
+  workHistoryBackground: { limit: 20, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**

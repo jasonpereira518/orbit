@@ -5098,6 +5098,7 @@
     "mastodonAcct": null,
     "profileImageUrl": null,
     "profileImageCheckedAt": null,
+    "workHistoryDueAt": null,
     "relationshipScore": 4,
     "statedCloseness": 4,
     "priorityLevel": 2,
@@ -5331,6 +5332,7 @@
       "allowance": null
     },
     "hasApolloKey": false,
+    "workHistoryAutoEnabled": true,
     "hasApiKey": false,
     "providers": [
       {
@@ -6874,6 +6876,7 @@
       "mastodonAcct": null,
       "profileImageUrl": null,
       "profileImageCheckedAt": null,
+      "workHistoryDueAt": null,
       "relationshipScore": 4,
       "statedCloseness": 4,
       "priorityLevel": 2,
@@ -10808,6 +10811,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -10879,6 +10883,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -10948,6 +10953,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11020,6 +11026,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11089,6 +11096,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11158,6 +11166,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11229,6 +11238,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11301,6 +11311,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11373,6 +11384,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11442,6 +11454,7 @@
         "knownWeightShare": 0.15
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11511,6 +11524,7 @@
         "knownWeightShare": 0.7
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11583,6 +11597,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11654,6 +11669,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11727,6 +11743,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11796,6 +11813,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11868,6 +11886,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11943,6 +11962,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12015,6 +12035,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12087,6 +12108,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12156,6 +12178,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12231,6 +12254,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12300,6 +12324,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12376,6 +12401,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12449,6 +12475,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12522,6 +12549,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12597,6 +12625,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12669,6 +12698,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null

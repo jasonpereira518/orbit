@@ -126,6 +126,12 @@ export type RadarModel = {
   updatedAt: string;
 };
 
+/**
+ * What autopilot did for one card: the reminder it scheduled and when it is due. Undo
+ * reverses exactly this, and only while the reminder is still the one autopilot set.
+ */
+export type RadarAutopilotAction = { reminderId: string; dueDate: string; at: string };
+
 /** Per-kind autopilot opt-in. Absent or false means off; nothing is ever sent either way. */
 export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
 
