@@ -4,7 +4,7 @@
  * `contact_experiences` is replaced wholesale on every capture, and `contacts.title` /
  * `company` are overwritten in place, so without this Orbit only ever knows where someone
  * works *now*. Each time a fresh work history arrives, `detectJobChanges` compares it with
- * what was stored and `recordJobChanges` writes the difference to `contact_job_changes` —
+ * what was stored and `recordJobChanges` writes the difference to `contact_career_moves` —
  * a log no later capture rewrites — and acts on it: the contact's title/company follow the
  * new role, the timeline gets an entry, and the dashboard offers a congratulations.
  *
@@ -30,7 +30,7 @@ import { getDb } from "@/db";
 import {
   aiSuggestions,
   contactExperiences,
-  contactJobChanges,
+  contactCareerMoves,
   contacts,
   interactions,
   type ContactJobChangeKind,
@@ -255,13 +255,13 @@ export async function loadJobBaseline(
       columns: { title: true, company: true },
     }),
     db
-      .select({ fromOrg: contactJobChanges.fromOrg })
-      .from(contactJobChanges)
+      .select({ fromOrg: contactCareerMoves.fromOrg })
+      .from(contactCareerMoves)
       .where(
         and(
-          eq(contactJobChanges.userId, userId),
-          eq(contactJobChanges.contactId, contactId),
-          gte(contactJobChanges.detectedAt, since)
+          eq(contactCareerMoves.userId, userId),
+          eq(contactCareerMoves.contactId, contactId),
+          gte(contactCareerMoves.detectedAt, since)
         )
       ),
   ]);
@@ -306,7 +306,7 @@ export async function recordJobChanges(
   const db = await getDb();
 
   const inserted = await db
-    .insert(contactJobChanges)
+    .insert(contactCareerMoves)
     .values(
       changes.map((c) => ({
         userId,
@@ -324,7 +324,7 @@ export async function recordJobChanges(
       }))
     )
     .onConflictDoNothing({
-      target: [contactJobChanges.userId, contactJobChanges.contactId, contactJobChanges.dedupeKey],
+      target: [contactCareerMoves.userId, contactCareerMoves.contactId, contactCareerMoves.dedupeKey],
     })
     // Bare: a field selector defeats Drizzle's overload resolution against the union `Db`
     // type (the trap noted in action-items.ts).
@@ -411,9 +411,9 @@ export async function getJobChanges(userId: string, contactId: string): Promise<
   const db = await getDb();
   const rows = await db
     .select()
-    .from(contactJobChanges)
-    .where(and(eq(contactJobChanges.userId, userId), eq(contactJobChanges.contactId, contactId)))
-    .orderBy(desc(contactJobChanges.detectedAt));
+    .from(contactCareerMoves)
+    .where(and(eq(contactCareerMoves.userId, userId), eq(contactCareerMoves.contactId, contactId)))
+    .orderBy(desc(contactCareerMoves.detectedAt));
   return rows.map((r) => ({
     id: r.id,
     kind: r.kind,
@@ -444,15 +444,15 @@ export async function getRecentMoveLines(
   const since = new Date(now.getTime() - RECENT_MOVES_DAYS * 86_400_000);
   const rows = await db
     .select()
-    .from(contactJobChanges)
+    .from(contactCareerMoves)
     .where(
       and(
-        eq(contactJobChanges.userId, userId),
-        inArray(contactJobChanges.contactId, contactIds),
-        gte(contactJobChanges.detectedAt, since)
+        eq(contactCareerMoves.userId, userId),
+        inArray(contactCareerMoves.contactId, contactIds),
+        gte(contactCareerMoves.detectedAt, since)
       )
     )
-    .orderBy(desc(contactJobChanges.detectedAt));
+    .orderBy(desc(contactCareerMoves.detectedAt));
   const byContact = new Map<string, string[]>();
   for (const r of rows) {
     const list = byContact.get(r.contactId) ?? [];
@@ -479,16 +479,16 @@ export async function recentMoveAsFieldChanges(
   const since = new Date(now.getTime() - CONGRATS_MAX_AGE_MONTHS * 30 * 86_400_000);
   const [move] = await db
     .select()
-    .from(contactJobChanges)
+    .from(contactCareerMoves)
     .where(
       and(
-        eq(contactJobChanges.userId, userId),
-        eq(contactJobChanges.contactId, contactId),
-        inArray(contactJobChanges.kind, ["joined", "title_change"]),
-        gte(contactJobChanges.detectedAt, since)
+        eq(contactCareerMoves.userId, userId),
+        eq(contactCareerMoves.contactId, contactId),
+        inArray(contactCareerMoves.kind, ["joined", "title_change"]),
+        gte(contactCareerMoves.detectedAt, since)
       )
     )
-    .orderBy(desc(contactJobChanges.detectedAt))
+    .orderBy(desc(contactCareerMoves.detectedAt))
     .limit(1);
   if (!move?.toOrg) return [];
   const changes: FieldChange[] = [];

@@ -237,7 +237,7 @@ async function seed() {
   });
 
   // Cascade-covered (from `contacts`), seeded anyway: the job-movement log.
-  await db.insert(schema.contactJobChanges).values({
+  await db.insert(schema.contactCareerMoves).values({
     userId: USER,
     contactId: contact.id,
     kind: "joined",

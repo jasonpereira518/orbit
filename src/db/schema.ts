@@ -1567,9 +1567,15 @@ export type ContactJobChangeKind = "joined" | "left" | "title_change";
  * latest snapshot; this table is what remembers the transitions between snapshots. Rows
  * are written by `recordJobChanges` (lib/job-changes.ts) and never rewritten. The unique
  * `dedupe_key` makes re-detecting the same move a no-op.
+ *
+ * NOT named `contact_job_changes`: open PR #187 (sub-agent-testing-feedback, schema v66)
+ * defines a table by that name with a different shape, and its preview build already
+ * created it on the shared preview database — where `CREATE TABLE IF NOT EXISTS` then
+ * silently kept the other shape and this table's indexes failed the migration. The same
+ * collision would reach production if both merged.
  */
-export const contactJobChanges = pgTable(
-  "contact_job_changes",
+export const contactCareerMoves = pgTable(
+  "contact_career_moves",
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
@@ -1588,8 +1594,8 @@ export const contactJobChanges = pgTable(
     detectedAt: timestamp("detected_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
-    uniqueIndex("contact_job_changes_dedupe_uidx").on(t.userId, t.contactId, t.dedupeKey),
-    index("contact_job_changes_contact_idx").on(t.userId, t.contactId, t.detectedAt),
+    uniqueIndex("contact_career_moves_dedupe_uidx").on(t.userId, t.contactId, t.dedupeKey),
+    index("contact_career_moves_contact_idx").on(t.userId, t.contactId, t.detectedAt),
   ]
 );
 

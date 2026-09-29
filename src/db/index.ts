@@ -491,7 +491,7 @@ CREATE TABLE IF NOT EXISTS contact_experiences (
   source text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS contact_job_changes (
+CREATE TABLE IF NOT EXISTS contact_career_moves (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -2195,7 +2195,9 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // Sep 29 2026 — every ref is at 129, but the orbit-pricing-plans worktree claims 130 and
 // the linkedin-work-history worktree claims 131, so 132 is the next free integer.
 //
-// 133 = contact_job_changes (the job-movement log), contacts.work_history_due_at (the
+// 133 = contact_career_moves (the job-movement log — not "contact_job_changes", which open
+// PR #187 already created with another shape on the shared preview database),
+// contacts.work_history_due_at (the
 // staggered re-check schedule) and user_settings.work_history_auto_enabled. This branch
 // first claimed 131, but main moved to 132 meanwhile; a database already stamped 132 would
 // treat 131 as current and never add these, so it takes a new number. Scanned every local
@@ -2534,10 +2536,10 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
   // The job-movement log. The unique key makes re-detecting the same move a no-op.
-  `CREATE UNIQUE INDEX IF NOT EXISTS contact_job_changes_dedupe_uidx
-     ON contact_job_changes(user_id, contact_id, dedupe_key)`,
-  `CREATE INDEX IF NOT EXISTS contact_job_changes_contact_idx
-     ON contact_job_changes(user_id, contact_id, detected_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_career_moves_dedupe_uidx
+     ON contact_career_moves(user_id, contact_id, dedupe_key)`,
+  `CREATE INDEX IF NOT EXISTS contact_career_moves_contact_idx
+     ON contact_career_moves(user_id, contact_id, detected_at)`,
 
   // --- Duplicate prevention --------------------------------------------------------
   //

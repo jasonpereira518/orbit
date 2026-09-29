@@ -11,7 +11,7 @@ import "./smoke/_env";
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { aiSuggestions, contactJobChanges, contacts, interactions } from "../src/db/schema";
+import { aiSuggestions, contactCareerMoves, contacts, interactions } from "../src/db/schema";
 import type { IncomingExperience } from "../src/lib/contact-profile";
 import { isLoggedTouch } from "../src/lib/interaction-provenance";
 import {
@@ -140,7 +140,7 @@ async function recording() {
   const outcome = await researchContactWorkHistory(USER, id, { researcher: answer(moved), now });
   check("the research run saved", outcome === "saved", outcome);
 
-  const logged = await db.select().from(contactJobChanges).where(eq(contactJobChanges.contactId, id));
+  const logged = await db.select().from(contactCareerMoves).where(eq(contactCareerMoves.contactId, id));
   check("the move is logged", logged.length === 1 && logged[0]?.kind === "joined" && logged[0]?.toOrg === "Ramp", JSON.stringify(logged));
 
   const after = await db.query.contacts.findFirst({ where: eq(contacts.id, id) });
@@ -167,7 +167,7 @@ async function recording() {
 
   // The same answer again: the snapshot now matches, and the log's dedupe key holds anyway.
   await researchContactWorkHistory(USER, id, { researcher: answer(moved), now, force: true });
-  const loggedAgain = await db.select().from(contactJobChanges).where(eq(contactJobChanges.contactId, id));
+  const loggedAgain = await db.select().from(contactCareerMoves).where(eq(contactCareerMoves.contactId, id));
   const nudgesAgain = await db
     .select()
     .from(aiSuggestions)
@@ -193,7 +193,7 @@ async function recording() {
     researcher: answer([role("Acme", { startYear: 2021 }), role("Initech", { isCurrent: false, endYear: 2021 })]),
     now,
   });
-  const lateLog = await db.select().from(contactJobChanges).where(eq(contactJobChanges.contactId, late!.id));
+  const lateLog = await db.select().from(contactCareerMoves).where(eq(contactCareerMoves.contactId, late!.id));
   const lateNudge = await db
     .select()
     .from(aiSuggestions)
@@ -208,7 +208,7 @@ async function recording() {
     .returning();
   await researchContactWorkHistory(USER, blank!.id, { researcher: answer([role("Figma", { title: "Designer" })]), now });
   const blankAfter = await db.query.contacts.findFirst({ where: eq(contacts.id, blank!.id) });
-  const blankLog = await db.select().from(contactJobChanges).where(eq(contactJobChanges.contactId, blank!.id));
+  const blankLog = await db.select().from(contactCareerMoves).where(eq(contactCareerMoves.contactId, blank!.id));
   check("a first history fills in the company", blankAfter?.company === "Figma", String(blankAfter?.company));
   check("…without logging a move", blankLog.length === 0);
 
