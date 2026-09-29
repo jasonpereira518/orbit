@@ -57,10 +57,21 @@ export const RECOMMENDATION_BUCKETS = ["today", "soon", "later"] as const;
 export type RecommendationBucket = (typeof RECOMMENDATION_BUCKETS)[number];
 
 /**
- * `pending` and `snoozed` are live: at most one live row per (user, contact, kind), enforced
- * by `recommendations_live_uidx`. The rest are terminal and kept as history.
+ * `pending`, `snoozed` and `auto_applied` are live: at most one live row per (user, contact,
+ * kind), enforced by `recommendations_live_v2_uidx`. `auto_applied` is a card autopilot acted
+ * on (a follow-up scheduled, a draft written) and that still offers Undo. The rest are
+ * terminal and kept as history.
  */
-export type RecommendationStatus = "pending" | "snoozed" | "accepted" | "dismissed" | "expired";
+export type RecommendationStatus =
+  | "pending"
+  | "snoozed"
+  | "auto_applied"
+  | "accepted"
+  | "dismissed"
+  | "expired";
+
+/** The statuses the live unique index covers. Kept beside the type so SQL and TS agree. */
+export const LIVE_RECOMMENDATION_STATUSES = ["pending", "snoozed", "auto_applied"] as const;
 
 /** One line of "why", with the points that produced it. The UI shows the label only. */
 export type RadarReason = { code: string; label: string; points: number };
@@ -70,6 +81,72 @@ export type RadarEvidence = { label: string; at: string | null };
 
 /** The optional AI line, cached against the inputs it was written from. */
 export type RadarAiNote = { why: string; opener: string; inputsHash: string; generatedAt: string };
+
+/**
+ * A message written for a card ahead of time, so acting on it is review-and-send. Cached
+ * against the same `inputs_hash` as the AI note: a card whose facts have not moved keeps its
+ * draft, and nothing is spent writing it again.
+ */
+export type RadarDraft = {
+  body: string;
+  channel: "email" | "linkedin" | "sms";
+  inputsHash: string;
+  generatedAt: string;
+};
+
+/**
+ * What one account has taught Radar: accept and decline tallies per kind and per reason
+ * code, rebuilt from the last 90 days of rows at the end of every run. `a` counts accepts
+ * (a conversion counts double), `d` counts dismissals (an ignored card counts half).
+ */
+export type RadarModelTally = { a: number; d: number };
+export type RadarModel = {
+  kinds: Partial<Record<RecommendationKind, RadarModelTally>>;
+  reasons: Record<string, RadarModelTally>;
+  updatedAt: string;
+};
+
+/** Per-kind autopilot opt-in. Absent or false means off; nothing is ever sent either way. */
+export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
+
+/** Where the nightly Apollo re-check left off, and when the current lap began. */
+export type RadarApolloCursor = { after: string | null; lapStartedAt: string };
+
+/**
+ * Dated facts about a contact that come from outside Orbit's own tables. Stored in
+ * `contact_signals`, deduplicated per account, and read by the scorer like any other signal.
+ */
+export const CONTACT_SIGNAL_KINDS = [
+  "job_change",
+  "company_news",
+  "social_post",
+  "linkedin_activity",
+] as const;
+export type ContactSignalKind = (typeof CONTACT_SIGNAL_KINDS)[number];
+
+/**
+ * Sanitized, length-capped text only: every string here came from a third party (a feed, a
+ * post, a page the extension read) and is treated as untrusted wherever it is shown or sent
+ * to a model. `url` has already been through `safeHttpUrl`.
+ */
+export type ContactSignalPayload = {
+  /** job_change: which field moved, and from what to what. */
+  field?: "title" | "company";
+  from?: string | null;
+  to?: string;
+  /** company_news: the headline and the company it matched. */
+  title?: string;
+  company?: string;
+  /** social_post and linkedin_activity: a short excerpt. */
+  excerpt?: string;
+  network?: "bluesky" | "mastodon" | "linkedin";
+  url?: string | null;
+  /** Human label for where it came from ("Hacker News", "SEC EDGAR", "Extension"). */
+  sourceLabel?: string;
+};
+
+/** The global news tables' source kinds (`external_sources.kind`). */
+export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
 
 /** What a person did with a recommendation, recorded so the next run respects it. */
 export type RadarFeedbackAction = "accepted" | "dismissed" | "snoozed" | "never";

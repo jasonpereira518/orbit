@@ -10,6 +10,7 @@ import { getDb } from "@/db";
 import { recommendationFeedback, recommendations } from "@/db/schema";
 import { scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import { recordFeedback } from "@/lib/radar/store";
+import { LIVE_RECOMMENDATION_STATUSES } from "@/lib/radar/types";
 
 const DAY_MS = 86_400_000;
 
@@ -82,7 +83,7 @@ export async function neverForContactForUser(userId: string, id: string) {
       and(
         eq(recommendations.userId, userId),
         eq(recommendations.contactId, rec.contactId),
-        inArray(recommendations.status, ["pending", "snoozed"])
+        inArray(recommendations.status, [...LIVE_RECOMMENDATION_STATUSES])
       )
     );
   await recordFeedback(userId, { contactId: rec.contactId, recommendationId: id, kind: null, action: "never" });

@@ -94,7 +94,15 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_next_at timestamptz,
   radar_lease_until timestamptz,
   radar_last_run_at timestamptz,
-  radar_paused integer NOT NULL DEFAULT 0
+  radar_paused integer NOT NULL DEFAULT 0,
+  radar_model jsonb,
+  radar_autopilot jsonb NOT NULL DEFAULT '{}',
+  radar_capture_linkedin_activity integer NOT NULL DEFAULT 0,
+  radar_digest_enabled integer NOT NULL DEFAULT 1,
+  radar_digest_tz text,
+  radar_digest_last_week text,
+  radar_digest_unsub_token_hash text,
+  radar_apollo_cursor jsonb
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
@@ -124,6 +132,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   linkedin_url text,
   x_handle text,
   website text,
+  bluesky_handle text,
+  mastodon_acct text,
   profile_image_url text,
   profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
@@ -403,11 +413,20 @@ CREATE TABLE IF NOT EXISTS recommendations (
   run_id uuid,
   inputs_hash text NOT NULL,
   ai_note jsonb,
+  base_score integer,
+  ai_delta integer,
+  ai_angle text,
+  draft jsonb,
+  first_seen_at timestamptz,
+  last_seen_at timestamptz,
+  seen_count integer NOT NULL DEFAULT 0,
+  acted_at timestamptz,
+  outcome_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
-CREATE UNIQUE INDEX IF NOT EXISTS recommendations_live_uidx ON recommendations(user_id, contact_id, kind) WHERE status IN ('pending', 'snoozed');
+CREATE UNIQUE INDEX IF NOT EXISTS recommendations_live_v2_uidx ON recommendations(user_id, contact_id, kind) WHERE status IN ('pending', 'snoozed', 'auto_applied');
 CREATE INDEX IF NOT EXISTS recommendations_user_status_score_idx ON recommendations(user_id, status, score DESC);
 CREATE TABLE IF NOT EXISTS radar_runs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -432,6 +451,56 @@ CREATE TABLE IF NOT EXISTS recommendation_feedback (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS recommendation_feedback_user_contact_idx ON recommendation_feedback(user_id, contact_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS contact_signals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  occurred_at timestamptz NOT NULL,
+  source text NOT NULL,
+  external_item_id uuid,
+  payload jsonb NOT NULL DEFAULT '{}',
+  dedupe_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_signals_dedupe_uidx ON contact_signals(user_id, dedupe_hash);
+CREATE INDEX IF NOT EXISTS contact_signals_user_occurred_idx ON contact_signals(user_id, occurred_at DESC);
+CREATE TABLE IF NOT EXISTS external_sources (
+  id text PRIMARY KEY,
+  label text NOT NULL,
+  url text NOT NULL,
+  kind text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  etag text,
+  last_modified text,
+  last_fetched_at timestamptz,
+  last_status text,
+  last_error text,
+  consecutive_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS external_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_id text NOT NULL REFERENCES external_sources(id) ON DELETE CASCADE,
+  external_id text NOT NULL,
+  title text NOT NULL,
+  summary text,
+  url text,
+  published_at timestamptz NOT NULL,
+  first_seen_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_items_source_external_uidx ON external_items(source_id, external_id);
+CREATE INDEX IF NOT EXISTS external_items_published_idx ON external_items(published_at);
+CREATE TABLE IF NOT EXISTS external_item_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id uuid NOT NULL REFERENCES external_items(id) ON DELETE CASCADE,
+  company_key text NOT NULL,
+  company_name text NOT NULL,
+  published_at timestamptz NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_item_companies_item_key_uidx ON external_item_companies(item_id, company_key);
+CREATE INDEX IF NOT EXISTS external_item_companies_key_published_idx ON external_item_companies(company_key, published_at DESC);
 CREATE TABLE IF NOT EXISTS contact_embeddings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2233,7 +2302,16 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // merge of main at 132 takes its own number, and every database re-runs the full list once.
 // Scanned every remote ref on Sep 29 2026: 132 is the highest claimed anywhere, so 133 is
 // the next free integer.
-export const SCHEMA_VERSION = 133;
+//
+// 135 = the Radar flagship: contact_signals, external_sources + external_items +
+// external_item_companies (global news), recommendations.base_score / ai_delta / ai_angle /
+// draft / first_seen_at / last_seen_at / seen_count / acted_at / outcome_at and the v2 live
+// index that covers auto_applied, contacts.bluesky_handle + mastodon_acct, and user_settings
+// radar_model / radar_autopilot / radar_capture_linkedin_activity / radar_digest_* /
+// radar_apollo_cursor. NOT 134: scanned every remote ref on Sep 29 2026 — main is at 132,
+// claude/linkedin-work-history-fdd22e also claims 133, and claude/waitlist-pass-news claims
+// 134, so 135 is the next free integer.
+export const SCHEMA_VERSION = 135;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2645,6 +2723,8 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS recommendations_contact_idx ON recommendations(contact_id)`,
   `CREATE INDEX IF NOT EXISTS recommendation_feedback_contact_idx
      ON recommendation_feedback(contact_id)`,
+  // v135: Radar's outside-world signals, same reasoning: contact deletes and merges.
+  `CREATE INDEX IF NOT EXISTS contact_signals_contact_idx ON contact_signals(contact_id)`,
   // Merge relies on this cascade on purpose, and dismissed pairs are kept forever.
   `CREATE INDEX IF NOT EXISTS duplicate_suggestions_contact_a_idx
      ON duplicate_suggestions(contact_a_id)`,
@@ -3345,6 +3425,28 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "radar_last_run_at", "timestamptz");
   await ensureColumn(client, "user_settings", "radar_paused", "integer NOT NULL DEFAULT 0");
 
+  // v135: the Radar flagship. Recommendations and contacts gain columns on databases the
+  // v133 template already built, and the account gains its model, autopilot and digest state.
+  await ensureColumn(client, "user_settings", "radar_model", "jsonb");
+  await ensureColumn(client, "user_settings", "radar_autopilot", "jsonb NOT NULL DEFAULT '{}'");
+  await ensureColumn(client, "user_settings", "radar_capture_linkedin_activity", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "radar_digest_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "radar_digest_tz", "text");
+  await ensureColumn(client, "user_settings", "radar_digest_last_week", "text");
+  await ensureColumn(client, "user_settings", "radar_digest_unsub_token_hash", "text");
+  await ensureColumn(client, "user_settings", "radar_apollo_cursor", "jsonb");
+  await ensureColumn(client, "contacts", "bluesky_handle", "text");
+  await ensureColumn(client, "contacts", "mastodon_acct", "text");
+  await ensureColumn(client, "recommendations", "base_score", "integer");
+  await ensureColumn(client, "recommendations", "ai_delta", "integer");
+  await ensureColumn(client, "recommendations", "ai_angle", "text");
+  await ensureColumn(client, "recommendations", "draft", "jsonb");
+  await ensureColumn(client, "recommendations", "first_seen_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "last_seen_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "seen_count", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "recommendations", "acted_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "outcome_at", "timestamptz");
+
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
   // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
@@ -4032,6 +4134,29 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_lease_until timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_last_run_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_paused integer NOT NULL DEFAULT 0`,
+  // Schema v135: the Radar flagship. A database the v133 template built has `recommendations`
+  // without these columns and the v1 live index, whose predicate leaves out `auto_applied`.
+  // The v1 index is dropped here, before the template's indexes run, so the v2 one replaces it.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_model jsonb`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_autopilot jsonb NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_capture_linkedin_activity integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_tz text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_last_week text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_unsub_token_hash text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_apollo_cursor jsonb`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bluesky_handle text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS draft jsonb`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS first_seen_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS last_seen_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS seen_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS acted_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
+  `DROP INDEX IF EXISTS recommendations_live_uidx`,
 ];
 
 /**

@@ -89,6 +89,7 @@ async function danglingReferences(contactId: string): Promise<string[]> {
     ["contact_briefs", "contact_id"],
     ["recommendations", "contact_id"],
     ["recommendation_feedback", "contact_id"],
+    ["contact_signals", "contact_id"],
   ];
   const found: string[] = [];
   for (const [table, column] of tables) {

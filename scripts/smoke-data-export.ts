@@ -30,6 +30,7 @@ async function seed() {
   await db.insert(schema.reminders).values({ userId: USER, contactId: contact.id, title: "follow up", dueDate: new Date() });
   await db.insert(schema.aiSuggestions).values({ userId: USER, suggestionType: "reconnect", title: "Reach out" });
   await db.insert(schema.recommendations).values({ userId: USER, contactId: contact.id, kind: "reconnect", score: 30, bucket: "later", expiresAt: new Date(Date.now() + 7 * 86_400_000), inputsHash: "h" });
+  await db.insert(schema.contactSignals).values({ userId: USER, contactId: contact.id, kind: "job_change", occurredAt: new Date(), source: "manual", payload: { field: "company", from: "Acme", to: "Globex" }, dedupeHash: "smoke-export-signal" });
   await db.insert(schema.imports).values({ userId: USER, importType: "linkedin_connections" });
   await db.insert(schema.gmailConnections).values({ userId: USER, emailAddress: "e@x.test", accessTokenEncrypted: encrypt("a"), refreshTokenEncrypted: encrypt("r") });
   await db.insert(schema.events).values({ userId: USER, title: "Summit" });
@@ -74,6 +75,7 @@ async function main() {
     check("an inline avatar becomes the avatar route", contact?.profile_image_url === `/api/avatars/${contactId}`);
     check("nobody else's rows", out.categories.contacts.contacts.every((c) => c.user_id === USER));
     check("Radar's list is in insights", out.categories.insights.recommendations?.[0]?.contact_id === contactId);
+    check("and so are its outside-world signals", out.categories.insights.contact_signals?.[0]?.contact_id === contactId);
     check("recruiter links name the recruiter", out.categories.recruiters.user_recruiter_links?.[0]?.recruiter_full_name === "Rec");
   } finally {
     await purgeUserData(USER, { keepSettings: false }).catch(() => {});

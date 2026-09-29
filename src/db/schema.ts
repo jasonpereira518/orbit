@@ -12,9 +12,16 @@ import {
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 import type {
+  ContactSignalKind,
+  ContactSignalPayload,
+  ExternalSourceKind,
   RadarAiNote,
+  RadarApolloCursor,
+  RadarAutopilot,
+  RadarDraft,
   RadarEvidence,
   RadarFeedbackAction,
+  RadarModel,
   RadarReason,
   RadarRunStatus,
   RadarRunTrigger,
@@ -456,6 +463,20 @@ export const userSettings = pgTable("user_settings", {
   radarLastRunAt: timestamp("radar_last_run_at", { withTimezone: true }),
   /** 1 = the person paused Radar: no nightly run, no AI spend. Integer, per house convention. */
   radarPaused: integer("radar_paused").default(0).notNull(),
+  /** What this account has taught Radar (`src/lib/radar/model.ts`). Rebuilt by every run. */
+  radarModel: jsonb("radar_model").$type<RadarModel>(),
+  /** Per-kind autopilot opt-in. Autopilot schedules and drafts; it never sends. */
+  radarAutopilot: jsonb("radar_autopilot").$type<RadarAutopilot>().default({}).notNull(),
+  /** 1 = the extension may save LinkedIn posts by known contacts as Radar activity. */
+  radarCaptureLinkedinActivity: integer("radar_capture_linkedin_activity").default(0).notNull(),
+  /** The Monday email. 1 = on (the default). The rest is its claim and unsubscribe state. */
+  radarDigestEnabled: integer("radar_digest_enabled").default(1).notNull(),
+  radarDigestTz: text("radar_digest_tz"),
+  /** ISO week ("2026-W40") of the last digest sent, claimed in one statement before sending. */
+  radarDigestLastWeek: text("radar_digest_last_week"),
+  radarDigestUnsubTokenHash: text("radar_digest_unsub_token_hash"),
+  /** Where the nightly Apollo re-check (own key only) left off. */
+  radarApolloCursor: jsonb("radar_apollo_cursor").$type<RadarApolloCursor>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -519,6 +540,14 @@ export const contacts = pgTable(
     /** Bare X/Twitter handle, no leading "@" — see normalizeXHandle in lib/duplicates. */
     xHandle: text("x_handle"),
     website: text("website"),
+    /**
+     * Public social handles the person chose to add, for Radar's post signals. Plain columns
+     * rather than `contact_identities` kinds: the identity sync releases every kind it does not
+     * derive itself, so a kind added only here would be wiped on the next edit.
+     * `blueskyHandle` is a bare handle ("name.bsky.social"); `mastodonAcct` is "user@host".
+     */
+    blueskyHandle: text("bluesky_handle"),
+    mastodonAcct: text("mastodon_acct"),
     profileImageUrl: text("profile_image_url"),
     /**
      * When we last tried, and failed, to find a photo for this contact.
@@ -2020,14 +2049,30 @@ export const recommendations = pgTable(
     runId: uuid("run_id"),
     inputsHash: text("inputs_hash").notNull(),
     aiNote: jsonb("ai_note").$type<RadarAiNote>(),
+    /** The scorer's own number, before learning and the rerank moved it to `score`. */
+    baseScore: integer("base_score"),
+    /** What the bounded AI rerank added or took away (±15), and its one-line angle. */
+    aiDelta: integer("ai_delta"),
+    aiAngle: text("ai_angle"),
+    /** A message written ahead of time for a Today card (`RadarDraft`). */
+    draft: jsonb("draft").$type<RadarDraft>(),
+    /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    seenCount: integer("seen_count").default(0).notNull(),
+    /** When the person acted on it, and when a conversation followed an accept (≤ 14 days). */
+    actedAt: timestamp("acted_at", { withTimezone: true }),
+    outcomeAt: timestamp("outcome_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
   (t) => [
-    uniqueIndex("recommendations_live_uidx")
+    // v2 of the live index: `auto_applied` is live too. Renamed rather than altered, so a
+    // database that already has the v1 index (predicate without it) builds the new one.
+    uniqueIndex("recommendations_live_v2_uidx")
       .on(t.userId, t.contactId, t.kind)
-      .where(sql`${t.status} in ('pending', 'snoozed')`),
+      .where(sql`${t.status} in ('pending', 'snoozed', 'auto_applied')`),
     index("recommendations_user_status_score_idx").on(t.userId, t.status, t.score.desc()),
   ]
 );
@@ -2077,6 +2122,98 @@ export const recommendationFeedback = pgTable(
       t.contactId,
       t.createdAt.desc()
     ),
+  ]
+);
+
+/**
+ * Dated facts about one contact from outside Orbit's own tables: a job change, a headline
+ * about their company, a public post. Written by the producers in `src/lib/radar/signals/`,
+ * read by the per-user run, deduplicated per account by `dedupe_hash` so the same fact seen
+ * twice is one row. `payload` is sanitized, length-capped third-party text.
+ */
+export const contactSignals = pgTable(
+  "contact_signals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<ContactSignalKind>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    source: text("source").notNull(),
+    /** The global news item behind a `company_news` signal. No FK: items are pruned. */
+    externalItemId: uuid("external_item_id"),
+    payload: jsonb("payload").$type<ContactSignalPayload>().default({}).notNull(),
+    dedupeHash: text("dedupe_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("contact_signals_dedupe_uidx").on(t.userId, t.dedupeHash),
+    index("contact_signals_user_occurred_idx").on(t.userId, t.occurredAt.desc()),
+  ]
+);
+
+/**
+ * Public news feeds Radar reads (global, no `user_id`), beside `job_feed_sources`. Adding or
+ * disabling a source is a row, not a deploy.
+ */
+export const externalSources = pgTable("external_sources", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  kind: text("kind").$type<ExternalSourceKind>().notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  etag: text("etag"),
+  lastModified: text("last_modified"),
+  lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
+  lastStatus: text("last_status"),
+  lastError: text("last_error"),
+  consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** One headline from one source (global). Pruned after 30 days. */
+export const externalItems = pgTable(
+  "external_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => externalSources.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    url: text("url"),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_items_source_external_uidx").on(t.sourceId, t.externalId),
+    index("external_items_published_idx").on(t.publishedAt),
+  ]
+);
+
+/**
+ * The companies a headline may be about, keyed by `jobCompanyBucketKey` so the per-user
+ * probe is one indexed lookup with the account's own company keys. Candidates, not
+ * verdicts: `companiesMatch` confirms each hit before a signal is written.
+ */
+export const externalItemCompanies = pgTable(
+  "external_item_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => externalItems.id, { onDelete: "cascade" }),
+    companyKey: text("company_key").notNull(),
+    companyName: text("company_name").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_item_companies_item_key_uidx").on(t.itemId, t.companyKey),
+    index("external_item_companies_key_published_idx").on(t.companyKey, t.publishedAt.desc()),
   ]
 );
 

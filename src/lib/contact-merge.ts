@@ -86,6 +86,9 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   // What the person did with Radar about this contact: a "not for this person" must still
   // hold for the merged contact. No unique index at all, so nothing can collide.
   { table: "recommendation_feedback", column: "contact_id", scoped: true },
+  // Radar's outside-world facts (job changes, headlines, posts) are about the person, so they
+  // follow the winner. Unique on (user_id, dedupe_hash), which a repoint does not change.
+  { table: "contact_signals", column: "contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */

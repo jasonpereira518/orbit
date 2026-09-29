@@ -66,6 +66,7 @@ import {
   pageViews,
   planUpgradeEvents,
   radarRuns,
+  contactSignals,
   recommendationFeedback,
   recommendations,
   recruiterMessages,
@@ -135,9 +136,11 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *                               global and never deleted with an account). The match is the
  *                               only per-user row in the job-feed trio; the feed itself and
  *                               its postings are global and carry no `user_id`.
- * `recommendations` and `recommendation_feedback` also cascade from `contacts`, but are
- * deleted explicitly by `insights`, which can run without deleting contacts. `radar_runs`
- * has no parent and is always deleted explicitly.
+ * `recommendations`, `recommendation_feedback` and `contact_signals` also cascade from
+ * `contacts`, but are deleted explicitly by `insights`, which can run without deleting
+ * contacts. `radar_runs` has no parent and is always deleted explicitly. Radar's news tables
+ * (`external_sources`, `external_items`, `external_item_companies`) are global, like the
+ * job feed's, carry no `user_id`, and are never deleted with an account.
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly. `suggested_reminders` looks like it would cascade
@@ -221,7 +224,7 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
     counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
@@ -246,9 +249,19 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(recommendations).where(eq(recommendations.userId, userId));
       await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
       await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
+      // What Radar learned from the outside world about these contacts (job changes,
+      // headlines, posts). Also cascades from contacts; deleted here for the same reason.
+      await db.delete(contactSignals).where(eq(contactSignals.userId, userId));
+      // The learned model and the Apollo cursor are derived from the data just deleted.
       await db
         .update(userSettings)
-        .set({ radarLastRunAt: null, radarNextAt: null, radarLeaseUntil: null })
+        .set({
+          radarLastRunAt: null,
+          radarNextAt: null,
+          radarLeaseUntil: null,
+          radarModel: null,
+          radarApolloCursor: null,
+        })
         .where(eq(userSettings.userId, userId));
     },
   },
@@ -743,8 +756,17 @@ const PRESERVED_SETTINGS_COLUMNS = {
   termsAcceptedAt: true,
   termsVersion: true,
   timelineBackfillEnabled: true,
-  // A person who paused Radar did not ask for it back by deleting their data.
+  // A person who paused Radar did not ask for it back by deleting their data. The same goes
+  // for autopilot, extension capture and the digest: preferences, not content. The digest's
+  // week claim and unsubscribe hash survive too, so a delete neither re-sends this week's
+  // email nor breaks the unsubscribe link in the last one.
   radarPaused: true,
+  radarAutopilot: true,
+  radarCaptureLinkedinActivity: true,
+  radarDigestEnabled: true,
+  radarDigestTz: true,
+  radarDigestLastWeek: true,
+  radarDigestUnsubTokenHash: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {

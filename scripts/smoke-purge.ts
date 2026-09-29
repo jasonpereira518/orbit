@@ -396,6 +396,15 @@ async function seed() {
     action: "never",
   });
   await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
+  await db.insert(schema.contactSignals).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "job_change",
+    occurredAt: new Date(),
+    source: "manual",
+    payload: { field: "company", from: "Acme", to: "Globex" },
+    dedupeHash: "smoke-purge-signal",
+  });
 
   // Background AI still in flight at a provider when the account went.
   await db.insert(schema.aiBatchJobs).values({

@@ -19,13 +19,14 @@ import type {
   RecommendationKind,
   RecommendationStatus,
 } from "@/lib/radar/types";
+import { LIVE_RECOMMENDATION_STATUSES } from "@/lib/radar/types";
 
 const DAY_MS = 86_400_000;
 
 /** Terminal rows are kept this long as suppression history, then pruned by the run. */
 export const RADAR_HISTORY_DAYS = 90;
 
-const LIVE_STATUSES: RecommendationStatus[] = ["pending", "snoozed"];
+const LIVE_STATUSES: RecommendationStatus[] = [...LIVE_RECOMMENDATION_STATUSES];
 const TERMINAL_STATUSES: RecommendationStatus[] = ["accepted", "dismissed", "expired"];
 
 export type LiveRecommendation = {
@@ -206,7 +207,9 @@ export async function writeRunResult(
           )
           .onConflictDoUpdate({
             target: [recommendations.userId, recommendations.contactId, recommendations.kind],
-            targetWhere: sql`${recommendations.status} in ('pending', 'snoozed')`,
+            // Must imply `recommendations_live_v2_uidx`'s predicate, or Postgres finds no
+            // arbiter index for the conflict.
+            targetWhere: sql`${recommendations.status} in ('pending', 'snoozed', 'auto_applied')`,
             set: {
               score: sql`excluded.score`,
               bucket: sql`excluded.bucket`,
