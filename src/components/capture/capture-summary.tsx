@@ -157,10 +157,23 @@ export function CaptureSummary({
                     transition={SPRING_PILL}
                     className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/30 px-3 py-2"
                   >
-                    <PlanetBadge index={index} size="sm" />
+                    <PlanetBadge index={index} closeness={draft.closeness} size="sm" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-foreground">{name}</p>
                       {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
+                      {/* The first two takeaways, so the list says what you learned, not only who. */}
+                      {draft.fields.takeaways.some((t) => t.trim()) && (
+                        <ul className="mt-1 space-y-0.5">
+                          {draft.fields.takeaways
+                            .filter((t) => t.trim())
+                            .slice(0, 2)
+                            .map((t) => (
+                              <li key={t} className="line-clamp-1 text-xs text-muted-foreground before:mr-1.5 before:content-['•']">
+                                {t}
+                              </li>
+                            ))}
+                        </ul>
+                      )}
                     </div>
                     <Badge variant={draft.mergeContactId ? "secondary" : "outline"} className="text-[10px]">
                       {draft.mergeContactId ? "Update" : "New"}

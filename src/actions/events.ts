@@ -252,7 +252,7 @@ export async function enrichEventFromUrl(
 ): Promise<{ ok: boolean; error?: string }> {
   const userId = await requireUserForSurface(SURFACE);
   try {
-    await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
+    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: error.message };
@@ -373,7 +373,7 @@ export async function previewResync(
   if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
 
   try {
-    await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
+    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
@@ -410,7 +410,7 @@ export async function resyncEvent(eventId: string): Promise<{ ok: boolean; error
   if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
 
   try {
-    await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
+    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
@@ -682,7 +682,7 @@ export async function explainAttendee(
   }
 
   try {
-    await consumeBucket(userId, "eventWhy", RATE_LIMITS.eventWhy);
+    await consumeBucket("eventWhy", userId, RATE_LIMITS.eventWhy);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: "That's a lot of suggestions — try again in a bit." };

@@ -2219,11 +2219,21 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // every local and remote ref on Sep 27 2026: 128 is the highest claimed anywhere, so 129
 // is the next free integer.
 //
-// 130 = Radar P0: recommendations, radar_runs, recommendation_feedback, and
-// user_settings.radar_next_at + radar_lease_until + radar_last_run_at + radar_paused. Scanned
-// every remote ref on Sep 29 2026: 129 is the highest claimed anywhere, so 130 is the next
-// free integer.
-export const SCHEMA_VERSION = 130;
+// 132 = capture_jobs.source_file_hashes (text[], GIN-indexed): the SHA-256 of every original
+// file a capture was read from, so the same file dropped again is flagged "Already captured"
+// instead of being read and billed twice. In SCALE_DDL, which both engines run. NOT 130 or
+// 131: scanned every local and remote ref and every worktree's working src/db/index.ts on
+// Sep 29 2026 — every ref is at 129, but the orbit-pricing-plans worktree claims 130 and
+// the linkedin-work-history worktree claims 131, so 132 is the next free integer.
+//
+// 133 = Radar P0: recommendations, radar_runs, recommendation_feedback, and
+// user_settings.radar_next_at + radar_lease_until + radar_last_run_at + radar_paused. This
+// branch first stamped 130, which collided with the orbit-pricing-plans worktree and sits
+// below main's 132, and a database at 132 would never have created the Radar tables. So the
+// merge of main at 132 takes its own number, and every database re-runs the full list once.
+// Scanned every remote ref on Sep 29 2026: 132 is the highest claimed anywhere, so 133 is
+// the next free integer.
+export const SCHEMA_VERSION = 133;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2294,6 +2304,11 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS mention_picks jsonb NOT NULL DEFAULT '[]'`,
   `CREATE INDEX IF NOT EXISTS capture_jobs_user_batch_idx ON capture_jobs(user_id, batch_group_id)`,
+  // v132: what each capture was read from, by content hash, so a file dropped a second time
+  // is recognised (`findCapturedFiles`). GIN because the one question asked of it is an
+  // `&&` overlap against a handful of hashes, across every job the user has.
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_file_hashes text[] NOT NULL DEFAULT '{}'`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_source_file_hashes_idx ON capture_jobs USING gin (source_file_hashes)`,
 
   // --- Generated columns -----------------------------------------------------------
   //
@@ -2625,7 +2640,7 @@ export const SCALE_DDL: string[] = [
   // could only use the user_id prefix of the (user_id, posting_id, contact_id) key.
   `CREATE INDEX IF NOT EXISTS job_posting_matches_contact_idx
      ON job_posting_matches(contact_id)`,
-  // v130: Radar's contact children. Recommendations are rewritten nightly and feedback
+  // v133: Radar's contact children. Recommendations are rewritten nightly and feedback
   // is kept for suppression, so both see contact deletes and merges.
   `CREATE INDEX IF NOT EXISTS recommendations_contact_idx ON recommendations(contact_id)`,
   `CREATE INDEX IF NOT EXISTS recommendation_feedback_contact_idx
@@ -3324,7 +3339,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "meeting_sessions", "off_deepgram_ms", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "speech_tag_id", "text");
 
-  // v130: Radar's per-account schedule. Same reasoning as every block above.
+  // v133: Radar's per-account schedule. Same reasoning as every block above.
   await ensureColumn(client, "user_settings", "radar_next_at", "timestamptz");
   await ensureColumn(client, "user_settings", "radar_lease_until", "timestamptz");
   await ensureColumn(client, "user_settings", "radar_last_run_at", "timestamptz");
@@ -4012,7 +4027,7 @@ const alters = [
   // Schema v117: learned brand colors for companies and schools outside the curated table.
   `CREATE TABLE IF NOT EXISTS org_brand_colors (name_key text NOT NULL, kind text NOT NULL, name text NOT NULL, hex text, domain text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,
-  // Schema v130: Radar's nightly schedule, lease and pause flag for each account.
+  // Schema v133: Radar's nightly schedule, lease and pause flag for each account.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_next_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_lease_until timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_last_run_at timestamptz`,

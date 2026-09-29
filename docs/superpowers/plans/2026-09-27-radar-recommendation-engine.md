@@ -16,8 +16,9 @@
 starting P0. A read-only pass over the new `main` changed the following. Where this section
 contradicts a task below, this section wins.
 
-**Schema (Task 1).** P0 takes **schema 130** (129 is the highest claim on any remote branch;
-121–124 belong to the Leads stack). `user_settings` columns go in three places: the
+**Schema (Task 1).** P0 takes **schema 133**. It first took 130 (129 was the highest claim on
+any remote branch; 121–124 belong to the Leads stack), but main reached 132 while the PR was
+open, so the merge of main moved Radar to the next free integer. `user_settings` columns go in three places: the
 `CREATE TABLE user_settings` body, `alters`, and `ensureColumn` in `migratePglite`. Every
 *named* Drizzle index must exist under the same name in the DDL (`scripts/lib/schema-coverage.ts`
 gates the Vercel build). P0 creates only what P0 writes: `recommendations`, `radar_runs`,

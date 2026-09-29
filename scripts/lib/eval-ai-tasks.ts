@@ -211,6 +211,13 @@ export async function runCaptureTask({ userId, limit, log }: RunOpts): Promise<T
   const opportunities = tally();
   const referrals = tally();
   const reminders = tally();
+  // The richer half of a card. Kept out of `fieldAccuracy` so its baseline stays comparable.
+  const takeaways = tally();
+  const personal = tally();
+  const work = tally();
+  const handles = tally();
+  const connections = tally();
+  const promises = tally();
   let phantomParticipants = 0;
   let forbiddenHits = 0;
   const misses: string[] = [];
@@ -239,6 +246,22 @@ export async function runCaptureTask({ userId, limit, log }: RunOpts): Promise<T
         for (const key of ["company", "role", "email"] as const) {
           const expected = want[key];
           if (expected) count(fields, sameField(expected, item.parsed[key]));
+        }
+        const p = item.parsed;
+        if (want.minTakeaways) count(takeaways, (p.takeaways?.length ?? 0) >= want.minTakeaways);
+        for (const word of want.personal ?? []) {
+          count(personal, (p.personal_details ?? []).some((d) => mentions(d, word)));
+        }
+        const workBlob = JSON.stringify(p.work ?? {});
+        for (const word of want.work ?? []) count(work, mentions(workBlob, word));
+        if (want.phone) count(handles, (p.phone ?? "").replace(/\D/g, "").endsWith(want.phone.replace(/\D/g, "").slice(-7)));
+        if (want.xHandle) count(handles, sameField(want.xHandle, p.x_handle));
+        if (want.school) count(handles, sameField(want.school, p.school));
+        for (const name of want.connections ?? []) {
+          count(connections, (p.connections ?? []).some((c) => sameName(name, c.name) || mentions(c.name, name)));
+        }
+        for (const want_ of want.promises ?? []) {
+          count(promises, (p.promises ?? []).some((pr) => pr.direction === want_.direction && mentions(pr.text, want_.contains)));
         }
         for (const kind of want.opportunityKinds ?? []) {
           const found = item.opportunities.some((o) => o.kind === kind);
@@ -292,6 +315,12 @@ export async function runCaptureTask({ userId, limit, log }: RunOpts): Promise<T
       opportunityRecall: rate(opportunities),
       referralRecall: rate(referrals),
       reminderRecall: rate(reminders),
+      takeawayRate: rate(takeaways),
+      personalRecall: rate(personal),
+      workRecall: rate(work),
+      handleAccuracy: rate(handles),
+      connectionRecall: rate(connections),
+      promiseRecall: rate(promises),
       phantomParticipants,
       forbiddenHits,
     },
