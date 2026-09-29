@@ -8,9 +8,9 @@
  *
  * ## Precedence
  *
- * An extension capture is a page the user actually looked at; Apollo is an inference from
- * a third-party dataset. So the extension always wins, and Apollo writes only into a gap
- * or over its own earlier guess.
+ * An extension capture is a page the user actually looked at; a web-search history and an
+ * Apollo record are inferences. So the extension always wins, and an inference writes only
+ * into a gap or over another inference.
  *
  * Replacement is wholesale rather than a merge, and the delete is NOT filtered by source.
  * A merge would strand roles that the newest capture no longer shows — LinkedIn's own page
@@ -106,9 +106,9 @@ function trimmed(value: string | null | undefined, max = 300): string | null {
 /**
  * Whether `incoming` is allowed to overwrite what is already stored.
  *
- * An absent row means anything may write. Otherwise the extension always may, and Apollo
- * may only replace Apollo — deliberately regardless of timestamps, because a fresher
- * inference is still an inference.
+ * An absent row means anything may write. Otherwise the extension always may, and an
+ * inference (web or Apollo) may only replace another inference — deliberately regardless
+ * of timestamps, because a fresher inference is still an inference.
  */
 function outranks(
   incoming: ContactProfileSource,
@@ -116,7 +116,7 @@ function outranks(
 ): boolean {
   if (existing === null) return true;
   if (incoming === "extension") return true;
-  return existing === "apollo";
+  return existing !== "extension";
 }
 
 export type SaveProfileResult = {
@@ -252,6 +252,58 @@ export async function saveContactProfile(
   });
 
   return { written: true, reason: "saved" };
+}
+
+/** Most entries one inferred history may write — real histories run far shorter. */
+const MAX_INFERRED_EXPERIENCES = 60;
+
+function yearOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1900 && value <= 2200
+    ? value
+    : null;
+}
+
+function monthOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 12
+    ? value
+    : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * Validate a work history a model wrote.
+ *
+ * The web-search research answers in JSON it was asked for, not JSON it is held to, so an
+ * entry can arrive with a missing organization, a month of 13 or a school marked current.
+ * `saveContactProfile` bounds string lengths itself; this bounds the shape and the count.
+ */
+export function sanitizeIncomingExperiences(value: unknown): IncomingExperience[] {
+  if (!Array.isArray(value)) return [];
+  const out: IncomingExperience[] = [];
+  for (const raw of value.slice(0, MAX_INFERRED_EXPERIENCES)) {
+    if (!raw || typeof raw !== "object") continue;
+    const e = raw as Record<string, unknown>;
+    const organization = stringOrNull(e.organization)?.trim();
+    if (!organization) continue;
+    const kind: ContactExperienceKind = e.kind === "education" ? "education" : "role";
+    out.push({
+      kind,
+      organization,
+      title: stringOrNull(e.title),
+      fieldOfStudy: stringOrNull(e.fieldOfStudy),
+      location: stringOrNull(e.location),
+      description: stringOrNull(e.description),
+      startYear: yearOrNull(e.startYear),
+      startMonth: monthOrNull(e.startMonth),
+      endYear: yearOrNull(e.endYear),
+      endMonth: monthOrNull(e.endMonth),
+      isCurrent: kind === "role" && e.isCurrent === true,
+    });
+  }
+  return out;
 }
 
 export async function getContactProfile(

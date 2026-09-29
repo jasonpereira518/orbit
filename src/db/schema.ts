@@ -1447,8 +1447,11 @@ export const contactBriefs = pgTable("contact_briefs", {
 export type ContactExperienceKind = "role" | "education";
 /**
  * Where a stored profile came from. Drives precedence in `saveContactProfile`: an
- * extension capture is a page the user actually looked at and always outranks Apollo,
- * which is a third-party inference.
+ * extension capture is a page the user actually looked at and always outranks the two
+ * inferences — `"web"`, a work history the person's own AI model assembled from a web
+ * search (`lib/work-history-research.ts`, the producer every LinkedIn pull uses), and
+ * `"apollo"`, a third-party dataset that no longer has a producer but whose stored rows
+ * remain. The inferences replace each other; neither replaces an extension capture.
  *
  * `"extension"` currently has NO producer — the browser capture path was removed before
  * merge because its DOM readers had never run against a real LinkedIn page. The value and
@@ -1456,7 +1459,7 @@ export type ContactExperienceKind = "role" | "education";
  * `scripts/smoke-contact-profile.ts`, so restoring that path is additive rather than
  * another change to the stored shape.
  */
-export type ContactProfileSource = "extension" | "apollo";
+export type ContactProfileSource = "extension" | "web" | "apollo";
 
 export type ProfileSkill = { name: string };
 export type ProfileCertification = { name: string; issuer: string | null; year: number | null };

@@ -58,6 +58,7 @@ export const PUBLIC_ROUTES = [
   // `fetch` from other functions, which carry no Clerk session; same CRON_SECRET gate.
   "/api/avatars/encode",
   "/api/embeddings/backfill",
+  "/api/work-history/research",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
   "/api/ops/speech-usage",

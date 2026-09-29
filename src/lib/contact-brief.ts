@@ -9,6 +9,7 @@ import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { formatHowMetSummary, metContextLabel } from "@/lib/met-context";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { listOpenActionItems } from "@/lib/action-items";
+import { getCareerLines } from "@/lib/contact-profile";
 import { OPEN_OPPORTUNITY_STATUSES, opportunityKindLabel } from "@/lib/opportunity-kinds";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { reportUnlessQuiet } from "@/lib/report-error";
@@ -279,7 +280,7 @@ export async function generateAndStoreContactBrief(
   // What the brief could never see before: the things this relationship actually owes.
   // Loaded in parallel and each guarded, because a brief that fails because one side query
   // failed is strictly worse than a brief written without that side.
-  const [openOpportunities, pendingReminders, openItems] = await Promise.all([
+  const [openOpportunities, pendingReminders, openItems, careerLines] = await Promise.all([
     db
       .select({
         kind: contactOpportunities.kind,
@@ -312,7 +313,11 @@ export async function generateAndStoreContactBrief(
       .limit(OPEN_ITEM_LIMIT)
       .catch(() => []),
     listOpenActionItems(userId, contactId).catch(() => []),
+    // The one-line work history ("Stripe, ex-Google · MIT") stored from LinkedIn, so the
+    // brief can place someone by their career, not only by their current title.
+    getCareerLines(userId, [contactId]).catch(() => new Map<string, string>()),
   ]);
+  const career = careerLines.get(contactId) ?? null;
 
   const opportunityLines = openOpportunities.map((o) =>
     [
@@ -343,7 +348,7 @@ export async function generateAndStoreContactBrief(
     Boolean(contact.howMet?.trim()) ||
     Boolean(contact.metContext) ||
     Boolean(contact.notes?.trim()) ||
-    Boolean(contact.title || contact.company) ||
+    Boolean(contact.title || contact.company || career) ||
     interactionSnippets.length > 0;
 
   if (!hasSignal && !options?.force) {
@@ -355,6 +360,7 @@ export async function generateAndStoreContactBrief(
     contact.preferredName ? `Preferred name: ${contact.preferredName}` : null,
     contact.title ? `Role: ${contact.title}` : null,
     contact.company ? `Company: ${contact.company}` : null,
+    career ? `Career: ${career}` : null,
     contact.location ? `Location: ${contact.location}` : null,
     contact.industry ? `Industry: ${contact.industry}` : null,
     formatHowMetSummary({

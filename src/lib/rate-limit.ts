@@ -127,6 +127,12 @@ export const RATE_LIMITS = {
   apolloSearch: { limit: 20, windowSec: 86_400 },
   /** Person matches (one Apollo credit each) per user per day on the hosted key. */
   apolloEnrich: { limit: 50, windowSec: 86_400 },
+  /**
+   * Web-search work-history lookups. They run on the person's own AI key, but each one is
+   * several paid searches the person never clicked for — a pasted list or a refresh fans
+   * out — so a day has a ceiling that no ordinary use of LinkedIn pulls comes near.
+   */
+  workHistoryResearch: { limit: 60, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**

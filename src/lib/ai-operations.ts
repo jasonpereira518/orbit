@@ -86,6 +86,9 @@ export const AI_OPERATIONS = {
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },
+  // The person's own model, not the fast tier: telling two people with one name apart from
+  // search snippets is judgment, and a wrong answer writes a stranger's career onto a contact.
+  "contact.work_history": { label: "Work history (web search)", tier: "user", background: true },
   "events.why": { label: "Events: why talk to them", tier: "fast", thinking: "minimal" },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
