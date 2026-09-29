@@ -37,6 +37,7 @@ import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { isSurfaceLive } from "@/lib/surface-visibility";
 import { getCareerLines, getContactProfile } from "@/lib/contact-profile";
 import {
   formatExperienceDates,
@@ -622,9 +623,11 @@ export async function prepareChatContext(
       route.attention
         ? (() => {
             steps.start("attention", "Checking who is overdue");
-            return getClosenessCohort(userId)
-              .catch(() => null)
-              .then((cohort) => getAttentionBrief(userId, cohort?.interactedIds))
+            return Promise.all([
+              getClosenessCohort(userId).catch(() => null),
+              isSurfaceLive(userId, "page.radar").catch(() => false),
+            ])
+              .then(([cohort, radar]) => getAttentionBrief(userId, cohort?.interactedIds, { radar }))
               .catch(() => null)
               .then((brief) => {
                 const overdueRefs = brief

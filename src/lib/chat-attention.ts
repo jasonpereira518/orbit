@@ -101,7 +101,9 @@ function daysBetween(from: Date | string | null, now: number) {
 
 export async function getAttentionBrief(
   userId: string,
-  interactedIds?: Set<string>
+  interactedIds?: Set<string>,
+  /** Lead with Radar's list. Only for a viewer who can open Radar (`isSurfaceLive`). */
+  opts: { radar?: boolean } = {}
 ): Promise<AttentionBrief> {
   const db = await getDb();
   const now = new Date();
@@ -136,7 +138,7 @@ export async function getAttentionBrief(
     }),
     // Radar's live list, already joined to its contacts. Empty for anyone Radar has never
     // run for, so their brief is exactly what it was.
-    listPendingRecommendations(userId, SUGGESTION_CAP).catch(() => []),
+    opts.radar ? listPendingRecommendations(userId, SUGGESTION_CAP).catch(() => []) : [],
   ]);
 
   const suggestionContactIds = suggestionRows

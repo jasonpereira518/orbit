@@ -351,13 +351,14 @@ async function main() {
   // withAlerts: false — this budget targets the bounded-query design this phase adds.
   // Account alerts are a separate feature with their own statement budget, covered by
   // smoke-account-alerts.ts.
-  const panel = await loadNotificationPanel(USER, new Date(), { withAlerts: false });
+  const panel = await loadNotificationPanel(USER, new Date(), { withAlerts: false, radar: true });
   const panelCount = stopQueryCount();
   const panelScans = contactScans(capturedQueries());
   console.log(`  statements: ${panelCount}`);
   // 9, up from 8, and deliberately: Radar's one-line summary (a count and three names off
-  // the recommendations index). It is a sibling of `items`, never an item, so it adds a
-  // statement but no rows to the scaling bound below.
+  // the recommendations index), measured on, as it is for anyone who can open Radar. It is a
+  // sibling of `items`, never an item, so it adds a statement but no rows to the scaling
+  // bound below.
   check("panel issues ≤ 9 statements", panelCount <= 9, `got ${panelCount}`);
   check(
     "panel contacts scan filters on next_follow_up_at",
@@ -690,7 +691,7 @@ async function main() {
 
   const smallDashboard = await getDashboardData(SCALE_USER);
   const smallGraph = await loadGraphData(SCALE_USER, { profile: Promise.resolve(null), scope: "all" });
-  const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false });
+  const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false, radar: true });
   const smallKnowledge = await loadKnowledgeBase(SCALE_USER);
   check(
     "knowledge payload does not grow with the account",

@@ -53,6 +53,8 @@ import { encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { getAttentionBrief } from "../src/lib/chat-attention";
+import { isSurfaceLive } from "../src/lib/surface-visibility";
+import { COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { loadRadarPreview } from "../src/lib/radar/page-data";
 import { scaleContactRows } from "./lib/scale-fixture";
 
@@ -322,13 +324,25 @@ run(async () => {
   console.log("\nthe rest of the app sees the same list");
   {
     const live = await pending();
-    const panel = await loadNotificationPanel(USER, new Date(), { withAlerts: false });
+    check("nothing points into Radar while it is coming soon",
+      (await isSurfaceLive(USER, "page.radar")) === !COMING_SOON_KEYS.has("page.radar"));
+    startQueryCount();
+    const unasked = await loadNotificationPanel(USER, new Date(), { withAlerts: false });
+    stopQueryCount();
+    check("the bell has no Radar row unless the viewer can open Radar",
+      unasked.radar === undefined && !capturedQueries().some((q) => /\brecommendations\b/.test(q)));
+    const panel = await loadNotificationPanel(USER, new Date(), { withAlerts: false, radar: true });
     check("the bell summarises Radar in one line", panel.radar?.count === live.length && (panel.radar?.names.length ?? 0) <= 3, JSON.stringify(panel.radar));
     check("and never as a due item", !panel.items.some((i) => i.url === "/radar"));
     const preview = await loadRadarPreview(USER);
     check("the dashboard previews the top four", preview.hasRun && preview.items.length === Math.min(4, live.length) && preview.total === live.length);
-    const brief = await getAttentionBrief(USER);
     const radarIds = new Set(live.map((r) => r.contactId));
+    startQueryCount();
+    await getAttentionBrief(USER);
+    stopQueryCount();
+    check("chat does not read Radar unless the viewer can open it",
+      !capturedQueries().some((q) => /\brecommendations\b/.test(q)));
+    const brief = await getAttentionBrief(USER, undefined, { radar: true });
     check("chat's attention brief leads with Radar", brief.suggestions.length > 0 && radarIds.has(brief.suggestions[0]!.id));
     check("with Radar's reasons", brief.suggestions.filter((b) => radarIds.has(b.id)).every((b) => b.reason.length > 0));
     check("and nobody twice", new Set(brief.suggestions.map((b) => b.id)).size === brief.suggestions.length);

@@ -25,11 +25,16 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
  * `settings` (and `entitlements`, resolved from it when omitted) is for a caller that already
  * holds the account's row — a Server Action that went through `requireAuthenticatedUser()`,
  * where `cache()` cannot stop `getEntitlements` and the alerts from reading it again.
+ *
+ * `radar` is true only when this viewer can use Radar (`isSurfaceLive(userId, "page.radar")`):
+ * the row links to /radar, which is a teaser while Radar is coming soon. Off unless asked
+ * for, so a caller that forgets shows no Radar row rather than a link to a page the viewer
+ * cannot use, and the desktop poll, which never shows it, never pays for it.
  */
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
+  opts: { withAlerts: boolean; radar?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
   const context: AccountHealthContext | undefined = opts.settings
@@ -108,15 +113,17 @@ export async function loadNotificationPanel(
     // Radar's live list, as one summary line: how many and who's first. Never items, so
     // never "due", so never a badge or a desktop notification (an unconfirmed guess must
     // not reach either). One indexed read; empty for anyone Radar has never run for.
-    db.execute(sql`
-      SELECT count(*)::int AS n,
-             (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names
-        FROM recommendations r
-        JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
-       WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
-    `),
+    opts.radar
+      ? db.execute(sql`
+          SELECT count(*)::int AS n,
+                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names
+            FROM recommendations r
+            JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
+           WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
+        `)
+      : null,
   ]);
-  const radarRow = rowsOf<{ n: number; names: string[] | null }>(radarRows)[0];
+  const radarRow = radarRows ? rowsOf<{ n: number; names: string[] | null }>(radarRows)[0] : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
