@@ -49,7 +49,7 @@ import {
   getApolloApiKey,
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
-import { saveContactProfile } from "@/lib/contact-profile";
+import { kickWorkHistoryResearch } from "@/lib/work-history-research";
 import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
@@ -1351,30 +1351,19 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       );
       if (profileImageUrl) await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
 
-      // Apollo fills a gap; it never overwrites an extension capture. `saveContactProfile`
-      // enforces that, so this call is unconditional and cheap when it is outranked.
-      if (profile.experiences.length) {
-        await saveContactProfile(userId, contact.id, {
-          source: "apollo",
-          sourceUrl: profile.linkedinUrl,
-          adapterVersion: null,
-          capturedAt: new Date(),
-          warnings: [],
-          headline: null,
-          about: null,
-          skills: [],
-          certifications: [],
-          volunteering: [],
-          publications: [],
-          experiences: profile.experiences,
-        }).catch(() => null); // never fail a refresh over the profile half
-      }
-
       refreshed += 1;
     } catch {
       failed += 1;
     }
   }
+
+  // Work history comes from a web search on the person's own AI key, not from Apollo, and
+  // in its own function: a few searches outlast this request. The route skips anyone with a
+  // recent history, so a repeated refresh does not search again.
+  await kickWorkHistoryResearch(
+    userId,
+    ordered.map((c) => c.id)
+  );
 
   revalidatePath("/contacts");
   revalidatePath("/");

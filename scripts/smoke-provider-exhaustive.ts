@@ -222,6 +222,13 @@ const ALLOWLIST: Record<string, string> = {
     "deliberately not wired up (multipart body, no valid model slug); the two are " +
     "exhaustive for every grant transcribeAudioWithAI can receive today.",
   "src/lib/ai.ts:2236": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:592.)",
+  // webSearchJson: four explicit arms in order — gemini, openrouter, openai, then anthropic
+  // as the fallthrough. OpenRouter has its own arm (its search is a request plugin, not the
+  // Responses API tool the openai arm uses), so neither literal below can receive it.
+  "src/lib/ai.ts:2694": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
+    "arm follows it, so the four arms are exhaustive over AiProvider.",
+  "src/lib/ai.ts:2747": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
+    "above (plugin-based search, not the Responses API), so it never reaches this one.",
   "src/lib/errors.ts:36": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
   "src/lib/errors.ts:38": "same function as line 36 — see that entry.",

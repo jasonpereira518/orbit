@@ -102,6 +102,7 @@ function main() {
     "/api/capture/jobs/job_abc123/run",
     "/api/avatars/encode",
     "/api/embeddings/backfill",
+    "/api/work-history/research",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
     "/api/sync/run",
