@@ -5,16 +5,26 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
-import { and, eq, gte, ne, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
+import { siteSettings, usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
-import type { Plan } from "@/lib/plan-limits";
+import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { AI_OPERATIONS } from "@/lib/ai-operations";
+import {
+  creditPeriodFor,
+  ensureAllowance,
+  getCreditBalance,
+  packsUsable,
+  placeHold,
+  type CreditBalance,
+} from "@/lib/credits/ledger";
+import { creditsToMicros } from "@/lib/credits/grants";
 import {
   AI_PROVIDERS,
   resolveAiModel,
@@ -35,21 +45,20 @@ import {
   chooseCompletionKey,
   chooseEmbeddingKey,
   aiReadyFromFacts,
-  managedCallAllowed,
+  holdEstimateMicros,
   managedEligibility,
   managedModel,
-  managedWindow,
   nothingUsable,
-  MANAGED_AI_BUDGET,
+  BACKGROUND_FLOOR_SHARE,
+  BACKGROUND_OPERATIONS,
   MANAGED_AI_ENABLED,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
   type AiAccessDenial,
+  type AiKeyPreference,
   type AiKeySource,
   type KeyFacts,
-  type ManagedAllowance,
   type ManagedEligibility,
-  type ManagedUsage,
 } from "@/lib/managed-ai-policy";
 
 /**
@@ -139,19 +148,50 @@ export function jevSwitchedOff(): boolean {
 }
 
 /**
- * `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK.
- * Always on while `MANAGED_AI_ENABLED` is false: managed AI has not shipped.
+ * `ORBIT_MANAGED_AI=off` — the env emergency stop. Pro and Max fall back to "add your own
+ * key". Wins over the admin console's runtime switch below.
  */
 export function managedAiSwitchedOff(): boolean {
   if (!MANAGED_AI_ENABLED) return true;
   return process.env.ORBIT_MANAGED_AI?.trim().toLowerCase() === "off";
 }
 
-function managedKey(provider: AiProvider): string | null {
-  // Managed AI off: the local-dev names are the only ones read, and only on a dev server.
-  if (!MANAGED_AI_ENABLED) {
-    return localDevAiEnabled() ? process.env[LOCAL_ENV[provider]]?.trim() || null : null;
+/**
+ * The admin console's runtime switch (`site_settings.managed_ai_paused`), cached for 30s per
+ * server instance so it costs one read per instance, not per call. Unset reads as PAUSED on
+ * production — managed AI must not run before the legal text describing it ships — and as
+ * running everywhere else. A read failure keeps the last answer, or pauses if there is none.
+ */
+const PAUSE_TTL_MS = 30_000;
+let pauseCache: { paused: boolean; at: number } | null = null;
+
+export function managedAiPausedDefault(): boolean {
+  return process.env.VERCEL_ENV === "production";
+}
+
+export async function managedAiPaused(now = Date.now()): Promise<boolean> {
+  if (pauseCache && now - pauseCache.at < PAUSE_TTL_MS) return pauseCache.paused;
+  try {
+    const db = await getDb();
+    const [row] = await db
+      .select({ paused: siteSettings.managedAiPaused })
+      .from(siteSettings)
+      .where(eq(siteSettings.id, 1))
+      .limit(1);
+    const paused = row?.paused ?? managedAiPausedDefault();
+    pauseCache = { paused, at: now };
+    return paused;
+  } catch {
+    return pauseCache?.paused ?? true;
   }
+}
+
+/** For the admin switch: forget the cached answer so this instance sees the change at once. */
+export function forgetManagedAiPause() {
+  pauseCache = null;
+}
+
+function managedKey(provider: AiProvider): string | null {
   if (managedAiSwitchedOff()) return null;
   const explicit = process.env[MANAGED_ENV[provider]]?.trim();
   if (explicit) return explicit;
@@ -177,33 +217,23 @@ export function managedEnvVar(provider: AiProvider): string {
 
 /**
  * LOCALHOST ONLY — `next dev` runs AI on the keys in the developer's own `.env.local`, the
- * way local development always worked, so a fresh clone can capture a note without pasting a
- * key into Settings first. It is the only path left to a key the account did not save.
- *
- * Three conditions, all required, and none of them settable by a deployment: managed AI is
- * off (with it on, these names are Orbit's own managed keys and the plan rule applies), the
- * process is not a Vercel runtime, and `NODE_ENV` is development — which `next build` and
- * every deployment are not. `ORBIT_DEMO_MANAGED_AI=off` still turns it off, which is how the
- * production BYOK states are seen on a laptop.
+ * way local development always worked, unmetered. Two conditions, neither settable by a
+ * deployment: the process is not a Vercel runtime, and `NODE_ENV` is development — which
+ * `next build` and every deployment are not. `ORBIT_DEMO_MANAGED_AI=off` turns it off, which
+ * is how the production BYOK and credit states are seen on a laptop.
  */
 function localDevAiEnabled(): boolean {
-  if (MANAGED_AI_ENABLED) return false;
   if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
   return !process.env.VERCEL && isLocalhost();
 }
 
 /**
- * Demo accounts count as Lifetime (see `managed-ai-policy.ts`).
- * `ORBIT_DEMO_MANAGED_AI=off` switches that off, so the BYOK states can be seen on `next dev`
- * — the same shape as `ORBIT_DEMO_DATA=off` for onboarding.
- *
- * With managed AI off this narrows to the localhost case: the showcase account
- * (`DEMO_ACCOUNT_USER_ID`) is a deployed account, and no deployment pays for AI.
+ * Demo accounts on a dev server run on the developer's keys, unmetered. A DEPLOYED demo
+ * account (the showcase, `DEMO_ACCOUNT_USER_ID`) is not exempt: it follows the plan it holds,
+ * so it can never spend Orbit's money outside the credit ledger.
  */
 function demoCountsAsManaged(userId: string): boolean {
-  if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
-  if (!MANAGED_AI_ENABLED) return localDevAiEnabled() && isDemoAccount(userId);
-  return isDemoAccount(userId);
+  return localDevAiEnabled() && isDemoAccount(userId);
 }
 
 /* ------------------------------------------------------------------------ grants ----- */
@@ -418,79 +448,14 @@ export function managedCostSql() {
     ELSE 0 END)`;
 }
 
-/**
- * This month's managed spend for one account — an index scan on `(user_id, created_at)`,
- * plus what batches still in flight are expected to cost.
- *
- * The reservation matters: a submitted batch has spent the money but written no usage rows
- * yet (they land when its results do, hours later). Without counting it, an account could
- * submit batch after batch and only discover the cap when the bill arrived.
- */
-export async function managedUsageThisMonth(userId: string, now = new Date()): Promise<ManagedUsage> {
-  const { start } = managedWindow(now);
-  const db = await getDb();
-  // Independent sums over two tables, so they go out together.
-  const [[row], [reserved]] = await Promise.all([
-    db
-      .select({
-        spent: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
-        calls: sql<number>`count(*)::int`,
-      })
-      .from(usageEvents)
-      .where(
-        and(
-          eq(usageEvents.userId, userId),
-          eq(usageEvents.keyOwner, "orbit"),
-          gte(usageEvents.createdAt, start),
-          // Deepgram rows carry keyOwner "orbit" too — it's Orbit's own key, but it is a hosted
-          // service metered by `speech_usage`, not an LLM call against the managed allowance.
-          // Without this exclusion, `UNPRICED_CALL_MICROS.transcription` (managedCostSql's
-          // fallback for a null-cost transcription row, which Deepgram rows always are — see
-          // the note in ai.ts) would charge every voice note against the same monthly cap that
-          // gates a Lifetime account's chat and capture calls, so recording a few voice notes
-          // could throttle that account out of its own AI completions.
-          ne(usageEvents.provider, "deepgram"),
-        ),
-      ),
-    db
-      .select({
-        micros: sql<string>`coalesce(sum(${aiBatchJobs.estCostMicros}), 0)::bigint`,
-        calls: sql<string>`coalesce(sum(${aiBatchJobs.requestCount}), 0)::bigint`,
-      })
-      .from(aiBatchJobs)
-      .where(
-        and(
-          eq(aiBatchJobs.userId, userId),
-          eq(aiBatchJobs.keyOwner, "orbit"),
-          eq(aiBatchJobs.status, "submitted"),
-          gte(aiBatchJobs.createdAt, start),
-        ),
-      ),
-  ]);
-  return {
-    spentMicros: Number(row?.spent ?? 0) + Number(reserved?.micros ?? 0),
-    calls: Number(row?.calls ?? 0) + Number(reserved?.calls ?? 0),
-  };
-}
-
-export function allowanceFrom(usage: ManagedUsage, now = new Date()): ManagedAllowance {
-  return {
-    ...usage,
-    limitMicros: MANAGED_AI_BUDGET.monthlyCostMicros,
-    callLimit: MANAGED_AI_BUDGET.monthlyCalls,
-    resetsAt: managedWindow(now).resetsAt.toISOString(),
-  };
-}
-
 /* -------------------------------------------------------------------- the gate ------- */
 
 /**
  * One account's AI access: the settings read, plan and keys, resolved once per AI call — or
  * once per request, when a request that makes several calls opens it once and passes it
- * down (`/api/chat`; see `forUser`). Only the account READ is shared that way: the managed
- * allowance is checked in `grant()`, so every `completion()` / `embedding()` on a shared
- * access still sums this month's usage afresh, including what earlier calls in the same
- * request spent.
+ * down (`/api/chat`; see `forUser`). Only the account READ is shared that way: credits are
+ * held in `grant()`, so every `completion()` / `embedding()` on a shared access places its
+ * own hold against the live balance.
  *
  * Built by `resolveAiAccess`. Decrypts only what exists and holds the plaintext privately;
  * callers only ever see grants.
@@ -502,8 +467,8 @@ export class AiAccess {
     readonly settings: AccountRow | undefined,
     readonly plan: Plan,
     readonly eligibility: ManagedEligibility,
-    /** A paid Lifetime checkout Stripe says has not cleared yet. */
-    readonly upgradePending: boolean,
+    /** Which key runs first when the account could use either. */
+    readonly preference: AiKeyPreference,
     private readonly personal: Partial<Record<AiProvider, string>>,
     private readonly managed: Partial<Record<AiProvider, string>>,
     /** The decision model's key: the account's own, or on `next dev` the developer's. */
@@ -516,8 +481,6 @@ export class AiAccess {
     }
     const row = opts.row !== undefined ? (opts.row ?? undefined) : await loadAccount(userId);
     const plan = resolvePlan(row).plan;
-    // Lifetime is no longer sold, so there is no pending Lifetime payment to wait on.
-    const upgradePending = false;
 
     const personal: Partial<Record<AiProvider, string>> = {};
     const decrypted = {
@@ -532,7 +495,10 @@ export class AiAccess {
 
     const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
     const managed: Partial<Record<AiProvider, string>> = {};
-    if (eligibility) {
+    // The admin pause stops Orbit-paid AI for Pro and Max; a dev server's own keys are not
+    // Orbit's, so a localhost demo account is unaffected.
+    const paused = eligibility === "plan" ? await managedAiPaused() : false;
+    if (eligibility && !paused) {
       for (const provider of MANAGED_PROVIDER_ORDER) {
         const key = managedKey(provider);
         if (key) managed[provider] = key;
@@ -540,8 +506,8 @@ export class AiAccess {
     }
 
     // BYOK only. The one exception is the dev server's own `.env.local`, on the same terms
-    // as every other provider there (a localhost demo account, managed AI off) — so it can
-    // never become an Orbit-paid key, even the day managed AI ships.
+    // as every other provider there (a localhost demo account) — so it can never become an
+    // Orbit-paid key.
     const ownDecisionKey = decryptOrNull(row?.typesafeApiKeyEncrypted);
     const devDecisionKey =
       eligibility === "demo" && localDevAiEnabled()
@@ -553,7 +519,8 @@ export class AiAccess {
         ? { key: devDecisionKey, source: "managed" as const }
         : null;
 
-    return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed, decisionKey);
+    const preference = (row?.aiKeyPreference ?? null) as AiKeyPreference;
+    return new AiAccess(userId, row, plan, eligibility, preference, personal, managed, decisionKey);
   }
 
   /**
@@ -577,6 +544,7 @@ export class AiAccess {
   facts(): KeyFacts {
     return {
       eligibility: this.eligibility,
+      preference: this.preference,
       selectedProvider: this.selectedProvider,
       selectedModel: this.selectedModel,
       personal: {
@@ -595,14 +563,7 @@ export class AiAccess {
     };
   }
 
-  /**
-   * The refusal for `reason`. A `key_required` for an account whose Lifetime payment is
-   * still clearing is reported as that instead: a key is not what they are missing.
-   */
   refusal(reason: AiAccessDenial, message?: string): AiAccessError {
-    if (reason === "key_required" && this.upgradePending) {
-      return new AiAccessError("upgrade_pending");
-    }
     return new AiAccessError(reason, message);
   }
 
@@ -615,13 +576,27 @@ export class AiAccess {
     const key = source === "personal" ? this.personal[provider] : this.managed[provider];
     // Unreachable when the policy and the maps agree; a refusal beats a crash if they don't.
     if (!key) throw this.refusal(nothingUsable(this.eligibility).reason);
-    // The allowance is Orbit's spend ceiling. On a dev server the "managed" key is the
-    // developer's own, so there is nothing to ration and no usage query to pay for.
-    if (source === "managed" && MANAGED_AI_ENABLED) {
-      const usage = await managedUsageThisMonth(this.userId);
-      if (!managedCallAllowed(usage, operation)) throw this.refusal("managed_limit");
-    }
+    // Credits are Orbit's spend ceiling: hold this call's estimate against the live balance,
+    // or refuse — the hard stop. On a dev server the "managed" key is the developer's own
+    // (eligibility "demo"), so there is nothing to meter.
+    if (source === "managed" && this.eligibility === "plan") await this.holdCredits(operation);
     return mint(provider, model, source, key, operation);
+  }
+
+  private async holdCredits(operation: string): Promise<void> {
+    await ensureAllowance(this.userId, this.plan, creditPeriodFor(this.settings));
+    const tier = (AI_OPERATIONS as Record<string, { tier?: string }>)[operation]?.tier;
+    const monthly = PLAN_CONFIG[this.plan].monthlyCredits ?? 0;
+    const hold = await placeHold({
+      userId: this.userId,
+      micros: holdEstimateMicros(tier),
+      operation,
+      packs: packsUsable(this.plan),
+      floorMicros: BACKGROUND_OPERATIONS.has(operation)
+        ? creditsToMicros(monthly * BACKGROUND_FLOOR_SHARE)
+        : 0,
+    });
+    if (!hold) throw this.refusal("managed_limit");
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */
@@ -736,8 +711,12 @@ export type AiAccessStatus = {
   managedConfigured: boolean;
   /** Voice and meeting capture have an engine — Deepgram's quota or `AiAccess.canTranscribe()`. */
   canTranscribe: boolean;
-  /** This month's managed allowance — eligible accounts only. */
-  allowance: ManagedAllowance | null;
+  /** Which key runs first when the account has both (`null` = the saved key). */
+  preference: AiKeyPreference;
+  /** Orbit-paid AI is paused by the admin switch or the env kill switch. */
+  managedPaused: boolean;
+  /** The credit balance — Pro and Max only. */
+  credits: (CreditBalance & { monthlyCredits: number }) | null;
 };
 
 /**
@@ -755,18 +734,18 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
 
   // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
   // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
-  // callers rely on. Read alongside the managed allowance, but only once `resolveAiAccess`
-  // has settled: that can grant a just-paid Lifetime plan, and the speech limit is per plan.
-  const [usage, speech] = await Promise.all([
-    access.eligibility && MANAGED_AI_ENABLED ? managedUsageThisMonth(userId, now) : null,
+  // callers rely on.
+  const monthlyCredits = PLAN_CONFIG[access.plan].monthlyCredits;
+  const [balance, speech, paused] = await Promise.all([
+    monthlyCredits ? getCreditBalance(userId, access.plan, access.settings, now) : null,
     deepgramEnabled() ? speechAllowance(userId, "shortform") : null,
+    access.eligibility === "plan" ? managedAiPaused() : Promise.resolve(false),
   ]);
-  const allowance = usage ? allowanceFrom(usage, now) : null;
 
   let reason: AiAccessDenial | null = null;
   if (!choice.ok) {
-    reason = choice.reason === "key_required" && access.upgradePending ? "upgrade_pending" : choice.reason;
-  } else if (choice.source === "managed" && allowance && !managedCallAllowed(allowance, "status")) {
+    reason = choice.reason;
+  } else if (choice.source === "managed" && access.eligibility === "plan" && balance && balance.spendable <= 0) {
     reason = "managed_limit";
   }
 
@@ -784,13 +763,15 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
     hasPersonalKey: facts.personal[facts.selectedProvider],
     managedConfigured: Object.values(managedKeysConfigured()).some(Boolean),
     canTranscribe: deepgram || access.canTranscribe(),
-    allowance,
+    preference: access.preference,
+    managedPaused: managedAiSwitchedOff() || paused,
+    credits: balance && monthlyCredits ? { ...balance, monthlyCredits } : null,
   };
 }
 
 /**
  * The presence-only answer, for the notifications panel's 120-second poll: no decryption,
- * no allowance query, no Stripe. Same policy function as the gate, so the "add your API
+ * no credit query, no Stripe. Same policy function as the gate, so the "add your API
  * key" alert and the gate cannot disagree about who needs a key.
  */
 export function aiReadyFromSettings(
@@ -798,6 +779,7 @@ export function aiReadyFromSettings(
   row: {
     aiProvider?: string | null;
     aiModel?: string | null;
+    aiKeyPreference?: string | null;
     geminiApiKeyEncrypted?: string | null;
     openaiApiKeyEncrypted?: string | null;
     anthropicApiKeyEncrypted?: string | null;

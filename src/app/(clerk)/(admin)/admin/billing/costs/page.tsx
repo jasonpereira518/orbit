@@ -21,7 +21,7 @@ import {
   costToRunBreakdown,
   paidSignupsByChannel,
 } from "@/lib/money-metrics";
-import { MANAGED_AI_BUDGET } from "@/lib/managed-ai-policy";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 
 export const metadata = { title: "Admin · Money · Costs" };
 
@@ -117,15 +117,15 @@ export default async function MoneyCostsPage() {
             label="On Orbit's AI keys"
             value={formatMicros(aiSpend.orbitKeyMicros)}
             tone="muted"
-            hint={`Lifetime managed AI · capped at ${formatMicros(MANAGED_AI_BUDGET.monthlyCostMicros)}/account/month`}
+            hint={`Pro and Max included AI · ${PLAN_CONFIG.orbit.monthlyCredits} / ${PLAN_CONFIG.max.monthlyCredits} credits per account per cycle`}
           />
         </div>
 
         {/*
          * `keyOwner: "orbit"` is written only for calls the AI gate (`src/lib/ai-access.ts`)
-         * ran on a MANAGED key: Lifetime accounts with no key of their own, and demo
-         * accounts. It is a real cost with a hard per-account ceiling (MANAGED_AI_BUDGET),
-         * and the ops sweep pages when its pace threatens what Lifetime brought in.
+         * ran on a MANAGED key: Pro and Max accounts on included AI. It is a real cost with a
+         * hard per-account ceiling (the credit ledger's hard stop), and the ops sweep pages
+         * when it outpaces the revenue behind it.
          */}
         {aiSpend.orbitKeyMicros > 0 && (
           <AdminPanel title="AI on Orbit's keys">
@@ -133,10 +133,10 @@ export default async function MoneyCostsPage() {
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
               <p>
                 {formatMicros(aiSpend.orbitKeyMicros)} of AI spend in the last 30 days ran on
-                Orbit&apos;s managed keys — Lifetime accounts that have not added a key of their
-                own. Each account is capped at{" "}
-                {formatMicros(MANAGED_AI_BUDGET.monthlyCostMicros)} a month; set{" "}
-                <code>ORBIT_MANAGED_AI=off</code> to stop managed AI for everyone at once.
+                Orbit&apos;s managed keys — Pro and Max accounts on included AI. Each account stops at
+                its credits ({PLAN_CONFIG.orbit.monthlyCredits} on Pro, {PLAN_CONFIG.max.monthlyCredits} on Max, plus
+                any packs); pause managed AI from the Access page, or set{" "}
+                <code>ORBIT_MANAGED_AI=off</code> to stop it for everyone at once.
               </p>
             </div>
           </AdminPanel>

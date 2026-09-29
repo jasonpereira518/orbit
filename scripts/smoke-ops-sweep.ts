@@ -42,6 +42,11 @@ async function reset() {
   // Other scripts' disarmed rows would otherwise add up to a burst.
   await db.execute(sql`UPDATE gmail_connections SET sync_error = NULL WHERE next_sync_at IS NULL AND sync_error IS NOT NULL`);
   await db.execute(sql`DELETE FROM rate_limit_buckets WHERE bucket LIKE 'avatarSource.shared:%' OR bucket LIKE 'apollo.%'`);
+  // Other scripts' Pro and Max accounts: with no managed key in the test environment they
+  // would raise `ai.managed_unconfigured` (Pro and Max sell included AI) — a delivery this
+  // script does not expect. Plan columns only; the throwaway database is shared per suite.
+  await db.execute(sql`UPDATE user_settings SET comped_plan = NULL WHERE comped_plan IN ('orbit', 'max')`);
+  await db.execute(sql`UPDATE user_settings SET subscription_plan = NULL, subscription_status = NULL WHERE subscription_plan IN ('orbit', 'max')`);
   // A healthy run of every OTHER scheduled job, so their own "has stopped running"
   // conditions stay quiet.
   //

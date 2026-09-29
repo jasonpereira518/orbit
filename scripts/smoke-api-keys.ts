@@ -253,6 +253,10 @@ run(async () => {
   await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${free}`);
 
   await db.execute(sql`DELETE FROM api_keys WHERE user_id LIKE 'api-key-smoke%'`);
+  // The comped Max row would read as a Pro/Max account with no managed key to the ops sweep
+  // that runs later in the same suite (one shared PGlite).
+  await db.execute(sql`DELETE FROM gate_events WHERE user_id = ${USER}`);
+  await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${USER}`);
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

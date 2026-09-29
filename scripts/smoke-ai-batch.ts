@@ -17,7 +17,9 @@ import { listPendingBatchJobs, pollAiBatch } from "../src/lib/ai-batch";
 import { runAiBatchSweep } from "../src/lib/ai-batch-apply";
 import { runLinkedInTimelineBackfill } from "../src/lib/linkedin-timeline-backfill";
 import { enrichContactsFromMessagesBatched } from "../src/lib/message-enrichment";
-import { managedUsageThisMonth } from "../src/lib/ai-access";
+import { ensureAllowance, creditPeriodFor, placeHold, getCreditBalance, BATCH_HOLD_TTL_MS } from "../src/lib/credits/ledger";
+import { settleBatchJob } from "../src/lib/ai-batch";
+import { creditGrants, creditHolds } from "../src/db/schema";
 
 const USER = "smoke-ai-batch-user";
 const MANAGED = "smoke-ai-batch-managed";
@@ -330,18 +332,37 @@ async function main() {
     check("  and the row says why", settled?.status === "failed" && Boolean(settled.errorMessage));
   }
 
-  console.log("\nThe managed allowance counts what is still in flight");
+  console.log("\nA batch on Orbit's key holds its estimate against the credits");
   {
     // A batch on Orbit's key has spent the money but written no usage rows yet — its
-    // results land hours later. Without the reservation an account could submit its way
-    // past the cap and only find out when the bill arrived.
+    // results land hours later. Without the hold an account could submit its way past its
+    // credits and only find out when the bill arrived.
     await db.delete(aiBatchJobs).where(eq(aiBatchJobs.userId, MANAGED));
-    const before = await managedUsageThisMonth(MANAGED);
-    check("nothing in flight, nothing reserved", before.spentMicros === 0 && before.calls === 0);
+    await db.delete(creditGrants).where(eq(creditGrants.userId, MANAGED));
+    await db.delete(creditHolds).where(eq(creditHolds.userId, MANAGED));
+    await db.delete(userSettings).where(eq(userSettings.userId, MANAGED));
+    await db.insert(userSettings).values({ userId: MANAGED, subscriptionPlan: "orbit", subscriptionStatus: "active" });
+    await ensureAllowance(MANAGED, "orbit", creditPeriodFor(null));
+    const before = await getCreditBalance(MANAGED, "orbit", null);
+    check("nothing in flight, nothing held", before.held === 0 && before.spendable === 200 * 10_000, JSON.stringify(before));
+
+    const jobId = crypto.randomUUID();
+    const hold = await placeHold({
+      userId: MANAGED, micros: 40_000, operation: `batch:${jobId}`, packs: true, ttlMs: BATCH_HOLD_TTL_MS, floorMicros: 40_000 - 1,
+    });
+    check("an in-flight batch holds its estimate", Boolean(hold));
+    const during = await getCreditBalance(MANAGED, "orbit", null);
+    check("  and the balance says so", during.held === 40_000 && during.spendable === 200 * 10_000 - 40_000, JSON.stringify(during));
+
+    const tooBig = await placeHold({
+      userId: MANAGED, micros: 5_000_000, operation: "batch:too-big", packs: true, ttlMs: BATCH_HOLD_TTL_MS, floorMicros: 5_000_000 - 1,
+    });
+    check("a batch bigger than what is left is refused outright", tooBig === null);
 
     const [row] = await db
       .insert(aiBatchJobs)
       .values({
+        id: jobId,
         userId: MANAGED,
         operation: "import.enrich",
         provider: "gemini",
@@ -353,30 +374,10 @@ async function main() {
         payload: { items: [] },
       })
       .returning();
-    const during = await managedUsageThisMonth(MANAGED);
-    check("an in-flight batch reserves its estimate", during.spentMicros === 40_000, String(during.spentMicros));
-    check("  and its requests count against the call ceiling", during.calls === 2, String(during.calls));
-
-    await db.update(aiBatchJobs).set({ status: "applied" }).where(eq(aiBatchJobs.id, row.id));
-    const after = await managedUsageThisMonth(MANAGED);
-    check("once applied, only the real usage rows count", after.spentMicros === 0 && after.calls === 0, JSON.stringify(after));
-
-    // A batch on the person's OWN key is their spend, never Orbit's allowance.
-    await db
-      .insert(aiBatchJobs)
-      .values({
-        userId: MANAGED,
-        operation: "import.enrich",
-        provider: "gemini",
-        model: "gemini-3.5-flash",
-        keyOwner: "user",
-        providerBatchId: "batches/own-key",
-        requestCount: 5,
-        estCostMicros: 90_000,
-        payload: { items: [] },
-      });
-    const byo = await managedUsageThisMonth(MANAGED);
-    check("a batch on the person's own key is not reserved", byo.spentMicros === 0 && byo.calls === 0, JSON.stringify(byo));
+    await settleBatchJob(row, "applied", null);
+    const after = await getCreditBalance(MANAGED, "orbit", null);
+    check("once settled, the hold is released", after.held === 0, JSON.stringify(after));
+    await db.delete(creditGrants).where(eq(creditGrants.userId, MANAGED));
   }
 
   for (const u of [USER, MANAGED]) {

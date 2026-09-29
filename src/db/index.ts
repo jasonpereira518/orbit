@@ -4514,4 +4514,36 @@ export async function runAtomicWrite(
   });
 }
 
+/**
+ * `runAtomicWrite`, returning each statement's result in order — for a group whose LAST
+ * statement is a conditional write the caller needs to read back (the credit hold: lock the
+ * account row, then insert a hold only if the balance covers it, RETURNING the new id).
+ *
+ * Postgres runs each statement of a transaction under READ COMMITTED with a fresh snapshot,
+ * so a statement placed after a row lock sees every write committed by whoever held that
+ * lock before it. That is what makes lock-then-conditional-insert atomic per account on both
+ * drivers without an interactive transaction (which neon-http cannot hold open).
+ */
+export async function runAtomicBatch(
+  db: Db,
+  build: (writer: AtomicWriter) => AtomicStatement[]
+): Promise<unknown[]> {
+  const batchable = db as unknown as {
+    batch?: (statements: AtomicStatement[]) => Promise<unknown[]>;
+  };
+  if (typeof batchable.batch === "function") {
+    const statements = build(db as unknown as AtomicWriter);
+    if (!statements.length) return [];
+    return batchable.batch(statements);
+  }
+  const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
+  return local.transaction(async (tx) => {
+    const results: unknown[] = [];
+    for (const statement of build(tx as unknown as AtomicWriter)) {
+      results.push(await (statement as unknown as Promise<unknown>));
+    }
+    return results;
+  });
+}
+
 export { schema };

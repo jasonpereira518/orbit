@@ -1,0 +1,129 @@
+/**
+ * The credit ledger's own rules, on PGlite:
+ *
+ *  - The allowance resets at each renewal and never rolls over; a comp resets monthly.
+ *  - Pro → Max mid-cycle raises the cycle to Max's allowance, keeping what was used; a
+ *    downgrade never lowers the cycle it happens in.
+ *  - The 80% / 100% notices, and "now on pack credits".
+ *  - Plain-language equivalents come from measured cost, and are hidden without enough data.
+ *
+ * (Holds, the hard stop, packs-after-allowance, own-key calls and freeze/restore are driven
+ * through the real gate in smoke-ai-access; pack grants and refunds in smoke-pricing-v2-billing.)
+ *
+ * Run: npx tsx scripts/smoke-credits.ts
+ */
+import "./smoke/_env";
+import { run } from "./smoke/_env";
+
+const USER = "smoke-credits-user";
+const DAY = 86_400_000;
+
+let failures = 0;
+function check(label: string, ok: boolean, detail?: unknown) {
+  if (ok) console.log(`  ok   ${label}`);
+  else {
+    failures++;
+    console.error(`  FAIL ${label}${detail === undefined ? "" : `\n       ${JSON.stringify(detail)}`}`);
+  }
+}
+
+run(async () => {
+  const { eq } = await import("drizzle-orm");
+  const { getDb } = await import("../src/db");
+  const { creditGrants, usageEvents } = await import("../src/db/schema");
+  const ledger = await import("../src/lib/credits/ledger");
+  const { evaluateAccountHealth, toAccountAlerts, isDismissible } = await import("../src/lib/account-alerts");
+  const { equivalentsFor, measuredActionCosts, MIN_SAMPLES } = await import("../src/lib/credits/equivalents");
+
+  const db = await getDb();
+  const reset = async () => {
+    await db.delete(creditGrants).where(eq(creditGrants.userId, USER));
+    await db.delete(usageEvents).where(eq(usageEvents.userId, USER));
+  };
+  await reset();
+
+  console.log("The allowance period");
+  const now = new Date("2026-10-15T12:00:00Z");
+  const sub = { subscriptionPeriodStart: new Date("2026-10-03T09:00:00Z"), subscriptionPeriodEnd: new Date("2026-11-03T09:00:00Z") };
+  const p1 = ledger.creditPeriodFor(sub, now);
+  check("a subscriber's allowance runs on their billing period", p1.start.getTime() === sub.subscriptionPeriodStart.getTime() && p1.end.getTime() === sub.subscriptionPeriodEnd.getTime());
+  const comp = ledger.creditPeriodFor({ compedPlan: "orbit" }, now);
+  check("a comp (no billing cycle) resets on the calendar month", comp.start.toISOString() === "2026-10-01T00:00:00.000Z" && comp.end.toISOString() === "2026-11-01T00:00:00.000Z");
+  const noStart = ledger.creditPeriodFor({ subscriptionPeriodEnd: sub.subscriptionPeriodEnd }, now);
+  check("a period end with no recorded start reads as the month before it", noStart.start.toISOString() === "2026-10-03T09:00:00.000Z");
+
+  console.log("\nReset at renewal, no rollover");
+  const cycle1 = { start: new Date(Date.now() - 20 * DAY), end: new Date(Date.now() + 10 * DAY) };
+  await ledger.ensureAllowance(USER, "orbit", cycle1);
+  await ledger.ensureAllowance(USER, "orbit", cycle1);
+  let grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
+  check("one grant per cycle, however often it is ensured", grants.length === 1 && grants[0].microsGranted === 200 * 10_000, grants.length);
+  await db.update(creditGrants).set({ microsRemaining: 150 * 10_000 }).where(eq(creditGrants.userId, USER));
+  let bal = await ledger.getCreditBalance(USER, "orbit", { subscriptionPeriodStart: cycle1.start, subscriptionPeriodEnd: cycle1.end });
+  check("the balance reads the cycle's remaining allowance", bal.allowance?.remaining === 150 * 10_000 && bal.spendable === 150 * 10_000, bal);
+
+  // Renewal: the mirror moves to the next period.
+  const cycle2 = { start: cycle1.end, end: new Date(cycle1.end.getTime() + 30 * DAY) };
+  const renewedAt = new Date(cycle1.end.getTime() + DAY);
+  bal = await ledger.getCreditBalance(USER, "orbit", { subscriptionPeriodStart: cycle2.start, subscriptionPeriodEnd: cycle2.end }, renewedAt);
+  check("the new cycle starts from a full 200", bal.allowance?.granted === 200 * 10_000 && bal.allowance.remaining === 200 * 10_000, bal.allowance);
+  check("…and last cycle's 150 unused credits do not roll over", bal.spendable === 200 * 10_000, bal.spendable);
+
+  console.log("\nPro → Max mid-cycle");
+  await reset();
+  await ledger.ensureAllowance(USER, "orbit", cycle1);
+  await db.update(creditGrants).set({ microsRemaining: 50 * 10_000 }).where(eq(creditGrants.userId, USER));
+  await ledger.ensureAllowance(USER, "max", cycle1);
+  grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
+  check("the cycle rises to Max's 500, keeping the 150 already used",
+    grants.length === 1 && grants[0].microsGranted === 500 * 10_000 && grants[0].microsRemaining === 350 * 10_000 && grants[0].plan === "max", grants[0]);
+  await ledger.ensureAllowance(USER, "orbit", cycle1);
+  grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
+  check("a switch back to Pro never lowers the cycle it happens in", grants[0].microsGranted === 500 * 10_000 && grants[0].microsRemaining === 350 * 10_000);
+  await ledger.ensureAllowance(USER, "free", cycle1);
+  await ledger.ensureAllowance(USER, "lifetime", cycle1);
+  check("Free and Lifetime get no allowance", (await db.select().from(creditGrants).where(eq(creditGrants.userId, USER))).length === 1);
+
+  console.log("\nThe 80% and 100% notices");
+  const health = (credits: Parameters<typeof evaluateAccountHealth>[0]["credits"]) =>
+    evaluateAccountHealth({
+      hasAiKey: true, aiProvider: "gemini", onboardingCompletedAt: new Date(), gmail: null, outlook: null,
+      googleCalendar: null, microsoftCalendar: null, appleCalendar: null, calendarErrorCount: 0, calendarErrorLabel: null,
+      calendarErrorDetail: null, importFailedCount: 0, importFailedLabel: null, importFailedDetail: null, importStalledCount: 0,
+      importStalledLabel: null, importStalledRows: null, importStalledTotal: null, plan: "orbit", planSource: "subscription",
+      subscriptionStatus: "active", subscriptionPeriodEnd: null, contactLimit: null, contactCount: null, credits,
+    } as Parameters<typeof evaluateAccountHealth>[0]).map((f) => f.code);
+  const c = (allowanceRemaining: number, packRemaining = 0) => ({
+    allowanceGranted: 2_000_000, allowanceRemaining, packRemaining,
+    spendable: allowanceRemaining + packRemaining, resetsAt: "2026-11-03T09:00:00.000Z",
+  });
+  check("under 80% used: quiet", health(c(1_000_000)).every((code) => !code.startsWith("plan.credits")));
+  check("80% used: a heads-up", health(c(400_000)).includes("plan.credits_near"));
+  check("100% used with packs: now on pack credits", health(c(0, 500_000)).includes("plan.credits_on_packs"));
+  check("100% used, no packs: AI paused, as an error", health(c(0)).includes("plan.credits_out"));
+  check("…the two heads-ups can be dismissed; the stop cannot",
+    isDismissible("plan.credits_near") && isDismissible("plan.credits_on_packs") && !isDismissible("plan.credits_out"));
+  const out = toAccountAlerts(evaluateAccountHealth({ ...({} as object), credits: c(0) } as never)).find((a) => a.code === "plan.credits_out");
+  check("…and says nothing is charged automatically", /Nothing is charged automatically/.test(out?.body ?? ""), out?.body);
+  check("no credits, no credit notices", health(null).every((code) => !code.startsWith("plan.credits")));
+
+  console.log("\nEquivalents from measured cost");
+  check("no measured cost, no equivalents", equivalentsFor(2_000_000, {}).length === 0);
+  const eq1 = equivalentsFor(2_500_000, { capture: 8_600, chat: 2_500 });
+  check("250 credits ≈ 290 captures and 1,000 chat answers at the eval's measured costs",
+    eq1.find((e) => e.action === "capture")?.count === 290 && eq1.find((e) => e.action === "chat")?.count === 1000, eq1);
+  const thin = await measuredActionCosts(Date.now() + 2 * 60 * 60 * 1000);
+  check(`fewer than ${MIN_SAMPLES} measured actions → no figure is invented`, thin.capture === undefined, thin);
+  for (let i = 0; i < MIN_SAMPLES; i++) {
+    await db.insert(usageEvents).values([
+      { userId: USER, operation: "capture.parse", provider: "gemini", model: "gemini-3.8-flash", kind: "completion", keyOwner: "orbit", estimatedCostMicros: 6_000, success: 1 },
+      { userId: USER, operation: "capture.details", provider: "gemini", model: "gemini-3.8-flash", kind: "completion", keyOwner: "orbit", estimatedCostMicros: 2_000, success: 1 },
+    ]);
+  }
+  const measured = await measuredActionCosts(Date.now() + 4 * 60 * 60 * 1000);
+  check("with enough captures, a capture costs the sum of its calls per capture", measured.capture === 8_000, measured);
+
+  await reset();
+  if (failures > 0) throw new Error(`${failures} credit check(s) failed`);
+  console.log("\nAll credit checks passed.");
+});
