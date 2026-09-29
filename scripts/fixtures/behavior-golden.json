@@ -5326,7 +5326,9 @@
       "hasPersonalKey": false,
       "managedConfigured": false,
       "canTranscribe": false,
-      "allowance": null
+      "preference": null,
+      "managedPaused": false,
+      "credits": null
     },
     "hasApolloKey": false,
     "hasApiKey": false,

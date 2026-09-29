@@ -1,4 +1,6 @@
 import { eq, sql } from "drizzle-orm";
+import { getCreditBalance } from "@/lib/credits/ledger";
+import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 import { getDb } from "@/db";
 import {
   appleConnections,
@@ -386,7 +388,44 @@ export async function loadAccountHealthInput(
     subscriptionPeriodEnd: toDate(settings.subscriptionPeriodEnd),
     contactLimit: entitlements.contactLimit,
     contactCount: needContacts ? num(row.contactCount) : null,
+    credits: await creditFacts(userId, entitlements.plan, settings, now),
   };
+}
+
+/** The credit balance for the 80% / 100% notices — Pro and Max on included AI only. */
+async function creditFacts(
+  userId: string,
+  plan: Plan,
+  settings: Parameters<typeof getCreditBalance>[2],
+  now: Date
+): Promise<HealthInput["credits"]> {
+  if (!PLAN_CONFIG[plan].features.hostedAi) return null;
+  // Running on the account's own key (the default whenever one is saved, unless it chose
+  // included AI first): credits are not what its AI runs on, so no credit notices.
+  const row = settings as {
+    aiKeyPreference?: string | null;
+    geminiApiKeyEncrypted?: string | null;
+    openaiApiKeyEncrypted?: string | null;
+    anthropicApiKeyEncrypted?: string | null;
+    openrouterApiKeyEncrypted?: string | null;
+  } | null;
+  const ownKey = Boolean(
+    row?.geminiApiKeyEncrypted || row?.openaiApiKeyEncrypted || row?.anthropicApiKeyEncrypted || row?.openrouterApiKeyEncrypted
+  );
+  if (ownKey && row?.aiKeyPreference !== "included") return null;
+  try {
+    const balance = await getCreditBalance(userId, plan, settings, now, { ensure: false });
+    if (!balance.allowance && balance.packRemaining === 0) return null;
+    return {
+      allowanceGranted: balance.allowance?.granted ?? 0,
+      allowanceRemaining: balance.allowance?.remaining ?? 0,
+      packRemaining: balance.packRemaining,
+      spendable: balance.spendable,
+      resetsAt: balance.allowance?.periodEnd ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

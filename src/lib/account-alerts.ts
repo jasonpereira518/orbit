@@ -60,6 +60,9 @@ export const IMPORT_ALERT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Fraction of the free contact cap at which the warning appears. */
 export const CONTACT_CAP_WARN_RATIO = 0.9;
 
+/** Share of a cycle's AI allowance used at which the heads-up appears. */
+export const CREDITS_WARN_RATIO = 0.8;
+
 /** Longest system-authored detail string (a provider error) shown verbatim in a body. */
 const MAX_DETAIL_CHARS = 140;
 
@@ -82,6 +85,12 @@ export type HealthCode =
   | "import.stalled"
   | "plan.contact_cap_reached"
   | "plan.contact_cap_near"
+  /** 80% of this cycle's AI allowance used (pricing v2). */
+  | "plan.credits_near"
+  /** The allowance is used and pack credits are now being spent. */
+  | "plan.credits_on_packs"
+  /** Nothing spendable left: included AI is paused until renewal or a pack. */
+  | "plan.credits_out"
   | "billing.past_due";
 
 /**
@@ -159,6 +168,17 @@ export type HealthInput = {
   contactLimit: number | null;
   /** null when `contactLimit` is null — the count is not queried for paid accounts. */
   contactCount: number | null;
+  /**
+   * The AI credit balance, in micros — Pro and Max accounts on included AI only. Absent or
+   * null means the credit predicates do not apply.
+   */
+  credits?: {
+    allowanceGranted: number;
+    allowanceRemaining: number;
+    packRemaining: number;
+    spendable: number;
+    resetsAt: string | null;
+  } | null;
 };
 
 export type HealthFinding = {
@@ -358,6 +378,33 @@ export function evaluateAccountHealth(
     }
   }
 
+  // --- AI credits ---------------------------------------------------------------------
+  // Mutually exclusive by construction, most severe first. 80% and 100% of the allowance
+  // are the two notices the plan promises; running on packs is the 100% notice for an
+  // account that still has somewhere to go.
+  if (input.credits) {
+    const c = input.credits;
+    const resetsAt = c.resetsAt;
+    if (c.spendable <= 0) {
+      findings.push({ code: "plan.credits_out", severity: "error", data: { resetsAt } });
+    } else if (c.allowanceGranted > 0 && c.allowanceRemaining <= 0 && c.packRemaining > 0) {
+      findings.push({
+        code: "plan.credits_on_packs",
+        severity: "warn",
+        data: { resetsAt, packCredits: Math.floor(c.packRemaining / 10_000) },
+      });
+    } else if (
+      c.allowanceGranted > 0 &&
+      c.allowanceGranted - c.allowanceRemaining >= Math.floor(c.allowanceGranted * CREDITS_WARN_RATIO)
+    ) {
+      findings.push({
+        code: "plan.credits_near",
+        severity: "warn",
+        data: { resetsAt, left: Math.floor(Math.max(0, c.allowanceRemaining) / 10_000) },
+      });
+    }
+  }
+
   // --- Billing ------------------------------------------------------------------------
   // `planSource === "subscription"` is the honest expression of `subscriptionIsLive`
   // without importing the server module: `resolvePlan` only reports that source while the
@@ -412,6 +459,9 @@ const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
   "calendar.sync_error",
   // Purely advisory: nothing is blocked until the cap is actually reached.
   "plan.contact_cap_near",
+  // Advisory too: AI still runs (on the rest of the allowance, or on pack credits).
+  "plan.credits_near",
+  "plan.credits_on_packs",
 ]);
 
 /**
@@ -421,6 +471,7 @@ const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
  *     `connection.microsoft_calendar` / `connection.apple_calendar` — sync and mailbox
  *     scans stay paused.
  *   `plan.contact_cap_reached` — no new contacts can be created at all.
+ *   `plan.credits_out` — included AI is paused until the person acts or the cycle renews.
  *   `billing.past_due` — see the note above.
  */
 export function isDismissible(code: HealthCode): boolean {
@@ -440,6 +491,9 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "import.stalled": "import",
   "plan.contact_cap_reached": "plan_limit",
   "plan.contact_cap_near": "plan_limit",
+  "plan.credits_near": "plan_limit",
+  "plan.credits_on_packs": "plan_limit",
+  "plan.credits_out": "plan_limit",
   "billing.past_due": "billing",
 };
 
@@ -467,7 +521,10 @@ const CODE_RANK: HealthCode[] = [
   "connection.microsoft_calendar",
   "connection.apple_calendar",
   "billing.past_due",
+  "plan.credits_out",
   "plan.contact_cap_reached",
+  "plan.credits_on_packs",
+  "plan.credits_near",
   "plan.contact_cap_near",
   "import.failed",
   "import.stalled",
@@ -504,7 +561,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `Add your ${str(f.data.providerLabel) ?? "AI"} API key`,
-          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. Orbit never charges you for AI — you bring your own.",
+          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. On the Free Plan AI runs on your own key; Orbit Pro and Max include it.",
           cta: {
             label: "Open AI settings",
             href: integrationHref("ai"),
@@ -686,6 +743,35 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         break;
       }
 
+      case "plan.credits_near":
+      case "plan.credits_on_packs":
+      case "plan.credits_out": {
+        const resets = str(f.data.resetsAt);
+        const when = resets
+          ? new Date(resets).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" })
+          : null;
+        const left = int(f.data.left) ?? 0;
+        const packs = int(f.data.packCredits) ?? 0;
+        alerts.push({
+          ...base,
+          title:
+            f.code === "plan.credits_out"
+              ? "You’re out of AI credits"
+              : f.code === "plan.credits_on_packs"
+                ? "Your monthly AI credits are used"
+                : `${left} ${plural(left, "credit", "credits")} left this cycle`,
+          body:
+            f.code === "plan.credits_out"
+              ? `Included AI is paused${when ? ` until ${when}` : ""}. Nothing is charged automatically — add a $5 pack, or use your own key.`
+              : f.code === "plan.credits_on_packs"
+                ? `Orbit is now using your pack credits (${packs} left)${when ? ` until your allowance resets on ${when}` : ""}.`
+                : `You’ve used 80% of this cycle’s AI credits${when ? `; they reset on ${when}` : ""}.`,
+          cta: { label: "View credits", href: integrationHref("ai"), external: false },
+          surfaceKey: "settings.ai",
+        });
+        break;
+      }
+
       case "billing.past_due": {
         const periodEnd = str(f.data.periodEnd);
         const until = periodEnd ? new Date(periodEnd) : null;
@@ -700,8 +786,8 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           ...base,
           title: "Your last payment didn't go through",
           body: readable
-            ? `Orbit Pro stays on until ${readable}. Update your card to keep it.`
-            : "Update your payment method to keep Orbit Pro.",
+            ? `Your plan stays on until ${readable}. Update your card to keep it.`
+            : "Update your payment method to keep your plan.",
           cta: {
             label: "Manage billing",
             href: "/settings#settings-plan",
