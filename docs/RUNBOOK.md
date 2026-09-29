@@ -106,6 +106,27 @@ above. Vercel Pro crons remove the rule entirely.
 | `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is outrunning what Lifetime brought in. `/admin/billing/costs` → "On Orbit's AI keys". Lower `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
 | `ai.managed_cap_hit` | Info: accounts used their whole monthly allowance. A rising count means the cap is too tight for real use. |
 
+## Radar: switches
+
+Radar (`src/lib/radar/`) is the nightly "who to reach out to" list, with its news sweep and
+Monday email. Every switch, smallest first:
+
+- **One account's email:** `UPDATE user_settings SET radar_digest_enabled = 0 WHERE user_id = '<id>';`
+  (the person can do it themselves from Settings, the Radar settings sheet, or the email's link).
+- **One account's autopilot:** `UPDATE user_settings SET radar_autopilot = '{}' WHERE user_id = '<id>';`
+  Autopilot only ever schedules a follow-up; it never sends. Every action it took shows under
+  "Autopilot did this" on `/radar` with Undo.
+- **One news feed:** `UPDATE external_sources SET enabled = false WHERE id = '<id>';`
+- **The AI rerank, for everyone:** set `RADAR_RERANK_ENABLED` to `false` in
+  `src/lib/radar/run.ts` and deploy. The deterministic order comes back on the next nightly
+  run; nothing else changes. Do it if `/admin/analytics/radar` shows cards the rerank promoted
+  not beating the ones it demoted after two weeks.
+- **All of Radar:** hide `page.radar` in `/admin/product`. The nightly pass, the news sweep and
+  the Monday email all stand down, and no AI key is spent.
+- **Releasing it:** delete `comingSoon: true` from `page.radar` in `src/lib/surfaces.ts`. While
+  it is coming soon, the nightly pass and the news sweep run only for accounts that have opened
+  Radar (admins previewing it), and the Monday email sends nothing.
+
 ## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
 
 **Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every deployed plan, Lifetime included, and no `ORBIT_MANAGED_*` variable is read anywhere. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.

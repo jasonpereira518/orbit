@@ -275,8 +275,9 @@ The version is the next free integer after re-scanning every remote ref. It will
 | Weekly digest | `POST /api/radar/digest` | `13 * * * 0,1` | `radar.digest` |
 
 Each job gets the base spec's full ops wiring: internal gate, ledger, `PUBLIC_ROUTES`, ops-sweep
-snapshot, alerts and RUNBOOK rows. While Radar is coming soon, all three stand down, as the
-nightly run does.
+snapshot, alerts and RUNBOOK rows. While Radar is coming soon, the feed sweep runs only once
+someone has opened Radar (an admin previewing it), as the nightly run does, and the digest sends
+nothing at all.
 
 ## Safety
 

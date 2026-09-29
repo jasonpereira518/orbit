@@ -139,7 +139,7 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
             onPointerEnter={preloadFollowUpDraftSheet}
             onFocus={preloadFollowUpDraftSheet}
             onClick={() => actions.setDraftOpen(true)}
-            aria-label={rec.draft ? `Review the draft to ${rec.contactName}` : `Draft a message to ${rec.contactName}`}
+            aria-label={rec.draft ? `Review draft for ${rec.contactName}` : `Draft a message to ${rec.contactName}`}
           >
             <PenLine className="size-3.5" aria-hidden />
             <span className="hidden sm:inline">{rec.draft ? "Review draft" : "Draft"}</span>

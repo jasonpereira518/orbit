@@ -75,7 +75,9 @@ export function RadarView(props: RadarViewProps) {
   const linked = focusId ? recommendations.findIndex((r) => r.id === focusId) : -1;
   // The server always draws the list; the browser then opens in focus mode for a linked card,
   // a remembered choice, or a phone. A choice made here wins from then on.
-  const arrival = useSyncExternalStore(noSubscription, () => arrivalMode(linked >= 0), () => "list" as Mode);
+  // Fixed at arrival: resolving the linked card removes it, and must not flip the layout.
+  const [arrivedLinked] = useState(linked >= 0);
+  const arrival = useSyncExternalStore(noSubscription, () => arrivalMode(arrivedLinked), () => "list" as Mode);
   const [chosen, setChosen] = useState<Mode | null>(null);
   const mode = chosen ?? arrival;
   const [index, setIndex] = useState(Math.max(0, linked));
