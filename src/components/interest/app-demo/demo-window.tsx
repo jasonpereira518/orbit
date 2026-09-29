@@ -2,7 +2,7 @@
 
 import { useEffect, useReducer, useRef, useSyncExternalStore, type ComponentType } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Bell, MessageSquarePlus, MousePointerClick, RotateCcw, Search, X } from "lucide-react";
+import { ArrowUp, Bell, MousePointerClick, RotateCcw, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EASE_HOUSE } from "@/lib/motion";
 import { firstName, personById } from "./demo-cast";
@@ -175,7 +175,7 @@ export function DemoWindow() {
           </main>
         </div>
 
-        {/* The app's floating controls: notifications and feedback at the top right, and the ask
+        {/* The app's floating controls: notifications at the top right, and the ask
             bar along the bottom of every screen that is not itself a chat or the star chart. */}
         <div className="absolute right-3 top-[3.25rem] z-30 flex flex-col gap-2.5">
           <button
@@ -187,13 +187,6 @@ export function DemoWindow() {
             <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
               3
             </span>
-          </button>
-          <button
-            type="button"
-            aria-label="Send feedback"
-            className="inline-flex size-10 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:text-foreground"
-          >
-            <MessageSquarePlus className="size-4" />
           </button>
         </div>
         {!fill && (

@@ -404,7 +404,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
           id="waitlist-poll"
           side="left"
           title="What should we release first?"
-          blurb="Vote for the one you want most, and see what everyone else picked."
+          blurb="Spend your stars on the features you want most, and watch the ranking move as everyone else does."
         >
           <FeaturePoll initial={poll} me={me} />
         </SplitSection>

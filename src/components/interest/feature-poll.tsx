@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ComponentType } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Bell, Calendar, MessageSquare, Minus, Network, Plug, Plus, Send, Star } from "lucide-react";
+import { Bell, Calendar, MessageSquare, Network, Plug, Send, Star } from "lucide-react";
 import { setPollStars } from "@/actions/waitlist-poll";
 import { usePassProgress, type PassProgress } from "@/lib/interest-progress-store";
 import { EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
@@ -18,7 +18,6 @@ import {
   applyAllocation,
   rankPoll,
   starBudget,
-  topPick,
   type PollOptionId,
   type PollResults,
   type StarAllocation,
@@ -37,31 +36,6 @@ const POLL_ICONS: Record<PollOptionId, IconType> = {
   "auto-integrations": Plug,
   "smart-follow-ups": Bell,
 };
-
-/** Stills of the demo (`public/waitlist/tour/`) for the options that have a screen to show. */
-const STILLS: Partial<Record<PollOptionId, { name: string; alt: string }>> = {
-  "constellation-map": { name: "constellation", alt: "A star chart of a network, with one person's card open." },
-  "network-chat": { name: "draft", alt: "An answer about a promise made to a contact, with a drafted email ready to send." },
-  "auto-integrations": { name: "timeline", alt: "One contact's timeline: an email, a meeting, a LinkedIn message and a call." },
-  "smart-follow-ups": { name: "suggestion", alt: "A suggestion to reach out to someone who has gone quiet." },
-};
-
-/**
- * Where an orb sits, by rank: the leader in the middle, the rest around it. Percent of the
- * field (x, y) — the orb's disc is centred on the point.
- */
-const SLOTS: readonly (readonly [number, number])[] = [
-  [50, 44],
-  [21, 22],
-  [79, 20],
-  [14, 62],
-  [86, 60],
-  [50, 79],
-];
-const FIELD_H = 440;
-/** The disc's height at scale 1, and the room reserved for it above the orb's label. */
-const DISC = 64;
-const DISC_ROOM = 104;
 
 const STAR_LEFT = (n: number) => (n === 1 ? "1 star" : `${n} stars`);
 
@@ -94,15 +68,12 @@ function useNear(ref: React.RefObject<HTMLElement | null>) {
  * The waitlist's feature poll: everyone spends STARS — three, plus one for every friend who
  * joined through their link — on the features they want first, stacked or spread.
  *
- * Desktop draws the features as an icon field: six glowing orbs that grow and brighten with
- * their share of the stars, the leader drifting to the middle, your own stars as pips. Tap an
- * orb for its card (the full description, a still from the demo, − and + stars). Phones get a
- * plain list with the same icons, full wrapping descriptions and the same controls. Both are
- * rendered and `md:` picks one, so nothing waits on hydration to choose.
+ * One ranked list on every screen: an icon, the feature and what it is, its share of the vote
+ * as a bar behind the row, and your own stars. Tap a row to place a star on it; tap one of its stars to take it back. The list re-sorts as the tally moves.
  *
  * STATE. `server` is the last tally and allocation the server confirmed; `mine` is what the
  * visitor has now. The tally on screen is `server.results` with `mine` swapped in for
- * `server.mine`, so a tap moves the orbs at once, and a live refresh of the tally never
+ * `server.mine`, so a tap moves the bars at once, and a live refresh of the tally never
  * clobbers stars that have not been saved yet. Every write sends the WHOLE allocation, one at
  * a time (a tap during a save queues the latest state), and the server's answer replaces the
  * guess; a failure rolls `mine` back and says so.
@@ -115,7 +86,7 @@ function useNear(ref: React.RefObject<HTMLElement | null>) {
  * re-counts the friends itself on every write, so the client cannot spend stars it has not
  * earned. `me` is the visitor's `?me=` pass token, if any; a visitor who joins on this page
  * gets theirs from the hero via `onPass`. Reduced motion is read at render time from
- * `useReducedMotion`: orbs jump to their places and sizes.
+ * `useReducedMotion`: rows jump to their places.
  */
 export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: string | null }) {
   const reduced = useReducedMotion();
@@ -135,7 +106,6 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
   const dirty = useRef(false);
   const holdPollUntil = useRef(0);
   const [passToken, setPassToken] = useState<string | null>(null);
-  const [selected, setSelected] = useState<PollOptionId>(() => topPick(initial.allocation) ?? POLL_OPTIONS[0].id);
 
   useEffect(() => onPass(setPassToken), []);
 
@@ -256,39 +226,30 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
     };
   }, [near, setServerBoth]);
 
-  const sel = POLL_OPTIONS.find((o) => o.id === selected) ?? POLL_OPTIONS[0];
-  const selView = byId.get(sel.id)!;
-  const SelIcon = POLL_ICONS[sel.id];
-  const still = STILLS[sel.id];
   const glide = reduced ? { duration: 0 } : SPRING_SOFT;
 
-  const controls = (id: PollOptionId, label: string, className?: string) => {
+  /** The row's stars: each one you have placed is a button that takes it back; the rest are empty slots. */
+  const stars = (id: PollOptionId, label: string) => {
     const n = mine[id] ?? 0;
-    const btn =
-      "flex size-8 items-center justify-center rounded-full border border-[#e8f3f1]/[0.16] text-[#e8f3f1] transition-colors hover:border-[#f2c14e]/60 hover:bg-[#f2c14e]/10 disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60";
     return (
-      <div className={cn("flex items-center gap-1.5", className)}>
-        <button
-          type="button"
-          className={btn}
-          disabled={n === 0}
-          aria-label={`Take a star back from ${label}`}
-          onClick={() => change(id, -1)}
-        >
-          <Minus className="size-3.5" aria-hidden={true} />
-        </button>
-        <span className="flex min-w-9 items-center justify-center gap-0.5 text-sm tabular-nums text-[#f2c14e]" aria-label={`${n} of your stars on ${label}`}>
-          <Star className="size-3.5 fill-current" aria-hidden={true} />
-          {n}
-        </span>
-        <button
-          type="button"
-          className={btn}
-          aria-label={`Give a star to ${label}`}
-          onClick={(e) => change(id, 1, e.currentTarget)}
-        >
-          <Plus className="size-3.5" aria-hidden={true} />
-        </button>
+      <div className="pointer-events-auto relative z-10 flex shrink-0 items-center">
+        {Array.from({ length: Math.max(BASE_STARS, n) }, (_, i) =>
+          i < n ? (
+            <button
+              key={i}
+              type="button"
+              aria-label={`Take a star back from ${label}`}
+              onClick={() => change(id, -1)}
+              className="group flex size-8 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60"
+            >
+              <Star className="size-5 fill-[#f2c14e] text-[#f2c14e] transition-transform group-hover:scale-90 group-hover:opacity-60" aria-hidden={true} />
+            </button>
+          ) : (
+            <span key={i} className="flex size-8 items-center justify-center" aria-hidden={true}>
+              <Star className="size-5 text-[#e8f3f1]/20" />
+            </span>
+          )
+        )}
       </div>
     );
   };
@@ -297,8 +258,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
     // Same deep-navy panel as the referral tracker (`.feature-poll-panel` / shared interest panel).
     <div ref={rootRef} className="landing-glass feature-poll-panel mx-auto w-full max-w-2xl rounded-3xl p-4 sm:p-6">
       <div role="group" aria-label="Which features do you want first? Spend your stars.">
-        <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">Feature poll</p>
-        <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <p className="text-sm text-[#e8f3f1]">
             <span className="mr-1.5 inline-flex gap-0.5 align-[-2px]" aria-hidden={true}>
               {Array.from({ length: Math.min(budget, 8) }, (_, i) => (
@@ -313,111 +273,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
           </p>
         </div>
 
-        {/* Desktop: the icon field. */}
-        <div className="mt-4 hidden md:block">
-          <div className="relative w-full" style={{ height: FIELD_H }}>
-            {POLL_OPTIONS.map((opt, index) => {
-              const v = byId.get(opt.id)!;
-              const slot = SLOTS[hasStars ? v.rank - 1 : index] ?? SLOTS[SLOTS.length - 1]!;
-              const Icon = POLL_ICONS[opt.id];
-              const scale = hasStars ? 0.75 + 0.75 * v.bar : 1;
-              const glow = hasStars ? v.bar : 0.25;
-              const mineN = mine[opt.id] ?? 0;
-              const isSel = sel.id === opt.id;
-              return (
-                <div
-                  key={opt.id}
-                  className="poll-orb absolute flex w-32 -translate-x-1/2 flex-col items-center"
-                  style={{ left: `${slot[0]}%`, top: `${slot[1]}%`, marginTop: -DISC_ROOM / 2 }}
-                >
-                  <button
-                    type="button"
-                    aria-pressed={isSel}
-                    aria-label={`${opt.label}${mineN ? `, ${STAR_LEFT(mineN)} from you` : ""}`}
-                    onClick={() => setSelected(opt.id)}
-                    className="group flex items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60"
-                    style={{ width: DISC_ROOM, height: DISC_ROOM }}
-                  >
-                    <span
-                      className={cn(
-                        "poll-orb-disc flex items-center justify-center rounded-full border bg-[#0b1120]",
-                        isSel ? "border-[#f2c14e]" : mineN ? "border-[#f2c14e]/60" : "border-[#e8f3f1]/20 group-hover:border-[#f2c14e]/50"
-                      )}
-                      style={{
-                        width: DISC,
-                        height: DISC,
-                        transform: `scale(${scale})`,
-                        boxShadow: `0 0 ${10 + 34 * glow}px rgba(242,193,78,${0.12 + 0.5 * glow}), inset 0 0 12px rgba(242,193,78,${0.05 + 0.2 * glow})`,
-                      }}
-                    >
-                      <Icon className={cn("size-7", hasStars && v.bar > 0.3 ? "text-[#ffe9a0]" : "text-[#cfe3dd]")} aria-hidden={true} />
-                    </span>
-                  </button>
-                  {/* The label rides up with the disc as it shrinks, so a small orb keeps its name
-                      close instead of floating above a gap sized for the biggest one. */}
-                  <div
-                    className="poll-orb-label flex flex-col items-center"
-                    style={{ transform: `translateY(${-(DISC_ROOM / 2 - 6 - (DISC / 2) * scale)}px)` }}
-                  >
-                  <span className="mt-1 text-center text-xs font-medium leading-tight text-[#e8f3f1]">{opt.label}</span>
-                  <span className="mt-1 flex h-4 items-center gap-0.5" aria-hidden={true}>
-                    {Array.from({ length: Math.min(mineN, 6) }, (_, i) => (
-                      <Star key={i} className="size-3 fill-[#f2c14e] text-[#f2c14e]" />
-                    ))}
-                    {mineN > 6 ? <span className="text-[10px] text-[#f2c14e]">+{mineN - 6}</span> : null}
-                    {view.showNumbers && v.share !== null ? (
-                      <span className="ml-1 text-[10px] tabular-nums text-[#9aada8]">{v.share}%</span>
-                    ) : null}
-                  </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* The selected feature's card. */}
-          <div aria-live="polite" className="mt-2 rounded-2xl border border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.03] p-4">
-            <div className="flex items-start gap-4">
-              <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-2 font-[family-name:var(--font-display)] text-xl text-[#e8f3f1]">
-                  <SelIcon className="size-5 text-[#f2c14e]" aria-hidden={true} />
-                  {sel.label}
-                </p>
-                <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
-                  {sel.blurb.charAt(0).toUpperCase() + sel.blurb.slice(1)}.
-                </p>
-                <p className="mt-2 text-xs text-[#6d807c]">
-                  {selView.count === 0
-                    ? "No stars yet."
-                    : `${selView.count} ${selView.count === 1 ? "star" : "stars"} so far${view.showNumbers && selView.share !== null ? ` · ${selView.share}% of the vote` : ""}`}
-                  {hasStars && selView.rank === 1 ? " · leading" : ""}
-                </p>
-                {controls(sel.id, sel.label, "mt-3")}
-              </div>
-              {still && near ? (
-                <div className="hidden w-[168px] shrink-0 overflow-hidden rounded-xl border border-[#e8f3f1]/10 lg:block">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- pre-sized WebP pair with its own srcset */}
-                  <img
-                    key={still.name}
-                    src={`/waitlist/tour/${still.name}-420.webp`}
-                    srcSet={`/waitlist/tour/${still.name}-420.webp 420w, /waitlist/tour/${still.name}-840.webp 840w`}
-                    sizes="168px"
-                    width={420}
-                    height={315}
-                    alt={still.alt}
-                    loading="lazy"
-                    decoding="async"
-                    draggable={false}
-                    className="block h-auto w-full select-none"
-                  />
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        {/* Phones: the list. */}
-        <ul className="mt-4 grid gap-3 md:hidden">
+        <ul className="mt-5 grid gap-2.5">
           {(hasStars ? view.options : POLL_OPTIONS.map((o) => byId.get(o.id)!)).map((v) => {
             const Icon = POLL_ICONS[v.id];
             const mineN = mine[v.id] ?? 0;
@@ -427,36 +283,37 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
                 layout="position"
                 transition={glide}
                 className={cn(
-                  "relative min-w-0 overflow-hidden rounded-2xl border px-4 py-3.5",
-                  mineN ? "border-[#f2c14e]/45 bg-[#f2c14e]/[0.05]" : "border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.03]"
+                  "relative min-w-0 overflow-hidden rounded-2xl border px-4 py-3 transition-colors hover:border-[#f2c14e]/40",
+                  mineN ? "border-[#f2c14e]/40 bg-[#f2c14e]/[0.05]" : "border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.03]"
                 )}
               >
+                <button
+                  type="button"
+                  aria-label={`Give a star to ${v.label}`}
+                  onClick={(e) => change(v.id, 1, e.currentTarget)}
+                  className="absolute inset-0 z-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#f2c14e]/60"
+                />
                 {hasStars ? (
                   <motion.span
                     aria-hidden={true}
-                    className="absolute inset-y-0 left-0 w-full origin-left bg-[#f2c14e]/[0.10]"
+                    className="pointer-events-none absolute inset-y-0 left-0 w-full origin-left bg-[#f2c14e]/[0.10]"
                     initial={false}
                     animate={{ scaleX: v.count === 0 ? 0 : Math.max(v.bar, 0.06) }}
                     transition={reduced ? { duration: 0 } : { duration: 0.7, ease: EASE_HOUSE }}
                   />
                 ) : null}
-                <div className="relative flex items-start gap-3">
-                  <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border border-[#f2c14e]/30 bg-[#0b1120]">
+                <div className="pointer-events-none relative flex items-center gap-3.5">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-full border border-[#f2c14e]/30 bg-[#0b1120]">
                     <Icon className="size-5 text-[#f2c14e]" aria-hidden={true} />
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-[#e8f3f1]">{v.label}</p>
-                    <p className="mt-0.5 text-sm leading-snug text-[#9aada8]">
-                      {v.blurb.charAt(0).toUpperCase() + v.blurb.slice(1)}.
-                    </p>
-                    <div className="mt-2.5 flex items-center justify-between gap-3">
-                      {controls(v.id, v.label)}
-                      <span className="text-xs tabular-nums text-[#9aada8]">
-                        {v.count} {v.count === 1 ? "star" : "stars"}
-                        {view.showNumbers && v.share !== null ? ` · ${v.share}%` : ""}
-                      </span>
-                    </div>
+                    <p className="mt-0.5 text-sm leading-snug text-[#9aada8]">{v.blurb.charAt(0).toUpperCase() + v.blurb.slice(1)}.</p>
                   </div>
+                  {view.showNumbers && v.share !== null ? (
+                    <span className="hidden w-11 text-right font-[family-name:var(--font-display)] text-lg tabular-nums text-[#e8f3f1] sm:block">{v.share}%</span>
+                  ) : null}
+                  {stars(v.id, v.label)}
                 </div>
               </motion.li>
             );
@@ -466,7 +323,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
 
       <p className="mt-4 text-center text-sm text-[#9aada8]">
         {view.showNumbers
-          ? `${tally.voters.toLocaleString("en-US")} people have voted. Tap a feature to see it.`
+          ? `${tally.voters.toLocaleString("en-US")} people have voted. Tap a feature to place a star; tap a star to take it back.`
           : POLL_RESULTS_CAPTION}
       </p>
       {error && (
