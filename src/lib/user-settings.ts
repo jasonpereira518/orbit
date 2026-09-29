@@ -475,7 +475,7 @@ export async function countLifetimePurchases() {
  */
 export async function setCompedPlan(
   userId: string,
-  plan: "orbit" | "lifetime" | null,
+  plan: "orbit" | "max" | "lifetime" | null,
   opts: {
     note?: string | null;
     adminUserId?: string | null;

@@ -434,6 +434,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-pricing-v2-billing": "pglite",
   "smoke-credits": "pglite",
   "smoke-plan-enforcement": "pglite",
+  "smoke-admin-lifetime": "pglite",
   "smoke-billing-portal": "pglite",
   "smoke-subscription-management": "pglite",
   "smoke-checkout-confirm": "pglite",
