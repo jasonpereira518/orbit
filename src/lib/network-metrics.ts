@@ -3,6 +3,8 @@ import {
   buildConstellationFit,
   constellationFitEdges,
 } from "@/lib/constellation-fit";
+import { schoolDisplayNames } from "@/lib/constellation-clusters";
+import { schoolGroupKeys } from "@/lib/school-key";
 import {
   closenessTier,
   type ClosenessBreakdown,
@@ -261,6 +263,8 @@ export function buildPeerEdges(
   const { clusters, byContactId } = fit;
 
   if (options?.metrics) {
+    // Company and school clusters only; role clusters (cross-company functions) are not a tie
+    // between people, so they contribute nothing to the counts.
     for (const cluster of clusters) {
       if (cluster.count < 2 || cluster.kind === "other") continue;
       const reason = clusterReason(cluster.kind);
@@ -274,6 +278,43 @@ export function buildPeerEdges(
             kind: "constellation",
             reason,
             company: cluster.name,
+          });
+        }
+      }
+    }
+
+    // Role clusters draw no metrics edges, but their members can still be alumni of one school
+    // (the tiered home is the role, not the school). Group everyone outside a company cluster
+    // by school here, independent of the tier, so the dashboard keeps its school links.
+    const inCompanyCluster = new Set<string>();
+    for (const cluster of clusters) {
+      if (cluster.kind === "company" && cluster.count >= 2) {
+        for (const id of cluster.contactIds) inCompanyCluster.add(id);
+      }
+    }
+    const schoolPool = contacts.filter(
+      (c) => !inCompanyCluster.has(c.id) && (c.school ?? "").trim()
+    );
+    const schoolGroups = schoolGroupKeys(schoolPool.map((c) => c.school!.trim()));
+    const groupOf = (c: { school?: string | null }) =>
+      schoolGroups.get((c.school ?? "").trim()) ?? null;
+    const schoolMembers = new Map<string, string[]>();
+    for (const c of schoolPool) {
+      const group = groupOf(c);
+      if (!group) continue;
+      const members = schoolMembers.get(group) ?? [];
+      members.push(c.id);
+      schoolMembers.set(group, members);
+    }
+    const schoolNames = schoolDisplayNames(schoolPool, groupOf);
+    for (const [group, ids] of schoolMembers) {
+      if (ids.length < 2) continue;
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          addPeerEdge(edges, seenPairs, ids[i], ids[j], {
+            kind: "constellation",
+            reason: "school",
+            company: schoolNames.get(group),
           });
         }
       }
