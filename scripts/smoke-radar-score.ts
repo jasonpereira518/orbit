@@ -208,6 +208,14 @@ function main() {
     check("a tie goes to the more time-bound kind", winner?.kind === "prep");
     check("the runner-up rides along as a zero-point line",
       winner?.reasons.some((r) => r.code === "also:recent_intro" && r.points === 0) === true);
+    const quiet: KindScore[] = [
+      { kind: "reach_out", score: 40, reasons: [{ code: "inbound_unanswered", label: "They messaged you", points: 40 }], evidence: [], anchorAt: null },
+      { kind: "reconnect", score: 30, reasons: [{ code: "dormant", label: "43 days since you last spoke", points: 30 }], evidence: [], anchorAt: null },
+    ];
+    check("a reach-out does not repeat the silence as an also line",
+      pickWinner("c1", quiet, NOW)?.reasons.every((r) => !r.code.startsWith("also:")) === true);
+    check("…but a prep card still carries it",
+      pickWinner("c1", [tie[1], quiet[1]], NOW)?.reasons.some((r) => r.code === "also:dormant") === true);
     check("nothing below the lowest bucket becomes a card",
       pickWinner("c1", [{ kind: "reconnect", score: RADAR_BUCKETS.later - 1, reasons: [], evidence: [], anchorAt: null }], NOW) === null);
 

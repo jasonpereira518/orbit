@@ -475,7 +475,9 @@ export function pickWinner(contactId: string, kinds: readonly KindScore[], now: 
   if (!bucket) return null;
   const reasons = [...winner.reasons];
   const runnerUp = ranked[1];
-  const also = runnerUp?.reasons.find((r) => r.points > 0 && !CONTEXT_CODES.has(r.code));
+  const also = runnerUp?.reasons.find(
+    (r) => r.points > 0 && !CONTEXT_CODES.has(r.code) && !REDUNDANT_ALSO[winner.kind]?.has(r.code)
+  );
   if (also) reasons.push({ code: `also:${also.code}`, label: also.label, points: 0 });
   return {
     contactId,
@@ -487,6 +489,15 @@ export function pickWinner(contactId: string, kinds: readonly KindScore[], now: 
     expiresAt: expiryFor(winner.kind, winner.anchorAt, now),
   };
 }
+
+/**
+ * An "also" line that would only restate the winner's lead. A reach-out already dates the
+ * silence ("They messaged you 43 days ago…"), so "43 days since you last spoke" under it
+ * says the same thing twice. Under a prep or follow-up card the same line is real news.
+ */
+const REDUNDANT_ALSO: Partial<Record<RecommendationKind, ReadonlySet<string>>> = {
+  reach_out: new Set(["dormant"]),
+};
 
 /** Reasons that describe the person rather than a fact about now. Never an "also" line. */
 export const CONTEXT_CODES: ReadonlySet<string> = new Set([
