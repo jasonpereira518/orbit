@@ -401,7 +401,7 @@ export async function explainTopForRun(userId: string, recIds: string[], opts: {
 - Create: `src/lib/radar/page-data.ts`, `src/actions/radar.ts`
 - Create: `src/app/(clerk)/(app)/(main)/radar/page.tsx`, `src/app/(clerk)/(app)/(main)/radar/loading.tsx`
 - Create: `src/components/radar/{radar-header,radar-today,radar-kind-section,recommendation-card,network-health-strip,radar-settings-panel,radar-empty}.tsx`
-- Modify: `src/components/loading/page-skeletons.tsx`, `src/lib/surfaces.ts`, `src/components/layout/app-nav.ts`, `src/lib/analytics-routes.ts`, `src/lib/feedback-report.ts`, `src/components/coming-soon/coming-soon.tsx`, `src/lib/rate-limit.ts`, `README.md`, `scripts/smoke-page-budgets.ts`
+- Modify: `src/components/loading/page-skeletons.tsx`, `src/lib/surfaces.ts`, `src/components/layout/app-nav.ts`, `src/lib/analytics-routes.ts`, `src/lib/feedback-report.ts`, `src/components/coming-soon/coming-soon.tsx`, `src/lib/rate-limit.ts`, `docs/DEVELOPMENT.md` (the route table moved out of `README.md`), `README.md` (Coming soon), `scripts/smoke-page-budgets.ts`
 
 - [ ] **Step 1: `loadRadarPage(userId, now)`** → `{recs: {today, byKind, total}, lastRunAt, nextRunAt, settings, aiAvailable}` in at most 6 statements (recommendations joined to contacts with `clientAvatarUrlSql`; settings via `ensureUserSettings`; last `radar_runs` row; `getAiCapability`). Add a `radar` section to `scripts/smoke-page-budgets.ts`: ≤ 6 statements at 3,000 contacts, flat from 750 to 3,000, no `notes` or `profile_image_url`.
 - [ ] **Step 2: Actions** in `src/actions/radar.ts`, each starting `const userId = await requireUserForSurface("page.radar")`:
@@ -412,7 +412,7 @@ export async function explainTopForRun(userId: string, recIds: string[], opts: {
   - `explainRecommendationAction(id)`; `updateRadarSettings({paused?, autopilot?})`.
 - [ ] **Step 3: The page** — first line `const gate = await pageVisibilityGate("page.radar"); if (gate) return gate;`; start the `fetchRadar()` promise before awaiting anything else; `<RenderStamp />`; `RadarHeader`, `RadarToday`, `NetworkHealthStrip`, `RadarKindSections` and `RadarSettingsPanel` each in their own `<Suspense>`. `loading.tsx` renders the real header plus `RadarPageSkeleton`.
 - [ ] **Step 4: `RecommendationCard`** (client) — avatar, `IntentLink` name, `ClosenessTierBadge dotOnly`, kind chip, reason chips (labels only), evidence line with any external link through `safeHttpUrl` and `rel="noopener noreferrer"`, why-line or the "Add an AI key" affordance, and actions: Schedule popover; Draft via `FollowUpDraftSheetLazy` with `preloadFollowUpDraftSheet()` on hover; Snooze menu; Dismiss with `runToastAction` undo (pattern: `src/components/dashboard/suggestion-row.tsx`); overflow "Not for this person" / "Open contact". Every icon button gets an accessible name (`smoke-icon-button-names`) and a 44 px target where listed in `smoke-tap-targets`.
-- [ ] **Step 5: Registry** — `PAGES` entry `{ key: "page.radar", kind: "page", label: "Radar", description: "Who to reach out to this week, and why.", href: "/radar", comingSoon: true }`; nav item `RADAR` (lucide `Radar`) in `APP_NAV_EXTRAS` and `MOBILE_MORE_NAV` while coming-soon; `"/radar"` in `ROUTE_PATTERNS` (required); `["/radar", "radar"]` in `ROUTE_AREAS` plus `FeedbackArea` and `AREA_LABELS`; `FEATURES["page.radar"]` copy; README route table row.
+- [ ] **Step 5: Registry** — `PAGES` entry `{ key: "page.radar", kind: "page", label: "Radar", description: "Who to reach out to this week, and why.", href: "/radar", comingSoon: true }`; nav item `RADAR` (lucide `Radar`) in `APP_NAV_EXTRAS` and `MOBILE_MORE_NAV` while coming-soon; `"/radar"` in `ROUTE_PATTERNS` (required); `["/radar", "radar"]` in `ROUTE_AREAS` plus `FeedbackArea` and `AREA_LABELS`; `FEATURES["page.radar"]` copy; route table row in `docs/DEVELOPMENT.md` and a Coming soon line in `README.md`.
 - [ ] **Step 6: Run** `npx tsx scripts/smoke-render-stamp-pages.ts && npx tsx scripts/smoke-admin-analytics.ts && npx tsx scripts/smoke-surface-visibility.ts && npx tsx scripts/smoke-command-palette.ts && npx tsx scripts/smoke-icon-button-names.ts && npx tsx scripts/smoke-tap-targets.ts && npx tsx scripts/smoke-action-user-scope.ts && npm run perf:pages` — expected green. Open `/radar` under `npm run dev` with the `orbit_preview_unreleased` cookie, with and without an AI key.
 - [ ] **Step 7: Commit** — `git commit -m "Add the Radar page"`
 
@@ -543,7 +543,7 @@ export async function recordJobChangeSignals(userId: string, contactId: string, 
 
 - [ ] **Step 1:** `buildOutreachSuggestions` becomes a one-release no-op that deletes pending `AUTO_SUGGESTION_TYPES` rows; remove `ensureOutreachSuggestions` / `maybeRefreshOutreachSuggestions` from `fetchDashboard`; the dashboard, bell and chat read Radar only. Keep the `job_posting_signal` and `score_bump` writers and their readers.
 - [ ] **Step 2:** Update the three smokes to the Radar equivalents; re-record `behavior-golden.json` with `--update` from trusted code in a worktree at the commit before the change; dashboard budget back to 16.
-- [ ] **Step 3:** Update `docs/performance.md` and `README.md`. Commit.
+- [ ] **Step 3:** Update `docs/performance.md` and `docs/DEVELOPMENT.md` (drop "coming soon" from the route row) and `README.md` (move Radar out of Coming soon). Commit.
 
 ---
 
