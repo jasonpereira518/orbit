@@ -358,6 +358,42 @@ export function referralLine(referrals: number) {
   return `${referrals} of ${TRACKER_SLOTS} friends joined. ${more} for ${next.perk}.`;
 }
 
+/** Referrals and place in line, as the pass last showed them or shows them now. */
+export type PassStanding = { referrals: number; position: number };
+
+const friendsWord = (n: number) => (n === 1 ? "friend" : "friends");
+const spotsWord = (n: number) => (n === 1 ? "spot" : "spots");
+
+/**
+ * What changed for a returning visitor since this device last showed them their pass, or
+ * null when nothing did. Honest both ways: other people's referrals can push you back, and
+ * saying so is what makes "you moved up" worth believing.
+ */
+export function describePassChange(before: PassStanding, after: PassStanding): string | null {
+  const friends = after.referrals - before.referrals;
+  const spots = before.position - after.position;
+  const n = (v: number) => formatTicketNumber(Math.abs(v));
+  if (friends > 0) {
+    const lead = `${friends === 1 ? "A friend" : `${friends} friends`} joined through your link since your last visit`;
+    if (spots > 0) return `${lead} — you moved up ${n(spots)} ${spotsWord(spots)}.`;
+    if (spots < 0) {
+      return `${lead}. Others are inviting too, so you're ${n(spots)} ${spotsWord(-spots)} further back overall.`;
+    }
+    return `${lead}.`;
+  }
+  if (spots > 0) return `You've moved up ${n(spots)} ${spotsWord(spots)} since your last visit.`;
+  if (spots < 0) {
+    return `You're ${n(spots)} ${spotsWord(-spots)} further back since your last visit — each friend you invite moves you up ${SPOTS_PER_REFERRAL}.`;
+  }
+  return null;
+}
+
+/** The pass's line when friends join while the page is open. */
+export function liveJoinLine(friends: number): string {
+  const who = friends === 1 ? "A friend" : `${friends} ${friendsWord(friends)}`;
+  return `${who} just joined through your link — +${friends * SPOTS_PER_REFERRAL} spots.`;
+}
+
 /** The prewritten share text; the URL is appended by the share target. */
 export const SHARE_TEXT =
   "I've been testing out Orbit, a new app for keeping track of professional relationships and follow-ups. I'm joining their early access list. Grab a spot before it opens up:";

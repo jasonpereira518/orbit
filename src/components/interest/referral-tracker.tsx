@@ -14,12 +14,15 @@ import {
   type ReferralTierId,
 } from "@/lib/interest-list";
 import { publishProgress, usePassProgress } from "@/lib/interest-progress-store";
+import { pulseStarfield } from "@/lib/starfield-events";
 import { EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
 
 /** How often an open pass asks whether a friend has joined. */
 const POLL_MS = 20_000;
+/** While the tab is hidden: slow enough to cost nothing, quick enough for the title badge. */
+const HIDDEN_POLL_MS = 60_000;
 /** Ticks closer together than this are one tick: a tab coming forward fires several events. */
 const MIN_GAP_MS = 3_000;
 /** Stagger between circles that fill together. Matches the pass's old moon drop. */
@@ -204,6 +207,7 @@ export function ReferralTracker({
     const before = previousReferrals.current;
     previousReferrals.current = referrals;
     if (before === null || referrals <= before) return;
+    burstFromCircle(rowRef.current, referrals - 1);
     const crossed = REFERRAL_TIERS.filter((t) => t.at > before && t.at <= referrals);
     const top = crossed[crossed.length - 1];
     if (!top) return;
@@ -212,7 +216,8 @@ export function ReferralTracker({
     return () => window.clearTimeout(clear);
   }, [referrals]);
 
-  // The poll. Ticks while the tab is hidden do nothing; coming back fetches at once.
+  // The poll. While the tab is hidden it slows to one read a minute (enough for the pass's
+  // tab-title badge); coming back fetches at once.
   useEffect(() => {
     if (!activeToken) return;
     let stopped = false;
@@ -220,8 +225,9 @@ export function ReferralTracker({
     let lastAt = 0;
 
     const tick = async () => {
-      if (stopped || document.visibilityState !== "visible") return;
-      if (Date.now() - lastAt < MIN_GAP_MS) return;
+      if (stopped) return;
+      const gap = document.visibilityState === "visible" ? MIN_GAP_MS : HIDDEN_POLL_MS;
+      if (Date.now() - lastAt < gap) return;
       lastAt = Date.now();
       controller?.abort();
       controller = new AbortController();
@@ -427,4 +433,20 @@ export function ReferralTracker({
       </ol>
     </div>
   );
+}
+
+/**
+ * A starfield burst from the circle a new friend just filled, when the tracker is what is on
+ * screen. The pass bursts from its own planet when IT is on screen, so this stays quiet then:
+ * one burst per join.
+ */
+function burstFromCircle(row: HTMLElement | null, index: number) {
+  if (!row || document.visibilityState !== "visible") return;
+  const onScreen = (r: DOMRect) => r.bottom > 0 && r.top < window.innerHeight;
+  const planet = document.querySelector("[data-pass-planet]");
+  if (planet && onScreen(planet.getBoundingClientRect())) return;
+  const circle = row.children[index];
+  if (!circle) return;
+  const r = circle.getBoundingClientRect();
+  if (onScreen(r)) pulseStarfield(r.left + r.width / 2, r.top + r.height / 2);
 }

@@ -35,6 +35,7 @@ const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
   "smoke-connectivity": "pure",
+  "smoke-waitlist-pass-news": "pure",
   "smoke-offline-queue": "pure",
   "smoke-chat-thread-prefetch": "pure",
   "smoke-render-stamp-pages": "pure",

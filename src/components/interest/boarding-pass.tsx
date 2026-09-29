@@ -1,13 +1,23 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import { ShareRow } from "@/components/interest/share-row";
-import { positionLine, referralLine, tierFor, type InterestTicket } from "@/lib/interest-list";
+import {
+  describePassChange,
+  liveJoinLine,
+  positionLine,
+  referralLine,
+  tierFor,
+  type InterestTicket,
+} from "@/lib/interest-list";
 import { usePassProgress } from "@/lib/interest-progress-store";
 import { DUR, EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
+import { readSeen, writeSeen } from "@/lib/pass-seen";
+import { pulseStarfield } from "@/lib/starfield-events";
+import { bumpTitleBadge } from "@/lib/tab-title-badge";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { planetLabel } from "@/lib/welcome-planets";
 
@@ -37,6 +47,12 @@ function joinedLabel(iso: string) {
  *
  * The place in line and the referral line follow the live progress (`usePassProgress`), so
  * they move when the referral tracker's poll finds a new friend.
+ *
+ * NEWS. One line under the referral line says what changed: on arrival, what moved since
+ * this device last showed the pass (`pass-seen.ts`, `describePassChange`); while open, a
+ * friend joining through the link (`liveJoinLine`), with a starfield burst from the planet
+ * and a "(+1)" tab-title badge if the tab is in the background. Other people's referrals
+ * move the number silently — only your own friends get a celebration.
  */
 export function BoardingPass({
   ticket,
@@ -62,6 +78,54 @@ export function BoardingPass({
   const live = progress.token === ticket.shareToken ? progress : serverProgress;
   const position = live.position ?? ticket.position;
   const { current: tier } = tierFor(live.referrals);
+  const token = ticket.shareToken;
+
+  const planetRef = useRef<HTMLSpanElement>(null);
+  const [news, setNews] = useState<{ text: string; key: number } | null>(null);
+  /** The referral count this pass last showed; null until the arrival read has run. */
+  const shownReferrals = useRef<number | null>(null);
+  /** A join that landed while the tab was hidden waits here for the tab to come back. */
+  const burstPending = useRef(false);
+
+  // Arrival: what changed since this device last showed this pass. localStorage only exists
+  // after hydration, so this cannot be a lazy initial state.
+  useEffect(() => {
+    const now = { referrals: live.referrals, position };
+    const seen = readSeen(token);
+    const text = seen ? describePassChange(seen, now) : null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reads client-only storage
+    if (text) setNews({ text, key: 0 });
+    writeSeen(token, now);
+    shownReferrals.current = live.referrals;
+    // Once per pass: live changes are the effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  // Live: a friend joined while the page is open.
+  useEffect(() => {
+    const before = shownReferrals.current;
+    if (before === null) return;
+    shownReferrals.current = live.referrals;
+    writeSeen(token, { referrals: live.referrals, position });
+    const gained = live.referrals - before;
+    if (gained <= 0) return;
+    setNews((prev) => ({ text: liveJoinLine(gained), key: (prev?.key ?? 0) + 1 }));
+    bumpTitleBadge(gained);
+    if (document.visibilityState === "visible") burstFromPlanet(planetRef.current);
+    else burstPending.current = true;
+  }, [live.referrals, position, token]);
+
+  // The burst for a join that landed in the background plays when the tab is shown again —
+  // the tab-title badge promised it.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || !burstPending.current) return;
+      burstPending.current = false;
+      burstFromPlanet(planetRef.current);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   const rise = (delay: number) =>
     full
@@ -73,6 +137,8 @@ export function BoardingPass({
       {/* Stub */}
       <div className="relative flex flex-col items-center px-4 pb-6 pt-5 text-center sm:pb-5">
         <motion.span
+          ref={planetRef}
+          data-pass-planet=""
           className="relative flex items-center justify-center"
           style={{ width: STUB_SIZE, height: STUB_SIZE }}
           initial={full ? { scale: 0.6, opacity: 0 } : false}
@@ -141,6 +207,22 @@ export function BoardingPass({
           </span>
         </motion.p>
 
+        {/* Always mounted, so screen readers hear each new line exactly once. */}
+        <p aria-live="polite" className={news ? "mt-3" : undefined}>
+          {news ? (
+            <motion.span
+              key={news.key}
+              className="inline-flex items-start gap-2 rounded-xl border border-[#f2c14e]/25 bg-[#f2c14e]/[0.07] px-3 py-2 text-sm leading-snug text-[#e8f3f1]"
+              initial={reduced ? false : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: DUR.base, ease: EASE_HOUSE, delay: full ? 1.2 : 0 }}
+            >
+              <span aria-hidden="true" className="mt-[7px] size-1.5 shrink-0 rounded-full bg-[#f2c14e] shadow-[0_0_8px_rgba(242,193,78,0.8)]" />
+              {news.text}
+            </motion.span>
+          ) : null}
+        </p>
+
         <ShareRow ticket={ticket} pageUrl={pageUrl} play={full} />
 
         <motion.p {...rise(1.5)} className="mt-4 text-xs leading-[1.6] text-[#6d807c]">
@@ -149,4 +231,11 @@ export function BoardingPass({
       </div>
     </div>
   );
+}
+
+/** A starfield burst from the pass's planet — only if it is on screen to be seen. */
+function burstFromPlanet(el: HTMLElement | null) {
+  const r = el?.getBoundingClientRect();
+  if (!r || r.bottom <= 0 || r.top >= window.innerHeight) return;
+  pulseStarfield(r.left + r.width / 2, r.top + r.height / 2);
 }
