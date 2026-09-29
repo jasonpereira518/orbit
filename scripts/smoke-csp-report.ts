@@ -35,7 +35,7 @@ function report(over: Record<string, unknown> = {}) {
     headers: { "content-type": "application/csp-report" },
     body: JSON.stringify({
       "csp-report": {
-        "document-uri": "https://orbit.jasonpereira.live/dashboard",
+        "document-uri": "https://myorbitnetwork.com/dashboard",
         "effective-directive": "script-src",
         "blocked-uri": uri,
         "violated-directive": "script-src",

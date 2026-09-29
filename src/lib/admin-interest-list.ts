@@ -626,7 +626,7 @@ export async function addManualInterestListSignup(
 ): Promise<{ email: string; id: string }> {
   const parsed = adminManualInterestListSchema.safeParse(input);
   if (!parsed.success) {
-    throw new UserFacingError(parsed.error.issues[0]?.message ?? "Could not add that signup.");
+    throw new UserFacingError(parsed.error.issues[0]?.message ?? "Couldn’t add that signup");
   }
   const { firstName, lastName, eventLabel, createdAt } = parsed.data;
   const email = parsed.data.email.trim().toLowerCase();
@@ -639,7 +639,7 @@ export async function addManualInterestListSignup(
     .limit(1);
 
   if (existing && !existing.unsubscribedAt) {
-    throw new UserFacingError("That address is already on the waitlist.");
+    throw new UserFacingError("That address is already on the waitlist");
   }
 
   let row = existing;
@@ -673,7 +673,7 @@ export async function addManualInterestListSignup(
         .where(eq(interestListSignups.email, email))
         .limit(1);
       if (row && !row.unsubscribedAt) {
-        throw new UserFacingError("That address is already on the waitlist.");
+        throw new UserFacingError("That address is already on the waitlist");
       }
     }
   }
@@ -699,7 +699,7 @@ export async function addManualInterestListSignup(
   }
 
   if (!row?.shareToken) {
-    throw new UserFacingError("Could not add that signup — try again.");
+    throw new UserFacingError("Couldn’t add that signup — try again");
   }
 
   const ticket = await ticketForRow({
@@ -753,7 +753,7 @@ export async function addManualInterestListSignupsFromPaste(input: {
     if (parseErrors.length > 0) {
       throw new UserFacingError(parseErrors[0]!);
     }
-    throw new UserFacingError("Paste at least one row: timestamp, name, and email.");
+    throw new UserFacingError("Paste at least one row: timestamp, name, and email");
   }
 
   // Prefer event time order when every row carried a timestamp; otherwise keep paste order.
@@ -778,7 +778,7 @@ export async function addManualInterestListSignupsFromPaste(input: {
       added.push(result);
     } catch (err) {
       const message =
-        err instanceof UserFacingError ? err.message : "Could not add that signup.";
+        err instanceof UserFacingError ? err.message : "Couldn’t add that signup";
       skipped.push({ email: row.email, reason: message });
     }
   }

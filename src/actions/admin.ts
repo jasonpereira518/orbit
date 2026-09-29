@@ -450,7 +450,7 @@ export async function unsubscribeInterestListAction(input: {
   // any resolved promise and only surfaces a rejection, so a returned {ok:false} would
   // toast "done" over an operation that did nothing. UserFacingError so the message
   // survives production digests and friendlyError can show it.
-  if (!removed) throw new UserFacingError("That signup no longer exists.");
+  if (!removed) throw new UserFacingError("That signup no longer exists");
 
   await recordAdminAction({
     adminUserId,
@@ -473,7 +473,7 @@ export async function resubscribeInterestListAction(input: {
   const reason = ops.requireReason(input.reason);
 
   const restored = await interestList.resubscribeInterestListRow(input.id);
-  if (!restored) throw new UserFacingError("That signup no longer exists.");
+  if (!restored) throw new UserFacingError("That signup no longer exists");
 
   await recordAdminAction({
     adminUserId,
@@ -581,13 +581,13 @@ export async function deleteInterestListAction(input: {
   // The audit entry records the address, so it is captured before the row is gone — and
   // checked against what the operator typed, so a stale page cannot delete the wrong row.
   const existing = await interestList.loadInterestListRow(input.id);
-  if (!existing) throw new UserFacingError("That signup no longer exists.");
+  if (!existing) throw new UserFacingError("That signup no longer exists");
   if (existing.email.trim().toLowerCase() !== input.confirmEmail.trim().toLowerCase()) {
-    throw new UserFacingError("That address does not match this signup.");
+    throw new UserFacingError("That address does not match this signup");
   }
 
   const deleted = await interestList.deleteInterestListRow(input.id);
-  if (!deleted) throw new UserFacingError("That signup no longer exists.");
+  if (!deleted) throw new UserFacingError("That signup no longer exists");
 
   await recordAdminAction({
     adminUserId,
@@ -615,10 +615,10 @@ export async function bulkUnsubscribeInterestListAction(input: {
 }): Promise<{ ok: true; count: number }> {
   const adminUserId = await requireAdminUserId();
   const reason = ops.requireReason(input.reason);
-  if (input.ids.length === 0) throw new UserFacingError("Nothing selected.");
+  if (input.ids.length === 0) throw new UserFacingError("Nothing selected");
 
   const emails = await interestList.bulkUnsubscribeInterestListRows(input.ids);
-  if (emails.length === 0) throw new UserFacingError("None of those signups still exist.");
+  if (emails.length === 0) throw new UserFacingError("None of those signups still exist");
 
   await recordAdminAction({
     adminUserId,
@@ -638,10 +638,10 @@ export async function bulkDeleteInterestListAction(input: {
 }): Promise<{ ok: true; count: number }> {
   const adminUserId = await requireAdminUserId();
   const reason = ops.requireReason(input.reason);
-  if (input.ids.length === 0) throw new UserFacingError("Nothing selected.");
+  if (input.ids.length === 0) throw new UserFacingError("Nothing selected");
 
   const emails = await interestList.bulkDeleteInterestListRows(input.ids);
-  if (emails.length === 0) throw new UserFacingError("None of those signups still exist.");
+  if (emails.length === 0) throw new UserFacingError("None of those signups still exist");
 
   await recordAdminAction({
     adminUserId,

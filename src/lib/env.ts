@@ -404,7 +404,7 @@ function emailDomain(value: string | undefined): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
-/** One domain is the other or sits under it — `jasonpereira.live` vs `orbit.jasonpereira.live`. */
+/** One domain is the other or sits under it — `example.com` vs `app.example.com`. */
 function relatedDomains(a: string, b: string) {
   return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }
