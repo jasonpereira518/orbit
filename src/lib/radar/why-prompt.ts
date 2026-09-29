@@ -22,6 +22,8 @@ export const RADAR_WHY_SYSTEM = [
   '"opener" is one sentence the user could send as the first line of a message:',
   "warm, no flattery, no exclamation marks, no links, and never a question about something",
   "you were not told.",
+  "Never state a number of days or weeks: the note is reused for days, so say recently,",
+  "a while, or soon instead.",
 ].join(" ");
 
 /** Reasons that argue against the recommendation; the "why" never repeats them. */
@@ -72,7 +74,31 @@ export function buildRadarWhyPrompt(inputs: RadarWhyInputs): { system: string; u
   };
 }
 
-/** Changes when, and only when, anything the model would see changes. */
-export function radarInputsHash(inputs: RadarWhyInputs): string {
-  return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);
+/**
+ * The key an AI note is cached under. Built from the FACTS, not the wording: reason labels
+ * say "9 days ago" and change every day, so hashing them would re-spend a model call on
+ * every card every night. The codes, the dates the evidence is about, and who the person is
+ * change only when something real changes. The prompt tells the model not to state day
+ * counts, so a note written three days ago is still true.
+ */
+export function radarNoteKey(rec: {
+  contactName: string;
+  title: string | null;
+  company: string | null;
+  kind: RecommendationKind;
+  reasons: readonly RadarReason[];
+  evidence: readonly RadarEvidence[];
+}): string {
+  const key = {
+    name: cleanSingleLine(rec.contactName, 80),
+    title: cleanSingleLine(rec.title, 120),
+    company: cleanSingleLine(rec.company, 120),
+    kind: rec.kind,
+    codes: rec.reasons
+      .filter((r) => (r.points > 0 || r.code.startsWith("also:")) && !PENALTY_CODES.has(r.code))
+      .map((r) => r.code)
+      .sort(),
+    evidence: rec.evidence.map((e) => e.at),
+  };
+  return createHash("sha256").update(JSON.stringify(key)).digest("hex").slice(0, 16);
 }

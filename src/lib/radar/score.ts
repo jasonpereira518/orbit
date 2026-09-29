@@ -27,7 +27,12 @@
  * Pure: no database, no network, no AI, and `now` is always an argument.
  */
 import { KIND_PRIORITY, type RadarEvidence, type RadarReason, type RadarSignal, type RecommendationBucket, type RecommendationKind } from "@/lib/radar/types";
-import { DORMANT_DAYS, idleThresholdFor } from "@/lib/outreach-thresholds";
+import {
+  DORMANT_DAYS,
+  LINKEDIN_QUIET_MAX_DAYS,
+  LINKEDIN_QUIET_MIN_DAYS,
+  idleThresholdFor,
+} from "@/lib/outreach-thresholds";
 
 const DAY_MS = 86_400_000;
 
@@ -96,6 +101,11 @@ export const RADAR_WINDOWS = {
   within48h: 2,
   actionItemStale: 14,
   expiry: 7,
+  /** An unanswered message is worth a nudge after this long, and stops being one after the upper bound. */
+  inboundMin: 5,
+  inboundMax: LINKEDIN_QUIET_MAX_DAYS,
+  /** A contact added at an event is not a follow-up; a touch a day or more after it is. */
+  postEventGrace: 1,
 } as const;
 
 /** A reason below this after decay is not worth a line. */
@@ -121,6 +131,12 @@ export type RadarContact = {
   targetPriority: 1 | 2 | 3 | null;
   /** 0..1 from `goalRelevanceComponent`. */
   goalFit: number;
+  /**
+   * Whether the closeness score rests on real evidence (`closeness_evidence` at or above
+   * `EVIDENCE_FLOOR`). Every import stamps `last_interaction_at`, so without this a month-old
+   * LinkedIn import would make hundreds of placed-by-guess contacts look "dormant".
+   */
+  hasEvidence: boolean;
 };
 
 /** What this person already did with Radar about this contact. */
@@ -200,8 +216,7 @@ function isHighValue(c: RadarContact): boolean {
     c.priorityLevel >= 2 ||
     c.relationshipScore >= 4 ||
     (c.statedCloseness ?? 0) >= 4 ||
-    c.tier === "inner" ||
-    c.tier === "mid"
+    (c.hasEvidence && (c.tier === "inner" || c.tier === "mid"))
   );
 }
 
@@ -270,6 +285,10 @@ export function scoreContactKinds(
         break;
       case "post_event": {
         const days = daysSince(s.at, now) ?? 0;
+        const followedUp =
+          contact.lastInteractionAt !== null &&
+          contact.lastInteractionAt.getTime() > s.at.getTime() + RADAR_WINDOWS.postEventGrace * DAY_MS;
+        if (followedUp) break;
         add(
           drafts,
           "reach_out",
@@ -322,6 +341,7 @@ export function scoreContactKinds(
       }
       case "inbound_unanswered": {
         const days = daysSince(s.at, now) ?? 0;
+        if (days < RADAR_WINDOWS.inboundMin || days > RADAR_WINDOWS.inboundMax) break;
         add(
           drafts,
           "reach_out",
@@ -332,6 +352,9 @@ export function scoreContactKinds(
       }
       case "linkedin_thread_quiet": {
         const days = daysSince(s.at, now) ?? 0;
+        // Only the lower bound bends to a stated rhythm; see `outreach-thresholds.ts`.
+        if (days < idleThresholdFor(contact.cadenceDays, LINKEDIN_QUIET_MIN_DAYS) || days > LINKEDIN_QUIET_MAX_DAYS) break;
+        if (s.count < 2) break;
         add(
           drafts,
           "reach_out",

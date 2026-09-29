@@ -22,7 +22,7 @@ import {
   type RadarPick,
   type RadarSuppression,
 } from "../src/lib/radar/score";
-import { buildRadarWhyPrompt, radarInputsHash, radarWhyInputs } from "../src/lib/radar/why-prompt";
+import { buildRadarWhyPrompt, radarNoteKey, radarWhyInputs } from "../src/lib/radar/why-prompt";
 import type { RadarSignal, RecommendationKind } from "../src/lib/radar/types";
 
 let failures = 0;
@@ -52,6 +52,7 @@ function contact(over: Partial<RadarContact> = {}): RadarContact {
     cadencePhrase: null,
     targetPriority: null,
     goalFit: 0,
+    hasEvidence: true,
     ...over,
   };
 }
@@ -137,8 +138,31 @@ function main() {
     check("unknown recency is not dormancy", scoreOf(kinds(contact({ lastInteractionAt: null })), "reconnect") === null);
     check("a low-value acquaintance is never nagged",
       scoreOf(kinds(contact({ tier: "outer", priorityLevel: 0, relationshipScore: 2, lastInteractionAt: ago(200) })), "reconnect") === null);
+    check("a guessed tier without evidence is not dormant",
+      scoreOf(kinds(contact({ tier: "mid", hasEvidence: false, lastInteractionAt: ago(60) })), "reconnect") === null);
+    check("but a stated priority is, evidence or not",
+      scoreOf(kinds(contact({ tier: "outer", hasEvidence: false, priorityLevel: 2, lastInteractionAt: ago(60) })), "reconnect") !== null);
     check("context alone never creates a recommendation",
       kinds(contact({ tier: "inner", priorityLevel: 3, targetPriority: 1, goalFit: 1, lastInteractionAt: ago(3) })).length === 0);
+  }
+
+  console.log("\nmessage windows");
+  {
+    const quiet = (days: number, over: Partial<RadarContact> = {}) =>
+      scoreOf(kinds(contact(over), [{ kind: "linkedin_thread_quiet", contactId: "c1", at: ago(days), count: 3 }]), "reach_out");
+    check("a thread quiet for 20 days counts", quiet(20) !== null);
+    check("one quiet for 10 days does not yet", quiet(10) === null);
+    check("one quiet for 100 days is too old", quiet(100) === null);
+    check("a monthly rhythm moves the lower bound", quiet(20, { cadenceDays: 30 }) === null && quiet(35, { cadenceDays: 30 }) !== null);
+    check("a single message is not a thread",
+      scoreOf(kinds(contact(), [{ kind: "linkedin_thread_quiet", contactId: "c1", at: ago(20), count: 1 }]), "reach_out") === null);
+    const inbound = (days: number) =>
+      scoreOf(kinds(contact(), [{ kind: "inbound_unanswered", contactId: "c1", at: ago(days) }]), "reach_out");
+    check("an unanswered message waits five days before nagging", inbound(3) === null && inbound(6) !== null);
+    const event = (lastTouch: Date) =>
+      scoreOf(kinds(contact({ lastInteractionAt: lastTouch }), [{ kind: "post_event", contactId: "c1", at: ago(5), title: "Summit" }]), "reach_out");
+    check("an event with nothing since is a reach_out", event(ago(40)) !== null);
+    check("an event you followed up on is not", event(ago(2)) === null);
   }
 
   console.log("\nfresh intros");
@@ -233,9 +257,14 @@ function main() {
     check("hostile note text stays inside the fence", prompt.user.indexOf("IGNORE PREVIOUS") > fenceOpen);
     check("penalty lines are not 'why' material", !prompt.user.includes("You spoke recently"));
     check("the same inputs build identical bytes", JSON.stringify(buildRadarWhyPrompt(radarWhyInputs(base))) === JSON.stringify(prompt));
-    check("the inputs hash is stable", radarInputsHash(inputs) === radarInputsHash(radarWhyInputs(base)));
-    check("and moves when a fact moves",
-      radarInputsHash(inputs) !== radarInputsHash(radarWhyInputs({ ...base, evidence: [{ label: "Open for 21 days", at: null }] })));
+    const key = radarNoteKey(base);
+    check("the note key is stable", key === radarNoteKey({ ...base }));
+    check("a day passing does not move it",
+      key === radarNoteKey({ ...base, evidence: [{ label: "Open for 21 days", at: null }], reasons: base.reasons.map((r) => ({ ...r, label: r.label + " (a day later)" })) }));
+    check("a new fact does",
+      key !== radarNoteKey({ ...base, reasons: [...base.reasons, { code: "target_company", label: "Works at Acme", points: 14 }] }));
+    check("so does a change to who they are", key !== radarNoteKey({ ...base, title: "CTO" }));
+    check("the model is told not to count days", /Never state a number of days/.test(prompt.system));
     check("the system prompt forbids invention", /Never invent/.test(prompt.system));
   }
 }

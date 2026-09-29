@@ -72,7 +72,7 @@ export type RadarEvidence = { label: string; at: string | null };
 export type RadarAiNote = { why: string; opener: string; inputsHash: string; generatedAt: string };
 
 /** What a person did with a recommendation, recorded so the next run respects it. */
-export type RadarFeedbackAction = "accepted" | "dismissed" | "snoozed" | "never" | "restored";
+export type RadarFeedbackAction = "accepted" | "dismissed" | "snoozed" | "never";
 
 export type RadarRunTrigger = "schedule" | "page" | "manual" | "first_visit";
 export type RadarRunStatus = "running" | "ok" | "partial" | "failed";
