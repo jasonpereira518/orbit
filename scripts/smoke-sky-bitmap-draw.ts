@@ -1,11 +1,13 @@
 /**
- * What the worker bitmaps draw, checked with a recording context: the galaxy backdrop.
+ * What the worker bitmaps draw, checked with a recording context: the galaxy backdrop, and a
+ * different wash per cluster form.
  * Pure: no DOM. Run: npx tsx scripts/smoke-sky-bitmap-draw.ts
  */
 import { buildHybridGraphLayout } from "../src/lib/graph-layout";
 import { galaxyBackdropData, galaxyBackdropZoom } from "../src/lib/graph/galaxy-dust";
 import { DUST_CHUNK, drawSkyBitmap, skyBitmapSize, type SkyBitmapJob } from "../src/lib/graph/sky-bitmap-draw";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
+import type { NebulaWashCluster, NebulaWashData } from "../src/components/graph/graph-nodes";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -37,6 +39,33 @@ function recorder() {
   });
   return { ctx: ctx as never, count: (n: string) => calls.get(n) ?? 0, assigned, stops };
 }
+
+console.log("\nWashes by form");
+const washCluster = (over: Partial<NebulaWashCluster>): NebulaWashCluster => ({
+  seed: "Acme", color: "#3aa3ff", x: 0, y: 0, radius: 300, opacity: 1, ...over,
+});
+const washData = (clusters: NebulaWashCluster[]): NebulaWashData => ({
+  kind: "nebulaWash", clusters, minX: -2000, minY: -2000, width: 4000, height: 4000,
+});
+const washJob = (clusters: NebulaWashCluster[]): SkyBitmapJob => ({ kind: "wash", data: washData(clusters), zoom: 1, dpr: 1, maxBackingPx: 2048 });
+const gradientsFor = (clusters: NebulaWashCluster[]) => {
+  const r = recorder();
+  drawSkyBitmap(r.ctx, washJob(clusters));
+  return r.count("createRadialGradient");
+};
+const parts = [
+  { key: "core", role: "core" as const, x: 0, y: 0, radius: 150 },
+  { key: "petal:engineering", role: "petal" as const, x: 400, y: 0, radius: 200 },
+  { key: "petal:design", role: "petal" as const, x: -400, y: 0, radius: 200 },
+];
+const figure = gradientsFor([washCluster({})]);
+check("a figure keeps its five lobes", figure === 5, String(figure));
+check("a cluster with no form is a figure", gradientsFor([washCluster({ form: "figure" })]) === figure);
+check("a petal cluster adds five lobes per part", gradientsFor([washCluster({ form: "petal", parts })]) === 5 + 5 * parts.length);
+check("a ring is one annulus glow", gradientsFor([washCluster({ form: "ring", parts: [{ key: "main", role: "main", x: 0, y: 0, radius: 200 }] })]) === 1);
+check("a role cluster has no shared wash", gradientsFor([washCluster({ form: "open" })]) === 0);
+check("a binary has no wash", gradientsFor([washCluster({ form: "binary" })]) === 0);
+check("a ring with no parts still draws something sane", gradientsFor([washCluster({ form: "ring" })]) === 1);
 
 console.log("\nGalaxy backdrop");
 const galaxy = galaxyBackdropData({

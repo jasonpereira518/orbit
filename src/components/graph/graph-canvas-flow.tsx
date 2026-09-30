@@ -1492,10 +1492,19 @@ function GraphCanvasInner({
         y: n.position.y,
         radius: d.radius,
         opacity: clusterEmphasis(d.company, washFocusCompany, company, searchDimActive),
+        form: d.form,
+        parts: d.parts,
       });
       // The same box the wash used to have its own element for: four radii across, so the
       // cloud dissolves well before the canvas ends and no cluster is clipped at the edge.
-      const reach = (d.radius * NEBULA_BOX_RADII) / 2;
+      // A petal's pools and a school's ring can lie farther out than the cluster's own radius,
+      // so the radius is the farthest edge of any part from the centre (and never less than the
+      // cluster's own, which keeps a cluster without parts exactly as it was).
+      let extent = d.radius;
+      for (const part of d.parts ?? []) {
+        extent = Math.max(extent, Math.hypot(part.x - n.position.x, part.y - n.position.y) + part.radius);
+      }
+      const reach = (extent * NEBULA_BOX_RADII) / 2;
       minX = Math.min(minX, n.position.x - reach);
       minY = Math.min(minY, n.position.y - reach);
       maxX = Math.max(maxX, n.position.x + reach);

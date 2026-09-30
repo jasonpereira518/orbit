@@ -23,7 +23,9 @@ import { cn } from "@/lib/utils";
 import {
   type ClusterLabelData,
   type GraphNodeData,
+  type NebulaData,
 } from "@/lib/graph-layout";
+import type { ClusterForm } from "@/lib/constellation-parts";
 import { withAlpha } from "@/lib/school-color";
 import {
   STAR_HIT_PAD,
@@ -385,6 +387,10 @@ export type NebulaWashCluster = {
   radius: number;
   /** The cluster's emphasis: 1, or dimmed because a search is pulling the eye elsewhere. */
   opacity: number;
+  /** How the cluster is washed: no form is a figure; role (open) and binary clusters get none. */
+  form?: ClusterForm;
+  /** The layout's part disks (absolute coordinates): a petal's pools, or a ring's centre and outer radius. */
+  parts?: NebulaData["parts"];
 };
 
 export type NebulaWashData = {

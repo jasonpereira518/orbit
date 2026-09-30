@@ -7,11 +7,13 @@
  * there are two places to draw it.
  */
 import type {
+  NebulaWashCluster,
   NebulaWashData,
   StarDustData,
   StarDustPoint,
 } from "@/components/graph/graph-nodes";
 import type { GalaxyBackdropData } from "@/lib/graph/galaxy-dust";
+import { CORE_TINT } from "@/lib/constellation-parts";
 import { NEBULA_LOBE_EDGE, NEBULA_LOBE_MID, nebulaLobes } from "@/lib/graph/nebula-lobes";
 import { zoomRelief as starZoomRelief } from "@/lib/graph/star-style";
 import { withAlpha } from "@/lib/school-color";
@@ -50,35 +52,93 @@ export function drawSkyBitmap(ctx: Ctx, job: SkyBitmapJob) {
   ctx.globalAlpha = 1;
 }
 
+/** A part's wash is lighter than the cluster's, so the parts read as pools within one cloud. */
+const PART_WASH_ALPHA = 0.7;
+
+function drawLobes(
+  ctx: Ctx,
+  scale: number,
+  seed: string,
+  color: string,
+  cx: number,
+  cy: number,
+  radius: number,
+  alphaScale: number
+) {
+  for (const lobe of nebulaLobes(seed, radius)) {
+    // Under half a backing pixel there is nothing to draw, and a zero-radius gradient throws.
+    if (lobe.rx * scale < 0.5 || lobe.ry * scale < 0.5) continue;
+    const a = lobe.alpha * alphaScale;
+    const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, lobe.rx);
+    fill.addColorStop(0, withAlpha(color, a));
+    fill.addColorStop(NEBULA_LOBE_MID, withAlpha(color, a * 0.45));
+    // The cluster's own colour at zero alpha, not `transparent`: that keyword is
+    // transparent BLACK, so a fade to it drags the hue toward black on the way out
+    // instead of simply thinning. The dashboard preview builds the same stops.
+    fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(color, 0));
+    fill.addColorStop(1, withAlpha(color, 0));
+    ctx.save();
+    // An ellipse rx by ry, as `radial-gradient(ellipse rx ry at …)` drew it: a circle of
+    // radius rx, squashed vertically. The gradient is built in this squashed space, so it
+    // stretches with the shape exactly as the CSS one did.
+    ctx.translate(cx + lobe.x, cy + lobe.y);
+    ctx.scale(1, lobe.ry / lobe.rx);
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+/** A school: a soft annulus that peaks on the outer ring, so the stars sit in a halo of their own colour. */
+function drawRing(ctx: Ctx, scale: number, cluster: NebulaWashCluster) {
+  const part = cluster.parts?.[0];
+  const ringR = part?.radius ?? cluster.radius * 0.5;
+  const cx = part?.x ?? cluster.x;
+  const cy = part?.y ?? cluster.y;
+  const outer = ringR * 1.3;
+  if (outer * scale < 0.5) return;
+  const fill = ctx.createRadialGradient(cx, cy, 0, cx, cy, outer);
+  fill.addColorStop(0, withAlpha(cluster.color, 0.05));
+  fill.addColorStop(0.3, withAlpha(cluster.color, 0.06));
+  fill.addColorStop(1 / 1.3, withAlpha(cluster.color, 0.12)); // the outer ring itself
+  fill.addColorStop(1, withAlpha(cluster.color, 0));
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.arc(cx, cy, outer, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function drawWash(ctx: Ctx, data: NebulaWashData, scale: number) {
   for (const cluster of data.clusters) {
-    // The cluster's dim is applied to its five lobes together, as the element's `opacity`
+    const form = cluster.form ?? "figure";
+    // A role cluster spans companies and a binary is two or three stars: neither has a cloud of
+    // its own, so neither is washed.
+    if (form === "open" || form === "binary") continue;
+    // The cluster's dim is applied to all its pieces together, as the element's `opacity`
     // applied it to the five backgrounds together. Instant rather than the 200ms fade the
     // boxes had: a canvas redraws, it does not transition. The stars above made the same
     // trade for the same reason.
     ctx.globalAlpha = cluster.opacity;
-    for (const lobe of nebulaLobes(cluster.seed, cluster.radius)) {
-      // Under half a backing pixel there is nothing to draw, and a zero-radius gradient throws.
-      if (lobe.rx * scale < 0.5 || lobe.ry * scale < 0.5) continue;
-      const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, lobe.rx);
-      fill.addColorStop(0, withAlpha(cluster.color, lobe.alpha));
-      fill.addColorStop(NEBULA_LOBE_MID, withAlpha(cluster.color, lobe.alpha * 0.45));
-      // The cluster's own colour at zero alpha, not `transparent`: that keyword is
-      // transparent BLACK, so a fade to it drags the hue toward black on the way out
-      // instead of simply thinning. The dashboard preview builds the same stops.
-      fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(cluster.color, 0));
-      fill.addColorStop(1, withAlpha(cluster.color, 0));
-      ctx.save();
-      // An ellipse rx by ry, as `radial-gradient(ellipse rx ry at …)` drew it: a circle of
-      // radius rx, squashed vertically. The gradient is built in this squashed space, so it
-      // stretches with the shape exactly as the CSS one did.
-      ctx.translate(cluster.x + lobe.x, cluster.y + lobe.y);
-      ctx.scale(1, lobe.ry / lobe.rx);
-      ctx.fillStyle = fill;
-      ctx.beginPath();
-      ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+    if (form === "ring") {
+      drawRing(ctx, scale, cluster);
+      continue;
+    }
+    drawLobes(ctx, scale, cluster.seed, cluster.color, cluster.x, cluster.y, cluster.radius, 1);
+    if (form === "petal") {
+      for (const part of cluster.parts ?? []) {
+        drawLobes(
+          ctx,
+          scale,
+          `${cluster.seed}#${part.key}`,
+          part.role === "core" ? CORE_TINT : cluster.color,
+          part.x,
+          part.y,
+          part.radius * 0.9,
+          PART_WASH_ALPHA
+        );
+      }
     }
   }
 }
