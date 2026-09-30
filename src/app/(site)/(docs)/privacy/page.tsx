@@ -249,6 +249,19 @@ export default function PrivacyPage() {
               where each event was found.
             </p>
           </DocCallout>
+          <DocCallout title="Email insights">
+            <p>
+              If you turn on Email insights in Settings, Orbit checks your Gmail every fifteen
+              minutes for new threads that look like a job application or a recruiter
+              conversation, excluding newsletters and mailing lists. For each thread it reads
+              only the sender, the subject, who is on it, and the short preview Gmail supplies —
+              never the body. It keeps the thread id, the subject, the participants, a note of
+              where an application stands (applied, interviewing, offer, or rejected) and that
+              one preview line as evidence. It stores no message bodies and does not send this
+              mail to an AI provider. Turning it off stops the checking; disconnecting Gmail, or
+              deleting your insights in Settings, removes what it recorded.
+            </p>
+          </DocCallout>
         </DocSection>
 
         <DocSection id="recruiters" index={5} title="The recruiter scan and the shared directory">
