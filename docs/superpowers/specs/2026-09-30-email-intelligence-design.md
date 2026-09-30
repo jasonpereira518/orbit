@@ -58,7 +58,7 @@ The schema version must be above 142. Choose it after scanning every local and r
 **`email_events`**
 - `thread_id` FK, `kind` (`job_posting | process_update | news | event | other`), `company`, `role`, `stage`.
 - `occurred_at`, `due_at`, `summary`, `evidence_quote`, `confidence`.
-- `people` (jsonb: name, email, title, optional `contact_id`), `asks` (suggested tasks), `dismissed_at`.
+- `people` (jsonb: name, email, title; contacts are resolved when read and never stored, see section 5), `asks` (suggested tasks), `dismissed_at`.
 
 New-table checklist:
 - Drizzle definition in `src/db/schema.ts`.
@@ -70,7 +70,7 @@ New-table checklist:
 Data lifecycle:
 - Register both tables in `src/lib/user-data.ts` for export, counts and purge. Derived output belongs with the `insights` category.
 - Cascade on Gmail disconnect (the `connections` step).
-- Handle `people[].contact_id` in `src/lib/contact-merge.ts`.
+- `people` holds no contact ids, so `src/lib/contact-merge.ts` needs no change.
 - `scripts/smoke-purge.ts` derives user-scoped tables from `schema.ts`, so it fails until this is done.
 
 ### 3. Ingest lane (P1)
@@ -94,15 +94,15 @@ Data lifecycle:
 
 ### 5. People resolution (P3)
 
-- Named people are matched by email through `contact_identities` (`findIdentityOwners`, `src/lib/contact-identity.ts`), which sets `contact_id`.
+- Named people are matched by email through `contact_identities` (`findIdentityOwners`) **when they are read** (`resolvePeople`, `src/lib/email-intel/resolve.ts`) and the result is never stored. A stored id inside a JSON column would go stale on `mergeContacts`/`unmergeContacts` (which repoint child rows by id and cannot see inside JSON), dangle on deletion, and miss a contact added after the email; a lookup has none of those problems, because merge already moves the `contact_identities` rows.
 - Unmatched people are suggestions only. Nothing creates contacts silently, and plan caps are respected.
 
 ### 6. Relevance ranking (P3)
 
 New pure module `src/lib/email-intel/relevance.ts`, modelled on `scoreAttendee` in `src/lib/events/relevance.ts` and `scoreContactKinds` in `src/lib/radar/score.ts`.
 
-- Candidates: people on the thread, people at the same company (`findOrgRosters`, `src/lib/chat-roster.ts`), and `hybridSearchContacts` with expansion terms drawn from the company, role and function.
-- Features: same or target company (`loadTargetKeys`), role and seniority (`seniorityOf`), goal fit (`goalRelevanceComponent`), closeness tier and warm path, recency.
+- Candidates: people on the thread (the model's named people plus the addresses on the thread's headers), contacts at the event's company (a direct query on the normalised company key, suffixes stripped, not `findOrgRosters`, which resolves a company named inside a question), and a lexical `hybridSearchContacts` on the role's words with `embedding: null` so no embedding call is made.
+- Features: on the thread, same or target company (`loadTargetKeys`), seniority (`seniorityOf`, counted only for people at the company or on the thread, and by event kind), a title/role word match, goal fit (`goalRelevanceComponent`), closeness tier, and a profile-search match for people found only that way. Warm path is not used (every candidate is already in the network) and recency is left to Radar's own scorer.
 - Each score carries reasons `{code, label, points}` and orders stably. No model chooses the order.
 - Top three people per event.
 - `role-function.ts` exists only on `claude/constellation-render-clustering-b81406`. Start with `seniorityOf`, and add role function when that lands or is cherry-picked.
