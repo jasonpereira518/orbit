@@ -5,10 +5,13 @@ import {
   ViewAsUserButton,
 } from "@/components/admin/surface-toggles";
 import { requireAdminPage } from "@/lib/admin";
+import { NavOrderEditor } from "@/components/admin/nav-order-editor";
 import { ConstellationFilterPanel } from "@/components/admin/constellation-filter-panel";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import {
+  getComingSoonKeys,
   getHiddenSurfaceKeys,
+  getNavOrder,
   isPreviewingUnreleased,
   isViewingAsUser,
 } from "@/lib/surface-visibility";
@@ -32,9 +35,11 @@ export const metadata = { title: "Admin · Product" };
  */
 export default async function AdminProductPage() {
   const adminUserId = await requireAdminPage();
-  const [hidden, viewingAsUser, previewingUnreleased, constellation] =
+  const [hidden, comingSoon, navOrder, viewingAsUser, previewingUnreleased, constellation] =
     await Promise.all([
       getHiddenSurfaceKeys(),
+      getComingSoonKeys(),
+      getNavOrder(),
       isViewingAsUser(adminUserId),
       isPreviewingUnreleased(adminUserId),
       getConstellationConfig(),
@@ -79,7 +84,7 @@ export default async function AdminProductPage() {
           <p className="text-xs text-muted-foreground">
             {previewingUnreleased
               ? "You are seeing the real pages behind every coming-soon screen. Everyone else still gets coming-soon until you stop."
-              : "Pages marked coming-soon (see src/lib/surfaces.ts) are closed to admins by default, same as everyone else. Turn this on to build against the real page instead. Lasts until you stop or close the browser, and changes nothing for anyone else."}
+              : "Pages marked coming soon (toggle them under Pages below) are closed to admins by default, same as everyone else. Turn this on to build against the real page instead. Lasts until you stop or close the browser, and changes nothing for anyone else."}
           </p>
         </AdminPanel>
 
@@ -87,8 +92,16 @@ export default async function AdminProductPage() {
           <ConstellationFilterPanel config={constellation} />
         </AdminPanel>
 
+        <AdminPanel title="Sidebar order">
+          <NavOrderEditor order={navOrder} comingSoon={[...comingSoon]} />
+        </AdminPanel>
+
         <AdminPanel title="Pages">
-          <SurfaceToggles surfaces={surfacesOfKind("page")} hidden={hiddenKeys} />
+          <SurfaceToggles
+            surfaces={surfacesOfKind("page")}
+            hidden={hiddenKeys}
+            comingSoon={[...comingSoon]}
+          />
         </AdminPanel>
 
         <AdminPanel title="Dashboard cards">
