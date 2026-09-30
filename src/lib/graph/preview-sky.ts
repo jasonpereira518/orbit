@@ -18,7 +18,6 @@ import {
   type GraphContactInput,
   type GraphNodeData,
   type NebulaData,
-  type OrbitRingsData,
 } from "@/lib/graph-layout";
 import {
   STAR_COMET,
@@ -102,7 +101,6 @@ export function buildPreviewSky(contacts: GraphContactInput[], userName: string)
   const starIndex = new Map<string, number>();
   const stars: number[] = [];
   const washes: number[] = [];
-  let rings: number[] = [];
 
   for (const n of layout.nodes) {
     const x = round(n.position.x);
@@ -125,8 +123,6 @@ export function buildPreviewSky(contacts: GraphContactInput[], userName: string)
     } else if (n.type === "nebula") {
       const d = n.data as NebulaData;
       washes.push(x, y, round(d.radius), colors.of(muted(d.color)), names.of(d.company));
-    } else if (n.type === "orbitRings") {
-      rings = [...(n.data as OrbitRingsData).radii];
     }
   }
 
@@ -157,7 +153,6 @@ export function buildPreviewSky(contacts: GraphContactInput[], userName: string)
     washes,
     lines,
     lineStyles: lineStyles.values,
-    rings,
     count: starIndex.size,
   };
 }

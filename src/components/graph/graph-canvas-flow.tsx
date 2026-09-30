@@ -32,7 +32,6 @@ import {
   ContactNode,
   LabeledEdge,
   NebulaWashNode,
-  OrbitRingsNode,
   StarDustNode,
   SunNode,
   CLUSTER_NAME_PIN_MIN_ZOOM,
@@ -200,7 +199,6 @@ function DefaultViewFitter({
 const nodeTypes = {
   contact: ContactNode,
   user: SunNode,
-  orbitRings: OrbitRingsNode,
   clusterLabel: ClusterLabelNode,
   nebulaWash: NebulaWashNode,
   starDust: StarDustNode,
@@ -1458,7 +1456,7 @@ function GraphCanvasInner({
       draggable: false,
       selectable: false,
       focusable: false,
-      // Above the rings (-2), beneath the clusters' haze (0) and every real star.
+      // Beneath the clusters' haze (0) and every real star.
       zIndex: -1,
       style: { pointerEvents: "none" },
     };
@@ -1528,7 +1526,7 @@ function GraphCanvasInner({
       draggable: false,
       selectable: false,
       focusable: false,
-      // Exactly where the 485 wash boxes sat: above the rings (-2) and the dust (-1), beneath
+      // Exactly where the 485 wash boxes sat: above the star dust (-1), beneath
       // the stars and the cluster names. Keeping the number keeps the sky's order unchanged.
       zIndex: 0,
       style: { pointerEvents: "none" },
@@ -1588,10 +1586,6 @@ function GraphCanvasInner({
     }
 
     for (const n of visit) {
-      if (n.type === "orbitRings") {
-        out.push(n);
-        continue;
-      }
       if (n.type === "user") {
         const selected = selection?.type === "user";
         out.push(
@@ -1993,7 +1987,7 @@ function GraphCanvasInner({
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
-      if (node.id === "rings" || node.id === STAR_DUST_ID) return;
+      if (node.id === STAR_DUST_ID) return;
       if (node.id === NEBULA_WASH_ID) return;
 
       if (node.type === "clusterLabel") {

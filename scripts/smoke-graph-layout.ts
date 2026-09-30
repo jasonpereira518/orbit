@@ -1,6 +1,6 @@
 /**
- * Exercises the packed sky-atlas constellation layout: undistorted asterism
- * figures, guaranteed non-overlap of stars and figure lines, shell packing,
+ * Exercises the galaxy constellation layout: undistorted asterism
+ * figures, guaranteed non-overlap of stars and figure lines, disk placement,
  * and the fit/edge agreement that used to be a hand-maintained invariant.
  * No DB, no network.
  * Run: npx tsx scripts/smoke-graph-layout.ts
@@ -13,8 +13,11 @@ import {
 import {
   buildHybridGraphLayout,
   type GraphContactInput,
+  type NebulaData,
   type GraphNodeData,
 } from "../src/lib/graph-layout";
+import { buildClusterAffinity } from "../src/lib/constellation-affinity";
+import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import { buildPeerEdges } from "../src/lib/network-metrics";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -79,7 +82,7 @@ const fixture: GraphContactInput[] = [
   contact("s1", { school: "MIT", orbitScore: 4 }),
   contact("s2", { school: "MIT", orbitScore: 2 }),
   contact("s3", { school: "MIT", orbitScore: 1 }),
-  // Singleton company → background rim, not a wedge.
+  // Singleton company → halo, not a cluster.
   contact("solo", { company: "Tiny Startup", orbitScore: 3 }),
   // One-off companies, same function → a cross-company role constellation.
   contact("r1", { company: "Acme Robotics", title: "Backend Engineer", orbitScore: 3 }),
@@ -336,7 +339,145 @@ console.log("\nNo overlaps");
       }
     }
   }
+  // A heuristic on star centroids; the exact disk guarantee (gap, sun clear) lives in
+  // smoke-disk-placement.
   check("cluster star fields are pairwise disjoint", clustersApart);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nThe galaxy");
+
+{
+  const g = layout.galaxy;
+  check("the layout carries a galaxy", Boolean(g) && g.diskRadius > 0);
+  check(
+    "no ring node is emitted",
+    !layout.nodes.some((n) => n.id === "rings" || (n.type as string) === "orbitRings")
+  );
+  const clusteredIds = new Set(
+    [...fit.fits.values()].flatMap((f) => [...f.figureMemberIds, ...f.scatterMemberIds])
+  );
+  check(
+    "every clustered star lies inside the disk",
+    [...clusteredIds].every((id) => {
+      const p = posById.get(id)!;
+      return Math.hypot(p.x, p.y) <= g.diskRadius + 1e-6;
+    })
+  );
+  const haloIds = ["solo", ...Array.from({ length: 7 }, (_, i) => `d${i}`)];
+  check(
+    "unaffiliated stars sit in the halo, beyond the disk",
+    haloIds.every((id) => {
+      const p = posById.get(id)!;
+      return Math.hypot(p.x, p.y) >= g.diskRadius;
+    })
+  );
+  check("the core is inside the disk", g.coreRadius <= g.diskRadius);
+  check(
+    "filaments join clusters that exist",
+    g.filaments.every((f) => fit.fits.has(f.from) && fit.fits.has(f.to))
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nNear = related (a realistic network)");
+
+{
+  const network = buildSyntheticGraphPayload(600, { seed: 3 }).contacts;
+  const big = buildHybridGraphLayout(network, "Tester");
+  const bigFit = buildConstellationFit(network);
+  const eligible = bigFit.clusters.filter((c) => bigFit.fits.has(c.id));
+  const links = buildClusterAffinity(network, bigFit.byContactId, eligible);
+  const centre = new Map(
+    big.nodes
+      .filter((n) => n.type === "nebula")
+      .map((n) => [(n.data as NebulaData).clusterId!, n.position] as const)
+  );
+  const d = (a: string, b: string) => {
+    const A = centre.get(a)!;
+    const B = centre.get(b)!;
+    return Math.hypot(A.x - B.x, A.y - B.y);
+  };
+  const ids = [...centre.keys()];
+  const all: number[] = [];
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) all.push(d(ids[i], ids[j]));
+  all.sort((a, b) => a - b);
+  const median = all[Math.floor(all.length / 2)];
+  const related = links.filter((l) => centre.has(l.a) && centre.has(l.b));
+  const mean = related.reduce((s, l) => s + d(l.a, l.b), 0) / Math.max(1, related.length);
+  check("the network has related clusters", related.length > 10, String(related.length));
+  check(
+    `related clusters sit closer than a typical pair (mean ${mean.toFixed(0)} < median ${median.toFixed(0)})`,
+    mean < median
+  );
+
+  // Same network, contacts the other way round: every star lands exactly where it did.
+  const flipped = buildHybridGraphLayout([...network].reverse(), "Tester");
+  const at = (l: typeof big) =>
+    new Map(l.nodes.filter((n) => n.type === "contact").map((n) => [n.id, n.position] as const));
+  const forwardAt = at(big);
+  const flippedAt = at(flipped);
+  let worst = 0;
+  for (const [id, p] of forwardAt) {
+    const q = flippedAt.get(id)!;
+    worst = Math.max(worst, Math.abs(p.x - q.x), Math.abs(p.y - q.y));
+  }
+  check(
+    "the layout does not depend on contact order",
+    forwardAt.size === flippedAt.size && worst < 1e-6,
+    `largest move ${worst.toFixed(6)}px`
+  );
+  const shape = (l: typeof big) =>
+    JSON.stringify([
+      Math.round(l.galaxy.diskRadius),
+      Math.round(l.galaxy.coreRadius),
+      l.galaxy.filaments.map((f) => `${f.from}>${f.to}`),
+    ]);
+  check("nor does the galaxy's shape", shape(big) === shape(flipped));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nA crowded halo stays close to the galaxy");
+
+{
+  // 500 people with nothing to cluster on, 400 in forty companies. The halo must hold all of
+  // them without trailing off into the far sky: the home view frames the farthest star.
+  const people: GraphContactInput[] = [
+    ...Array.from({ length: 500 }, (_, i) => contact(`h${i}`)),
+    ...Array.from({ length: 400 }, (_, i) =>
+      contact(`k${i}`, { company: `Firm${i % 40} Works` })
+    ),
+  ];
+  const crowd = buildHybridGraphLayout(people, "Tester");
+  const disk = crowd.galaxy.diskRadius;
+  const halo = crowd.nodes
+    .filter((n) => n.type === "contact" && n.id.startsWith("h"))
+    .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, r: Math.hypot(n.position.x, n.position.y) }));
+  const nearest = Math.min(...halo.map((h) => h.r));
+  const farthest = Math.max(...halo.map((h) => h.r));
+  check("the halo has its 500 stars", halo.length === 500, String(halo.length));
+  check(
+    "every halo star is beyond the disk and a gap",
+    nearest >= disk + 80,
+    `nearest ${nearest.toFixed(0)} vs disk ${disk.toFixed(0)}`
+  );
+  check(
+    "the farthest halo star is within 1.6 disk radii",
+    farthest <= 1.6 * disk,
+    `farthest ${farthest.toFixed(0)} = ${(farthest / disk).toFixed(2)} x disk ${disk.toFixed(0)}`
+  );
+  let clash = 0;
+  for (let i = 0; i < halo.length; i++) {
+    for (let j = i + 1; j < halo.length; j++) {
+      if (
+        Math.abs(halo[i].x - halo[j].x) < LABEL_WIDTH &&
+        Math.abs(halo[i].y - halo[j].y) < LABEL_HEIGHT
+      ) {
+        clash++;
+      }
+    }
+  }
+  check("no two halo labels overlap", clash === 0, `${clash} pairs`);
 }
 
 // ---------------------------------------------------------------------------
