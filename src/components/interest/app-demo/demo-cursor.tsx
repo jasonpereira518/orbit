@@ -58,6 +58,7 @@ export function useDemoTour({
   const [cursor, setCursor] = useState<Point | null>(null);
   const [pressing, setPressing] = useState(false);
   const [beat, setBeat] = useState(0);
+  const [typed, setTyped] = useState("");
 
   useEffect(() => {
     if (!active) return;
@@ -96,12 +97,21 @@ export function useDemoTour({
             setCursor(aimAt(el, root));
             await sleep(reduced ? 300 : 900);
           }
+          if (b.type) {
+            // Typed into the ask bar the way a person would, then sent by the click below.
+            for (let n = 1; n <= b.type.length; n++) {
+              setTyped(b.type.slice(0, n));
+              await sleep(reduced ? 0 : 45);
+            }
+            await sleep(reduced ? 100 : 350);
+          }
           if (b.action) {
             setPressing(true);
             await sleep(160);
             const action = typeof b.action === "function" ? b.action(stateRef.current) : b.action;
             if (action) dispatch(action);
             setPressing(false);
+            setTyped("");
             if (action && (action.type === "reset" || action.type === "openProfile" || action.type === "go" || action.type === "ask")) {
               paneRef.current?.scrollTo({ top: 0 });
             }
@@ -116,10 +126,11 @@ export function useDemoTour({
     return () => {
       cancelled = true;
       setPressing(false);
+      setTyped("");
     };
   }, [active, reduced, rootRef, paneRef, pausedRef, stateRef, dispatch]);
 
-  return { cursor, pressing, beat };
+  return { cursor, pressing, beat, typed };
 }
 
 export function TourCursor({ at, pressing, reduced }: { at: Point; pressing: boolean; reduced: boolean }) {
@@ -134,7 +145,7 @@ export function TourCursor({ at, pressing, reduced }: { at: Point; pressing: boo
     >
       {pressing && !reduced && (
         <motion.span
-          className="absolute -left-4 -top-4 size-8 rounded-full border-2 border-[#f2c14e]"
+          className="absolute -left-4 -top-4 size-8 rounded-full border-2 border-tier-lifetime"
           initial={{ scale: 0.3, opacity: 0.9 }}
           animate={{ scale: 1.4, opacity: 0 }}
           transition={{ duration: 0.45 }}
@@ -148,7 +159,7 @@ export function TourCursor({ at, pressing, reduced }: { at: Point; pressing: boo
         transition={{ duration: 0.12 }}
         style={{ filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.55))", transformOrigin: "2px 2px" }}
       >
-        <path d="M2 2 L2 19 L6.6 14.8 L9.6 21.6 L12.6 20.3 L9.7 13.6 L16 13.4 Z" fill="#fff" stroke="#0e1524" strokeWidth="1.3" strokeLinejoin="round" />
+        <path d="M2 2 L2 19 L6.6 14.8 L9.6 21.6 L12.6 20.3 L9.7 13.6 L16 13.4 Z" fill="#fff" stroke="var(--background)" strokeWidth="1.3" strokeLinejoin="round" />
       </motion.svg>
     </motion.div>
   );

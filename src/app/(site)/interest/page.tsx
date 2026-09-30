@@ -2,16 +2,19 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { cookies, headers } from "next/headers";
-import { Network, Plug, Sparkles } from "lucide-react";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { InterestHero, type HeroInitial } from "@/components/interest/interest-hero";
 import { ReferralTracker } from "@/components/interest/referral-tracker";
 import { RingsBackdrop } from "@/components/interest/rings-backdrop";
 import { AppDemo } from "@/components/interest/app-demo/app-demo";
+import { DemoPeek } from "@/components/interest/demo-peek";
+import { SkyHint } from "@/components/interest/sky-hint";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { FeaturePoll, type FeaturePollInitial } from "@/components/interest/feature-poll";
+import { EarlyAccessPath, JourneyTitle } from "@/components/interest/early-access-path";
+import { PillarArt, type PillarArtKind } from "@/components/interest/pillar-art";
 import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
 import {
   REFERRAL_TIERS,
@@ -24,12 +27,13 @@ import {
 import {
   getInterestProof,
   getInviterPlanet,
+  getProgressByShareToken,
   getTicketByShareToken,
   type InterestProof,
 } from "@/lib/interest-list-ticket";
 import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import { getPollInitial } from "@/lib/waitlist-poll-votes";
-import { POLL_VOTER_COOKIE } from "@/lib/waitlist-poll";
+import { BASE_STARS, POLL_VOTER_COOKIE } from "@/lib/waitlist-poll";
 import { isWaitlistHostHeader } from "@/lib/waitlist-host";
 
 // The proof line, the invited strip and the pass all come from the URL and the database
@@ -102,38 +106,78 @@ export async function generateMetadata({
 const HEADING =
   "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
 
+const SECTION_TITLE = `${HEADING} text-[clamp(26px,3.4vw,38px)]`;
+
+/**
+ * A section with its heading beside the content rather than above it, used to break the
+ * page's run of centred stacks. `side` is where the heading sits from `lg`; below that the
+ * two stack, heading first and centred, like every other section. The heading is always
+ * first in the DOM — only the visual order flips — so a screen reader or a keyboard meets
+ * it before the content. It sticks beside a long column (the FAQ, answers open).
+ */
+function SplitSection({
+  id,
+  title,
+  blurb,
+  side,
+  children,
+}: {
+  id: string;
+  title: string;
+  blurb: string;
+  side: "left" | "right";
+  children: React.ReactNode;
+}) {
+  const right = side === "right";
+  return (
+    <section
+      className={`mt-24 md:mt-32 lg:grid lg:items-start lg:gap-16 ${
+        right ? "lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]" : "lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
+      }`}
+      aria-labelledby={id}
+    >
+      <div className={`text-center lg:sticky lg:top-24 lg:text-left ${right ? "lg:order-2" : ""}`}>
+        <Reveal className="reveal-celestial">
+          <h2 id={id} className={SECTION_TITLE}>
+            {title}
+          </h2>
+        </Reveal>
+        <Reveal className="reveal-celestial" delay={80}>
+          <p className="mx-auto mt-3 max-w-[48ch] text-base leading-relaxed text-[#9aada8] lg:mx-0">
+            {blurb}
+          </p>
+        </Reveal>
+      </div>
+      <Reveal className="reveal-celestial mt-10 block lg:mt-0" delay={120}>
+        {children}
+      </Reveal>
+    </section>
+  );
+}
+
 /** What the proof line degrades to if the database read fails: count 0 stays below the
  * floor, so the count itself is hidden. */
 const EMPTY_PROOF: InterestProof = { count: 0, total: 0, recent: [] };
 
-/** What the poll degrades to if the database read fails: nothing voted, nothing tallied. */
-const EMPTY_POLL: FeaturePollInitial = { results: { counts: {} }, choice: null };
+/** What the poll degrades to if the database read fails: nothing tallied, no stars spent. */
+const EMPTY_POLL: FeaturePollInitial = { results: { counts: {}, voters: 0 }, allocation: {}, budget: BASE_STARS };
 
-const PILLARS = [
+const PILLARS: readonly { art: PillarArtKind; title: string; body: string }[] = [
   {
-    icon: Network,
+    art: "network",
     title: "One intelligence, your whole network",
     body: "Everyone you know, finally in one place that understands them.",
   },
   {
-    icon: Sparkles,
+    art: "ahead",
     title: "Always a step ahead",
     body: "An advanced recommendation engine reads your whole network and tells you who to reach, and when — before the moment slips by.",
   },
   {
-    icon: Plug,
+    art: "tools",
     title: "Works with the tools you already use",
     body: "It plugs into your inbox, your calendar and the apps you rely on every day. No starting from scratch.",
   },
-];
-
-const STEPS = [
-  { title: "Join the waitlist", body: "One email address. That's all it takes to hold your place." },
-  {
-    title: "We open in waves",
-    body: "Spots open a few at a time, in line order. Friends you invite move you up.",
-  },
-  { title: "Your invite arrives", body: "When your wave opens, your invite lands in your inbox." },
 ];
 
 function faq(privacyHref: string): readonly FaqItem[] {
@@ -181,7 +225,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
 
   // The proof line never depends on either token, so it runs alongside the pass.
   const voterId = await readVoterId();
-  const [proof, ticket, showDemo, poll] = await Promise.all([
+  const [proof, ticket, showDemo, poll, friendPlanets] = await Promise.all([
     getInterestProof().catch((err: unknown) => {
       console.error("[interest] proof read failed", err);
       return EMPTY_PROOF;
@@ -198,6 +242,15 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
       console.error("[interest] poll read failed", err);
       return EMPTY_POLL;
     }),
+    // The tracker draws each friend's planet; without them it falls back to plain gold.
+    me
+      ? getProgressByShareToken(me)
+          .then((p) => p?.friendPlanets ?? [])
+          .catch((err: unknown) => {
+            console.error("[interest] friend planets read failed", err);
+            return [];
+          })
+      : Promise.resolve([]),
   ]);
 
   // `?ref=` loses to a pass that actually RESOLVED, not to the mere presence of `?me=`: a
@@ -222,6 +275,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
     // left that overhang as dead scroll under the page.
     <div className="landing-root relative overflow-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield interactive />
+      <SkyHint />
 
       {/* Overlaid, not in flow: the page below sits exactly where it did without it. The
           hero's eyebrow starts 64px down on phones (main pt-6 + hero pt-10) and 104px from
@@ -249,14 +303,19 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         </div>
 
         <Reveal className="reveal-celestial mt-20 block">
-          <ul className="grid gap-6 sm:grid-cols-3">
-            {PILLARS.map(({ icon: Icon, title, body }) => (
-              <li key={title} className="flex gap-3.5">
-                <Icon className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]" aria-hidden="true" />
-                <div>
-                  <h3 className="text-sm font-medium text-[#e8f3f1]">{title}</h3>
-                  <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">{body}</p>
-                </div>
+          {/* No backdrop blur: the sky under these moves every frame (see the panel note in
+              globals.css). A faint fill reads as a surface without it. */}
+          <ul className="grid gap-4 sm:grid-cols-3">
+            {PILLARS.map(({ art, title, body }) => (
+              <li
+                key={title}
+                className="pillar-card rounded-2xl border border-[#e8f3f1]/[0.07] bg-[linear-gradient(180deg,rgba(232,243,241,0.04),rgba(232,243,241,0.01))] p-5 transition-colors duration-300 hover:border-[#f2c14e]/25"
+              >
+                <PillarArt kind={art} />
+                <h3 className="mt-4 font-[family-name:var(--font-display)] text-lg leading-snug text-[#e8f3f1]">
+                  {title}
+                </h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">{body}</p>
               </li>
             ))}
           </ul>
@@ -279,6 +338,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
               token={ticket?.shareToken ?? null}
               referrals={ticket?.referrals ?? 0}
               position={ticket?.position ?? null}
+              friendPlanets={ticket ? friendPlanets : []}
               joinHref="#interest-join"
             />
           </Reveal>
@@ -287,8 +347,8 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         {/* An admin can hide the demo from /admin/growth/interest-list. */}
         {showDemo && (
           <>
-            {/* Desktop only: the demo is a desktop window, and phones never fetch its chunk. */}
-            <section className="mt-32 hidden md:block" aria-labelledby="waitlist-demo">
+            {/* Wide screens only (lg): the demo is a desktop-sized window, and narrower ones never fetch its chunk. */}
+            <section className="mt-32 hidden lg:block" aria-labelledby="waitlist-demo">
               <Reveal className="reveal-celestial">
                 <h2 id="waitlist-demo" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
                   Take it for a spin.
@@ -303,56 +363,60 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
                 <AppDemo />
               </div>
             </section>
+
+            {/* Phones and tablets: stills of the same demo to swipe through. */}
+            <section className="mt-24 lg:hidden" aria-labelledby="waitlist-peek">
+              <Reveal className="reveal-celestial">
+                <h2 id="waitlist-peek" className={`${SECTION_TITLE} text-center`}>
+                  Take a peek.
+                </h2>
+              </Reveal>
+              <Reveal className="reveal-celestial" delay={80}>
+                <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
+                  A preview with a made-up network. Swipe through.
+                </p>
+              </Reveal>
+              <Reveal className="reveal-celestial mt-8 block" delay={120}>
+                <DemoPeek />
+              </Reveal>
+            </section>
           </>
         )}
 
-        <section className="mt-24 md:mt-32" aria-labelledby="waitlist-how">
+        {/* A lighter band than the panels around it, so a slightly shorter lead-in. */}
+        <section className="mt-24 md:mt-28" aria-labelledby="waitlist-how">
           <Reveal className="reveal-celestial">
-            <h2 id="waitlist-how" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
-              How early access works.
-            </h2>
+            <JourneyTitle token={ticket?.shareToken ?? null} className={`${SECTION_TITLE} text-center`} />
           </Reveal>
-          <Reveal className="reveal-celestial mt-10 block" delay={80}>
-            <ol className="grid gap-4 sm:grid-cols-3">
-              {STEPS.map((step, i) => (
-                <li key={step.title} className="landing-glass rounded-2xl p-5">
-                  <p className="font-[family-name:var(--font-display)] text-2xl text-landing-accent">
-                    {i + 1}
-                  </p>
-                  <h3 className="mt-2 text-sm font-medium text-[#e8f3f1]">{step.title}</h3>
-                  <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">{step.body}</p>
-                </li>
-              ))}
-            </ol>
+          <Reveal className="reveal-celestial mt-12 block" delay={80}>
+            <EarlyAccessPath
+              token={ticket?.shareToken ?? null}
+              referrals={ticket?.referrals ?? 0}
+              position={ticket?.position ?? null}
+              planet={ticket?.planet ?? null}
+              joinHref="#interest-join"
+              tiersHref="#waitlist-referrals"
+            />
           </Reveal>
         </section>
 
-        <section className="mt-24 md:mt-32" aria-labelledby="waitlist-poll">
-          <Reveal className="reveal-celestial">
-            <h2 id="waitlist-poll" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
-              What should we release first?
-            </h2>
-          </Reveal>
-          <Reveal className="reveal-celestial" delay={80}>
-            <p className="mx-auto mt-3 max-w-[48ch] text-center text-base leading-relaxed text-[#9aada8]">
-              Vote for the one you want most, and see what everyone else picked.
-            </p>
-          </Reveal>
-          <Reveal className="reveal-celestial mt-10 block" delay={120}>
-            <FeaturePoll initial={poll} me={me} />
-          </Reveal>
-        </section>
+        <SplitSection
+          id="waitlist-poll"
+          side="left"
+          title="What should we release first?"
+          blurb="Spend your stars on the features you want most, and watch the ranking move as everyone else does."
+        >
+          <FeaturePoll initial={poll} me={me} />
+        </SplitSection>
 
-        <section className="mt-24 md:mt-32" aria-labelledby="waitlist-faq">
-          <Reveal className="reveal-celestial">
-            <h2 id="waitlist-faq" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
-              A few answers.
-            </h2>
-          </Reveal>
-          <Reveal className="reveal-celestial mt-10 block" delay={80}>
-            <FaqList items={faq(privacyHref)} />
-          </Reveal>
-        </section>
+        <SplitSection
+          id="waitlist-faq"
+          side="right"
+          title="A few answers."
+          blurb="What to expect while you wait for your wave."
+        >
+          <FaqList items={faq(privacyHref)} columns={1} />
+        </SplitSection>
 
         <section className="relative mt-24 text-center md:mt-32">
           <div

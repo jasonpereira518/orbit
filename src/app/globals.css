@@ -2031,6 +2031,207 @@
   animation-duration: var(--transition-duration-celestial);
 }
 
+/* The waitlist's "How early access works" orbit (`early-access-path.tsx`). Drawn by
+ * default; only when <Reveal> brings the section in does the arc trace itself, the gold
+ * cadence follow, and each stop light up in turn. One-shot, no loop. */
+@keyframes early-path-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+@keyframes early-path-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes early-path-stop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+
+.early-path-draw {
+  stroke-dasharray: 1;
+}
+
+[data-reveal="in"] .early-path-draw {
+  animation: early-path-draw 1.2s var(--ease-house) 0.15s both;
+}
+
+[data-reveal="in"] .early-path-cadence {
+  animation: early-path-fade 0.8s var(--ease-house) 1s both;
+}
+
+[data-reveal="in"] .early-path-stop {
+  animation: early-path-stop 0.6s var(--ease-house) both;
+}
+
+/* The journey version: the walked stretch draws in gold after the arc, then the visitor's
+ * planet drops onto it. "Start here" (no pass yet) pulses three times, then rests. A stop's
+ * detail fades in as it changes. All one-shot. */
+.early-path-covered {
+  stroke-dasharray: 1;
+}
+
+[data-reveal="in"] .early-path-covered {
+  animation: early-path-draw 0.9s var(--ease-house) 1s both;
+}
+
+@keyframes early-path-marker {
+  from {
+    opacity: 0;
+    translate: 0 -10px;
+  }
+}
+
+[data-reveal="in"] .early-path-marker {
+  animation: early-path-marker 0.6s var(--ease-house) 1.6s both;
+}
+
+@keyframes early-path-start {
+  from {
+    scale: 1;
+    opacity: 0.7;
+  }
+  to {
+    scale: 2.4;
+    opacity: 0;
+  }
+}
+
+.early-path-start {
+  opacity: 0;
+  animation: early-path-start 1.6s var(--ease-house) 1s 3 both;
+}
+
+.early-path-detail {
+  animation: early-path-fade 0.35s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal="in"] .early-path-draw,
+  [data-reveal="in"] .early-path-cadence,
+  [data-reveal="in"] .early-path-stop,
+  [data-reveal="in"] .early-path-covered,
+  [data-reveal="in"] .early-path-marker,
+  .early-path-start,
+  .early-path-detail {
+    animation: none;
+  }
+}
+
+/* The waitlist's feature-pillar pictures (`pillar-art.tsx`): drawn by default, traced
+ * once when <Reveal> brings the row in, glow brightened on hover. SVG children scale
+ * about their own box only with fill-box — the default origin is the canvas corner. */
+.pillar-draw {
+  stroke-dasharray: 1;
+}
+
+.pillar-pop {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.pillar-glow {
+  opacity: 0.55;
+  transition: opacity var(--transition-duration-slow) var(--ease-house);
+}
+
+.pillar-card:hover .pillar-glow {
+  opacity: 1;
+}
+
+[data-reveal="in"] .pillar-draw {
+  animation: early-path-draw 1s var(--ease-house) 0.15s both;
+}
+
+[data-reveal="in"] .pillar-pop {
+  animation: early-path-stop 0.5s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal="in"] .pillar-draw,
+  [data-reveal="in"] .pillar-pop {
+    animation: none;
+  }
+}
+
+/* The waitlist's tier-unlock moment (`tier-celebration.tsx`): two gold rings roll out
+ * from the tier's planet once. Transform and opacity only. */
+@keyframes tier-celebration-ring {
+  from {
+    transform: scale(0.8);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+.tier-celebration-ring {
+  animation: tier-celebration-ring 1.4s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tier-celebration-ring {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* The faint dotted sky behind the waitlist preview's window (`app-demo/demo-window.tsx`), like
+ * the real app's starfield but drawn once in CSS: no canvas, no loop. */
+.demo-starfield {
+  opacity: 0.85;
+  background-image:
+    radial-gradient(1px 1px at 8% 12%, rgba(231, 236, 241, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 22% 70%, rgba(231, 236, 241, 0.32), transparent),
+    radial-gradient(1px 1px at 34% 30%, rgba(242, 193, 78, 0.4), transparent),
+    radial-gradient(1px 1px at 47% 86%, rgba(231, 236, 241, 0.4), transparent),
+    radial-gradient(1.5px 1.5px at 58% 18%, rgba(231, 236, 241, 0.3), transparent),
+    radial-gradient(1px 1px at 66% 58%, rgba(231, 236, 241, 0.45), transparent),
+    radial-gradient(1px 1px at 74% 90%, rgba(242, 193, 78, 0.3), transparent),
+    radial-gradient(1.5px 1.5px at 83% 34%, rgba(231, 236, 241, 0.35), transparent),
+    radial-gradient(1px 1px at 91% 66%, rgba(231, 236, 241, 0.45), transparent),
+    radial-gradient(1px 1px at 96% 10%, rgba(231, 236, 241, 0.3), transparent),
+    radial-gradient(1px 1px at 15% 46%, rgba(231, 236, 241, 0.28), transparent),
+    radial-gradient(1px 1px at 41% 52%, rgba(231, 236, 241, 0.25), transparent),
+    radial-gradient(1.5px 1.5px at 52% 40%, rgba(231, 236, 241, 0.22), transparent),
+    radial-gradient(1px 1px at 79% 76%, rgba(231, 236, 241, 0.3), transparent);
+}
+
+/* The feature poll's icon field (`feature-poll.tsx`): an orb glides to its rank's slot and its
+ * disc grows and glows with its share. In CSS rather than inline styles because inline ones
+ * are decided during server rendering, where reduced motion is unknown, and React does not
+ * repair a mismatched style attribute on hydration. */
+.poll-orb {
+  transition:
+    left 700ms var(--ease-house),
+    top 700ms var(--ease-house);
+}
+
+.poll-orb-disc {
+  transition:
+    transform 700ms var(--ease-house),
+    box-shadow 700ms var(--ease-house);
+}
+
+.poll-orb-label {
+  transition: transform 700ms var(--ease-house);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .poll-orb,
+  .poll-orb-disc,
+  .poll-orb-label {
+    transition: none;
+  }
+}
+
 .landing-scene {
   content-visibility: auto;
   /* Placeholder must approximate the real height — a big mismatch makes
