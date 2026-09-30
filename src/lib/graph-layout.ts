@@ -29,7 +29,6 @@ import {
 import { hashUnitStream } from "@/lib/hash-stream";
 
 export { orderConstellationMembers };
-export { buildClusterGeometry, type ClusterGeometry, type PartGeometry } from "@/lib/graph/cluster-geometry";
 
 /** What each closeness score is called in the inspect panel. */
 export const RING_LABELS: Record<number, string> = {

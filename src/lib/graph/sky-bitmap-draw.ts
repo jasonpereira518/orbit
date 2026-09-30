@@ -52,8 +52,24 @@ export function drawSkyBitmap(ctx: Ctx, job: SkyBitmapJob) {
   ctx.globalAlpha = 1;
 }
 
-/** A part's wash is lighter than the cluster's, so the parts read as pools within one cloud. */
-const PART_WASH_ALPHA = 0.7;
+/**
+ * A part's wash is lighter than the cluster's, so the parts read as pools within one cloud.
+ * Shared with the phone canvas (`draw-sky.ts`).
+ */
+export const PART_WASH_ALPHA = 0.7;
+
+/** A school's annulus reaches this many times the ring's own radius. */
+export const RING_OUTER = 1.3;
+/**
+ * The annulus's colour stops, as [offset, alpha] from the centre to `RING_OUTER`: faint inside,
+ * peaking on the ring itself, clear at the edge. Shared with the phone's `ringSprite`.
+ */
+export const RING_STOPS: ReadonlyArray<readonly [number, number]> = [
+  [0, 0.05],
+  [0.3, 0.06],
+  [1 / RING_OUTER, 0.12], // the outer ring itself
+  [1, 0],
+];
 
 function drawLobes(
   ctx: Ctx,
@@ -97,13 +113,10 @@ function drawRing(ctx: Ctx, scale: number, cluster: NebulaWashCluster) {
   const ringR = part?.radius ?? cluster.radius * 0.5;
   const cx = part?.x ?? cluster.x;
   const cy = part?.y ?? cluster.y;
-  const outer = ringR * 1.3;
+  const outer = ringR * RING_OUTER;
   if (outer * scale < 0.5) return;
   const fill = ctx.createRadialGradient(cx, cy, 0, cx, cy, outer);
-  fill.addColorStop(0, withAlpha(cluster.color, 0.05));
-  fill.addColorStop(0.3, withAlpha(cluster.color, 0.06));
-  fill.addColorStop(1 / 1.3, withAlpha(cluster.color, 0.12)); // the outer ring itself
-  fill.addColorStop(1, withAlpha(cluster.color, 0));
+  for (const [at, alpha] of RING_STOPS) fill.addColorStop(at, withAlpha(cluster.color, alpha));
   ctx.fillStyle = fill;
   ctx.beginPath();
   ctx.arc(cx, cy, outer, 0, Math.PI * 2);

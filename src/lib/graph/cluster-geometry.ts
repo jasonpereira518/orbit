@@ -14,17 +14,17 @@ export const LABEL_WIDTH = 104;
 export const LABEL_HEIGHT = 30;
 
 /** Scatter field starts this far beyond the figure's extent. */
-export const SCATTER_CLEAR = 54;
+const SCATTER_CLEAR = 54;
 /** Initial width of a cluster's scatter field annulus. */
-export const SCATTER_FIELD_WIDTH = 110;
+const SCATTER_FIELD_WIDTH = 110;
 /** Headroom beyond the outermost scatter star inside the footprint. */
 export const FOOT_MARGIN = 34;
 /** Clear space between two parts of one company (its core and petals), edge to edge. */
-export const PART_GAP = 64;
+const PART_GAP = 64;
 /** Minimum distance between any two figure stars after scaling. */
 export const FIGURE_STAR_MIN = LABEL_WIDTH;
 /** How far a tight template may be upscaled to clear FIGURE_STAR_MIN. */
-export const FIGURE_MAX_UPSCALE = 2.4;
+const FIGURE_MAX_UPSCALE = 2.4;
 
 /**
  * Two stars may not sit inside each other's label boxes: they need either
@@ -178,7 +178,7 @@ export type ClusterGeometry = {
   foot: number;
 };
 
-export type LocalPart = Omit<PartGeometry, "part" | "center">;
+type LocalPart = Omit<PartGeometry, "part" | "center">;
 
 /**
  * A figure and its scatter, in the part's own space. The asterism renders at its natural scale
@@ -188,7 +188,7 @@ export type LocalPart = Omit<PartGeometry, "part" | "center">;
  * members scatter through an annulus fully outside the figure's extent, which guarantees
  * clearance from every figure star and line by construction.
  */
-export function figureGeometry(
+function figureGeometry(
   shape: ConstellationShape,
   figureMemberIds: string[],
   scatterIds: string[],
@@ -256,7 +256,7 @@ export function figureGeometry(
 }
 
 /** A school: members on rings, the overflow scattered outside them. */
-export function ringGeometry(figureMemberIds: string[], scatterIds: string[], seed: string): LocalPart {
+function ringGeometry(figureMemberIds: string[], scatterIds: string[], seed: string): LocalPart {
   const { positions, radius } = ringLayout(figureMemberIds.length, seed);
   const { placed: scatterLocal, outer } = scatterField(
     scatterIds,

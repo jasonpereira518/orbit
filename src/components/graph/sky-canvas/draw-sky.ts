@@ -25,6 +25,9 @@ import {
   type Camera,
 } from "@/lib/graph/sky-camera";
 import { queryRect } from "@/lib/graph/hit-test";
+// A part's wash is lighter than the cluster's, and the ring's sprite reaches RING_OUTER x the
+// ring's own radius: the desktop's numbers, shared.
+import { PART_WASH_ALPHA, RING_OUTER } from "@/lib/graph/sky-bitmap-draw";
 import {
   bakedGalaxyBitmap,
   nebulaSprite,
@@ -55,10 +58,6 @@ export const LABEL_MAX_WIDTH = 104;
 
 /** At most this many core and petal names per frame, nearest the middle of the view first. */
 export const PETAL_LABEL_CAP = 40;
-/** A part's wash is lighter than the cluster's, as on desktop (`PART_WASH_ALPHA`). */
-const PART_WASH_ALPHA = 0.7;
-/** The ring's sprite reaches 1.3 x the ring's own radius, as the desktop annulus does. */
-const RING_OUTER = 1.3;
 const PETAL_FILL = "rgba(255,255,255,0.55)";
 const CORE_FILL = withAlpha(CORE_TINT, 0.7);
 const SUBTITLE_FILL = "rgba(255,255,255,0.55)";

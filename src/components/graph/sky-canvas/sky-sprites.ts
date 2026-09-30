@@ -14,7 +14,7 @@
  */
 import { galaxyBackdropData } from "@/lib/graph/galaxy-dust";
 import type { GalaxyStructure } from "@/lib/graph/galaxy-structure";
-import { drawGalaxyBackdrop } from "@/lib/graph/sky-bitmap-draw";
+import { RING_STOPS, drawGalaxyBackdrop } from "@/lib/graph/sky-bitmap-draw";
 import { withAlpha } from "@/lib/school-color";
 import { CONSTELLATION_STAR_PX } from "@/lib/graph/starfield-scale";
 
@@ -227,8 +227,8 @@ export function nebulaSprite(color: string, seed: string): Sprite | null {
 }
 
 /**
- * A school's ring: a soft annulus that peaks on the outer ring, the same stops as the desktop
- * `drawRing`. The sprite's edge is the ring's OUTER radius (1.3 x the ring's own), so a caller
+ * A school's ring: a soft annulus that peaks on the outer ring, the desktop `drawRing`'s own stops
+ * (`RING_STOPS`). The sprite's edge is the ring's OUTER radius (`RING_OUTER` x its own), so a caller
  * draws it `outer * 2 * k` across, centred on the ring.
  */
 const ringCache = new Map<string, Sprite>();
@@ -242,10 +242,7 @@ export function ringSprite(color: string): Sprite | null {
   const c = NEBULA_SPRITE_PX / 2;
 
   const fill = ctx.createRadialGradient(c, c, 0, c, c, c);
-  fill.addColorStop(0, withAlpha(color, 0.05));
-  fill.addColorStop(0.3, withAlpha(color, 0.06));
-  fill.addColorStop(1 / 1.3, withAlpha(color, 0.12)); // the outer ring itself
-  fill.addColorStop(1, withAlpha(color, 0));
+  for (const [at, alpha] of RING_STOPS) fill.addColorStop(at, withAlpha(color, alpha));
   ctx.fillStyle = fill;
   ctx.fillRect(0, 0, NEBULA_SPRITE_PX, NEBULA_SPRITE_PX);
 
