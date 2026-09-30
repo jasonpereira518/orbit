@@ -12,6 +12,10 @@ export type EmailEventPerson = {
   name: string | null;
   email: string | null;
   title: string | null;
+  /**
+   * Never written to storage. A contact id inside this JSON column would go stale on merge
+   * and unmerge; `resolvePeople` (`resolve.ts`) looks the address up when it is read.
+   */
   contactId?: string | null;
 };
 
