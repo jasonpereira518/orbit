@@ -100,6 +100,7 @@ function planCompany(ordered: PlanInput[]): PartPlan[] | null {
   return parts;
 }
 
+// `cluster.count` is not read (the ordered list has the size); it stays so callers pass a cluster.
 export function planClusterParts(
   cluster: { kind: ClusterKind; count: number },
   ordered: PlanInput[]
@@ -119,8 +120,9 @@ export function planClusterParts(
 
 /**
  * Members who share a school made adjacent: each school's run sits where its first member was.
- * Applied to a petal's figure stars, so classmates are joined by a figure line rather than
- * scattered across the shape. Members with no school stay where they are.
+ * Applied to a petal's figure stars, so classmates usually sit on stars joined by a figure line
+ * (adjacent star indices are joined in most shapes, but not all: gemini, crux, lyra and aquila
+ * break it) rather than scattered across the shape. Members with no school stay where they are.
  */
 export function knotOrder(ids: string[], schoolOf: (id: string) => string | null): string[] {
   const bySchool = new Map<string, string[]>();

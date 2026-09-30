@@ -86,7 +86,8 @@ export type ClusterFit = {
   /**
    * Aggregates over `parts`, for callers that only need "who is a figure star and who is
    * scatter": `shape` is the first part's, the id lists are the parts' lists joined in part
-   * order. Anything that pairs ids with shape stars must go through `parts`.
+   * order. Anything that pairs ids with shape stars must go through `parts`. `shape` has no
+   * reader in src and is kept only so old tests keep pairing; new code must use `parts`.
    */
   shape: ConstellationShape;
   figureMemberIds: string[];
@@ -133,6 +134,8 @@ export function buildConstellationFit(
 
   // Every cluster asks for a shape under its own id, exactly as before, so a cluster that is
   // not split keeps the figure it always had. The parts of a split company ask after everyone.
+  // Rings and petal companies request a classic shape they never draw, on purpose: dropping the
+  // request would hand that shape to a later cluster and move an existing constellation.
   const requests = clusters.map((c) => ({ id: c.id, contactIds: c.contactIds }));
   for (const { cluster, plan } of planned) {
     if (plan.form !== "petal") continue;
@@ -159,7 +162,8 @@ export function buildConstellationFit(
         plan.form === "ring"
           ? RING_SHAPE
           : shapes.get(plan.form === "petal" ? `${cluster.id}#${p.key}` : cluster.id);
-      if (!shape) break;
+      // Unreachable: assignClusterShapes answers every request. Never skip a cluster silently.
+      if (!shape) throw new Error(`constellation-fit: no shape for ${cluster.id}/${p.key}`);
       const figureCount =
         plan.form === "ring"
           ? Math.min(p.memberIds.length, RING_CAPACITY)
@@ -177,7 +181,6 @@ export function buildConstellationFit(
         scatterMemberIds: p.memberIds.slice(figureCount),
       });
     }
-    if (parts.length !== plan.parts.length) continue;
 
     fits.set(cluster.id, {
       cluster,
