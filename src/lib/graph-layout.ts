@@ -12,7 +12,6 @@ import { isCometContact } from "@/lib/comet";
 import { scaleForStarCount, type ConstellationShape } from "@/lib/constellation-shapes";
 import type { ClusterForm, PartRole } from "@/lib/constellation-parts";
 import { arrangeParts, ringLayout } from "@/lib/graph/cluster-anatomy";
-import { classifyTitle } from "@/lib/role-function";
 import { type BuiltCluster, type ClusterKind } from "@/lib/constellation-clusters";
 import { companyFamilyRoot } from "@/lib/company-family";
 import { buildClusterAffinity } from "@/lib/constellation-affinity";
@@ -533,7 +532,10 @@ function figureGeometry(
         const dx = Math.abs((stars[i].x - stars[j].x) * cos - (stars[i].y - stars[j].y) * sin);
         const dy = Math.abs((stars[i].x - stars[j].x) * sin + (stars[i].y - stars[j].y) * cos);
         if (dx < 1e-9 && dy < 1e-9) continue;
-        need = Math.max(need, Math.min(LABEL_WIDTH / (dx || Infinity), LABEL_HEIGHT / (dy || Infinity)));
+        need = Math.max(
+          need,
+          Math.min(dx > 1e-9 ? LABEL_WIDTH / dx : Infinity, dy > 1e-9 ? LABEL_HEIGHT / dy : Infinity)
+        );
       }
     }
     if (need * (1 + 1e-6) > scale) scale = need * (1 + 1e-6);
@@ -853,12 +855,17 @@ export function* buildHybridGraphLayoutSteps(
         ? geom.parts
             .filter((g) => g.part.label && g.part.role !== "main")
             .map((g) => {
-              const pts = [...g.part.figureMemberIds, ...g.part.scatterMemberIds]
-                .map((id) => positions.get(id))
-                .filter((p): p is PolarPosition => Boolean(p));
-              const pLeft = Math.min(...pts.map((p) => p.x));
-              const pRight = Math.max(...pts.map((p) => p.x));
-              const pTop = Math.min(...pts.map((p) => p.y));
+              // A plain loop: a spread of a big part's coordinates can exceed V8's argument limit.
+              let pLeft = Infinity;
+              let pRight = -Infinity;
+              let pTop = Infinity;
+              for (const id of [...g.part.figureMemberIds, ...g.part.scatterMemberIds]) {
+                const p = positions.get(id);
+                if (!p) continue;
+                pLeft = Math.min(pLeft, p.x);
+                pRight = Math.max(pRight, p.x);
+                pTop = Math.min(pTop, p.y);
+              }
               return {
                 key: g.part.key,
                 label: g.part.label!,
@@ -957,10 +964,9 @@ export function* buildHybridGraphLayoutSteps(
           clusterColor: cluster ? clusterColorById.get(cluster.id) : undefined,
           partKey: partOf.get(c.id)?.key,
           partRole: partOf.get(c.id)?.role,
-          leader:
-            partOf.get(c.id) && partOf.get(c.id)!.role !== "main"
-              ? classifyTitle(c.title).isLeader
-              : undefined,
+          // Leaders always go to the core and everyone else to a petal (planCompany), so the part
+          // says it; a 'main' cluster has no leadership to speak of.
+          leader: partOf.get(c.id) && partOf.get(c.id)!.role !== "main" ? partOf.get(c.id)!.role === "core" : undefined,
           orbitAngle: pos.angle,
           orbitRadius: pos.radius,
         },
