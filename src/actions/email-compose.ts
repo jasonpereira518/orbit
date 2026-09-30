@@ -51,8 +51,16 @@ export async function sendComposedEmail(input: Omit<ComposeInput, "fromName">): 
     contactId: typeof input?.contactId === "string" ? input.contactId : null,
     fromName: profile?.name?.trim() || null,
     provider: input?.provider === "gmail" || input?.provider === "outlook" ? input.provider : undefined,
+    attachments: Array.isArray(input?.attachments)
+      ? input.attachments
+          .slice(0, 11)
+          .filter((a) => a && typeof a.pathname === "string" && typeof a.filename === "string")
+          .map((a) => ({ pathname: a.pathname, filename: a.filename }))
+      : undefined,
+    scheduledFor: typeof input?.scheduledFor === "string" ? input.scheduledFor : undefined,
   });
-  if (result.ok) scheduleDispatch(result.sendId, new Date(result.sendAt));
+  // A scheduled send is the drain's to deliver; after() would sleep until then inside this action.
+  if (result.ok && !result.scheduled) scheduleDispatch(result.sendId, new Date(result.sendAt));
   return result;
 }
 

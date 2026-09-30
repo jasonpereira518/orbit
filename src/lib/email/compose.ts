@@ -1,13 +1,21 @@
 import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contactIdentities, contacts, emailSends, type EmailFailureKind, type EmailOrigin } from "@/db/schema";
+import {
+  contactIdentities,
+  contacts,
+  emailSends,
+  type EmailAttachmentRef,
+  type EmailFailureKind,
+  type EmailOrigin,
+} from "@/db/schema";
 import { DRAFT_MAX_CHARS, sanitizeDraft } from "@/lib/chat-draft";
 import { SEND_SUBJECT_MAX } from "@/lib/chat-send";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactSearchCondition } from "@/lib/contact-search-rank";
+import { verifyAttachmentRefs, type AttachmentFailure, type AttachmentInput } from "@/lib/email/attachments";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { ENQUEUE_COPY, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
-import { getSendCapability, type MailboxId, type SendCapability } from "@/lib/email/sender";
+import { getSendCapability, resolveSender, type MailboxId, type SendCapability } from "@/lib/email/sender";
 import { loadEmailSettings } from "@/lib/email/settings";
 import { appendSignature } from "@/lib/email/signature";
 
@@ -141,11 +149,22 @@ export type ComposeInput = {
   fromName: string | null;
   /** Send from this mailbox (the From picker). Omitted = the user's default. */
   provider?: MailboxId;
+  /** Uploaded files (pathnames under the user's prefix), verified here before queueing. */
+  attachments?: AttachmentInput[];
+  /** ISO instant for a scheduled send; omitted = send after the undo window. */
+  scheduledFor?: string;
 };
 
 export type ComposeResult =
-  | { ok: true; sendId: string; sendAt: string; to: string[] }
+  | { ok: true; sendId: string; sendAt: string; to: string[]; scheduled: boolean }
   | { ok: false; reason: EnqueueRefusal | "empty_body" | "too_long" | "not_retryable"; message: string };
+
+const ATTACHMENT_REFUSAL: Record<AttachmentFailure["reason"], EnqueueRefusal> = {
+  too_many: "too_many_files",
+  too_large: "too_large",
+  blocked_type: "blocked_type",
+  not_found: "file_missing",
+};
 
 /** Queue a composed email: cleaned, signed, sent after the undo window. */
 export async function sendComposed(userId: string, input: ComposeInput): Promise<ComposeResult> {
@@ -157,6 +176,20 @@ export async function sendComposed(userId: string, input: ComposeInput): Promise
   const subject = (sanitizeDraft(input.subject) ?? "").replace(/\s+/g, " ").trim();
   if (Array.from(subject).length > SEND_SUBJECT_MAX) {
     return { ok: false, reason: "too_long", message: "That subject is too long" };
+  }
+  let sendAt: Date | undefined;
+  if (input.scheduledFor) {
+    sendAt = new Date(input.scheduledFor);
+    if (Number.isNaN(sendAt.getTime())) return { ok: false, reason: "bad_schedule", message: ENQUEUE_COPY.bad_schedule };
+  }
+  // Files are checked against the mailbox this send will actually use (Outlook takes ~3 MB).
+  let refs: EmailAttachmentRef[] = [];
+  if (input.attachments?.length) {
+    const sender = await resolveSender(userId, input.provider ?? null);
+    if (!sender.ok) return { ok: false, reason: sender.reason, message: ENQUEUE_COPY[sender.reason] };
+    const verified = await verifyAttachmentRefs(userId, input.attachments, sender.provider);
+    if (!verified.ok) return { ok: false, reason: ATTACHMENT_REFUSAL[verified.reason], message: verified.message };
+    refs = verified.refs;
   }
   const { signature } = await loadEmailSettings(userId);
   const queued = await enqueueEmail(userId, {
@@ -170,9 +203,11 @@ export async function sendComposed(userId: string, input: ComposeInput): Promise
     originRef: input.contactId,
     provider: input.provider,
     delayMs: UNDO_DELAY_MS,
+    sendAt,
+    attachments: refs,
   });
   if (!queued.ok) return queued;
-  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to };
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to, scheduled: Boolean(sendAt) };
 }
 
 export type PendingSend = {
@@ -184,6 +219,9 @@ export type PendingSend = {
   failureKind: EmailFailureKind | null;
   origin: EmailOrigin;
   bodyText: string;
+  /** Set when this is a scheduled send (P4), not one waiting out its undo window. */
+  scheduledFor: string | null;
+  attachments: { filename: string; size: number; pathname: string }[];
 };
 
 /** Failed sends these surfaces can resend; agent and recruiter failures are handled on their own screens. */
@@ -223,6 +261,11 @@ export async function listContactPendingSends(userId: string, contactId: string)
     failureKind: r.failureKind,
     origin: r.origin,
     bodyText: r.bodyText,
+    scheduledFor:
+      r.status === "queued" && r.sendAt.getTime() > r.createdAt.getTime() + UNDO_DELAY_MS + 5_000
+        ? r.sendAt.toISOString()
+        : null,
+    attachments: r.attachments.map((a) => ({ filename: a.filename, size: a.size, pathname: a.blobKey })),
   }));
 }
 
@@ -256,11 +299,12 @@ export async function retryFailedSend(userId: string, sendId: string, fromName: 
     idempotencyKey: old.idempotencyKey,
     contactIds: old.contactIds,
     threadId: old.providerThreadId,
+    attachments: old.attachments,
     delayMs: UNDO_DELAY_MS,
   });
   if (!queued.ok) return queued;
   await db.update(emailSends).set({ dismissedAt: new Date() }).where(eq(emailSends.id, old.id));
-  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to };
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to, scheduled: false };
 }
 
 /** Hide a failed send from the contact page and the account alert. Only its owner can. */

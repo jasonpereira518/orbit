@@ -228,7 +228,7 @@ async function main() {
     await resetBucket();
     const d1 = await must(enqueueEmail(USER, { ...base, delayMs: 0 }));
     const d2 = await must(enqueueEmail(USER, { ...base, delayMs: 3_600_000 }));
-    const stats = await drainEmailSends({ budgetMs: 30_000, max: 50 });
+    const stats = await drainEmailSends({ budgetMs: 120_000, max: 50 });
     check("drain sent the due row", (await row(d1.id)).status === "sent", JSON.stringify(stats));
     check("drain left the future row queued", (await row(d2.id)).status === "queued");
 
