@@ -2,7 +2,19 @@ import type { EmailProviderId } from "@/db/schema";
 import type { MimeInput } from "@/lib/email/mime";
 
 export type OutboundMessage = MimeInput;
-export type SendResult = { providerMessageId: string; providerThreadId: string | null };
+/** Ids the provider assigned. Outlook's sendMail returns none, so both can be null. */
+export type SendResult = { providerMessageId: string | null; providerThreadId: string | null };
+
+/** What a provider can use to find an earlier attempt in Sent. */
+export type FindSentRef = {
+  /** The row's fixed RFC Message-ID (Gmail searches it; Outlook sends it as x-orbit-send-id). */
+  rfcMessageId: string;
+  subject: string;
+  /** No earlier than the row's creation, so a search can be bounded. */
+  since: Date;
+};
+
+export type ProviderSendOptions = { threadId?: string | null; sendId: string };
 export type MailErrorKind = "auth" | "transient" | "permanent" | "ambiguous";
 
 /**
@@ -26,7 +38,7 @@ export interface MailProvider {
   id: EmailProviderId;
   /** The sending address, or null when not connected / no send scope / needs reauth. */
   identity(userId: string): Promise<{ email: string } | null>;
-  send(userId: string, msg: OutboundMessage, opts?: { threadId?: string | null }): Promise<SendResult>;
-  /** Is a message with this Message-ID already in Sent? "unknown" = no read access. */
-  findSent(userId: string, rfcMessageId: string): Promise<SendResult | null | "unknown">;
+  send(userId: string, msg: OutboundMessage, opts: ProviderSendOptions): Promise<SendResult>;
+  /** Is this message already in Sent? "unknown" = no read access, or the lookup failed. */
+  findSent(userId: string, ref: FindSentRef): Promise<SendResult | null | "unknown">;
 }

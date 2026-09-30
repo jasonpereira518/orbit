@@ -227,7 +227,9 @@ export async function dispatchEmailSend(id: string, opts: { worker?: string } = 
   // A retry whose earlier attempt may have reached the provider: look in Sent first. A
   // definite earlier failure (transient) skips straight to sending when Sent can't be read.
   if (send.attempts > 1) {
-    const prior = await provider.findSent(send.userId, send.rfcMessageId).catch(() => "unknown" as const);
+    const prior = await provider
+      .findSent(send.userId, { rfcMessageId: send.rfcMessageId, subject: send.subject, since: send.createdAt })
+      .catch(() => "unknown" as const);
     if (prior && prior !== "unknown") return settleSent(send, worker, prior);
     if (prior === "unknown" && send.failureKind === "ambiguous") {
       return settleFailed(send, worker, "ambiguous", "May have sent — no read access to check Sent");
@@ -250,7 +252,7 @@ export async function dispatchEmailSend(id: string, opts: { worker?: string } = 
         inReplyTo: send.inReplyToRfcId,
         references: send.inReplyToRfcId,
       },
-      { threadId: send.providerThreadId }
+      { threadId: send.providerThreadId, sendId: send.id }
     );
   } catch (err) {
     const kind = err instanceof MailProviderError ? err.kind : "ambiguous";
