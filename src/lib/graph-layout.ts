@@ -381,9 +381,13 @@ function scatterField(
   return { placed, outer: Math.max(outer, maxR) };
 }
 
-/** Halo width scale, as a fraction of the disk's radius, and its floor. */
+/** The halo's width scale never exceeds this fraction of the disk's radius, nor drops below the floor. */
 const HALO_SCALE_FRACTION = 0.2;
 const HALO_MIN_SCALE = 160;
+/** How far into the exponential's tail a halo star may fall: -ln(1 - 0.95) is about three scales. */
+const HALO_TAIL = 0.95;
+/** Room a halo star's label needs, doubled so the band is comfortably loose. */
+const HALO_ROOM = 2;
 
 /**
  * Unaffiliated stars, drifting beyond the galaxy's edge and thinning with distance.
@@ -392,6 +396,14 @@ const HALO_MIN_SCALE = 160;
  * radius falls off exponentially from `inner`, so the halo is densest where the galaxy ends
  * and fades into empty sky, with noise on the angle. Same seeded rejection sampling against
  * label boxes as `scatterField`; when the band fills up it widens.
+ *
+ * How far it fades is sized from what has to fit, not from the galaxy: the home view frames
+ * the farthest star, so a halo that trailed off to twice the disk's radius shrank the whole
+ * sky. The stars need `count` label boxes, doubled for slack, spread round a ring of radius
+ * `inner`; that area over the ring's length is the band's width, and the exponential's scale
+ * is a third of it because the tail is cut at three scales. It is clamped between a floor
+ * (a thin halo would draw a ring again) and a fraction of the disk's radius (a huge network
+ * needs no more sky than that). The widening fallback still applies if a band fills.
  */
 function haloField(
   ids: string[],
@@ -399,7 +411,11 @@ function haloField(
 ): Array<{ id: string; x: number; y: number }> {
   const placed: Array<{ id: string; x: number; y: number }> = [];
   const occupied = new ClearanceGrid();
-  let scale = Math.max(HALO_MIN_SCALE, inner * HALO_SCALE_FRACTION);
+  const width = (ids.length * LABEL_CLEAR_X * LABEL_CLEAR_Y * HALO_ROOM) / (2 * Math.PI * inner);
+  let scale = Math.min(
+    inner * HALO_SCALE_FRACTION,
+    Math.max(HALO_MIN_SCALE, width / 3)
+  );
 
   for (const id of ids) {
     let spot: { x: number; y: number } | null = null;
@@ -409,7 +425,7 @@ function haloField(
       for (let tries = 0; tries < 24 && !spot; tries++, attempt++) {
         const u = hash(attempt * 2 + 1);
         const v = hash(attempt * 2 + 2);
-        const radius = inner - Math.log(1 - u * 0.999) * scale;
+        const radius = inner - Math.log(1 - u * HALO_TAIL) * scale;
         const angle = v * Math.PI * 2;
         const candidate = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
         if (occupied.clear(candidate)) spot = candidate;
@@ -574,7 +590,7 @@ export function buildHybridGraphLayout(
 /**
  * `buildHybridGraphLayout`, one phase at a time: it yields between phases so a caller can give
  * the main thread back in between (`src/lib/graph/sky-layout.ts`). At 10,000 contacts the whole
- * layout is ~50ms in one piece — a long task on its own — and no phase is more than ~15ms.
+ * layout is ~100ms in one piece — a long task on its own — and no slice is more than ~15ms.
  * Drained without pausing, it is exactly the synchronous layout.
  */
 export function* buildHybridGraphLayoutSteps(

@@ -428,6 +428,50 @@ console.log("\nNear = related (a realistic network)");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\nA crowded halo stays close to the galaxy");
+
+{
+  // 500 people with nothing to cluster on, 400 in forty companies. The halo must hold all of
+  // them without trailing off into the far sky: the home view frames the farthest star.
+  const people: GraphContactInput[] = [
+    ...Array.from({ length: 500 }, (_, i) => contact(`h${i}`)),
+    ...Array.from({ length: 400 }, (_, i) =>
+      contact(`k${i}`, { company: `Firm${i % 40} Works` })
+    ),
+  ];
+  const crowd = buildHybridGraphLayout(people, "Tester");
+  const disk = crowd.galaxy.diskRadius;
+  const halo = crowd.nodes
+    .filter((n) => n.type === "contact" && n.id.startsWith("h"))
+    .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, r: Math.hypot(n.position.x, n.position.y) }));
+  const nearest = Math.min(...halo.map((h) => h.r));
+  const farthest = Math.max(...halo.map((h) => h.r));
+  check("the halo has its 500 stars", halo.length === 500, String(halo.length));
+  check(
+    "every halo star is beyond the disk and a gap",
+    nearest >= disk + 80,
+    `nearest ${nearest.toFixed(0)} vs disk ${disk.toFixed(0)}`
+  );
+  check(
+    "the farthest halo star is within 1.6 disk radii",
+    farthest <= 1.6 * disk,
+    `farthest ${farthest.toFixed(0)} = ${(farthest / disk).toFixed(2)} x disk ${disk.toFixed(0)}`
+  );
+  let clash = 0;
+  for (let i = 0; i < halo.length; i++) {
+    for (let j = i + 1; j < halo.length; j++) {
+      if (
+        Math.abs(halo[i].x - halo[j].x) < LABEL_WIDTH &&
+        Math.abs(halo[i].y - halo[j].y) < LABEL_HEIGHT
+      ) {
+        clash++;
+      }
+    }
+  }
+  check("no two halo labels overlap", clash === 0, `${clash} pairs`);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\nEdges match the fit (the old hand-maintained invariant)");
 
 {
