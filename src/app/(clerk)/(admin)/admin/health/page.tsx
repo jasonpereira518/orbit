@@ -97,7 +97,14 @@ export default async function AdminHealthPage() {
         }
       />
 
-      <div className="mb-6">
+      <HealthLiveProvider initial={initialLive}>
+        <HealthLiveBody
+          providerProblems={
+            providers?.filter((p) => p.status === "degraded" || p.status === "unavailable")
+              .length ?? 0
+          }
+          providerPanel={
+            <>
         {/* First on the page: this answers "is Orbit itself up", not "is this account
             broken". Deliberately OUTSIDE HealthLiveProvider and server-rendered, the same
             treatment "Known bug signatures" gets below — `loadProviderStatuses` is cached
@@ -156,14 +163,10 @@ export default async function AdminHealthPage() {
             </ul>
           )}
         </AdminPanel>
-      </div>
-
-      <HealthLiveProvider initial={initialLive}>
-        <HealthLiveBody bugsEmbeddingsMissingVector={bugs?.embeddingsMissingVector ?? null} />
-      </HealthLiveProvider>
-
-      {bugs && (
-        <div className="mt-6">
+            </>
+          }
+          bugsPanel={
+            bugs ? (
           <AdminPanel title="Known bug signatures">
             <div className="grid gap-3 sm:grid-cols-3">
               <MetricTile
@@ -190,13 +193,11 @@ export default async function AdminHealthPage() {
               />
             </div>
           </AdminPanel>
-        </div>
-      )}
-
-      {/* Moved here from Growth, which now tracks people rather than machinery. Server-
-          rendered outside the live section for the same reason as the bug signatures:
-          these change over days, and each panel fetches and degrades on its own. */}
-      <div className="mt-6 space-y-6">
+        
+            ) : null
+          }
+          aiDataPanels={
+            <>
         <div className="grid gap-6 lg:grid-cols-2">
           <AiVolumePanel />
           <AiOperationsPanel />
@@ -205,7 +206,10 @@ export default async function AdminHealthPage() {
           <DataQualityPanel />
           <ArtifactsPanel />
         </div>
-      </div>
+            </>
+          }
+        />
+      </HealthLiveProvider>
     </>
   );
 }
