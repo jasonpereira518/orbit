@@ -172,7 +172,10 @@ export async function resolveSurfaceVisibility(
   const comingSoon = new Set<string>();
   if (!previewingUnreleased) {
     for (const key of COMING_SOON_KEYS) {
-      comingSoon.add(key);
+      // A page gets the coming-soon screen; a feature has no screen of its own to show, so
+      // it is simply hidden, which every entry point and guard already respects.
+      if (getSurface(key)?.kind === "page") comingSoon.add(key);
+      else hidden.add(key);
       for (const companion of COMING_SOON_COMPANIONS[key] ?? []) hidden.add(companion);
     }
   }

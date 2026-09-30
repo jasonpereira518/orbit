@@ -1,4 +1,7 @@
 import { Suspense } from "react";
+import { listContactPendingSendsAction } from "@/actions/email-compose";
+import { PendingSends } from "@/components/email/pending-sends";
+import type { PendingSend } from "@/lib/email/compose";
 import { after } from "next/server";
 import {
   getContactForProfile,
@@ -65,6 +68,7 @@ export default async function ContactDetailPage({
   // (or racing notFound() into the error boundary on a bogus id); on
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
+  const pendingSendsPromise = listContactPendingSendsAction(id).catch((): PendingSend[] => []);
   // Guarded like the others: an unhandled getSettings() rejection would take the whole
   // page down for a section that only decides whether the add-notes card and the
   // experience section's "Find work history" button are enabled.
@@ -395,6 +399,16 @@ export default async function ContactDetailPage({
         />
       </Suspense>
 
+      {/* Emails to this person still on their way, or that didn't make it — the outbox rows
+          the timeline won't show until they send. Renders nothing when there are none. */}
+      <Suspense fallback={null}>
+        <StreamedPendingSends
+          contactId={contact.id}
+          contactName={displayName}
+          sends={pendingSendsPromise}
+        />
+      </Suspense>
+
       {/* Streamed so the settings read never blocks the rest of the profile. The timeline
           needs it: whether an AI key is configured decides whether logging an interaction
           extracts a summary or just files the note as written. */}
@@ -488,6 +502,18 @@ async function StreamedFollowUp({
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
     </div>
   );
+}
+
+async function StreamedPendingSends({
+  contactId,
+  contactName,
+  sends,
+}: {
+  contactId: string;
+  contactName: string;
+  sends: Promise<PendingSend[]>;
+}) {
+  return <PendingSends contactId={contactId} contactName={contactName} sends={await sends} />;
 }
 
 async function StreamedTimeline({

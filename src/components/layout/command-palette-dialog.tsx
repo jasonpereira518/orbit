@@ -30,6 +30,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { searchContactsForPicker } from "@/actions/contacts";
+import { openCompose } from "@/lib/compose-events";
 import { saveThemePreference } from "@/actions/settings";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { useFullPrefetch } from "@/lib/intent-prefetch";
@@ -39,12 +40,14 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { requestAskBar } from "@/lib/ask-bar-events";
 import { handOffToCapture } from "@/lib/capture-handoff";
 import {
+  emailVerbTerm,
   looksLikeNote,
   looksLikeQuestion,
   rankEntries,
   visibleEntries,
   type PaletteEntry,
 } from "@/lib/command-palette";
+import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
 
@@ -230,13 +233,16 @@ export function CommandPaletteDialog({
   const contactsVisible = !hidden.has("page.contacts");
   // The same test the Capture actions pass, so "Capture this" goes dark along with them.
   const captureVisible = !hidden.has("page.capture");
+  // "email maya": people rows open Compose instead of the profile. Null unless Compose is
+  // available to this viewer and the query is the verb.
+  const emailTerm = contactsVisible && !hidden.has(COMPOSE_SURFACE_KEY) ? emailVerbTerm(query) : null;
 
   // People: the most recently seen when nothing is typed, a search once something is.
   // Every response is tagged, and anything but the latest is dropped, so a slow reply for
   // "sa" can never overwrite the faster one for "sarah".
   useEffect(() => {
     if (!open || !contactsVisible) return;
-    const term = query.trim();
+    const term = (emailTerm ?? query).trim();
     const request = ++requestRef.current;
     const timer = window.setTimeout(
       async () => {
@@ -257,7 +263,7 @@ export function CommandPaletteDialog({
       term ? SEARCH_DEBOUNCE_MS : 0
     );
     return () => window.clearTimeout(timer);
-  }, [open, query, contactsVisible]);
+  }, [open, query, emailTerm, contactsVisible]);
 
   function close() {
     onOpenChange(false);
@@ -346,6 +352,31 @@ export function CommandPaletteDialog({
     const note = captureRow && looksLikeNote(term);
     if (note) out.push(captureRow);
 
+    if (emailTerm) {
+      // The verb asks for one thing, so its rows are the whole answer.
+      return people.map((p) => ({
+        id: `email:${p.id}`,
+        group: "Email",
+        label: `Email ${p.preferredName || p.fullName}`,
+        hint: p.company ?? undefined,
+        hintAlways: true,
+        icon: (
+          <ContactAvatar
+            contactId={p.id}
+            firstName={p.firstName}
+            fullName={p.fullName}
+            profileImageUrl={p.avatarUrl}
+            size="sm"
+            className="size-7"
+          />
+        ),
+        run: () => {
+          close();
+          openCompose({ contactId: p.id });
+        },
+      }));
+    }
+
     const personRows: Row[] =
       contactsVisible
         ? people.map((p) => ({
@@ -408,7 +439,7 @@ export function CommandPaletteDialog({
     return out;
     // `go`/`close` only close over stable setters and the router.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, people, hidden, askMode, pathname, isDark, contactsVisible, captureVisible]);
+  }, [query, people, hidden, askMode, pathname, isDark, contactsVisible, captureVisible, emailTerm]);
 
   const active = rows[Math.min(activeIndex, Math.max(rows.length - 1, 0))];
 

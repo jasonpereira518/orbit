@@ -24,6 +24,7 @@ import {
 import {
   COMING_SOON_COMPANIONS,
   COMING_SOON_KEYS,
+  COMPOSE_SURFACE_KEY,
   FEEDBACK_SURFACE_KEY,
   SURFACES,
   getSurface,
@@ -60,6 +61,11 @@ function registryChecks() {
   // The feedback widget belongs to no page, so it is the first `widget`-kind surface. The
   // key is exported as a constant because three separate entry points gate on it, and a
   // typo in any of them would silently leave a door open after the widget was hidden.
+  const features = surfacesOfKind("feature");
+  check("compose is registered as a feature surface", features.some((s) => s.key === COMPOSE_SURFACE_KEY));
+  check("a feature surface declares no href", features.every((s) => s.href === undefined));
+  check("compose ships coming-soon", COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+
   const widgets = surfacesOfKind("widget");
   check("the feedback widget is registered as a hideable surface", widgets.length === 1);
   check(
@@ -220,13 +226,22 @@ async function main() {
         "an operator gets the coming-soon screen for unreleased pages by default",
         COMING_SOON_KEYS.size > 0 &&
           !forAdmin.previewingUnreleased &&
-          [...COMING_SOON_KEYS].every((k) => forAdmin.comingSoon.has(k))
+          [...COMING_SOON_KEYS]
+            .filter((k) => getSurface(k)?.kind === "page")
+            .every((k) => forAdmin.comingSoon.has(k))
       );
       check(
         "an ordinary user gets the coming-soon screen for every marked page",
         COMING_SOON_KEYS.size > 0 &&
-          [...COMING_SOON_KEYS].every((k) => forUser.comingSoon.has(k))
+          [...COMING_SOON_KEYS]
+            .filter((k) => getSurface(k)?.kind === "page")
+            .every((k) => forUser.comingSoon.has(k))
       );
+      check(
+        "a coming-soon feature is hidden outright for an ordinary user and a default admin",
+        forUser.hidden.has(COMPOSE_SURFACE_KEY) && forAdmin.hidden.has(COMPOSE_SURFACE_KEY)
+      );
+      check("compose's settings section is hidden with it", forUser.hidden.has("settings.email"));
       const companions = Object.values(COMING_SOON_COMPANIONS).flat();
       check(
         "a coming-soon page hides its companion surfaces for both a user and a default admin",
