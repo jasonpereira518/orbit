@@ -11,6 +11,25 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+import type {
+  ContactSignalKind,
+  ContactSignalPayload,
+  ExternalSourceKind,
+  RadarAiNote,
+  RadarApolloCursor,
+  RadarAutopilot,
+  RadarAutopilotAction,
+  RadarDraft,
+  RadarEvidence,
+  RadarFeedbackAction,
+  RadarModel,
+  RadarReason,
+  RadarRunStatus,
+  RadarRunTrigger,
+  RecommendationBucket,
+  RecommendationKind,
+  RecommendationStatus,
+} from "@/lib/radar/types";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
@@ -402,6 +421,13 @@ export const userSettings = pgTable("user_settings", {
    */
   timelineBackfillEnabled: integer("timeline_backfill_enabled").default(1).notNull(),
   /**
+   * Whether the hourly sweep keeps this account's contacts' work history current with web
+   * searches on their own AI key (`/api/work-history/sweep`). Only the background sweep:
+   * LinkedIn pulls and the profile's "Find work history" button run regardless. Integer
+   * 0/1, not boolean, per this table's convention (see `timelineBackfillEnabled`).
+   */
+  workHistoryAutoEnabled: integer("work_history_auto_enabled").default(1).notNull(),
+  /**
    * One-shot marker: has this row already been force-flipped to
    * `timeline_backfill_enabled = 1` by the v108 migration? Exists only so that migration's
    * `UPDATE` runs exactly once per row rather than every time `alters` re-runs (every future
@@ -434,6 +460,31 @@ export const userSettings = pgTable("user_settings", {
    * Null means "never checked", not "held" — held accounts are recomputed, never stored.
    */
   stealthClearedAt: timestamp("stealth_cleared_at", { withTimezone: true }),
+  /**
+   * Radar's nightly schedule for this account (`src/lib/radar/run.ts`). `radarNextAt` is a
+   * floor, not a promise: GitHub's scheduler lags. `radarLeaseUntil` is the claim that stops
+   * two overlapping passes from running one account twice. `radarLastRunAt` is also the
+   * "has opened Radar" marker the claim reads while the page is coming-soon.
+   */
+  radarNextAt: timestamp("radar_next_at", { withTimezone: true }),
+  radarLeaseUntil: timestamp("radar_lease_until", { withTimezone: true }),
+  radarLastRunAt: timestamp("radar_last_run_at", { withTimezone: true }),
+  /** 1 = the person paused Radar: no nightly run, no AI spend. Integer, per house convention. */
+  radarPaused: integer("radar_paused").default(0).notNull(),
+  /** What this account has taught Radar (`src/lib/radar/model.ts`). Rebuilt by every run. */
+  radarModel: jsonb("radar_model").$type<RadarModel>(),
+  /** Per-kind autopilot opt-in. Autopilot schedules and drafts; it never sends. */
+  radarAutopilot: jsonb("radar_autopilot").$type<RadarAutopilot>().default({}).notNull(),
+  /** 1 = the extension may save LinkedIn posts by known contacts as Radar activity. */
+  radarCaptureLinkedinActivity: integer("radar_capture_linkedin_activity").default(0).notNull(),
+  /** The Monday email. 1 = on (the default). The rest is its claim and unsubscribe state. */
+  radarDigestEnabled: integer("radar_digest_enabled").default(1).notNull(),
+  radarDigestTz: text("radar_digest_tz"),
+  /** ISO week ("2026-W40") of the last digest sent, claimed in one statement before sending. */
+  radarDigestLastWeek: text("radar_digest_last_week"),
+  radarDigestUnsubTokenHash: text("radar_digest_unsub_token_hash"),
+  /** Where the nightly Apollo re-check (own key only) left off. */
+  radarApolloCursor: jsonb("radar_apollo_cursor").$type<RadarApolloCursor>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -497,6 +548,14 @@ export const contacts = pgTable(
     /** Bare X/Twitter handle, no leading "@" — see normalizeXHandle in lib/duplicates. */
     xHandle: text("x_handle"),
     website: text("website"),
+    /**
+     * Public social handles the person chose to add, for Radar's post signals. Plain columns
+     * rather than `contact_identities` kinds: the identity sync releases every kind it does not
+     * derive itself, so a kind added only here would be wiped on the next edit.
+     * `blueskyHandle` is a bare handle ("name.bsky.social"); `mastodonAcct` is "user@host".
+     */
+    blueskyHandle: text("bluesky_handle"),
+    mastodonAcct: text("mastodon_acct"),
     profileImageUrl: text("profile_image_url"),
     /**
      * When we last tried, and failed, to find a photo for this contact.
@@ -507,6 +566,14 @@ export const contacts = pgTable(
      * skips a contact whose last attempt is inside AVATAR_RECHECK_DAYS.
      */
     profileImageCheckedAt: timestamp("profile_image_checked_at"),
+    /**
+     * When this contact's work history is next due a web-search re-check. NULL = never
+     * checked, which the sweep treats as due now. Also the sweep's lease: a claim pushes it
+     * ten minutes out, so an abandoned claim comes back on its own. Set after every
+     * research outcome by `researchContactWorkHistory` (lib/work-history-research.ts), on a
+     * closeness-tiered, jittered interval — see `nextWorkHistoryDue`.
+     */
+    workHistoryDueAt: timestamp("work_history_due_at", { withTimezone: true }),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —
@@ -1447,8 +1514,11 @@ export const contactBriefs = pgTable("contact_briefs", {
 export type ContactExperienceKind = "role" | "education";
 /**
  * Where a stored profile came from. Drives precedence in `saveContactProfile`: an
- * extension capture is a page the user actually looked at and always outranks Apollo,
- * which is a third-party inference.
+ * extension capture is a page the user actually looked at and always outranks the two
+ * inferences — `"web"`, a work history the person's own AI model assembled from a web
+ * search (`lib/work-history-research.ts`, the producer every LinkedIn pull uses), and
+ * `"apollo"`, a third-party dataset that no longer has a producer but whose stored rows
+ * remain. The inferences replace each other; neither replaces an extension capture.
  *
  * `"extension"` currently has NO producer — the browser capture path was removed before
  * merge because its DOM readers had never run against a real LinkedIn page. The value and
@@ -1456,7 +1526,7 @@ export type ContactExperienceKind = "role" | "education";
  * `scripts/smoke-contact-profile.ts`, so restoring that path is additive rather than
  * another change to the stored shape.
  */
-export type ContactProfileSource = "extension" | "apollo";
+export type ContactProfileSource = "extension" | "web" | "apollo";
 
 export type ProfileSkill = { name: string };
 export type ProfileCertification = { name: string; issuer: string | null; year: number | null };
@@ -1537,6 +1607,47 @@ export const contactExperiences = pgTable(
   (t) => [
     index("contact_experiences_contact_idx").on(t.userId, t.contactId, t.sortIndex),
     index("contact_experiences_org_idx").on(t.userId, t.organizationNormalized),
+  ]
+);
+
+export type ContactJobChangeKind = "joined" | "left" | "title_change";
+
+/**
+ * The durable log of a contact's job moves — "left Stripe, joined Ramp as Staff PM".
+ *
+ * `contact_experiences` is replaced wholesale on every capture, so it only ever holds the
+ * latest snapshot; this table is what remembers the transitions between snapshots. Rows
+ * are written by `recordJobChanges` (lib/job-changes.ts) and never rewritten. The unique
+ * `dedupe_key` makes re-detecting the same move a no-op.
+ *
+ * NOT named `contact_job_changes`: open PR #187 (sub-agent-testing-feedback, schema v66)
+ * defines a table by that name with a different shape, and its preview build already
+ * created it on the shared preview database — where `CREATE TABLE IF NOT EXISTS` then
+ * silently kept the other shape and this table's indexes failed the migration. The same
+ * collision would reach production if both merged.
+ */
+export const contactCareerMoves = pgTable(
+  "contact_career_moves",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .references(() => contacts.id, { onDelete: "cascade" })
+      .notNull(),
+    kind: text("kind").$type<ContactJobChangeKind>().notNull(),
+    fromOrg: text("from_org"),
+    fromTitle: text("from_title"),
+    toOrg: text("to_org"),
+    toTitle: text("to_title"),
+    startedYear: integer("started_year"),
+    startedMonth: integer("started_month"),
+    source: text("source").$type<ContactProfileSource>().notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("contact_career_moves_dedupe_uidx").on(t.userId, t.contactId, t.dedupeKey),
+    index("contact_career_moves_contact_idx").on(t.userId, t.contactId, t.detectedAt),
   ]
 );
 
@@ -1969,6 +2080,203 @@ export const aiSuggestions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("ai_suggestions_user_idx").on(t.userId, t.status)]
+);
+
+/**
+ * Radar's ranked recommendations: at most one live row per (user, contact, kind).
+ *
+ * Written only by the per-user run (`src/lib/radar/run.ts`) and by the person's own clicks.
+ * `reasons` and `evidence` are what the deterministic scorer produced; `ai_note` is the
+ * optional one-line why, kept while `inputs_hash` is unchanged. Terminal rows (accepted,
+ * dismissed, expired) are history for suppression and are pruned after 90 days.
+ */
+export const recommendations = pgTable(
+  "recommendations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<RecommendationKind>().notNull(),
+    score: integer("score").notNull(),
+    bucket: text("bucket").$type<RecommendationBucket>().notNull(),
+    reasons: jsonb("reasons").$type<RadarReason[]>().default([]).notNull(),
+    evidence: jsonb("evidence").$type<RadarEvidence[]>().default([]).notNull(),
+    status: text("status").$type<RecommendationStatus>().default("pending").notNull(),
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    runId: uuid("run_id"),
+    inputsHash: text("inputs_hash").notNull(),
+    aiNote: jsonb("ai_note").$type<RadarAiNote>(),
+    /** The scorer's own number, before learning and the rerank moved it to `score`. */
+    baseScore: integer("base_score"),
+    /** What the bounded AI rerank added or took away (±15), and its one-line angle. */
+    aiDelta: integer("ai_delta"),
+    aiAngle: text("ai_angle"),
+    /** A message written ahead of time for a Today card (`RadarDraft`). */
+    draft: jsonb("draft").$type<RadarDraft>(),
+    /** What autopilot scheduled for this card, so Undo can reverse exactly that. */
+    autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
+    /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    seenCount: integer("seen_count").default(0).notNull(),
+    /** When the person acted on it, and when a conversation followed an accept (≤ 14 days). */
+    actedAt: timestamp("acted_at", { withTimezone: true }),
+    outcomeAt: timestamp("outcome_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    // v2 of the live index: `auto_applied` is live too. Renamed rather than altered, so a
+    // database that already has the v1 index (predicate without it) builds the new one.
+    uniqueIndex("recommendations_live_v2_uidx")
+      .on(t.userId, t.contactId, t.kind)
+      .where(sql`${t.status} in ('pending', 'snoozed', 'auto_applied')`),
+    index("recommendations_user_status_score_idx").on(t.userId, t.status, t.score.desc()),
+  ]
+);
+
+/**
+ * One row per Radar run for one account: when, why it ran, and what it wrote. The page's
+ * "Updated 6h ago" stamp and the operator's view of the nightly pass both read it. No FK:
+ * it outlives nothing, and the account purge deletes it explicitly.
+ */
+export const radarRuns = pgTable(
+  "radar_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    trigger: text("trigger").$type<RadarRunTrigger>().notNull(),
+    status: text("status").$type<RadarRunStatus>().default("running").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    stats: jsonb("stats").$type<Record<string, number | boolean>>().default({}).notNull(),
+    error: text("error"),
+  },
+  (t) => [index("radar_runs_user_started_idx").on(t.userId, t.startedAt.desc())]
+);
+
+/**
+ * What a person did with a recommendation. The next run reads it so a dismissal sticks and
+ * "not for this person" is permanent. `kind` null means every kind for that contact.
+ */
+export const recommendationFeedback = pgTable(
+  "recommendation_feedback",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    recommendationId: uuid("recommendation_id"),
+    kind: text("kind").$type<RecommendationKind>(),
+    action: text("action").$type<RadarFeedbackAction>().notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recommendation_feedback_user_contact_idx").on(
+      t.userId,
+      t.contactId,
+      t.createdAt.desc()
+    ),
+  ]
+);
+
+/**
+ * Dated facts about one contact from outside Orbit's own tables: a job change, a headline
+ * about their company, a public post. Written by the producers in `src/lib/radar/signals/`,
+ * read by the per-user run, deduplicated per account by `dedupe_hash` so the same fact seen
+ * twice is one row. `payload` is sanitized, length-capped third-party text.
+ */
+export const contactSignals = pgTable(
+  "contact_signals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<ContactSignalKind>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    source: text("source").notNull(),
+    /** The global news item behind a `company_news` signal. No FK: items are pruned. */
+    externalItemId: uuid("external_item_id"),
+    payload: jsonb("payload").$type<ContactSignalPayload>().default({}).notNull(),
+    dedupeHash: text("dedupe_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("contact_signals_dedupe_uidx").on(t.userId, t.dedupeHash),
+    index("contact_signals_user_occurred_idx").on(t.userId, t.occurredAt.desc()),
+  ]
+);
+
+/**
+ * Public news feeds Radar reads (global, no `user_id`), beside `job_feed_sources`. Adding or
+ * disabling a source is a row, not a deploy.
+ */
+export const externalSources = pgTable("external_sources", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  kind: text("kind").$type<ExternalSourceKind>().notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  etag: text("etag"),
+  lastModified: text("last_modified"),
+  lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
+  lastStatus: text("last_status"),
+  lastError: text("last_error"),
+  consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** One headline from one source (global). Pruned after 30 days. */
+export const externalItems = pgTable(
+  "external_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => externalSources.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    url: text("url"),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_items_source_external_uidx").on(t.sourceId, t.externalId),
+    index("external_items_published_idx").on(t.publishedAt),
+  ]
+);
+
+/**
+ * The companies a headline may be about, keyed by `jobCompanyBucketKey` so the per-user
+ * probe is one indexed lookup with the account's own company keys. Candidates, not
+ * verdicts: `companiesMatch` confirms each hit before a signal is written.
+ */
+export const externalItemCompanies = pgTable(
+  "external_item_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => externalItems.id, { onDelete: "cascade" }),
+    companyKey: text("company_key").notNull(),
+    companyName: text("company_name").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_item_companies_item_key_uidx").on(t.itemId, t.companyKey),
+    index("external_item_companies_key_published_idx").on(t.companyKey, t.publishedAt.desc()),
+  ]
 );
 
 export type AudienceFilters = {

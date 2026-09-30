@@ -140,12 +140,16 @@ console.log("\nDerived lists");
     [...BACKGROUND_AI_OPERATIONS].sort().join(",") ===
       [
         "calendar.kind",
+        "contact.work_history",
         "duplicates.same_person",
         "duplicates.same_person.llm",
         "import.enrich",
         "import.enrich.gate",
         "import.linkedin.timeline",
         "import.linkedin.timeline.decide",
+        "radar.draft",
+        "radar.rerank",
+        "radar.why",
         "recruiter.gate",
         "recruiter.prefilter",
         "recruiter.scan",

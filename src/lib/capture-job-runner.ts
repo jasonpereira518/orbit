@@ -44,6 +44,7 @@ import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-a
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
 import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
@@ -226,11 +227,15 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       : await findBatchForCorpus(userId, row.sourceHash, row.createdAt);
 
     let out: SaveNoteBatchOutput;
+    // Who this save pulled from LinkedIn. Empty on the resumed path: that batch's first
+    // attempt already kicked them, and the Experience section's button covers a miss.
+    let linkedInContactIds: string[] = [];
     if (existing) {
       out = summarizeExistingBatch(existing);
     } else {
       const input = await buildSaveInput(row);
       out = await save(userId, input);
+      linkedInContactIds = linkedInCaptureContactIds(input.participants, out.contactIds);
     }
 
     const saved = savedSummary(row, out);
@@ -268,6 +273,9 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       }
 
       await kickEmbeddingBackfill(userId).catch(reportAndContinue(followOn("embeddings"), null));
+      // Their work history, found by web search in its own function (it takes minutes, and
+      // rebuilds the search text and brief itself when it lands).
+      await kickWorkHistoryResearch(userId, linkedInContactIds);
       for (const contactId of out.contactIds) {
         await generateAndStoreContactBrief(userId, contactId).catch(reportAndContinue(followOn("brief"), null));
       }

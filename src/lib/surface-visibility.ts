@@ -195,6 +195,17 @@ export async function isSurfaceVisible(
   return !hidden.has(surfaceKey);
 }
 
+/**
+ * True when this viewer can USE `surfaceKey`: not hidden, and released or being previewed.
+ * `isSurfaceVisible` says yes to a coming-soon page, which is right for the page (it renders
+ * its teaser) and wrong for anything elsewhere that points INTO it — a bell row or a chat
+ * suggestion drawn from a feature the viewer cannot open yet.
+ */
+export async function isSurfaceLive(userId: string, surfaceKey: string): Promise<boolean> {
+  const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+  return !hidden.has(surfaceKey) && !comingSoon.has(surfaceKey);
+}
+
 /** Throws `SurfaceHiddenError` unless this viewer may reach `surfaceKey`. */
 export async function requireVisibleSurface(userId: string, surfaceKey: string) {
   if (!(await isSurfaceVisible(userId, surfaceKey))) {

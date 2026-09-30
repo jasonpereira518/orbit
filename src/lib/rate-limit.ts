@@ -27,6 +27,7 @@ const BUCKET_LABELS: Record<string, string> = {
   meetingChunk: "meeting transcription",
   avatarResolve: "photo lookup",
   feedback: "feedback",
+  radarRefresh: "Radar refresh",
   interestJoin: "sign-up",
   interestProgress: "progress check",
   interestName: "sign-up",
@@ -41,6 +42,17 @@ const BUCKET_LABELS: Record<string, string> = {
   eventWhy: "attendee lookup",
   lifetimeConfirm: "checkout check",
   speechToken: "speech transcription",
+  // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
+  // rather than renaming the scope, which would reset those buckets' counters.
+  contactForm: "contact form",
+  "interest.join": "sign-up",
+  "interest.name": "sign-up",
+  "interest.progress": "progress check",
+  "avatar.resolve": "photo lookup",
+  "lifetime-confirm": "checkout check",
+  "poll.vote": "vote",
+  "work-history": "work-history lookup",
+  "work-history-background": "background work-history check",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -127,6 +139,19 @@ export const RATE_LIMITS = {
   apolloSearch: { limit: 20, windowSec: 86_400 },
   /** Person matches (one Apollo credit each) per user per day on the hosted key. */
   apolloEnrich: { limit: 50, windowSec: 86_400 },
+  /**
+   * Web-search work-history lookups. They run on the person's own AI key, but each one is
+   * several paid searches the person never clicked for — a pasted list or a refresh fans
+   * out — so a day has a ceiling that no ordinary use of LinkedIn pulls comes near.
+   */
+  workHistoryResearch: { limit: 60, windowSec: 86_400 },
+  /**
+   * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
+   * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
+   * up the lookups a person clicks for; every sweep search also counts against that one,
+   * so the two together still stop at its 60.
+   */
+  workHistoryBackground: { limit: 20, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**
@@ -135,6 +160,9 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  // Each refresh re-scores the whole network and may write up to five AI lines on the
+  // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
+  radarRefresh: { limit: 3, windowSec: 600 },
   /**
    * `joinInterestList`: ten submits per ten minutes per IP. Replaces the action's old
    * per-instance Map, which never held across instances. Loose on purpose — several friends

@@ -4,9 +4,10 @@
  *
  * Deliberately not inside `src/actions/interest-list.ts`: a "use server" module may only
  * export async functions, so constants and types the form needs have to live somewhere the
- * client can import them from. Client-safe: no `next/*`, no `node:*`, no `@/db`.
+ * client can import them from. Client-safe: no `next/*`, no `node:*`, no `@/db` — and no
+ * zod, which is ~64 KB gzipped on the waitlist page; the schemas live in
+ * `interest-list-schema.ts`, imported only by the server.
  */
-import { z } from "zod";
 import { RESERVED_WAITLIST_SLUGS } from "@/lib/waitlist-host";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
 
@@ -134,50 +135,26 @@ export function slugWithSuffix(base: string, n: number): string {
   return n <= 1 ? base : `${base}-${n}`;
 }
 
-export const interestListSchema = z.object({
-  email: z.email("That address doesn't look right.").max(160),
-  /** Honeypot. Hidden from people, irresistible to form-filling bots. */
-  website: z.string().max(0),
-  /** Milliseconds between the form rendering and this submission. */
-  elapsedMs: z.number().int().nonnegative(),
-  /** Who sent them: a referral slug (`/waitlist/<slug>`) or, on older links, a share token. */
-  ref: z.string().max(SHARE_TOKEN_MAX).optional(),
-});
+/** Longest address kept. */
+export const EMAIL_MAX = 160;
 
-export type InterestListInput = z.input<typeof interestListSchema>;
+/**
+ * The address rule, shared by the form's instant check and the server's schema
+ * (`interest-list-schema.ts`). It is zod's own `z.email()` pattern, copied here so the
+ * waitlist page can check a typo without shipping zod to every visitor.
+ */
+export const EMAIL_PATTERN =
+  /^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$/;
+
+export function isValidEmail(address: string): boolean {
+  return address.length <= EMAIL_MAX && EMAIL_PATTERN.test(address);
+}
 
 /** Longest first or last name kept. Generous; the point is a bound, not a rule about names. */
 export const NAME_MAX = 60;
 
-/**
- * Step two of the join: the name that goes on the pass. Sent after the address is already on
- * the list, so it is keyed by the ticket's share token rather than repeating the email.
- */
-export const interestNameSchema = z.object({
-  shareToken: z.string().min(1).max(SHARE_TOKEN_MAX),
-  firstName: z.string().trim().min(1, "Please add your first name.").max(NAME_MAX),
-  lastName: z.string().trim().min(1, "Please add your last name.").max(NAME_MAX),
-});
-
-export type InterestNameInput = z.input<typeof interestNameSchema>;
-
 /** Operator-added signup from an in-person event (admin console). */
 export const SIGNUP_EVENT_LABEL_MAX = 120;
-
-export const adminManualInterestListSchema = z.object({
-  email: z.email("That address doesn't look right.").max(160),
-  firstName: z.string().trim().min(1, "First name is required.").max(NAME_MAX),
-  lastName: z.string().trim().min(1, "Last name is required.").max(NAME_MAX),
-  eventLabel: z
-    .string()
-    .trim()
-    .min(2, "Event name is required.")
-    .max(SIGNUP_EVENT_LABEL_MAX),
-  /** When they signed at the event — used for join order when pasting a spreadsheet. */
-  createdAt: z.coerce.date().optional(),
-});
-
-export type AdminManualInterestListInput = z.infer<typeof adminManualInterestListSchema>;
 
 /** Cap on one paste so a runaway clipboard cannot mail thousands of welcomes. */
 export const ADMIN_EVENT_PASTE_MAX = 100;
@@ -229,12 +206,11 @@ export function parseEventSignupPaste(text: string): {
       continue;
     }
 
-    const emailParsed = z.email().max(160).safeParse(emailRaw.toLowerCase());
-    if (!emailParsed.success) {
+    const email = emailRaw.toLowerCase();
+    if (!isValidEmail(email)) {
       errors.push(`Line ${line}: “${emailRaw || "(empty)"}” is not a valid email.`);
       continue;
     }
-    const email = emailParsed.data;
     if (seen.has(email)) {
       errors.push(`Line ${line}: ${email} appears more than once in the paste.`);
       continue;

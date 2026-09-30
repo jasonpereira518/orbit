@@ -9,7 +9,7 @@
  * line, and any future export cannot disagree about what "most recent" means.
  */
 
-import type { ContactExperienceKind } from "@/db/schema";
+import type { ContactExperienceKind, ContactJobChangeKind } from "@/db/schema";
 
 /** The subset of an experience row that ordering and formatting need. */
 export type ExperienceEntry = {
@@ -195,4 +195,21 @@ export function careerLine(entries: ExperienceEntry[]): string | null {
   if (!parts.length && !school) return null;
   if (!parts.length) return school;
   return school ? `${parts.join(", ")} · ${school}` : parts.join(", ");
+}
+
+/** "Joined Ramp as Staff PM (from Stripe)" — the one sentence every surface shows. */
+export function jobChangeSentence(change: {
+  kind: ContactJobChangeKind;
+  fromOrg: string | null;
+  fromTitle: string | null;
+  toOrg: string | null;
+  toTitle: string | null;
+}): string {
+  if (change.kind === "title_change") {
+    return `New role at ${change.toOrg}: ${change.toTitle}${change.fromTitle ? ` (was ${change.fromTitle})` : ""}`;
+  }
+  if (change.kind === "left") {
+    return `Left ${change.fromOrg}${change.fromTitle ? ` (${change.fromTitle})` : ""}`;
+  }
+  return `Joined ${change.toOrg}${change.toTitle ? ` as ${change.toTitle}` : ""}${change.fromOrg ? ` (from ${change.fromOrg})` : ""}`;
 }

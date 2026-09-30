@@ -49,6 +49,13 @@ export type OpsSnapshot = {
      * a feed that stopped being read is indistinguishable from a quiet hiring season.
      */
     jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's nightly pass (`/api/radar/run`), once a day at 04:17 UTC. */
+    radarRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's news sweep (`/api/radar/feeds/sweep`), hourly at :53. */
+    radarFeeds: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's Monday email (`/api/radar/digest`), hourly at :13 through Sunday and Monday UTC. */
+    radarDigest: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    workHistory: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
   processStalledRecent: CronRunState[];
@@ -174,6 +181,37 @@ export const CALENDAR_DISARM_BURST = 5;
  * `warning`, never `critical`: nobody is paged because an internship notification is late.
  */
 const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Radar's nightly pass: daily, so a day and a quarter plus GitHub's lag.
+ *
+ * Unlike the job feed, a pass that has NEVER run is not an alert. The first run is up to a
+ * day after the deploy that adds it, and a condition that opens on every deploy and closes
+ * the next morning trains whoever reads these to ignore them. A pass that ran and then went
+ * quiet is the failure worth a message. `warning`: a late list of people to write to is not
+ * an outage.
+ */
+const RADAR_SILENT_MS = 30 * 60 * 60 * 1000;
+
+/**
+ * Radar's news sweep: hourly, so six hours is five missed runs. As with the nightly pass, a
+ * sweep that has never run is not an alert (it stands down until someone opens Radar, and a
+ * stand-down still records a run). `warning`: a headline noticed late costs nothing.
+ */
+const RADAR_FEEDS_SILENT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Radar's Monday email runs every hour of Sunday and Monday UTC and not at all in between,
+ * so a normal gap is five days (Monday night to Sunday morning). Six days of silence means a
+ * whole Sunday passed without a run. As with the others, never having run is not an alert.
+ */
+const RADAR_DIGEST_SILENT_MS = 6 * 24 * 60 * 60 * 1000;
+
+/**
+ * The work-history sweep runs hourly (ops.yml, :37); six hours of silence is five missed
+ * runs, not GitHub's ordinary lag. `warning`: a job move noticed a day late costs nothing.
+ */
+const WORK_HISTORY_SILENT_MS = 6 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -373,6 +411,91 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Job feed sweep ${jobFeed.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${jobFeed.lastStartedAt?.toISOString() ?? "unknown"} ended ${jobFeed.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  const radarRun = s.cron.radarRun;
+  if (radarRun.lastStartedAt && now.getTime() - radarRun.lastStartedAt.getTime() > RADAR_SILENT_MS) {
+    out.push({
+      id: "radar.schedule_missed",
+      severity: "warning",
+      title: "Radar's nightly pass has stopped running",
+      detail: `Last started ${radarRun.lastStartedAt.toISOString()}; nobody's Radar list is being refreshed overnight.`,
+      href: "/admin/health",
+    });
+  } else if (radarRun.lastState === "failed" || radarRun.lastState === "stale") {
+    out.push({
+      id: "radar.run_failed",
+      severity: "warning",
+      title: `Radar's nightly pass ${radarRun.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarRun.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarRun.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  const radarFeeds = s.cron.radarFeeds;
+  if (radarFeeds.lastStartedAt && now.getTime() - radarFeeds.lastStartedAt.getTime() > RADAR_FEEDS_SILENT_MS) {
+    out.push({
+      id: "radarfeeds.schedule_missed",
+      severity: "warning",
+      title: "Radar's news sweep has stopped running",
+      detail: `Last started ${radarFeeds.lastStartedAt.toISOString()}; headlines about people's companies are not arriving.`,
+      href: "/admin/health",
+    });
+  } else if (radarFeeds.lastState === "failed" || radarFeeds.lastState === "stale") {
+    out.push({
+      id: "radarfeeds.run_failed",
+      severity: "warning",
+      title: `Radar's news sweep ${radarFeeds.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarFeeds.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarFeeds.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // `partial` is a run where Resend refused someone; they are retried the next hour, and the
+  // error log carries the reason. Only a run that failed outright, or went quiet, is news.
+  const radarDigest = s.cron.radarDigest;
+  if (radarDigest.lastStartedAt && now.getTime() - radarDigest.lastStartedAt.getTime() > RADAR_DIGEST_SILENT_MS) {
+    out.push({
+      id: "radardigest.schedule_missed",
+      severity: "warning",
+      title: "Radar's Monday email has stopped running",
+      detail: `Last started ${radarDigest.lastStartedAt.toISOString()}; nobody is getting their weekly list by email.`,
+      href: "/admin/health",
+    });
+  } else if (radarDigest.lastState === "failed" || radarDigest.lastState === "stale") {
+    out.push({
+      id: "radardigest.run_failed",
+      severity: "warning",
+      title: `Radar's Monday email ${radarDigest.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarDigest.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarDigest.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // And the same pair for the work-history sweep. `partial` is its ordinary shape too — a
+  // run that handed unstarted claims back when its time ran out.
+  const workHistory = s.cron.workHistory;
+  const workHistorySilentFor = workHistory.lastStartedAt
+    ? now.getTime() - workHistory.lastStartedAt.getTime()
+    : null;
+  if (workHistorySilentFor === null || workHistorySilentFor > WORK_HISTORY_SILENT_MS) {
+    out.push({
+      id: "workhistory.schedule_missed",
+      severity: "warning",
+      title: "Work-history sweep has stopped running",
+      detail: workHistory.lastStartedAt
+        ? `Last started ${workHistory.lastStartedAt.toISOString()}; contacts' job moves are not being noticed.`
+        : "No run has ever been recorded; contacts' job moves are not being noticed.",
+      href: "/admin/health",
+    });
+  } else if (workHistory.lastState === "failed" || workHistory.lastState === "stale") {
+    out.push({
+      id: "workhistory.run_failed",
+      severity: "warning",
+      title: `Work-history sweep ${workHistory.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${workHistory.lastStartedAt?.toISOString() ?? "unknown"} ended ${workHistory.lastState}.`,
       href: "/admin/health",
     });
   }
