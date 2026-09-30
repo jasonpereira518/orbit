@@ -51,6 +51,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
   writing_instructions text,
+  email_signature_text text,
+  email_signature_html text,
+  default_send_provider text,
   onboarding_completed_at timestamptz,
   first_name text,
   last_name text,
@@ -1591,6 +1594,45 @@ CREATE TABLE IF NOT EXISTS connector_outbox (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS connector_outbox_action_uidx ON connector_outbox(user_id, connector_id, action, entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS connector_outbox_due_idx ON connector_outbox(status, next_attempt_at);
+CREATE TABLE IF NOT EXISTS email_sends (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  from_email text NOT NULL,
+  from_name text,
+  to_emails jsonb NOT NULL,
+  cc jsonb NOT NULL DEFAULT '[]'::jsonb,
+  bcc jsonb NOT NULL DEFAULT '[]'::jsonb,
+  subject text NOT NULL,
+  body_text text NOT NULL,
+  body_html text,
+  contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  origin text NOT NULL,
+  origin_ref text,
+  idempotency_key text,
+  status text NOT NULL DEFAULT 'queued',
+  send_at timestamptz NOT NULL,
+  sent_at timestamptz,
+  attempts integer NOT NULL DEFAULT 0,
+  claimed_by uuid,
+  lease_until timestamptz,
+  last_error text,
+  failure_kind text,
+  rfc_message_id text NOT NULL,
+  provider_message_id text,
+  provider_thread_id text,
+  in_reply_to_send_id uuid,
+  in_reply_to_rfc_id text,
+  attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  dismissed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS email_sends_idempotency_uidx ON email_sends(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND (status IN ('queued','sending','sent') OR failure_kind = 'ambiguous');
+CREATE INDEX IF NOT EXISTS email_sends_due_idx ON email_sends(send_at) WHERE status = 'queued';
+CREATE INDEX IF NOT EXISTS email_sends_user_created_idx ON email_sends(user_id, created_at);
+CREATE INDEX IF NOT EXISTS email_sends_user_status_idx ON email_sends(user_id, status);
+CREATE INDEX IF NOT EXISTS email_sends_contact_ids_idx ON email_sends USING gin (contact_ids);
 CREATE TABLE IF NOT EXISTS contact_identities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2339,7 +2381,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // so the merge takes its own number and every database re-runs the full list once. Scanned
 // every remote ref on Sep 29 2026: 135 is the highest claimed anywhere, so 136 is the next
 // free integer.
-export const SCHEMA_VERSION = 136;
+//
+// 140 = email_sends (the person-to-person outbox every 1:1 send goes through — direct email
+// P1) and user_settings.email_signature_text / email_signature_html / default_send_provider.
+// Scanned every local and remote ref and every worktree's working src/db/index.ts on Sep 29
+// 2026: 139 (claude/pricing-v2) is the highest claimed anywhere, so 140 is the next free integer.
+export const SCHEMA_VERSION = 140;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3483,6 +3530,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "recommendations", "outcome_at", "timestamptz");
   // v136: what autopilot scheduled for a card.
   await ensureColumn(client, "recommendations", "autopilot", "jsonb");
+  // v140: direct email — signature and default sending mailbox. Same reasoning as every block above.
+  await ensureColumn(client, "user_settings", "email_signature_text", "text");
+  await ensureColumn(client, "user_settings", "email_signature_html", "text");
+  await ensureColumn(client, "user_settings", "default_send_provider", "text");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -4200,7 +4251,17 @@ const alters = [
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
   `DROP INDEX IF EXISTS recommendations_live_uidx`,
   // Schema v136: what autopilot scheduled for a card, so its Undo reverses exactly that.
-  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,  // Schema v140: email_sends, the person-to-person outbox (direct email P1), plus the
+  // signature and default sending mailbox on user_settings.
+  `CREATE TABLE IF NOT EXISTS email_sends (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, from_email text NOT NULL, from_name text, to_emails jsonb NOT NULL, cc jsonb NOT NULL DEFAULT '[]'::jsonb, bcc jsonb NOT NULL DEFAULT '[]'::jsonb, subject text NOT NULL, body_text text NOT NULL, body_html text, contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb, origin text NOT NULL, origin_ref text, idempotency_key text, status text NOT NULL DEFAULT 'queued', send_at timestamptz NOT NULL, sent_at timestamptz, attempts integer NOT NULL DEFAULT 0, claimed_by uuid, lease_until timestamptz, last_error text, failure_kind text, rfc_message_id text NOT NULL, provider_message_id text, provider_thread_id text, in_reply_to_send_id uuid, in_reply_to_rfc_id text, attachments jsonb NOT NULL DEFAULT '[]'::jsonb, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS email_sends_idempotency_uidx ON email_sends(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND (status IN ('queued','sending','sent') OR failure_kind = 'ambiguous')`,
+  `CREATE INDEX IF NOT EXISTS email_sends_due_idx ON email_sends(send_at) WHERE status = 'queued'`,
+  `CREATE INDEX IF NOT EXISTS email_sends_user_created_idx ON email_sends(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS email_sends_user_status_idx ON email_sends(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS email_sends_contact_ids_idx ON email_sends USING gin (contact_ids)`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_text text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_html text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS default_send_provider text`,
 ];
 
 /**

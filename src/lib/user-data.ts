@@ -29,6 +29,7 @@ import {
   connectorConnections,
   connectorOutbox,
   contactBriefs,
+  emailSends,
   contactEmbeddings,
   memoryChunks,
   contactExperiences,
@@ -606,14 +607,18 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(contactProfiles),
       own(contactExperiences),
       own(contactCareerMoves),
+      own(emailSends),
       joined("contact_tags", (userId, limit, offset) => sql`SELECT ct.* FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.user_id = ${userId} ORDER BY ct.id LIMIT ${limit} OFFSET ${offset}`),
     ],
     // The `implies` list in `DATA_CATEGORY_META` is what stops this step from quietly
     // exceeding a partial request: `interactions`, `reminders`, `contact_embeddings` and
     // `contact_tags` are all `on delete cascade` from `contacts` and go the moment a
     // contact does, ticked or not.
-    counts: [contacts, companies, contactMerges],
+    counts: [contacts, companies, contactMerges, emailSends],
     run: async (db, userId) => {
+      // Queued and sent 1:1 mail. Deleted with contacts so a purge also stops anything still
+      // waiting in the outbox — a queued send outliving its contact would still go out.
+      await db.delete(emailSends).where(eq(emailSends.userId, userId));
       // Read before anything goes: the contact rows and merge snapshots are the only record
       // of which Blob objects are this user's. The objects have no foreign key to cascade.
       const photoRows = await db.execute(sql`

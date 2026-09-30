@@ -139,6 +139,11 @@ export const userSettings = pgTable("user_settings", {
    * redacts those by name).
    */
   writingInstructions: text("writing_instructions"),
+  /** Appended to email sent from Orbit (direct email). Plain text, and a sanitized HTML twin. */
+  emailSignatureText: text("email_signature_text"),
+  emailSignatureHtml: text("email_signature_html"),
+  /** Which connected mailbox sends when more than one can. NULL = pick automatically. */
+  defaultSendProvider: text("default_send_provider").$type<"gmail" | "outlook">(),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),
@@ -5448,6 +5453,68 @@ export const connectorOutbox = pgTable(
 );
 
 export type ConnectorOutboxRow = typeof connectorOutbox.$inferSelect;
+
+export type EmailProviderId = "gmail" | "outlook" | "demo";
+export type EmailOrigin = "compose" | "follow_up" | "chat" | "agent" | "recruiter";
+export type EmailSendStatus = "queued" | "sending" | "sent" | "failed" | "canceled";
+export type EmailFailureKind = "auth" | "permanent" | "ambiguous" | "exhausted";
+export type EmailAttachmentRef = { blobKey: string; filename: string; contentType: string; size: number };
+
+/**
+ * One person-to-person email, from enqueue to delivery. The single path every 1:1 send in
+ * Orbit takes (spec: docs/superpowers/specs/2026-09-29-direct-email-design.md). Claim/lease
+ * columns follow `connector_outbox`: `claimed_by` + `lease_until` are evaluated on the
+ * DATABASE clock, and every post-send write is guarded on `claimed_by`.
+ */
+export const emailSends = pgTable(
+  "email_sends",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<EmailProviderId>().notNull(),
+    fromEmail: text("from_email").notNull(),
+    fromName: text("from_name"),
+    to: jsonb("to_emails").$type<string[]>().notNull(),
+    cc: jsonb("cc").$type<string[]>().default([]).notNull(),
+    bcc: jsonb("bcc").$type<string[]>().default([]).notNull(),
+    subject: text("subject").notNull(),
+    bodyText: text("body_text").notNull(),
+    bodyHtml: text("body_html"),
+    contactIds: jsonb("contact_ids").$type<string[]>().default([]).notNull(),
+    origin: text("origin").$type<EmailOrigin>().notNull(),
+    originRef: text("origin_ref"),
+    idempotencyKey: text("idempotency_key"),
+    status: text("status").$type<EmailSendStatus>().default("queued").notNull(),
+    sendAt: timestamp("send_at", { withTimezone: true }).notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    attempts: integer("attempts").default(0).notNull(),
+    claimedBy: uuid("claimed_by"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    lastError: text("last_error"),
+    failureKind: text("failure_kind").$type<EmailFailureKind>(),
+    rfcMessageId: text("rfc_message_id").notNull(),
+    providerMessageId: text("provider_message_id"),
+    providerThreadId: text("provider_thread_id"),
+    inReplyToSendId: uuid("in_reply_to_send_id"),
+    inReplyToRfcId: text("in_reply_to_rfc_id"),
+    attachments: jsonb("attachments").$type<EmailAttachmentRef[]>().default([]).notNull(),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // Partial in the DDL (active + ambiguous rows only): a canceled or definitely-failed
+    // send frees its key so the same draft can be sent again.
+    uniqueIndex("email_sends_idempotency_uidx").on(t.userId, t.idempotencyKey),
+    // The drain's scan (partial on status = 'queued' in the DDL).
+    index("email_sends_due_idx").on(t.sendAt),
+    index("email_sends_user_created_idx").on(t.userId, t.createdAt),
+    index("email_sends_user_status_idx").on(t.userId, t.status),
+    index("email_sends_contact_ids_idx").using("gin", t.contactIds),
+  ]
+);
+
+export type EmailSendRecord = typeof emailSends.$inferSelect;
 export type EventAlias = typeof eventAliases.$inferSelect;
 export type EventCompany = typeof eventCompanies.$inferSelect;
 export type TargetCompany = typeof targetCompanies.$inferSelect;

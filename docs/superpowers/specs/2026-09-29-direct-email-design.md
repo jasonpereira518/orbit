@@ -75,7 +75,8 @@ number below main's silently skips its own DDL). New tables follow the DDL templ
 | `body_html` | text | sanitized; signature / HTML part (P2) |
 | `contact_ids` | jsonb `uuid[]` default `[]` | recipients resolved to contacts; drives logging |
 | `origin` | text not null | `compose` \| `follow_up` \| `chat` \| `agent` \| `recruiter` |
-| `origin_ref` | text | e.g. `agent_send_requests.id`, follow-up reminder id |
+| `origin_ref` | text | e.g. `agent_send_requests.id`, follow-up contact id |
+| `idempotency_key` | text | natural key per surface (`chat-send:…`, `agent:…`, `recruiter:…`); partial unique with `user_id` on active + ambiguous rows |
 | `status` | text not null | `queued` \| `sending` \| `sent` \| `failed` \| `canceled` |
 | `send_at` | timestamptz not null | |
 | `sent_at` | timestamptz | |
@@ -383,3 +384,15 @@ Local-dev caution: smoke scripts use `.env.local`'s `DATABASE_URL` if present �
 - Outreach campaigns' sending (their own spec).
 - Syncing replies into Orbit / an inbox view (overlaps Outreach v2 stages 3–4).
 - Server-side draft storage, templates, mail merge, open/click tracking.
+
+## Planning amendments (P1 plan)
+
+Decided while writing `docs/superpowers/plans/2026-09-29-direct-email-p1-engine.md`:
+
+1. **`idempotency_key` column** (nullable text) with a partial unique index on `(user_id, idempotency_key)` for active/ambiguous rows. Chat, agent and recruiter sends already have natural keys; this replaces chat's claim-row-before-send.
+2. **Interaction `source` is per origin, not the origin name**, so existing readers keep working: `chat` → `"chat_send"` (read by `src/actions/chat.ts`), `agent` → `"mcp"`, `follow_up` → `"follow_up"`, `recruiter` → `"recruiter_send"`, `compose` → `"email_send"`.
+3. **A `demo` provider**: demo workspaces (`isDemoWorkspace`) have no OAuth tokens; the demo provider marks sends sent without network, matching `sendRecruiterDrafts`'s existing demo short-circuit.
+4. **`from_name` is captured at enqueue** from the calling action (Clerk profile needs a request; the drain has none).
+5. **Contact-timeline pending items move to P2** (they belong with Compose). P1 ships the failed-send account alert only.
+6. `email_sends` is purged in the **`contacts`** data category: deleting contacts must also stop their queued mail.
+7. (Implementation) The recipients column is **`to_emails`** in SQL (`to` in Drizzle): `to` is reserved, and the schema-ddl guard does not parse quoted identifiers. Shipped as **schema v140** (pricing-v2 claimed 139).
