@@ -41,7 +41,8 @@ type OperationSpec = {
   thinking?: ThinkingLevel;
   /**
    * Bulk work running on the person's behalf rather than something they are waiting on.
-   * On Orbit's managed keys it stops at `MANAGED_AI_BUDGET.backgroundShare` of the month.
+   * On Orbit's keys it runs only while more than `BACKGROUND_FLOOR_SHARE` of the monthly
+   * credits remain (`src/lib/managed-ai-policy.ts`).
    */
   background?: boolean;
 };
@@ -92,6 +93,16 @@ export const AI_OPERATIONS = {
   // namesake risk is carried by the prompt's "confident or nothing" rule, not model size.
   "contact.work_history": { label: "Work history (web search)", tier: "fast", thinking: "minimal", background: true },
   "events.why": { label: "Events: why talk to them", tier: "fast", thinking: "minimal" },
+  // One sentence about a Radar card the scorer already chose, written during the nightly
+  // pass on the account's own key: work on the person's behalf, not something they wait on.
+  "radar.why": { label: "Radar: why this person", tier: "fast", thinking: "minimal", background: true },
+  // One call per nightly run: nudges the scorer's shortlist within ±15 points, given the
+  // account's goals. It can reorder cards the rules already chose; it can never add one.
+  "radar.rerank": { label: "Radar: ranking the shortlist", tier: "fast", thinking: "minimal", background: true },
+  // A follow-up written overnight for a Today card, on the account's own key, so acting on
+  // the card is review-and-send. The same prompt as "followup.draft"; background because
+  // nobody is waiting on it.
+  "radar.draft": { label: "Radar: drafts for Today", tier: "user", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },

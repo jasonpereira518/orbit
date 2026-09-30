@@ -12,6 +12,7 @@ import {
   Bell,
   BookOpen,
   PartyPopper,
+  Radar,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -89,6 +90,11 @@ const OUTREACH: AppNavItem = {
   label: "Outreach",
   icon: Send,
 };
+const RADAR: AppNavItem = {
+  href: "/radar",
+  label: "Radar",
+  icon: Radar,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -114,7 +120,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * the two items that actually are coming soon (`comingSoon` in `src/lib/surfaces.ts`), and
  * splitting the group over one released item was a deliberate no per product decision.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [RADAR, EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -142,6 +148,7 @@ export const MOBILE_MORE_NAV = [
   REMINDERS,
   IMPORTS,
   CONSTELLATION,
+  RADAR,
   EVENTS,
   OUTREACH,
   KNOWLEDGE,

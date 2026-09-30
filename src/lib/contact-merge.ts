@@ -83,6 +83,12 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   // `contact_ids` array it also carries is rewritten separately (step 4c-2), because an
   // array rewrite is not reversible from a list of ids alone.
   { table: "memory_chunks", column: "contact_id", scoped: true },
+  // What the person did with Radar about this contact: a "not for this person" must still
+  // hold for the merged contact. No unique index at all, so nothing can collide.
+  { table: "recommendation_feedback", column: "contact_id", scoped: true },
+  // Radar's outside-world facts (job changes, headlines, posts) are about the person, so they
+  // follow the winner. Unique on (user_id, dedupe_hash), which a repoint does not change.
+  { table: "contact_signals", column: "contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */
@@ -432,6 +438,21 @@ export async function mergeContacts(
         sql`DELETE FROM contact_profiles
              WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
          RETURNING to_jsonb(contact_profiles) AS row`
+      )
+    );
+
+    // recommendations: at most one LIVE row per (user, contact, kind), so the loser's live
+    // cards could collide with the winner's. They are archived rather than moved, and the
+    // next run raises whatever is still true about the merged person. Unmerge restores them
+    // from the archive like any other deleted row.
+    statements.push(
+      recordDeleted(
+        tx,
+        mergeId,
+        "recommendations",
+        sql`DELETE FROM recommendations
+             WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
+         RETURNING to_jsonb(recommendations) AS row`
       )
     );
 

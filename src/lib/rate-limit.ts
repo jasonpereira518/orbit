@@ -27,6 +27,7 @@ const BUCKET_LABELS: Record<string, string> = {
   meetingChunk: "meeting transcription",
   avatarResolve: "photo lookup",
   feedback: "feedback",
+  radarRefresh: "Radar refresh",
   interestJoin: "sign-up",
   interestProgress: "progress check",
   interestName: "sign-up",
@@ -159,6 +160,9 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  // Each refresh re-scores the whole network and may write up to five AI lines on the
+  // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
+  radarRefresh: { limit: 3, windowSec: 600 },
   /**
    * `joinInterestList`: ten submits per ten minutes per IP. Replaces the action's old
    * per-instance Map, which never held across instances. Loose on purpose — several friends

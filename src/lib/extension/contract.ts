@@ -401,6 +401,29 @@ export type FollowUpResponse = {
 };
 
 /* -------------------------------------------------------------------------- */
+/* Radar activity — additive; v1 clients never call it                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A post by a known contact that the person chose to keep ("Save as Radar activity"). The
+ * server refuses unless the person turned activity capture on in Radar's settings. Only the
+ * excerpt they saw is stored (at most 280 characters), never the page.
+ */
+export type SaveActivityRequest = {
+  contactId: string;
+  excerpt: string;
+  url?: string | null;
+  /** When they saw it, ISO. Defaults to now. */
+  seenAt?: string | null;
+};
+
+export type SaveActivityResponse = {
+  saved: boolean;
+  /** True when the same post was already saved for this contact. */
+  duplicate: boolean;
+};
+
+/* -------------------------------------------------------------------------- */
 /* Search + session                                                           */
 /* -------------------------------------------------------------------------- */
 
