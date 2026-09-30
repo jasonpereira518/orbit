@@ -120,6 +120,14 @@ export function useCaptureFanout(opts?: {
    * own completion, which must see the cancel however many renders ago it happened.
    */
   const cancelledRef = useRef(new Set<string>());
+  /**
+   * Set by Stop, cleared by the next `start`. The pump checks THIS rather than trusting its own
+   * `running`: React runs the pump effect after the commit it belongs to, sometimes a tick
+   * later, so a pump from the render before Stop can still run after Stop with `running` true
+   * in its closure. It used to start the first uploads right over the rows Stop had skipped,
+   * and they landed `queued` — a note the person cancelled, read anyway.
+   */
+  const stoppedRef = useRef(false);
   const settledRef = useRef(false);
   // Kept in a ref and synced in an effect rather than assigned during render: the callback
   // is usually an inline arrow, so depending on it directly would re-arm the settle effect
@@ -168,6 +176,7 @@ export function useCaptureFanout(opts?: {
       filesRef.current = files;
       hashesRef.current = hashes;
       cancelledRef.current = new Set();
+      stoppedRef.current = false;
       batchIdRef.current = newId();
       settledRef.current = false;
       setEntries(next);
@@ -189,6 +198,7 @@ export function useCaptureFanout(opts?: {
   const inFlightRef = useRef(new Set<string>());
 
   const cancelPending = useCallback(() => {
+    stoppedRef.current = true;
     setRunning(false);
     // In flight right now: let each request finish, then discard what it made (see the
     // header). Read from the ref, not `entries` — an upload the pump started this very
@@ -219,7 +229,7 @@ export function useCaptureFanout(opts?: {
 
   // The pump.
   useEffect(() => {
-    if (!running) return;
+    if (!running || stoppedRef.current) return;
     const batchGroupId = batchIdRef.current;
     if (!batchGroupId) return;
 

@@ -134,6 +134,10 @@ async function main() {
     const stub = stubUploader((label) => ({ ok: true, jobId: `job-${label}` }));
     const h = await mount(stub.uploader);
     await h.start(["a", "b", "c", "d"]);
+    // This case is Stop WITH uploads in flight, so wait for that rather than assume one tick
+    // is enough for the pump to have started them (the case below covers Stop before it has).
+    for (let i = 0; i < 50 && stub.calls.size < 2; i++) await h.wait(1);
+    check("both uploads are in flight before Stop", stub.calls.size === 2, String(stub.calls.size));
     h.hook().cancelPending();
     check("nothing is discarded before the ids exist", h.discarded.length === 0, JSON.stringify(h.discarded));
     await h.wait(200);
@@ -148,6 +152,30 @@ async function main() {
     check("running is false", !h.hook().running);
     check("onSettled did not fire for a cancelled run", h.settled.length === 0, String(h.settled.length));
     await h.unmount();
+  }
+
+  // The race behind a flake in the case above: Stop pressed after `start` has committed but
+  // before React has run the pump effect for that commit. The stale pump used to start the
+  // first uploads anyway, over the rows Stop had just skipped, and they landed as `queued`
+  // — a note the person cancelled, read regardless. Repeated because the window is one tick.
+  console.log("\nStop before the pump has run starts nothing");
+  {
+    const leaks: string[] = [];
+    for (let run = 0; run < 30; run++) {
+      const stub = stubUploader((label) => ({ ok: true, jobId: `job-${label}` }));
+      const h = await mount(stub.uploader);
+      await h.start(["a", "b", "c", "d"]);
+      if (stub.calls.size === 0) {
+        h.hook().cancelPending();
+        await h.wait(60);
+        const notSkipped = h.hook().entries.filter((e) => e.status !== "skipped");
+        if (notSkipped.length > 0 || stub.calls.size > 0) {
+          leaks.push(`run ${run}: ${notSkipped.map((e) => `${e.label}=${e.status}`).join(" ")} uploads=${stub.calls.size}`);
+        }
+      }
+      await h.unmount();
+    }
+    check("no cancelled note is uploaded or queued", leaks.length === 0, leaks.slice(0, 3).join("; "));
   }
 
   console.log("\neach note's file hashes reach its upload");
