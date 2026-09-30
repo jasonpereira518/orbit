@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import { DRAFT_MAX_CHARS, sanitizeDraft } from "@/lib/chat-draft";
 import { SEND_SUBJECT_MAX } from "@/lib/chat-send";
+import { hasBlobStorage } from "@/lib/contact-avatar";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactSearchCondition } from "@/lib/contact-search-rank";
 import { verifyAttachmentRefs, type AttachmentFailure, type AttachmentInput } from "@/lib/email/attachments";
@@ -35,6 +36,8 @@ export type ComposeRecipient = {
 export type ComposeContext = {
   capability: SendCapability;
   signature: string | null;
+  /** Blob storage is configured, so the composer can offer attachments (P4). */
+  attachmentsAvailable: boolean;
   contact: {
     id: string;
     name: string;
@@ -49,7 +52,8 @@ export type ComposeContext = {
 export async function getComposeContext(userId: string, contactId: string | null): Promise<ComposeContext | null> {
   const db = await getDb();
   const [capability, { signature }] = await Promise.all([getSendCapability(userId), loadEmailSettings(userId)]);
-  if (!contactId) return { capability, signature, contact: null };
+  const attachmentsAvailable = hasBlobStorage();
+  if (!contactId) return { capability, signature, attachmentsAvailable, contact: null };
   const [row] = await db
     .select({
       id: contacts.id,
@@ -80,6 +84,7 @@ export async function getComposeContext(userId: string, contactId: string | null
   return {
     capability,
     signature,
+    attachmentsAvailable,
     contact: {
       id: row.id,
       name: row.preferredName || row.fullName,

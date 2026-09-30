@@ -1,20 +1,27 @@
 "use client";
 
-import { Loader2, Send, Sparkles } from "lucide-react";
+import { upload } from "@vercel/blob/client";
+import { Loader2, Paperclip, Sparkles } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type DragEvent } from "react";
 import { draftComposeWithAi, getComposeContextAction, sendComposedEmail } from "@/actions/email-compose";
+import { AttachmentList, type ComposeAttachment } from "@/components/email/attachment-list";
 import { ConnectMailboxButton } from "@/components/email/connect-mailbox-button";
 import { MailboxSelect } from "@/components/email/mailbox-select";
 import { RecipientField } from "@/components/email/recipient-field";
+import { ScheduleMenu } from "@/components/email/schedule-menu";
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { formatUploadSize } from "@/lib/capture-limits";
 import { clearComposeDraft, composeDraftKey, readComposeDraft, writeComposeDraft } from "@/lib/compose-draft";
 import type { ComposeRequest } from "@/lib/compose-events";
+import { attachmentPrefixFor, BLOB_ACCESS, isBlockedFilename, safeFilename } from "@/lib/email/attachment-paths";
 import type { ComposeContext, ComposeRecipient } from "@/lib/email/compose";
+import { MAX_ATTACHMENTS, maxAttachmentBytesFor } from "@/lib/email/config";
+import { formatScheduled } from "@/lib/email/schedule-presets";
 import type { MailboxId } from "@/lib/email/sender";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
@@ -49,6 +56,10 @@ export function ComposeDialog({
   const [subject, setSubject] = useState(request.subject ?? "");
   const [body, setBody] = useState(request.body ?? "");
   const [problem, setProblem] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<ComposeAttachment[]>(() =>
+    (request.attachments ?? []).map((a) => ({ ...a, id: a.pathname, progress: 100 }))
+  );
+  const fileInput = useRef<HTMLInputElement>(null);
   const [sending, startSend] = useTransition();
   const [drafting, startDraft] = useTransition();
 
@@ -102,7 +113,59 @@ export function ComposeDialog({
   const sendable = capability?.ok ? capability.mailboxes.filter((m) => m.canSend) : [];
   // The mailbox this send leaves from: the person's pick, else whatever resolved by default.
   const [fromProvider, setFromProvider] = useState<MailboxId | null>(null);
-  const canSend = Boolean(capability?.ok) && to.length > 0 && body.trim().length > 0 && !sending;
+  const provider = fromProvider ?? (capability?.ok ? capability.provider : null);
+  const maxBytes = maxAttachmentBytesFor(provider ?? "gmail");
+  const mailboxName = provider === "outlook" ? "Outlook" : "Gmail";
+  const attachedBytes = attachments.reduce((n, a) => n + (a.error ? 0 : a.size), 0);
+  const uploading = attachments.some((a) => !a.pathname && !a.error);
+  // Switching From to Outlook can put files already attached over its smaller limit.
+  const overLimit =
+    attachedBytes > maxBytes
+      ? `Attachments over ${formatUploadSize(maxBytes)} can’t be sent from ${mailboxName} — ${formatUploadSize(attachedBytes)} attached`
+      : null;
+  const canSend =
+    Boolean(capability?.ok) && to.length > 0 && body.trim().length > 0 && !sending && !uploading && !overLimit;
+
+  function addFiles(files: File[]) {
+    let count = attachments.filter((a) => !a.error).length;
+    let total = attachedBytes;
+    for (const file of files) {
+      const filename = safeFilename(file.name);
+      if (isBlockedFilename(filename)) {
+        toast.error(`${filename} can’t be sent by email`);
+        continue;
+      }
+      if (count >= MAX_ATTACHMENTS) {
+        toast.error(`Attach up to ${MAX_ATTACHMENTS} files`);
+        break;
+      }
+      if (total + file.size > maxBytes) {
+        toast.error(`${filename} is too big for ${mailboxName} — ${formatUploadSize(maxBytes)} total`);
+        continue;
+      }
+      count++;
+      total += file.size;
+      const id = crypto.randomUUID();
+      setAttachments((list) => [...list, { id, filename, size: file.size, progress: 0 }]);
+      const update = (patch: Partial<ComposeAttachment>) =>
+        setAttachments((list) => list.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+      upload(`${attachmentPrefixFor(userId)}${id}/${filename}`, file, {
+        access: BLOB_ACCESS,
+        handleUploadUrl: "/api/email/attachments/upload",
+        onUploadProgress: ({ percentage }) => update({ progress: percentage }),
+      })
+        .then((blob) => update({ pathname: blob.pathname, progress: 100 }))
+        .catch(() => update({ error: "Didn’t upload" }));
+    }
+  }
+
+  function onDrop(e: DragEvent) {
+    if (!ready?.attachmentsAvailable || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    // Read synchronously: the DataTransfer is emptied once the event returns.
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length) addFiles(files);
+  }
 
   function draftWithAi() {
     const contactId = request.contactId;
@@ -118,9 +181,12 @@ export function ComposeDialog({
     });
   }
 
-  function send() {
+  function send(scheduledFor?: Date) {
     setProblem(null);
     const snapshot = { to, cc, bcc, subject, body };
+    const files = attachments
+      .filter((a) => a.pathname)
+      .map((a) => ({ pathname: a.pathname!, filename: a.filename }));
     startSend(async () => {
       try {
         const res = await sendComposedEmail({
@@ -128,6 +194,8 @@ export function ComposeDialog({
           contactId: request.contactId,
           // Only an explicit pick is sent; otherwise the server resolves the default itself.
           provider: fromProvider ?? undefined,
+          attachments: files,
+          scheduledFor: scheduledFor?.toISOString(),
         });
         if (!res.ok) {
           setProblem(res.message);
@@ -140,6 +208,9 @@ export function ComposeDialog({
         showUndoSendToast({
           sendId: res.sendId,
           recipientLabel: others > 0 ? `${who} and ${others} more` : who,
+          ...(res.scheduled
+            ? { message: `Scheduled — ${formatScheduled(new Date(res.sendAt), new Date())}`, durationMs: 15_000 }
+            : {}),
           onUndone: () => {
             // Nothing went out: keep what was written so it can be fixed and sent again.
             writeComposeDraft(window.localStorage, key, snapshot);
@@ -173,7 +244,13 @@ export function ComposeDialog({
             Couldn’t open the composer. Close it and try again.
           </p>
         ) : (
-          <div className="flex min-w-0 flex-col gap-2 text-sm">
+          <div
+            className="flex min-w-0 flex-col gap-2 text-sm"
+            onDragOver={(e) => {
+              if (ready?.attachmentsAvailable && e.dataTransfer.types.includes("Files")) e.preventDefault();
+            }}
+            onDrop={onDrop}
+          >
             <div className="flex min-h-9 items-center gap-2 border-b border-border/60 py-1.5">
               <span className="w-10 shrink-0 text-xs font-medium text-muted-foreground">From</span>
               {capability?.ok && sendable.length > 1 ? (
@@ -240,28 +317,61 @@ export function ComposeDialog({
                 {`-- \n${ready.signature}`}
               </p>
             )}
+            <AttachmentList
+              items={attachments}
+              disabled={sending}
+              onRemove={(id) => setAttachments((list) => list.filter((a) => a.id !== id))}
+            />
+            {overLimit && (
+              <p className="text-sm text-destructive" role="alert">
+                {overLimit}
+              </p>
+            )}
             {problem && (
               <p className="text-sm text-destructive" role="alert">
                 {problem}
               </p>
             )}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <div>
+              <div className="flex items-center gap-2">
                 {request.contactId && (
                   <Button type="button" variant="outline" size="sm" onClick={draftWithAi} disabled={drafting || sending}>
                     {drafting ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
                     Draft with AI
                   </Button>
                 )}
+                {ready?.attachmentsAvailable && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => fileInput.current?.click()}
+                      disabled={sending}
+                      aria-label="Attach files"
+                    >
+                      <Paperclip className="size-3.5" />
+                      Attach
+                    </Button>
+                    <input
+                      ref={fileInput}
+                      type="file"
+                      multiple
+                      hidden
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files ?? []);
+                        e.target.value = "";
+                        if (files.length) addFiles(files);
+                      }}
+                    />
+                  </>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {lowOnSends && capability?.ok && (
                   <span className="text-xs text-muted-foreground">{capability.remainingToday} left today</span>
                 )}
-                <Button type="button" size="sm" onClick={send} disabled={!canSend}>
-                  {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                  Send
-                </Button>
+                <ScheduleMenu disabled={!canSend} sending={sending} onSendNow={() => send()} onSchedule={(at) => send(at)} />
               </div>
             </div>
           </div>

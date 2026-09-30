@@ -10,9 +10,16 @@ import { toast } from "@/lib/toast";
  * it if the dispatcher hasn't claimed it yet. The toast lives exactly as long as the window,
  * and is not kept in the notification panel: an Undo offered after the mail left would lie.
  */
-export function showUndoSendToast(opts: { sendId: string; recipientLabel: string; onUndone?: () => void }) {
-  const id = toast.message(`Sending to ${opts.recipientLabel}…`, {
-    duration: UNDO_DELAY_MS,
+export function showUndoSendToast(opts: {
+  sendId: string;
+  recipientLabel: string;
+  onUndone?: () => void;
+  /** A scheduled send says when instead; its Undo stays offered a little longer. */
+  message?: string;
+  durationMs?: number;
+}) {
+  const id = toast.message(opts.message ?? `Sending to ${opts.recipientLabel}…`, {
+    duration: opts.durationMs ?? UNDO_DELAY_MS,
     keep: false,
     action: {
       label: "Undo",
