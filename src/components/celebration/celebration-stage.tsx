@@ -49,11 +49,14 @@ export function CelebrationStage({
   /** "ignite" when restarting mid-play for an even higher tier — the
    * anticipation was already spent on the first accretion. */
   startAt = "accrete",
+  handoffToAppLogo = true,
   onHandoff,
   onDone,
 }: {
   theme: TierTheme;
   startAt?: "accrete" | "ignite";
+  /** Local previews leave the account's actual plan ring untouched. */
+  handoffToAppLogo?: boolean;
   /** Fired when the mark starts flying home, while the veil still covers the
    * app — the caller uses it to refresh the shell so the mark lands on a
    * logo already wearing the new tier's ring. */
@@ -121,7 +124,9 @@ export function CelebrationStage({
     // their tier from now on. Reduced motion never flies anything across the
     // screen, and a stage that never reached the finale has no mark to send.
     const target =
-      reduced || phaseRef.current !== "rest" ? null : findAppLogoTarget();
+      !handoffToAppLogo || reduced || phaseRef.current !== "rest"
+        ? null
+        : findAppLogoTarget();
     if (target) {
       const l = layoutRef.current;
       setHandoff({
@@ -150,7 +155,7 @@ export function CelebrationStage({
       return;
     }
     timers.current.push(setTimeout(onDone, reduced ? REDUCED_MS : EXIT_MS));
-  }, [clearTimers, onDone, onHandoff, reduced]);
+  }, [clearTimers, handoffToAppLogo, onDone, onHandoff, reduced]);
 
   const skipToRest = useCallback(() => {
     if (phaseRef.current === "rest" || exitingRef.current) return;
@@ -297,7 +302,7 @@ export function CelebrationStage({
     [entered, exiting, reduced, theme.field.edge],
   );
 
-  const shaken = phase !== "accrete" && !skipped;
+  const shaken = phase !== "accrete" && !skipped && theme.signature !== "seal";
 
   return (
     <>
