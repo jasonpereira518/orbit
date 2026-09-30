@@ -21,10 +21,8 @@ import {
 } from "@/lib/graph/sky-bitmap-draw";
 import { cn } from "@/lib/utils";
 import {
-  RING_LABELS,
   type ClusterLabelData,
   type GraphNodeData,
-  type OrbitRingsData,
 } from "@/lib/graph-layout";
 import { withAlpha } from "@/lib/school-color";
 import {
@@ -63,68 +61,6 @@ function StarHandles() {
         className="!pointer-events-none !left-1/2 !top-1/2 !h-px !w-px !min-h-0 !min-w-0 !-translate-x-1/2 !-translate-y-1/2 !border-0 !bg-transparent !opacity-0"
       />
     </>
-  );
-}
-
-function OrbitRingsNodeComponent({
-  data,
-}: NodeProps & { data: OrbitRingsData }) {
-  const max = Math.max(...data.radii, 1);
-  const labels = [5, 4, 3, 2, 1] as const;
-
-  // Rings are pure background texture — faint dashes that give the sky some depth. They
-  // hold still: the slow spin they used to have was a standing compositor layer the size of
-  // the whole sky, re-rastered at every zoom step, for motion nobody could perceive.
-  return (
-    <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
-      <div
-        className="absolute"
-        style={{
-          left: -max,
-          top: -max,
-          width: max * 2,
-          height: max * 2,
-        }}
-      >
-        <svg
-          width={max * 2}
-          height={max * 2}
-          className="absolute inset-0 overflow-visible"
-          aria-hidden
-        >
-          {data.radii.map((r, i) => (
-            <circle
-              key={r}
-              cx={max}
-              cy={max}
-              r={r}
-              fill="none"
-              stroke="rgba(255,255,255,0.08)"
-              strokeWidth={1}
-              strokeDasharray={i % 2 === 0 ? "2 16" : "1 12"}
-              opacity={0.7}
-            />
-          ))}
-        </svg>
-      </div>
-      {data.showLabels &&
-        data.radii.map((r, i) => {
-          const score = labels[i];
-          return (
-            <span
-              key={`label-${r}`}
-              className="absolute whitespace-nowrap text-[9px] uppercase tracking-[0.16em] text-white/30"
-              style={{
-                left: 6,
-                top: -r - 6,
-                transform: "translateY(-50%)",
-              }}
-            >
-              {RING_LABELS[score]}
-            </span>
-          );
-        })}
-    </div>
   );
 }
 
@@ -1034,7 +970,6 @@ function LabeledEdgeComponent({
   );
 }
 
-export const OrbitRingsNode = memo(OrbitRingsNodeComponent);
 export const SunNode = memo(SunNodeComponent);
 export const ContactNode = memo(ContactNodeComponent);
 export const ClusterLabelNode = memo(ClusterLabelNodeComponent);

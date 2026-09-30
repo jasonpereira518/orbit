@@ -740,7 +740,10 @@ console.log("\nthe index the renderer draws from\n");
 
   check("every contact becomes a star", index.stars.length === 300);
   check("the sun is found", index.sun !== null && index.sun.x === 0 && index.sun.y === 0);
-  check("the rings survive", index.ringRadii.length > 0);
+  check(
+    "there are no orbit rings to draw",
+    !("ringRadii" in index) && !layout.nodes.some((n) => (n.type as string) === "orbitRings")
+  );
   check(
     "labels are ordered by orbit score, so the budget keeps the closest people",
     index.labelOrder.every((s, i, arr) => i === 0 || arr[i - 1].score >= s.score)

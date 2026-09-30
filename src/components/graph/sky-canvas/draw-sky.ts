@@ -126,22 +126,6 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
 
   const world = visibleWorldRect(camera, width, height);
 
-  // 3. Orbit rings — pure background texture.
-  if (index.ringRadii.length > 0) {
-    const origin = worldToScreen({ x: 0, y: 0 }, camera);
-    ctx.save();
-    ctx.strokeStyle = "rgba(255,255,255,0.08)";
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.7;
-    index.ringRadii.forEach((r, i) => {
-      ctx.setLineDash(i % 2 === 0 ? [2, 16] : [1, 12]);
-      ctx.beginPath();
-      ctx.arc(origin.x, origin.y, r * camera.k, 0, Math.PI * 2);
-      ctx.stroke();
-    });
-    ctx.restore();
-  }
-
   // 4. Nebulae. One blit each, no blur anywhere.
   for (const n of index.nebulae) {
     if (

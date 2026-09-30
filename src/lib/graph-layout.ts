@@ -25,10 +25,7 @@ import { hashUnitStream } from "@/lib/hash-stream";
 
 export { orderConstellationMembers };
 
-/** Decorative orbit rings — pure background texture, no meaning. */
-export const RING_RADII = [160, 260, 360, 470, 580] as const;
-
-/** Score 5 = closest to you (the sun) … Score 1 = furthest out */
+/** What each closeness score is called in the inspect panel. */
 export const RING_LABELS: Record<number, string> = {
   5: "Core orbit",
   4: "Inner orbit",
@@ -123,12 +120,6 @@ export type GraphNodeData = {
   entering?: boolean;
 };
 
-export type OrbitRingsData = {
-  kind: "rings";
-  radii: number[];
-  showLabels?: boolean;
-};
-
 export type ClusterLabelData = {
   kind: "clusterLabel";
   label: string;
@@ -164,8 +155,8 @@ export type NebulaData = {
 
 export type LayoutNode = {
   id: string;
-  type: "user" | "contact" | "orbitRings" | "clusterLabel" | "nebula";
-  data: GraphNodeData | OrbitRingsData | ClusterLabelData | NebulaData;
+  type: "user" | "contact" | "clusterLabel" | "nebula";
+  data: GraphNodeData | ClusterLabelData | NebulaData;
   position: { x: number; y: number };
   draggable?: boolean;
   selectable?: boolean;

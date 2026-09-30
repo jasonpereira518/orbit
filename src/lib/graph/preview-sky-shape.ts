@@ -27,8 +27,6 @@ export type PreviewSky = {
   lines: number[];
   /** The distinct looks the lines come in. */
   lineStyles: PreviewLineStyle[];
-  /** Orbit ring radii, drawn around the sun. */
-  rings: number[];
   count: number;
 };
 
@@ -52,14 +50,6 @@ export function expandPreviewSky(sky: PreviewSky): { nodes: LayoutNode[]; edges:
       data: { kind: "user", label: "", initials: "" },
     },
   ];
-  if (sky.rings.length > 0) {
-    nodes.push({
-      id: "rings",
-      type: "orbitRings",
-      position: { x: 0, y: 0 },
-      data: { kind: "rings", radii: sky.rings },
-    });
-  }
 
   for (let i = 0; i < sky.stars.length; i += STAR_FIELDS) {
     const [x, y, score, c, flags, angle] = sky.stars.slice(i, i + STAR_FIELDS);

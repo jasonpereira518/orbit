@@ -67,7 +67,6 @@ export type SkyIndex = {
   clusterLabels: ClusterLabelEntry[];
   edges: EdgeEntry[];
   sun: { x: number; y: number; data: GraphNodeData } | null;
-  ringRadii: number[];
   grid: SkyGrid;
   /** World bounding box of everything drawn, for the pan clamp. */
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
@@ -83,16 +82,11 @@ export function buildSkyIndex(layout: {
   const starsById = new Map<string, StarEntry>();
   const positions = new Map<string, { x: number; y: number }>();
   let sun: SkyIndex["sun"] = null;
-  let ringRadii: number[] = [];
 
   for (const node of layout.nodes) {
     const p = node.position;
     positions.set(node.id, p);
 
-    if (node.type === "orbitRings") {
-      ringRadii = [...(node.data as { radii: number[] }).radii];
-      continue;
-    }
     if (node.type === "user") {
       sun = { x: p.x, y: p.y, data: node.data as GraphNodeData };
       continue;
@@ -198,7 +192,6 @@ export function buildSkyIndex(layout: {
     clusterLabels,
     edges,
     sun,
-    ringRadii,
     grid: buildSkyGrid(targets),
     bounds: { minX, minY, maxX, maxY },
   };

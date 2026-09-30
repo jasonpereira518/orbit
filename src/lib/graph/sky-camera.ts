@@ -83,7 +83,6 @@ export function computeSunExtents(
 
   for (const n of liveNodes) {
     if (n.hidden) continue;
-    if (n.type === "orbitRings") continue;
     const halfW = Math.max(24, (n.measured?.width ?? 48) / 2);
     const halfH = Math.max(24, (n.measured?.height ?? 48) / 2);
     if (n.type === "nebula") {
