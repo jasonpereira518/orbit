@@ -50,6 +50,7 @@ export async function sendComposedEmail(input: Omit<ComposeInput, "fromName">): 
     body: typeof input?.body === "string" ? input.body : "",
     contactId: typeof input?.contactId === "string" ? input.contactId : null,
     fromName: profile?.name?.trim() || null,
+    provider: input?.provider === "gmail" || input?.provider === "outlook" ? input.provider : undefined,
   });
   if (result.ok) scheduleDispatch(result.sendId, new Date(result.sendAt));
   return result;

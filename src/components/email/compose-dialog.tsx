@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { draftComposeWithAi, getComposeContextAction, sendComposedEmail } from "@/actions/email-compose";
 import { ConnectMailboxButton } from "@/components/email/connect-mailbox-button";
+import { MailboxSelect } from "@/components/email/mailbox-select";
 import { RecipientField } from "@/components/email/recipient-field";
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { clearComposeDraft, composeDraftKey, readComposeDraft, writeComposeDraft } from "@/lib/compose-draft";
 import type { ComposeRequest } from "@/lib/compose-events";
 import type { ComposeContext, ComposeRecipient } from "@/lib/email/compose";
+import type { MailboxId } from "@/lib/email/sender";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 
@@ -97,6 +99,9 @@ export function ComposeDialog({
     [contact]
   );
 
+  const sendable = capability?.ok ? capability.mailboxes.filter((m) => m.canSend) : [];
+  // The mailbox this send leaves from: the person's pick, else whatever resolved by default.
+  const [fromProvider, setFromProvider] = useState<MailboxId | null>(null);
   const canSend = Boolean(capability?.ok) && to.length > 0 && body.trim().length > 0 && !sending;
 
   function draftWithAi() {
@@ -118,7 +123,12 @@ export function ComposeDialog({
     const snapshot = { to, cc, bcc, subject, body };
     startSend(async () => {
       try {
-        const res = await sendComposedEmail({ ...snapshot, contactId: request.contactId });
+        const res = await sendComposedEmail({
+          ...snapshot,
+          contactId: request.contactId,
+          // Only an explicit pick is sent; otherwise the server resolves the default itself.
+          provider: fromProvider ?? undefined,
+        });
         if (!res.ok) {
           setProblem(res.message);
           return;
@@ -166,10 +176,17 @@ export function ComposeDialog({
           <div className="flex min-w-0 flex-col gap-2 text-sm">
             <div className="flex min-h-9 items-center gap-2 border-b border-border/60 py-1.5">
               <span className="w-10 shrink-0 text-xs font-medium text-muted-foreground">From</span>
-              {capability?.ok ? (
+              {capability?.ok && sendable.length > 1 ? (
+                <MailboxSelect mailboxes={capability.mailboxes} value={fromProvider ?? sendable[0]!.id} onChange={setFromProvider} disabled={sending} />
+              ) : capability?.ok ? (
                 <span className="min-w-0 truncate font-medium">{capability.fromEmail}</span>
               ) : capability && capability.reason !== "cap_reached" ? (
-                <ConnectMailboxButton reason={capability.reason} returnTo={pathname || "/contacts"} />
+                <ConnectMailboxButton
+                  reason={capability.reason}
+                  provider={capability.provider}
+                  outlookAvailable={capability.outlookAvailable}
+                  returnTo={pathname || "/contacts"}
+                />
               ) : (
                 <span className="text-muted-foreground">You’ve reached today’s email limit</span>
               )}

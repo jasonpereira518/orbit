@@ -24,6 +24,8 @@ import { dispatchEmailSend } from "../src/lib/email/outbox";
 import { setProviderOverride } from "../src/lib/email/providers";
 import type { MailProvider, OutboundMessage } from "../src/lib/email/providers/types";
 import { saveEmailSignature } from "../src/lib/email/settings";
+import { setOutlookSendOverride } from "../src/lib/email/sender";
+import { MICROSOFT_SCOPES } from "../src/lib/microsoft-scopes";
 import { purgeUserData } from "../src/lib/user-data";
 
 const USER = "smoke-email-compose-user";
@@ -136,6 +138,29 @@ async function main() {
     const after = await db.query.contacts.findFirst({ where: eq(schema.contacts.id, maya!.id) });
     check("emailing someone answers their due follow-up", after?.followUpStatus === "none");
 
+    console.log("choosing the mailbox");
+    setOutlookSendOverride(true);
+    setProviderOverride("outlook", { ...fake, id: "outlook" });
+    await db.insert(schema.outlookConnections).values({
+      userId: USER,
+      emailAddress: "me@contoso.io",
+      accessTokenEncrypted: encrypt("t"),
+      refreshTokenEncrypted: encrypt("r"),
+      tokenExpiresAt: new Date(Date.now() + 3_600_000),
+      scopes: MICROSOFT_SCOPES.contacts,
+      status: "active",
+    });
+    await resetBucket();
+    const noSend = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Via Outlook", body: "Hi", contactId: maya!.id, fromName: null, provider: "outlook" });
+    check("choosing Outlook without Mail.Send is refused, not sent from Gmail", !noSend.ok && noSend.reason === "not_connected", JSON.stringify(noSend));
+    await db.update(schema.outlookConnections).set({ scopes: MICROSOFT_SCOPES.mailSend }).where(eq(schema.outlookConnections.userId, USER));
+    const viaOutlook = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Via Outlook", body: "Hi", contactId: maya!.id, fromName: null, provider: "outlook" });
+    const outlookRow = viaOutlook.ok ? await db.query.emailSends.findFirst({ where: eq(schema.emailSends.id, viaOutlook.sendId) }) : null;
+    check("choosing Outlook queues from Outlook", outlookRow?.provider === "outlook" && outlookRow.fromEmail === "me@contoso.io", JSON.stringify(viaOutlook));
+    if (viaOutlook.ok) await db.update(schema.emailSends).set({ status: "canceled" }).where(eq(schema.emailSends.id, viaOutlook.sendId));
+    setOutlookSendOverride(null);
+    setProviderOverride("outlook", null);
+
     console.log("pending on the contact page");
     await resetBucket();
     const q = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Queued one", body: "Later", contactId: maya!.id, fromName: null });
@@ -164,6 +189,8 @@ async function main() {
     check("dismissed rows leave the list", !(await listContactPendingSends(USER, maya!.id)).some((p) => p.id === retried.sendId));
   } finally {
     setProviderOverride("gmail", null);
+    setProviderOverride("outlook", null);
+    setOutlookSendOverride(null);
     await resetBucket();
     for (const u of [USER, OTHER]) await purgeUserData(u, { keepSettings: false }).catch(() => {});
   }

@@ -152,7 +152,11 @@ async function main() {
   await reset();
   const ctxBefore = await getChatSendContext(msg!.id, contact!.id);
   check("the confirm dialog gets the contact's address, not one it was given", ctxBefore?.to === "ben@acme-corp.io" && ctxBefore.recipientProblem === null);
-  check("and knows the connected account", ctxBefore?.identity.sendingAs === "me@gmail-mail.io" && ctxBefore.identity.canSend === true, JSON.stringify(ctxBefore));
+  check(
+    "and knows the sending mailbox, with nothing blocking",
+    ctxBefore?.identity.sendingAs === "me@gmail-mail.io" && ctxBefore.identity.canSend === true && ctxBefore.identity.block === null,
+    JSON.stringify(ctxBefore?.identity)
+  );
   check("a contact the message did not recommend gets no dialog", (await getChatSendContext(msg!.id, other!.id)) === null);
   check("a foreign message gets no dialog", (await getChatSendContext(foreignMsg!.id, contact!.id)) === null);
 
@@ -282,6 +286,8 @@ async function main() {
   check("a connection that needs reconnecting is reported as such", !stale.ok && stale.reason === "needs_reconnect" && sends.length === 0);
   await db.update(gmailConnections).set({ status: "active" }).where(eq(gmailConnections.userId, USER));
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, USER));
+  const blockedCtx = await getChatSendContext(msg!.id, contact!.id);
+  check("with no mailbox the dialog is told why, and which to connect", blockedCtx?.identity.block?.reason === "not_connected" && blockedCtx.identity.canSend === false, JSON.stringify(blockedCtx?.identity));
   const notConn = await send();
   check("no Gmail at all is reported as not connected", !notConn.ok && notConn.reason === "not_connected" && sends.length === 0);
   await db.insert(gmailConnections).values({

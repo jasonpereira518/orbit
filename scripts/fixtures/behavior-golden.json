@@ -5301,7 +5301,9 @@
     "email": "sarah.chen@example.com",
     "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
     "canSendEmail": false,
-    "sendBlock": "not_connected"
+    "sendBlock": "not_connected",
+    "sendBlockProvider": null,
+    "outlookAvailable": false
   },
   "action: listRecentMerges": [],
   "action: getSettings": {
