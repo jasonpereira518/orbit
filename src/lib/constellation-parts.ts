@@ -41,6 +41,8 @@ export const FUNCTION_LABELS: Record<RoleFunction, string> = {
 export const PETAL_MIN_MEMBERS = 8;
 /** …at least two function groups of this many, to be worth splitting. */
 export const PETAL_MIN_GROUP = 2;
+/** …and at least this many named functions (not counting "Other") to split at all. */
+export const PETAL_MIN_NAMED = 2;
 
 const codepoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -87,7 +89,10 @@ function planCompany(ordered: PlanInput[]): PartPlan[] | null {
   }
 
   const petals = [...groups].filter(([, ids]) => ids.length >= PETAL_MIN_GROUP);
-  if (petals.length < 2) return null;
+  // "Other" is where blank and unrecognised titles land, so it can be the biggest group in a
+  // company whose titles are mostly empty. It rides along once a company really has functions,
+  // but it never makes a company split by itself.
+  if (petals.filter(([fn]) => fn !== "other").length < PETAL_MIN_NAMED) return null;
   petals.sort((a, b) => b[1].length - a[1].length || codepoint(a[0], b[0]));
 
   const parts: PartPlan[] = [];
