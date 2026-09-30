@@ -36,10 +36,8 @@ export type DiskOptions = {
   iterations?: number;
 };
 
-export const DISK_ITERATIONS = 90;
+export const DISK_ITERATIONS = 20;
 const YIELD_EVERY = 10;
-/** Relaxation steps run without gravity, after the main ones. */
-const POLISH = 120;
 /** Fraction of a link's slack closed per step (each end moves half). */
 const ATTRACT = 0.3;
 /** Each end of an overlapping pair moves this fraction of the overlap. */
@@ -48,14 +46,13 @@ const REPEL = 0.5;
 const GRAVITY = 0.015;
 /** Strongest partners seated straight after a cluster, while its surroundings are free. */
 const SEED_PARTNERS = 3;
-/**
- * Legalize keeps a relaxed spot that overlaps by no more than this. Repulsion closes an overlap
- * geometrically and never quite reaches zero, and moving a cluster for a sliver would tear it
- * from its relatives.
- */
-const LEGAL_TOLERANCE = 0.05;
 const MAX_STEP = 80;
 const SEARCH_STEP = 24;
+/** A disk's search rings are also at least this fraction of its footprint apart. */
+const SEARCH_STEP_FOOT = 0.3;
+/** Seed and legalize yield after this many clusters. */
+const SEED_YIELD_EVERY = 20;
+const LEGALIZE_YIELD_EVERY = 20;
 const SEARCH_ANGLES = 24;
 const SEARCH_RINGS = 600;
 
@@ -93,13 +90,17 @@ class DiskGrid {
 
   private stamp = new Int32Array(0);
   private epoch = 0;
+  /** Reused by every query: the result is only valid until the next call. */
+  private readonly out: number[] = [];
 
-  /** Every disk whose box could overlap the query circle (a superset of the true overlaps). */
+  /** Every disk whose box could overlap the query circle (a superset of the true overlaps).
+   * The returned array is shared and overwritten by the next call. */
   near(x: number, y: number, r: number): number[] {
     // A stamp per disk instead of a Set: this runs for every candidate spot of every search.
     if (this.stamp.length < this.count) this.stamp = new Int32Array(this.count * 2);
     const epoch = ++this.epoch;
-    const out: number[] = [];
+    const out = this.out;
+    out.length = 0;
     const x0 = Math.floor((x - r) / this.cell);
     const x1 = Math.floor((x + r) / this.cell);
     const y0 = Math.floor((y - r) / this.cell);
@@ -161,10 +162,10 @@ export function* placeClusterDisks(
   };
 
   /** Free of the sun's clear zone and of every disk in the grid. */
-  const free = (x: number, y: number, r: number, tol = 0) => {
-    if (Math.hypot(x, y) < sunClear + r - tol) return false;
+  const free = (x: number, y: number, r: number) => {
+    if (Math.hypot(x, y) < sunClear + r) return false;
     for (const j of grid.near(x, y, r + gap)) {
-      if (Math.hypot(x - xs[j], y - ys[j]) < foot[j] + r + gap - tol) return false;
+      if (Math.hypot(x - xs[j], y - ys[j]) < foot[j] + r + gap) return false;
     }
     return true;
   };
@@ -176,8 +177,9 @@ export function* placeClusterDisks(
   const findSpot = (i: number, bx: number, by: number, minDist: number) => {
     const r = foot[i];
     const start = hashUnit(order[i].id, 21) * Math.PI * 2;
+    const step = Math.max(SEARCH_STEP, r * SEARCH_STEP_FOOT);
     for (let ring = 0; ring < SEARCH_RINGS; ring++) {
-      const d = minDist + ring * SEARCH_STEP;
+      const d = minDist + ring * step;
       let best: { x: number; y: number; dist: number } | null = null;
       for (let k = 0; k < SEARCH_ANGLES; k++) {
         const t = start + (k / SEARCH_ANGLES) * Math.PI * 2;
@@ -196,6 +198,10 @@ export function* placeClusterDisks(
   // next unrelated cluster: in size order alone, a big cluster's surroundings fill with
   // strangers and its one small relative lands a ring away.
   const placedFlag = new Array<boolean>(n).fill(false);
+  // How far out the last unattached cluster had to go: the next one starts its search near
+  // there instead of walking every ring from the sun again. Sparse holes it skips stay empty.
+  let frontier = 0;
+  let seated = 0;
   const seat = (i: number) => {
     let anchor = -1;
     let anchorW = 0;
@@ -208,7 +214,8 @@ export function* placeClusterDisks(
     const spot =
       anchor >= 0
         ? findSpot(i, xs[anchor], ys[anchor], foot[anchor] + foot[i] + gap)
-        : findSpot(i, 0, 0, sunClear + foot[i]);
+        : findSpot(i, 0, 0, Math.max(sunClear + foot[i], frontier - 2 * (foot[i] + gap)));
+    if (anchor < 0) frontier = Math.max(frontier, spot.dist);
     place(i, spot.x, spot.y);
     placedFlag[i] = true;
   };
@@ -220,15 +227,14 @@ export function* placeClusterDisks(
       .sort((p, q) => q.w - p.w || p.j - q.j)
       .slice(0, SEED_PARTNERS);
     for (const { j } of partners) if (!placedFlag[j]) seat(j);
+    if (seated++ % SEED_YIELD_EVERY === SEED_YIELD_EVERY - 1) yield;
   }
   yield;
 
   // 2. Relax.
   const dx = new Float64Array(n);
   const dy = new Float64Array(n);
-  // The last POLISH steps drop the pull toward the sun, so overlaps the crowding caused settle
-  // out instead of surviving into legalize (which would move a cluster away from its relatives).
-  for (let step = 0; step < iterations + POLISH; step++) {
+  for (let step = 0; step < iterations; step++) {
     grid.clear();
     for (let i = 0; i < n; i++) grid.add(i, xs[i], ys[i], foot[i]);
     dx.fill(0);
@@ -248,7 +254,7 @@ export function* placeClusterDisks(
         }
       }
       const r = Math.hypot(xi, yi);
-      if (step < iterations && r > 1e-6) {
+      if (r > 1e-6) {
         const g = GRAVITY * Math.sqrt(size[i] / maxSize) * r;
         dx[i] -= (xi / r) * g;
         dy[i] -= (yi / r) * g;
@@ -294,16 +300,45 @@ export function* placeClusterDisks(
     if (step % YIELD_EVERY === YIELD_EVERY - 1) yield;
   }
 
-  // 3. Legalize.
+  // 3. Legalize. Same order as the seed: a cluster's closest relatives are settled right after
+  // it, while the sky beside it is still open.
   grid.clear();
   extent = 0;
-  for (let i = 0; i < n; i++) {
-    if (free(xs[i], ys[i], foot[i], LEGAL_TOLERANCE)) {
+  placedFlag.fill(false);
+  const settle = (i: number) => {
+    placedFlag[i] = true;
+    if (free(xs[i], ys[i], foot[i])) {
       place(i, xs[i], ys[i]);
-    } else {
-      const spot = findSpot(i, xs[i], ys[i], 0);
-      place(i, spot.x, spot.y);
+      return;
     }
+    // Nearest free spot to where relaxing left it — unless a relative is already settled and
+    // a spot tangent to it is closer to it than this one is.
+    let spot = findSpot(i, xs[i], ys[i], 0);
+    let kin = -1;
+    let kinW = 0;
+    for (const { j, w } of links[i]) {
+      if (placedFlag[j] && j !== i && (w > kinW || (w === kinW && j < kin))) {
+        kin = j;
+        kinW = w;
+      }
+    }
+    if (kin >= 0) {
+      const tangent = findSpot(i, xs[kin], ys[kin], foot[kin] + foot[i] + gap);
+      const away = (p: { x: number; y: number }) => Math.hypot(p.x - xs[kin], p.y - ys[kin]);
+      if (away(tangent) < away(spot)) spot = tangent;
+    }
+    place(i, spot.x, spot.y);
+  };
+  let settled = 0;
+  for (let i = 0; i < n; i++) {
+    if (placedFlag[i]) continue;
+    settle(i);
+    const partners = links[i]
+      .filter(({ j }) => !placedFlag[j])
+      .sort((p, q) => q.w - p.w || p.j - q.j)
+      .slice(0, SEED_PARTNERS);
+    for (const { j } of partners) if (!placedFlag[j]) settle(j);
+    if (settled++ % LEGALIZE_YIELD_EVERY === LEGALIZE_YIELD_EVERY - 1) yield;
   }
 
   let diskRadius = 0;
