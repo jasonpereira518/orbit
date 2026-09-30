@@ -119,6 +119,35 @@ console.log("\nThe biggest cluster anchors the middle");
   check(`its near edge is close to the sun (${reach.toFixed(0)} ≤ ${OPTS.sunClear + 2 * OPTS.gap})`, reach <= OPTS.sunClear + 2 * OPTS.gap);
 }
 
+console.log("\nA small galaxy stays tight");
+{
+  // 40 disks, footprints 90-330, size proportional to footprint, a ring of family links among the
+  // 8 smallest. The shape of the result, not its exact coordinates: how much of the galaxy's disk
+  // the footprints fill (loose = the relax step and the legalize search are not pulling inward),
+  // and whether the biggest disk anchors the middle.
+  // Measured with the current constants: density 0.352, biggest disk's near edge 251 px from the
+  // sun (its ring, seed "g"). Other seeds of the same shape give density 0.26-0.38.
+  const inputs: DiskInput[] = Array.from({ length: 40 }, (_, i) => {
+    const foot = 90 + Math.round(hashUnit(`g${i}`, 1) * 240);
+    return { id: `g${i}`, foot, size: foot };
+  });
+  const smallest = [...inputs].sort((a, b) => a.foot - b.foot).slice(0, 8);
+  const ring: AffinityEdge[] = smallest.map((d, i) => ({
+    a: d.id,
+    b: smallest[(i + 1) % smallest.length].id,
+    weight: 1,
+    kind: "family" as const,
+  }));
+  const { placement } = run(inputs, ring);
+  const density = inputs.reduce((s, d) => s + d.foot * d.foot, 0) / (placement.diskRadius * placement.diskRadius);
+  check(`the footprints fill the disk (density ${density.toFixed(3)} >= 0.30)`, density >= 0.3);
+  const biggest = inputs.reduce((a, b) => (b.foot > a.foot ? b : a));
+  const c = placement.centers.get(biggest.id)!;
+  const edge = Math.hypot(c.x, c.y) - biggest.foot;
+  const limit = OPTS.sunClear + 3 * OPTS.gap;
+  check(`the biggest disk's near edge is within the sun's clear zone + 3 gaps (${edge.toFixed(0)} <= ${limit})`, edge <= limit);
+}
+
 console.log("\nA hub of strong non-family links");
 {
   // 60 alumni ties, each heavier than a family link, on one cluster. Only family links skip the
