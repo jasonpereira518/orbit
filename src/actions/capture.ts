@@ -33,6 +33,7 @@ import { getDb } from "@/db";
 import { resolveAvatarNow } from "@/lib/avatar-backfill";
 import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
 import {
   saveNoteBatch,
   type MeetingExtraReminderInput,
@@ -271,6 +272,7 @@ export async function confirmBulkCapture(
   // smoke suite); this is the request scope, so schedule them here.
   after(async () => {
     await kickEmbeddingBackfill(userId).catch(() => null);
+    await kickWorkHistoryResearch(userId, linkedInCaptureContactIds(items, out.contactIds));
     for (const id of out.contactIds) {
       await generateAndStoreContactBrief(userId, id).catch(() => null);
     }

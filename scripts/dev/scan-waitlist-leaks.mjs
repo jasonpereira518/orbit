@@ -9,7 +9,7 @@
  * WAITLIST_HOST set) — dev bundles carry source paths and comments that production strips.
  *
  *   node scripts/dev/scan-waitlist-leaks.mjs http://waitlist.localhost:3100 --connect 127.0.0.1 [--app-host orbit.example]
- *   node scripts/dev/scan-waitlist-leaks.mjs https://your-waitlist-domain --app-host orbit.jasonpereira.live
+ *   node scripts/dev/scan-waitlist-leaks.mjs https://your-waitlist-domain --app-host myorbitnetwork.com
  *
  * Findings come in two grades:
  *   LEAK    — visible text, HTML, metadata or response headers. Must be zero.

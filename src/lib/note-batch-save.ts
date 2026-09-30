@@ -37,6 +37,7 @@ import {
 } from "@/lib/contact-opportunities";
 import type { ExtractedOpportunity } from "@/lib/opportunity-extract";
 import { syncMemoryChunkMentions } from "@/lib/memory-chunks";
+import { enrichmentKeyFacts, takeawaysToSummary } from "@/lib/capture/person-enrichment";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
@@ -45,6 +46,13 @@ import { deleteCapturePhotosForBatch } from "@/lib/capture-photos";
 
 export type NoteBatchParticipantInput = {
   notes: string;
+  /**
+   * The note this person came from, when the batch folds several (a combined upload). Keys
+   * their interaction, so the same contact in two notes gets both conversations; and a
+   * later card for a name an earlier card in this batch just created saves into that
+   * contact rather than creating a second one.
+   */
+  sourceHash?: string;
   parsed: ParsedNote;
   mergeContactId?: string | null;
   createReminder: boolean;
@@ -210,6 +218,11 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     for (const p of input.participants) {
       const { parsed } = p;
       let contactId = p.mergeContactId || null;
+      // A combined upload has one card per note, so the same new person can arrive twice.
+      // The first card creates them; a later one with the same name joins that contact.
+      if (!contactId && p.sourceHash && parsed.name) {
+        contactId = contactIdByName.get(parsed.name.trim().toLowerCase()) ?? null;
+      }
       let wasCreated = false;
       // Spec §3: a capture that asks for a reminder also moves the contact's own
       // follow-up stamp, on create AND on merge — the profile's "next follow-up" and
@@ -217,15 +230,24 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       const followUpDate = p.createReminder
         ? windowDueDate(anchor, p.followUpDays || p.parsed.follow_up_days || DEFAULT_FOLLOW_UP_WINDOW_DAYS)
         : null;
+      // Takeaways are what the card shows and edits; `summary` is the fallback for a job
+      // parsed before they existed.
+      const aiSummary = takeawaysToSummary(parsed.takeaways ?? []) || parsed.summary || undefined;
+      const keyFacts = [...parsed.key_facts, ...enrichmentKeyFacts(parsed)];
       const fields = {
         company: parsed.company || undefined,
         title: parsed.role || undefined,
         location: parsed.location || undefined,
         email: parsed.email || undefined,
         linkedinUrl: parsed.linkedin_url || undefined,
+        phone: parsed.phone || undefined,
+        xHandle: parsed.x_handle || undefined,
+        website: parsed.website || undefined,
+        school: parsed.school || undefined,
+        industry: parsed.industry || undefined,
         howMet: parsed.met_at || undefined,
-        aiSummary: parsed.summary || undefined,
-        keyFacts: parsed.key_facts,
+        aiSummary,
+        keyFacts,
         sharedInterests: parsed.shared_interests,
         // `opportunities` is deliberately NOT written here any more.
         //
@@ -256,13 +278,40 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         // Tags are ADDED to the contact's own, never a replacement list: `updateContactForUser`
         // sets the full list, and the note's tags alone would delete the rest (an empty list
         // deleted them all).
-        const { tagNames, ...rest } = fields;
+        const { tagNames, phone, xHandle, website, school, industry, keyFacts: noteFacts, ...rest } = fields;
+        // Handles fill gaps and never overwrite: a phone the person typed on the contact
+        // outranks one a note happened to mention. Key facts accumulate — writing the note's
+        // list outright would delete everything earlier notes taught Orbit about them.
+        const [current] = await db
+          .select({
+            phone: contacts.phone,
+            xHandle: contacts.xHandle,
+            website: contacts.website,
+            school: contacts.school,
+            industry: contacts.industry,
+            keyFacts: contacts.keyFacts,
+          })
+          .from(contacts)
+          .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)))
+          .limit(1);
+        const gaps = {
+          ...(phone && !current?.phone ? { phone } : {}),
+          ...(xHandle && !current?.xHandle ? { xHandle } : {}),
+          ...(website && !current?.website ? { website } : {}),
+          ...(school && !current?.school ? { school } : {}),
+          ...(industry && !current?.industry ? { industry } : {}),
+        };
+        const priorFacts = current?.keyFacts ?? [];
+        const priorKeys = new Set(priorFacts.map((f) => f.trim().toLowerCase()));
+        const addedFacts = noteFacts.filter((f) => !priorKeys.has(f.trim().toLowerCase()));
         await updateContactForUser(
           userId,
           contactId,
           {
             fullName: parsed.name || undefined,
             ...rest,
+            ...gaps,
+            ...(addedFacts.length ? { keyFacts: [...priorFacts, ...addedFacts] } : {}),
             ...(tagNames?.length ? { tagNames: await withExistingTagNames(userId, contactId, tagNames) } : {}),
           },
           WRITE_OPTS
@@ -288,13 +337,13 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         {
           contactId,
           rawNotes: p.notes,
-          aiSummary: parsed.summary || undefined,
+          aiSummary,
           topics: parsed.topics,
           actionItems: parsed.action_items,
           interactionType: p.interactionType || "meeting_note",
           source: "capture",
           interactionDate,
-          externalId: noteInteractionExternalId(input.sourceHash, contactId),
+          externalId: noteInteractionExternalId(p.sourceHash ?? input.sourceHash, contactId),
           noteBatchId: batchId,
         },
         WRITE_OPTS

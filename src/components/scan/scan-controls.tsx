@@ -106,6 +106,7 @@ export function ScanControls({
   disabled = false,
   onRawFiles,
   onPages,
+  onFiles,
   onTranscript,
   compact = false,
 }: {
@@ -121,6 +122,14 @@ export function ScanControls({
   onRawFiles: (files: File[]) => void;
   /** Images and PDF pages, already downscaled and re-encoded to JPEG. */
   onPages: (pages: ScanPage[]) => void;
+  /**
+   * Every picked or pasted set of files, untouched — for a host that decides for itself
+   * what happens next (Messy Notes sorts two or more into notes, and checks a single file
+   * against what was already captured, before anything is read). Absent, files go through
+   * `onRawFiles`/`onPages`. The webcam's pages always go to `onPages`: they are photographs
+   * taken just now, so there is nothing to sort and nothing that could have been read before.
+   */
+  onFiles?: (files: File[]) => void;
   /** The phone handoff returns text the server already transcribed, and the job it sits on. */
   onTranscript: (text: string, sources: string[], captureJobId?: string) => void;
 }) {
@@ -132,6 +141,10 @@ export function ScanControls({
   const acceptFiles = useCallback(
     async (files: File[]) => {
       if (!files.length) return;
+      if (onFiles) {
+        onFiles(files);
+        return;
+      }
       setNormalizing(true);
       try {
         const { pages, raw } = await sortAndNormalizeScanFiles(files);
@@ -142,7 +155,7 @@ export function ScanControls({
         setNormalizing(false);
       }
     },
-    [onPages, onRawFiles]
+    [onFiles, onPages, onRawFiles]
   );
 
   // Paste a screenshot straight in. A screenshot of a conference badge or a LinkedIn

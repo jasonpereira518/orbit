@@ -70,8 +70,13 @@ function stubUploader(answer: (label: string, call: number) => Awaited<ReturnTyp
 async function mount(uploader: FanoutUploader) {
   let latest!: ReturnType<typeof useCaptureFanout>;
   const settled: string[][] = [];
+  // Stubbed always: the real one is a server action, and a smoke has no session to call it in.
+  const discarded: string[] = [];
+  const discarder = async (jobId: string) => {
+    discarded.push(jobId);
+  };
   function Harness() {
-    latest = useCaptureFanout({ uploader, onSettled: (ids) => settled.push(ids) });
+    latest = useCaptureFanout({ uploader, discarder, onSettled: (ids) => settled.push(ids) });
     return null;
   }
   const root = createRoot(fakeContainer());
@@ -87,7 +92,7 @@ async function mount(uploader: FanoutUploader) {
     root.unmount();
     await sleep(0);
   };
-  return { hook: () => latest, settled, start, wait: sleep, unmount };
+  return { hook: () => latest, settled, discarded, start, wait: sleep, unmount };
 }
 
 async function main() {
@@ -121,7 +126,40 @@ async function main() {
     await h.unmount();
   }
 
-  console.log("\nStop leaves in-flight uploads to land");
+  // Stop used to let the two in-flight uploads land as `queued`. Under `autoQueue` that
+  // meant both were then READ — a cancelled note turning up for review anyway — so now each
+  // is discarded the moment its job id comes back, and shows as skipped like the rest.
+  console.log("\nStop discards what was already in flight, once its id lands");
+  {
+    const stub = stubUploader((label) => ({ ok: true, jobId: `job-${label}` }));
+    const h = await mount(stub.uploader);
+    await h.start(["a", "b", "c", "d"]);
+    // Stop only once both slots are really uploading: pressed before the pump has run, Stop
+    // starts nothing at all, which is the next case, not this one.
+    const inFlightBy = Date.now() + 1_000;
+    while (stub.calls.size < 2 && Date.now() < inFlightBy) await h.wait(1);
+    check("two uploads are in flight before Stop", stub.calls.size === 2, String(stub.calls.size));
+    h.hook().cancelPending();
+    check("nothing is discarded before the ids exist", h.discarded.length === 0, JSON.stringify(h.discarded));
+    await h.wait(200);
+    const statuses = h.hook().entries.map((e) => `${e.label}=${e.status}`).join(" ");
+    check("every note reads as skipped", statuses === "a=skipped b=skipped c=skipped d=skipped", statuses);
+    check(
+      "the two in flight at Stop were discarded as their ids landed",
+      JSON.stringify([...h.discarded].sort()) === JSON.stringify(["job-a", "job-b"]),
+      JSON.stringify(h.discarded)
+    );
+    check("nothing new started after Stop", stub.calls.size === 2, String(stub.calls.size));
+    check("running is false", !h.hook().running);
+    check("onSettled did not fire for a cancelled run", h.settled.length === 0, String(h.settled.length));
+    await h.unmount();
+  }
+
+  // The race this used to lose: Stop pressed after `start` has rendered but before the pump's
+  // effect has run. That effect still saw `running` true and started two uploads, which then
+  // landed as `queued` with their jobs kept. Whichever of Stop and the pump comes first here,
+  // nothing may land and every job that was made must be discarded.
+  console.log("\nStop right after start leaves nothing behind, whoever gets there first");
   {
     const stub = stubUploader((label) => ({ ok: true, jobId: `job-${label}` }));
     const h = await mount(stub.uploader);
@@ -129,9 +167,38 @@ async function main() {
     h.hook().cancelPending();
     await h.wait(200);
     const statuses = h.hook().entries.map((e) => `${e.label}=${e.status}`).join(" ");
-    check("the two in flight at Stop are queued", statuses === "a=queued b=queued c=skipped d=skipped", statuses);
-    check("nothing new started after Stop", stub.calls.size === 2, String(stub.calls.size));
+    check("every note reads as skipped", statuses === "a=skipped b=skipped c=skipped d=skipped", statuses);
+    const made = [...stub.calls.keys()].map((label) => `job-${label}`).sort();
+    check(
+      "every job that was made is discarded",
+      JSON.stringify([...h.discarded].sort()) === JSON.stringify(made),
+      `made ${JSON.stringify(made)}, discarded ${JSON.stringify(h.discarded)}`
+    );
+    check("at most the first two ever started", stub.calls.size <= 2, String(stub.calls.size));
     check("running is false", !h.hook().running);
+    check("onSettled did not fire", h.settled.length === 0, String(h.settled.length));
+    await h.unmount();
+  }
+
+  console.log("\neach note's file hashes reach its upload");
+  {
+    const seen = new Map<string, string[] | undefined>();
+    const uploader: FanoutUploader = async ({ label, fileHashes }) => {
+      seen.set(label, fileHashes);
+      return { ok: true, jobId: `job-${label}` };
+    };
+    const h = await mount(uploader);
+    const file = new File(["x"], "note.md");
+    h.hook().start(
+      [
+        { label: "one", fileIds: ["f"], bytes: 1, anchorIso: null, fileHashes: ["h1"] } as PlannedUpload,
+        { label: "two", fileIds: ["f", "g"], bytes: 2, anchorIso: null, fileHashes: ["h2", "h3"] } as PlannedUpload,
+      ],
+      () => file
+    );
+    await h.wait(100);
+    check("the first note carries its hash", JSON.stringify(seen.get("one")) === JSON.stringify(["h1"]), JSON.stringify(seen.get("one")));
+    check("the second carries both of its own", JSON.stringify(seen.get("two")) === JSON.stringify(["h2", "h3"]), JSON.stringify(seen.get("two")));
     await h.unmount();
   }
 

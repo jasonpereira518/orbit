@@ -11,7 +11,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-capture-jobs";
 
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { captureJobs, contactOpportunities, contacts, ignoredPeople, noteBatches, reminders, userSettings } from "../src/db/schema";
+import { captureJobs, contactOpportunities, contacts, ignoredPeople, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
 import {
   CAPTURE_CLAIM_STALE_MS,
   claimCaptureJob,
@@ -22,9 +22,17 @@ import {
   recordCaptureDecisionRow,
   queueCaptureJobRow,
   appendIngestedBlocks,
+  appendSourceFileHashes,
+  createCaptureJobWithId,
+  findCapturedFileRows,
+  findJobBySourceHash,
+  heartbeatCaptureJob,
   markCaptureJobTranscribed,
   captureJobLooksStuck,
+  settleCaptureJob,
+  mergeCaptureBatchRows,
 } from "../src/lib/capture-jobs";
+import { randomUUID } from "node:crypto";
 import { assembleCaptureCorpus, runCaptureJobById } from "../src/lib/capture-job-runner";
 import type { CaptureParseResult } from "../src/lib/capture/types";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
@@ -247,6 +255,151 @@ async function main() {
   check("a discarded job cannot be discarded twice", !(await discardCaptureJobRow(USER, broken.id)));
   await discardCaptureJobRow(USER, media.id);
   check("nothing active remains", (await findActiveCaptureJob(USER)) === null);
+
+  console.log("\nStop: a discarded job stays discarded…");
+  {
+    // Stop mid-parse. The runner's next heartbeat finds the claim gone and it stops there:
+    // no second model pass, no outcome written.
+    const stopped = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "A note stopped mid-read." });
+    let passes = 0;
+    const settledRow = await runCaptureJobById(stopped.id, {
+      parse: async (_u, corpus, _h, opts) => {
+        passes += 1; // pass one
+        await discardCaptureJobRow(USER, stopped.id); // the person presses Stop
+        await opts?.onProgress?.(); // the heartbeat after pass one — parks from here
+        passes += 1; // pass two: must never run
+        return fakeParse(corpus);
+      },
+      enrich: false,
+    });
+    check("the runner returns as soon as the claim is gone", settledRow?.status === "discarded", settledRow?.status);
+    check("  without starting the next model pass", passes === 1, `passes=${passes}`);
+    const after = (await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, stopped.id) }))!;
+    check("  and without writing a result", after.result === null && after.sourceHash === null);
+    check("discarding clears the claim token", after.claimToken === null);
+
+    // The writes a late runner or a late upload would make, each refused on a discarded row.
+    const claimed = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Claimed, then stopped." });
+    const claim = (await claimCaptureJob(claimed.id, "extracting"))!;
+    check("a live claim heartbeats", await heartbeatCaptureJob(claimed.id, claim.token));
+    await discardCaptureJobRow(USER, claimed.id);
+    check("a heartbeat after discard reports the claim lost", !(await heartbeatCaptureJob(claimed.id, claim.token)));
+    // Put the token back by hand: the status check alone must still refuse the outcome.
+    await db.update(captureJobs).set({ claimToken: claim.token }).where(eq(captureJobs.id, claimed.id));
+    check("an outcome never lands on a discarded row", !(await settleCaptureJob(claimed.id, claim.token, { status: "ready" })));
+    check("  nor does a heartbeat keep it alive", !(await heartbeatCaptureJob(claimed.id, claim.token)));
+
+    const ingesting = await createCaptureJob(USER, { sourceKind: "messy", status: "ingesting" });
+    await discardCaptureJobRow(USER, ingesting.id);
+    await appendIngestedBlocks(ingesting.id, [{ text: "Late transcription.", source: "photos:1/1" }]);
+    await markCaptureJobTranscribed(ingesting.id);
+    const late = (await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, ingesting.id) }))!;
+    check("a transcription landing after Stop adds nothing", late.ingestedBlocks.length === 0);
+    check("  and cannot mark it transcribed", late.status === "discarded", late.status);
+    check("  and autoQueue cannot queue it", (await queueCaptureJobRow(USER, ingesting.id, {})) === null);
+
+    // Stop before the upload's INSERT: the browser minted the id; Stop leaves a tombstone.
+    const early = randomUUID();
+    check("a Stop that beats the insert finds nothing to discard", !(await discardCaptureJobRow(USER, early, { tombstone: true })));
+    check("  so the late insert under that id gives up", (await createCaptureJobWithId(USER, early, { sourceKind: "messy", status: "ingesting" })) === null);
+    check("  and the tombstone is not an active job", (await findActiveCaptureJob(USER)) === null);
+    const fresh = randomUUID();
+    check("an unused client id creates the job", (await createCaptureJobWithId(USER, fresh, { sourceKind: "messy", status: "ingesting" }))?.id === fresh);
+    check("  and another user cannot claim that id", (await createCaptureJobWithId("someone-else", fresh, { sourceKind: "messy", status: "ingesting" })) === null);
+    await discardCaptureJobRow(USER, fresh);
+  }
+
+  console.log("\nAlready captured…");
+  {
+    const h = (c: string) => c.repeat(64);
+    const first = await createCaptureJob(USER, {
+      sourceKind: "messy",
+      status: "ingesting",
+      sourceLabel: "whiteboard",
+      sourceFileHashes: [h("a"), h("b"), "not-a-hash", h("a")],
+    });
+    check("only well-formed hashes are stored, once each", JSON.stringify(first.sourceFileHashes) === JSON.stringify([h("a"), h("b")]), JSON.stringify(first.sourceFileHashes));
+    await appendSourceFileHashes(first.id, [h("c")]);
+    const found = await findCapturedFileRows(USER, [h("a"), h("c"), h("d")]);
+    const byHash = Object.fromEntries(found.map((m) => [m.hash, m]));
+    check("a hash stored at create is found", byHash[h("a")]?.jobId === first.id && byHash[h("a")]?.label === "whiteboard");
+    check("a hash appended by a later part is found", byHash[h("c")]?.jobId === first.id);
+    check("an unseen hash is simply absent", !byHash[h("d")] && found.length === 2, String(found.length));
+    check("another user's files are never reported", (await findCapturedFileRows("someone-else", [h("a")])).length === 0);
+    check("garbage in asks nothing", (await findCapturedFileRows(USER, ["nope", 42])).length === 0);
+    await discardCaptureJobRow(USER, first.id);
+    check("a discarded capture no longer counts", (await findCapturedFileRows(USER, [h("a")])).length === 0);
+
+    // Pasted text: the runner stamps `hashSourceNote(corpus)` on every job it reads.
+    const text = "Met Ada at the demo day.";
+    const read = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: text });
+    await runCaptureJobById(read.id, deps);
+    const dup = await findJobBySourceHash(USER, hashSourceNote("  met ada at the DEMO day. "));
+    check("the same notes, differently spaced and cased, are the same notes", dup?.id === read.id);
+    check("a job is never its own duplicate", (await findJobBySourceHash(USER, hashSourceNote(text), read.id)) === null);
+    await discardCaptureJobRow(USER, read.id);
+    check("a discarded extraction no longer counts", (await findJobBySourceHash(USER, hashSourceNote(text))) === null);
+  }
+
+  console.log("\nAn upload is reviewed together…");
+  {
+    await reset();
+    // Two notes both about Maya, one also about Leo — each read as its own job.
+    const byNote = (corpus: string): CaptureParseResult => {
+      const base = fakeParse(corpus);
+      const card = (key: string, name: string) => ({ ...base.items[1]!, key, notes: `${name}: ${corpus}`, parsed: person(name) });
+      return {
+        ...base,
+        items: corpus.includes("Leo") ? [card("0-Maya Chen", "Maya Chen"), card("1-Leo Park", "Leo Park")] : [card("0-Maya Chen", "Maya Chen")],
+        suggestedReminders: [],
+        mentions: [],
+        mentionedOnly: [],
+      };
+    };
+    const batchDeps = { parse: async (_u: string, corpus: string) => byNote(corpus), enrich: false };
+    const batch = randomUUID();
+    const one = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Met Maya at the summit.", batchGroupId: batch, sourceLabel: "summit.txt" });
+    const two = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Coffee with Maya and Leo.", batchGroupId: batch, sourceLabel: "coffee.txt" });
+    const summitHash = "a".repeat(64);
+    await appendSourceFileHashes(one.id, [summitHash]);
+    await runCaptureJobById(one.id, batchDeps);
+
+    check("a file of an upload is never resumed on its own", (await findActiveCaptureJob(USER)) === null);
+    check("nothing folds while a file is still being read", (await mergeCaptureBatchRows(USER, batch)) === null);
+    await runCaptureJobById(two.id, batchDeps);
+
+    const combined = await mergeCaptureBatchRows(USER, batch);
+    check("once every file is read, the upload folds into one job", combined?.status === "ready" && combined.batchGroupId === null, `${combined?.status}`);
+    check("  a card per person per note, the same person twice", combined?.result?.items.map((i) => i.parsed.name).join() === "Maya Chen,Maya Chen,Leo Park", combined?.result?.items.map((i) => i.parsed.name).join());
+    check("  with keys unique across notes", new Set(combined?.result?.items.map((i) => i.key)).size === 3);
+    check("  each card naming its note", combined?.result?.items.map((i) => i.noteLabel).join() === "summit.txt,coffee.txt,coffee.txt");
+    check("  and carrying its note's hash", combined?.result?.items[0]?.noteHash === hashSourceNote("Met Maya at the summit."));
+    check("  the files' hashes move with it", combined?.sourceFileHashes.includes(summitHash) ?? false);
+    const sources = await db.query.captureJobs.findMany({ where: inArray(captureJobs.id, [one.id, two.id]) });
+    check("the files are kept as merged, not discarded", sources.every((r) => r.status === "merged"));
+    check("a second fold finds nothing left to claim", (await mergeCaptureBatchRows(USER, batch)) === null);
+    check("the combined job is the one the page resumes", (await findActiveCaptureJob(USER))?.id === combined!.id);
+
+    for (const [index, item] of combined!.result!.items.entries()) {
+      await recordCaptureDecisionRow(USER, combined!.id, item.key, {
+        decision: "accept", index, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: new Date().toISOString(),
+      });
+    }
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, combined!.id));
+    const saved = await runCaptureJobById(combined!.id, batchDeps);
+    check("the combined review saves", saved?.status === "saved", `${saved?.status} ${saved?.error}`);
+    const people = await db.query.contacts.findMany({ where: eq(contacts.userId, USER) });
+    check("the same new person from two notes is one contact", people.map((p) => p.fullName).sort().join() === "Leo Park,Maya Chen", people.map((p) => p.fullName).join());
+    const maya = people.find((p) => p.fullName === "Maya Chen")!;
+    const mayaNotes = await db.query.interactions.findMany({ where: eq(interactions.contactId, maya.id) });
+    check("  with both conversations on their timeline", mayaNotes.length === 2, String(mayaNotes.length));
+
+    const lone = randomUUID();
+    const solo = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Met Maya at the summit again.", batchGroupId: lone });
+    await runCaptureJobById(solo.id, batchDeps);
+    const unbatched = await mergeCaptureBatchRows(USER, lone);
+    check("one ready file just leaves the batch", unbatched?.id === solo.id && unbatched.batchGroupId === null && unbatched.status === "ready");
+  }
 
   await db.delete(captureJobs).where(and(eq(captureJobs.userId, USER), eq(captureJobs.status, "discarded")));
   await reset();

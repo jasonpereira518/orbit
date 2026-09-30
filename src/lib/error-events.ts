@@ -118,6 +118,12 @@ export const ERROR_SOURCES = {
    */
   jobFeedFetch: "jobs.feed_fetch",
   /**
+   * A public news feed could not be read (`src/lib/radar/feeds/sweep.ts`), recorded only when
+   * the fetcher's retry ladder was exhausted. The source row's `consecutive_failures` is the
+   * running count an operator reads.
+   */
+  radarNewsFetch: "radar.news_fetch",
+  /**
    * Security-relevant AI behaviour (`src/lib/ai-security.ts`): a tool call the registry
    * refused, an MCP batch over the cap, a draft flood, an answer the output guard scrubbed,
    * agent-written text shaped like an injection. `kind` is which; context carries ids and

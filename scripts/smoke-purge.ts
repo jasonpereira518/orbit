@@ -236,6 +236,17 @@ async function seed() {
     source: "extension",
   });
 
+  // Cascade-covered (from `contacts`), seeded anyway: the job-movement log.
+  await db.insert(schema.contactCareerMoves).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "joined",
+    fromOrg: "Initech",
+    toOrg: "Acme",
+    source: "web",
+    dedupeKey: "purge-smoke-move",
+  });
+
   await db.insert(schema.actionItems).values({
     userId: USER,
     contactId: contact.id,
@@ -377,6 +388,33 @@ async function seed() {
     userId: USER,
     suggestionType: "reconnect",
     title: "Reach out",
+  });
+
+  // Radar: a live recommendation (cascades from contacts), a "not for this person" that
+  // must not outlive the account, and a run ledger row, which has no FK at all.
+  await db.insert(schema.recommendations).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "reconnect",
+    score: 30,
+    bucket: "later",
+    expiresAt: new Date(Date.now() + 7 * 86_400_000),
+    inputsHash: "h",
+  });
+  await db.insert(schema.recommendationFeedback).values({
+    userId: USER,
+    contactId: contact.id,
+    action: "never",
+  });
+  await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
+  await db.insert(schema.contactSignals).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "company_news",
+    occurredAt: new Date(),
+    source: "manual",
+    payload: { title: "Globex raises a Series B", company: "Globex" },
+    dedupeHash: "smoke-purge-signal",
   });
 
   // Background AI still in flight at a provider when the account went.

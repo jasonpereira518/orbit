@@ -100,6 +100,12 @@ export type PageText = {
   charCount: number;
   /** True when the blob came from the user's selection rather than the page. */
   fromSelection: boolean;
+  /**
+   * On a LinkedIn post page, the post's own text: the blob is the whole update, author
+   * header and reactions included, which is right for parsing and wrong for quoting. Absent
+   * elsewhere, and from older extension builds.
+   */
+  postBody?: string;
 };
 
 export type PageContext = {
@@ -401,6 +407,29 @@ export type FollowUpResponse = {
 };
 
 /* -------------------------------------------------------------------------- */
+/* Radar activity — additive; v1 clients never call it                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A post by a known contact that the person chose to keep ("Save as Radar activity"). The
+ * server refuses unless the person turned activity capture on in Radar's settings. Only the
+ * excerpt they saw is stored (at most 280 characters), never the page.
+ */
+export type SaveActivityRequest = {
+  contactId: string;
+  excerpt: string;
+  url?: string | null;
+  /** When they saw it, ISO. Defaults to now. */
+  seenAt?: string | null;
+};
+
+export type SaveActivityResponse = {
+  saved: boolean;
+  /** True when the same post was already saved for this contact. */
+  duplicate: boolean;
+};
+
+/* -------------------------------------------------------------------------- */
 /* Search + session                                                           */
 /* -------------------------------------------------------------------------- */
 
@@ -429,6 +458,8 @@ export type MeResponse = {
     hasAiKey: boolean;
     hasApolloKey: boolean;
     aiProvider: string;
+    /** The person let the extension save LinkedIn posts to Radar (Radar's settings). */
+    radarCaptureLinkedinActivity: boolean;
   };
   stats: {
     contactCount: number;

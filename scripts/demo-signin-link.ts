@@ -19,7 +19,7 @@
  * Usage:
  *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts
  *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts --email you@x.com
- *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts --base-url https://orbit.jasonpereira.live
+ *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts --base-url https://myorbitnetwork.com
  *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts --expires-seconds 2592000
  */
 import { config } from "dotenv";
@@ -36,7 +36,7 @@ function flagValue(name: string, fallback: string) {
 }
 
 const EMAIL = flagValue("email", "demo@orbit.com");
-const BASE_URL = flagValue("base-url", "https://orbit.jasonpereira.live").replace(/\/$/, "");
+const BASE_URL = flagValue("base-url", "https://myorbitnetwork.com").replace(/\/$/, "");
 // 30 days — the longest Clerk documents for this — so the link doesn't go stale before
 // you get to it. Does NOT make it reusable; see the header comment.
 const EXPIRES_IN_SECONDS = Number(flagValue("expires-seconds", String(30 * 24 * 60 * 60)));

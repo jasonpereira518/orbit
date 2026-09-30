@@ -34,6 +34,9 @@ export const PUBLIC_ROUTES = [
   // Clicked from an email, by someone who has never signed in. Authenticated by the
   // opaque token in the query string instead, same pattern as the calendar feed above.
   "/api/interest-list/unsubscribe",
+  // Radar's Monday email's off switch, clicked from a mail client (and called directly by
+  // Gmail's and Yahoo's unsubscribe buttons). Authenticated by the signed token in the query.
+  "/api/radar/digest/unsubscribe",
   // The boarding-pass link preview. Fetched by X, LinkedIn and iMessage, which carry no
   // session; authenticated by nothing, because it reveals only a number and a planet.
   "/api/interest-list/ticket-image",
@@ -61,11 +64,18 @@ export const PUBLIC_ROUTES = [
   // `fetch` from other functions, which carry no Clerk session; same CRON_SECRET gate.
   "/api/avatars/encode",
   "/api/embeddings/backfill",
+  "/api/work-history/research",
+  "/api/work-history/sweep",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
+  // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same
+  // reasons.
+  "/api/radar/run",
+  "/api/radar/feeds/sweep",
+  "/api/radar/digest",
   "/api/webhooks/outbound/drain",
   "/api/connectors/outbox/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key

@@ -264,7 +264,7 @@ async function seedNetwork(
         endYear,
         isCurrent: endYear === null,
         sortIndex: sortIndex++,
-        source: "apollo",
+        source: "web",
       });
     }
     for (const [organization, fieldOfStudy, startYear, endYear] of p.education ?? []) {
@@ -278,7 +278,7 @@ async function seedNetwork(
         startYear,
         endYear,
         sortIndex: sortIndex++,
-        source: "apollo",
+        source: "web",
       });
     }
     profileRows.push({
@@ -287,7 +287,7 @@ async function seedNetwork(
       headline: p.company ? `${p.title} at ${p.company}` : p.title,
       about: p.notes ?? null,
       skills: [...(p.sharedInterests ?? []), ...(p.tags ?? [])].map((name) => ({ name })),
-      source: "apollo",
+      source: "web",
       sourceUrl: p.linkedinUrl ?? null,
     });
   }

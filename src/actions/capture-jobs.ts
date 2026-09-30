@@ -15,11 +15,14 @@ import {
   failCaptureJob,
   findActiveCaptureJob,
   findActiveCaptureJobs,
+  findCapturedFileRows,
+  findJobBySourceHash,
   getCaptureJobRow,
   MAX_CAPTURE_STALL_RESUMES,
   queueCaptureJobRow,
   recordCaptureChoicesRow,
   recordCaptureDecisionRow,
+  mergeCaptureBatchRows,
   toCaptureJobView,
   type CaptureJobView,
 } from "@/lib/capture-jobs";
@@ -36,6 +39,7 @@ import type {
   CaptureJobSource,
 } from "@/lib/capture/types";
 import { actionFailure } from "@/lib/action-failure";
+import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 
 /**
  * The /capture page's contract with its durable job. Every export is async (one non-async
@@ -51,6 +55,16 @@ import { actionFailure } from "@/lib/action-failure";
 
 type Fail = { ok: false; error: string };
 type Ok = { ok: true; job: CaptureJobView };
+/**
+ * `queueCaptureJob` declining to read notes it has already read. A `Fail` in shape — `ok`
+ * false, with an `error` worded for a toast — so every caller written before this existed
+ * still shows something sensible; the Extract button reads `duplicate` to offer "Extract
+ * again", which re-calls with `force`.
+ */
+export type QueueDuplicate = Fail & { duplicate: { jobId: string; capturedAt: string } };
+
+/** What the duplicate toast says. One place, so the button and any other caller agree. */
+const DUPLICATE_NOTES_COPY = "You’ve already captured these notes";
 
 function kick(id: string) {
   after(() => runCaptureJobById(id).catch(() => null));
@@ -79,6 +93,25 @@ export async function getActiveCaptureJobs(limit = 25): Promise<CaptureJobView[]
  * Takes the batch id rather than "everything open" so Start over on one queue cannot throw
  * away a single capture the person left in another tab.
  */
+/**
+ * Fold an upload's files into one review, once every file is read. Null `job` means "not
+ * yet" (a file is still being read) or "already done" (another tab or poll got there first).
+ */
+export async function mergeCaptureBatch(
+  batchGroupId: string
+): Promise<{ ok: true; job: CaptureJobView | null } | Fail> {
+  try {
+    const userId = await requireUserId();
+    if (typeof batchGroupId !== "string" || !batchGroupId.trim()) {
+      return { ok: false, error: "That upload is no longer open" };
+    }
+    const row = await mergeCaptureBatchRows(userId, batchGroupId.trim());
+    return { ok: true, job: row ? toCaptureJobView(row) : null };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t put those notes together — try again?", "capture-jobs.merge-capture-batch") };
+  }
+}
+
 export async function discardCaptureBatch(
   batchGroupId: string
 ): Promise<{ ok: true; discarded: number } | Fail> {
@@ -127,9 +160,34 @@ export async function getCaptureJob(
 }
 
 /**
+ * Which of these files (by `hashFileBytes`) this user has already captured.
+ *
+ * The notes sorter asks this once a drop is hashed and starts every match unticked, marked
+ * "Already captured"; the single-file path in Messy Notes asks it before uploading at all.
+ * Only matches come back — a hash nobody has seen is simply absent — and only from this
+ * user's own jobs, so the answer can never say anything about anyone else's files.
+ */
+export async function findCapturedFiles(
+  hashes: string[]
+): Promise<{ ok: true; matches: Array<{ hash: string; jobId: string; capturedAt: string; label: string | null }> } | Fail> {
+  try {
+    const userId = await requireUserId();
+    if (!Array.isArray(hashes) || !hashes.length) return { ok: true, matches: [] };
+    return { ok: true, matches: await findCapturedFileRows(userId, hashes) };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t check those files — try again?", "capture-jobs.find-captured-files") };
+  }
+}
+
+/**
  * Extract pressed. Creates the row for text-only input, or queues the job a media upload
  * already created (the edited transcript replaces what was transcribed). Rate-limited
  * here, in request scope — never in the runner.
+ *
+ * Refuses notes this user has already extracted — the same text by `hashSourceNote`, the
+ * hash the runner stamps on every job it reads — unless `force` is set, and says which job
+ * has them (`QueueDuplicate`). Checked BEFORE the rate-limit token is spent: declining to
+ * do the work should not cost the person a slot of the work.
  */
 export async function queueCaptureJob(input: {
   jobId?: string | null;
@@ -143,12 +201,26 @@ export async function queueCaptureJob(input: {
   batchGroupId?: string | null;
   sourceLabel?: string | null;
   mentionPicks?: MentionPick[] | null;
-}): Promise<Ok | Fail> {
+  /** Extract again: read these notes even though an identical capture already exists. */
+  force?: boolean;
+}): Promise<Ok | Fail | QueueDuplicate> {
   try {
     const userId = await requireUserId();
-    await consumeBucket("capture", userId, RATE_LIMITS.capture);
     const text = input.text.trim();
     if (!text && !input.jobId) return { ok: false, error: "Notes are required" };
+
+    if (text && !input.force) {
+      const earlier = await findJobBySourceHash(userId, hashSourceNote(text), input.jobId);
+      if (earlier) {
+        return {
+          ok: false,
+          error: DUPLICATE_NOTES_COPY,
+          duplicate: { jobId: earlier.id, capturedAt: earlier.createdAt.toISOString() },
+        };
+      }
+    }
+
+    await consumeBucket("capture", userId, RATE_LIMITS.capture);
 
     let row = input.jobId
       ? await queueCaptureJobRow(userId, input.jobId, {
@@ -299,10 +371,18 @@ export async function saveCaptureJob(jobId: string): Promise<Ok | Fail> {
   }
 }
 
-export async function discardCaptureJob(jobId: string): Promise<{ ok: true } | Fail> {
+/**
+ * Throw a job away. `opts.stopping` is Stop pressed on an upload whose request may not have
+ * created the row yet: the id was minted in the browser, so a miss leaves a discarded
+ * tombstone under it and the late insert gives up (see `discardCaptureJobRow`). Only a
+ * well-formed uuid can be tombstoned — anything else is not an id this app ever minted.
+ */
+export async function discardCaptureJob(jobId: string, opts?: { stopping?: boolean }): Promise<{ ok: true } | Fail> {
   try {
     const userId = await requireUserId();
-    await discardCaptureJobRow(userId, jobId);
+    const tombstone =
+      opts?.stopping === true && typeof jobId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobId);
+    await discardCaptureJobRow(userId, jobId, { tombstone });
     revalidatePath("/capture");
     return { ok: true };
   } catch (err) {
