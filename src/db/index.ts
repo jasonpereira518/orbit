@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
   work_history_auto_enabled integer NOT NULL DEFAULT 1,
+  email_intel_enabled integer NOT NULL DEFAULT 0,
+  email_intel_cursor_at timestamptz,
+  email_intel_next_at timestamptz,
   timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
@@ -1770,6 +1773,49 @@ CREATE TABLE IF NOT EXISTS capture_jobs (
 );
 CREATE INDEX IF NOT EXISTS capture_jobs_user_status_idx ON capture_jobs(user_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS capture_jobs_stall_idx ON capture_jobs(status, updated_at);
+CREATE TABLE IF NOT EXISTS email_threads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL DEFAULT 'gmail',
+  thread_id text NOT NULL,
+  last_message_id text NOT NULL,
+  subject text NOT NULL DEFAULT '',
+  participants jsonb NOT NULL DEFAULT '[]'::jsonb,
+  last_direction text NOT NULL DEFAULT 'in',
+  decision text NOT NULL,
+  triage_score integer NOT NULL DEFAULT 0,
+  status text NOT NULL,
+  claim_token uuid,
+  claimed_at timestamptz,
+  stall_resumes integer NOT NULL DEFAULT 0,
+  processed_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS email_threads_thread_uidx ON email_threads(user_id, provider, thread_id);
+CREATE INDEX IF NOT EXISTS email_threads_pending_idx ON email_threads(user_id, status) WHERE status = 'pending_ai';
+CREATE TABLE IF NOT EXISTS email_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  thread_row_id uuid NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE,
+  source text NOT NULL DEFAULT 'rule',
+  kind text NOT NULL,
+  company text,
+  role text,
+  stage text,
+  occurred_at timestamptz NOT NULL,
+  due_at timestamptz,
+  summary text NOT NULL,
+  evidence_quote text NOT NULL DEFAULT '',
+  confidence real NOT NULL DEFAULT 0,
+  people jsonb NOT NULL DEFAULT '[]'::jsonb,
+  asks jsonb NOT NULL DEFAULT '[]'::jsonb,
+  dismissed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS email_events_rule_uidx ON email_events(thread_row_id, kind) WHERE source = 'rule';
+CREATE INDEX IF NOT EXISTS email_events_user_idx ON email_events(user_id, occurred_at);
 CREATE TABLE IF NOT EXISTS ignored_people (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2438,7 +2484,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // columns. Scanned every local and remote ref and every worktree's working src/db/index.ts on
 // Sep 30 2026: 141 is the highest claimed anywhere (140 is claude/orbit-direct-email-cc0746),
 // so 142 is the next free integer.
-export const SCHEMA_VERSION = 142;
+// 145 = email insights (Email Intelligence P0/P1): user_settings.email_intel_enabled /
+// email_intel_cursor_at / email_intel_next_at plus the email_threads and email_events tables.
+// Scanned every local and remote ref and every worktree on Sep 30 2026: 144 is the highest
+// claimed anywhere, so 145 is the next free integer.
+export const SCHEMA_VERSION = 145;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3469,6 +3519,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "email_intel_enabled", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "email_intel_cursor_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "email_intel_next_at", "timestamptz");
 
   try {
     await client.exec(
@@ -4295,6 +4348,10 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_due_at timestamptz`,
   `CREATE INDEX IF NOT EXISTS contacts_work_history_due_idx ON contacts(user_id, work_history_due_at) WHERE linkedin_url IS NOT NULL`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS work_history_auto_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v145: email insights — opt-in switch, watermark, and schedule/lease per account.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_enabled integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_cursor_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_next_at timestamptz`,
   // Schema v133: Radar's nightly schedule, lease and pause flag for each account.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_next_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_lease_until timestamptz`,
