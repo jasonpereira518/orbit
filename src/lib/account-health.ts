@@ -4,6 +4,7 @@ import {
   appleConnections,
   calendarSubscriptions,
   contacts,
+  emailSends,
   gmailConnections,
   imports,
   outlookConnections,
@@ -321,6 +322,14 @@ export async function loadAccountHealthInput(
           AND ${imports.updatedAt} > ${importWindowStart}
         ORDER BY ${imports.updatedAt} DESC LIMIT 1)`,
 
+      // Windowed like imports: a failure is history, and an unwindowed one would be a
+      // permanent badge on a device that never dismissed it.
+      emailSendFailedCount: sql<number>`(
+        SELECT count(*)::int FROM ${emailSends}
+        WHERE ${emailSends.userId} = ${userId} AND ${emailSends.status} = 'failed'
+          AND ${emailSends.dismissedAt} IS NULL
+          AND ${emailSends.updatedAt} > ${importWindowStart})`,
+
       contactCount: needContacts
         ? sql<number>`(
             SELECT count(*)::int FROM ${contacts}
@@ -379,6 +388,7 @@ export async function loadAccountHealthInput(
     importStalledLabel: text(row.importStalledLabel),
     importStalledRows: row.importStalledRows == null ? null : num(row.importStalledRows),
     importStalledTotal: row.importStalledTotal == null ? null : num(row.importStalledTotal),
+    emailSendFailedCount: num(row.emailSendFailedCount),
 
     plan: entitlements.plan,
     planSource: entitlements.source,
