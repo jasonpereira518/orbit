@@ -201,13 +201,16 @@ export type FitEdge = {
   clusterId: string;
   clusterName: string;
   clusterKind: ClusterKind;
+  /** How the cluster is drawn, and which part of it the line belongs to. */
+  form: ClusterForm;
+  partRole: PartRole;
 };
 
 /** The figure lines: shape edges resolved to the members on their endpoints. */
 export function constellationFitEdges(fit: ConstellationFitResult): FitEdge[] {
   const out: FitEdge[] = [];
-  for (const { cluster, parts } of fit.fits.values()) {
-    for (const { shape, figureMemberIds } of parts) {
+  for (const { cluster, form, parts } of fit.fits.values()) {
+    for (const { shape, figureMemberIds, role } of parts) {
       for (const [ai, bi] of shape.edges) {
         const a = figureMemberIds[ai];
         const b = figureMemberIds[bi];
@@ -218,6 +221,8 @@ export function constellationFitEdges(fit: ConstellationFitResult): FitEdge[] {
           clusterId: cluster.id,
           clusterName: cluster.name,
           clusterKind: cluster.kind,
+          form,
+          partRole: role,
         });
       }
     }

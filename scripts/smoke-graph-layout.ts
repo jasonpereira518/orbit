@@ -18,6 +18,7 @@ import {
   type ClusterLabelData,
 } from "../src/lib/graph-layout";
 import { figureStarCount } from "../src/lib/constellation-shapes";
+import { CORE_TINT } from "../src/lib/constellation-parts";
 import { RING_CAPACITY, RING_MIN_RADIUS } from "../src/lib/graph/cluster-anatomy";
 import { buildClusterAffinity } from "../src/lib/constellation-affinity";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
@@ -39,6 +40,8 @@ const SUN_MIN_DIST = 150;
 /** Always-on label box under each star (see graph-nodes.tsx). */
 const LABEL_WIDTH = 104;
 const LABEL_HEIGHT = 30;
+/** The layout's CLUSTER_LABEL_GAP (22) + CLUSTER_LABEL_HEAD (48): room above the top star for the name. */
+const CLUSTER_NAME_HEAD_ALLOWANCE = 70;
 
 function contact(
   id: string,
@@ -473,6 +476,81 @@ console.log("\nCluster anatomy");
       `…and sits nearer the roomiest petal (${roomiest.key}, ${dTo(roomiest).toFixed(0)}px) than the core (${dTo(core).toFixed(0)}px)`,
       dTo(roomiest) < dTo(core)
     );
+  }
+
+  // What the renderers draw: forms, part disks, per-star tints, line styles, petal names.
+  {
+    const nebula = (name: string) =>
+      layout.nodes.find((n) => n.type === "nebula" && (n.data as NebulaData).company === name)!.data as NebulaData;
+    check(
+      "nebulae carry their cluster's form",
+      nebula("Northwind").form === "petal" && nebula("Chapel Hill").form === "ring" && nebula("Google").form === "figure"
+    );
+    const nwParts = nebula("Northwind").parts!;
+    check(
+      "a petal nebula lists its parts, absolute and inside the sky",
+      nwParts.map((p) => p.key).join() === "core,petal:engineering,petal:design,petal:sales" &&
+        nwParts.every((p) => p.radius > 0 && Number.isFinite(p.x) && Number.isFinite(p.y))
+    );
+    check(
+      "…and every part disk contains its stars",
+      nw.parts.every((p, i) =>
+        [...p.figureMemberIds, ...p.scatterMemberIds].every(
+          (id) => Math.hypot(posById.get(id)!.x - nwParts[i].x, posById.get(id)!.y - nwParts[i].y) <= nwParts[i].radius + 1e-6
+        )
+      )
+    );
+    const chN = nebula("Chapel Hill");
+    check(
+      "a ring nebula has one part: the ring's centre and outer radius",
+      chN.parts!.length === 1 &&
+        chN.parts![0].key === "main" &&
+        chN.parts![0].radius >= RING_MIN_RADIUS &&
+        ch.cluster.contactIds.every(
+          (id) => Math.hypot(posById.get(id)!.x - chN.parts![0].x, posById.get(id)!.y - chN.parts![0].y) <= chN.parts![0].radius + 1e-6
+        )
+    );
+    check("figures and binaries have no parts", nebula("Google").parts === undefined);
+
+    check("core stars are warm white", star("nw-l0").clusterColor === CORE_TINT);
+    check(
+      "petal stars keep the company's colour",
+      star("nw-e0").clusterColor !== CORE_TINT && star("nw-e0").clusterColor === star("nw-d0").clusterColor
+    );
+    check(
+      "figure stars anchor lines; ring stars do not",
+      star("g0").anchorsLines === true && ch.cluster.contactIds.every((id) => star(id).anchorsLines === false)
+    );
+    const dashed = layout.edges.filter((e) => e.data?.dash);
+    check(
+      "role clusters draw dotted, faint lines",
+      dashed.length > 0 &&
+        dashed.every((e) => e.style?.strokeDasharray === "2 5" && Number(e.style?.opacity) === 0.35 && e.data?.reason === "role") &&
+        layout.edges.filter((e) => e.data?.reason === "role").every((e) => e.data?.dash)
+    );
+    const coreIds = new Set(nw.parts.find((p) => p.role === "core")!.figureMemberIds);
+    const coreEdges = layout.edges.filter((e) => coreIds.has(e.source) && coreIds.has(e.target));
+    check("core lines are warm white", coreEdges.length > 0 && coreEdges.every((e) => /255,\s*233,\s*194/.test(String(e.style?.stroke))));
+
+    // A petal's name sits below its lowest star (so it can never collide with the cluster name,
+    // which sits above the topmost star), and still inside the node's box.
+    const box = label("Northwind").box!;
+    const nwTop = Math.min(...nw.cluster.contactIds.map((id) => posById.get(id)!.y));
+    const boxTop = nwTop - CLUSTER_NAME_HEAD_ALLOWANCE;
+    const petalOk = nw.parts
+      .filter((p) => p.role !== "main")
+      .every((p) => {
+        const l = petalLabels.find((x) => x.key === p.key)!;
+        const bottom = Math.max(...[...p.figureMemberIds, ...p.scatterMemberIds].map((id) => posById.get(id)!.y));
+        return l.anchor.y + boxTop > bottom && l.anchor.y <= box.height;
+      });
+    check("petal names sit below their part, inside the box", petalOk);
+
+    // A role cluster: each star wears its own company's colour; the label says how many companies.
+    const rolePair = ["r1", "r2"].map((id) => star(id));
+    check("role cluster stars wear their own company's colour", rolePair[0].clusterKind === "role" && rolePair[0].clusterColor !== rolePair[1].clusterColor);
+    check("the role cluster's label counts its companies", label("Engineers").subtitle === "across 2 companies");
+    check("only role clusters carry a subtitle", label("Google").subtitle === undefined && label("Northwind").subtitle === undefined);
   }
 }
 

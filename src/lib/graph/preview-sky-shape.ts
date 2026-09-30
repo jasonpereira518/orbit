@@ -73,6 +73,8 @@ export function expandPreviewSky(sky: PreviewSky): { nodes: LayoutNode[]; edges:
       company: sky.names[name],
       color: sky.colors[c],
       radius,
+      // The baked preview keeps no anatomy: every wash is drawn as a plain cluster.
+      form: "figure",
     };
     nodes.push({ id: `w${i / WASH_FIELDS}`, type: "nebula", position: { x, y }, data });
   }

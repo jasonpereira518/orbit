@@ -46,7 +46,7 @@ import {
   SMALL_SKY_QUERY,
   isSmallSkyViewport,
 } from "../src/components/graph/use-small-sky";
-import { STAR_HIT_PAD, starSize, starVisual, zoomRelief } from "../src/lib/graph/star-style";
+import { STAR_HIT_PAD, starSize, starSubtitle, starVisual, zoomRelief } from "../src/lib/graph/star-style";
 import { buildHybridGraphLayout, type GraphContactInput } from "../src/lib/graph-layout";
 import { buildSkyIndex } from "../src/components/graph/sky-canvas/sky-index";
 import {
@@ -651,6 +651,14 @@ console.log("\nstar parity\n");
   check(
     "...and falls back to the company when the title is unknown",
     starVisual({ ...base, title: null }, false).subtitle === "Analytical"
+  );
+  // In a role cluster everyone does the same job, so the company is the news.
+  check(
+    "a role cluster's subtitle puts the company first",
+    starSubtitle({ ...base, clusterKind: "role", company: "Stripe", title: "Engineer" }) === "Stripe" &&
+      starSubtitle({ ...base, clusterKind: "company", company: "Stripe", title: "Engineer" }) === "Engineer" &&
+      starSubtitle({ ...base, clusterKind: "role", company: null, title: "Engineer" }) === "Engineer" &&
+      starSubtitle({ ...base, clusterKind: "role", company: "  ", title: null }) === null
   );
 
   check("zoomRelief is inert when zoomed in", zoomRelief(10, 2) === 1);

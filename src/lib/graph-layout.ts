@@ -7,7 +7,7 @@ import {
   placementScore,
 } from "@/lib/constellation-fit";
 import { isCometContact } from "@/lib/comet";
-import type { ClusterForm, PartRole } from "@/lib/constellation-parts";
+import { CORE_TINT, type ClusterForm, type PartRole } from "@/lib/constellation-parts";
 import {
   buildClusterGeometry,
   ClearanceGrid,
@@ -15,7 +15,7 @@ import {
   LABEL_CLEAR_Y,
   LABEL_WIDTH,
 } from "@/lib/graph/cluster-geometry";
-import { type BuiltCluster, type ClusterKind } from "@/lib/constellation-clusters";
+import { type BuiltCluster, type ClusterKind, type ClusterRef } from "@/lib/constellation-clusters";
 import { companyFamilyRoot } from "@/lib/company-family";
 import { buildClusterAffinity } from "@/lib/constellation-affinity";
 import { placeClusterDisks } from "@/lib/graph/disk-placement";
@@ -109,13 +109,19 @@ export type GraphNodeData = {
   clusterKind?: ClusterKind;
   /** Whether this star traces the constellation figure or scatters around it. */
   figureRole?: "figure" | "scatter";
-  /** Brand color of the star's cluster (undefined for Deep Space singletons). */
+  /**
+   * The star's tint. Its cluster's brand colour, except a split company's core (`CORE_TINT`) and a
+   * role cluster's stars, which wear their own company's colour (silver if they have none).
+   * Undefined for Deep Space singletons.
+   */
   clusterColor?: string;
   /** Which part of its cluster the star belongs to (see `constellation-parts.ts`). */
   partKey?: string;
   partRole?: PartRole;
   /** In a split company: whether the title puts them in the leadership core's league. */
   leader?: boolean;
+  /** Whether a figure line starts or ends on this star (rings and scatter stars anchor none). */
+  anchorsLines?: boolean;
   orbitAngle?: number;
   orbitRadius?: number;
   spotlight?: boolean;
@@ -153,7 +159,13 @@ export type ClusterLabelData = {
   anchor?: { x: number; y: number };
   /** How the cluster is drawn — see `constellation-parts.ts`. */
   form?: ClusterForm;
-  /** A split company's core and petal names, anchored like `anchor`. */
+  /** Role clusters only: "across N companies" — who the cluster's people work for. */
+  subtitle?: string;
+  /**
+   * A split company's core and petal names. `anchor` is the top-centre of the name's text, in px
+   * from the box's top-left, a little below the part's lowest star — clear of the cluster name,
+   * which sits above the topmost star.
+   */
   petalLabels?: Array<{
     key: string;
     label: string;
@@ -172,6 +184,14 @@ export type NebulaData = {
   radius: number;
   clusterKind?: ClusterKind;
   clusterId?: string;
+  /** How the cluster is drawn — see `constellation-parts.ts`. */
+  form: ClusterForm;
+  /**
+   * The disks the renderers draw behind the stars, in absolute layout coordinates. A petal
+   * company has one per part (`radius` is the part's footprint); a ring school has one `main`
+   * entry whose `x, y` is the ring's centre and `radius` its outer ring. Otherwise undefined.
+   */
+  parts?: Array<{ key: string; role: PartRole; x: number; y: number; radius: number }>;
 };
 
 export type LayoutNode = {
@@ -207,6 +227,8 @@ export type LayoutEdge = {
       | "sharedInterests";
     label?: string;
     brandColor?: string;
+    /** Dash pattern, in px, for a line drawn dotted (role clusters). */
+    dash?: [number, number];
   };
   style?: Record<string, string | number>;
 };
@@ -243,6 +265,8 @@ const CLUSTER_LABEL_GAP = 22;
 const CLUSTER_LABEL_HEAD = 48;
 /** Margin around the stars on the other three sides of the box. */
 const CLUSTER_LABEL_PAD = 24;
+/** Layout px between a petal's lowest star and the top of its name. */
+const PETAL_LABEL_GAP = 22;
 
 function toPosition(x: number, y: number): PolarPosition {
   return { x, y, angle: Math.atan2(y, x), radius: Math.hypot(x, y) };
@@ -463,10 +487,24 @@ export function* buildHybridGraphLayoutSteps(
   });
 
   yield;
+  // A role cluster says how many companies its people are spread over. Only role clusters ask,
+  // so the contacts are indexed the first time one does.
+  let contactById: Map<string, GraphContactInput> | null = null;
+  const roleSubtitle = (ids: string[]) => {
+    contactById ??= new Map(contacts.map((c) => [c.id, c]));
+    const companies = new Set<string>();
+    for (const id of ids) {
+      const company = (contactById.get(id)?.company ?? "").trim().toLowerCase();
+      if (company) companies.add(company);
+    }
+    const n = Math.max(1, companies.size);
+    return `across ${n} ${n === 1 ? "company" : "companies"}`;
+  };
   const clusterNodes: LayoutNode[] = [];
   const clusterColorById = new Map<string, string>();
   for (const geom of geoms) {
     const cluster = geom.cluster;
+    const center = centers.get(cluster.id)!;
     const color = brandOf(cluster.name, cluster.kind);
     clusterColorById.set(cluster.id, color);
 
@@ -495,6 +533,19 @@ export function* buildHybridGraphLayoutSteps(
         radius: nebulaRadius,
         clusterKind: cluster.kind,
         clusterId: cluster.id,
+        form: geom.fit.form,
+        parts:
+          geom.fit.form === "petal"
+            ? geom.parts.map((g) => ({
+                key: g.part.key,
+                role: g.part.role,
+                x: center.x + g.center.x,
+                y: center.y + g.center.y,
+                radius: g.foot,
+              }))
+            : geom.fit.form === "ring" && geom.parts[0].ringRadius !== undefined
+              ? [{ key: "main", role: "main" as const, x: center.x, y: center.y, radius: geom.parts[0].ringRadius }]
+              : undefined,
       },
       position: { x: cx, y: cy },
       draggable: false,
@@ -528,13 +579,13 @@ export function* buildHybridGraphLayoutSteps(
               // A plain loop: a spread of a big part's coordinates can exceed V8's argument limit.
               let pLeft = Infinity;
               let pRight = -Infinity;
-              let pTop = Infinity;
+              let pBottom = -Infinity;
               for (const id of [...g.part.figureMemberIds, ...g.part.scatterMemberIds]) {
                 const p = positions.get(id);
                 if (!p) continue;
                 pLeft = Math.min(pLeft, p.x);
                 pRight = Math.max(pRight, p.x);
-                pTop = Math.min(pTop, p.y);
+                pBottom = Math.max(pBottom, p.y);
               }
               return {
                 key: g.part.key,
@@ -543,11 +594,12 @@ export function* buildHybridGraphLayoutSteps(
                 count: g.part.figureMemberIds.length + g.part.scatterMemberIds.length,
                 anchor: {
                   x: (pLeft + pRight) / 2 - boxLeft,
-                  y: pTop - CLUSTER_LABEL_GAP - boxTop,
+                  y: pBottom + PETAL_LABEL_GAP - boxTop,
                 },
               };
             })
         : undefined;
+    const subtitle = cluster.kind === "role" ? roleSubtitle(cluster.contactIds) : undefined;
     clusterNodes.push({
       id: `cluster-${cluster.id}`,
       type: "clusterLabel",
@@ -561,6 +613,7 @@ export function* buildHybridGraphLayoutSteps(
         box: { width: boxWidth, height: boxHeight },
         anchor: { x: (left + right) / 2 - boxLeft, y: CLUSTER_LABEL_HEAD },
         form: geom.fit.form,
+        subtitle,
         petalLabels,
       },
       // The name's anchor. The chart sets the node's origin so its box lands around it.
@@ -570,6 +623,20 @@ export function* buildHybridGraphLayoutSteps(
       zIndex: 7,
     });
   }
+
+  // A star wears its cluster's colour. The exceptions: a split company's leadership core is warm
+  // white, and a role cluster spans companies, so each of its stars wears its own company's
+  // colour (the cluster's silver when it has none).
+  const starColor = (
+    cluster: ClusterRef | undefined,
+    role: PartRole | undefined,
+    company: string | null
+  ) => {
+    if (!cluster) return undefined;
+    if (role === "core") return CORE_TINT;
+    const own = cluster.kind === "role" ? (company ?? "").trim() : "";
+    return own ? brandOf(own, "company") : clusterColorById.get(cluster.id);
+  };
 
   const nodes: LayoutNode[] = [
     {
@@ -631,12 +698,13 @@ export function* buildHybridGraphLayoutSteps(
           figureRole: figureIds.has(c.id)
             ? ("figure" as const)
             : ("scatter" as const),
-          clusterColor: cluster ? clusterColorById.get(cluster.id) : undefined,
+          clusterColor: starColor(cluster, partOf.get(c.id)?.role, c.company),
           partKey: partOf.get(c.id)?.key,
           partRole: partOf.get(c.id)?.role,
           // Leaders always go to the core and everyone else to a petal (planCompany), so the part
           // says it; a 'main' cluster has no leadership to speak of.
           leader: partOf.get(c.id) && partOf.get(c.id)!.role !== "main" ? partOf.get(c.id)!.role === "core" : undefined,
+          anchorsLines: false,
           orbitAngle: pos.angle,
           orbitRadius: pos.radius,
         },
@@ -666,23 +734,40 @@ export function* buildHybridGraphLayoutSteps(
     };
     const layoutEdge = peerEdgeToLayoutEdge(peer);
     const brand = brandOf(fitEdge.clusterName, reason);
+    // Leaders' lines are warm white; a role cluster's are dotted and faint, since its people are
+    // only alike in what they do; everything else is tinted with the cluster's brand.
+    const dotted = fitEdge.clusterKind === "role";
+    const style: Record<string, string | number> =
+      fitEdge.partRole === "core"
+        ? { ...layoutEdge.style, stroke: withAlpha(CORE_TINT, 0.85) }
+        : dotted
+          ? { ...layoutEdge.style, stroke: "rgba(255,255,255,0.9)", opacity: 0.35, strokeDasharray: "2 5" }
+          : { ...layoutEdge.style, stroke: withAlpha(mixWithWhite(brand, 0.55), 0.8) };
     edges.push({
       ...layoutEdge,
       type: "labeled",
       label: undefined,
-      style: {
-        ...layoutEdge.style,
-        stroke: withAlpha(mixWithWhite(brand, 0.55), 0.8),
-      },
+      style,
       data: layoutEdge.data
         ? {
             kind: layoutEdge.data.kind,
             company: layoutEdge.data.company,
             reason: layoutEdge.data.reason,
             brandColor: brand,
+            ...(dotted ? { dash: [2, 5] as [number, number] } : {}),
           }
         : undefined,
     });
+  }
+
+  // Which stars a line touches is only known now the lines are drawn.
+  const lineEnds = new Set<string>();
+  for (const e of edges) {
+    lineEnds.add(e.source);
+    lineEnds.add(e.target);
+  }
+  for (const node of nodes) {
+    if (node.type === "contact") (node.data as GraphNodeData).anchorsLines = lineEnds.has(node.id);
   }
 
   return { nodes, edges, galaxy };

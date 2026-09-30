@@ -31,7 +31,10 @@ export const STAR_HIT_PAD = 16;
  * know what they do. Never both — one quiet line keeps the sky readable.
  */
 export function starSubtitle(data: GraphNodeData) {
-  return (data.title || "").trim() || (data.company || "").trim() || null;
+  const title = (data.title || "").trim();
+  const company = (data.company || "").trim();
+  // A role cluster is people who do the same job, so the job tells you nothing: the company does.
+  return (data.clusterKind === "role" ? company || title : title || company) || null;
 }
 
 /**

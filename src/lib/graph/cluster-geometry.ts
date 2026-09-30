@@ -165,6 +165,8 @@ export type PartGeometry = {
   scatterLocal: Array<{ id: string; x: number; y: number }>;
   /** The part's own footprint radius about `center`. */
   foot: number;
+  /** A ring school only: the ring's outer radius about `center`. */
+  ringRadius?: number;
 };
 
 /** One cluster's local geometry: its parts and the disk that holds them all. */
@@ -264,7 +266,7 @@ export function ringGeometry(figureMemberIds: string[], scatterIds: string[], se
     positions
   );
   const outermost = scatterLocal.length > 0 ? outer : radius;
-  return { figureLocal: positions, scatterLocal, foot: outermost + FOOT_MARGIN };
+  return { figureLocal: positions, scatterLocal, foot: outermost + FOOT_MARGIN, ringRadius: radius };
 }
 
 /**

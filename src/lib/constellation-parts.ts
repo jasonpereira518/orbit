@@ -14,6 +14,12 @@
 import type { ClusterKind } from "@/lib/constellation-clusters";
 import { classifyTitle, type RoleFunction } from "@/lib/role-function";
 
+/**
+ * The colour of a split company's leadership core stars: a warm white, so the people who lead
+ * read as the brightest and the company's own colour is left to the petals round them.
+ */
+export const CORE_TINT = "#ffe9c2";
+
 export type ClusterForm = "petal" | "figure" | "ring" | "binary" | "open";
 export type PartRole = "main" | "core" | "petal";
 export type PartPlan = {
