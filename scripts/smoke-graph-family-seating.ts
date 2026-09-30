@@ -5,8 +5,8 @@
  * the rim with everyone unclustered. Three ways that used to fail, each checked here:
  *
  *   - a lone DeepMind contact is not a constellation, so it was scattered across the rim;
- *   - a family could straddle two shells, landing its smaller member on the far side;
- *   - a shell's spare arc was spread evenly, so neighbours in one family drifted apart.
+ *   - a family could end up apart, landing its smaller member on the far side;
+ *   - related clusters were placed by list order, not relatedness.
  *
  * The measure is relative, on a busy sky: the related star or cluster must be nearer Google
  * than almost every unrelated cluster is. No DB, no network.
@@ -44,8 +44,9 @@ function seat(unrelated: number) {
   const add = (prefix: string, company: string | null, n: number) => {
     for (let i = 0; i < n; i++) contacts.push(contact(`${prefix}-${i}`, company));
   };
-  // Unrelated employers of assorted sizes, so shells are crowded and wrap.
-  for (let i = 0; i < unrelated; i++) add(`co${i}`, `Company ${i}`, 2 + ((i * 7) % 11));
+  // Unrelated employers of assorted sizes, so the sky is crowded. (Distinct first words: the
+  // company-family fallback groups "Company 1", "Company 2"… into one family.)
+  for (let i = 0; i < unrelated; i++) add(`co${i}`, `Employer${i} Labs`, 2 + ((i * 7) % 11));
   add("google", "Google", 12);
   add("gdm", "Google DeepMind", 3);
   // Not "DeepMind": that is an exact alias of Google DeepMind and would join its cluster.
@@ -84,18 +85,16 @@ function seat(unrelated: number) {
     lone < nearestUnrelated,
     `Google Cloud ${lone.toFixed(0)} vs nearest unrelated cluster ${nearestUnrelated.toFixed(0)}`
   );
-  const rimFrom = Math.min(
-    ...contacts.filter((c) => c.id.startsWith("loose-")).map((c) => radius(c.id))
+  const haloFrom = layout.galaxy.diskRadius;
+  check(
+    "and not out in the halo with the unclustered",
+    radius("gcloud-0") < haloFrom,
+    `radius ${radius("gcloud-0").toFixed(0)} vs halo from ${haloFrom.toFixed(0)}`
   );
   check(
-    "and not out on the rim with the unclustered",
-    radius("gcloud-0") < rimFrom,
-    `radius ${radius("gcloud-0").toFixed(0)} vs rim from ${rimFrom.toFixed(0)}`
-  );
-  check(
-    "a lone contact at an unrelated company still goes to the rim",
-    radius("bank-0") >= rimFrom - 1,
-    `radius ${radius("bank-0").toFixed(0)} vs rim from ${rimFrom.toFixed(0)}`
+    "a lone contact at an unrelated company still goes to the halo",
+    radius("bank-0") >= haloFrom - 1,
+    `radius ${radius("bank-0").toFixed(0)} vs halo from ${haloFrom.toFixed(0)}`
   );
   const googleLabel = layout.nodes.find(
     (n) => n.type === "clusterLabel" && (n.data as { label?: string }).label === "Google"

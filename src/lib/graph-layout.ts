@@ -10,7 +10,10 @@ import {
 import { isCometContact } from "@/lib/comet";
 import { scaleForStarCount } from "@/lib/constellation-shapes";
 import { type BuiltCluster, type ClusterKind } from "@/lib/constellation-clusters";
-import { companyFamilyKey, companyFamilyRoot } from "@/lib/company-family";
+import { companyFamilyRoot } from "@/lib/company-family";
+import { buildClusterAffinity } from "@/lib/constellation-affinity";
+import { placeClusterDisks } from "@/lib/graph/disk-placement";
+import { buildGalaxyStructure, type GalaxyStructure } from "@/lib/graph/galaxy-structure";
 import { peerEdgeToLayoutEdge, type PeerEdge } from "@/lib/network-metrics";
 import {
   clusterBrandColor,
@@ -241,7 +244,7 @@ function toPosition(x: number, y: number): PolarPosition {
 const LABEL_WIDTH = 104;
 const LABEL_HEIGHT = 30;
 
-/** Clear sky between the sun and the first shell's clusters. */
+/** Clear sky between the sun and the nearest cluster. */
 const SUN_CLEAR = 180;
 /** Minimum clearance between two cluster footprints. */
 const CLUSTER_GAP = LABEL_WIDTH;
@@ -251,10 +254,8 @@ const SCATTER_CLEAR = 54;
 const SCATTER_FIELD_WIDTH = 110;
 /** Headroom beyond the outermost scatter star inside the footprint. */
 const FOOT_MARGIN = 34;
-/** Gap between the last shell and the deep-space rim. */
+/** Gap between the galaxy's edge and the start of the halo. */
 const BACKGROUND_GAP = 90;
-/** Initial width of the deep-space rim annulus. */
-const BACKGROUND_FIELD_WIDTH = 160;
 /** Minimum distance between any two figure stars after scaling. */
 const FIGURE_STAR_MIN = LABEL_WIDTH;
 /** How far a tight template may be upscaled to clear FIGURE_STAR_MIN. */
@@ -389,11 +390,52 @@ function scatterField(
   return { placed, outer: Math.max(outer, maxR) };
 }
 
+/** Halo width scale, as a fraction of the disk's radius, and its floor. */
+const HALO_SCALE_FRACTION = 0.2;
+const HALO_MIN_SCALE = 160;
+
+/**
+ * Unaffiliated stars, drifting beyond the galaxy's edge and thinning with distance.
+ *
+ * The old deep-space rim was a uniform annulus, which drew a perfect dotted circle. Here the
+ * radius falls off exponentially from `inner`, so the halo is densest where the galaxy ends
+ * and fades into empty sky, with noise on the angle. Same seeded rejection sampling against
+ * label boxes as `scatterField`; when the band fills up it widens.
+ */
+function haloField(
+  ids: string[],
+  inner: number
+): Array<{ id: string; x: number; y: number }> {
+  const placed: Array<{ id: string; x: number; y: number }> = [];
+  const occupied = new ClearanceGrid();
+  let scale = Math.max(HALO_MIN_SCALE, inner * HALO_SCALE_FRACTION);
+
+  for (const id of ids) {
+    let spot: { x: number; y: number } | null = null;
+    let attempt = 0;
+    const hash = hashUnitStream(`halo:${id}`);
+    for (let rounds = 0; !spot && rounds < 200; rounds++) {
+      for (let tries = 0; tries < 24 && !spot; tries++, attempt++) {
+        const u = hash(attempt * 2 + 1);
+        const v = hash(attempt * 2 + 2);
+        const radius = inner - Math.log(1 - u * 0.999) * scale;
+        const angle = v * Math.PI * 2;
+        const candidate = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+        if (occupied.clear(candidate)) spot = candidate;
+      }
+      if (!spot) scale *= 1.15;
+    }
+    // Practically unreachable — the band widens until a spot clears.
+    if (!spot) spot = { x: inner + scale, y: 0 };
+    placed.push({ id, ...spot });
+    occupied.add(spot);
+  }
+  return placed;
+}
+
 /** One cluster's local geometry: undistorted figure plus a scatter field. */
 export type ClusterGeometry = {
   cluster: BuiltCluster;
-  /** The company family it packs beside (see `clusterFamily`); its own id when it has none. */
-  family?: string;
   fit: ClusterFit;
   /** Rotated, scaled shape stars in cluster-local space (index ↔ figureMemberIds). */
   figureLocal: Array<{ x: number; y: number }>;
@@ -474,13 +516,6 @@ export function buildClusterGeometry(
   };
 }
 
-/** The family a cluster packs beside: related companies share one, schools stand alone. */
-function clusterFamily(cluster: BuiltCluster): string {
-  return cluster.kind === "company"
-    ? companyFamilyKey(cluster.name) || cluster.id
-    : cluster.id;
-}
-
 /**
  * People who belong near a cluster they are not in.
  *
@@ -517,145 +552,22 @@ function familySatellites(
   return satellites;
 }
 
-/** Family-adjacent cluster order: families by total size, members by size. */
-function orderClustersByFamily(eligible: BuiltCluster[]): BuiltCluster[] {
-  const families = new Map<string, BuiltCluster[]>();
-  for (const cluster of eligible) {
-    const key = clusterFamily(cluster);
-    const list = families.get(key);
-    if (list) list.push(cluster);
-    else families.set(key, [cluster]);
-  }
-  return [...families.entries()]
-    .map(([key, clusters]) => ({
-      key,
-      clusters: [...clusters].sort(
-        (a, b) => b.count - a.count || a.id.localeCompare(b.id)
-      ),
-      total: clusters.reduce((s, c) => s + c.count, 0),
-    }))
-    .sort((a, b) => b.total - a.total || a.key.localeCompare(b.key))
-    .flatMap((f) => f.clusters);
-}
-
-export type PackedShells = {
-  /** Cluster centers, keyed by cluster id. */
-  centers: Map<string, { x: number; y: number }>;
-  /** Outer edge of the packed sky (last shell radius + its max footprint + gap). */
-  skyEdge: number;
-  /** Family-adjacent order used for packing. */
-  ordered: ClusterGeometry[];
-};
-
-/** Exact angular need between two adjacent clusters on a shell of radius R. */
-function pairArc(a: ClusterGeometry, b: ClusterGeometry, R: number) {
-  return (
-    2 * Math.asin(Math.min(1, (a.foot + b.foot + CLUSTER_GAP) / (2 * R)))
-  );
-}
-
-function shellFits(items: ClusterGeometry[], R: number) {
-  if (items.length <= 1) return true;
-  let total = 0;
-  for (let i = 0; i < items.length; i++) {
-    total += pairArc(items[i], items[(i + 1) % items.length], R);
-  }
-  return total <= Math.PI * 2;
-}
-
 /**
- * Pack clusters onto concentric shells around the sun. Greedy fill in
- * family-adjacent order: a shell accepts clusters while the exact chord-based
- * angular budget lasts, then the next shell starts beyond the previous
- * shell's outer edge. Adjacent-slot arcs are exact chord constraints and
- * shells are radially disjoint, so cluster footprints never overlap.
- */
-export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
-  const centers = new Map<string, { x: number; y: number }>();
-  let prevOuter = SUN_CLEAR;
-  let idx = 0;
-  let shellIndex = 0;
-
-  while (idx < geoms.length) {
-    const items: ClusterGeometry[] = [];
-    let maxFoot = 0;
-    let R = 0;
-    while (idx < geoms.length) {
-      const tentative = [...items, geoms[idx]];
-      const tentativeMax = Math.max(maxFoot, geoms[idx].foot);
-      const tentativeR = prevOuter + tentativeMax + (shellIndex > 0 ? CLUSTER_GAP : 0);
-      if (items.length > 0 && !shellFits(tentative, tentativeR)) break;
-      items.push(geoms[idx]);
-      maxFoot = tentativeMax;
-      R = tentativeR;
-      idx++;
-    }
-
-    // Never split a family across two shells: a family member that did not fit went to the far
-    // side of the next shell, however closely related. If the family started partway through
-    // this shell, the whole family moves out to the next one — unless it alone fills a shell.
-    const next = geoms[idx];
-    const last = items[items.length - 1];
-    if (next && last?.family && next.family === last.family) {
-      let familyStart = items.length - 1;
-      while (familyStart > 0 && items[familyStart - 1].family === last.family) familyStart--;
-      if (familyStart > 0) {
-        idx -= items.length - familyStart;
-        items.splice(familyStart);
-        maxFoot = Math.max(...items.map((g) => g.foot));
-        R = prevOuter + maxFoot + (shellIndex > 0 ? CLUSTER_GAP : 0);
-      }
-    }
-
-    // Place along the shell: exact pairwise increments plus even slack.
-    const start = -Math.PI / 2 + shellIndex * 0.6;
-    if (items.length === 1) {
-      centers.set(items[0].cluster.id, {
-        x: Math.cos(start) * R,
-        y: Math.sin(start) * R,
-      });
-    } else {
-      const increments = items.map((g, i) =>
-        pairArc(g, items[(i + 1) % items.length], R)
-      );
-      const used = increments.reduce((a, b) => a + b, 0);
-      // Spare arc goes between families, not inside one: spread evenly, a sparse shell pushed
-      // Google DeepMind a quarter-turn away from the Google beside it.
-      const boundary = items.map(
-        (g, i) => !g.family || g.family !== items[(i + 1) % items.length].family
-      );
-      // One family filling the shell: keep it together and leave the gap after its last member.
-      if (!boundary.some(Boolean)) boundary[boundary.length - 1] = true;
-      const boundaries = boundary.filter(Boolean).length;
-      const spare = Math.max(0, Math.PI * 2 - used);
-      let theta = start;
-      items.forEach((g, i) => {
-        centers.set(g.cluster.id, {
-          x: Math.cos(theta) * R,
-          y: Math.sin(theta) * R,
-        });
-        const slack = boundary[i] ? spare / boundaries : 0;
-        theta += increments[i] + slack;
-      });
-    }
-
-    prevOuter = R + maxFoot + CLUSTER_GAP;
-    shellIndex += 1;
-  }
-
-  return { centers, skyEdge: prevOuter, ordered: geoms };
-}
-
-/**
- * The packed sky atlas:
+ * The galaxy:
  * - Sun at the center inside a clear core.
- * - Each company/school cluster draws its asterism, undistorted, with
- *   overflow members ringed around it; clusters pack on concentric shells
- *   with guaranteed spacing.
- * - Deep Space and singletons rim the sky beyond the last shell.
- * - Nothing overlaps: stars, figures, and lines all keep their distance.
+ * - Each company / role / school cluster draws its asterism, undistorted, with overflow
+ *   members ringed around it, inside a footprint disk.
+ * - Disks are placed by relatedness — family, alumni, shared tags — so near means related
+ *   (`constellation-affinity.ts`, `graph/disk-placement.ts`), with the biggest clusters
+ *   anchoring the middle. Nothing overlaps: stars, figures, lines and disks keep their distance.
+ * - Everyone no cluster claimed drifts in a halo beyond the disk, thinning outward.
+ * - `galaxy` is the backdrop's shape data: core, disk edge and dust filaments.
  */
-export type HybridGraphLayout = { nodes: LayoutNode[]; edges: LayoutEdge[] };
+export type HybridGraphLayout = {
+  nodes: LayoutNode[];
+  edges: LayoutEdge[];
+  galaxy: GalaxyStructure;
+};
 
 export function buildHybridGraphLayout(
   contacts: GraphContactInput[],
@@ -698,12 +610,18 @@ export function* buildHybridGraphLayoutSteps(
 
   const eligible = fit.clusters.filter((c) => fits.has(c.id));
   const satellites = familySatellites(contacts, eligible);
-  const geoms = orderClustersByFamily(eligible).map((cluster) => ({
-    ...buildClusterGeometry(fits.get(cluster.id)!, satellites.get(cluster.id)),
-    family: clusterFamily(cluster),
-  }));
+  const geoms = eligible.map((cluster) =>
+    buildClusterGeometry(fits.get(cluster.id)!, satellites.get(cluster.id))
+  );
   yield;
-  const { centers, skyEdge } = packClusterShells(geoms);
+
+  const affinity = buildClusterAffinity(contacts, byContactId, eligible);
+  yield;
+  const { centers, diskRadius } = yield* placeClusterDisks(
+    geoms.map((g) => ({ id: g.cluster.id, foot: g.foot, size: g.cluster.count })),
+    affinity,
+    { sunClear: SUN_CLEAR, gap: CLUSTER_GAP }
+  );
 
   const positions = new Map<string, PolarPosition>();
   const figureIds = new Set<string>();
@@ -722,23 +640,21 @@ export function* buildHybridGraphLayoutSteps(
     }
   }
 
-  // Deep Space and singleton clusters scatter across the rim beyond the
-  // last shell — same organic field, sky-sized.
+  // Everyone no constellation claimed drifts in a halo beyond the galaxy's edge.
   const background = contacts
     .filter((c) => !positions.has(c.id))
     .sort((a, b) => a.id.localeCompare(b.id));
   if (background.length > 0) {
-    const { placed } = scatterField(
-      background.map((c) => c.id),
-      "deep-space",
-      skyEdge + BACKGROUND_GAP,
-      BACKGROUND_FIELD_WIDTH,
-      []
-    );
-    for (const p of placed) {
+    const inner = Math.max(diskRadius, SUN_CLEAR) + BACKGROUND_GAP;
+    for (const p of haloField(background.map((c) => c.id), inner)) {
       positions.set(p.id, toPosition(p.x, p.y));
     }
   }
+
+  const galaxy = buildGalaxyStructure(centers, affinity, {
+    sunClear: SUN_CLEAR,
+    diskRadius,
+  });
 
   yield;
   const clusterNodes: LayoutNode[] = [];
@@ -820,19 +736,6 @@ export function* buildHybridGraphLayoutSteps(
   }
 
   const nodes: LayoutNode[] = [
-    {
-      id: "rings",
-      type: "orbitRings",
-      data: {
-        kind: "rings",
-        radii: [...RING_RADII],
-        showLabels: false,
-      },
-      position: { x: 0, y: 0 },
-      draggable: false,
-      selectable: false,
-      zIndex: -2,
-    },
     {
       id: "me",
       type: "user",
@@ -941,5 +844,5 @@ export function* buildHybridGraphLayoutSteps(
     });
   }
 
-  return { nodes, edges };
+  return { nodes, edges, galaxy };
 }

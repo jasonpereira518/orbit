@@ -13,8 +13,11 @@ import {
 import {
   buildHybridGraphLayout,
   type GraphContactInput,
+  type NebulaData,
   type GraphNodeData,
 } from "../src/lib/graph-layout";
+import { buildClusterAffinity } from "../src/lib/constellation-affinity";
+import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import { buildPeerEdges } from "../src/lib/network-metrics";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -337,6 +340,75 @@ console.log("\nNo overlaps");
     }
   }
   check("cluster star fields are pairwise disjoint", clustersApart);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nThe galaxy");
+
+{
+  const g = layout.galaxy;
+  check("the layout carries a galaxy", Boolean(g) && g.diskRadius > 0);
+  check(
+    "no ring node is emitted",
+    !layout.nodes.some((n) => n.id === "rings" || (n.type as string) === "orbitRings")
+  );
+  const clusteredIds = new Set(
+    [...fit.fits.values()].flatMap((f) => [...f.figureMemberIds, ...f.scatterMemberIds])
+  );
+  check(
+    "every clustered star lies inside the disk",
+    [...clusteredIds].every((id) => {
+      const p = posById.get(id)!;
+      return Math.hypot(p.x, p.y) <= g.diskRadius + 1e-6;
+    })
+  );
+  const haloIds = ["solo", ...Array.from({ length: 7 }, (_, i) => `d${i}`)];
+  check(
+    "unaffiliated stars sit in the halo, beyond the disk",
+    haloIds.every((id) => {
+      const p = posById.get(id)!;
+      return Math.hypot(p.x, p.y) >= g.diskRadius;
+    })
+  );
+  check("the core is inside the disk", g.coreRadius <= g.diskRadius);
+  check(
+    "filaments join clusters that exist",
+    g.filaments.every((f) => fit.fits.has(f.from) && fit.fits.has(f.to))
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nNear = related (a realistic network)");
+
+{
+  const network = buildSyntheticGraphPayload(600, { seed: 3 }).contacts;
+  const big = buildHybridGraphLayout(network, "Tester");
+  const bigFit = buildConstellationFit(network);
+  const eligible = bigFit.clusters.filter((c) => bigFit.fits.has(c.id));
+  const links = buildClusterAffinity(network, bigFit.byContactId, eligible);
+  const centre = new Map(
+    big.nodes
+      .filter((n) => n.type === "nebula")
+      .map((n) => [(n.data as NebulaData).clusterId!, n.position] as const)
+  );
+  const d = (a: string, b: string) => {
+    const A = centre.get(a)!;
+    const B = centre.get(b)!;
+    return Math.hypot(A.x - B.x, A.y - B.y);
+  };
+  const ids = [...centre.keys()];
+  const all: number[] = [];
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) all.push(d(ids[i], ids[j]));
+  all.sort((a, b) => a - b);
+  const median = all[Math.floor(all.length / 2)];
+  const related = links.filter((l) => centre.has(l.a) && centre.has(l.b));
+  const mean = related.reduce((s, l) => s + d(l.a, l.b), 0) / Math.max(1, related.length);
+  console.log(`  related=${related.length} mean=${mean.toFixed(1)} median=${median.toFixed(1)}`);
+  check("the network has related clusters", related.length > 10, String(related.length));
+  check(
+    `related clusters sit closer than a typical pair (mean ${mean.toFixed(0)} < median ${median.toFixed(0)})`,
+    mean < median
+  );
 }
 
 // ---------------------------------------------------------------------------
