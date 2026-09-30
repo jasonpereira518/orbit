@@ -1,8 +1,16 @@
-# Pricing v2 — proposed Terms and Privacy edits
+# Pricing v2 — Terms and Privacy edits
 
-**Status: proposal only.** Neither page has been edited, `TERMS_VERSION` (`src/lib/legal.ts`,
-currently `2026-09-26`) has not been bumped, and `scripts/legal-pages.lock.json` is untouched.
-Every change below needs Jason's approval first.
+**Status: APPLIED on Sep 29 2026, with Jason's approval.** Both pages carry the edits below,
+`TERMS_VERSION` is `2026-09-29` (existing accounts are asked to accept again), and
+`scripts/legal-pages.lock.json` records the new text. Jason's answers to the open questions:
+packs are refundable on request until any of their credits are used; an annual plan cancelled
+within 14 days of its yearly charge is refunded in full on request.
+
+**Still for Jason to verify before switching included AI on:** Privacy §7 now says Orbit's
+provider agreements "do not allow your content to be used to train their models" and that
+providers "may keep requests for a limited period for abuse monitoring". Confirm both for each
+provider account Orbit uses (Gemini must be on a PAID tier; Google's free tier may train on
+inputs), and name the retention period if you want it stated.
 
 **Why this blocks shipping:** Privacy §7 says "Orbit never runs AI on its own provider accounts."
 That becomes false the moment included AI runs for a Pro or Max account. Included AI therefore
