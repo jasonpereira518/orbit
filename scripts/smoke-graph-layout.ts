@@ -15,7 +15,9 @@ import {
   type GraphContactInput,
   type NebulaData,
   type GraphNodeData,
+  type ClusterLabelData,
 } from "../src/lib/graph-layout";
+import { RING_CAPACITY } from "../src/lib/graph/cluster-anatomy";
 import { buildClusterAffinity } from "../src/lib/constellation-affinity";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import { buildPeerEdges } from "../src/lib/network-metrics";
@@ -82,6 +84,31 @@ const fixture: GraphContactInput[] = [
   contact("s1", { school: "MIT", orbitScore: 4 }),
   contact("s2", { school: "MIT", orbitScore: 2 }),
   contact("s3", { school: "MIT", orbitScore: 1 }),
+  // A company big enough to split into a leadership core and function petals.
+  ...["VP Engineering", "CTO", "Co-founder"].map((title, i) =>
+    contact(`nw-l${i}`, { company: "Northwind", title, orbitScore: 5 - i })
+  ),
+  ...Array.from({ length: 11 }, (_, i) =>
+    contact(`nw-e${i}`, {
+      company: "Northwind",
+      title: "Software Engineer",
+      school: i % 2 ? "MIT" : i % 3 ? "Waterloo" : null,
+      orbitScore: 1 + ((i * 3) % 5),
+    })
+  ),
+  ...Array.from({ length: 8 }, (_, i) =>
+    contact(`nw-d${i}`, { company: "Northwind", title: "Product Designer", orbitScore: 1 + ((i * 2) % 5) })
+  ),
+  ...Array.from({ length: 5 }, (_, i) =>
+    contact(`nw-s${i}`, { company: "Northwind", title: "Account Executive", orbitScore: 1 + (i % 5) })
+  ),
+  // A school with enough alumni to be a ring, and one too big for its rings.
+  ...Array.from({ length: 14 }, (_, i) =>
+    contact(`ch${i}`, { school: "Chapel Hill", orbitScore: 1 + (i % 5) })
+  ),
+  ...Array.from({ length: 52 }, (_, i) =>
+    contact(`su${i}`, { school: "State U", orbitScore: 1 + ((i * 2) % 5) })
+  ),
   // Singleton company → halo, not a cluster.
   contact("solo", { company: "Tiny Startup", orbitScore: 3 }),
   // One-off companies, same function → a cross-company role constellation.
@@ -128,12 +155,17 @@ console.log("\nFit assignment");
 
   // Figure members are the top of the placement order, aligned to shape stars.
   for (const f of fit.fits.values()) {
-    check(
-      `figure size matches shape (${f.cluster.name})`,
-      f.figureMemberIds.length ===
-        Math.min(f.shape.stars.length, f.cluster.count),
-      `${f.figureMemberIds.length} vs ${f.shape.stars.length}`
-    );
+    for (const p of f.parts) {
+      if (f.form === "ring") {
+        check(`ring keeps every member it can (${f.cluster.name})`, p.figureMemberIds.length === Math.min(f.cluster.count, RING_CAPACITY));
+        continue;
+      }
+      check(
+        `figure size matches shape (${f.cluster.name}/${p.key})`,
+        p.figureMemberIds.length === Math.min(p.shape.stars.length, p.figureMemberIds.length),
+        `${p.figureMemberIds.length} vs ${p.shape.stars.length}`
+      );
+    }
   }
 }
 
@@ -174,9 +206,10 @@ console.log("\nLayout basics");
 console.log("\nShape fidelity (figures are undistorted asterisms)");
 
 {
-  for (const f of fit.fits.values()) {
-    const pts = f.figureMemberIds.map((id) => posById.get(id)!);
-    const stars = f.shape.stars.slice(0, f.figureMemberIds.length);
+  for (const f of fit.fits.values()) for (const part of f.parts) {
+    if (f.form === "ring") continue;
+    const pts = part.figureMemberIds.map((id) => posById.get(id)!);
+    const stars = part.shape.stars.slice(0, part.figureMemberIds.length);
     if (pts.length < 2) continue;
     // A similarity transform preserves all pairwise distance ratios.
     let ratio: number | null = null;
@@ -197,7 +230,7 @@ console.log("\nShape fidelity (figures are undistorted asterisms)");
         }
       }
     }
-    check(`figure is a pure similarity transform (${f.cluster.name})`, faithful);
+    check(`figure is a pure similarity transform (${f.cluster.name}/${part.key})`, faithful);
   }
 }
 
@@ -342,6 +375,50 @@ console.log("\nNo overlaps");
   // A heuristic on star centroids; the exact disk guarantee (gap, sun clear) lives in
   // smoke-disk-placement.
   check("cluster star fields are pairwise disjoint", clustersApart);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nCluster anatomy");
+
+{
+  const label = (name: string) =>
+    layout.nodes.find((n) => n.type === "clusterLabel" && (n.data as { label?: string }).label === name)!
+      .data as ClusterLabelData;
+  const nw = [...fit.fits.values()].find((f) => f.cluster.name === "Northwind")!;
+  check("Northwind is a petal cluster with a core and three petals", nw.form === "petal" && nw.parts.map((p) => p.key).join() === "core,petal:engineering,petal:design,petal:sales");
+  check("its label node says so", label("Northwind").form === "petal");
+  const petalLabels = label("Northwind").petalLabels ?? [];
+  check("…with a label for the core and each petal", petalLabels.map((l) => l.label).join() === "Leadership,Engineering,Design,Sales & BD");
+  check("…each anchored inside the node's box", petalLabels.every((l) => {
+    const box = label("Northwind").box!;
+    return l.anchor.x >= 0 && l.anchor.x <= box.width && l.anchor.y >= 0 && l.anchor.y <= box.height;
+  }));
+  check("a plain figure has no petal labels", label("Google").petalLabels === undefined && label("Google").form === "figure");
+
+  // Parts sit on disjoint footprints: each part's stars stay apart from the other parts'.
+  const partStars = nw.parts.map((p) => [...p.figureMemberIds, ...p.scatterMemberIds].map((id) => posById.get(id)!));
+  let apart = Infinity;
+  for (let a = 0; a < partStars.length; a++)
+    for (let b = a + 1; b < partStars.length; b++)
+      for (const p of partStars[a]) for (const q of partStars[b]) apart = Math.min(apart, Math.hypot(p.x - q.x, p.y - q.y));
+  check(`stars of different parts keep clear (${apart.toFixed(0)}px ≥ 120)`, apart >= 120);
+
+  const star = (id: string) => contactNodes.find((n) => n.id === id)!.data as GraphNodeData;
+  check("stars know their part", star("nw-l0").partKey === "core" && star("nw-l0").partRole === "core" && star("nw-e0").partKey === "petal:engineering");
+  check("…and whether they lead", star("nw-l0").leader === true && star("nw-e0").leader === false);
+  check("a star in an ordinary cluster is 'main' and carries no leader flag", star("aws0").partRole === "main" && star("aws0").leader === undefined);
+
+  const ch = [...fit.fits.values()].find((f) => f.cluster.name === "Chapel Hill")!;
+  check("Chapel Hill is a ring", ch.form === "ring" && label("Chapel Hill").form === "ring");
+  check("a ring draws no figure lines", !layout.edges.some((e) => ch.cluster.contactIds.includes(e.source)));
+  check("ring members are figure stars", ch.cluster.contactIds.every((id) => (star(id).figureRole === "figure")));
+  const ringR = ch.cluster.contactIds.map((id) => posById.get(id)!);
+  const cx = ringR.reduce((s, p) => s + p.x, 0) / ringR.length;
+  const cy = ringR.reduce((s, p) => s + p.y, 0) / ringR.length;
+  const radii = ringR.map((p) => Math.hypot(p.x - cx, p.y - cy));
+  check(`ring members lie on one circle (spread ${(Math.max(...radii) - Math.min(...radii)).toFixed(1)}px)`, Math.max(...radii) - Math.min(...radii) < 3);
+  const su = [...fit.fits.values()].find((f) => f.cluster.name === "State U")!;
+  check("a school too big for its rings scatters the rest", su.scatterMemberIds.length === 52 - Math.min(52, RING_CAPACITY) && su.figureMemberIds.length === Math.min(52, RING_CAPACITY));
 }
 
 // ---------------------------------------------------------------------------
