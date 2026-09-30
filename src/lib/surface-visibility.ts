@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
@@ -9,12 +9,15 @@ import {
   COMING_SOON_COMPANIONS,
   DEFAULT_COMING_SOON_KEYS,
   LIVE_FLAG_PREFIX,
+  ORDER_FLAG_PREFIX,
   SOON_FLAG_PREFIX,
   canMarkComingSoon,
   effectiveComingSoonKeys,
   getSurface,
   isAlwaysVisible,
+  surfaceKeyForHref,
 } from "@/lib/surfaces";
+import { APP_NAV_CORE, APP_NAV_EXTRAS } from "@/components/layout/app-nav";
 
 /**
  * The server half of surface visibility: which surfaces are hidden, and for whom.
@@ -75,7 +78,7 @@ export function isSurfaceHiddenError(err: unknown): err is SurfaceHiddenError {
  * surface staying reachable for a few more seconds after it is hidden is acceptable.
  */
 const HIDDEN_KEYS_TTL_MS = 15_000;
-type FlagSnapshot = { hidden: Set<string>; comingSoon: Set<string> };
+type FlagSnapshot = { hidden: Set<string>; comingSoon: Set<string>; navOrder: string[] };
 let flagsMemo: { snapshot: FlagSnapshot; at: number } | null = null;
 
 /** Forget the cross-request copy. For writers of `app_surface_flags`, including tests. */
@@ -97,11 +100,17 @@ const getFlagSnapshot = cache(async (): Promise<FlagSnapshot> => {
       .select({ surfaceKey: appSurfaceFlags.surfaceKey })
       .from(appSurfaceFlags);
     const all = rows.map((r) => r.surfaceKey);
+    const isOverride = (k: string) =>
+      k.startsWith(SOON_FLAG_PREFIX) ||
+      k.startsWith(LIVE_FLAG_PREFIX) ||
+      k.startsWith(ORDER_FLAG_PREFIX);
+    const orderRow = all.find((k) => k.startsWith(ORDER_FLAG_PREFIX));
     const snapshot: FlagSnapshot = {
-      hidden: new Set(
-        all.filter((k) => !k.startsWith(SOON_FLAG_PREFIX) && !k.startsWith(LIVE_FLAG_PREFIX))
-      ),
+      hidden: new Set(all.filter((k) => !isOverride(k))),
       comingSoon: effectiveComingSoonKeys(all),
+      navOrder: orderRow
+        ? orderRow.slice(ORDER_FLAG_PREFIX.length).split(",").filter(Boolean)
+        : [],
     };
     flagsMemo = { snapshot, at: now };
     return snapshot;
@@ -110,7 +119,11 @@ const getFlagSnapshot = cache(async (): Promise<FlagSnapshot> => {
     // would be a far worse outage than one that briefly showed a surface meant to be dark.
     // Coming-soon falls back to the code defaults for the same reason. Not memoized, so the
     // failure lasts one request rather than the whole TTL.
-    return { hidden: new Set<string>(), comingSoon: new Set(DEFAULT_COMING_SOON_KEYS) };
+    return {
+      hidden: new Set<string>(),
+      comingSoon: new Set(DEFAULT_COMING_SOON_KEYS),
+      navOrder: [],
+    };
   }
 });
 
@@ -124,6 +137,11 @@ const getFlagSnapshot = cache(async (): Promise<FlagSnapshot> => {
  */
 export const getHiddenSurfaceKeys = cache(async (): Promise<Set<string>> => {
   return (await getFlagSnapshot()).hidden;
+});
+
+/** The operator's sidebar order as surface keys; empty means the code's own order. */
+export const getNavOrder = cache(async (): Promise<string[]> => {
+  return (await getFlagSnapshot()).navOrder;
 });
 
 /**
@@ -174,6 +192,8 @@ export type SurfaceVisibility = {
   previewingUnreleased: boolean;
   /** Every page marked coming soon, preview or not. What the nav tags "Soon". */
   comingSoonMarked: Set<string>;
+  /** Sidebar order chosen by the operator, as surface keys. */
+  navOrder: string[];
 };
 
 
@@ -215,6 +235,7 @@ export async function resolveSurfaceVisibility(
     comingSoon,
     previewingUnreleased,
     comingSoonMarked: new Set(marked),
+    navOrder: await getNavOrder(),
   };
 }
 
@@ -327,5 +348,40 @@ export async function setSurfaceComingSoon(
     resourceType: "surface",
     resourceId: surfaceKey,
     detail: { label: surface.label, kind: surface.kind },
+  });
+}
+
+/** Surface keys of every page that has a sidebar entry — the only ones an order may name. */
+export function navSurfaceKeys(): string[] {
+  return [...APP_NAV_CORE, ...APP_NAV_EXTRAS]
+    .map((item) => surfaceKeyForHref(item.href))
+    .filter((k): k is string => k !== null);
+}
+
+/**
+ * Save the sidebar order for everyone. Replaces the whole list in one write; every key must
+ * be a real nav page, so a forged action cannot smuggle arbitrary text into the flag row.
+ */
+export async function setNavOrder(adminUserId: string, keys: string[]): Promise<void> {
+  const valid = new Set(navSurfaceKeys());
+  if (new Set(keys).size !== keys.length || keys.some((k) => !valid.has(k))) {
+    throw new Error("That sidebar order includes a page that is not in the sidebar.");
+  }
+  const db = await getDb();
+  await db.delete(appSurfaceFlags).where(like(appSurfaceFlags.surfaceKey, `${ORDER_FLAG_PREFIX}%`));
+  if (keys.length > 0) {
+    await db
+      .insert(appSurfaceFlags)
+      .values({ surfaceKey: `${ORDER_FLAG_PREFIX}${keys.join(",")}`, hiddenBy: adminUserId })
+      .onConflictDoNothing();
+  }
+  invalidateHiddenSurfaceKeys();
+
+  await recordAdminAction({
+    adminUserId,
+    action: "product.nav.reorder",
+    resourceType: "surface",
+    resourceId: "nav-order",
+    detail: { order: keys },
   });
 }

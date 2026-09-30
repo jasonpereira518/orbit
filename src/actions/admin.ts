@@ -23,6 +23,7 @@ import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
 import {
   PREVIEW_UNRELEASED_COOKIE,
+  setNavOrder,
   setSurfaceComingSoon,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
@@ -341,6 +342,17 @@ export async function setSurfaceComingSoonAction(input: {
   const adminUserId = await requireAdminUserId();
 
   await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/** Save the sidebar order for everyone. See `setNavOrder`. */
+export async function setNavOrderAction(input: { order: string[] }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setNavOrder(adminUserId, input.order);
 
   revalidatePath("/", "layout");
   revalidatePath("/admin/product");

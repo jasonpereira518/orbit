@@ -27,7 +27,12 @@ import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { usePrefersReducedTransparency } from "@/lib/use-prefers-reduced-transparency";
-import { FEEDBACK_SURFACE_KEY, isHrefComingSoon, isHrefHidden } from "@/lib/surfaces";
+import {
+  FEEDBACK_SURFACE_KEY,
+  isHrefComingSoon,
+  isHrefHidden,
+  orderNavItems,
+} from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { MobileCaptureButton } from "@/components/layout/mobile-capture-button";
 import {
@@ -56,6 +61,7 @@ export function MobileNav({
   demoMode,
   hidden,
   comingSoon,
+  navOrder,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
@@ -63,6 +69,8 @@ export function MobileNav({
   hidden: ReadonlySet<string>;
   /** Pages marked coming soon, whether or not this viewer is previewing them. */
   comingSoon: ReadonlySet<string>;
+  /** Operator-chosen order, as surface keys. */
+  navOrder: readonly string[];
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -101,8 +109,17 @@ export function MobileNav({
    * on the wrong tab. Everything downstream reads these, never the module constants.
    */
   const moreNav = useMemo(
-    () => MOBILE_MORE_NAV.filter((item) => !isHrefHidden(item.href, hidden)),
-    [hidden]
+    () => {
+      const ordered = orderNavItems(MOBILE_MORE_NAV, navOrder).filter(
+        (item) => !isHrefHidden(item.href, hidden)
+      );
+      // Coming-soon pages sink to the bottom, matching the desktop sidebar.
+      return [
+        ...ordered.filter((item) => !isHrefComingSoon(item.href, comingSoon)),
+        ...ordered.filter((item) => isHrefComingSoon(item.href, comingSoon)),
+      ];
+    },
+    [hidden, comingSoon, navOrder]
   );
   const bottomNav = useMemo(
     () =>

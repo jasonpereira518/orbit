@@ -12,13 +12,16 @@
  */
 import "./smoke/_env";
 
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
 import {
   isSurfaceHiddenError,
   requireVisibleSurface,
   resolveSurfaceVisibility,
+  getNavOrder,
+  navSurfaceKeys,
+  setNavOrder,
   setSurfaceComingSoon,
   setSurfaceHidden,
 } from "../src/lib/surface-visibility";
@@ -28,6 +31,7 @@ import {
   FEEDBACK_SURFACE_KEY,
   SURFACES,
   effectiveComingSoonKeys,
+  orderNavItems,
   getSurface,
   surfaceForPathname,
   surfaceKeyForHref,
@@ -320,6 +324,33 @@ async function main() {
       settingsRejected = true;
     }
     check("an escape-hatch page cannot be marked coming soon", settingsRejected);
+
+    console.log("\nsidebar order");
+    const navItems = [{ href: "/contacts" }, { href: "/capture" }, { href: "/chat" }, { href: "/x" }];
+    check(
+      "an order sorts listed pages first and leaves the rest in default order",
+      orderNavItems(navItems, ["page.chat", "page.contacts"]).map((i) => i.href).join() ===
+        "/chat,/contacts,/capture,/x"
+    );
+    check("an empty order is the code's order", orderNavItems(navItems, []).map((i) => i.href).join() === "/contacts,/capture,/chat,/x");
+    try {
+      const keys = navSurfaceKeys();
+      const reversed = [...keys].reverse();
+      await setNavOrder(ADMIN, reversed);
+      check("a saved order reads back", (await getNavOrder()).join() === reversed.join());
+      check("the order row never counts as a hidden surface", [...(await resolveSurfaceVisibility(USER)).hiddenForUsers].every((k) => !k.startsWith("order:")));
+      let badRejected = false;
+      try {
+        await setNavOrder(ADMIN, ["page.dashboard-not-real"]);
+      } catch {
+        badRejected = true;
+      }
+      check("an order naming a non-sidebar page is rejected", badRejected);
+      await setNavOrder(ADMIN, []);
+      check("clearing the order restores the default", (await getNavOrder()).length === 0);
+    } finally {
+      await db.delete(appSurfaceFlags).where(like(appSurfaceFlags.surfaceKey, "order:%"));
+    }
 
     console.log("\naudit");
     const entries = await db

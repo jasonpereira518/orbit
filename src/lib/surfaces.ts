@@ -312,6 +312,32 @@ export function effectiveComingSoonKeys(flagRows: Iterable<string>): Set<string>
 }
 
 /**
+ * The operator's sidebar order, stored as ONE more row in `app_surface_flags`:
+ * `order:page.a,page.b,...`. Like the coming-soon overrides, this avoids a schema change.
+ */
+export const ORDER_FLAG_PREFIX = "order:";
+
+/**
+ * `items` sorted by the operator's order (surface keys). Items the order does not mention —
+ * a nav entry added after the operator last saved — keep their default relative order after
+ * the listed ones. Stable, so an empty order returns the code's own order.
+ */
+export function orderNavItems<T extends { href: string }>(
+  items: readonly T[],
+  order: readonly string[]
+): T[] {
+  const rank = (item: T) => {
+    const key = surfaceKeyForHref(item.href);
+    const i = key === null ? -1 : order.indexOf(key);
+    return i === -1 ? order.length : i;
+  };
+  return items
+    .map((item, index) => ({ item, index, rank: rank(item) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((x) => x.item);
+}
+
+/**
  * Surfaces elsewhere in the app that only make sense once a coming-soon page is released.
  * They are hidden from exactly the viewers who get the coming-soon screen, so nothing
  * points at a page that is closed.

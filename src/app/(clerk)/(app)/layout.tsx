@@ -159,6 +159,7 @@ export default async function AppLayout({
       hidden={[...visibility.hidden]}
       hiddenForUsers={[...visibility.hiddenForUsers]}
       comingSoon={[...visibility.comingSoonMarked]}
+      navOrder={visibility.navOrder}
       viewingAsUser={visibility.viewingAsUser}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to

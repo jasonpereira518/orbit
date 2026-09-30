@@ -5,11 +5,13 @@ import {
   ViewAsUserButton,
 } from "@/components/admin/surface-toggles";
 import { requireAdminPage } from "@/lib/admin";
+import { NavOrderEditor } from "@/components/admin/nav-order-editor";
 import { ConstellationFilterPanel } from "@/components/admin/constellation-filter-panel";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import {
   getComingSoonKeys,
   getHiddenSurfaceKeys,
+  getNavOrder,
   isPreviewingUnreleased,
   isViewingAsUser,
 } from "@/lib/surface-visibility";
@@ -33,10 +35,11 @@ export const metadata = { title: "Admin · Product" };
  */
 export default async function AdminProductPage() {
   const adminUserId = await requireAdminPage();
-  const [hidden, comingSoon, viewingAsUser, previewingUnreleased, constellation] =
+  const [hidden, comingSoon, navOrder, viewingAsUser, previewingUnreleased, constellation] =
     await Promise.all([
       getHiddenSurfaceKeys(),
       getComingSoonKeys(),
+      getNavOrder(),
       isViewingAsUser(adminUserId),
       isPreviewingUnreleased(adminUserId),
       getConstellationConfig(),
@@ -87,6 +90,10 @@ export default async function AdminProductPage() {
 
         <AdminPanel title="Constellation">
           <ConstellationFilterPanel config={constellation} />
+        </AdminPanel>
+
+        <AdminPanel title="Sidebar order">
+          <NavOrderEditor order={navOrder} comingSoon={[...comingSoon]} />
         </AdminPanel>
 
         <AdminPanel title="Pages">

@@ -53,6 +53,7 @@ export function AppShell({
   hidden,
   hiddenForUsers,
   comingSoon,
+  navOrder,
   viewingAsUser,
 }: {
   children: React.ReactNode;
@@ -66,6 +67,8 @@ export function AppShell({
   hiddenForUsers: string[];
   /** Page keys marked coming soon, for the nav's "Soon" tags. */
   comingSoon: string[];
+  /** Operator-chosen sidebar order, as surface keys. */
+  navOrder: string[];
   viewingAsUser: boolean;
   /** True when an admin has opted into seeing real pages behind a coming-soon screen. */
 }) {
@@ -169,6 +172,7 @@ export function AppShell({
               hidden={hiddenSet}
               hiddenForUsers={hiddenForUsersSet}
               comingSoon={comingSoonSet}
+              navOrder={navOrder}
             />
           </div>
           <main
@@ -271,6 +275,7 @@ export function AppShell({
               demoMode={demoMode}
               hidden={hiddenSet}
               comingSoon={comingSoonSet}
+              navOrder={navOrder}
             />
           </main>
         </div>
