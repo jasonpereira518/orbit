@@ -12,7 +12,7 @@ const VIEWS = [
  */
 export function KnowledgeViewSwitch({ view }: { view: "people" | "overview" }) {
   return (
-    <nav aria-label="Knowledge view" className="inline-flex rounded-xl bg-muted/60 p-1">
+    <nav aria-label="Knowledge view" className="inline-flex shrink-0 rounded-xl bg-muted/60 p-1">
       {VIEWS.map((v) => (
         <IntentLink
           key={v.id}

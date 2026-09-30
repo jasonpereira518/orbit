@@ -14,6 +14,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * People (a list and a dossier) is the page; Overview is the flat feed it grew out of.
+ * Both share one width and one header, word for word, so the switch between them stays
+ * exactly where it is instead of jumping as the page changes.
  *
  * The selected person is the URL (`?p=`), so the dossier is an ordinary server component
  * that streams in behind a skeleton and can be linked, reloaded and reached with back.
@@ -30,7 +32,7 @@ export default async function KnowledgePage({
   const selectedId = view === "people" && typeof sp.p === "string" && UUID.test(sp.p) ? sp.p : null;
 
   return (
-    <div className={cn("mx-auto w-full space-y-6", view === "people" ? "max-w-6xl" : "max-w-3xl")}>
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       <RenderStamp />
       <div className={cn("flex-wrap items-end justify-between gap-4", selectedId ? "hidden lg:flex" : "flex")}>
         <div>
@@ -38,9 +40,7 @@ export default async function KnowledgePage({
             Knowledge base
           </h1>
           <p className="mt-1 text-muted-foreground">
-            {view === "people"
-              ? "Everyone in your orbit, what Orbit knows about them, and how they fit your goals."
-              : "Everything Orbit knows about your network — imported messages, notes, summaries, and key facts."}
+            Everyone in your orbit, what Orbit knows about them, and how they fit your goals.
           </p>
         </div>
         <KnowledgeViewSwitch view={view} />
