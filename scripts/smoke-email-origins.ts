@@ -108,6 +108,52 @@ async function chatSection() {
   check("emailing from Chat answers the follow-up", after?.followUpStatus === "none");
 }
 
+async function recruiterSection() {
+  console.log("recruiter");
+  const db = await getDb();
+  const [rec] = await db
+    .insert(schema.recruiters)
+    .values({ fullName: "Riley Recruiter", nameNormalized: "riley recruiter" })
+    .returning();
+  try {
+    const draft = async () =>
+      (
+        await db
+          .insert(schema.recruiterMessages)
+          .values({ userId: USER, recruiterId: rec!.id, intent: "set_up_chat", subject: "Chat?", body: "Hi Riley" })
+          .returning()
+      )[0]!;
+    const load = async (id: string) =>
+      (await db.select().from(schema.recruiterMessages).where(eq(schema.recruiterMessages.id, id)))[0]!;
+
+    fail = null;
+    const ok = await draft();
+    const { outcome } = await sendNow({
+      to: ["riley@talent-co.io"],
+      subject: ok.subject,
+      bodyText: ok.body,
+      origin: "recruiter",
+      originRef: ok.id,
+      idempotencyKey: `recruiter:${ok.id}`,
+    });
+    const sentRow = await load(ok.id);
+    check("a sent recruiter email marks its draft sent", outcome === "sent" && sentRow.status === "sent" && sentRow.gmailMessageId === "pm");
+
+    fail = "permanent";
+    const bad = await draft();
+    await sendNow({ to: ["riley@talent-co.io"], subject: bad.subject, bodyText: bad.body, origin: "recruiter", originRef: bad.id, idempotencyKey: `recruiter:${bad.id}` });
+    const failedRow = await load(bad.id);
+    check(
+      "a refused one marks it failed, in Orbit's words",
+      failedRow.status === "failed" && !/Gmail 4|raw provider/.test(failedRow.errorMessage ?? ""),
+      failedRow.errorMessage ?? ""
+    );
+    fail = null;
+  } finally {
+    await db.delete(schema.recruiters).where(eq(schema.recruiters.id, rec!.id));
+  }
+}
+
 async function main() {
   const db = await getDb();
   await purgeUserData(USER, { keepSettings: false }).catch(() => {});
@@ -124,6 +170,7 @@ async function main() {
     });
     await followUpSection();
     await chatSection();
+    await recruiterSection();
   } finally {
     setProviderOverride("gmail", null);
     await resetBucket();

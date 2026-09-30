@@ -82,6 +82,12 @@ export type EnqueueInput = {
   inReplyToRfcId?: string | null;
   /** Skip the lookup when the caller already knows (e.g. a contact-page send). */
   contactIds?: string[];
+  /**
+   * False when the caller already charged the burst bucket for a whole batch (recruiter
+   * sends): a batch the person approved at once is one action, not twenty. The daily cap
+   * still counts every message.
+   */
+  chargeBurst?: boolean;
 };
 
 export type EnqueueResult =
@@ -115,11 +121,9 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
   const sender = await resolveSender(userId);
   if (!sender.ok) return refuse(sender.reason);
 
-  try {
-    await consumeBucket("emailSend", userId, RATE_LIMITS.emailSend);
-  } catch (err) {
-    if (isRateLimitedError(err)) return refuse("rate_limited");
-    throw err;
+  if (input.chargeBurst !== false) {
+    const limited = await chargeEmailBurst(userId);
+    if (limited) return limited;
   }
 
   const [ent, used] = await Promise.all([getEntitlements(userId), countEmailSendsToday(userId)]);
@@ -155,6 +159,17 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
     return { ok: true, id: row!.id, sendAt: row!.sendAt, to: recipients.to, provider: sender.provider };
   } catch (err) {
     if (isUniqueViolation(err)) return refuse("duplicate");
+    throw err;
+  }
+}
+
+/** One unit of the `emailSend` burst bucket; a refusal when the bucket is empty. */
+export async function chargeEmailBurst(userId: string): Promise<EnqueueResult | null> {
+  try {
+    await consumeBucket("emailSend", userId, RATE_LIMITS.emailSend);
+    return null;
+  } catch (err) {
+    if (isRateLimitedError(err)) return refuse("rate_limited");
     throw err;
   }
 }
