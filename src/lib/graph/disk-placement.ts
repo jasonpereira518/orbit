@@ -57,11 +57,17 @@ const SEED_PARTNERS = 3;
 const STRONG_LINK = 1;
 const MAX_STEP = 80;
 const SEARCH_STEP = 24;
-/** A disk's search rings are also at least this fraction of its footprint apart. */
-const SEARCH_STEP_FOOT = 0.3;
+/**
+ * A disk's search rings are also at least this fraction of its footprint apart: coarse when
+ * looking for any free spot, fine when looking for one beside a relative (a family must end up
+ * tangent, not a coarse step away).
+ */
+const SEARCH_STEP_FOOT = 0.7;
+const TANGENT_STEP_FOOT = 0.3;
 /** Seed and legalize yield after this many visited clusters. */
 const YIELD_CLUSTERS_EVERY = 20;
-const SEARCH_ANGLES = 24;
+const SEARCH_ANGLES = 16;
+const TANGENT_ANGLES = 24;
 const SEARCH_RINGS = 600;
 
 /** Disks bucketed by the grid cells their bounding box covers, so a test looks at neighbours. */
@@ -169,11 +175,23 @@ export function* placeClusterDisks(
     extent = Math.max(extent, Math.hypot(x, y) + foot[i]);
   };
 
-  /** Free of the sun's clear zone and of every disk in the grid. */
+  /**
+   * Free of the sun's clear zone and of every disk in the grid.
+   *
+   * Neighbouring candidates in a search are usually blocked by the same disk, so the one that
+   * blocked last is tried first and most failures cost a single distance.
+   */
+  let blocker = -1;
   const free = (x: number, y: number, r: number) => {
     if (Math.hypot(x, y) < sunClear + r) return false;
+    if (blocker >= 0 && Math.hypot(x - xs[blocker], y - ys[blocker]) < foot[blocker] + r + gap) {
+      return false;
+    }
     for (const j of grid.near(x, y, r + gap)) {
-      if (Math.hypot(x - xs[j], y - ys[j]) < foot[j] + r + gap) return false;
+      if (Math.hypot(x - xs[j], y - ys[j]) < foot[j] + r + gap) {
+        blocker = j;
+        return false;
+      }
     }
     return true;
   };
@@ -182,17 +200,26 @@ export function* placeClusterDisks(
    * The free spot for disk `i` nearest the sun, searching outward from (bx, by) in rings of
    * growing distance. Ends at a spot beyond everything placed, so it always finds one.
    */
-  const findSpot = (i: number, bx: number, by: number, minDist: number) => {
+  const cosTable = new Float64Array(TANGENT_ANGLES);
+  const sinTable = new Float64Array(TANGENT_ANGLES);
+  const findSpot = (i: number, bx: number, by: number, minDist: number, tangent = false) => {
+    const angleCount = tangent ? TANGENT_ANGLES : SEARCH_ANGLES;
     const r = foot[i];
     const start = hashUnit(order[i].id, 21) * Math.PI * 2;
-    const step = Math.max(SEARCH_STEP, r * SEARCH_STEP_FOOT);
+    const step = Math.max(SEARCH_STEP, r * (tangent ? TANGENT_STEP_FOOT : SEARCH_STEP_FOOT));
+    for (let k = 0; k < angleCount; k++) {
+      const t = start + (k / angleCount) * Math.PI * 2;
+      cosTable[k] = Math.cos(t);
+      sinTable[k] = Math.sin(t);
+    }
     for (let ring = 0; ring < SEARCH_RINGS; ring++) {
       const d = minDist + ring * step;
       let best: { x: number; y: number; dist: number } | null = null;
-      for (let k = 0; k < SEARCH_ANGLES; k++) {
-        const t = start + (k / SEARCH_ANGLES) * Math.PI * 2;
-        const x = bx + Math.cos(t) * d;
-        const y = by + Math.sin(t) * d;
+      // At distance 0 every angle is the same point.
+      const angles = d === 0 ? 1 : angleCount;
+      for (let k = 0; k < angles; k++) {
+        const x = bx + cosTable[k] * d;
+        const y = by + sinTable[k] * d;
         const dist = Math.hypot(x, y);
         if ((!best || dist < best.dist - 1e-9) && free(x, y, r)) best = { x, y, dist };
       }
@@ -228,6 +255,9 @@ export function* placeClusterDisks(
         .filter(({ j }) => !placedFlag[j])
         .sort((p, q) => q.w - p.w || p.j - q.j)
         .filter(({ w }, rank) => rank < SEED_PARTNERS || w >= STRONG_LINK);
+      // Seated smallest first: a small relative takes the spot hugging the cluster, and the
+      // bigger ones go around it rather than crowding it out.
+      partners.sort((p, q) => foot[p.j] - foot[q.j] || p.j - q.j);
       for (const { j } of partners) if (!placedFlag[j]) one(j);
       if (visited++ % YIELD_CLUSTERS_EVERY === YIELD_CLUSTERS_EVERY - 1) yield;
     }
@@ -239,7 +269,7 @@ export function* placeClusterDisks(
     const anchor = strongestPlaced(i);
     const spot =
       anchor >= 0
-        ? findSpot(i, xs[anchor], ys[anchor], foot[anchor] + foot[i] + gap)
+        ? findSpot(i, xs[anchor], ys[anchor], foot[anchor] + foot[i] + gap, true)
         : findSpot(i, 0, 0, Math.max(sunClear + foot[i], frontier - 2 * (foot[i] + gap)));
     if (anchor < 0) frontier = Math.max(frontier, spot.dist);
     place(i, spot.x, spot.y);
@@ -320,6 +350,7 @@ export function* placeClusterDisks(
   // 3. Legalize. Same order as the seed: a cluster's closest relatives are settled right after
   // it, while the sky beside it is still open.
   grid.clear();
+  blocker = -1;
   extent = 0;
   placedFlag.fill(false);
   const settle = (i: number) => {
@@ -333,7 +364,7 @@ export function* placeClusterDisks(
     let spot = findSpot(i, xs[i], ys[i], 0);
     const kin = strongestPlaced(i);
     if (kin >= 0) {
-      const tangent = findSpot(i, xs[kin], ys[kin], foot[kin] + foot[i] + gap);
+      const tangent = findSpot(i, xs[kin], ys[kin], foot[kin] + foot[i] + gap, true);
       const away = (p: { x: number; y: number }) => Math.hypot(p.x - xs[kin], p.y - ys[kin]);
       if (away(tangent) < away(spot)) spot = tangent;
     }
