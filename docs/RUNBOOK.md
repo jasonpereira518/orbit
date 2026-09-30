@@ -123,12 +123,12 @@ Monday email. Every switch, smallest first:
   not beating the ones it demoted after two weeks.
 - **All of Radar:** hide `page.radar` in `/admin/product`. The nightly pass, the news sweep and
   the Monday email all stand down, and no AI key is spent.
-- **Released on Sep 30 2026** (`comingSoon` removed from `page.radar` in `src/lib/surfaces.ts`).
-  Since then the nightly pass claims every account active in the last 60 days (25 per claim,
-  continuing itself), the hourly news sweep runs as soon as any account has had a pass, and the
-  Monday email goes to accounts active in the last 30 days that have a pending Today or Soon
-  card and haven't turned it off. Putting `comingSoon: true` back returns the pass to accounts
-  that have opened Radar and stops the email; to stop everything, hide the page instead.
+- **Releasing it:** delete `comingSoon: true` from `page.radar` in `src/lib/surfaces.ts`. While
+  it is coming soon, the nightly pass runs only for accounts that have opened Radar (admins
+  previewing it, plus anyone who opened it while it was out), the news sweep runs only once one
+  of them has had a pass, and the Monday email sends nothing. Once released, the pass claims every
+  account active in the last 60 days and the email goes to active accounts with a pending card.
+  It was released on Sep 30 2026 (#380) and put back behind coming soon the same day.
 
 ## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
 

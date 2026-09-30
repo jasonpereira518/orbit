@@ -104,7 +104,6 @@ const KNOWLEDGE: AppNavItem = {
 /** Primary sidebar destinations (above the "Coming soon" divider) */
 export const APP_NAV_CORE: AppNavItem[] = [
   DASHBOARD,
-  RADAR,
   CONTACTS,
   CAPTURE,
   REMINDERS,
@@ -121,7 +120,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * the two items that actually are coming soon (`comingSoon` in `src/lib/surfaces.ts`), and
  * splitting the group over one released item was a deliberate no per product decision.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [RADAR, EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -146,10 +145,10 @@ export const MOBILE_BOTTOM_NAV: Array<
 ];
 
 export const MOBILE_MORE_NAV = [
-  RADAR,
   REMINDERS,
   IMPORTS,
   CONSTELLATION,
+  RADAR,
   EVENTS,
   OUTREACH,
   KNOWLEDGE,
