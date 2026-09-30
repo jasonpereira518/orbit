@@ -167,6 +167,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-sky-bitmap-draw": "pure",
   "smoke-hash-stream": "pure",
   "smoke-sky-layout": "pure",
+  "smoke-preview-sky": "pure",
   "smoke-graph-family-seating": "pure",
   "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",

@@ -12,7 +12,17 @@ import type {
   NebulaData,
 } from "@/lib/graph-layout";
 
-export type PreviewLineStyle = [kind: EdgeKind, stroke: string, opacity: number, strokeWidth: number];
+/** `dash` is 0 for a solid line, else the dot length: the pattern is `[dash, dash * 2.5]`. */
+export type PreviewLineStyle = [
+  kind: EdgeKind,
+  stroke: string,
+  opacity: number,
+  strokeWidth: number,
+  dash: number,
+];
+
+/** A dotted line's gap, as a multiple of its dot (the chart's role lines are "2 5"). */
+export const DASH_GAP = 2.5;
 
 export type PreviewSky = {
   /** Flat [x, y, score, colourIndex (-1: untinted), flags, cometAngle×100] per star. */
@@ -73,7 +83,9 @@ export function expandPreviewSky(sky: PreviewSky): { nodes: LayoutNode[]; edges:
       company: sky.names[name],
       color: sky.colors[c],
       radius,
-      // The baked preview keeps no anatomy: every wash is drawn as a plain cluster.
+      // The baked preview keeps no anatomy (no galaxy backdrop, part pools or petal names): the
+      // washes it does carry are ring and petal clusters' ordinary cloud, so they read as plain
+      // figures. Open and binary clusters were dropped when the sky was built.
       form: "figure",
     };
     nodes.push({ id: `w${i / WASH_FIELDS}`, type: "nebula", position: { x, y }, data });
@@ -82,14 +94,16 @@ export function expandPreviewSky(sky: PreviewSky): { nodes: LayoutNode[]; edges:
   const edges: LayoutEdge[] = [];
   for (let i = 0; i < sky.lines.length; i += LINE_FIELDS) {
     const [a, b, s] = sky.lines.slice(i, i + LINE_FIELDS);
-    const [kind, stroke, opacity, strokeWidth] = sky.lineStyles[s];
+    const [kind, stroke, opacity, strokeWidth, dash] = sky.lineStyles[s];
     edges.push({
       id: `e${i / LINE_FIELDS}`,
       source: `s${a}`,
       target: `s${b}`,
       type: "straight",
-      data: { kind },
-      style: { stroke, opacity, strokeWidth },
+      data: dash ? { kind, dash: [dash, dash * DASH_GAP] } : { kind },
+      style: dash
+        ? { stroke, opacity, strokeWidth, strokeDasharray: `${dash} ${dash * DASH_GAP}` }
+        : { stroke, opacity, strokeWidth },
     });
   }
 
