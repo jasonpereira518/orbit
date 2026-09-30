@@ -127,6 +127,21 @@ async function main() {
     await kind("503");
     check("sendMail is never retried inside the provider", calls.filter((c) => c.url.includes("/me/sendMail")).length === 1);
 
+    console.log("attachments");
+    const withFile = sendMailPayload(
+      { ...MSG, attachments: [{ filename: "a.pdf", contentType: "application/pdf", bytes: new Uint8Array([37, 80, 68, 70]) }] },
+      MSG.messageId
+    );
+    const att = (withFile.message as { attachments?: Record<string, string>[] }).attachments?.[0];
+    check("files ride inline as fileAttachment", att?.["@odata.type"] === "#microsoft.graph.fileAttachment" && att.contentBytes === "JVBERg==" && att.name === "a.pdf");
+    check("no files, no attachments field", !("attachments" in sendMailPayload(MSG, "h").message));
+    mode = "ok";
+    calls.length = 0;
+    const big = await outlookProvider
+      .send(USER, { ...MSG, attachments: [{ filename: "big.bin", contentType: "application/octet-stream", bytes: new Uint8Array(3 * 1024 * 1024 + 1) }] }, OPTS)
+      .then(() => "sent", (e) => (e instanceof MailProviderError ? e.kind : String(e)));
+    check("over 3 MB is refused before any request", big === "permanent" && calls.length === 0, big);
+
     console.log("findSent");
     const ref = { rfcMessageId: MSG.messageId, subject: "Hi", since: new Date(Date.now() - 60_000) };
     check("no Mail.Read → unknown", (await outlookProvider.findSent(USER, ref)) === "unknown");

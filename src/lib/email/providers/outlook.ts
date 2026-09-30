@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
+import { MAX_ATTACHMENT_BYTES_OUTLOOK } from "@/lib/email/config";
 import { MailProviderError, type MailProvider, type OutboundMessage } from "@/lib/email/providers/types";
 import { graphFetchWithRetry } from "@/lib/graph-fetch";
 import { getValidAccessToken, hasMailScope, hasSendScope } from "@/lib/outlook";
@@ -38,6 +39,16 @@ export function sendMailPayload(msg: OutboundMessage, sendHeader: string) {
       ccRecipients: recipients(msg.cc),
       bccRecipients: recipients(msg.bcc),
       internetMessageHeaders: [{ name: ORBIT_SEND_HEADER, value: sendHeader }],
+      ...(msg.attachments?.length
+        ? {
+            attachments: msg.attachments.map((a) => ({
+              "@odata.type": "#microsoft.graph.fileAttachment",
+              name: a.filename,
+              contentType: a.contentType,
+              contentBytes: Buffer.from(a.bytes).toString("base64"),
+            })),
+          }
+        : {}),
     },
     saveToSentItems: true,
   };
@@ -83,6 +94,12 @@ export const outlookProvider: MailProvider = {
   },
 
   async send(userId, msg) {
+    // Files ride inline in sendMail, which caps them (Mail.Send only — no upload session).
+    // Enqueue already refuses more; this keeps a stale row from failing at Graph instead.
+    const attached = (msg.attachments ?? []).reduce((n, a) => n + a.bytes.length, 0);
+    if (attached > MAX_ATTACHMENT_BYTES_OUTLOOK) {
+      throw new MailProviderError("permanent", "attachments over Outlook's sendMail limit");
+    }
     const accessToken = await token(userId);
     let res: Response;
     try {
