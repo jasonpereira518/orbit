@@ -101,6 +101,8 @@ payload fields for the leak smoke to consider.
 
 Output per cluster: local positions + footprint radius `foot`.
 
+**As built (phase 3).** Forms are decided by `planClusterParts`: binary for 3 or fewer members; petal needs a company of at least 8 with at least 2 function groups of at least 2 non-leaders, lone functions folding into "Other" and a lone "Other" folding into the largest petal; open = role cluster of at least 4; ring = school of at least 4. Petals are arranged by `arrangeParts`: alternating big and small round the core, every pair verified, growing the ring until clear. Rings use a 124px spacing so labels cannot overlap and hold 43 stars before scattering the rest. Parts of one company keep 64px between footprints, and petal parts use a small "clear names" scale bump so tilted figures cannot clash labels. `layout` emits `form`, `petalLabels`, and per-star `partKey`, `partRole` and `leader`.
+
 ### Phase B — disk placement
 
 1. **Seed** — biggest cluster first. Each next cluster (size order, id tiebreak) is placed tangent to its strongest already-placed neighbour at a hash-seeded angle; clusters with no affinity take the next sunflower (golden-angle) slot.
@@ -110,6 +112,8 @@ Output per cluster: local positions + footprint radius `foot`.
 Deterministic: seeded hashes only, fixed iteration counts, stable ordering.
 
 **As built.** Seeding places clusters in size order, with each cluster's strongest already-placed relatives seated right after it (top 3 by affinity, plus any family-strength link). Relaxing runs 20 force steps, and legalization mirrors the seed order. Independence from contact order is a tested property: affinity weights are quantized to 1e-9, summation order is fixed, and member ordering breaks ties by id.
+
+**Small-galaxy tightening (phase 3, Task 6).** About 200 configurations of the placement constants moved the relatedness numbers by noise only. The "related-pair distance ÷ median pair distance" target proved ill-posed at ~150 contacts: with 17–23 clusters, 50–66% of all cluster pairs are linked, so the mean over linked pairs is about the mean over all pairs. Relatedness is guaranteed structurally by seeding (strongest relatives seated adjacent) and by the family-adjacency fixtures, so no constants were changed; `smoke-disk-placement` gained a "small galaxy stays tight" regression case (density ≥ 0.30, biggest cluster's near edge ≤ sunClear + 3·gap).
 
 ### Phase C — halo
 
