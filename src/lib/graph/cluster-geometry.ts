@@ -181,7 +181,8 @@ export type LocalPart = Omit<PartGeometry, "part" | "center">;
 /**
  * A figure and its scatter, in the part's own space. The asterism renders at its natural scale
  * with a mild seeded tilt — never warped — and is scaled up only if a template packs two stars
- * closer than FIGURE_STAR_MIN (or, with `clearNames`, than their name boxes need). Overflow
+ * closer than FIGURE_STAR_MIN or than their name boxes need. Both adjustments are a single
+ * uniform scale, so a figure always stays a pure similarity transform of its template. Overflow
  * members scatter through an annulus fully outside the figure's extent, which guarantees
  * clearance from every figure star and line by construction.
  */
@@ -189,8 +190,7 @@ export function figureGeometry(
   shape: ConstellationShape,
   figureMemberIds: string[],
   scatterIds: string[],
-  seed: string,
-  clearNames = false
+  seed: string
 ): LocalPart {
   const count = figureMemberIds.length;
   const baseScale = scaleForStarCount(count);
@@ -214,13 +214,13 @@ export function figureGeometry(
     }
   }
 
-  if (clearNames && count > 1) {
+  if (count > 1) {
     // FIGURE_STAR_MIN is a circle, but a name is a LABEL_WIDTH x LABEL_HEIGHT box: a pair 106px
     // apart along a tilted diagonal can still have overlapping names. Open the figure just far
-    // enough that no two name boxes touch. Only petal-company parts ask for this: every other
-    // cluster keeps the scale it has always had, so a plain constellation never moves. This
-    // deliberately ignores FIGURE_MAX_UPSCALE: the bump is measured at no more than ~4.1% and the
-    // templates are fixed, so it cannot run away. Do not cap it, or a clash could come back.
+    // enough that no two name boxes touch. This applies to every figure and is a single uniform
+    // scale, so the asterism is never warped. It deliberately ignores FIGURE_MAX_UPSCALE: the
+    // bump is measured at no more than ~4.1% and the templates are fixed, so it cannot run away.
+    // Do not cap it, or a clash could come back.
     let need = 0;
     for (let i = 0; i < stars.length; i++) {
       for (let j = i + 1; j < stars.length; j++) {
@@ -299,7 +299,7 @@ export function buildClusterGeometry(
     const scatterIds = [...part.scatterMemberIds, ...(i === roomiest ? satelliteIds : [])];
     return form === "ring"
       ? ringGeometry(part.figureMemberIds, scatterIds, seed)
-      : figureGeometry(part.shape, part.figureMemberIds, scatterIds, seed, form === "petal");
+      : figureGeometry(part.shape, part.figureMemberIds, scatterIds, seed);
   });
 
   if (form !== "petal") {

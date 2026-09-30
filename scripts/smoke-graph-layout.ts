@@ -569,6 +569,46 @@ console.log("\nNear = related (a realistic network)");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\nNo label clashes within a cluster");
+
+{
+  // The figure scale rule is a circle test (FIGURE_STAR_MIN); names are LABEL_WIDTH x LABEL_HEIGHT
+  // boxes, so a tilted pair could clear the circle and still have overlapping names.
+  const network = buildSyntheticGraphPayload(2500, { seed: 1 }).contacts;
+  const big = buildHybridGraphLayout(network, "Tester");
+  const bigFit = buildConstellationFit(network);
+  const byCluster = new Map<string, Array<{ id: string; x: number; y: number }>>();
+  for (const n of big.nodes) {
+    if (n.type !== "contact") continue;
+    const ref = bigFit.byContactId.get(n.id);
+    if (!ref) continue;
+    let list = byCluster.get(ref.id);
+    if (!list) byCluster.set(ref.id, (list = []));
+    list.push({ id: n.id, x: n.position.x, y: n.position.y });
+  }
+  let clashes = 0;
+  let first = "";
+  for (const stars of byCluster.values()) {
+    for (let i = 0; i < stars.length; i++) {
+      for (let j = i + 1; j < stars.length; j++) {
+        const dx = stars[i].x - stars[j].x;
+        const dy = stars[i].y - stars[j].y;
+        if (!(Math.abs(dx) >= LABEL_WIDTH || Math.abs(dy) >= LABEL_HEIGHT)) {
+          clashes += 1;
+          if (!first) first = `${stars[i].id}↔${stars[j].id}`;
+        }
+      }
+    }
+  }
+  console.log(`  label clashes within clusters: ${clashes} (${byCluster.size} clusters)`);
+  check(
+    "no two stars in one cluster have overlapping name boxes",
+    clashes === 0,
+    `${clashes} clashes, first ${first}`
+  );
+}
+
+// ---------------------------------------------------------------------------
 console.log("\nA crowded halo stays close to the galaxy");
 
 {
