@@ -1338,7 +1338,11 @@
 }
 
 /* Shared waitlist panel surface — referral tracker + feature poll. Deep navy, gold wash,
- * edge vignette, faint card-local stars. Near-opaque so busy copy holds against the starfield. */
+ * edge vignette, faint card-local stars. Near-opaque so busy copy holds against the starfield.
+ *
+ * No backdrop-filter, here or on the glass inside: behind a 97–99% opaque fill a blur is
+ * invisible, but it is not free — the sky under it redraws every frame, so every blurred
+ * box was re-blurred every frame (the poll alone had seven). */
 .interest-panel-glass,
 .referral-tracker-glass,
 .landing-glass.feature-poll-panel {
@@ -1353,7 +1357,13 @@
   box-shadow:
     inset 0 1px 0 0 rgba(242, 193, 78, 0.06),
     0 0 48px -16px rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(16px);
+  backdrop-filter: none;
+}
+
+.interest-panel-glass .landing-glass,
+.referral-tracker-glass .landing-glass,
+.landing-glass.feature-poll-panel .landing-glass {
+  backdrop-filter: none;
 }
 
 .interest-panel-glass::before,
@@ -1528,6 +1538,23 @@
  * Two ambient loops. Linear, not the house curve: these are orbits, and an
  * orbit that eases would read as a wobble. The global reduced-motion clamp at
  * the bottom of this file freezes both. */
+/* The referral tracker's unlocked and next planets, bobbing (`referral-tracker.tsx`). */
+@keyframes tracker-planet-bob {
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.tracker-planet-bob {
+  animation: tracker-planet-bob 5.2s ease-in-out infinite both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tracker-planet-bob {
+    animation: none;
+  }
+}
+
 @keyframes interest-spin {
   to {
     transform: rotate(360deg);
@@ -1536,19 +1563,15 @@
 
 /* The decorative rings behind the signup card, and the dot circling the
  * submit button while a join is in flight (`animate-[interest-spin_…]`).
- * `transform-box: fill-box` centres the spin on the ring group's own box —
- * without it an SVG group rotates about the viewBox origin. */
+ * The rings spin whole <svg> boxes (see `rings-backdrop.tsx`), which the
+ * compositor runs off the main thread; a spun SVG child would not be. */
 .interest-rings-spin {
   animation: interest-spin 160s linear infinite;
-  transform-origin: 50% 50%;
-  transform-box: fill-box;
   will-change: transform;
 }
 
 .interest-rings-spin-reverse {
   animation: interest-spin 110s linear infinite reverse;
-  transform-origin: 50% 50%;
-  transform-box: fill-box;
   will-change: transform;
 }
 

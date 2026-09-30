@@ -48,6 +48,13 @@ export type BulkNotePersonPreview = {
   sharedNoteTexts: string[];
   interactionDate: string | null;
   interactionType: string | null;
+  /**
+   * Set on a card from a combined upload (`combine-results.ts`): the hash of the note this
+   * card came from, which keys its interaction on save, and the file's name for the card.
+   * Absent on an ordinary single capture, where the job's own hash is the note's.
+   */
+  noteHash?: string;
+  noteLabel?: string | null;
 };
 
 /** One typed opportunity awaiting review, shaped for the client. */
@@ -135,7 +142,10 @@ export type CaptureParseResult = {
  *   ready       people are extracted, nobody has decided anything
  *   reviewing   at least one card was decided
  *   saving      Save pressed; a runner owns the write
- *   saved | failed | discarded — terminal
+ *   merged      one file of a multi-file upload, folded into a combined job for review
+ *               (`combine-results.ts`); kept, not discarded, so its hashes still say
+ *               "already captured"
+ *   saved | failed | discarded | merged — terminal
  */
 export type CaptureJobStatus =
   | "ingesting"
@@ -147,7 +157,8 @@ export type CaptureJobStatus =
   | "saving"
   | "saved"
   | "failed"
-  | "discarded";
+  | "discarded"
+  | "merged";
 
 export const ACTIVE_CAPTURE_JOB_STATUSES: readonly CaptureJobStatus[] = [
   "ingesting",
