@@ -50,7 +50,8 @@ export function orderConstellationMembers(members: GraphContactInput[]) {
     if (dormantDiff !== 0) return dormantDiff;
     const scoreDiff = placementScore(b) - placementScore(a);
     if (scoreDiff !== 0) return scoreDiff;
-    return displayName(a).localeCompare(displayName(b));
+    // Two people can share a name: id last, so the order never follows the input's.
+    return displayName(a).localeCompare(displayName(b)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   });
 }
 

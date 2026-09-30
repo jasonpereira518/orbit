@@ -53,6 +53,8 @@ export const AFFINITY = {
 const byWeight = (x: AffinityEdge, y: AffinityEdge) =>
   y.weight - x.weight || x.a.localeCompare(y.a) || x.b.localeCompare(y.b);
 
+const ascending = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+
 export function buildClusterAffinity(
   contacts: AffinityContact[],
   byContactId: Map<string, { id: string }>,
@@ -109,7 +111,10 @@ export function buildClusterAffinity(
     counts.set(clusterId, (counts.get(clusterId) ?? 0) + 1);
     bySchool.set(group, counts);
   }
-  for (const counts of bySchool.values()) {
+  // Maps iterate in insertion order, which follows the contacts; float sums are not
+  // associative, so accumulate in key order or the last digit depends on the input order.
+  for (const group of [...bySchool.keys()].sort(ascending)) {
+    const counts = bySchool.get(group)!;
     if (counts.size < 2) continue;
     const top = [...counts.entries()]
       .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
@@ -140,12 +145,15 @@ export function buildClusterAffinity(
       byValue.set(value, set);
     }
   }
-  for (const set of byValue.values()) {
+  for (const value of [...byValue.keys()].sort(ascending)) {
+    const set = byValue.get(value)!;
     if (set.size < 2 || set.size > AFFINITY.maxTagClusters) continue;
     pairs([...set].sort(), (x, y) => AFFINITY.tags * scaled(x, y));
   }
 
   // Sparse: each cluster keeps its strongest links.
+  // Quantized so no last-digit residue of the sums can reorder links or tip the placement.
+  for (const e of total.values()) e.weight = Math.round(e.weight * 1e9) / 1e9;
   const strong = [...total.values()].filter((e) => e.weight >= AFFINITY.minWeight);
   const incident = new Map<string, AffinityEdge[]>();
   for (const e of strong) {

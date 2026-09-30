@@ -2,16 +2,19 @@
  * Where each constellation's footprint disk sits in the galaxy.
  *
  * Three passes, all deterministic (seeded hashes, fixed iteration counts, stable order):
- *   1. SEED — biggest first. A cluster with an already-placed neighbour goes tangent to its
- *      strongest one (at the free angle nearest the sun); one with none goes to the nearest
- *      free ring around the sun. The seed alone is already legal.
+ *   1. SEED — biggest first, each cluster followed at once by its closest relatives (its top few
+ *      links, and every strong link), while the sky beside it is still open. A cluster with an
+ *      already-placed relative goes tangent to the strongest one, at the free angle nearest the
+ *      sun; one with none goes to the nearest free ring around the sun, searching from a
+ *      running frontier instead of the sun itself. The seed alone is already legal.
  *   2. RELAX — a fixed number of force steps. Affinity edges pull a pair together until their
  *      disks are tangent; overlapping disks push apart; a pull toward the sun, stronger for
  *      bigger clusters, makes the galaxy dense in the middle; the sun's clear zone repels.
- *   3. LEGALIZE — clusters in size order keep their relaxed spot if it is free and otherwise
- *      take the nearest free one. This is what makes non-overlap a guarantee rather than a
- *      hope: it cannot fail, because the search always ends at a spot beyond everything
- *      placed so far.
+ *   3. LEGALIZE — the same visiting order as the seed. A cluster keeps its relaxed spot if it is
+ *      free; otherwise it takes the nearest free one, or a spot tangent to its strongest
+ *      already-settled relative when that is closer to it. This is what makes non-overlap a
+ *      guarantee rather than a hope: it cannot fail, because the search always ends at a spot
+ *      beyond everything placed so far.
  *
  * It is a generator so the caller can hand the main thread back every few iterations — the
  * whole layout is one long task otherwise (see `buildHybridGraphLayoutSteps`).
@@ -46,13 +49,18 @@ const REPEL = 0.5;
 const GRAVITY = 0.015;
 /** Strongest partners seated straight after a cluster, while its surroundings are free. */
 const SEED_PARTNERS = 3;
+/**
+ * A link at least this heavy is seated with its cluster however many stronger links it has.
+ * 1 is a company-family link (`AFFINITY.family`): a family must stay together even when a
+ * cluster's school and tag links outweigh it.
+ */
+const STRONG_LINK = 1;
 const MAX_STEP = 80;
 const SEARCH_STEP = 24;
 /** A disk's search rings are also at least this fraction of its footprint apart. */
 const SEARCH_STEP_FOOT = 0.3;
-/** Seed and legalize yield after this many clusters. */
-const SEED_YIELD_EVERY = 20;
-const LEGALIZE_YIELD_EVERY = 20;
+/** Seed and legalize yield after this many visited clusters. */
+const YIELD_CLUSTERS_EVERY = 20;
 const SEARCH_ANGLES = 24;
 const SEARCH_RINGS = 600;
 
@@ -148,7 +156,7 @@ export function* placeClusterDisks(
   }
   // Forces are summed link by link, and float addition is not associative: a fixed order is
   // what makes the result independent of the order the affinity list arrived in.
-  for (const list of links) list.sort((p, q) => p.j - q.j);
+  for (const list of links) list.sort((p, q) => p.j - q.j || p.w - q.w);
 
   const meanFoot = foot.reduce((s, f) => s + f, 0) / n;
   const grid = new DiskGrid(Math.min(900, Math.max(160, meanFoot * 2)), n);
@@ -190,7 +198,7 @@ export function* placeClusterDisks(
       }
       if (best) return best;
     }
-    const d = extent + r + gap;
+    const d = Math.max(extent, sunClear) + r + gap;
     return { x: Math.cos(start) * d, y: Math.sin(start) * d, dist: d };
   };
 
@@ -198,19 +206,37 @@ export function* placeClusterDisks(
   // next unrelated cluster: in size order alone, a big cluster's surroundings fill with
   // strangers and its one small relative lands a ring away.
   const placedFlag = new Array<boolean>(n).fill(false);
+  /** The strongest link of `i` to a cluster already placed, or -1. */
+  const strongestPlaced = (i: number) => {
+    let best = -1;
+    let bestW = 0;
+    for (const { j, w } of links[i]) {
+      if (placedFlag[j] && (w > bestW || (w === bestW && j < best))) {
+        best = j;
+        bestW = w;
+      }
+    }
+    return best;
+  };
+  /** Visit clusters biggest first, each followed by its closest unvisited relatives. */
+  function* visit(one: (i: number) => void) {
+    let visited = 0;
+    for (let i = 0; i < n; i++) {
+      if (placedFlag[i]) continue;
+      one(i);
+      const partners = links[i]
+        .filter(({ j }) => !placedFlag[j])
+        .sort((p, q) => q.w - p.w || p.j - q.j)
+        .filter(({ w }, rank) => rank < SEED_PARTNERS || w >= STRONG_LINK);
+      for (const { j } of partners) if (!placedFlag[j]) one(j);
+      if (visited++ % YIELD_CLUSTERS_EVERY === YIELD_CLUSTERS_EVERY - 1) yield;
+    }
+  }
   // How far out the last unattached cluster had to go: the next one starts its search near
   // there instead of walking every ring from the sun again. Sparse holes it skips stay empty.
   let frontier = 0;
-  let seated = 0;
   const seat = (i: number) => {
-    let anchor = -1;
-    let anchorW = 0;
-    for (const { j, w } of links[i]) {
-      if (placedFlag[j] && (w > anchorW || (w === anchorW && j < anchor))) {
-        anchor = j;
-        anchorW = w;
-      }
-    }
+    const anchor = strongestPlaced(i);
     const spot =
       anchor >= 0
         ? findSpot(i, xs[anchor], ys[anchor], foot[anchor] + foot[i] + gap)
@@ -219,16 +245,7 @@ export function* placeClusterDisks(
     place(i, spot.x, spot.y);
     placedFlag[i] = true;
   };
-  for (let i = 0; i < n; i++) {
-    if (placedFlag[i]) continue;
-    seat(i);
-    const partners = links[i]
-      .filter(({ j }) => !placedFlag[j])
-      .sort((p, q) => q.w - p.w || p.j - q.j)
-      .slice(0, SEED_PARTNERS);
-    for (const { j } of partners) if (!placedFlag[j]) seat(j);
-    if (seated++ % SEED_YIELD_EVERY === SEED_YIELD_EVERY - 1) yield;
-  }
+  yield* visit(seat);
   yield;
 
   // 2. Relax.
@@ -314,14 +331,7 @@ export function* placeClusterDisks(
     // Nearest free spot to where relaxing left it — unless a relative is already settled and
     // a spot tangent to it is closer to it than this one is.
     let spot = findSpot(i, xs[i], ys[i], 0);
-    let kin = -1;
-    let kinW = 0;
-    for (const { j, w } of links[i]) {
-      if (placedFlag[j] && j !== i && (w > kinW || (w === kinW && j < kin))) {
-        kin = j;
-        kinW = w;
-      }
-    }
+    const kin = strongestPlaced(i);
     if (kin >= 0) {
       const tangent = findSpot(i, xs[kin], ys[kin], foot[kin] + foot[i] + gap);
       const away = (p: { x: number; y: number }) => Math.hypot(p.x - xs[kin], p.y - ys[kin]);
@@ -329,17 +339,7 @@ export function* placeClusterDisks(
     }
     place(i, spot.x, spot.y);
   };
-  let settled = 0;
-  for (let i = 0; i < n; i++) {
-    if (placedFlag[i]) continue;
-    settle(i);
-    const partners = links[i]
-      .filter(({ j }) => !placedFlag[j])
-      .sort((p, q) => q.w - p.w || p.j - q.j)
-      .slice(0, SEED_PARTNERS);
-    for (const { j } of partners) if (!placedFlag[j]) settle(j);
-    if (settled++ % LEGALIZE_YIELD_EVERY === LEGALIZE_YIELD_EVERY - 1) yield;
-  }
+  yield* visit(settle);
 
   let diskRadius = 0;
   for (let i = 0; i < n; i++) {

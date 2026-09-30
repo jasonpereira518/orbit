@@ -403,11 +403,27 @@ console.log("\nNear = related (a realistic network)");
   const median = all[Math.floor(all.length / 2)];
   const related = links.filter((l) => centre.has(l.a) && centre.has(l.b));
   const mean = related.reduce((s, l) => s + d(l.a, l.b), 0) / Math.max(1, related.length);
-  console.log(`  related=${related.length} mean=${mean.toFixed(1)} median=${median.toFixed(1)}`);
   check("the network has related clusters", related.length > 10, String(related.length));
   check(
     `related clusters sit closer than a typical pair (mean ${mean.toFixed(0)} < median ${median.toFixed(0)})`,
     mean < median
+  );
+
+  // Same network, contacts the other way round: every star lands exactly where it did.
+  const flipped = buildHybridGraphLayout([...network].reverse(), "Tester");
+  const at = (l: typeof big) =>
+    new Map(l.nodes.filter((n) => n.type === "contact").map((n) => [n.id, n.position] as const));
+  const forwardAt = at(big);
+  const flippedAt = at(flipped);
+  let worst = 0;
+  for (const [id, p] of forwardAt) {
+    const q = flippedAt.get(id)!;
+    worst = Math.max(worst, Math.abs(p.x - q.x), Math.abs(p.y - q.y));
+  }
+  check(
+    "the layout does not depend on contact order",
+    forwardAt.size === flippedAt.size && worst < 1e-6,
+    `largest move ${worst.toFixed(6)}px`
   );
 }
 

@@ -12,6 +12,8 @@
  * than almost every unrelated cluster is. No DB, no network.
  * Run: npx tsx scripts/smoke-graph-family-seating.ts
  */
+import { buildClusterAffinity } from "../src/lib/constellation-affinity";
+import { buildConstellationFit } from "../src/lib/constellation-fit";
 import { buildHybridGraphLayout, type GraphContactInput } from "../src/lib/graph-layout";
 
 let failures = 0;
@@ -105,8 +107,66 @@ function seat(unrelated: number) {
   );
 }
 
+/**
+ * A family stays together even when the bigger cluster's other ties are stronger: Google shares
+ * two schools and eight interests with five other companies, so its link to DeepMind (1) is
+ * outweighed by more than three of them and is not among its top three by weight.
+ */
+function seatBusyGoogle() {
+  const contacts: GraphContactInput[] = [];
+  const tags = Array.from({ length: 8 }, (_, i) => `interest-${i}`);
+  const add = (prefix: string, company: string, n: number, tied = true) => {
+    for (let i = 0; i < n; i++) {
+      const c = contact(`${prefix}-${i}`, company);
+      if (tied) {
+        c.school = i % 2 === 0 ? "Stanford University" : "MIT";
+        c.tags = tags;
+      }
+      contacts.push(c);
+    }
+  };
+  add("google", "Google", 12);
+  for (let i = 0; i < 5; i++) add(`peer${i}`, `Peer${i} Labs`, 12);
+  for (let i = 0; i < 20; i++) add(`co${i}`, `Employer${i} Labs`, 2 + ((i * 7) % 11), false);
+  // DeepMind's people share nothing with Google but the family.
+  for (let i = 0; i < 3; i++) contacts.push(contact(`gdm-${i}`, "Google DeepMind"));
+
+  const fit = buildConstellationFit(contacts);
+  const eligible = fit.clusters.filter((c) => fit.fits.has(c.id));
+  const links = buildClusterAffinity(contacts, fit.byContactId, eligible)
+    .filter((l) => l.a === "company:google" || l.b === "company:google")
+    .sort((x, y) => y.weight - x.weight);
+  const rank = links.findIndex((l) => l.a === "company:google deepmind" || l.b === "company:google deepmind");
+  console.log("\nGoogle with strong non-family ties");
+  check("DeepMind's family link is outranked by more than three others", rank >= 3, `rank ${rank}`);
+
+  const layout = buildHybridGraphLayout(contacts, "You");
+  const pos = new Map(layout.nodes.map((n) => [n.id, n.position]));
+  const centroid = (prefix: string) => {
+    const ps = contacts.filter((c) => c.id.startsWith(`${prefix}-`)).map((c) => pos.get(c.id)!);
+    return {
+      x: ps.reduce((sum, p) => sum + p.x, 0) / ps.length,
+      y: ps.reduce((sum, p) => sum + p.y, 0) / ps.length,
+    };
+  };
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  const google = centroid("google");
+  const others = [
+    ...Array.from({ length: 5 }, (_, i) => `peer${i}`),
+    ...Array.from({ length: 20 }, (_, i) => `co${i}`),
+  ];
+  const nearest = Math.min(...others.map((o) => dist(google, centroid(o))));
+  const gdm = dist(google, centroid("gdm"));
+  check(
+    "DeepMind is still Google's nearest neighbour",
+    gdm < nearest,
+    `DeepMind ${gdm.toFixed(0)} vs nearest ${nearest.toFixed(0)}`
+  );
+}
+
 seat(20);
 seat(60);
+seatBusyGoogle();
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);

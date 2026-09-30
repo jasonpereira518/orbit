@@ -110,5 +110,26 @@ console.log("\nBounds and determinism");
   check("independent of contact order", JSON.stringify(reversed) === JSON.stringify(edges));
 }
 
+console.log("\nSums do not depend on contact order");
+{
+  // Two clusters related three ways (two schools and a rare tag), several more sharing some of
+  // them: each pair's weight is a float sum of irrational terms, so a different accumulation
+  // order shows up as a last-digit difference.
+  const contacts: P[] = [];
+  const sizes = [3, 5, 7, 4, 6, 9];
+  sizes.forEach((n, k) => {
+    for (let i = 0; i < n; i++) {
+      const school = (k + i) % 3 === 0 ? "MIT" : (k + i) % 3 === 1 ? "Stanford" : undefined;
+      const tags = i % 2 === 0 ? ["climbing"] : k % 2 === 0 ? ["jazz", "climbing"] : ["jazz"];
+      contacts.push(person(`k${k}-${i}`, `Firm ${k}`, { school, tags }));
+    }
+  });
+  const forward = affinityOf(contacts);
+  check("the network has related clusters", forward.length > 5, String(forward.length));
+  for (const order of [[...contacts].reverse(), [...contacts].sort((a, b) => (a.id < b.id ? 1 : -1))]) {
+    check("affinity is byte-identical whatever the contact order", JSON.stringify(affinityOf(order)) === JSON.stringify(forward));
+  }
+}
+
 console.log("\ncluster-affinity: all checks passed");
 process.exit(0);
