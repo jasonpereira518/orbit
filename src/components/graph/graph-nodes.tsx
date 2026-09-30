@@ -25,10 +25,11 @@ import {
   type GraphNodeData,
   type NebulaData,
 } from "@/lib/graph-layout";
-import type { ClusterForm } from "@/lib/constellation-parts";
+import { CORE_TINT, type ClusterForm } from "@/lib/constellation-parts";
 import { withAlpha } from "@/lib/school-color";
 import {
   STAR_HIT_PAD,
+  petalLabelOffset,
   starVisual,
   zoomRelief as starZoomRelief,
 } from "@/lib/graph/star-style";
@@ -182,9 +183,11 @@ function ContactNodeComponent({
   /**
    * Handles only where a figure line ends. React Flow needs them to anchor an edge and
    * measures every one on mount; a scatter star has no edges, so its pair was two DOM
-   * nodes and two layout reads apiece for nothing.
+   * nodes and two layout reads apiece for nothing. Neither does a ring star or a part's star
+   * that no line reaches: the layout says which stars are a line's end (`anchorsLines`), and
+   * the figure role stands in for it only for data that never went through the layout.
    */
-  const anchorsLines = data.figureRole === "figure";
+  const anchorsLines = data.anchorsLines ?? data.figureRole === "figure";
 
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
@@ -642,17 +645,36 @@ export function clusterNameScale(zoom: number) {
 }
 
 /** A cluster name's box in layout px at a zoom, bottom-centred on its anchor. */
-export function clusterNameSize(label: string, withCount: boolean, zoom: number) {
+export function clusterNameSize(
+  label: string,
+  withCount: boolean,
+  zoom: number,
+  subtitle?: string
+) {
   const sc = clusterNameScale(zoom);
   return {
-    width: (label.length * CLUSTER_NAME_CHAR_W + 16) * sc,
-    height: (CLUSTER_NAME_LINE_H + (withCount ? CLUSTER_COUNT_LINE_H : 0) + 4) * sc,
+    width:
+      (Math.max(label.length, (subtitle?.length ?? 0) * CLUSTER_SUBTITLE_EM) * CLUSTER_NAME_CHAR_W +
+        16) *
+      sc,
+    height:
+      (CLUSTER_NAME_LINE_H +
+        (withCount ? CLUSTER_COUNT_LINE_H : 0) +
+        (subtitle ? CLUSTER_COUNT_LINE_H : 0) +
+        4) *
+      sc,
   };
 }
 const TYPICAL_STAR_DISC = 12;
 /** The name's line box and the headcount line's, in unscaled px. */
 const CLUSTER_NAME_LINE_H = 15;
 const CLUSTER_COUNT_LINE_H = 12;
+/** The subtitle and headcount are set at this fraction of the name (`text-[0.82em]`). */
+const CLUSTER_SUBTITLE_EM = 0.82;
+/** Petal and core names are this much smaller than the cluster name. */
+const PETAL_NAME_EM = 0.7;
+/** Air, in unscaled px, between a pinned name's foot and the topmost petal name. */
+const PETAL_NAME_GAP = 4;
 /** Rough advance of the 11px semibold, letter-spaced name — enough to keep it on screen. */
 const CLUSTER_NAME_CHAR_W = 7.4;
 /** Below this zoom the name never pins; the whole sky is in view and every name is too. */
@@ -679,6 +701,12 @@ function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCoun
         ) : null}
         <span className="relative text-white">{data.label}</span>
       </span>
+      {/* A role cluster spans companies, so it says how many — part of the name, never pinned apart. */}
+      {data.subtitle ? (
+        <span className="relative whitespace-nowrap text-[0.82em] font-medium leading-[1.2] tracking-[0.06em] text-white/55">
+          {data.subtitle}
+        </span>
+      ) : null}
       {/* In the summary view the cluster stands in for its people, so it says how many. */}
       {showCount && (
         <span className="relative whitespace-nowrap text-[0.82em] font-medium leading-[1.2] tabular-nums tracking-[0.06em] text-white/55">
@@ -686,6 +714,57 @@ function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCoun
         </span>
       )}
     </>
+  );
+}
+
+/**
+ * A split company's core and petal names, hung under their parts.
+ *
+ * Not a node of their own and not a box: one zero-size origin placed on the cluster name's
+ * anchor (so `style` says where that is in the parent), and a text span per label offset from
+ * it by `petalLabelOffset`. Rendered only while shown, so a large sky mounts a handful, and
+ * pointer-transparent, so the stars under a name stay clickable. The core reads warm white, the
+ * petals dim; both are set small and wide-tracked, a caption rather than a second title.
+ */
+function PetalLabels({
+  data,
+  scale,
+  style,
+}: {
+  data: ClusterLabelData;
+  scale: number;
+  style: React.CSSProperties;
+}) {
+  const labels = data.petalLabels;
+  const anchor = data.anchor;
+  if (!data.showPetals || !labels?.length || !anchor) return null;
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute h-0 w-0"
+      style={{ ...style, fontSize: 11 * scale * PETAL_NAME_EM }}
+    >
+      {labels.map((p) => {
+        const { dx, dy } = petalLabelOffset(anchor, p.anchor);
+        return (
+          <span
+            key={p.key}
+            className={cn(
+              "pointer-events-none absolute whitespace-nowrap text-center text-[1em] font-medium uppercase leading-none tracking-[0.14em]",
+              p.role === "core" ? null : "text-white/55"
+            )}
+            style={{
+              left: dx,
+              top: dy,
+              transform: "translateX(-50%)",
+              ...(p.role === "core" ? { color: withAlpha(CORE_TINT, 0.7) } : null),
+            }}
+          >
+            {p.label}
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -714,7 +793,7 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
    */
   return (
     <div
-      className="nopan nodrag flex cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
+      className="nopan nodrag relative flex cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
       title={`Zoom to ${data.label}`}
       // Drawn at its size rather than scaled up: scaling magnifies glyphs the browser already
       // rasterised, which is why names went soft as the camera came in. It also makes the node's
@@ -722,6 +801,8 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
       style={{ fontSize: 11 * scale }}
     >
       <ClusterNameText data={data} showCount={showCount} />
+      {/* The node's origin is the name's bottom-centre; the labels hang from that point. */}
+      <PetalLabels data={data} scale={scale} style={{ left: "50%", top: "100%" }} />
     </div>
   );
 }
@@ -746,21 +827,39 @@ function PinnableClusterName({
 }: NodeProps & { data: ClusterLabelData; scale: number; showCount: boolean }) {
   const box = data.box ?? { width: width ?? 0, height: height ?? 0 };
   const anchor = data.anchor ?? { x: box.width / 2, y: 0 };
+  /**
+   * Where the pinned name must stop. A split company's box reaches well below its top star to
+   * hold the core and petal names, and a name that slid all the way down would sit on top of
+   * them — exactly where they are wanted, once the cluster's top has left the view. So the name
+   * travels only as far as just above the topmost of them (and leaves with the top of the
+   * cluster from there); they are the local captions for the parts below. Only while they are
+   * drawn: without them the name travels the whole box, as before.
+   */
+  const petalTop =
+    data.showPetals && data.petalLabels?.length
+      ? Math.min(...data.petalLabels.map((p) => p.anchor.y))
+      : null;
 
   // A string, so a pan re-renders only a name that is actually pinned: every other one
   // computes "0|0" frame after frame and stays put.
   const pin = useStore((s) => {
     const [tx, ty, k] = s.transform;
     const sc = clusterNameScale(k);
-    const nameH = (CLUSTER_NAME_LINE_H + (showCount ? CLUSTER_COUNT_LINE_H : 0)) * sc;
+    const nameH =
+      (CLUSTER_NAME_LINE_H +
+        (showCount ? CLUSTER_COUNT_LINE_H : 0) +
+        (data.subtitle ? CLUSTER_COUNT_LINE_H : 0)) *
+      sc;
     const halfW = (data.label.length * CLUSTER_NAME_CHAR_W * sc) / 2;
 
     const viewTop = (CLUSTER_NAME_PIN_TOP_PX - ty) / k - positionAbsoluteY;
     const viewLeft = (CLUSTER_NAME_PIN_SIDE_PX - tx) / k - positionAbsoluteX;
     const viewRight = (s.width - CLUSTER_NAME_PIN_SIDE_PX - tx) / k - positionAbsoluteX;
 
-    // Down, never below the box: past that the cluster is leaving and the name goes with it.
-    const dy = Math.min(Math.max(0, viewTop - (anchor.y - nameH)), box.height - anchor.y);
+    // Down, never below the box (past that the cluster is leaving and the name goes with it), and
+    // never onto its petal names.
+    const floor = petalTop === null ? box.height : Math.max(anchor.y, petalTop - PETAL_NAME_GAP * sc);
+    const dy = Math.min(Math.max(0, viewTop - (anchor.y - nameH)), floor - anchor.y);
     // Across, within the view where it fits and never beyond the cluster's own edges.
     let x = anchor.x;
     if (viewRight - viewLeft > halfW * 2) {
@@ -796,6 +895,8 @@ function PinnableClusterName({
         )}
         <ClusterNameText data={data} showCount={showCount} />
       </div>
+      {/* Siblings of the name, not children: they stay with their parts when the name pins. */}
+      <PetalLabels data={data} scale={scale} style={{ left: anchor.x, top: anchor.y }} />
     </div>
   );
 }

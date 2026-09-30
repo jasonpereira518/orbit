@@ -46,7 +46,16 @@ import {
   SMALL_SKY_QUERY,
   isSmallSkyViewport,
 } from "../src/components/graph/use-small-sky";
-import { STAR_HIT_PAD, starSize, starSubtitle, starVisual, zoomRelief } from "../src/lib/graph/star-style";
+import {
+  PETAL_LABEL_MIN_ZOOM,
+  STAR_HIT_PAD,
+  petalLabelOffset,
+  showPetalLabels,
+  starSize,
+  starSubtitle,
+  starVisual,
+  zoomRelief,
+} from "../src/lib/graph/star-style";
 import { buildHybridGraphLayout, type GraphContactInput } from "../src/lib/graph-layout";
 import { buildSkyIndex } from "../src/components/graph/sky-canvas/sky-index";
 import {
@@ -820,6 +829,23 @@ console.log("\ngesture constants\n");
   );
 }
 
+// ---------------------------------------------------------------------------
+console.log("\npetal labels\n");
+// ---------------------------------------------------------------------------
+{
+  check("petal names wait for a zoom close enough to read them", PETAL_LABEL_MIN_ZOOM === 0.25);
+  const off = petalLabelOffset({ x: 100, y: 48 }, { x: 140, y: 300 });
+  check(
+    "a petal label sits at its anchor minus the cluster name's anchor",
+    off.dx === 40 && off.dy === 252,
+    JSON.stringify(off)
+  );
+  const z = PETAL_LABEL_MIN_ZOOM;
+  check("shown when close, unsummarised and the name is shown", showPetalLabels({ labelZoom: z, summary: false, nameShown: true }));
+  check("hidden below the zoom floor", !showPetalLabels({ labelZoom: z * 0.9, summary: false, nameShown: true }));
+  check("hidden in the summary view", !showPetalLabels({ labelZoom: 1, summary: true, nameShown: true }));
+  check("hidden when the cluster's name lost the collision pass", !showPetalLabels({ labelZoom: 1, summary: false, nameShown: false }));
+}
 
 console.log("\nAll graph-canvas smoke checks passed.\n");
 process.exit(0);

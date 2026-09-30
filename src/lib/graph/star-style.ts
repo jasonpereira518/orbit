@@ -37,6 +37,23 @@ export function starSubtitle(data: GraphNodeData) {
   return (data.clusterKind === "role" ? company || title : title || company) || null;
 }
 
+/** Petal names show once the camera is close enough to read them and the sky is not summarised. */
+export const PETAL_LABEL_MIN_ZOOM = 0.25;
+
+/** Where a petal label sits relative to the cluster name's origin, in layout px. */
+export function petalLabelOffset(anchor: { x: number; y: number }, petal: { x: number; y: number }) {
+  return { dx: petal.x - anchor.x, dy: petal.y - anchor.y };
+}
+
+/**
+ * Whether a cluster draws its core and petal names: close enough to read, not the summary view
+ * (where the cluster stands in for its people), and only while the cluster's own name won its
+ * place in the collision pass — the parts' names are its detail, so they never outlive it.
+ */
+export function showPetalLabels(o: { labelZoom: number; summary: boolean; nameShown: boolean }) {
+  return o.labelZoom >= PETAL_LABEL_MIN_ZOOM && !o.summary && o.nameShown;
+}
+
 /**
  * Counteract the camera a little as it pulls back.
  *

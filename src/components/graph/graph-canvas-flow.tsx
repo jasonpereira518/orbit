@@ -74,7 +74,13 @@ import {
   selectionForContact,
   selectionForUser,
 } from "@/lib/graph/sky-selection";
-import { starSubtitle, starVisual, zoomRelief } from "@/lib/graph/star-style";
+import {
+  PETAL_LABEL_MIN_ZOOM,
+  showPetalLabels,
+  starSubtitle,
+  starVisual,
+  zoomRelief,
+} from "@/lib/graph/star-style";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { markOpenStage } from "@/lib/graph/open-marks";
 import { markFirstPaintThenInteractive } from "@/lib/graph/open-marks-paint";
@@ -402,7 +408,12 @@ function clusterNameWinners(
     )
     .map((n) => {
       const d = n.data as ClusterLabelData;
-      const { width, height } = clusterNameSize(d.label, withCount && Boolean(d.count), zoom);
+      const { width, height } = clusterNameSize(
+        d.label,
+        withCount && Boolean(d.count),
+        zoom,
+        d.subtitle
+      );
       // Air between neighbours, and slack for zooms between two steps. Far out, where a whole
       // sky of clusters competes for the space, much more of it: a legend of a few well-spaced
       // names reads, a wall of them does not.
@@ -1213,6 +1224,8 @@ function GraphCanvasInner({
   const labelZoom = useStore((s) => zoomStep(s.transform[2]));
   // Cluster names can pin in view from here in (see ClusterLabelNode in graph-nodes.tsx).
   const labelPinnable = useStore((s) => s.transform[2] >= CLUSTER_NAME_PIN_MIN_ZOOM);
+  // Only the crossing matters to the node pass, not each step of the zoom beyond it.
+  const petalZoomReached = labelZoom >= PETAL_LABEL_MIN_ZOOM;
 
 
   /**
@@ -1657,10 +1670,19 @@ function GraphCanvasInner({
         const nameHidden = !clusterNamesShown.has(n.id);
         // The name under the pointer sits above the rest, since it is the one being read.
         const nameRaised = label.label === hoveredCluster;
+        // Core and petal names are the name's detail: they go wherever the name goes.
+        // (The zoom enters as its crossing alone, so the pass is not redone at every zoom step.)
+        const showPetals =
+          Boolean(label.petalLabels?.length) &&
+          showPetalLabels({
+            labelZoom: petalZoomReached ? PETAL_LABEL_MIN_ZOOM : 0,
+            summary,
+            nameShown: !nameHidden,
+          });
         out.push(
           withEmphasis(
             n,
-            `${opacity}|${summary}|${pinnable}|${nameHidden}|${nameRaised}`,
+            `${opacity}|${summary}|${pinnable}|${nameHidden}|${nameRaised}|${showPetals}`,
             () =>
               ({
                 ...n,
@@ -1680,7 +1702,7 @@ function GraphCanvasInner({
                       ] as [number, number],
                     }
                   : { origin: [0.5, 1] as [number, number] }),
-                data: { ...label, summary, pinnable },
+                data: { ...label, summary, pinnable, showPetals },
                 ariaLabel: summary
                   ? `${label.label}, ${label.count ?? 0} ${
                       label.count === 1 ? "person" : "people"
@@ -1767,6 +1789,7 @@ function GraphCanvasInner({
     sky.entering,
     labelled,
     labelPinnable,
+    petalZoomReached,
     highlightedCluster,
     clusterNamesShown,
     hoveredCluster,

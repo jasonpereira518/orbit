@@ -177,6 +177,11 @@ export type ClusterLabelData = {
   }>;
   /** Zoomed in far enough to pin the name in view. Set per render by the chart. */
   pinnable?: boolean;
+  /**
+   * Draw `petalLabels` now: the camera is close enough to read them, the sky is not summarised
+   * and this cluster's name is shown. Set per render by the chart (`showPetalLabels`).
+   */
+  showPetals?: boolean;
 };
 
 export type NebulaData = {
