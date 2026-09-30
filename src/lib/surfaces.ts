@@ -55,14 +55,13 @@ const PAGES: Surface[] = [
     reason: "Onboarding and the app shell both redirect here.",
   },
   {
-    // Ships dark: the page, the nightly pass's spend and the dashboard preview all key off
-    // this flag. An admin previews it from /admin/product; releasing is deleting the line.
+    // Released. Hiding it in /admin/product stands down the nightly pass, the news sweep and
+    // the Monday email, and nothing points into it (see "Radar: switches" in docs/RUNBOOK.md).
     key: "page.radar",
     kind: "page",
     label: "Radar",
     description: "Who to reach out to this week, and why, rebuilt every night.",
     href: "/radar",
-    comingSoon: true,
   },
   {
     key: "page.events",

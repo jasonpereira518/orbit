@@ -125,9 +125,12 @@ Monday email. Every switch, smallest first:
   not beating the ones it demoted after two weeks.
 - **All of Radar:** hide `page.radar` in `/admin/product`. The nightly pass, the news sweep and
   the Monday email all stand down, and no AI key is spent.
-- **Releasing it:** delete `comingSoon: true` from `page.radar` in `src/lib/surfaces.ts`. While
-  it is coming soon, the nightly pass and the news sweep run only for accounts that have opened
-  Radar (admins previewing it), and the Monday email sends nothing.
+- **Released on Sep 30 2026** (`comingSoon` removed from `page.radar` in `src/lib/surfaces.ts`).
+  Since then the nightly pass claims every account active in the last 60 days (25 per claim,
+  continuing itself), the hourly news sweep runs as soon as any account has had a pass, and the
+  Monday email goes to accounts active in the last 30 days that have a pending Today or Soon
+  card and haven't turned it off. Putting `comingSoon: true` back returns the pass to accounts
+  that have opened Radar and stops the email; to stop everything, hide the page instead.
 
 ## Email insights: switches
 
@@ -144,9 +147,11 @@ smallest first:
 - **Turning it on for someone** needs the recruiter plan (Pro or Lifetime) and Gmail's mail
   scope (the `email_intel` purpose). `gmail.readonly` is a restricted scope, so until the CASA
   assessment passes only listed Google test users can grant it.
-- **It ships dark:** the Settings switch renders only where Radar is live, so it appears with
-  Radar's release (delete `comingSoon: true` from `page.radar`), or for an admin using
-  "Preview unreleased".
+- **Where it shows:** the Settings switch renders wherever Radar is live (it was added after
+  Radar's release, so it is visible on merge). It is off by default per account, disabled with
+  "Available on Orbit Pro and Orbit Max" on other plans, and asks for Gmail's mail scope only
+  when someone presses it. To pull it from view, hide `page.radar` in `/admin/product` (which
+  also stands Radar down) or remove the `EmailIntelSetting` mount in the settings page.
 
 ## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
 
