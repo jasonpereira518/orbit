@@ -25,7 +25,14 @@ import {
   type Camera,
 } from "@/lib/graph/sky-camera";
 import { queryRect } from "@/lib/graph/hit-test";
-import { galaxyBackdropBitmap, nebulaSprite, ringSprite, starSprite, sunSprite } from "./sky-sprites";
+import {
+  bakedGalaxyBitmap,
+  nebulaSprite,
+  ringSprite,
+  scheduleGalaxyBake,
+  starSprite,
+  sunSprite,
+} from "./sky-sprites";
 import type { ClusterLabelEntry, PetalLabelEntry, SkyIndex, StarEntry } from "./sky-index";
 
 /**
@@ -73,6 +80,11 @@ export type SkyFrame = {
   /** True when the sun is the current selection. */
   sunSelected: boolean;
   background: HTMLCanvasElement | null;
+  /**
+   * Called once when a galaxy backdrop this frame asked for has been baked, outside the frame, so
+   * the chart can draw once more to show it. The chart's coalescing redraw request.
+   */
+  onBackdropBaked?: () => void;
 };
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -180,10 +192,12 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
 
   const world = visibleWorldRect(camera, width, height);
 
-  // 3. The galaxy behind everything: one bitmap, baked once per layout, one blit per frame.
+  // 3. The galaxy behind everything: one bitmap, baked once per layout, one blit per frame. Never
+  // baked inside a frame: until the idle bake has run the sky simply has no backdrop yet.
   if (index.galaxy) {
-    const galaxy = galaxyBackdropBitmap(index.galaxy);
-    if (galaxy && worldBoxVisible(galaxy, world)) {
+    const galaxy = bakedGalaxyBitmap(index.galaxy);
+    if (galaxy === undefined) scheduleGalaxyBake(index.galaxy, frame.onBackdropBaked);
+    else if (galaxy && worldBoxVisible(galaxy, world)) {
       const p = worldToScreen({ x: galaxy.minX, y: galaxy.minY }, camera);
       ctx.drawImage(galaxy.canvas, p.x, p.y, galaxy.width * camera.k, galaxy.height * camera.k);
     }

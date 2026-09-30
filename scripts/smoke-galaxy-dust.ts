@@ -2,6 +2,7 @@
  * The galaxy backdrop's raw material: dust and dark lanes along the filaments.
  * Pure: no DOM. Run: npx tsx scripts/smoke-galaxy-dust.ts
  */
+import { createHash } from "node:crypto";
 import { galaxyBackdropData } from "../src/lib/graph/galaxy-dust";
 import type { GalaxyStructure } from "../src/lib/graph/galaxy-structure";
 
@@ -33,6 +34,10 @@ console.log("\nLanes");
 check("at most 14 lanes, from the heaviest filaments", d.dust.lanes.length === 14 && d.dust.lanes.every((l) => l.path.length === 6 && l.width > 0 && l.alpha > 0 && l.alpha <= 0.35));
 console.log("\nStability");
 check("deterministic", JSON.stringify(galaxyBackdropData(galaxy)) === JSON.stringify(d));
+// Pinned from the per-dot `hashUnit` version: hashing each filament's seed once (hashUnitStream)
+// is an optimisation only, so the sky must come out byte for byte the same.
+const fingerprint = createHash("sha256").update(JSON.stringify(d)).digest("hex").slice(0, 16);
+check("byte-identical to the pinned fingerprint", fingerprint === "9b4551b414ee1537", fingerprint);
 // Equal weights and equal `from` force the lane tie-break down to `to`.
 const tied = [
   ...filaments,

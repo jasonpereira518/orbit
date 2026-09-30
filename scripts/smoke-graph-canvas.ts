@@ -68,7 +68,12 @@ import {
   worldBoxVisible,
   type SkyFrame,
 } from "../src/components/graph/sky-canvas/draw-sky";
-import { clearSpriteCaches, galaxyBackdropBitmap } from "../src/components/graph/sky-canvas/sky-sprites";
+import {
+  bakedGalaxyBitmap,
+  clearSpriteCaches,
+  galaxyBackdropBitmap,
+  releaseGalaxyBitmaps,
+} from "../src/components/graph/sky-canvas/sky-sprites";
 import { galaxyBackdropData } from "../src/lib/graph/galaxy-dust";
 import { anatomyFixture } from "./lib/anatomy-fixture";
 import type { ClusterLabelData } from "../src/lib/graph-layout";
@@ -952,8 +957,33 @@ console.log("\nthe phone canvas draws the galaxy\n");
   const otherBitmap = galaxyBackdropBitmap(other.galaxy)!;
   check("a new layout's galaxy is baked again", otherBitmap !== bitmap && made.length === before + 2);
   clearSpriteCaches();
-  check("clearing the sprite caches drops it", galaxyBackdropBitmap(galaxy) !== bitmap);
-  check("a different size is its own bake", galaxyBackdropBitmap(galaxy, 512)!.canvas.width === 512);
+  check("a theme flip keeps it: the backdrop has no theme colour in it", galaxyBackdropBitmap(galaxy) === bitmap && made.length === before + 2);
+  const small = galaxyBackdropBitmap(galaxy, 512)!;
+  check("a different size is its own bake", small.canvas.width === 512);
+  releaseGalaxyBitmaps();
+  // The live bitmap is the last one baked; older ones belong to superseded layouts and go at GC.
+  check(
+    "leaving the chart zeroes the live bitmap's backing store and forgets every bake",
+    small.canvas.width === 0 && small.canvas.height === 0 &&
+      bakedGalaxyBitmap(galaxy) === undefined && bakedGalaxyBitmap(galaxy, 512) === undefined && galaxyBackdropBitmap(galaxy) !== bitmap
+  );
+  // A browser that will not give a 2D context: the bake fails once and is not retried per frame.
+  const realDocument = (globalThis as unknown as { document: unknown }).document;
+  let refusedCanvases = 0;
+  (globalThis as unknown as { document: unknown }).document = {
+    createElement: () => {
+      refusedCanvases += 1;
+      return { width: 0, height: 0, getContext: () => null };
+    },
+  };
+  const refused = buildHybridGraphLayout(anatomyFixture(), "Test User").galaxy;
+  const failedTwice = [galaxyBackdropBitmap(refused), galaxyBackdropBitmap(refused)];
+  check(
+    "a failed bake is remembered for its galaxy, not retried every frame",
+    failedTwice.every((b) => b === null) && refusedCanvases === 1 && bakedGalaxyBitmap(refused) === null,
+    String(refusedCanvases)
+  );
+  (globalThis as unknown as { document: unknown }).document = realDocument;
 
   // The pure test for "is the box on screen".
   const screenWorld = { minX: 0, minY: 0, maxX: 400, maxY: 800 };
@@ -976,18 +1006,42 @@ console.log("\nthe phone canvas draws the galaxy\n");
     sunSelected: false,
     background: null,
   });
+  // The bake is deferred to an idle callback, captured here and run by hand.
+  const idleQueue: Array<() => void> = [];
+  const g = globalThis as unknown as { requestIdleCallback?: unknown; cancelIdleCallback?: unknown; setTimeout: unknown };
+  g.requestIdleCallback = (cb: () => void) => idleQueue.push(cb);
+  g.cancelIdleCallback = () => {};
+  const runIdle = () => {
+    while (idleQueue.length) idleQueue.shift()!();
+  };
+  let redraws = 0;
   const runFrame = (camera: SkyFrame["camera"]) => {
     const rec = makeCtx();
-    drawSky(rec.ctx, frameAt(camera));
+    drawSky(rec.ctx, { ...frameAt(camera), onBackdropBaked: () => (redraws += 1) });
     return rec;
   };
-  clearSpriteCaches();
+  releaseGalaxyBitmaps();
   const galaxyBlits = (rec: ReturnType<typeof makeCtx>) => {
-    const bmp = galaxyBackdropBitmap(anatomyIndex.galaxy!)!;
-    return rec.calls.filter((c) => c.name === "drawImage" && c.args[0] === bmp.canvas);
+    const bmp = bakedGalaxyBitmap(anatomyIndex.galaxy!);
+    return bmp ? rec.calls.filter((c) => c.name === "drawImage" && c.args[0] === bmp.canvas) : [];
   };
+  const bakesBefore = made.filter((c) => c.width === 1024).length;
+  const firstFrame = runFrame({ x: 195, y: 400, k: 0.4 });
+  check(
+    "the first frame does not bake the galaxy: it is left for an idle moment",
+    made.filter((c) => c.width === 1024).length === bakesBefore && bakedGalaxyBitmap(anatomyIndex.galaxy!) === undefined &&
+      idleQueue.length === 1 && galaxyBlits(firstFrame).length === 0
+  );
+  runFrame({ x: 195, y: 400, k: 0.4 });
+  check("...scheduled at most once for its galaxy, however many frames ask", idleQueue.length === 1 && redraws === 0);
+  runIdle();
+  check(
+    "the idle bake fills the cache and asks for exactly one redraw",
+    bakedGalaxyBitmap(anatomyIndex.galaxy!) !== undefined && made.filter((c) => c.width === 1024).length === bakesBefore + 1 && redraws === 1
+  );
 
   const onScreen = runFrame({ x: 195, y: 400, k: 0.4 });
+  check("a baked galaxy schedules nothing more", idleQueue.length === 0 && redraws === 1);
   check("a frame over the galaxy blits the backdrop exactly once", galaxyBlits(onScreen).length === 1, String(galaxyBlits(onScreen).length));
   const blit = galaxyBlits(onScreen)[0].args as number[];
   check(
@@ -995,7 +1049,28 @@ console.log("\nthe phone canvas draws the galaxy\n");
     close(blit[1], box.minX * 0.4 + 195) && close(blit[2], box.minY * 0.4 + 400) && close(blit[3], box.width * 0.4)
   );
   const firstDraw = onScreen.calls.findIndex((c) => c.name === "drawImage");
-  check("...and it is the first image drawn, under the haze", onScreen.calls[firstDraw].args[0] === galaxyBackdropBitmap(anatomyIndex.galaxy!)!.canvas);
+  check("...and it is the first image drawn, under the haze", onScreen.calls[firstDraw].args[0] === bakedGalaxyBitmap(anatomyIndex.galaxy!)!.canvas);
+
+  // Leaving the chart with a bake still pending: it never runs and never asks for a frame.
+  releaseGalaxyBitmaps();
+  runFrame({ x: 195, y: 400, k: 0.4 });
+  releaseGalaxyBitmaps();
+  runIdle();
+  check("a bake pending when the chart unmounts is dropped", bakedGalaxyBitmap(anatomyIndex.galaxy!) === undefined && redraws === 1);
+
+  // No requestIdleCallback (Safari): a zero-delay timeout instead, still outside the frame.
+  delete g.requestIdleCallback;
+  delete g.cancelIdleCallback;
+  const realSetTimeout = g.setTimeout;
+  const timeouts: Array<[() => void, number]> = [];
+  g.setTimeout = (cb: () => void, ms: number) => timeouts.push([cb, ms]);
+  const noIdle = runFrame({ x: 195, y: 400, k: 0.4 });
+  g.setTimeout = realSetTimeout;
+  check("without requestIdleCallback the bake waits on a timeout", timeouts.length === 1 && galaxyBlits(noIdle).length === 0);
+  timeouts[0][0]();
+  check("...and blits once it has run", galaxyBlits(runFrame({ x: 195, y: 400, k: 0.4 })).length === 1 && redraws === 2);
+  g.requestIdleCallback = (cb: () => void) => idleQueue.push(cb);
+  g.cancelIdleCallback = () => {};
   const away = runFrame({ x: 5e6, y: 5e6, k: 0.4 });
   check("a frame looking elsewhere draws no backdrop", galaxyBlits(away).length === 0);
   const noGalaxy = (() => {
@@ -1140,6 +1215,8 @@ console.log("\npetal labels\n");
 }
 
 delete (globalThis as { document?: unknown }).document;
+delete (globalThis as { requestIdleCallback?: unknown }).requestIdleCallback;
+delete (globalThis as { cancelIdleCallback?: unknown }).cancelIdleCallback;
 
 console.log("\nAll graph-canvas smoke checks passed.\n");
 process.exit(0);

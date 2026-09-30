@@ -5,7 +5,7 @@
  */
 import { buildHybridGraphLayout } from "../src/lib/graph-layout";
 import { galaxyBackdropData, galaxyBackdropZoom } from "../src/lib/graph/galaxy-dust";
-import { DUST_CHUNK, drawSkyBitmap, skyBitmapSize, type SkyBitmapJob } from "../src/lib/graph/sky-bitmap-draw";
+import { DUST_CHUNK, SMALL_DOT_PX, drawSkyBitmap, skyBitmapSize, type SkyBitmapJob } from "../src/lib/graph/sky-bitmap-draw";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import type { NebulaWashCluster, NebulaWashData } from "../src/components/graph/graph-nodes";
 
@@ -85,6 +85,28 @@ for (const a of galaxy.dust.alpha) bandCounts[Math.min(5, Math.floor(a / 0.04))]
 const expectedFills = 2 + bandCounts.reduce((sum, n) => sum + Math.ceil(n / DUST_CHUNK), 0);
 check("it fills the dust in chunks, not per dot and not per band", g.count("fill") === expectedFills, `${g.count("fill")} vs ${expectedFills}`);
 check("it clears first", g.count("clearRect") === 1);
+// At this backing scale every dot is under SMALL_DOT_PX of radius: all squares, and the only arcs
+// are the disk and the bulge.
+check(
+  "sub-1.5px dots are squares, not arcs (the fills above are unchanged)",
+  galaxy.dust.radius.every((r) => Math.max(0.75 / size.scale, r) * size.scale < SMALL_DOT_PX) &&
+    g.count("rect") === galaxy.dust.x.length && g.count("arc") === 2,
+  `${g.count("rect")} rects, ${g.count("arc")} arcs, ${galaxy.dust.x.length} dots`
+);
+// A small galaxy drawn close up: every dot is several backing px wide, so every dot is an arc.
+const near = galaxyBackdropData({
+  coreRadius: 180, diskRadius: 500,
+  filaments: [{ from: "p", to: "q", weight: 1, path: Array.from({ length: 6 }, (_, k) => ({ x: -300 + k * 120, y: k * 20 })) }],
+});
+const nearJob: SkyBitmapJob = { kind: "galaxy", data: near, zoom: 1, dpr: 2, maxBackingPx: 2048 };
+const nearScale = skyBitmapSize(nearJob).scale;
+const n = recorder();
+drawSkyBitmap(n.ctx, nearJob);
+check(
+  "…while dots of 1.5 backing px or more stay round",
+  near.dust.radius.every((r) => r * nearScale >= SMALL_DOT_PX) && n.count("rect") === 0 && n.count("arc") === 2 + near.dust.x.length,
+  `${n.count("rect")} rects, ${n.count("arc")} arcs, ${near.dust.x.length} dots, scale ${nearScale}`
+);
 const alphas = g.assigned.filter(([k]) => k === "globalAlpha");
 check("it resets alpha last", alphas.length > 0 && alphas[alphas.length - 1][1] === 1);
 const rgb = (c: string) => c.replace(/,[^,)]*\)$/, "");

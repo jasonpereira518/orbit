@@ -11,6 +11,7 @@ import {
   bakeBackground,
   clearSpriteCaches,
   deviceRatio,
+  releaseGalaxyBitmaps,
 } from "@/components/graph/sky-canvas/sky-sprites";
 import {
   TAP_TOLERANCE_PX,
@@ -135,6 +136,13 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     frameStateRef.current = { focus, focusCluster, focusCompany, company, selection };
   }, [index, focus, focusCluster, focusCompany, company, selection]);
 
+  /**
+   * The galaxy backdrop is baked outside a frame (see `scheduleGalaxyBake`), and asks for one
+   * redraw when it is ready. Through a ref, because `requestDraw` is built on `draw`.
+   */
+  const requestDrawRef = useRef<() => void>(() => {});
+  const onBackdropBaked = useCallback(() => requestDrawRef.current(), []);
+
   const draw = useCallback(() => {
     const ctx = ctxRef.current;
     const { width, height } = paneRef.current;
@@ -152,6 +160,7 @@ export function GraphCanvasMobile(props: GraphChartProps) {
       companyFilter: state.company,
       sunSelected: state.selection?.type === "user",
       background: backgroundRef.current,
+      onBackdropBaked,
     });
 
     if (!readyRef.current) {
@@ -160,7 +169,7 @@ export function GraphCanvasMobile(props: GraphChartProps) {
       // handshake half-armed.
       markGraphViewportReady();
     }
-  }, []);
+  }, [onBackdropBaked]);
 
   /**
    * One coalescing invalidator. Between interactions this schedules nothing at all —
@@ -185,6 +194,9 @@ export function GraphCanvasMobile(props: GraphChartProps) {
       draw();
     });
   }, [draw]);
+  useEffect(() => {
+    requestDrawRef.current = requestDraw;
+  }, [requestDraw]);
 
   const cancelTween = useCallback(() => {
     if (tweenRafRef.current) cancelAnimationFrame(tweenRafRef.current);
@@ -298,7 +310,8 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     };
   }, [requestDraw]);
 
-  // Sprites bake the theme's colours in, so a theme flip has to drop them.
+  // Sprites bake the theme's colours in, so a theme flip has to drop them. The galaxy backdrop
+  // does not, and is kept: re-baking it is the most expensive thing the canvas does.
   useEffect(() => {
     const observer = new MutationObserver(() => {
       clearSpriteCaches();
@@ -335,16 +348,18 @@ export function GraphCanvasMobile(props: GraphChartProps) {
 
   /**
    * Leaving the chart hands its memory back. The sprite and label caches are module-level,
-   * and at 10k contacts they hold a 64KB haze bitmap per cluster and a measured string per
-   * name — tens of MB on a phone that would otherwise outlive the page. Canvas backing
-   * stores are only reclaimed at GC, and iOS caps the total, so they are zeroed now rather
-   * than left for a collector that may run after the next page has asked for its own.
+   * and at 10k contacts they hold a 64KB haze bitmap per cluster, the 4MB galaxy backdrop and
+   * a measured string per name — tens of MB on a phone that would otherwise outlive the page.
+   * Canvas backing stores are only reclaimed at GC, and iOS caps the total, so they are zeroed
+   * now rather than left for a collector that may run after the next page has asked for its
+   * own (`releaseGalaxyBitmaps` zeroes the backdrop's and cancels a bake still pending).
    * On a StrictMode remount the resize effect rebuilds both canvases and the caches refill
    * on the next frame.
    */
   useEffect(
     () => () => {
       clearSpriteCaches();
+      releaseGalaxyBitmaps();
       clearTextCache();
       for (const canvas of [canvasRef.current, backgroundRef.current]) {
         if (canvas) {

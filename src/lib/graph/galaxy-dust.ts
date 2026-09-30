@@ -8,7 +8,7 @@
  */
 
 import type { GalaxyStructure } from "@/lib/graph/galaxy-structure";
-import { hashUnit } from "@/lib/hash";
+import { hashUnitStream } from "@/lib/hash-stream";
 
 export type GalaxyLane = { path: Array<{ x: number; y: number }>; width: number; alpha: number };
 export type GalaxyDust = { x: number[]; y: number[]; alpha: number[]; radius: number[]; lanes: GalaxyLane[] };
@@ -67,26 +67,28 @@ export function galaxyBackdropData(galaxy: GalaxyStructure): GalaxyBackdropData 
     const strength = 0.6 + Math.min(f.weight, 1.5);
     const count = Math.max(DUST_MIN, Math.min(DUST_MAX, Math.round((total / 45) * strength)));
     const spread = 10 + total * 0.05;
-    const seed = `${f.from}|${f.to}`;
+    // The seed string is hashed once per filament, not five times per dot: `hashUnitStream`
+    // gives exactly `hashUnit(seed, salt)` for each salt (and it was ~23ms of hashing at 10,000).
+    const hash = hashUnitStream(`${f.from}|${f.to}`);
     for (let k = 0; k < count; k++) {
-      const p = along(f.path, lengths, total, (k + hashUnit(seed, k * 4)) / count);
+      const p = along(f.path, lengths, total, (k + hash(k * 4)) / count);
       // Two draws averaged: a soft band, densest on the filament's own line.
-      const off = (hashUnit(seed, k * 4 + 1) + hashUnit(seed, k * 4 + 2) - 1) * spread;
+      const off = (hash(k * 4 + 1) + hash(k * 4 + 2) - 1) * spread;
       dust.x.push(Math.max(-half, Math.min(half, p.x + p.nx * off)));
       dust.y.push(Math.max(-half, Math.min(half, p.y + p.ny * off)));
-      dust.alpha.push(0.05 + 0.17 * hashUnit(seed, k * 4 + 3) * Math.min(1, 0.4 + f.weight));
-      dust.radius.push(2 + 5 * hashUnit(seed, k * 4 + 1000));
+      dust.alpha.push(0.05 + 0.17 * hash(k * 4 + 3) * Math.min(1, 0.4 + f.weight));
+      dust.radius.push(2 + 5 * hash(k * 4 + 1000));
     }
   }
 
   ordered
     .slice(0, LANES)
     .forEach((f) => {
-      const seed = `${f.from}|${f.to}`;
+      const hash = hashUnitStream(`${f.from}|${f.to}`);
       dust.lanes.push({
         path: f.path,
-        width: 18 + 24 * hashUnit(seed, 5000),
-        alpha: 0.16 + 0.14 * hashUnit(seed, 5001),
+        width: 18 + 24 * hash(5000),
+        alpha: 0.16 + 0.14 * hash(5001),
       });
     });
 

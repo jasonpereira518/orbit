@@ -176,6 +176,10 @@ function drawDust(ctx: Ctx, data: StarDustData, zoom: number) {
  */
 export const DUST_CHUNK = 25;
 
+/** Dust dots whose radius is under this many BACKING px are filled as squares, not arcs. */
+export const SMALL_DOT_PX = 1.5;
+const SQRT_PI = Math.sqrt(Math.PI);
+
 /**
  * The galaxy behind everything: a cool disk haze, a warm bulge, dark lanes across the strongest
  * relatedness chains, and dust along all of them. Every gradient fades to its OWN colour at zero
@@ -217,6 +221,10 @@ export function drawGalaxyBackdrop(ctx: Ctx, data: GalaxyBackdropData, scale: nu
   // from the backing scale rather than the camera zoom, so the picture depends on nothing that
   // changes once the backing-store cap binds.
   const minRadius = 0.75 / Math.max(scale, 0.0001);
+  // Under a pixel and a half of radius an arc and a square rasterise to the same anti-aliased
+  // smudge, and a rect is far cheaper to path and fill. The square has the disc's AREA (side
+  // r·√π), so the smudge carries the same light it did as a circle.
+  const rectBelow = SMALL_DOT_PX / Math.max(scale, 0.0001);
   const bands: number[][] = [[], [], [], [], [], []];
   data.dust.alpha.forEach((a, i) => bands[Math.min(5, Math.floor(a / 0.04))].push(i));
   bands.forEach((indices, band) => {
@@ -227,6 +235,11 @@ export function drawGalaxyBackdrop(ctx: Ctx, data: GalaxyBackdropData, scale: nu
       ctx.beginPath();
       for (const i of indices.slice(start, start + DUST_CHUNK)) {
         const r = Math.max(minRadius, data.dust.radius[i]);
+        if (r < rectBelow) {
+          const side = r * SQRT_PI;
+          ctx.rect(data.dust.x[i] - side / 2, data.dust.y[i] - side / 2, side, side);
+          continue;
+        }
         ctx.moveTo(data.dust.x[i] + r, data.dust.y[i]);
         ctx.arc(data.dust.x[i], data.dust.y[i], r, 0, Math.PI * 2);
       }
