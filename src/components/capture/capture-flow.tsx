@@ -29,7 +29,7 @@ import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureM
 import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
 import type { DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { CaptureQueuePanel } from "@/components/capture/capture-queue-panel";
-import { discardCaptureBatch, getActiveCaptureJobs } from "@/actions/capture-jobs";
+import { discardCaptureBatch, getActiveCaptureJobs, mergeCaptureBatch } from "@/actions/capture-jobs";
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
 import { MeetingCaptureTab } from "@/components/capture/meeting-capture-tab";
@@ -95,7 +95,7 @@ export function CaptureFlow({
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
   aiReason?: AiAccessDenial | null;
   canTranscribe?: boolean;
-  /** Meeting recording is Orbit Pro and Lifetime only. False shows an upgrade prompt instead of the recorder. */
+  /** Meeting recording is on Orbit Pro, Max and Lifetime. False shows an upgrade prompt instead of the recorder. */
   canUseMeetings?: boolean;
   /** `FEATURE_DENIAL.meetings`, read on the server — this file is a client component and cannot import `@/lib/entitlements` (it reaches the database). */
   meetingsDeniedMessage: string;
@@ -181,6 +181,40 @@ export function CaptureFlow({
       clearInterval(t);
     };
   }, [batchJobs.length, queueBusy]);
+
+  // Every file read: fold the upload into one review. The server claims the ready files, so
+  // a second tab or a repeat of this effect gets null and does nothing. The combined job
+  // becomes the page's job, which lands on "N people ready to review".
+  const batchReadyCount = batchJobs.filter((j) => j.status === "ready").length;
+  const mergingRef = useRef<string | null>(null);
+  // Read inside the effect, not a dependency: the page's job changing must not re-fire it.
+  const jobRef = useRef(job);
+  useEffect(() => {
+    jobRef.current = job;
+  }, [job]);
+  useEffect(() => {
+    if (!activeBatchId || queueBusy || batchReadyCount === 0) return;
+    if (mergingRef.current === activeBatchId) return;
+    mergingRef.current = activeBatchId;
+    const batchId = activeBatchId;
+    void mergeCaptureBatch(batchId)
+      .then((res) => {
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        // Never over the top of a single capture someone is in the middle of reviewing;
+        // the combined job waits in the queue and resumes once that one is done.
+        const current = jobRef.current;
+        const midReview = current && !current.batchGroupId && ["ready", "reviewing", "saving"].includes(current.status);
+        if (res.job && !midReview) seedCaptureJob(res.job, { force: true });
+        return getActiveCaptureJobs().then(setQueue);
+      })
+      .catch(() => null)
+      .finally(() => {
+        if (mergingRef.current === batchId) mergingRef.current = null;
+      });
+  }, [activeBatchId, queueBusy, batchReadyCount]);
 
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [pendingStart, setPendingStart] = useState(false);

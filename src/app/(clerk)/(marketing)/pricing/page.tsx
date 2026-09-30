@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Eye, KeyRound, RotateCcw } from "lucide-react";
+import { Eye, Sparkles, RotateCcw } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { Reveal } from "@/components/motion/reveal";
@@ -11,23 +11,17 @@ import { WarpArrivalBeacon } from "@/components/warp/warp-arrival-beacon";
 import { PlanComparison } from "@/components/pricing/plan-comparison";
 import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
-import {
-  FREE_CONTACT_LIMIT,
-  LIFETIME_INTRO_PRICE,
-  LIFETIME_INTRO_SEATS,
-  LIFETIME_STANDARD_PRICE,
-} from "@/lib/plan-limits";
-import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
-import { isStripeConfigured } from "@/lib/stripe-config";
-import { lifetimeOffer } from "@/lib/lifetime-offer";
+import { AI_POSITIONING } from "@/lib/plan-copy";
+import { FREE_CONTACT_LIMIT, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
+import { isCheckoutConfigured } from "@/lib/stripe-config";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
+
+const PRO_PRICE = formatPlanPrice(PLAN_CONFIG.orbit.monthlyPriceCents ?? 0);
+const MAX_PRICE = formatPlanPrice(PLAN_CONFIG.max.monthlyPriceCents ?? 0);
 
 export const metadata: Metadata = {
   title: "Pricing — Orbit",
-  // Static, so it cannot consult the live sale count. It therefore states the introductory
-  // price as introductory rather than as the price — accurate whichever side of the
-  // threshold a crawler reads it on.
-  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. $${MONTHLY_AMOUNT} a month for unlimited, or Orbit Lifetime once — $${LIFETIME_INTRO_PRICE} introductory, $${LIFETIME_STANDARD_PRICE} after the first ${LIFETIME_INTRO_SEATS} buyers.`,
+  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. Orbit Pro is ${PRO_PRICE} a month and Orbit Max ${MAX_PRICE} a month, both with AI included. ${AI_POSITIONING}`,
 };
 
 const HEADING =
@@ -37,7 +31,7 @@ const TRUST = [
   {
     icon: RotateCcw,
     title: "Cancel any time",
-    body: "You keep Orbit Pro until the period you paid for ends, then drop back to the Free Plan.",
+    body: "You keep your plan until the period you paid for ends, then drop back to the Free Plan.",
   },
   {
     icon: Eye,
@@ -45,31 +39,21 @@ const TRUST = [
     body: "Reaching a limit only stops new contacts. Everything already in your orbit stays visible and editable.",
   },
   {
-    icon: KeyRound,
-    title: "No markup on AI",
-    body: "Every plan runs on your own provider key, billed to you at cost. We never resell tokens.",
+    icon: Sparkles,
+    title: "AI included, never auto-charged",
+    body: "Pro and Max include AI credits each month. Run out and AI simply pauses until you choose a $5 pack or it resets — nothing is ever charged automatically.",
   },
 ];
 
 /**
- * Revalidated every five minutes rather than rendered per request: the only server read
- * is the Lifetime sale count, and the struck-through price can lag a few minutes without
- * anyone being misled. Who is signed in, and on what plan, resolves in the browser
- * (`LandingAuthControls`, `PricingTiers`) so the page itself is shared by everyone.
+ * Static and shared by everyone: who is signed in, their plan, and whether a founding price
+ * applies to them resolve in the browser (`LandingAuthControls`, `PricingTiers`).
  */
-export const revalidate = 300;
-
-export default async function PricingPage() {
+export default function PricingPage() {
   const clerkOn = isClerkConfigured();
   const demoMode = isDemoMode();
-
-  // What Lifetime costs today. Read from the sale count rather than hardcoded, so the
-  // struck-through comparison stops being shown the moment it stops being true — a
-  // permanent "was $75" beside a price that is simply $25 is a fake discount.
-  const offer = await lifetimeOffer();
-
   // Only offer checkout when Stripe can actually take the payment.
-  const lifetimePurchasable = isStripeConfigured();
+  const checkoutOpen = isCheckoutConfigured();
   const authProps = { clerkOn, demoMode };
 
   return (
@@ -112,22 +96,15 @@ export default async function PricingPage() {
           </Reveal>
           <Reveal className="reveal-celestial" delay={90}>
             <p className="mx-auto mt-5 max-w-[46ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
-              Past that, five dollars a month keeps every contact, follow-up,
-              and warm intro in one place. AI always runs on your own key, at
-              cost — we never mark it up.
+              Bring your own AI key on the Free Plan. Orbit Pro and Orbit Max
+              keep every contact, follow-up and warm intro in one place — with
+              AI included.
             </p>
           </Reveal>
         </section>
 
         <Reveal className="reveal-celestial mt-14 block md:mt-20" delay={140}>
-          <PricingTiers
-            clerkOn={clerkOn}
-            lifetimePurchasable={lifetimePurchasable}
-            lifetimeOffer={{
-              priceUsd: offer.priceUsd,
-              compareAtUsd: offer.compareAtUsd,
-            }}
-          />
+          <PricingTiers clerkOn={clerkOn} checkoutOpen={checkoutOpen} />
         </Reveal>
 
         <Reveal className="reveal-celestial mt-20 block">

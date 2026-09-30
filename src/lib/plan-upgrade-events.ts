@@ -5,15 +5,14 @@ import {
   resolvePlan,
   type BillingColumns,
 } from "@/lib/entitlements";
+import { PLAN_RANK } from "@/lib/plans/plan-config";
 
 export type PlanUpgradeEvent = {
   id: string;
-  plan: "orbit" | "lifetime";
+  plan: "orbit" | "max" | "lifetime";
   source: "subscription" | "lifetime" | "comp";
   createdAt: string;
 };
-
-const PLAN_RANK = { free: 0, orbit: 1, lifetime: 2 } as const;
 
 /**
  * Queue a celebration only when effective access actually moves upward.

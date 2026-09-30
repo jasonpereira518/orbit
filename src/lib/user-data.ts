@@ -15,6 +15,10 @@ import {
   apiKeys,
   appleConnections,
   billingEvents,
+  creditAccounts,
+  creditGrants,
+  creditHolds,
+  planMeterUsage,
   calendarSources,
   calendarSubscriptions,
   captureHandoffs,
@@ -252,10 +256,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(recommendations).where(eq(recommendations.userId, userId));
       await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
       await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
-      // What Radar learned from the outside world about these contacts (job changes,
-      // headlines, posts). Also cascades from contacts; deleted here for the same reason.
+      // What Radar learned from the outside world about these contacts (headlines, posts).
+      // Also cascades from contacts; deleted here for the same reason.
       await db.delete(contactSignals).where(eq(contactSignals.userId, userId));
-      // The learned model and the Apollo cursor are derived from the data just deleted.
+      // The learned model is derived from the data just deleted.
       await db
         .update(userSettings)
         .set({
@@ -263,7 +267,6 @@ const STEPS: Record<DataCategory, CategoryStep> = {
           radarNextAt: null,
           radarLeaseUntil: null,
           radarModel: null,
-          radarApolloCursor: null,
         })
         .where(eq(userSettings.userId, userId));
     },
@@ -751,6 +754,23 @@ const PRESERVED_SETTINGS_COLUMNS = {
   subscriptionStatus: true,
   subscriptionPeriodEnd: true,
   subscriptionEventAt: true,
+  // Both were missing before pricing v2, so a partial delete reset an annual subscriber to
+  // "never recorded", which reads as the monthly price.
+  subscriptionMonthlyCents: true,
+  subscriptionInterval: true,
+  subscriptionPeriodStart: true,
+  // Founding pricing is a promise made to the account, not to its contents.
+  foundingEligible: true,
+  foundingRedeemedAt: true,
+  foundingWindowEndsAt: true,
+  foundingSubscriptionId: true,
+  aiKeyPreference: true,
+  maxNudgeSeenAt: true,
+  // Credit emails: the person's choice, and what was already sent this cycle (so deleting
+  // data mid-cycle never re-sends a notice).
+  creditEmailEnabled: true,
+  creditNoticePeriodStart: true,
+  creditNoticeLevel: true,
   compedNote: true,
   compedAt: true,
   compedBy: true,
@@ -813,6 +833,26 @@ const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
   if (key === "billing") {
     await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
+    // Credit grants are money for the same reason billing rows are: a pack is cash received
+    // and its unused credits are a liability, so the rows are anonymised, never deleted. The
+    // account is gone, so whatever it had not spent is closed out as revoked — which is what
+    // takes it off the outstanding-liability figure.
+    await db
+      .update(creditGrants)
+      .set({
+        userId: null,
+        status: "revoked",
+        revokedAt: sql`coalesce(${creditGrants.revokedAt}, now())`,
+        revokedReason: sql`coalesce(${creditGrants.revokedReason}, 'account_deleted')`,
+        microsRevoked: sql`coalesce(${creditGrants.microsRevoked}, 0) + ${creditGrants.microsRemaining}`,
+        microsRemaining: 0,
+        updatedAt: new Date(),
+      })
+      .where(eq(creditGrants.userId, userId));
+    // A lock row, in-flight holds and monthly counters: operational, keyed on the person.
+    await db.delete(creditHolds).where(eq(creditHolds.userId, userId));
+    await db.delete(creditAccounts).where(eq(creditAccounts.userId, userId));
+    await db.delete(planMeterUsage).where(eq(planMeterUsage.userId, userId));
     return;
   }
   if (key === "preferences") {

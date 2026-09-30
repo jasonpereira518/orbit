@@ -16,9 +16,9 @@ export default async function OnboardingPage() {
   }
 
   // Every invited sign-up passes through here first (`/sign-up` forces this redirect), so
-  // this is where a missed `user.created` webhook is made up for: an invited account that
-  // has no comp yet gets its Orbit plan before it ever meets a paywall.
-  if (!settings.compedPlan) await claimSiteInviteGrant(userId);
+  // this is where a missed `user.created` webhook is made up for: an invited account gets its
+  // founding-pricing eligibility before it ever sees a price.
+  if (!settings.foundingEligible) await claimSiteInviteGrant(userId);
 
   return <OnboardingFlowLazy initialStepId={settings.onboardingStep} />;
 }

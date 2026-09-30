@@ -143,7 +143,8 @@ async function main() {
   check("free cannot meet", entitlementsForPlan("free", "free").canUseMeetings === false);
   check("Pro can meet", entitlementsForPlan("orbit", "subscription").canUseMeetings === true);
   check("Lifetime can meet", entitlementsForPlan("lifetime", "lifetime").canUseMeetings === true);
-  check("the denial names both paid plans", /Pro/.test(FEATURE_DENIAL.meetings) && /Lifetime/.test(FEATURE_DENIAL.meetings));
+  check("Max can meet", entitlementsForPlan("max", "subscription").canUseMeetings === true);
+  check("the denial names both plans on sale", /Pro/.test(FEATURE_DENIAL.meetings) && /Max/.test(FEATURE_DENIAL.meetings) && !/Lifetime/.test(FEATURE_DENIAL.meetings));
 
   // `requireMeetingsUser()` (src/lib/plan-guards.ts) is `requireUserId()` then
   // `requireEntitlement(userId, "meetings")`. This exercises that second half against the

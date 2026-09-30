@@ -10,10 +10,11 @@
  * stealth, now held) cannot take an invitation — Clerk refuses one for an existing user — so
  * the marker goes straight onto that user and they are handed the sign-in link instead.
  *
- * AN INVITATION IS FULL ACCESS, not just a way past stealth: the account it lands on is comped
- * to Orbit (`grantSiteInvitePlan`). The existing-account path comps on the spot; a new account
- * is comped when it first appears — from the `user.created` webhook, with the onboarding page
- * as the backstop for a webhook that never lands (`claimSiteInviteGrant`).
+ * AN INVITATION MAKES THE ACCOUNT FOUNDING-ELIGIBLE (pricing v2), not just a way past stealth:
+ * its first paid subscription gets founding pricing (`recordSiteInvite`). It is no longer a
+ * comp. The existing-account path records it on the spot; a new account when it first appears —
+ * from the `user.created` webhook, with the onboarding page as the backstop for a webhook that
+ * never lands (`claimSiteInviteGrant`).
  *
  * THE EMAIL IS ORBIT'S, not Clerk's: Clerk is always told `notify: false`, and when the admin
  * asks for the link to be emailed, `site-invite-email.ts` sends the boarding pass with the
@@ -24,12 +25,12 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { interestListSignups } from "@/db/schema";
+import { interestListSignups, userSettings } from "@/db/schema";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { hasSiteInvite, markStealthCleared, SITE_INVITE_METADATA_KEY } from "@/lib/site-access";
-import { ensureUserSettings, setCompedPlan } from "@/lib/user-settings";
+import { ensureUserSettings } from "@/lib/user-settings";
 import { asWelcomePlanet, type WelcomePlanet } from "@/lib/welcome-planets";
 import {
   DEFAULT_INVITE_PLANET,
@@ -39,9 +40,11 @@ import {
 } from "@/lib/site-invite-email";
 
 const INVITE_EXPIRES_DAYS = 30;
-/** The plan an invitation comps. `orbit`, not `lifetime`: only `orbit` reaches every gate. */
-const INVITE_PLAN = "orbit" as const;
-const INVITE_COMP_NOTE = "Invited by an admin";
+/**
+ * The note invitations wrote on the comp they granted before pricing v2 — kept because
+ * existing comps carry it, and the v130 backfill uses it to find those accounts.
+ */
+export const LEGACY_INVITE_COMP_NOTE = "Invited by an admin";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type SiteInviteResult =
@@ -95,7 +98,7 @@ export async function inviteToSite(input: {
   if (user) {
     await clerk.users.updateUserMetadata(user.id, { publicMetadata: marker });
     await markStealthCleared(user.id);
-    await grantSiteInvitePlan(user.id, marker, input.adminUserId);
+    await recordSiteInvite(user.id, marker);
     await recordAdminAction({
       adminUserId: input.adminUserId,
       action: "site.invite.existing_account",
@@ -201,38 +204,39 @@ export async function revokeSiteInvite(input: { adminUserId: string; invitationI
 }
 
 /**
- * Comp an invited account to Orbit. A no-op without the invitation marker, and for an
- * account that already carries any comp, so an admin's hand-set Lifetime is never downgraded.
+ * Record that an account came through a beta invitation: it is eligible for founding pricing
+ * (pricing v2) — $2 off Pro or $4 off Max for the first three months of its first paid
+ * subscription. Stored on the account, never inferred later.
  *
- * Only `user.created`, the existing-account invite and the onboarding backstop call this —
- * never `user.updated` — so a comp an admin later revokes from the console stays revoked
- * (the onboarding backstop only runs before onboarding is finished).
+ * Invites no longer comp Orbit Pro. Accounts comped by an invitation BEFORE pricing v2 keep
+ * their comp exactly as it is; this never touches `comped_plan`.
+ *
+ * A no-op without the invitation marker; idempotent. Only `user.created`, the existing-account
+ * invite and the onboarding backstop call this — never `user.updated`.
  */
-export async function grantSiteInvitePlan(
+export async function recordSiteInvite(
   userId: string,
-  publicMetadata: Record<string, unknown> | null | undefined,
-  adminUserId?: string | null
+  publicMetadata: Record<string, unknown> | null | undefined
 ): Promise<boolean> {
   if (!hasSiteInvite(publicMetadata)) return false;
   const settings = await ensureUserSettings(userId);
-  if (settings.compedPlan) return false;
-  const invite = publicMetadata?.[SITE_INVITE_METADATA_KEY] as { by?: unknown } | undefined;
-  const by = adminUserId ?? (typeof invite?.by === "string" ? invite.by : null);
-  await setCompedPlan(userId, INVITE_PLAN, { note: INVITE_COMP_NOTE, adminUserId: by });
+  if (settings.foundingEligible) return false;
+  const db = await getDb();
+  await db.update(userSettings).set({ foundingEligible: true, updatedAt: new Date() }).where(eq(userSettings.userId, userId));
   return true;
 }
 
 /**
  * The backstop for a missed `user.created` webhook: ask Clerk whether this account was
- * invited and comp it if so. One Clerk call, so callers gate it to accounts that plausibly
- * need it (no comp yet, still onboarding). Fails quietly — a Clerk hiccup must not break
+ * invited and record its founding eligibility if so. One Clerk call, so callers gate it to
+ * accounts that plausibly need it (not yet eligible, still onboarding). Fails quietly — a Clerk hiccup must not break
  * the page it runs on; the next visit tries again.
  */
 export async function claimSiteInviteGrant(userId: string): Promise<boolean> {
   if (!isClerkConfigured() || userId === "demo-user") return false;
   try {
     const user = await (await clerkClient()).users.getUser(userId);
-    return await grantSiteInvitePlan(userId, user.publicMetadata as Record<string, unknown>);
+    return await recordSiteInvite(userId, user.publicMetadata as Record<string, unknown>);
   } catch (err) {
     console.error("[site-invites] invite grant check failed", err);
     return false;

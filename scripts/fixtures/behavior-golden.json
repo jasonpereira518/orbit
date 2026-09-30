@@ -5330,7 +5330,9 @@
       "hasPersonalKey": false,
       "managedConfigured": false,
       "canTranscribe": false,
-      "allowance": null
+      "preference": null,
+      "managedPaused": false,
+      "credits": null
     },
     "hasApolloKey": false,
     "workHistoryAutoEnabled": true,
@@ -6660,11 +6662,17 @@
         "capabilities": {
           "hasAiKey": false,
           "hasApolloKey": false,
-          "aiProvider": "gemini"
+          "aiProvider": "gemini",
+          "radarCaptureLinkedinActivity": false
         },
         "stats": {
           "contactCount": 25,
           "dueFollowUpCount": 6
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
         }
       }
     }
@@ -7356,6 +7364,65 @@
         "contactId": "<contacts:Sarah Chen>",
         "nextFollowUpAt": "<ts>",
         "reminderId": "<reminders:Follow up with Sarah Chen>"
+      }
+    }
+  },
+  "ext save post to radar, capture off (route)": {
+    "status": 400,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "message": "Saving LinkedIn activity is off. Turn it on in Radar’s settings first."
+      }
+    }
+  },
+  "ext save post to radar (route)": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "saved": true,
+        "duplicate": false
+      }
+    }
+  },
+  "ext save post to radar again (route)": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "saved": true,
+        "duplicate": true
+      }
+    }
+  },
+  "ext me, post saving on": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "contractVersion": 1,
+        "user": {
+          "name": "Demo User",
+          "email": "demo@orbit.local",
+          "imageUrl": null
+        },
+        "capabilities": {
+          "hasAiKey": false,
+          "hasApolloKey": false,
+          "aiProvider": "gemini",
+          "radarCaptureLinkedinActivity": true
+        },
+        "stats": {
+          "contactCount": 26,
+          "dueFollowUpCount": 5
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
+        }
       }
     }
   },

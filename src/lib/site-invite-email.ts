@@ -105,8 +105,8 @@ export function buildSiteInviteEmail(input: {
   const subject = "Now boarding: your Orbit pass";
   const lead = firstName ? `Your wait is over, ${firstName}.` : "Your wait is over.";
   const opening = existing
-    ? "I've opened Orbit up for your account — the full plan, on me. Sign in with this address and you're through."
-    : "I've opened a seat on Orbit for you — the full plan, on me. Your pass is below.";
+    ? "I've opened Orbit up for your account. Sign in with this address and you're through — and as one of the first people in, you'll see founding pricing inside if you ever upgrade."
+    : "I've opened a seat on Orbit for you. Your pass is below — and as one of the first people in, you'll see founding pricing inside if you ever upgrade.";
   const buttonLabel = existing ? "Sign in to Orbit" : "Board Orbit";
   const fineprint = existing
     ? `Sign in as ${input.email} to board. Not expecting this? You can ignore it.`

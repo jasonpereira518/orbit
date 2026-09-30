@@ -30,8 +30,14 @@ export type TourHotspot = {
   label: string;
 };
 
+/**
+ * The pages the tour stops on. Outreach stays in the tour's sidebar (as "soon", like the real
+ * one) but gets no stop: it hasn't shipped, and the tour only walks through what has.
+ */
+export type TourStepId = Exclude<TourNavKey, "outreach">;
+
 export type TourStep = {
-  id: TourNavKey;
+  id: TourStepId;
   navKey: TourNavKey | null;
   title: string;
   body: string;
@@ -156,17 +162,6 @@ export const TOUR_STEPS: TourStep[] = [
     hotspots: [
       { id: "figure", label: "People linked into a constellation." },
       { id: "spica", label: "Brightest stars are your closest ties." },
-    ],
-  },
-  {
-    id: "outreach",
-    navKey: "outreach",
-    title: "Outreach",
-    body: "Run cold campaigns — find prospects, generate drafts, and send from your apps.",
-    hotspots: [
-      { id: "campaign", label: "Your campaigns live here." },
-      { id: "new", label: "Start a new cold outreach campaign." },
-      { id: "draft", label: "AI drafts messages you can edit & send." },
     ],
   },
 ];

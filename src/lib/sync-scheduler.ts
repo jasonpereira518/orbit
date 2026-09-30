@@ -20,6 +20,7 @@
  * error that becomes a number in `cron_runs.stats` is visible; one that aborts the loop is a
  * silent outage for every user after it in the queue.
  */
+import { extraConnectionPaused } from "@/lib/connection-limits";
 import {
   CalendarSyncTokenExpiredError,
   advanceCursor as advanceGoogleCalendarCursor,
@@ -203,6 +204,8 @@ export type SyncRunStats = {
   synced: number;
   failed: number;
   skippedNoScope: number;
+  /** A Free account's later Google/Microsoft connection, rescheduled untouched. */
+  skippedExtraConnection?: number;
   eventsIngested: number;
   /** Calendar events the decision model (Jev) skipped or kept against the rules' call. */
   calendarSkippedByDecision: number;
@@ -826,6 +829,32 @@ async function syncAppleCalendar(
  * way this rejects is if claiming itself fails, which means the database is unreachable and
  * there is nothing to record anyway.
  */
+/** How long a paused extra connection waits before the pass looks at it again. */
+const EXTRA_CONNECTION_RECHECK_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * A Free account that had both Google and Microsoft connected before pricing v2 keeps its
+ * EARLIER one syncing (`connection-limits.ts`). The later one is rescheduled, untouched —
+ * never disarmed, which would take a reconnect to undo — so it simply resumes on the next
+ * check after the account moves to a paid plan.
+ */
+async function skipExtraConnection(
+  conn: ClaimedConnection,
+  now: Date,
+  stats: SyncRunStats
+): Promise<boolean> {
+  const provider = conn.provider === "microsoft" ? "microsoft" : "google";
+  const paused = await extraConnectionPaused(conn.userId, provider).catch(() => false);
+  if (!paused) return false;
+  stats.skippedExtraConnection = (stats.skippedExtraConnection ?? 0) + 1;
+  await markSyncResult(conn.provider, conn.id, {
+    ok: true,
+    cursor: conn.syncCursor,
+    nextSyncAt: new Date(now.getTime() + EXTRA_CONNECTION_RECHECK_MS),
+  }).catch(() => null);
+  return true;
+}
+
 export async function runSyncPass(
   options: { now?: Date; budgetMs?: number; deps?: SyncDeps } = {}
 ): Promise<SyncRunStats> {
@@ -870,6 +899,8 @@ export async function runSyncPass(
       }).catch(() => null);
       return;
     }
+
+    if (await skipExtraConnection(conn, now, stats)) return;
 
     // A token minted before a scope shipped keeps working for the scopes it does hold, but
     // every call needing the missing one returns 403. Disarm only when the connection can do
@@ -927,6 +958,8 @@ export async function runSyncPass(
       }).catch(() => null);
       return;
     }
+
+    if (await skipExtraConnection(conn, now, stats)) return;
 
     // Same reasoning as the Google branch: a token minted before the calendar scope
     // shipped is still valid for Outlook Contacts and will keep working, but every

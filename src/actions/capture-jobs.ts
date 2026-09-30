@@ -22,6 +22,7 @@ import {
   queueCaptureJobRow,
   recordCaptureChoicesRow,
   recordCaptureDecisionRow,
+  mergeCaptureBatchRows,
   toCaptureJobView,
   type CaptureJobView,
 } from "@/lib/capture-jobs";
@@ -92,6 +93,25 @@ export async function getActiveCaptureJobs(limit = 25): Promise<CaptureJobView[]
  * Takes the batch id rather than "everything open" so Start over on one queue cannot throw
  * away a single capture the person left in another tab.
  */
+/**
+ * Fold an upload's files into one review, once every file is read. Null `job` means "not
+ * yet" (a file is still being read) or "already done" (another tab or poll got there first).
+ */
+export async function mergeCaptureBatch(
+  batchGroupId: string
+): Promise<{ ok: true; job: CaptureJobView | null } | Fail> {
+  try {
+    const userId = await requireUserId();
+    if (typeof batchGroupId !== "string" || !batchGroupId.trim()) {
+      return { ok: false, error: "That upload is no longer open" };
+    }
+    const row = await mergeCaptureBatchRows(userId, batchGroupId.trim());
+    return { ok: true, job: row ? toCaptureJobView(row) : null };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t put those notes together — try again?", "capture-jobs.merge-capture-batch") };
+  }
+}
+
 export async function discardCaptureBatch(
   batchGroupId: string
 ): Promise<{ ok: true; discarded: number } | Fail> {
