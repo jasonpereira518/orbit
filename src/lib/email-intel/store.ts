@@ -45,7 +45,9 @@ export async function upsertThreadResult(userId: string, result: ThreadResult): 
       // Untouched when nothing new arrived: the row (and its event) stay exactly as they were.
       setWhere: sql`${emailThreads.lastMessageId} <> excluded.last_message_id`,
     })
-    .returning({ id: emailThreads.id });
+    // Bare `.returning()`: a field selector defeats Drizzle's overload resolution after
+    // `.onConflictDoUpdate()` against the union `Db` type (see contact-identity.ts).
+    .returning();
   if (!row) return { changed: false };
 
   if (result.event) {
