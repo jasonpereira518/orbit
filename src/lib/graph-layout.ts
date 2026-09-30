@@ -524,7 +524,9 @@ function figureGeometry(
     // FIGURE_STAR_MIN is a circle, but a name is a LABEL_WIDTH x LABEL_HEIGHT box: a pair 106px
     // apart along a tilted diagonal can still have overlapping names. Open the figure just far
     // enough that no two name boxes touch. Only petal-company parts ask for this: every other
-    // cluster keeps the scale it has always had, so a plain constellation never moves.
+    // cluster keeps the scale it has always had, so a plain constellation never moves. This
+    // deliberately ignores FIGURE_MAX_UPSCALE: the bump is measured at no more than ~4.1% and the
+    // templates are fixed, so it cannot run away. Do not cap it, or a clash could come back.
     let need = 0;
     for (let i = 0; i < stars.length; i++) {
       for (let j = i + 1; j < stars.length; j++) {
@@ -760,9 +762,13 @@ export function* buildHybridGraphLayoutSteps(
         partOf.set(id, role);
         positions.set(id, toPosition(center.x + p.x, center.y + p.y));
       });
+      // A Set, not `includes`: a non-split cluster or a ring school is one part holding its whole
+      // scatter list, so a list scan per star is quadratic in a slice that must stay short.
+      // Family satellites are seated in the scatter field without belonging to the part, so they
+      // must not be given its part info.
+      const own = new Set(g.part.scatterMemberIds);
       for (const p of g.scatterLocal) {
-        // Family satellites are seated here without belonging to the cluster.
-        if (g.part.scatterMemberIds.includes(p.id)) partOf.set(p.id, role);
+        if (own.has(p.id)) partOf.set(p.id, role);
         positions.set(p.id, toPosition(center.x + p.x, center.y + p.y));
       }
     }

@@ -17,7 +17,7 @@ import {
   type GraphNodeData,
   type ClusterLabelData,
 } from "../src/lib/graph-layout";
-import { RING_CAPACITY } from "../src/lib/graph/cluster-anatomy";
+import { RING_CAPACITY, RING_MIN_RADIUS } from "../src/lib/graph/cluster-anatomy";
 import { buildClusterAffinity } from "../src/lib/constellation-affinity";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import { buildPeerEdges } from "../src/lib/network-metrics";
@@ -417,8 +417,57 @@ console.log("\nCluster anatomy");
   const cy = ringR.reduce((s, p) => s + p.y, 0) / ringR.length;
   const radii = ringR.map((p) => Math.hypot(p.x - cx, p.y - cy));
   check(`ring members lie on one circle (spread ${(Math.max(...radii) - Math.min(...radii)).toFixed(1)}px)`, Math.max(...radii) - Math.min(...radii) < 3);
+  // On its own the circle check would pass with every member stacked at the centre.
+  const meanRadius = radii.reduce((a, b) => a + b, 0) / radii.length;
+  check(`…and the circle is open, not collapsed (mean radius ${meanRadius.toFixed(0)}px ≥ ${RING_MIN_RADIUS})`, meanRadius >= RING_MIN_RADIUS);
   const su = [...fit.fits.values()].find((f) => f.cluster.name === "State U")!;
   check("a school too big for its rings scatters the rest", su.scatterMemberIds.length === 52 - Math.min(52, RING_CAPACITY) && su.figureMemberIds.length === Math.min(52, RING_CAPACITY));
+  const suFigure = su.figureMemberIds.map((id) => posById.get(id)!);
+  const scx = suFigure.reduce((a, p) => a + p.x, 0) / suFigure.length;
+  const scy = suFigure.reduce((a, p) => a + p.y, 0) / suFigure.length;
+  const suOuter = Math.max(...suFigure.map((p) => Math.hypot(p.x - scx, p.y - scy)));
+  const suNearest = Math.min(...su.scatterMemberIds.map((id) => Math.hypot(posById.get(id)!.x - scx, posById.get(id)!.y - scy)));
+  check(
+    `the overflow scatters outside the ring (nearest ${suNearest.toFixed(0)}px > outer radius ${suOuter.toFixed(0)}px)`,
+    su.scatterMemberIds.length > 0 && suNearest > suOuter
+  );
+
+  // A petal company's family satellite is seated in its roomiest petal without belonging to it.
+  {
+    const titled = (i: number, title: string) =>
+      contact(`gg${i}`, { company: "Google", title, orbitScore: 1 + (i % 5) });
+    const titles = [
+      ...["VP Engineering", "CTO", "Co-founder"],
+      ...Array.from({ length: 10 }, () => "Software Engineer"),
+      ...Array.from({ length: 8 }, () => "Product Designer"),
+      ...Array.from({ length: 5 }, () => "Account Executive"),
+    ];
+    const gContacts = [...titles.map((t, i) => titled(i, t)), contact("gc-sat", { company: "Google Cloud", orbitScore: 3 })];
+    const gFit = buildConstellationFit(gContacts);
+    const gLayout = buildHybridGraphLayout(gContacts, "Tester");
+    const gPos = new Map(gLayout.nodes.filter((n) => n.type === "contact").map((n) => [n.id, n.position]));
+    const google = [...gFit.fits.values()].find((f) => f.cluster.name === "Google")!;
+    check("a titled 26-person Google splits into petals", google.form === "petal" && google.parts.length >= 3);
+    const sat = gLayout.nodes.find((n) => n.id === "gc-sat")!.data as GraphNodeData;
+    check("the Google Cloud satellite carries no part", sat.partKey === undefined && sat.partRole === undefined && sat.leader === undefined);
+    const centroid = (ids: string[]) => ({
+      x: ids.reduce((a, id) => a + gPos.get(id)!.x, 0) / ids.length,
+      y: ids.reduce((a, id) => a + gPos.get(id)!.y, 0) / ids.length,
+    });
+    const core = google.parts.find((p) => p.role === "core")!;
+    const roomiest = google.parts
+      .filter((p) => p.role === "petal")
+      .reduce((best, p) => (p.figureMemberIds.length + p.scatterMemberIds.length > best.figureMemberIds.length + best.scatterMemberIds.length ? p : best));
+    const at = gPos.get("gc-sat")!;
+    const dTo = (part: typeof core) => {
+      const c = centroid([...part.figureMemberIds, ...part.scatterMemberIds]);
+      return Math.hypot(at.x - c.x, at.y - c.y);
+    };
+    check(
+      `…and sits nearer the roomiest petal (${roomiest.key}, ${dTo(roomiest).toFixed(0)}px) than the core (${dTo(core).toFixed(0)}px)`,
+      dTo(roomiest) < dTo(core)
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
