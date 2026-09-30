@@ -11,12 +11,9 @@ import {
   type Highlight,
 } from "@/components/marketing/marketing-doc";
 import type { TocItem } from "@/components/marketing/doc-toc";
-import {
-  FREE_CONTACT_LIMIT,
-  LIFETIME_INTRO_PRICE,
-  LIFETIME_INTRO_SEATS,
-  LIFETIME_STANDARD_PRICE,
-} from "@/lib/plan-limits";
+import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS, FOUNDING_AMOUNT_OFF_CENTS, FOUNDING_MONTHS } from "@/lib/stripe-config";
+import { formatPlanPrice } from "@/lib/plans/plan-config";
 import { LEGAL_LAST_UPDATED } from "@/lib/legal";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
@@ -149,7 +146,7 @@ export default function TermsPage() {
           <p>
             You can delete your account yourself, at any time, in Settings under
             Data and privacy. Deleting it erases your Orbit data, cancels an
-            active Orbit Pro subscription, and removes your sign-in.
+            active Orbit Pro or Orbit Max subscription, and removes your sign-in.
           </p>
         </DocSection>
 
@@ -246,6 +243,13 @@ export default function TermsPage() {
             offers, and any given integration may be removed from Orbit if it
             becomes impractical to maintain.
           </p>
+          <p>
+            Included AI on Orbit Pro and Orbit Max is different: it runs on
+            Orbit&apos;s own accounts with those providers, is paid for by your
+            plan and measured in credits (see{" "}
+            <a href="#plans">Plans and payment</a>), and the provider does not
+            bill you.
+          </p>
         </DocSection>
 
         <DocSection id="ai" index={8} title="AI features">
@@ -253,9 +257,13 @@ export default function TermsPage() {
             Most AI features are optional and run only when you use them; when
             you do, relevant content from your Orbit data is sent to an AI
             provider you selected so it can generate a response. A few run
-            automatically in the background instead — see below. On every
-            plan, including Orbit Pro and Orbit Lifetime, AI runs on an API
-            key you supply, and that provider bills you directly.
+            automatically in the background instead — see below. On the Free
+            Plan and on Orbit Lifetime, AI runs on an API key you supply, and
+            that provider bills you directly. On Orbit Pro and Orbit Max, AI is
+            included: it runs on Orbit&apos;s own provider accounts and uses
+            your plan&apos;s credits. If you add a key of your own and choose it
+            in Settings, those calls run on your key instead, your provider
+            bills you, and no credits are used.
           </p>
           <p>
             Some AI work runs in the background: search indexing, and — after
@@ -263,9 +271,12 @@ export default function TermsPage() {
             conversations, without you turning anything on first. The cap of{" "}
             {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the
             conversations that reach the model; a thread with a single message
-            gets a rule-based note instead, with no AI call. Settings shows
-            the last 30 days of AI usage and its estimated cost; the bill
-            itself comes from your provider.
+            gets a rule-based note instead, with no AI call. On Pro and Max,
+            background AI work uses credits too, and pauses once half of the
+            month&apos;s credits are used, so what you ask for yourself comes
+            first. Settings shows the last 30 days of AI usage and its
+            estimated cost. For calls on your own key, the bill itself comes
+            from your provider; included AI shows as credits used.
           </p>
           <p>
             AI output is probabilistic. It can be inaccurate, outdated,
@@ -294,14 +305,14 @@ export default function TermsPage() {
         <DocSection id="plans" index={10} title="Plans and payment">
           <p>
             The Free Plan covers up to {FREE_CONTACT_LIMIT} contacts and costs
-            nothing. Paid plans — Orbit Pro, billed monthly or annually, and
-            Orbit Lifetime, a one-time purchase — lift that cap. Orbit Lifetime
-            is not limited in number and does not sell out; its{" "}
-            <em>introductory price</em> of ${LIFETIME_INTRO_PRICE} applies to the
-            first {LIFETIME_INTRO_SEATS} buyers, after which it becomes $
-            {LIFETIME_STANDARD_PRICE}. Current prices are on the{" "}
-            <Link href="/pricing">pricing page</Link> and apply from the moment
-            you subscribe.
+            nothing; AI on it runs on a key you supply. Orbit Pro and Orbit Max
+            are subscriptions, billed monthly or yearly (a year paid up front is
+            two months free), that lift that cap and include AI, along with the
+            other allowances listed on the pricing page. Current prices are on
+            the <Link href="/pricing">pricing page</Link> and apply from the
+            moment you subscribe. Orbit Lifetime is no longer sold. Accounts
+            that already have it keep it, with every Orbit Max feature and AI on
+            their own key.
           </p>
           <ul>
             <li>
@@ -311,15 +322,24 @@ export default function TermsPage() {
               if you later drop back to Free.
             </li>
             <li>
-              <strong>Cancel whenever you like.</strong> Write to us through the{" "}
-              <Link href="/contact">contact page</Link> and Orbit Pro ends at the
-              close of the period you have already paid for; deleting your account
-              in Settings cancels it immediately. Cancelling part-way through a
-              period does not trigger a pro-rated refund.
+              <strong>Cancel whenever you like.</strong> Cancel in Settings, or
+              write to us through the <Link href="/contact">contact page</Link>,
+              and your subscription ends at the close of the period you have
+              already paid for; deleting your account in Settings cancels it
+              immediately. Cancelling part-way through a period does not trigger
+              a pro-rated refund — except that an annual plan cancelled within 14
+              days of its yearly charge is refunded in full on request.
             </li>
             <li>
-              <strong>Payments are handled by Stripe.</strong> Both Orbit Pro and
-              Orbit Lifetime are sold through Stripe, whose terms govern the
+              <strong>Switching plans.</strong> Moving from Pro to Max, or from
+              monthly to annual billing, takes effect at once and you pay the
+              difference for the rest of the period; moving from Max to Pro, or
+              from annual to monthly, takes effect when the period you&apos;ve
+              paid for ends.
+            </li>
+            <li>
+              <strong>Payments are handled by Stripe.</strong> Orbit Pro, Orbit
+              Max and credit packs are sold through Stripe, whose terms govern the
               transaction itself, and taxes are added where the law requires.
               Orbit never sees your card.
             </li>
@@ -332,7 +352,41 @@ export default function TermsPage() {
             <li>
               <strong>AI, enrichment, and sending costs are separate.</strong>{" "}
               Where a feature runs on your own provider key, that provider bills
-              you directly and no Orbit plan covers it.
+              you directly and no Orbit plan covers it. Included AI on Pro and Max
+              is covered by your plan&apos;s credits.
+            </li>
+            <li>
+              <strong>Credits.</strong> Included AI is measured in credits: one
+              credit is one cent of the provider&apos;s list price for the work
+              done. Your plan&apos;s monthly credits reset each month — on an
+              annual plan too, on the same day each month — and do not roll over.
+              When your credits run out, included AI stops until they reset or
+              you add a pack; at most the one request already in progress
+              finishes. Orbit never charges you automatically for more.
+            </li>
+            <li>
+              <strong>Credit packs.</strong> On Pro and Max you can buy{" "}
+              {CREDIT_PACK_CREDITS} credits for {formatPlanPrice(CREDIT_PACK_PRICE_CENTS)}.
+              Pack credits are used after your monthly credits, and they do not
+              expire while you&apos;re on Pro or Max. If you move to a plan
+              without included AI, unused pack credits are kept but can&apos;t
+              be used; they come back if you subscribe to Pro or Max again. A
+              pack is refundable on request until any of its credits are used.
+              If a pack&apos;s payment is refunded, or reversed after a lost
+              dispute, the pack&apos;s unused credits are removed.
+            </li>
+            <li>
+              <strong>Founding pricing.</strong> An account created from a beta
+              invitation gets its first paid subscription, if billed monthly, at
+              a founding price for its first {FOUNDING_MONTHS} monthly invoices:{" "}
+              {formatPlanPrice(FOUNDING_AMOUNT_OFF_CENTS.orbit)} off Orbit Pro or{" "}
+              {formatPlanPrice(FOUNDING_AMOUNT_OFF_CENTS.max)} off Orbit Max.
+              Founding pricing does not apply to annual billing, which is already
+              discounted, and ends if a founding subscription moves to annual
+              billing. If you switch between Pro and Max during those months, the
+              founding price for the new plan applies to the invoices that
+              remain. After that, the regular price applies. Founding pricing
+              applies once per account.
             </li>
           </ul>
           <p>

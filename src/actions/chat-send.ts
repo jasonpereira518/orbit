@@ -61,7 +61,7 @@ export type ChatSendResult =
   | { ok: false; reason: ChatSendReason; message: string };
 
 const COPY: Record<ChatSendReason, string> = {
-  plan: "Sending from Gmail is a Pro feature. You can copy the draft or open it in your mail app instead.",
+  plan: "Sending from Gmail is part of Orbit Pro and Max. You can copy the draft or open it in your mail app instead.",
   not_connected: "Connect Gmail to send from your own address.",
   needs_reconnect: "Gmail needs to be reconnected before it can send.",
   missing_scope: "Orbit doesn’t have Google’s permission to send as you yet.",

@@ -119,6 +119,31 @@ async function seed() {
     effectiveAt: now,
   });
 
+  // Pricing v2 credit ledger: a pack (money, so anonymised like billing_events), the lock
+  // row, an in-flight hold and a monthly meter (all deleted).
+  await db.insert(schema.creditGrants).values({
+    userId: USER,
+    kind: "pack",
+    grantKey: `${USER}-pack`,
+    microsGranted: 2_500_000,
+    microsRemaining: 1_000_000,
+    amountCents: 500,
+    stripeRef: `cs_${USER}`,
+  });
+  await db.insert(schema.creditAccounts).values({ userId: USER });
+  await db.insert(schema.creditHolds).values({
+    userId: USER,
+    micros: 20_000,
+    operation: "chat.answer",
+    expiresAt: new Date(now.getTime() + 60_000),
+  });
+  await db.insert(schema.planMeterUsage).values({
+    userId: USER,
+    meter: "hosted_enrichment",
+    periodKey: "2026-09",
+    used: 3,
+  });
+
   await db.insert(schema.closenessCohorts).values({
     userId: USER,
     snapshot: {
@@ -743,6 +768,10 @@ async function main() {
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
     .catch(() => {});
+  await (await getDb())
+    .delete(schema.creditGrants)
+    .where(eq(schema.creditGrants.grantKey, `${USER}-pack`))
+    .catch(() => {});
   const { recruiterId, soleRecruiterId } = await seed();
 
   console.log("\nSeeded");
@@ -791,6 +820,21 @@ async function main() {
   await ledgerDb
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`));
+
+  // Same rule for a credit pack: the grant survives, anonymised, and its unused credits are
+  // closed out so they stop counting as an outstanding liability.
+  const [pack] = await ledgerDb
+    .select()
+    .from(schema.creditGrants)
+    .where(eq(schema.creditGrants.grantKey, `${USER}-pack`));
+  check("credit pack survives the purge", pack !== undefined);
+  check("...with the personal link severed", pack?.userId === null);
+  check("...its paid amount intact", pack?.amountCents === 500);
+  check(
+    "...and its unused credits closed out",
+    pack?.status === "revoked" && pack.microsRemaining === 0 && pack.microsRevoked === 1_000_000
+  );
+  await ledgerDb.delete(schema.creditGrants).where(eq(schema.creditGrants.grantKey, `${USER}-pack`));
 
   // The second deliberate survivor — see `purgeUserData`. Asserting BOTH halves matters:
   // the key surviving alone would miss a purge that forgot to delete-and-recreate the row,

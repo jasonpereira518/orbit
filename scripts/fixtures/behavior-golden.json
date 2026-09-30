@@ -5329,7 +5329,9 @@
       "hasPersonalKey": false,
       "managedConfigured": false,
       "canTranscribe": false,
-      "allowance": null
+      "preference": null,
+      "managedPaused": false,
+      "credits": null
     },
     "hasApolloKey": false,
     "workHistoryAutoEnabled": true,
@@ -6665,6 +6667,11 @@
         "stats": {
           "contactCount": 25,
           "dueFollowUpCount": 6
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
         }
       }
     }
@@ -7409,6 +7416,11 @@
         "stats": {
           "contactCount": 26,
           "dueFollowUpCount": 5
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
         }
       }
     }

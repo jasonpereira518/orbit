@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { canConnect } from "@/lib/connection-limits";
 import { auth } from "@clerk/nextjs/server";
 import { consumeGmailOAuthState } from "@/actions/gmail";
 import {
@@ -74,6 +75,14 @@ export async function GET(request: Request) {
 
     if (!sessionUserId || sessionUserId !== stateUserId) {
       throw new Error("Signed-in user does not match OAuth state");
+    }
+
+    // Backstop for the check at the start of the flow: a Free account's second provider.
+    if (!(await canConnect(sessionUserId, "google"))) {
+      redirectBase.searchParams.set("gmail", "error");
+      redirectBase.searchParams.set("google", "error");
+      redirectBase.searchParams.set("reason", "plan_limit");
+      return NextResponse.redirect(redirectBase);
     }
 
     const tokens = await exchangeCodeForTokens(code);

@@ -15,7 +15,9 @@ import * as adminFeedback from "@/lib/admin-feedback";
 import * as broadcast from "@/lib/broadcasts";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
+import type { Plan } from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
+import { grantLifetime, previewLifetime, revokeLifetime, type LifetimePreview } from "@/lib/admin-lifetime";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
@@ -29,6 +31,7 @@ import {
   type ConstellationConfig,
 } from "@/lib/constellation-config";
 import { setStealth } from "@/lib/site-access";
+import { setManagedAiPaused, type ManagedAiSwitchState } from "@/lib/managed-ai-switch";
 import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   inviteToSite,
@@ -49,7 +52,7 @@ import { UserFacingError } from "@/lib/errors";
 
 export type CompResult = {
   ok: true;
-  plan: "free" | "orbit" | "lifetime";
+  plan: Plan;
 };
 
 /**
@@ -63,13 +66,18 @@ export type CompResult = {
  */
 export async function setCompAction(input: {
   targetUserId: string;
-  plan: "orbit" | "lifetime" | null;
+  plan: "orbit" | "max" | null;
   reason: string;
 }): Promise<CompResult> {
   const adminUserId = await requireAdminUserId();
 
   const reason = input.reason.trim();
   if (!reason) throw new Error("A reason is required.");
+  // Lifetime has its own audited path (grantLifetimeAction), which also ends a live
+  // subscription at its period end. A comp is Pro or Max only.
+  if (input.plan !== null && input.plan !== "orbit" && input.plan !== "max") {
+    throw new Error("Comp Pro or Max here; Lifetime has its own Grant action.");
+  }
 
   const db = await getDb();
   const before = await db.query.userSettings.findFirst({
@@ -99,6 +107,47 @@ export async function setCompAction(input: {
   // Resolved from the returned row, NOT from getEntitlements(): that helper is a React
   // cache() memo and may still hold the pre-write value within this same request.
   return { ok: true, plan: resolvePlan(row).plan };
+}
+
+/* ------------------------------------------------------------- Lifetime (admin) ------- */
+// Admin-assigned only (pricing v2). The bodies live in `src/lib/admin-lifetime.ts`.
+
+export type { LifetimePreview } from "@/lib/admin-lifetime";
+
+/** What granting or revoking would do to this account — shown before anything changes. */
+export async function previewLifetimeAction(targetUserId: string): Promise<LifetimePreview> {
+  await requireAdminUserId();
+  return previewLifetime(targetUserId);
+}
+
+/** Grant Lifetime; a live subscription is set to end at its period end. Audited. */
+export async function grantLifetimeAction(input: {
+  targetUserId: string;
+  reason: string;
+}): Promise<{ ok: true; subscription: "scheduled" | "none" | "error" }> {
+  const adminUserId = await requireAdminUserId();
+  const result = await grantLifetime(adminUserId, input);
+  revalidateAccount(input.targetUserId);
+  return result;
+}
+
+/** Revoke a comped Lifetime (and, only when asked, a purchased one). Audited. */
+export async function revokeLifetimeAction(input: {
+  targetUserId: string;
+  reason: string;
+  includePurchase?: boolean;
+}): Promise<CompResult> {
+  const adminUserId = await requireAdminUserId();
+  const result = await revokeLifetime(adminUserId, input);
+  revalidateAccount(input.targetUserId);
+  return result;
+}
+
+function revalidateAccount(targetUserId: string) {
+  revalidatePath("/admin");
+  revalidatePath("/admin/users");
+  revalidatePath(`/admin/users/${targetUserId}`);
+  revalidatePath("/admin/billing");
 }
 
 /**
@@ -997,4 +1046,18 @@ export async function revokeSiteInviteAction(input: {
   const { email } = await revokeSiteInvite({ adminUserId, invitationId: input.invitationId });
   revalidateAccess();
   return { ok: true, email };
+}
+
+/**
+ * Pause or resume included AI on Pro and Max. Audited; takes effect on this instance at once
+ * and on every other within 30 seconds. Free and Lifetime are never affected.
+ */
+export async function setManagedAiPausedAction(input: {
+  paused: boolean;
+  reason: string;
+}): Promise<ManagedAiSwitchState> {
+  const adminUserId = await requireAdminUserId();
+  const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
+  revalidatePath("/admin/billing");
+  return state;
 }

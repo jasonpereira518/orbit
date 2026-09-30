@@ -50,7 +50,7 @@ export function MeetingCaptureTab({
   hasApiKey: boolean;
   aiReason?: AiAccessDenial | null;
   canTranscribe: boolean;
-  /** Meeting recording is Orbit Pro and Lifetime only. False renders an upgrade prompt instead of the recorder. */
+  /** Meeting recording is on Orbit Pro, Max and Lifetime. False renders an upgrade prompt instead of the recorder. */
   canUseMeetings: boolean;
   /** `FEATURE_DENIAL.meetings`, read on the server and threaded down — this is a client
    * component and cannot import `@/lib/entitlements` (it reaches the database). */

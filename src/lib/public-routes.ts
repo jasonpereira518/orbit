@@ -37,6 +37,9 @@ export const PUBLIC_ROUTES = [
   // Radar's Monday email's off switch, clicked from a mail client (and called directly by
   // Gmail's and Yahoo's unsubscribe buttons). Authenticated by the signed token in the query.
   "/api/radar/digest/unsubscribe",
+  // The credit emails' off switch (80% and 100% of the monthly AI credits): same shape as
+  // Radar's, authenticated by the signed token in the query.
+  "/api/credits/email/unsubscribe",
   // The boarding-pass link preview. Fetched by X, LinkedIn and iMessage, which carry no
   // session; authenticated by nothing, because it reveals only a number and a planet.
   "/api/interest-list/ticket-image",
@@ -76,6 +79,8 @@ export const PUBLIC_ROUTES = [
   "/api/radar/run",
   "/api/radar/feeds/sweep",
   "/api/radar/digest",
+  // The credit emails, on the ten-minute schedule — same CRON_SECRET gate.
+  "/api/credits/notices",
   "/api/webhooks/outbound/drain",
   "/api/connectors/outbox/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key

@@ -7,10 +7,12 @@
  */
 import "./smoke/_env";
 
-import { and, count, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, userSettings } from "../src/db/schema";
+import { contacts, gateEvents, userSettings } from "../src/db/schema";
 import {
+  entitlementsForPlan,
+  FEATURE_DENIAL,
   FREE_CONTACT_LIMIT,
   getEntitlements,
   isPaywallError,
@@ -26,6 +28,13 @@ import {
 } from "../src/lib/contact-writes";
 import { createCompanyResolver } from "../src/lib/companies";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { limitFor } from "../src/lib/speech-limits";
+import {
+  PLAN_CONFIG,
+  PLANS,
+  unlockPlanFor,
+  type Plan,
+} from "../src/lib/plans/plan-config";
 
 const USER = "smoke-entitlements-user";
 const WRITE_OPTS = { skipEmbedding: true, skipRevalidate: true } as const;
@@ -49,15 +58,85 @@ async function setBilling(patch: Partial<typeof userSettings.$inferInsert>) {
   await db.update(userSettings).set(patch).where(eq(userSettings.userId, USER));
 }
 
+/**
+ * The pricing v2 matrix, typed in by hand from the spec table rather than read from
+ * `PLAN_CONFIG` — a copy that cannot silently agree with a wrong config.
+ */
+const HOUR = 3600;
+const SPEC: Record<
+  Plan,
+  {
+    contactLimit: number | null;
+    credits: number | null;
+    packs: boolean;
+    meeting: number;
+    shortform: number;
+    enrich: number;
+    connections: number | null;
+    recruiters: boolean;
+    sync: boolean;
+    api: boolean;
+    meetings: boolean;
+    hostedAi: boolean;
+    extension: boolean;
+  }
+> = {
+  free: { contactLimit: 500, credits: null, packs: false, meeting: 0, shortform: 1 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: false, extension: true },
+  orbit: { contactLimit: null, credits: 200, packs: true, meeting: 5 * HOUR, shortform: 5 * HOUR, enrich: 10, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
+  max: { contactLimit: null, credits: 500, packs: true, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
+  lifetime: { contactLimit: null, credits: null, packs: false, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: false, extension: true },
+};
+
+function matrix() {
+  console.log("\npricing v2 matrix");
+  for (const plan of PLANS) {
+    const spec = SPEC[plan];
+    const config = PLAN_CONFIG[plan];
+    const ent = entitlementsForPlan(plan, plan === "free" ? "free" : "subscription");
+    const row = (label: string, ok: boolean, detail?: unknown) =>
+      check(`${plan}: ${label}`, ok, detail === undefined ? undefined : JSON.stringify(detail));
+    row("contact limit", ent.contactLimit === spec.contactLimit, ent.contactLimit);
+    row("monthly credits", config.monthlyCredits === spec.credits, config.monthlyCredits);
+    row("credit packs", ent.canBuyCreditPacks === spec.packs);
+    row("managed AI", ent.canUseHostedAi === spec.hostedAi);
+    row("meeting seconds", limitFor("meeting", plan) === spec.meeting, limitFor("meeting", plan));
+    row("voice seconds", limitFor("shortform", plan) === spec.shortform, limitFor("shortform", plan));
+    row("hosted enrichments", config.hostedEnrichmentsPerMonth === spec.enrich);
+    row("hosted enrichment flag", ent.canUseHostedEnrichment === spec.enrich > 0);
+    row("Google/Microsoft connections", config.googleMicrosoftConnections === spec.connections);
+    row("extra connections flag", ent.canUseExtraConnections === (spec.connections === null));
+    row("recruiters", ent.canUseRecruiters === spec.recruiters);
+    row("calendar subscriptions and event sources", ent.canUseSync === spec.sync);
+    row("REST API and webhooks", ent.canUseApi === spec.api);
+    row("meetings", ent.canUseMeetings === spec.meetings);
+    row("extension core", ent.canUseExtension === spec.extension);
+    // Capture, chat, Constellation, reminders, knowledge base, LinkedIn import, export and
+    // MCP are ungated on every plan; MCP is the one of them with a flag.
+    row("MCP connector", ent.canUseMcp === true);
+  }
+  check("Pro and Max are the only priced plans", PLAN_CONFIG.orbit.monthlyPriceCents === 899 && PLAN_CONFIG.max.monthlyPriceCents === 1999 && PLAN_CONFIG.lifetime.monthlyPriceCents === null);
+  check("annual is two months free: Pro $89.99, Max $199.99, and nothing else sold yearly",
+    PLAN_CONFIG.orbit.annualPriceCents === 8999 && PLAN_CONFIG.max.annualPriceCents === 19999 &&
+      PLAN_CONFIG.lifetime.annualPriceCents === null &&
+      (["orbit", "max"] as const).every((p) => PLAN_CONFIG[p].annualPriceCents! < PLAN_CONFIG[p].monthlyPriceCents! * 12));
+  check("the API unlocks on Max, never Lifetime", unlockPlanFor("api") === "max");
+  check("recruiters unlock on Pro", unlockPlanFor("recruiters") === "orbit");
+  check("the contact cap unlocks on Pro", unlockPlanFor("contacts") === "orbit");
+  check("no denial names Lifetime", Object.values(FEATURE_DENIAL).every((m) => !/Lifetime/.test(m)));
+  check("the API denial offers Max only", FEATURE_DENIAL.api.startsWith("The Orbit API and webhooks are available on Orbit Max."));
+}
+
 async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
+  await db.delete(gateEvents).where(eq(gateEvents.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   await ensureUserSettings(USER);
 }
 
 async function main() {
   console.log("Paywall smoke test (pglite)…");
+  matrix();
   await reset();
 
   // --- pure resolution precedence (no DB) ---
@@ -85,6 +164,19 @@ async function main() {
   check(
     "canceled and lapsed -> free",
     resolvePlan({ subscriptionPlan: "orbit", subscriptionStatus: "canceled", subscriptionPeriodEnd: past }).plan === "free"
+  );
+  check(
+    "active Max subscription -> max",
+    resolvePlan({ subscriptionPlan: "max", subscriptionStatus: "active" }).plan === "max"
+  );
+  check(
+    "comped Max -> max from comp",
+    resolvePlan({ compedPlan: "max", subscriptionPlan: "orbit", subscriptionStatus: "active" }).source === "comp" &&
+      resolvePlan({ compedPlan: "max" }).plan === "max"
+  );
+  check(
+    "comped Lifetime outranks a Max subscription",
+    resolvePlan({ compedPlan: "lifetime", subscriptionPlan: "max", subscriptionStatus: "active" }).plan === "lifetime"
   );
 
   // --- free tier cap ---
@@ -120,7 +212,7 @@ async function main() {
   } catch (err) {
     threw = err;
   }
-  check("contact #101 refused", isPaywallError(threw), String(threw));
+  check(`contact #${FREE_CONTACT_LIMIT + 1} refused`, isPaywallError(threw), String(threw));
   check(`still exactly ${FREE_CONTACT_LIMIT}`, (await contactCount()) === FREE_CONTACT_LIMIT);
 
   // --- never hide data ---
@@ -165,10 +257,11 @@ async function main() {
   check("outreach unlocked", ent.canUseOutreach === true);
   check("sync unlocked", ent.canUseSync === true);
   check("extension unlocked", ent.canUseExtension === true);
-  // The whole point of the split: Lifetime sends on Orbit's credits (bounded by
-  // DAILY_SEND_LIMIT) but enriches on its own Apollo key (which has no ceiling).
+  // Pricing v2: Lifetime has every Max entitlement except managed AI and packs.
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
-  check("hosted enrichment gated on lifetime", ent.canUseHostedEnrichment === false);
+  check("hosted enrichment unlocked on lifetime (monthly cap)", ent.canUseHostedEnrichment === true);
+  check("no managed AI on lifetime", ent.canUseHostedAi === false && ent.canBuyCreditPacks === false);
+  check("API on lifetime", ent.canUseApi === true);
 
   const past101 = await createContactsBulkForUser(
     USER,
@@ -191,6 +284,34 @@ async function main() {
   check("hosted sending unlocked", ent.canUseHostedSending === true);
   check("hosted enrichment unlocked", ent.canUseHostedEnrichment === true);
 
+  // --- the REST API is Max-only, and the refusal records what would unlock it ---
+  let apiThrew: unknown = null;
+  try {
+    await requireEntitlement(USER, "api");
+  } catch (err) {
+    apiThrew = err;
+  }
+  check("Pro is refused the REST API", isPaywallError(apiThrew), String(apiThrew));
+  const [apiHit] = await (await getDb())
+    .select()
+    .from(gateEvents)
+    .where(eq(gateEvents.userId, USER))
+    .orderBy(desc(gateEvents.createdAt))
+    .limit(1);
+  check(
+    "the gate hit records plan orbit, unlock plan max",
+    apiHit?.feature === "api" && apiHit.plan === "orbit" && apiHit.unlockPlan === "max",
+    JSON.stringify(apiHit)
+  );
+
+  await setBilling({ subscriptionPlan: "max" });
+  ent = await getEntitlements(USER);
+  check("Max subscription resolves to max", ent.plan === "max", ent.plan);
+  check("Max has the REST API", ent.canUseApi === true);
+  await requireEntitlement(USER, "api");
+  check("requireEntitlement lets Max through to the API", true);
+  await setBilling({ subscriptionPlan: "orbit" });
+
   // --- one plan at a time ---
   // Buying Lifetime cancels Pro, but the mirror can still show a subscription until its
   // period end. The account is Lifetime, with Lifetime's flags and nothing of Pro's.
@@ -203,7 +324,7 @@ async function main() {
   });
   ent = await getEntitlements(USER);
   check("plan stays lifetime", ent.plan === "lifetime", ent.plan);
-  check("Pro's enrichment does not carry over", ent.canUseHostedEnrichment === false);
+  check("Pro's managed AI does not carry over", ent.canUseHostedAi === false);
   check("Lifetime's own sending is there", ent.canUseHostedSending === true);
 
   await setBilling({
@@ -252,6 +373,7 @@ async function main() {
     ent = await getEntitlements(USER);
     check("comped showcase reports lifetime", ent.plan === "lifetime", ent.plan);
     check("comped showcase keeps hosted enrichment", ent.canUseHostedEnrichment === true);
+    check("comped showcase keeps every gate open", ent.canUseHostedAi && ent.canUseApi);
   } finally {
     if (priorShowcase === undefined) delete process.env.DEMO_ACCOUNT_USER_ID;
     else process.env.DEMO_ACCOUNT_USER_ID = priorShowcase;

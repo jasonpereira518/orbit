@@ -44,8 +44,8 @@ const STEPS = [
   },
   {
     kicker: "Step 03 · you",
-    title: "Send outreach",
-    body: "Find people at the companies you're targeting, and reach out from Orbit.",
+    title: "Follow up",
+    body: "Log a conversation in seconds — Orbit drafts the follow-up for you to review and send.",
     dot: "#efd284",
     glow: "none",
   },

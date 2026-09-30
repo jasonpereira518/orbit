@@ -1,6 +1,7 @@
 /**
- * A Pro subscriber can cancel, undo it, and switch monthly ↔ annual from the plan card — on
- * their own subscription only — and a Lifetime purchase cancels Pro on the spot (one plan at a time).
+ * A subscriber can cancel, undo it, and switch between Pro and Max (on Stripe's confirmation
+ * page) from the plan card — on their own subscription only — and an admin's Lifetime grant
+ * sets their subscription to end at the period end (one plan at a time).
  *
  * Stripe is a fake: every call is recorded, so the checks read what would have been sent.
  *
@@ -8,10 +9,6 @@
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
-
-// Read at module load by src/lib/stripe.ts, so set before the dynamic imports below.
-process.env.STRIPE_PRO_MONTHLY_PRICE_ID = "price_smoke_monthly";
-process.env.STRIPE_PRO_ANNUAL_PRICE_ID = "price_smoke_annual";
 
 import type Stripe from "stripe";
 
@@ -31,7 +28,14 @@ function check(label: string, ok: boolean, detail?: string) {
 const PERIOD_END = Math.floor(Date.now() / 1000) + 20 * 86_400;
 
 function fakeSub(over: Partial<Stripe.Subscription> & { price?: string; interval?: "month" | "year"; amount?: number } = {}) {
-  const { price = "price_smoke_monthly", interval = "month", amount = 500, ...rest } = over;
+  const { price = "price_smoke_pro", interval = "month", amount = 899, ...rest } = over;
+  const LOOKUP: Record<string, string> = {
+    price_smoke_pro: "orbit_pro_monthly_v2",
+    price_smoke_max: "orbit_max_monthly_v2",
+    price_smoke_pro_annual: "orbit_pro_annual_v2",
+    price_smoke_max_annual: "orbit_max_annual_v2",
+  };
+  const lookupKey = LOOKUP[price] ?? null;
   return {
     id: "sub_smoke",
     object: "subscription",
@@ -47,7 +51,7 @@ function fakeSub(over: Partial<Stripe.Subscription> & { price?: string; interval
           id: "si_smoke",
           quantity: 1,
           current_period_end: PERIOD_END,
-          price: { id: price, unit_amount: amount, currency: "usd", recurring: { interval, interval_count: 1 } },
+          price: { id: price, lookup_key: lookupKey, unit_amount: amount, currency: "usd", recurring: { interval, interval_count: 1 } },
         },
       ],
     },
@@ -59,10 +63,9 @@ function fakeStripe(subs: Stripe.Subscription[]) {
   const calls = {
     list: [] as string[],
     update: [] as Array<{ id: string; params: Stripe.SubscriptionUpdateParams }>,
-    preview: [] as Stripe.InvoiceCreatePreviewParams[],
-    cancel: [] as Array<{ id: string; params: Stripe.SubscriptionCancelParams }>,
+    portal: [] as Stripe.BillingPortal.SessionCreateParams[],
   };
-  const state = { subs: [...subs], previewTotal: 4520, updateError: null as unknown };
+  const state = { subs: [...subs], updateError: null as unknown };
   return {
     calls,
     state,
@@ -78,25 +81,17 @@ function fakeStripe(subs: Stripe.Subscription[]) {
         const next = { ...current } as Stripe.Subscription;
         if (params.cancel_at_period_end !== undefined) next.cancel_at_period_end = params.cancel_at_period_end;
         if (params.cancel_at === "") next.cancel_at = null;
-        if (params.items?.[0]?.price) {
-          const annual = params.items[0].price === "price_smoke_annual";
-          Object.assign(next, {
-            items: fakeSub({ price: params.items[0].price, interval: annual ? "year" : "month", amount: annual ? 5000 : 500 }).items,
-          });
-        }
         state.subs = state.subs.map((s) => (s.id === id ? next : s));
         return next;
       },
-      preview: async (params: Stripe.InvoiceCreatePreviewParams) => {
-        calls.preview.push(params);
-        return { total: state.previewTotal, currency: "usd" };
-      },
-      cancel: async (id: string, params: Stripe.SubscriptionCancelParams) => {
-        calls.cancel.push({ id, params });
+      portal: async (params: Stripe.BillingPortal.SessionCreateParams) => {
+        calls.portal.push(params);
         if (state.updateError) throw state.updateError;
-        state.subs = state.subs.map((s) => (s.id === id ? ({ ...s, status: "canceled" } as Stripe.Subscription) : s));
-        return {};
+        return { url: "https://billing.stripe.test/session" };
       },
+      priceFor: async (plan: "orbit" | "max", period: "monthly" | "annual") =>
+        `price_smoke_${plan === "max" ? "max" : "pro"}${period === "annual" ? "_annual" : ""}`,
+      portalConfiguration: async () => "bpc_smoke",
     },
   };
 }
@@ -125,7 +120,7 @@ run(async () => {
     const res = await sm.getSubscriptionDetails(SUBSCRIBER, { stripe: f.stripe });
     check("looked up through their own customer id", f.calls.list[0] === "cus_smoke_subman", f.calls.list.join());
     check("picked the live Pro subscription, not another product's or an ended one",
-      res.ok && res.subscription.period === "monthly" && res.subscription.amountCents === 500, JSON.stringify(res));
+      res.ok && res.subscription.period === "monthly" && res.subscription.plan === "orbit" && res.subscription.amountCents === 899, JSON.stringify(res));
     check("renewal date is the period end", res.ok && res.subscription.periodEnd === PERIOD_END);
   }
 
@@ -134,11 +129,12 @@ run(async () => {
     const f = fakeStripe([fakeSub()]);
     for (const [who, id] of [["Lifetime", LIFETIME], ["Free", FREE]] as const) {
       const r1 = await sm.cancelSubscription(id, { stripe: f.stripe });
-      const r2 = await sm.changeBillingPeriod(id, "annual", { stripe: f.stripe });
+      const r2 = await sm.createPlanSwitchUrl(id, "max", { stripe: f.stripe });
       check(`a ${who} account is told there is nothing to manage`,
         !r1.ok && r1.error === sm.SUBSCRIPTION_COPY.noSubscription && !r2.ok, JSON.stringify([r1, r2]));
     }
-    check("neither listed nor updated anything", f.calls.list.length === 0 && f.calls.update.length === 0);
+    check("neither listed, updated nor opened anything",
+      f.calls.list.length === 0 && f.calls.update.length === 0 && f.calls.portal.length === 0);
   }
 
   console.log("\nCancel, then undo");
@@ -152,8 +148,8 @@ run(async () => {
     const again = await sm.cancelSubscription(SUBSCRIBER, { stripe: f.stripe });
     check("canceling twice is a no-op", again.ok && f.calls.update.length === 1);
 
-    const blocked = await sm.changeBillingPeriod(SUBSCRIBER, "annual", { stripe: f.stripe });
-    check("a pending cancellation blocks a billing switch",
+    const blocked = await sm.createPlanSwitchUrl(SUBSCRIBER, "max", { stripe: f.stripe });
+    check("a pending cancellation blocks a plan switch",
       !blocked.ok && blocked.error === sm.SUBSCRIPTION_COPY.cancelPending, JSON.stringify(blocked));
 
     const resumed = await sm.resumeSubscription(SUBSCRIBER, { stripe: f.stripe });
@@ -168,71 +164,77 @@ run(async () => {
       d.ok && d.subscription.cancelAtPeriodEnd && d.subscription.periodEnd === PERIOD_END - 86_400, JSON.stringify(d));
   }
 
-  console.log("\nMonthly ↔ annual");
+  console.log("\nPro ↔ Max");
   {
     const f = fakeStripe([fakeSub()]);
-    const preview = await sm.previewBillingPeriodChange(SUBSCRIBER, "annual", { stripe: f.stripe });
-    check("preview quotes Stripe's own total", preview.ok && preview.totalCents === 4520, JSON.stringify(preview));
-    const p = f.calls.preview[0];
-    check("preview swaps the existing item to the annual price, invoiced now",
-      p?.subscription === "sub_smoke" && p.subscription_details?.items?.[0]?.id === "si_smoke" &&
-        p.subscription_details.items[0].price === "price_smoke_annual" &&
-        p.subscription_details.proration_behavior === "always_invoice", JSON.stringify(p));
+    const up = await sm.createPlanSwitchUrl(SUBSCRIBER, "max", { stripe: f.stripe });
+    const session = f.calls.portal[0];
+    check("returns Stripe's confirmation page", up.ok && up.url.startsWith("https://"), JSON.stringify(up));
+    check("on their own customer, with the pricing v2 portal configuration",
+      session?.customer === "cus_smoke_subman" && session.configuration === "bpc_smoke", JSON.stringify(session));
+    const confirm = session?.flow_data?.subscription_update_confirm;
+    check("a confirm flow that swaps the existing item to the Max price",
+      session?.flow_data?.type === "subscription_update_confirm" && confirm?.subscription === "sub_smoke" &&
+        confirm.items[0]?.id === "si_smoke" && confirm.items[0]?.price === "price_smoke_max", JSON.stringify(session?.flow_data));
+    check("and comes back to Settings, arming the Max celebration",
+      String(session?.flow_data?.after_completion?.redirect?.return_url ?? "").includes("upgraded=max"));
+    check("never changes the subscription itself (Stripe does, after the person confirms)", f.calls.update.length === 0);
 
-    const up = await sm.changeBillingPeriod(SUBSCRIBER, "annual", { stripe: f.stripe });
-    const u = f.calls.update[0]?.params;
-    check("the switch sends the same item swap", u?.items?.[0]?.id === "si_smoke" && u.items[0].price === "price_smoke_annual");
-    check("a declined charge rejects the switch outright", u?.payment_behavior === "error_if_incomplete");
-    check("keeps the period metadata in step", (u?.metadata as Record<string, string> | undefined)?.orbit_billing_period === "annual");
-    check("reports annual", up.ok && up.subscription.period === "annual" && up.subscription.amountCents === 5000, JSON.stringify(up));
+    const same = await sm.createPlanSwitchUrl(SUBSCRIBER, "orbit", { stripe: f.stripe });
+    check("switching to the plan you are on is refused",
+      !same.ok && same.error === sm.SUBSCRIPTION_COPY.alreadyOnPlan && f.calls.portal.length === 1);
 
-    const same = await sm.changeBillingPeriod(SUBSCRIBER, "annual", { stripe: f.stripe });
-    check("switching to the period you are on is refused",
-      !same.ok && same.error === sm.SUBSCRIPTION_COPY.alreadyOnPeriod && f.calls.update.length === 1);
+    const onMax = fakeStripe([fakeSub({ price: "price_smoke_max", amount: 1999 })]);
+    const down = await sm.createPlanSwitchUrl(SUBSCRIBER, "orbit", { stripe: onMax.stripe });
+    check("Max → Pro offers the Pro price", down.ok &&
+      onMax.calls.portal[0]?.flow_data?.subscription_update_confirm?.items[0]?.price === "price_smoke_pro");
 
-    f.state.previewTotal = -3750;
-    const downPreview = await sm.previewBillingPeriodChange(SUBSCRIBER, "monthly", { stripe: f.stripe });
-    check("annual → monthly previews as credit", downPreview.ok && downPreview.totalCents === -3750);
-    const down = await sm.changeBillingPeriod(SUBSCRIBER, "monthly", { stripe: f.stripe });
-    check("and switches back", down.ok && down.subscription.period === "monthly");
+    const annual = fakeStripe([fakeSub({ price: "price_smoke_pro_annual", interval: "year", amount: 8999 })]);
+    const annualUp = await sm.createPlanSwitchUrl(SUBSCRIBER, "max", { stripe: annual.stripe });
+    check("an annual Pro subscriber moving to Max is offered Max's ANNUAL price",
+      annualUp.ok && annual.calls.portal[0]?.flow_data?.subscription_update_confirm?.items[0]?.price === "price_smoke_max_annual");
 
-    const bogus = await sm.changeBillingPeriod(SUBSCRIBER, "weekly" as never, { stripe: f.stripe });
-    check("an unknown period never reaches Stripe", !bogus.ok && f.calls.update.length === 2);
+    const legacy = fakeStripe([fakeSub({ price: "price_legacy_annual", interval: "year", amount: 5000 })]);
+    const legacyDetails = await sm.getSubscriptionDetails(SUBSCRIBER, { stripe: legacy.stripe });
+    check("a legacy $50/yr subscription reads as annual Pro, at its own price",
+      legacyDetails.ok && legacyDetails.subscription.plan === "orbit" && legacyDetails.subscription.period === "annual" &&
+        legacyDetails.subscription.amountCents === 5000, JSON.stringify(legacyDetails));
+    const legacyToPro = await sm.createPlanSwitchUrl(SUBSCRIBER, "orbit", { stripe: legacy.stripe });
+    check("…and asking for Pro is refused: that would be a price rise, not a switch",
+      !legacyToPro.ok && legacyToPro.error === sm.SUBSCRIPTION_COPY.alreadyOnPlan && legacy.calls.portal.length === 0);
 
-    f.state.updateError = Object.assign(new Error("Your card was declined."), { code: "card_declined" });
-    const declined = await sm.changeBillingPeriod(SUBSCRIBER, "annual", { stripe: f.stripe });
-    check("a declined card says so", !declined.ok && declined.error === sm.SUBSCRIPTION_COPY.paymentDeclined, JSON.stringify(declined));
+    const bogus = await sm.createPlanSwitchUrl(SUBSCRIBER, "lifetime" as never, { stripe: f.stripe });
+    check("Lifetime is never a switch target", !bogus.ok && f.calls.portal.length === 1);
+
     f.state.updateError = new Error("socket hang up");
     const broken = await sm.cancelSubscription(SUBSCRIBER, { stripe: f.stripe });
     check("other Stripe trouble is a sentence, not a stack trace",
       !broken.ok && broken.error === sm.SUBSCRIPTION_COPY.unavailable);
   }
 
-  console.log("\nLifetime replaces Pro");
+  console.log("\nAn admin's Lifetime grant ends the subscription at the period end");
   {
     const other = fakeSub({ id: "sub_other_product", metadata: { orbit_plan: "something_else" } } as never);
     const f = fakeStripe([other, fakeSub()]);
-    const r = await sm.endProForLifetime(SUBSCRIBER, { stripe: f.stripe });
-    check("cancels Pro immediately", r === "canceled" && f.calls.cancel.length === 1 && f.calls.cancel[0].id === "sub_smoke",
-      JSON.stringify(f.calls.cancel));
-    check("with no proration credit or final invoice",
-      f.calls.cancel[0]?.params.prorate === false && f.calls.cancel[0]?.params.invoice_now === false);
-    check("leaves another product's subscription alone", !f.calls.cancel.some((c) => c.id === "sub_other_product"));
-    check("never schedules instead of canceling", f.calls.update.length === 0);
-    check("idempotent: the webhook arriving second finds nothing",
-      (await sm.endProForLifetime(SUBSCRIBER, { stripe: f.stripe })) === "none" && f.calls.cancel.length === 1);
-    const pending = fakeStripe([fakeSub({ cancel_at_period_end: true } as never)]);
-    await sm.endProForLifetime(SUBSCRIBER, { stripe: pending.stripe });
-    check("a subscription already set to end is canceled now too", pending.calls.cancel.length === 1);
-    const lapsed = fakeStripe([fakeSub()]);
-    check("an account that never subscribed never reaches Stripe",
-      (await sm.endProForLifetime(LIFETIME, { stripe: lapsed.stripe })) === "none" && lapsed.calls.list.length === 0);
+    const preview = await sm.lifetimeGrantSubscriptionEffect(SUBSCRIBER, { stripe: f.stripe });
+    check("the admin is shown what will happen first",
+      preview.kind === "ends_at_period_end" && preview.periodEnd === PERIOD_END && preview.plan === "orbit",
+      JSON.stringify(preview));
+    const r = await sm.endSubscriptionForLifetime(SUBSCRIBER, { stripe: f.stripe });
+    check("sets cancel_at_period_end, never cancels now",
+      r === "scheduled" && f.calls.update.length === 1 && f.calls.update[0].id === "sub_smoke" &&
+        f.calls.update[0].params.cancel_at_period_end === true, JSON.stringify(f.calls.update));
+    check("leaves another product's subscription alone", !f.calls.update.some((c) => c.id === "sub_other_product"));
+    await sm.endSubscriptionForLifetime(SUBSCRIBER, { stripe: f.stripe });
+    check("idempotent: a subscription already ending is left as it is", f.calls.update.length === 1);
     check("an account with no Stripe customer is fine",
-      (await sm.endProForLifetime(FREE, { stripe: fakeStripe([fakeSub()]).stripe })) === "none");
+      (await sm.endSubscriptionForLifetime(FREE, { stripe: fakeStripe([fakeSub()]).stripe })) === "none");
+    check("and the preview says nothing will change",
+      (await sm.lifetimeGrantSubscriptionEffect(FREE, { stripe: fakeStripe([fakeSub()]).stripe })).kind === "none");
     const failing = fakeStripe([fakeSub()]);
     failing.state.updateError = new Error("boom");
-    check("never throws: the Lifetime grant already landed",
-      (await sm.endProForLifetime(SUBSCRIBER, { stripe: failing.stripe })) === "error");
+    check("never throws: the grant already landed",
+      (await sm.endSubscriptionForLifetime(SUBSCRIBER, { stripe: failing.stripe })) === "error");
   }
 
   console.log("\nOne plan at a time");
@@ -241,7 +243,7 @@ run(async () => {
     await db.update(userSettings).set({ lifetimePurchasedAt: new Date() }).where(eq(userSettings.userId, SUBSCRIBER));
     const ent = await getEntitlements(SUBSCRIBER);
     check("Lifetime plus a leftover live subscription resolves to Lifetime alone",
-      ent.plan === "lifetime" && ent.source === "lifetime" && ent.canUseHostedEnrichment === false, JSON.stringify(ent));
+      ent.plan === "lifetime" && ent.source === "lifetime" && ent.canUseHostedAi === false, JSON.stringify(ent));
     const f = fakeStripe([fakeSub()]);
     const r = await sm.cancelSubscription(SUBSCRIBER, { stripe: f.stripe });
     check("and the card no longer treats it as a subscription", !r.ok && f.calls.list.length === 0);

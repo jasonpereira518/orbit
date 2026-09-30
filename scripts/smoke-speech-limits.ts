@@ -15,8 +15,10 @@ check("free gets no meeting minutes", limitFor("meeting", "free") === 0);
 check("Pro gets 5 meeting hours", limitFor("meeting", "orbit") === 18_000);
 check("Lifetime gets 10 meeting hours", limitFor("meeting", "lifetime") === 36_000);
 check("free short-form is 60 minutes", limitFor("shortform", "free") === 3_600);
-check("paid short-form is 300 minutes", limitFor("shortform", "orbit") === 18_000 && limitFor("shortform", "lifetime") === 18_000);
-check("every plan is covered", Object.keys(SPEECH_LIMITS.meeting).length === 3);
+check("Pro short-form is 5 hours", limitFor("shortform", "orbit") === 18_000);
+check("Max and Lifetime short-form is 10 hours", limitFor("shortform", "max") === 36_000 && limitFor("shortform", "lifetime") === 36_000);
+check("Max gets 10 meeting hours", limitFor("meeting", "max") === 36_000);
+check("every plan is covered", Object.keys(SPEECH_LIMITS.meeting).length === 4 && Object.keys(SPEECH_LIMITS.shortform).length === 4);
 
 console.log("\nquotaState");
 {
