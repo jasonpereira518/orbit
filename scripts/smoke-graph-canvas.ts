@@ -13,7 +13,6 @@
 
 import {
   PAN_SLACK_VIEWPORTS,
-  HOME_FIT_TO_GALAXY,
   SKY_FIT_MAX_ZOOM,
   SKY_MAX_ZOOM,
   SKY_MIN_ZOOM,
@@ -60,7 +59,6 @@ import {
   zoomRelief,
 } from "../src/lib/graph/star-style";
 import { buildHybridGraphLayout, type GraphContactInput } from "../src/lib/graph-layout";
-import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import { clusterNameSize } from "../src/components/graph/graph-nodes";
 import { buildSkyIndex } from "../src/components/graph/sky-canvas/sky-index";
 import {
@@ -426,112 +424,6 @@ console.log("\nframing\n");
     "fitWorldRect keeps the whole rect inside the pane",
     corner.x >= 0 && corner.y >= 0,
     `corner at ${corner.x.toFixed(1)},${corner.y.toFixed(1)}`
-  );
-}
-
-// ---------------------------------------------------------------------------
-console.log("\nhome framing opens on the galaxy\n");
-// ---------------------------------------------------------------------------
-{
-  const pane = { width: 1440, height: 900 };
-  const inset = { x: 28, top: 112, bottom: 60 };
-  check("home fitting to the galaxy is switched on", HOME_FIT_TO_GALAXY === true);
-
-  // `share` of the network belongs to nothing: no company, school or title, so it drifts in the
-  // halo. A fixture with none (share 0) has nothing out there to stop framing.
-  const build = (n: number, share: number) => {
-    const payload = buildSyntheticGraphPayload(n, { seed: 3 });
-    const contacts = payload.contacts.map((c, i) =>
-      (i % 100) / 100 < share ? { ...c, company: null, school: null, title: null } : c
-    );
-    return buildHybridGraphLayout(contacts, "Test User");
-  };
-  const homeZoom = (extents: { maxAbsX: number; maxAbsY: number }) =>
-    zoomToFitSunCentered(extents.maxAbsX, extents.maxAbsY, pane.width, pane.height);
-
-  for (const [n, share] of [
-    [1000, 0.7],
-    [2500, 0.7],
-  ] as const) {
-    const layout = build(n, share);
-    const without = computeSunExtents(layout.nodes, []);
-    const withGalaxy = computeSunExtents(layout.nodes, [], layout.galaxy);
-    const kWithout = homeZoom(without);
-    const kWith = homeZoom(withGalaxy);
-    const label = `${n} contacts, ${share * 100}% unclustered`;
-    console.log(`  ${label}: home zoom ${kWithout.toFixed(3)} -> ${kWith.toFixed(3)}`);
-
-    check(`${label}: the galaxy framing opens larger than the farthest-star framing`, kWith > kWithout, `${kWithout.toFixed(3)} -> ${kWith.toFixed(3)}`);
-
-    // The disk and the sun's clear zone always fit, padding included.
-    const reach = Math.max(layout.galaxy.coreRadius, layout.galaxy.diskRadius * 1.1);
-    check(
-      `${label}: the whole disk and the sun's clear zone stay in frame`,
-      withGalaxy.maxAbsX >= reach - 1e-6 && withGalaxy.maxAbsY >= reach - 1e-6,
-      `reach ${reach.toFixed(0)}, extents ${withGalaxy.maxAbsX.toFixed(0)}x${withGalaxy.maxAbsY.toFixed(0)}`
-    );
-
-    const cam: Camera = { x: pane.width / 2, y: pane.height / 2, k: kWith };
-    const centres = layout.nodes.filter((nd) => nd.type === "clusterLabel" || nd.type === "nebula");
-    const outside = centres.filter((nd) => {
-      const p = worldToScreen(nd.position, cam);
-      return p.x < 0 || p.x > pane.width || p.y < 0 || p.y > pane.height;
-    });
-    check(
-      `${label}: every cluster's centre is still inside the viewport`,
-      centres.length > 0 && outside.length === 0,
-      `${outside.length}/${centres.length} outside`
-    );
-
-    // Pan bounds are the whole sky, not the framed disk: the farthest star stays reachable.
-    const all = rectOf(layout.nodes.map((nd) => nd.position))!;
-    const farthest = layout.nodes.reduce((a, b) =>
-      Math.hypot(b.position.x, b.position.y) > Math.hypot(a.position.x, a.position.y) ? b : a
-    );
-    check(
-      `${label}: the pan clamp still lets the farthest star be reached`,
-      (() => {
-        // Pan so the farthest star is dead centre, then let the clamp have its say.
-        const toStar: Camera = {
-          k: kWith,
-          x: pane.width / 2 - farthest.position.x * kWith,
-          y: pane.height / 2 - farthest.position.y * kWith,
-        };
-        const held = clampPan(toStar, all, pane);
-        const p = worldToScreen(farthest.position, held);
-        return p.x >= 0 && p.x <= pane.width && p.y >= 0 && p.y <= pane.height;
-      })()
-    );
-
-    // The phone frames the stars themselves and gets the same cut: halo stars stop setting its zoom.
-    const phoneWith = fitStarsToPane(layout.nodes, pane, inset, layout.galaxy);
-    const phoneWithout = fitStarsToPane(layout.nodes, pane, inset);
-    check(
-      `${label}: the phone's home also opens larger on the galaxy`,
-      phoneWith.k > phoneWithout.k,
-      `${phoneWithout.k.toFixed(3)} -> ${phoneWith.k.toFixed(3)}`
-    );
-  }
-
-  // A sky whose halo sits inside the disk must not open any further out than it did: the galaxy
-  // framing only ever tightens, it never frames the square of the disk over a smaller sky.
-  for (const n of [300, 1000, 2500]) {
-    const layout = build(n, 0);
-    const without = computeSunExtents(layout.nodes, []);
-    const withGalaxy = computeSunExtents(layout.nodes, [], layout.galaxy);
-    check(
-      `${n} contacts, none unclustered: the galaxy framing is never wider than before`,
-      withGalaxy.maxAbsX <= without.maxAbsX && withGalaxy.maxAbsY <= without.maxAbsY &&
-        homeZoom(withGalaxy) >= homeZoom(without)
-    );
-  }
-
-  // A tiny galaxy still frames at least the sun's clear zone, and the switch's "off" path is the
-  // plain extents.
-  const tiny = computeSunExtents([], [], { diskRadius: 10, coreRadius: 180 });
-  check(
-    "a tiny galaxy never frames inside the sun's clear zone or the 240-unit floor",
-    tiny.maxAbsX === 240 && tiny.maxAbsY === 240
   );
 }
 

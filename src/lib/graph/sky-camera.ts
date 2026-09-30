@@ -9,7 +9,6 @@
  * the canvas camera unchanged.
  */
 import type { NebulaData, buildHybridGraphLayout } from "@/lib/graph-layout";
-import type { GalaxyStructure } from "@/lib/graph/galaxy-structure";
 
 
 export type Vec2 = { x: number; y: number };
@@ -31,20 +30,6 @@ export const SKY_FIT_MAX_ZOOM = 1.35;
 export const SKY_FIT_PAD = 1.18;
 
 /**
- * Whether the home view frames the galaxy disk rather than the farthest halo star.
- *
- * A few unaffiliated stars drift far out in the halo, and fitting every one of them left the
- * galaxy itself a third of the pane's width at 1,000 contacts. With this on, the home fit
- * covers the sun's clear zone and the disk (`GALAXY_FRAME_PAD` past its edge); halo stars past
- * that start just outside the first view and stay a pan away — pan bounds still cover every
- * star. Set it to `false` to go back to framing every star's reach.
- */
-export const HOME_FIT_TO_GALAXY = true;
-
-/** How far past the disk's haze edge the galaxy framing reaches, as a factor of its radius. */
-export const GALAXY_FRAME_PAD = 1.1;
-
-/**
  * A node as the camera needs to see it: enough of React Flow's `Node` to be assignable
  * from one, without importing @xyflow/react into a module the canvas path loads.
  */
@@ -64,17 +49,10 @@ export type MeasuredNode = {
  * `liveNodes` refines the estimate from measured DOM boxes and is the only reason the
  * React Flow path needs a second pass. The canvas draws exactly the constant
  * half-extents below, so it passes an empty array and frames once.
- *
- * Given the layout's `galaxy` (and `HOME_FIT_TO_GALAXY`), the extents are capped at its reach:
- * the disk plus `GALAXY_FRAME_PAD`, never less than the sun's clear zone or the 240-unit floor.
- * Stars beyond that reach are the halo; they stop setting the zoom and stay a pan away. The cap
- * only ever tightens the framing, so a sky whose halo sits inside the disk frames exactly as it
- * did. Home and the initial view both call this, so they agree.
  */
 export function computeSunExtents(
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
-  liveNodes: MeasuredNode[],
-  galaxy?: Pick<GalaxyStructure, "diskRadius" | "coreRadius">
+  liveNodes: MeasuredNode[]
 ): { maxAbsX: number; maxAbsY: number } {
   let maxAbsX = 240;
   let maxAbsY = 240;
@@ -122,16 +100,7 @@ export function computeSunExtents(
     }
   }
 
-  if (HOME_FIT_TO_GALAXY && galaxy) {
-    const reach = galaxyReach(galaxy);
-    return { maxAbsX: Math.min(maxAbsX, reach), maxAbsY: Math.min(maxAbsY, reach) };
-  }
   return { maxAbsX, maxAbsY };
-}
-
-/** How far from the sun the galaxy framing reaches: the disk and a margin, never inside the clear zone. */
-export function galaxyReach(galaxy: Pick<GalaxyStructure, "diskRadius" | "coreRadius">): number {
-  return Math.max(galaxy.coreRadius, galaxy.diskRadius * GALAXY_FRAME_PAD, 240);
 }
 
 export function zoomToFitSunCentered(
@@ -278,21 +247,16 @@ function trimmedRange(values: number[]): [number, number] {
  * figures, so fitting every last one of them left the constellations themselves a small
  * knot in the middle of a phone. The trimmed stars stay a pan away, and a network too
  * small for the trim to reach a whole star is framed exactly.
- *
- * Given the layout's `galaxy` (and `HOME_FIT_TO_GALAXY`), stars beyond its reach (`galaxyReach`)
- * are the halo and don't count either, so a sky with a wide halo opens on the galaxy.
  */
 export function fitStarsToPane(
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
   pane: { width: number; height: number },
-  inset: { x: number; top: number; bottom: number },
-  galaxy?: Pick<GalaxyStructure, "diskRadius" | "coreRadius">
+  inset: { x: number; top: number; bottom: number }
 ): Camera {
-  const reach = HOME_FIT_TO_GALAXY && galaxy ? galaxyReach(galaxy) : Infinity;
   const points: Vec2[] = [];
   for (const n of layoutNodes) {
     if (n.type === "contact" || n.type === "user" || n.type === "clusterLabel") {
-      if (Math.hypot(n.position.x, n.position.y) <= reach) points.push(n.position);
+      points.push(n.position);
     }
   }
 

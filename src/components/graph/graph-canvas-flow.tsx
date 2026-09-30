@@ -61,7 +61,6 @@ import {
   zoomToFitSunCentered,
 } from "@/lib/graph/sky-camera";
 import { galaxyBackdropData } from "@/lib/graph/galaxy-dust";
-import type { GalaxyStructure } from "@/lib/graph/galaxy-structure";
 import { NEBULA_BOX_RADII } from "@/lib/graph/nebula-lobes";
 import { contactMatchesLocal } from "@/lib/graph/search-match";
 import {
@@ -100,15 +99,12 @@ function DefaultViewFitter({
   homeToken,
   animate,
   layoutNodes,
-  galaxy,
   onSettled,
 }: {
   homeToken: number;
   /** Glide there rather than cut. False for the very first framing, which nobody sees. */
   animate: boolean;
   layoutNodes: LayoutNodes;
-  /** The layout's galaxy, so the framing can stop at its disk (see `computeSunExtents`). */
-  galaxy: GalaxyStructure;
   /**
    * Fires once the *refined* (post-measurement) framing has been applied.
    * The first pass runs before React Flow has measured node DOM sizes, so
@@ -122,9 +118,9 @@ function DefaultViewFitter({
   // React Flow's own nodes, not the ones it was handed: those no longer carry the measured
   // boxes this framing reads (see `Measurements`); React Flow's copies always do.
   const liveNodes = () => [...storeApi.getState().nodeLookup.values()];
-  const layoutRef = useRef({ nodes: layoutNodes, galaxy });
+  const layoutRef = useRef(layoutNodes);
   const onSettledRef = useRef(onSettled);
-  layoutRef.current = { nodes: layoutNodes, galaxy };
+  layoutRef.current = layoutNodes;
   onSettledRef.current = onSettled;
 
   useEffect(() => {
@@ -146,8 +142,7 @@ function DefaultViewFitter({
         return;
       }
 
-      const { nodes, galaxy: sky } = layoutRef.current;
-      const { maxAbsX, maxAbsY } = computeSunExtents(nodes, liveNodes(), sky);
+      const { maxAbsX, maxAbsY } = computeSunExtents(layoutRef.current, liveNodes());
       const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, width, height);
       const duration = animate ? CAMERA_MS.move : 0;
 
@@ -177,11 +172,7 @@ function DefaultViewFitter({
             onSettledRef.current?.();
             return;
           }
-          const extents = computeSunExtents(
-            layoutRef.current.nodes,
-            liveNodes(),
-            layoutRef.current.galaxy
-          );
+          const extents = computeSunExtents(layoutRef.current, liveNodes());
           const z = zoomToFitSunCentered(
             extents.maxAbsX,
             extents.maxAbsY,
@@ -1247,10 +1238,10 @@ function GraphCanvasInner({
   const paneW = useStore((s) => s.width);
   const paneH = useStore((s) => s.height);
   const atHome = useMemo(() => {
-    const { maxAbsX, maxAbsY } = computeSunExtents(sky.layout.nodes, [], sky.layout.galaxy);
+    const { maxAbsX, maxAbsY } = computeSunExtents(sky.layout.nodes, []);
     const home = zoomToFitSunCentered(maxAbsX, maxAbsY, paneW, paneH);
     return labelZoom <= home * CLUSTER_NAME_HOME_SLACK;
-  }, [sky.layout.nodes, sky.layout.galaxy, paneW, paneH, labelZoom]);
+  }, [sky.layout.nodes, paneW, paneH, labelZoom]);
 
   /**
    * The cluster the reader deliberately picked: clicked or searched (`focusCluster`), filtered
@@ -2229,8 +2220,7 @@ function GraphCanvasInner({
           if (w < 48 || h < 48) return;
           const { maxAbsX, maxAbsY } = computeSunExtents(
             layout.nodes,
-            instance.getNodes(),
-            layout.galaxy
+            instance.getNodes()
           );
           const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, w, h);
           void instance.setViewport({ x: w / 2, y: h / 2, zoom });
@@ -2254,7 +2244,6 @@ function GraphCanvasInner({
           homeToken={homeToken}
           animate={homeToken > 1 || sky.epoch > 0}
           layoutNodes={layout.nodes}
-          galaxy={layout.galaxy}
           onSettled={() => setViewportReady(true)}
         />
         {/*
