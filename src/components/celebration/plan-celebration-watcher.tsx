@@ -13,7 +13,6 @@ import { useAppPulse } from "@/lib/app-pulse-store";
 import { toast } from "@/lib/toast";
 import type { Plan } from "@/lib/plan-limits";
 import {
-  PLAN_RANK,
   readLastSeenPlan,
   upgradeKind,
   writeLastSeenPlan,
@@ -113,10 +112,10 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     (next: Plan) => {
       const running = activeRef.current;
       if (running) {
-        // Mid-play upgrade (orbit -> lifetime inside the same seven seconds):
+        // Mid-play plan change (orbit -> lifetime inside the same seven seconds):
         // record it, then restart at the ignition — the anticipation was
         // already spent.
-        if (isPaidPlan(next) && PLAN_RANK[next] > PLAN_RANK[running.plan]) {
+        if (isPaidPlan(next) && next !== running.plan) {
           writeLastSeenPlan(next);
           start(next, "ignite");
         }
@@ -124,14 +123,15 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
       }
       switch (upgradeKind(readLastSeenPlan(), next)) {
         case "first-visit":
-        case "downgrade":
-          // Silent: seeds a fresh device, re-arms after account switches and
-          // comp revocations.
+          // Silent: seeds a fresh device.
           writeLastSeenPlan(next);
           return;
         case "same":
           return;
-        case "upgrade": {
+        case "upgrade":
+        case "downgrade": {
+          // Any move onto a paid plan plays; a move to free has no tier to show, so it
+          // only re-arms the key.
           if (!isPaidPlan(next)) {
             writeLastSeenPlan(next);
             return;

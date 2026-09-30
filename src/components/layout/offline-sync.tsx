@@ -38,10 +38,9 @@ export function OfflineSync({ userId }: { userId: string }) {
   useEffect(() => configureOfflineQueue(userId, OFFLINE_RUNNERS), [userId]);
 
   useEffect(() => {
-    // The worker that serves `/offline.html` when a page load cannot reach the network (see
-    // public/orbit-sw.js). Production only: in development it would sit in front of every
-    // navigation of a server that restarts all day, and a stale worker there is confusing
-    // for no benefit. Idle, so it never competes with the page's own first requests.
+    // The notification worker (see public/orbit-sw.js). It no longer touches page loads, so
+    // a stopped server or dead connection shows the browser's own error page. Production
+    // only: a stale worker in development is confusing for no benefit. Idle, so it never competes with the page's own first requests.
     if (process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) return;
     const register = () => {
       navigator.serviceWorker.register(SW_PATH, { scope: "/" }).catch(() => {
