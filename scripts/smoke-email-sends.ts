@@ -11,7 +11,8 @@ import { getDb, rowsOf } from "../src/db";
 import * as schema from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
-import { cancelEmailSend, dispatchEmailSend, enqueueEmail } from "../src/lib/email/outbox";
+import { cancelEmailSend, dispatchEmailSend, drainEmailSends, enqueueEmail } from "../src/lib/email/outbox";
+import { readFileSync } from "node:fs";
 import { setProviderOverride } from "../src/lib/email/providers";
 import { MailProviderError, type MailProvider, type OutboundMessage } from "../src/lib/email/providers/types";
 import { purgeUserData } from "../src/lib/user-data";
@@ -221,6 +222,21 @@ async function main() {
       SELECT ${USER}, 'gmail', 'me@x.org', '["z@x.org"]'::jsonb, 's', 'b', 'chat', 'sent', now(), '<cap-' || g || '@orbit.mail>' FROM generate_series(1, ${fill}::int) g`);
     const capped = await enqueueEmail(USER, base);
     check("21st send in 24h refused on Free", !capped.ok && capped.reason === "cap_reached", JSON.stringify(capped));
+
+    // --- drain picks up due rows and lapsed leases, skips future ones
+    await db.execute(sql`DELETE FROM email_sends WHERE user_id = ${USER} AND origin = 'chat'`);
+    await resetBucket();
+    const d1 = await must(enqueueEmail(USER, { ...base, delayMs: 0 }));
+    const d2 = await must(enqueueEmail(USER, { ...base, delayMs: 3_600_000 }));
+    const stats = await drainEmailSends({ budgetMs: 30_000, max: 50 });
+    check("drain sent the due row", (await row(d1.id)).status === "sent", JSON.stringify(stats));
+    check("drain left the future row queued", (await row(d2.id)).status === "queued");
+
+    // --- source guard: the claim keeps the lease predicate and the DB-clock lease
+    const src = readFileSync("src/lib/email/outbox.ts", "utf8");
+    check("claim leases on the DB clock", src.includes("lease_until = now() +"));
+    check("claim takes lapsed leases only", src.includes("status = 'sending' AND lease_until < now()"));
+    check("outbox never imports next/server directly", !/from "next\/server"/.test(src));
   } finally {
     setProviderOverride("gmail", null);
     await resetBucket();

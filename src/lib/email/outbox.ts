@@ -351,3 +351,37 @@ async function settleRetry(
     .returning();
   return settled.length ? "retry" : "not_claimable";
 }
+
+/**
+ * The backstop. `after()` dispatches interactive sends; this catches everything it didn't —
+ * a recycled function, a retry, a lapsed lease, and (P4) scheduled sends. Runs from the
+ * ten-minute ops workflow. Rows go oldest-due first, one at a time, within the budget.
+ */
+export async function drainEmailSends(opts: { budgetMs: number; max: number }) {
+  const db = await getDb();
+  const deadline = Date.now() + opts.budgetMs;
+  const stats = { attempted: 0, sent: 0, retried: 0, failed: 0, skipped: 0 };
+  const due = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      SELECT id FROM email_sends
+       WHERE send_at <= now()
+         AND (status = 'queued' OR (status = 'sending' AND lease_until < now()))
+       ORDER BY send_at
+       LIMIT ${opts.max}
+    `)
+  );
+  for (const { id } of due) {
+    // One provider call is capped at 20s (plus a Sent check); stop while there is room for it.
+    if (deadline - Date.now() < 22_000) break;
+    stats.attempted++;
+    const outcome = await dispatchEmailSend(id).catch((err) => {
+      reportError(err, { where: "email.drain-item" });
+      return "failed" as const;
+    });
+    if (outcome === "sent") stats.sent++;
+    else if (outcome === "retry") stats.retried++;
+    else if (outcome === "failed") stats.failed++;
+    else stats.skipped++;
+  }
+  return stats;
+}
