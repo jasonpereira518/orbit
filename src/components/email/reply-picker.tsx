@@ -2,7 +2,7 @@
 
 import { CornerUpLeft, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { replySubject } from "@/lib/email/reply-subject";
+import { stripReply } from "@/lib/email/reply-subject";
 import type { ReplyTarget } from "@/lib/email/reply-targets";
 
 const NEW = "new";
@@ -25,18 +25,26 @@ export function ReplyPicker({
   value,
   onChange,
   disabled,
+  currentSubject,
 }: {
   targets: ReplyTarget[];
   value: string | null;
   onChange: (key: string | null) => void;
   disabled?: boolean;
+  /** Labels a reply kept from an edited send, which isn't one of `targets`. */
+  currentSubject: string;
 }) {
-  if (!targets.length) return null;
-  const items = [
+  const kept = value && !targets.some((t) => t.key === value) ? value : null;
+  if (!targets.length && !kept) return null;
+  // `label` is the one-line trigger text; `detail` is a second line in the open list, so a
+  // long subject wraps instead of running under the check mark on a phone.
+  const items: { value: string; label: string; detail?: string }[] = [
     { value: NEW, label: "New email" },
+    ...(kept ? [{ value: kept, label: `Reply to “${stripReply(currentSubject) || "(no subject)"}”` }] : []),
     ...targets.map((t) => ({
       value: t.key,
-      label: `Reply to “${replySubject(t.subject)}” · ${when(t.at)} · ${SOURCE[t.source]}`,
+      label: `Reply to “${t.subject || "(no subject)"}”`,
+      detail: `${when(t.at)} · ${SOURCE[t.source]}`,
     })),
   ];
   return (
@@ -53,8 +61,11 @@ export function ReplyPicker({
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false} className="p-1">
           {items.map((i) => (
-            <SelectItem key={i.value} value={i.value} className="py-1.5 pl-2">
-              {i.label}
+            <SelectItem key={i.value} value={i.value} className="py-1.5 pl-2 whitespace-normal">
+              <span className="flex min-w-0 flex-col">
+                <span className="break-words">{i.label}</span>
+                {i.detail && <span className="text-xs text-muted-foreground">{i.detail}</span>}
+              </span>
             </SelectItem>
           ))}
         </SelectContent>

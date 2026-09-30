@@ -306,7 +306,13 @@ export function ComposeDialog({
                 <RecipientField id="compose-bcc" label="Bcc" value={bcc} onChange={setBcc} />
               </>
             )}
-            <ReplyPicker targets={ready?.replyTargets ?? []} value={replyTo} onChange={setReplyTo} disabled={sending} />
+            <ReplyPicker
+              targets={ready?.replyTargets ?? []}
+              value={replyTo}
+              onChange={setReplyTo}
+              disabled={sending}
+              currentSubject={subject}
+            />
             {replyTo ? (
               // The server fixes a reply's subject (Gmail threads only on a matching one).
               <p aria-label="Subject" className="min-w-0 truncate border-b border-border/60 py-2">
