@@ -54,6 +54,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     lastNightly,
     lastSyncRun,
     lastJobFeedRun,
+    lastRadarRun,
+    lastRadarFeeds,
+    lastRadarDigest,
+    lastWorkHistoryRun,
     webhooks,
     issues,
     outreach,
@@ -89,6 +93,30 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "jobs.feed-sweep"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "radar.run"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "radar.feeds"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "radar.digest"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "work-history.sweep"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       recentWebhookOutcomes(5, now),
@@ -203,6 +231,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const syncRun = lastSyncRun[0];
   const drainRun = lastDrain[0];
   const jobFeedRun = lastJobFeedRun[0];
+  const radarRun = lastRadarRun[0];
+  const radarFeeds = lastRadarFeeds[0];
+  const radarDigest = lastRadarDigest[0];
+  const workHistoryRun = lastWorkHistoryRun[0];
   return {
     cron: {
       processStalled: {
@@ -220,6 +252,22 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       jobFeed: {
         lastStartedAt: jobFeedRun?.startedAt ?? null,
         lastState: jobFeedRun ? deriveCronRunState(jobFeedRun, now) : null,
+      },
+      radarRun: {
+        lastStartedAt: radarRun?.startedAt ?? null,
+        lastState: radarRun ? deriveCronRunState(radarRun, now) : null,
+      },
+      radarFeeds: {
+        lastStartedAt: radarFeeds?.startedAt ?? null,
+        lastState: radarFeeds ? deriveCronRunState(radarFeeds, now) : null,
+      },
+      radarDigest: {
+        lastStartedAt: radarDigest?.startedAt ?? null,
+        lastState: radarDigest ? deriveCronRunState(radarDigest, now) : null,
+      },
+      workHistory: {
+        lastStartedAt: workHistoryRun?.startedAt ?? null,
+        lastState: workHistoryRun ? deriveCronRunState(workHistoryRun, now) : null,
       },
     },
     processStalledRecent: lastNightly.map((r) => deriveCronRunState(r, now)),

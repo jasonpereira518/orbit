@@ -10,7 +10,7 @@ import {
   INTEREST_LIST_COUNT_FLOOR,
   NAME_MAX,
   buildTicketUrl,
-  interestListSchema,
+  isValidEmail,
   type InterestTicket,
 } from "@/lib/interest-list";
 import type { InterestProof } from "@/lib/interest-list-ticket";
@@ -160,7 +160,7 @@ export function InterestHero({
 
     // Same rule the server applies, checked here first so a typo does not cost a round
     // trip. The server re-validates regardless.
-    if (!interestListSchema.shape.email.safeParse(address).success) {
+    if (!isValidEmail(address)) {
       fail(FORMAT_ERROR);
       return;
     }

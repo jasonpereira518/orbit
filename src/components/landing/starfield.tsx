@@ -142,6 +142,16 @@ const FIGURE_EDGE_STAGGER_MS = 90;
  */
 const SEARCH_BUDGET_MS = 2;
 
+/**
+ * Interactive skies only: while NOTHING moves — no scroll, no shooting star, no
+ * pulse, no gravity well, no figure — the only change between frames is the
+ * twinkle, a slow alpha drift that nobody can tell from 30fps. So a calm sky
+ * repaints every other frame, halving what the page costs at rest (the canvas
+ * redraw, its commit and raster). Any motion is caught on the very next frame,
+ * so a scroll or a streak always runs at full rate.
+ */
+const CALM_FRAME_MS = 30;
+
 /* Nebulae, the base gradient and the corner vignette all live in
  * `lib/sky-palette.ts` now: the warp stage cross-fades into this exact
  * image at the end of a lift-off, and a half-shade of drift between the two
@@ -214,6 +224,9 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     /** The stars `pending` was handed, in the order it knows them by. */
     let pendingStars: Star[] = [];
     let figureScrollY = 0;
+    /** When the sky was last actually drawn, and at what scroll — see CALM_FRAME_MS. */
+    let lastPaint = 0;
+    let lastPaintScrollY = -1;
 
     function paintBackground() {
       // Resized in place: a fresh viewport-sized bitmap per resize event (~20MB at 2x) was
@@ -229,6 +242,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     }
 
     function resize() {
+      // Resizing the canvas clears it, so the next frame must draw, calm or not.
+      lastPaint = 0;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       width = window.innerWidth;
       height = window.innerHeight;
@@ -543,6 +558,25 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     }
 
     function draw(now: number) {
+      if (
+        interactive &&
+        !reduced &&
+        now - lastPaint < CALM_FRAME_MS &&
+        window.scrollY === lastPaintScrollY &&
+        shooters.length === 0 &&
+        now < nextShot &&
+        pulses.length === 0 &&
+        !pointerActive &&
+        settled &&
+        !figure &&
+        !pending
+      ) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      lastPaint = now;
+      lastPaintScrollY = window.scrollY;
+
       ctx!.clearRect(0, 0, width, height);
       // A zero-size viewport at mount (hidden tab being restored, prerender) produces a
       // zero-size bg canvas, and drawImage throws InvalidStateError on those — which

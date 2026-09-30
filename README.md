@@ -97,6 +97,7 @@ On every plan, AI runs on your own provider account and is billed to you at cost
 
 - **Events.** Remember the conferences and meetups you went to and the people you met there.
 - **Outreach.** Find the right people and run personal, tracked outreach at your own pace.
+- **Radar.** Every night, Orbit looks over your network and tells you who is worth a message this week, and why.
 
 ---
 
