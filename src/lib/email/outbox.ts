@@ -17,7 +17,7 @@ import { originHooks } from "@/lib/email/origins";
 import { providerFor } from "@/lib/email/providers";
 import { MailProviderError, type SendResult } from "@/lib/email/providers/types";
 import { normalizeRecipients } from "@/lib/email/recipients";
-import { countEmailSendsToday, resolveSender } from "@/lib/email/sender";
+import { countEmailSendsToday, resolveSender, type MailboxId } from "@/lib/email/sender";
 import { getEntitlements } from "@/lib/entitlements";
 import { markOutlookNeedsReauth } from "@/lib/outlook";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
@@ -51,9 +51,9 @@ export type EnqueueRefusal =
   | "duplicate";
 
 export const ENQUEUE_COPY: Record<EnqueueRefusal, string> = {
-  not_connected: "Connect Gmail to send from your own address",
-  no_send_scope: "Allow Gmail to send, then try again",
-  needs_reauth: "Your Gmail connection expired — reconnect to send",
+  not_connected: "Connect your email to send from your own address",
+  no_send_scope: "Allow Orbit to send from your email, then try again",
+  needs_reauth: "Your email connection expired — reconnect to send",
   cap_reached: "You've reached today's email limit — it resets over the next 24 hours",
   rate_limited: "That's a lot of email in a few minutes — try again shortly",
   no_recipient: "Add at least one recipient",
@@ -89,6 +89,11 @@ export type EnqueueInput = {
    * still counts every message.
    */
   chargeBurst?: boolean;
+  /**
+   * Send from this mailbox specifically (Compose's From picker, recruiter replies). Honoured
+   * only if it can send; an explicit choice is refused rather than silently swapped.
+   */
+  provider?: MailboxId;
 };
 
 export type EnqueueResult =
@@ -119,8 +124,9 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
   const recipients = normalizeRecipients({ to: input.to, cc: input.cc, bcc: input.bcc });
   if (!recipients.ok) return refuse(recipients.reason);
 
-  const sender = await resolveSender(userId);
+  const sender = await resolveSender(userId, input.provider ?? null);
   if (!sender.ok) return refuse(sender.reason);
+  if (input.provider && sender.provider !== input.provider) return refuse("not_connected");
 
   if (input.chargeBurst !== false) {
     const limited = await chargeEmailBurst(userId);
