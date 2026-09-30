@@ -56,6 +56,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "work-history": "work-history lookup",
   "work-history-background": "background work-history check",
   "email-intel-daily": "email-insights",
+  "email-intel-extract-daily": "email-insights reading",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -160,6 +161,12 @@ export const RATE_LIMITS = {
    * Keyed per UTC day by the sweep, like `workHistoryBackground`.
    */
   emailIntelDaily: { limit: 300, windowSec: 86_400 },
+  /**
+   * Model calls the email-insights extractor may make per account per UTC day. One call reads
+   * one hiring thread on the person's own key; the ingest cap (`emailIntelDaily`) bounds what
+   * is listed, this bounds what is paid for.
+   */
+  emailIntelExtractDaily: { limit: 40, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**
