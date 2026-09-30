@@ -98,6 +98,14 @@ async function main() {
   const goneErr = await loadAttachmentBytes(refs).then(() => null, (e) => e);
   check("a deleted blob is permanent", goneErr instanceof MailProviderError && goneErr.kind === "permanent");
 
+  console.log("token route");
+  const fs = await import("node:fs");
+  const route = fs.readFileSync("src/app/api/email/attachments/upload/route.ts", "utf8");
+  check("the token route is gated on Compose", route.includes("requireUserForSurface(COMPOSE_SURFACE_KEY)"));
+  check("tokens are only for the user's own prefix", route.includes("attachmentPrefixFor(userId)"));
+  check("only token requests are handled (no unauthenticated completion callback)", route.includes('body.type !== "blob.generate-client-token"'));
+  check("the token route is not public", !fs.readFileSync("src/lib/public-routes.ts", "utf8").includes("/api/email/attachments"));
+
   setAttachmentBlobClientForTests(null);
   if (failures) throw new Error(`${failures} check(s) failed`);
   console.log("\nAll attachment checks passed.");
