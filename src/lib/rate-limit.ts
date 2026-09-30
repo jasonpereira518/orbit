@@ -55,6 +55,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "poll.results": "results check",
   "work-history": "work-history lookup",
   "work-history-background": "background work-history check",
+  "email-intel-daily": "email-insights",
 };
 
 function formatRetryAfter(sec: number): string {
