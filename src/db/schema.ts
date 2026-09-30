@@ -290,7 +290,7 @@ export const userSettings = pgTable("user_settings", {
    * its webhook mirrors them here so that background jobs (which have no request
    * context) resolve the same plan the UI does. Same rationale as `email` above.
    */
-  compedPlan: text("comped_plan").$type<"orbit" | "lifetime">(),
+  compedPlan: text("comped_plan").$type<"orbit" | "max" | "lifetime">(),
   lifetimePurchasedAt: timestamp("lifetime_purchased_at", { withTimezone: true }),
   /**
    * The Lifetime Checkout Session this account most recently opened, until it resolves.
@@ -307,7 +307,8 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   stripeCustomerId: text("stripe_customer_id"),
-  subscriptionPlan: text("subscription_plan").$type<"orbit">(),
+  /** `orbit` = Orbit Pro. Read from the subscription price's lookup key (pricing v2). */
+  subscriptionPlan: text("subscription_plan").$type<"orbit" | "max">(),
   subscriptionStatus: text("subscription_status").$type<
     "active" | "past_due" | "canceled"
   >(),
@@ -358,6 +359,37 @@ export const userSettings = pgTable("user_settings", {
   compedNote: text("comped_note"),
   compedAt: timestamp("comped_at", { withTimezone: true }),
   compedBy: text("comped_by"),
+  /**
+   * Start of the subscription's current billing period. The managed-AI allowance resets at
+   * each renewal, so the credit ledger needs the window, not just its end.
+   */
+  subscriptionPeriodStart: timestamp("subscription_period_start", { withTimezone: true }),
+  /**
+   * Founding pricing (pricing v2). Set when an account is created through a beta invitation
+   * — a Clerk invite from the admin console or from a waitlist row — and never inferred
+   * later: "was this person invited?" must be answerable from the row, not from Clerk.
+   * Eligible accounts get the founding coupon on their FIRST paid subscription only.
+   */
+  foundingEligible: boolean("founding_eligible").default(false).notNull(),
+  /** When the founding coupon was applied — the one-time claim. Null = not yet redeemed. */
+  foundingRedeemedAt: timestamp("founding_redeemed_at", { withTimezone: true }),
+  /** End of the three-cycle founding window; a tier switch inside it keeps the discount. */
+  foundingWindowEndsAt: timestamp("founding_window_ends_at", { withTimezone: true }),
+  /** The subscription the founding coupon is attached to. */
+  foundingSubscriptionId: text("founding_subscription_id"),
+  /**
+   * Which AI a paid account runs on by default when it has both: `included` (Orbit's keys,
+   * metered in credits) or `own` (the user's saved key, never metered). Null = the pre-v2
+   * rule, where a saved personal key wins.
+   */
+  aiKeyPreference: text("ai_key_preference").$type<"included" | "own">(),
+  /** The one-time "two packs plus Pro is about the price of Max" prompt, once shown. */
+  maxNudgeSeenAt: timestamp("max_nudge_seen_at", { withTimezone: true }),
+  /** The emails at 80% and 100% of the monthly credits. 1 = on (the default). */
+  creditEmailEnabled: integer("credit_email_enabled").default(1).notNull(),
+  /** The allowance cycle (its start) and level (80 or 100) last emailed — see `credits/notices.ts`. */
+  creditNoticePeriodStart: timestamp("credit_notice_period_start", { withTimezone: true }),
+  creditNoticeLevel: integer("credit_notice_level").default(0).notNull(),
   /**
    * The last time this human was present. Two writers, deliberately sharing one column:
    *
@@ -4109,9 +4141,16 @@ export const waitlistPollVotes = pgTable(
   "waitlist_poll_votes",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    /** The voter's top pick (most stars; ties to authored order). Kept for the admin console
+     * and older readers; the tally reads `stars`. */
     optionId: text("option_id").notNull(),
     voterKey: text("voter_key").notNull(),
     signupId: uuid("signup_id"),
+    /**
+     * Stars per option id, e.g. `{"network-chat": 2, "events": 1}` (v134). Null on votes cast
+     * before stars existed: those count as the whole base budget on `option_id`.
+     */
+    stars: jsonb("stars").$type<Record<string, number>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -4214,6 +4253,8 @@ export type BillingEventKind =
   | "churn"
   | "reactivation"
   | "lifetime"
+  /** A $5 credit pack (pricing v2): one-time cash, never MRR. */
+  | "credit_pack"
   | "payment"
   | "refund"
   | "payment_failed";
@@ -4295,7 +4336,12 @@ export const gateEvents = pgTable(
     userId: text("user_id").notNull(),
     /** A `FeatureKey` from `@/lib/entitlements`, or "contacts" for the free cap. */
     feature: text("feature").notNull(),
-    plan: text("plan").$type<"free" | "orbit" | "lifetime">().notNull(),
+    plan: text("plan").$type<"free" | "orbit" | "max" | "lifetime">().notNull(),
+    /**
+     * The cheapest plan that would have let them through (`unlockPlanFor`). Null on rows
+     * written before pricing v2.
+     */
+    unlockPlan: text("unlock_plan").$type<"orbit" | "max">(),
     /** Route or action that hit the wall, for locating it in the product. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4304,6 +4350,108 @@ export const gateEvents = pgTable(
     index("gate_events_feature_created_idx").on(t.feature, t.createdAt),
     index("gate_events_user_created_idx").on(t.userId, t.createdAt),
   ]
+);
+
+/**
+ * Managed-AI credits (pricing v2). 1 credit = $0.01 of model cost at Orbit's provider rates,
+ * stored as cost-micros (1 credit = 10,000 micros) so a settlement is exact to the call.
+ *
+ * One row per grant: a cycle's allowance, a purchased pack, or an admin adjustment. The grant
+ * rows ARE the balance — there is no denormalised total to drift. Spendable credit is the sum
+ * of `micros_remaining` over active grants that are usable right now:
+ *  - allowance: inside [period_start, period_end); it never rolls over.
+ *  - pack: while the account is on a plan with managed AI. A downgrade FREEZES packs by this
+ *    rule alone — nothing is written, so a resubscribe finds them exactly as they were.
+ * Consumption spends allowance first, then packs oldest-first.
+ *
+ * `grant_key` is the idempotency key: `pack:cs:<checkout session>` for a pack (so a retried
+ * webhook grants once), `allowance:<user>:<period start>` for an allowance.
+ *
+ * `user_id` is nullable only so a full account deletion can anonymise the rows the way it
+ * anonymises `billing_events`: a pack is money, and the liability figure must not silently
+ * change when its buyer leaves.
+ */
+export const creditGrants = pgTable(
+  "credit_grants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id"),
+    kind: text("kind").$type<"allowance" | "pack" | "adjustment">().notNull(),
+    grantKey: text("grant_key").notNull(),
+    /** The plan whose allowance this is (allowance rows only). */
+    plan: text("plan").$type<"orbit" | "max">(),
+    microsGranted: integer("micros_granted").notNull(),
+    microsRemaining: integer("micros_remaining").notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    /** What the buyer paid, in cents (packs only) — the liability is priced from this. */
+    amountCents: integer("amount_cents"),
+    /** The Stripe object behind a pack (`cs_…`), so a refund or dispute can find it. */
+    stripeRef: text("stripe_ref"),
+    status: text("status").$type<"active" | "revoked">().default("active").notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedReason: text("revoked_reason"),
+    /** Unused micros taken back by the revocation. */
+    microsRevoked: integer("micros_revoked"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("credit_grants_key_uidx").on(t.grantKey),
+    index("credit_grants_user_idx").on(t.userId, t.kind, t.status),
+    index("credit_grants_stripe_ref_idx").on(t.stripeRef),
+  ]
+);
+
+/**
+ * One row per account that has ever held credits. It carries no balance: it exists to be
+ * LOCKED. Placing a hold first touches this row inside the same atomic batch, so two
+ * concurrent calls for one account serialise and the second sees the first's hold. That is
+ * the whole in-flight guard — at zero credits at most the one call already running finishes.
+ */
+export const creditAccounts = pgTable("credit_accounts", {
+  userId: text("user_id").primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * A managed-AI call in flight: its estimated cost is held against the balance until the
+ * call settles at its real token cost, then the row is deleted. A hold whose call died
+ * without settling simply expires — it is never charged.
+ */
+export const creditHolds = pgTable(
+  "credit_holds",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    micros: integer("micros").notNull(),
+    operation: text("operation").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("credit_holds_user_idx").on(t.userId, t.expiresAt),
+    index("credit_holds_expires_idx").on(t.expiresAt),
+  ]
+);
+
+/**
+ * Per-plan monthly meters that are counts rather than money or audio seconds: hosted Apollo
+ * enrichments today. One row per (user, meter, period), incremented atomically with a
+ * conditional upsert so the cap holds under concurrency. `period_key` is `YYYY-MM` (UTC).
+ */
+export const planMeterUsage = pgTable(
+  "plan_meter_usage",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    meter: text("meter").$type<"hosted_enrichment">().notNull(),
+    periodKey: text("period_key").notNull(),
+    used: integer("used").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("plan_meter_usage_uidx").on(t.userId, t.meter, t.periodKey)]
 );
 
 /**
@@ -4385,6 +4533,13 @@ export const siteSettings = pgTable("site_settings", {
    * set, which reads as ON: the switch exists to take the demo down, not to put it up.
    */
   waitlistDemoEnabled: boolean("waitlist_demo_enabled"),
+  /**
+   * The admin console's managed-AI switch. True = paused: Pro and Max fall back to "add your
+   * own key" and no call runs on Orbit's provider keys. Null = never set, which reads as
+   * PAUSED in production (managed AI must not run before the legal text describing it ships)
+   * and on elsewhere. The `ORBIT_MANAGED_AI=off` env kill switch still wins over this.
+   */
+  managedAiPaused: boolean("managed_ai_paused"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
   updatedBy: text("updated_by"),
@@ -5480,7 +5635,7 @@ export const planUpgradeEvents = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
-    plan: text("plan").$type<"orbit" | "lifetime">().notNull(),
+    plan: text("plan").$type<"orbit" | "max" | "lifetime">().notNull(),
     source: text("source")
       .$type<"subscription" | "lifetime" | "comp">()
       .notNull(),

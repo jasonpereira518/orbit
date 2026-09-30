@@ -30,6 +30,7 @@ const BUCKET_LABELS: Record<string, string> = {
   radarRefresh: "Radar refresh",
   interestJoin: "sign-up",
   interestProgress: "progress check",
+  pollResults: "poll results",
   interestName: "sign-up",
   apiRead: "API read",
   apiWrite: "API write",
@@ -51,6 +52,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "avatar.resolve": "photo lookup",
   "lifetime-confirm": "checkout check",
   "poll.vote": "vote",
+  "poll.results": "results check",
   "work-history": "work-history lookup",
   "work-history-background": "background work-history check",
 };
@@ -182,6 +184,12 @@ export const RATE_LIMITS = {
    * for several people behind one NAT, and stops a script sweeping share tokens.
    */
   interestProgress: { limit: 120, windowSec: 300 },
+  /**
+   * `/api/waitlist-poll/results`: the poll's live tallies, read about every 30 seconds while
+   * the tab is visible (~10 calls per five minutes for one visitor). The answer is the
+   * instance's 30 s memo, so the limit only stops a script hammering the route.
+   */
+  pollResults: { limit: 60, windowSec: 300 },
   /**
    * `saveInterestListName`, the join's second step. A person makes one, maybe a couple of
    * corrections' worth; the limit exists to stop a script walking guessed tokens.

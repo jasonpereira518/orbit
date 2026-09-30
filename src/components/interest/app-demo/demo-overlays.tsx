@@ -21,7 +21,7 @@ function Scrim({ children, onClose }: { children: ReactNode; onClose: () => void
   const { reduced } = useDemo();
   return (
     <motion.div
-      className="absolute inset-0 z-30 flex items-start justify-center bg-[#04070f]/60 pt-16 backdrop-blur-[2px]"
+      className="absolute inset-0 z-30 flex items-start justify-center bg-background/60 pt-16 backdrop-blur-[2px]"
       initial={reduced ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={reduced ? undefined : { opacity: 0 }}
@@ -53,9 +53,9 @@ export function SearchPalette() {
 
   return (
     <Scrim onClose={close}>
-      <div role="dialog" aria-label="Search your network" className="w-[420px] overflow-hidden rounded-2xl border border-[var(--d-border)] bg-[var(--d-card)] shadow-2xl">
-        <div className="flex items-center gap-2 border-b border-[var(--d-border)]/70 px-3">
-          <Search className="size-4 text-[var(--d-dim)]" aria-hidden="true" />
+      <div role="dialog" aria-label="Search your network" className="w-[420px] overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+        <div className="flex items-center gap-2 border-b border-border/70 px-3">
+          <Search className="size-4 text-muted-foreground" aria-hidden="true" />
           <input
             ref={input}
             value={q}
@@ -76,9 +76,9 @@ export function SearchPalette() {
             }}
             placeholder="Search people, companies, tags…"
             aria-label="Search people, companies, tags"
-            className="w-full bg-transparent py-3 text-sm text-[var(--d-ink)] placeholder:text-[var(--d-dim)]/70 focus:outline-none"
+            className="w-full bg-transparent py-3 text-sm text-ink placeholder:text-muted-foreground/70 focus:outline-none"
           />
-          <kbd className="rounded border border-[var(--d-border)] px-1.5 text-[10px] text-[var(--d-dim)]">esc</kbd>
+          <kbd className="rounded border border-border px-1.5 text-[10px] text-muted-foreground">esc</kbd>
         </div>
         <ul className="max-h-72 overflow-y-auto p-1.5" role="listbox" aria-label="People">
           {results.map((p, i) => (
@@ -91,15 +91,15 @@ export function SearchPalette() {
               >
                 <Avatar person={p} size={26} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-[var(--d-ink)]">{p.name}</span>
-                  <span className="block truncate text-[11px] text-[var(--d-dim)]">
+                  <span className="block truncate text-sm text-ink">{p.name}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
                     {p.title} · {p.company}
                   </span>
                 </span>
               </button>
             </li>
           ))}
-          {results.length === 0 && <li className="px-3 py-6 text-center text-xs text-[var(--d-dim)]">No one matches “{q}”.</li>}
+          {results.length === 0 && <li className="px-3 py-6 text-center text-xs text-muted-foreground">No one matches “{q}”.</li>}
         </ul>
       </div>
     </Scrim>
@@ -120,14 +120,14 @@ export function LogSheet() {
       <form
         role="dialog"
         aria-label="Log interaction"
-        className="w-[440px] rounded-2xl border border-[var(--d-border)] bg-[var(--d-card)] p-4 shadow-2xl"
+        className="w-[440px] rounded-2xl border border-border bg-card p-4 shadow-2xl"
         onSubmit={(e) => {
           e.preventDefault();
           dispatch({ type: "log", id: personId, entryType: type, note: note.trim() || `${type} with ${firstName(p)}` });
         }}
       >
-        <p className="font-[family-name:var(--font-display)] text-lg text-[var(--d-ink)]">Log interaction</p>
-        <label className="mt-3 block text-[11px] font-medium text-[var(--d-dim)]" htmlFor="demo-log-person">
+        <p className="font-[family-name:var(--font-display)] text-lg text-ink">Log interaction</p>
+        <label className="mt-3 block text-[11px] font-medium text-muted-foreground" htmlFor="demo-log-person">
           With
         </label>
         <select
@@ -142,7 +142,7 @@ export function LogSheet() {
             </option>
           ))}
         </select>
-        <p className="mt-3 text-[11px] font-medium text-[var(--d-dim)]">What happened</p>
+        <p className="mt-3 text-[11px] font-medium text-muted-foreground">What happened</p>
         <div className="mt-1 flex flex-wrap gap-1.5" role="group" aria-label="Interaction type">
           {TIMELINE_TYPES.map((t) => (
             <button
@@ -152,7 +152,7 @@ export function LogSheet() {
               onClick={() => setType(t)}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 text-[11px]",
-                type === t ? "border-[var(--d-primary)]/60 text-[var(--d-ink)]" : "border-[var(--d-border)] text-[var(--d-dim)]"
+                type === t ? "border-primary/60 text-ink" : "border-border text-muted-foreground"
               )}
             >
               <span className="scale-75">
@@ -162,7 +162,7 @@ export function LogSheet() {
             </button>
           ))}
         </div>
-        <label className="mt-3 block text-[11px] font-medium text-[var(--d-dim)]" htmlFor="demo-log-note">
+        <label className="mt-3 block text-[11px] font-medium text-muted-foreground" htmlFor="demo-log-note">
           Notes
         </label>
         <textarea

@@ -35,6 +35,8 @@ const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
   "smoke-connectivity": "pure",
+  "smoke-waitlist-pass-news": "pure",
+  "smoke-waitlist-demo-fidelity": "pure",
   "smoke-offline-queue": "pure",
   "smoke-chat-thread-prefetch": "pure",
   "smoke-render-stamp-pages": "pure",
@@ -194,7 +196,6 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
   "smoke-landing-cards": "pure",
-  "smoke-lifetime-pricing": "pure",
   "smoke-linkedin-paste": "pure",
   "smoke-locked-participant": "pure",
   "smoke-log-hygiene": "pure",
@@ -442,6 +443,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-speech-quota": "pglite",
   "smoke-stripe-unattributed": "pglite",
   "smoke-stripe-webhook": "pglite",
+  "smoke-pricing-v2-billing": "pglite",
+  "smoke-credits": "pglite",
+  "smoke-plan-enforcement": "pglite",
+  "smoke-admin-lifetime": "pglite",
+  "smoke-admin-credits": "pglite",
+  "smoke-credit-notices": "pglite",
+  "smoke-tier-contrast": "pure",
   "smoke-billing-portal": "pglite",
   "smoke-subscription-management": "pglite",
   "smoke-checkout-confirm": "pglite",
@@ -462,6 +470,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
+  "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {

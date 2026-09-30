@@ -28,7 +28,7 @@ export default async function RecruiterComposePage() {
           "Review every message before anything sends",
           "Sends from your Gmail, threaded into the original conversation",
         ]}
-        note="Included in Orbit Pro and Orbit Lifetime."
+        note="Included in Orbit Pro and Orbit Max."
       />
     );
   }

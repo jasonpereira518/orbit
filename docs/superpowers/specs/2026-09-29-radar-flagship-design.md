@@ -180,7 +180,7 @@ as the base spec's `heads_up` table describes (points and half-lives unchanged).
   - The `job_change` kind of `contact_signals` is gone. It was never written, and the
     column has no CHECK constraint, so removing it needed no migration.
   - `radar_apollo_cursor` leaves in two steps. First the code stops naming it (#371). Then
-    schema v141 drops it (`ALTER TABLE user_settings DROP COLUMN IF EXISTS
+    schema v143 drops it (`ALTER TABLE user_settings DROP COLUMN IF EXISTS
     radar_apollo_cursor`, with its CREATE TABLE line, `ensureColumn` and `alters` ADD
     removed). The deployment still serving while that migration runs selects every
     `user_settings` column on each request, so it must never know the column (the
@@ -263,7 +263,7 @@ The version is the next free integer after re-scanning every remote ref. It will
   - `radar_model jsonb`, `radar_autopilot jsonb NOT NULL DEFAULT '{}'`.
   - `radar_capture_linkedin_activity integer NOT NULL DEFAULT 0`.
   - `radar_digest_enabled integer NOT NULL DEFAULT 1`, `radar_digest_tz`,
-    `radar_digest_last_week`, `radar_digest_unsub_token_hash`, `radar_apollo_cursor` (dropped in v141).
+    `radar_digest_last_week`, `radar_digest_unsub_token_hash`, `radar_apollo_cursor` (dropped in v143).
   - All of them go in the three `user_settings` places.
 - **`contacts`:** `bluesky_handle`, `mastodon_acct` (text, nullable).
 - **Lifecycle:**

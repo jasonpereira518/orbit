@@ -25,14 +25,15 @@
  * And it does not call `requireEntitlement()`. That writes a `gate_events` row on every
  * denial, so one lapsed subscriber whose Zapier polls every five minutes would write ~300
  * rows a day and drown the very signal that table exists to collect. Gate hits from the
- * request path go through the throttle instead; the unthrottled version is correct in the
- * key-issuance actions, which a human triggers.
+ * request path go through `recordGateHitThrottled` instead (one row per user per hour); the
+ * unthrottled version is correct in the key-issuance actions, which a human triggers.
  */
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { apiKeys } from "@/db/schema";
 import { bearerFrom, hashApiKey, looksLikeApiKey, type ApiKeyScope } from "@/lib/api/keys";
-import { entitlementsFromSettings, type Entitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings, FEATURE_DENIAL, type Entitlements } from "@/lib/entitlements";
+import { recordGateHitThrottled } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { isHeldByStealth } from "@/lib/site-access";
 
@@ -153,10 +154,13 @@ export async function assertAccountUsable(
   // beside it — see `canUseMcp` in `entitlements.ts`.
   const allowed = opts.surface === "mcp" ? entitlements.canUseMcp : entitlements.canUseApi;
   if (!allowed) {
-    throw new ApiAuthError(
-      "payment_required",
-      "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime."
-    );
+    await recordGateHitThrottled({
+      userId,
+      feature: "api",
+      plan: entitlements.plan,
+      context: { surface: opts.surface ?? "api" },
+    });
+    throw new ApiAuthError("payment_required", FEATURE_DENIAL.api);
   }
   return entitlements;
 }

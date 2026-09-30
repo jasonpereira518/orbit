@@ -429,7 +429,7 @@ function InboxRow({
     >
       {control.kind === "locked" ? (
         <p className="text-sm text-muted-foreground">
-          {capability?.detail ?? "Part of Orbit Pro and Lifetime"}
+          {capability?.detail ?? "Part of Orbit Pro and Max"}
         </p>
       ) : null}
 

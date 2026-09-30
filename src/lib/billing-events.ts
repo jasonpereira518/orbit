@@ -272,14 +272,17 @@ export async function currentMrrCents(now: Date = new Date()): Promise<number> {
       periodEnd: userSettings.subscriptionPeriodEnd,
       plan: userSettings.subscriptionPlan,
       comped: userSettings.compedPlan,
+      monthlyCents: userSettings.subscriptionMonthlyCents,
     })
     .from(userSettings);
 
   return rows.reduce((total, r) => {
     // A comped account pays nothing regardless of what its subscription columns say.
     if (r.comped) return total;
-    if (r.plan !== "orbit") return total;
-    return total + monthlyValueCents(r.status, r.periodEnd, now);
+    if (r.plan !== "orbit" && r.plan !== "max") return total;
+    // The stored value is what the webhook booked (founding discount included), so the two
+    // derivations agree for every price, not only the legacy $5 one.
+    return total + monthlyValueCents(r.status, r.periodEnd, now, r.monthlyCents);
   }, 0);
 }
 

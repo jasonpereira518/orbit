@@ -76,15 +76,14 @@ export const REQUIRED_IN_PREVIEW = [
   "ENCRYPTION_SECRET",
 ] as const;
 
-const STRIPE_PRICE_IDS = [
-  "STRIPE_LIFETIME_PRICE_ID",
-  "STRIPE_LIFETIME_STANDARD_PRICE_ID",
-  "STRIPE_PRO_MONTHLY_PRICE_ID",
-  "STRIPE_PRO_ANNUAL_PRICE_ID",
-] as const;
+/**
+ * No price ids: pricing v2 resolves every price by lookup key (`src/lib/stripe-prices.ts`),
+ * created by `scripts/stripe-pricing-v2.ts`. The old STRIPE_*_PRICE_ID variables are
+ * ignored, so leaving them set in Vercel is harmless.
+ */
 
 /**
- * Orbit's managed AI keys, which Lifetime accounts run on when they bring none
+ * Orbit's managed AI keys, which Pro and Max run their included AI on
  * (`src/lib/ai-access.ts`). Checked by presence only, here as everywhere.
  */
 const MANAGED_AI_KEYS = [
@@ -184,7 +183,7 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       if (!env.STRIPE_SECRET_KEY!.startsWith("sk_live_")) {
         errors.push("STRIPE_SECRET_KEY must be a live key (sk_live_) in production — test-mode prices fail checkout");
       }
-      for (const name of ["STRIPE_WEBHOOK_SECRET", ...STRIPE_PRICE_IDS]) {
+      for (const name of ["STRIPE_WEBHOOK_SECRET"]) {
         if (!has(env, name)) errors.push(`${name} is required when STRIPE_SECRET_KEY is set`);
       }
     }
@@ -206,9 +205,10 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         missingExpected.push(name);
       }
     }
-    // Lifetime is sold as including AI. Selling it with no managed key means every buyer
-    // without a key of their own is refused — a warning rather than a failed build, since
-    // the ops sweep pages on it (`ai.managed_unconfigured`) and a key must never block a deploy.
+    // Pro and Max are sold with AI included. Selling them with no managed key means every
+    // subscriber without a key of their own is refused — a warning rather than a failed
+    // build, since the ops sweep pages on it (`ai.managed_unconfigured`) and a key must never
+    // block a deploy.
     if (
       MANAGED_AI_ENABLED &&
       has(env, "STRIPE_SECRET_KEY") &&
@@ -216,7 +216,7 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       env.ORBIT_MANAGED_AI?.trim().toLowerCase() !== "off"
     ) {
       warnings.push(
-        "No ORBIT_MANAGED_*_API_KEY is set; Lifetime is on sale but its included AI has no key to run on"
+        "No ORBIT_MANAGED_*_API_KEY is set; Pro and Max are on sale but their included AI has no key to run on"
       );
     }
     return { errors, warnings, missingRequired, missingExpected };

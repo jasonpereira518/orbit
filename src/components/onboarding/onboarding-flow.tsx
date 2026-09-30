@@ -11,7 +11,7 @@ import { TourCursor } from "@/components/onboarding/tour-cursor";
 import {
   TOUR_INTERVAL_MS,
   TOUR_STEPS,
-  type TourNavKey,
+  type TourStepId,
 } from "@/components/onboarding/tour-config";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { WelcomePreview } from "@/components/onboarding/previews/welcome-preview";
@@ -23,11 +23,10 @@ import { ChatPreview } from "@/components/onboarding/previews/chat-preview";
 import { GraphPreview } from "@/components/onboarding/previews/graph-preview";
 import { DashboardPreview } from "@/components/onboarding/previews/dashboard-preview";
 import { RecruitersPreview } from "@/components/onboarding/previews/recruiters-preview";
-import { OutreachPreview } from "@/components/onboarding/previews/outreach-preview";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const PREVIEWS: Record<TourNavKey, typeof WelcomePreview> = {
+const PREVIEWS: Record<TourStepId, typeof WelcomePreview> = {
   welcome: WelcomePreview,
   contacts: ContactsPreview,
   capture: CapturePreview,
@@ -37,13 +36,15 @@ const PREVIEWS: Record<TourNavKey, typeof WelcomePreview> = {
   graph: GraphPreview,
   dashboard: DashboardPreview,
   recruiters: RecruitersPreview,
-  outreach: OutreachPreview,
 };
 
 const LAST_INDEX = TOUR_STEPS.length - 1;
 
 function indexForStep(stepId: string | null | undefined) {
   if (!stepId) return 0;
+  // "outreach" was the tour's last stop until Outreach was taken out of it (it hasn't
+  // shipped). Someone who stopped there resumes at the end, not back at the welcome.
+  if (stepId === "outreach") return LAST_INDEX;
   const idx = TOUR_STEPS.findIndex((s) => s.id === stepId);
   return idx >= 0 ? idx : 0;
 }

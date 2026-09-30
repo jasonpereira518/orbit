@@ -12,6 +12,7 @@
  * `serverInitial` (the values the page rendered with) instead.
  */
 import { useSyncExternalStore } from "react";
+import type { WelcomePlanet } from "./welcome-planets";
 
 export type PassProgress = {
   /** The pass's share token, or null when the visitor has no pass. */
@@ -19,6 +20,8 @@ export type PassProgress = {
   referrals: number;
   /** Place in line, or null when there is no pass. */
   position: number | null;
+  /** Friends' planets in join order, when known (the poll and the server render carry them). */
+  friendPlanets?: readonly WelcomePlanet[];
 };
 
 let current: PassProgress | null = null;
@@ -30,7 +33,8 @@ export function publishProgress(next: PassProgress) {
     current &&
     current.token === next.token &&
     current.referrals === next.referrals &&
-    current.position === next.position
+    current.position === next.position &&
+    (current.friendPlanets ?? []).join() === (next.friendPlanets ?? []).join()
   ) {
     return;
   }
