@@ -167,6 +167,17 @@ gently bowed curve between cluster centres, width ∝ weight.
 
 Label collision priority: search hit > cluster > petal > star.
 
+### Phase 4 as built
+
+- **Backdrop.** `galaxyBackdropData` (`src/lib/graph/galaxy-dust.ts`) turns `GalaxyStructure` into plain data (disk, bulge, dust dots, dark lanes); `drawGalaxyBackdrop` (`sky-bitmap-draw.ts`) paints it: disk haze `rgba(150,175,255,.085)` → `rgba(130,160,255,.05)` → clear, bulge `rgba(255,240,205,.34)` → `rgba(245,200,106,.16)` → clear, dark lanes, then dust in six alpha bands filled in chunks of `DUST_CHUNK = 25` (one giant path fill was super-linear: 2.5 s at 10k). Desktop draws it as one more worker bitmap (a single `<img>` node at `zIndex -2`, redrawn only when the camera stops at a new quarter-octave zoom). The phone bakes the same function once per `GalaxyStructure` into a 1024px canvas and blits it with one `drawImage` (`galaxyBackdropBitmap`, so it looks softer when zoomed in).
+- **Petal company.** Brand wash plus one lobe pool per part (`PART_WASH_ALPHA = 0.7`); the leadership core is warm (`CORE_TINT = #ffe9c2`). Petal names sit below each part (`PETAL_LABEL_GAP = 44`, and the label box grows to hold them) from `PETAL_LABEL_MIN_ZOOM = 0.25`, capped at 40 a frame on the phone.
+- **School ring.** Annulus nebula (stops 0.05 → 0.06@0.3 → 0.12@1/1.3 → 0, outer radius 1.3 × ring), no star handles on the ring stars unless they anchor a line (`anchorsLines`).
+- **Role / binary.** No wash. Role stars keep their own company brand, lines are dotted (`[2, 5]`, 0.35 alpha), and the cluster subtitle reads "across N companies".
+- **"Other" rule.** A company splits into petals only with at least `PETAL_MIN_NAMED = 2` named petals, so an "Other" petal alone never forces a split.
+- **Global `clearNames`.** Star name stacks clear the cluster name everywhere, not only in petals.
+- **Dashboard preview.** Deliberately reduced parity: no backdrop, part pools or petal names; it only skips open/binary washes and keeps the dotted role lines.
+- **Home fit.** Not changed. Framing the galaxy disk instead of the farthest halo star was tried and reverted: it was a no-op on clustered networks and cropped halo-heavy or cluster-free ones (the phone opened on the sun with 0 of 60 stars in view). A percentile-based fit would be the next try.
+
 ### Unchanged
 
 Star size = score, comets, overdue ring, hover/select/search emphasis (petals join the dimming:
