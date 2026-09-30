@@ -27,6 +27,7 @@ import {
   type ProOptions,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { GalaxyBackdropNode } from "@/components/graph/galaxy-backdrop-node";
 import {
   ClusterLabelNode,
   ContactNode,
@@ -59,6 +60,7 @@ import {
   computeSunExtents,
   zoomToFitSunCentered,
 } from "@/lib/graph/sky-camera";
+import { galaxyBackdropData } from "@/lib/graph/galaxy-dust";
 import { NEBULA_BOX_RADII } from "@/lib/graph/nebula-lobes";
 import { contactMatchesLocal } from "@/lib/graph/search-match";
 import {
@@ -202,6 +204,7 @@ const nodeTypes = {
   clusterLabel: ClusterLabelNode,
   nebulaWash: NebulaWashNode,
   starDust: StarDustNode,
+  galaxyBackdrop: GalaxyBackdropNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -315,6 +318,7 @@ const ENTRANCE_CLEAR_MS = 700;
 
 const STAR_DUST_ID = "star-dust";
 const NEBULA_WASH_ID = "nebula-wash";
+const GALAXY_BACKDROP_ID = "galaxy-backdrop";
 
 /** Below this zoom, cluster names keep much wider gaps between them (see `clusterNameWinners`). */
 const CLUSTER_NAME_SPARSE_BELOW_ZOOM = 0.2;
@@ -1534,6 +1538,38 @@ function GraphCanvasInner({
   }, [nebulaWash]);
 
   /**
+   * The galaxy behind the whole sky, as one worker-drawn image beneath the dust. Its payload
+   * depends on the layout's galaxy alone, so a hover, a search or a pan leaves it (and its
+   * bitmap) untouched. Carries its own `measured` box for the reason the dust node does, and is
+   * deliberately NOT part of the camera's extents: `computeSunExtents` only counts the node
+   * types it names, and this type is not one of them.
+   */
+  const skyGalaxy = sky.layout.galaxy;
+  const galaxyBackdrop = useMemo(() => galaxyBackdropData(skyGalaxy), [skyGalaxy]);
+  const galaxyBackdropNode = useMemo(
+    (): Node => ({
+      id: GALAXY_BACKDROP_ID,
+      type: "galaxyBackdrop",
+      // nodeOrigin is [0.5, 0.5], so the position is the canvas's centre.
+      position: {
+        x: galaxyBackdrop.minX + galaxyBackdrop.width / 2,
+        y: galaxyBackdrop.minY + galaxyBackdrop.height / 2,
+      },
+      width: galaxyBackdrop.width,
+      height: galaxyBackdrop.height,
+      measured: { width: galaxyBackdrop.width, height: galaxyBackdrop.height },
+      data: galaxyBackdrop,
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      // Beneath the star dust (-1), the washes (0) and every star.
+      zIndex: -2,
+      style: { pointerEvents: "none" },
+    }),
+    [galaxyBackdrop]
+  );
+
+  /**
    * Where each node sits in `orbitNodes`, so the pass below can visit only the stars that can
    * be drawn and still hand React Flow its nodes in the sky's order (which is their stacking
    * order in the DOM).
@@ -1549,7 +1585,7 @@ function GraphCanvasInner({
   }, [orbitNodes]);
 
   const nodes = useMemo(() => {
-    const out: Node[] = [];
+    const out: Node[] = [galaxyBackdropNode];
     if (starDustNode) out.push(starDustNode);
     if (nebulaWashNode) out.push(nebulaWashNode);
 
@@ -1708,6 +1744,7 @@ function GraphCanvasInner({
     return out;
   }, [
     orbitNodes,
+    galaxyBackdropNode,
     starDustNode,
     nebulaWashNode,
     summary,
@@ -1989,6 +2026,7 @@ function GraphCanvasInner({
     (_, node) => {
       if (node.id === STAR_DUST_ID) return;
       if (node.id === NEBULA_WASH_ID) return;
+      if (node.id === GALAXY_BACKDROP_ID) return;
 
       if (node.type === "clusterLabel") {
         if (compact) return;

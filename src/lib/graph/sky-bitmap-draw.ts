@@ -1,5 +1,6 @@
 /**
- * Drawing the sky's two bitmaps — the cluster washes and the star dust — onto any 2D context.
+ * Drawing the sky's bitmaps — the cluster washes, the star dust and the galaxy backdrop — onto
+ * any 2D context.
  *
  * Pure (no DOM, no React), so the same code draws on the page's canvas and on an
  * `OffscreenCanvas` in `sky-bitmap.worker.ts`. See `useSkyBitmap` in graph-nodes.tsx for why
@@ -10,6 +11,7 @@ import type {
   StarDustData,
   StarDustPoint,
 } from "@/components/graph/graph-nodes";
+import type { GalaxyBackdropData } from "@/lib/graph/galaxy-dust";
 import { NEBULA_LOBE_EDGE, NEBULA_LOBE_MID, nebulaLobes } from "@/lib/graph/nebula-lobes";
 import { zoomRelief as starZoomRelief } from "@/lib/graph/star-style";
 import { withAlpha } from "@/lib/school-color";
@@ -17,7 +19,8 @@ import { withAlpha } from "@/lib/school-color";
 /** One bitmap to draw: what, at which quantised zoom and pixel ratio, capped at how many px. */
 export type SkyBitmapJob =
   | { kind: "wash"; data: NebulaWashData; zoom: number; dpr: number; maxBackingPx: number }
-  | { kind: "dust"; data: StarDustData; zoom: number; dpr: number; maxBackingPx: number };
+  | { kind: "dust"; data: StarDustData; zoom: number; dpr: number; maxBackingPx: number }
+  | { kind: "galaxy"; data: GalaxyBackdropData; zoom: number; dpr: number; maxBackingPx: number };
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -42,7 +45,8 @@ export function drawSkyBitmap(ctx: Ctx, job: SkyBitmapJob) {
   ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
   ctx.clearRect(data.minX, data.minY, data.width, data.height);
   if (job.kind === "wash") drawWash(ctx, job.data, scale);
-  else drawDust(ctx, job.data, job.zoom);
+  else if (job.kind === "dust") drawDust(ctx, job.data, job.zoom);
+  else drawGalaxyBackdrop(ctx, job.data, job.zoom);
   ctx.globalAlpha = 1;
 }
 
@@ -102,4 +106,58 @@ function drawDust(ctx: Ctx, data: StarDustData, zoom: number) {
     }
     ctx.fill();
   }
+}
+
+/**
+ * The galaxy behind everything: a cool disk haze, a warm bulge, dark lanes across the strongest
+ * relatedness chains, and dust along all of them. Every gradient fades to its OWN colour at zero
+ * alpha (never `transparent`, which is black), as the washes do.
+ */
+export function drawGalaxyBackdrop(ctx: Ctx, data: GalaxyBackdropData, zoom: number) {
+  if (data.diskRadius > 0) {
+    const disk = ctx.createRadialGradient(0, 0, 0, 0, 0, data.diskRadius);
+    disk.addColorStop(0, "rgba(150,175,255,0.085)");
+    disk.addColorStop(0.5, "rgba(130,160,255,0.05)");
+    disk.addColorStop(1, "rgba(130,160,255,0)");
+    ctx.fillStyle = disk;
+    ctx.beginPath();
+    ctx.arc(0, 0, data.diskRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const bulgeR = data.coreRadius * 1.8;
+  const bulge = ctx.createRadialGradient(0, 0, 0, 0, 0, bulgeR);
+  bulge.addColorStop(0, "rgba(255,240,205,0.34)");
+  bulge.addColorStop(0.3, "rgba(245,200,106,0.16)");
+  bulge.addColorStop(1, "rgba(245,200,106,0)");
+  ctx.fillStyle = bulge;
+  ctx.beginPath();
+  ctx.arc(0, 0, bulgeR, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const lane of data.dust.lanes) {
+    ctx.strokeStyle = `rgba(3,5,10,${lane.alpha.toFixed(3)})`;
+    ctx.lineWidth = lane.width;
+    ctx.beginPath();
+    lane.path.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.stroke();
+  }
+
+  // Dust in six alpha bands, one path and one fill each: thousands of dots, a handful of draws.
+  const minRadius = 0.75 / Math.max(zoom, 0.01);
+  const bands: number[][] = [[], [], [], [], [], []];
+  data.dust.alpha.forEach((a, i) => bands[Math.min(5, Math.floor(a / 0.04))].push(i));
+  bands.forEach((indices, band) => {
+    if (indices.length === 0) return;
+    ctx.globalAlpha = 0.04 * band + 0.02;
+    ctx.fillStyle = "rgb(190,208,255)";
+    ctx.beginPath();
+    for (const i of indices) {
+      const r = Math.max(minRadius, data.dust.radius[i]);
+      ctx.moveTo(data.dust.x[i] + r, data.dust.y[i]);
+      ctx.arc(data.dust.x[i], data.dust.y[i], r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  });
 }

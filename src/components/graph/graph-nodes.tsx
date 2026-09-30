@@ -441,7 +441,7 @@ const NEBULA_WASH_MAX_BACKING_PX = 2048;
  * the worker, swapping each new image in once it is decoded so the old one stays up meanwhile.
  * Without a worker (or `OffscreenCanvas`) the canvas simply stays, as it always was.
  */
-function useSkyBitmap() {
+export function useSkyBitmap() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [imageShown, setImageShown] = useState(false);
@@ -522,13 +522,13 @@ function useSkyBitmap() {
  * canvas rides the viewport transform like the rest of the sky — so redrawing then repainted
  * the same pixels: the whole wash, every cluster's five gradients, at the end of every pan.
  */
-type DrawnCanvas = { data: unknown; zoom: number; dpr: number };
+export type DrawnCanvas = { data: unknown; zoom: number; dpr: number };
 
-function alreadyDrawn(last: DrawnCanvas | null, data: unknown, zoom: number, dpr: number) {
+export function alreadyDrawn(last: DrawnCanvas | null, data: unknown, zoom: number, dpr: number) {
   return last !== null && last.data === data && last.zoom === zoom && last.dpr === dpr;
 }
 
-function drawNowUnlessHidden(canvas: HTMLCanvasElement, draw: () => void) {
+export function drawNowUnlessHidden(canvas: HTMLCanvasElement, draw: () => void) {
   const stage = canvas.closest<HTMLElement>(".constellation-stage");
   if (stage?.style.opacity === "0") {
     const timer = window.setTimeout(draw, 0);
