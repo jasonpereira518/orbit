@@ -77,7 +77,7 @@ export async function generateRecruiterDrafts(
     const ids = Array.from(new Set(recruiterIds.filter(Boolean)));
     if (ids.length === 0) throw new UserFacingError("Pick at least one recruiter first");
     if (ids.length > RECRUITER_BATCH_LIMIT) {
-      throw new UserFacingError(`Draft at most ${RECRUITER_BATCH_LIMIT} at a time.`);
+      throw new UserFacingError(`Draft at most ${RECRUITER_BATCH_LIMIT} at a time`);
     }
 
     const db = await getDb();
@@ -272,7 +272,7 @@ export async function sendRecruiterDrafts(
       throw new UserFacingError(ENQUEUE_COPY.cap_reached);
     }
     if (unique.length > remaining) {
-      throw new UserFacingError(`You can send ${remaining} more today. Deselect ${unique.length - remaining}.`);
+      throw new UserFacingError(`You can send ${remaining} more today. Deselect ${unique.length - remaining}`);
     }
 
     // The demo workspace has no Gmail grant to send with (`demo-workspace-connections.ts`),

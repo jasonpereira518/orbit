@@ -50,17 +50,17 @@ export type EnqueueRefusal =
   | "duplicate";
 
 export const ENQUEUE_COPY: Record<EnqueueRefusal, string> = {
-  not_connected: "Connect Gmail to send from your own address.",
-  no_send_scope: "Allow Gmail to send, then try again.",
-  needs_reauth: "Your Gmail connection expired — reconnect to send.",
-  cap_reached: "You've reached today's email limit. It resets over the next 24 hours.",
-  rate_limited: "That's a lot of email in a few minutes — try again shortly.",
-  no_recipient: "Add at least one recipient.",
-  too_many: "That's more than 20 recipients — trim the list.",
-  invalid_recipient: "One of those addresses doesn't look right.",
-  placeholder: "That's a placeholder address, not a real inbox.",
-  empty_body: "Write something before sending.",
-  duplicate: "That message is already on its way.",
+  not_connected: "Connect Gmail to send from your own address",
+  no_send_scope: "Allow Gmail to send, then try again",
+  needs_reauth: "Your Gmail connection expired — reconnect to send",
+  cap_reached: "You've reached today's email limit — it resets over the next 24 hours",
+  rate_limited: "That's a lot of email in a few minutes — try again shortly",
+  no_recipient: "Add at least one recipient",
+  too_many: "That's more than 20 recipients — trim the list",
+  invalid_recipient: "One of those addresses doesn't look right",
+  placeholder: "That's a placeholder address, not a real inbox",
+  empty_body: "Write something before sending",
+  duplicate: "That message is already on its way",
 };
 
 export type EnqueueInput = {

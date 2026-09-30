@@ -97,10 +97,10 @@ export async function approveAgentSend(
     status: "failed",
     error:
       row?.failureKind === "ambiguous"
-        ? "That may have sent — check your Sent folder before sending it again."
+        ? "That may have sent — check your Sent folder before sending it again"
         : row?.failureKind === "auth"
-          ? "Gmail needs reconnecting before this can send. The draft is back in your queue."
-          : "That didn’t send. The draft is back in your queue.",
+          ? "Gmail needs reconnecting before this can send. The draft is back in your queue"
+          : "That didn’t send. The draft is back in your queue",
   };
 }
 

@@ -3,7 +3,7 @@
  * HTML alternative, fixed Message-ID, and no header smuggling.
  * Run: npx tsx scripts/smoke-email-mime.ts
  */
-import { buildMime, newRfcMessageId, withBccHeader } from "../src/lib/email/mime";
+import { buildMime, formatAddress, newRfcMessageId, withBccHeader } from "../src/lib/email/mime";
 
 function check(label: string, ok: boolean, detail?: string) {
   if (!ok) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -55,5 +55,33 @@ const gmailHead = gmailRaw.split("\r\n\r\n")[0]!;
 check("Gmail variant carries Bcc in the header block", /^Bcc: hidden@x\.org$/m.test(gmailHead));
 check("Gmail variant body unchanged", gmailRaw.split("\r\n\r\n")[1] === "Hi there");
 check("no Bcc list, no Bcc header", withBccHeader(plain, []) === plain);
+
+// --- address formatting (ported from the retired smoke-gmail-send-mime) ------------------
+check("bare address when no display name", formatAddress(null, "jason@acme-corp.io") === "jason@acme-corp.io");
+check("ascii display names are quoted", formatAddress("Jason Pereira", "jason@acme-corp.io") === '"Jason Pereira" <jason@acme-corp.io>');
+check("a comma in the name cannot split the header", formatAddress("Pereira, Jason", "jason@acme-corp.io") === '"Pereira, Jason" <jason@acme-corp.io>');
+check(
+  "embedded quotes are escaped, not left to terminate the string",
+  formatAddress('Jason "JP" Pereira', "jason@acme-corp.io") === '"Jason \\"JP\\" Pereira" <jason@acme-corp.io>'
+);
+const nonAscii = formatAddress("José Álvarez", "jose@acme-corp.io");
+check("non-ascii names use an encoded-word", nonAscii.startsWith("=?UTF-8?B?") && nonAscii.endsWith("<jose@acme-corp.io>"), nonAscii);
+check("an encoded-word is not wrapped in quotes", !nonAscii.includes('"'), nonAscii);
+
+// --- header injection through every header value --------------------------------------
+const injected = buildMime({
+  ...base,
+  to: ["a@b.io\r\nBcc: attacker@evil.io"],
+  cc: [],
+  from: { name: "Evil\r\nBcc: attacker@evil.io", email: "me@x.org" },
+  subject: "hello\r\nBcc: attacker@evil.io",
+});
+const injectedHead = injected.split("\r\n\r\n")[0]!.split("\r\n");
+// CR/LF folds to a space rather than dropping the text, so "Bcc:" can appear inside a
+// value; what matters is that no line STARTS with it, since only that is parsed as a header.
+check("no smuggled header starts a line", injectedHead.every((line) => !/^bcc:/i.test(line)), injectedHead.join(" | "));
+check("the injected text survives only as inert inline content", injectedHead.some((l) => l.startsWith("To: ") && l.includes("Bcc:")));
+check("header block has exactly the expected lines", injectedHead.length === 7, String(injectedHead.length));
+check("From precedes To", plain.indexOf("From:") < plain.indexOf("To:"));
 
 console.log("\nAll MIME checks passed.");

@@ -26,7 +26,7 @@ export function showUndoSendToast(opts: { sendId: string; recipientLabel: string
             toast.message("Already sent", { id });
           }
         } catch (err) {
-          toast.error(friendlyError(err, "Couldn’t undo that — it may already be on its way."), { id, keep: false });
+          toast.error(friendlyError(err, "Couldn’t undo that — it may already be on its way"), { id, keep: false });
         }
       },
     },

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 /**
  * RFC 5322 message building for Orbit's outbound mail. Pure: no network, no DB. Moved here
- * from `src/lib/gmail-send.ts` so every mail provider builds the same bytes.
+ * from the retired `gmail-send.ts` so every mail provider builds the same bytes.
  */
 
 /**
