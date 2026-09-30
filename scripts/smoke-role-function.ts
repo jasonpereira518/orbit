@@ -72,8 +72,6 @@ const TABLE: Array<[string | null, RoleFunction, boolean]> = [
   ["Partner, Art Director", "design", true],
   ["President & Creative Director", "design", true],
   ["Creative Director", "design", false],
-  ["Assistant Vice President", "other", false],
-  ["Associate Director", "other", false],
 ];
 
 console.log("\nclassifyTitle");

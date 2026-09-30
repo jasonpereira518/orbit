@@ -17,6 +17,7 @@ import {
   type GraphNodeData,
   type ClusterLabelData,
 } from "../src/lib/graph-layout";
+import { figureStarCount } from "../src/lib/constellation-shapes";
 import { RING_CAPACITY, RING_MIN_RADIUS } from "../src/lib/graph/cluster-anatomy";
 import { buildClusterAffinity } from "../src/lib/constellation-affinity";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
@@ -162,7 +163,8 @@ console.log("\nFit assignment");
       }
       check(
         `figure size matches shape (${f.cluster.name}/${p.key})`,
-        p.figureMemberIds.length === Math.min(p.shape.stars.length, p.figureMemberIds.length),
+        p.figureMemberIds.length ===
+          Math.min(p.shape.stars.length, figureStarCount(p.figureMemberIds.length + p.scatterMemberIds.length)),
         `${p.figureMemberIds.length} vs ${p.shape.stars.length}`
       );
     }
@@ -329,7 +331,9 @@ console.log("\nNo overlaps");
     worstSeg
   );
 
-  // Line–line: no two figure segments properly intersect (shared endpoints ok).
+  // Line–line: no two figure segments properly intersect (shared endpoints ok). Segments that share
+  // a star are skipped, so a template that crosses itself (the four-star Crux) is allowed: the
+  // guarantee is no crossings between different figures.
   const cross = (ox: number, oy: number, ax: number, ay: number, bx: number, by: number) =>
     (ax - ox) * (by - oy) - (ay - oy) * (bx - ox);
   let crossings = 0;
@@ -347,34 +351,36 @@ console.log("\nNo overlaps");
   }
   check("no two figure lines cross", crossings === 0, `${crossings} crossings`);
 
-  // Cluster–cluster: footprint separation via per-cluster bounding circles.
-  const clusterPoints = new Map<string, Array<{ x: number; y: number }>>();
-  for (const n of contactNodes) {
-    const d = n.data as GraphNodeData;
-    if (!d.clusterId || !fit.fits.has(d.clusterId)) continue;
-    const list = clusterPoints.get(d.clusterId) ?? [];
-    list.push(n.position);
-    clusterPoints.set(d.clusterId, list);
+  // Cluster–cluster, exactly: placeClusterDisks keeps every pair of footprint disks CLUSTER_GAP
+  // apart and every star sits FOOT_MARGIN inside its disk, so stars of different clusters are at
+  // least CLUSTER_GAP + 2·FOOT_MARGIN apart. Family satellites are seated in a foreign field on
+  // purpose, so only stars in some fit's figure/scatter lists count.
+  const CLUSTER_APART = LABEL_WIDTH + 2 * 34;
+  const owned: Array<{ id: string; cluster: string; x: number; y: number }> = [];
+  for (const f of fit.fits.values()) {
+    for (const id of [...f.figureMemberIds, ...f.scatterMemberIds]) {
+      const pos = posById.get(id)!;
+      owned.push({ id, cluster: f.cluster.id, x: pos.x, y: pos.y });
+    }
   }
-  const hulls = [...clusterPoints.entries()].map(([id, pts]) => {
-    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-    const r = pts.reduce((m, p) => Math.max(m, Math.hypot(p.x - cx, p.y - cy)), 0);
-    return { id, cx, cy, r };
-  });
-  let clustersApart = true;
-  for (let i = 0; i < hulls.length; i++) {
-    for (let j = i + 1; j < hulls.length; j++) {
-      const a = hulls[i];
-      const b = hulls[j];
-      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.r + b.r + STAR_MIN_DIST) {
-        clustersApart = false;
+  owned.sort((a, b) => a.x - b.x);
+  let nearest = Infinity;
+  let nearestPair = "";
+  for (let i = 0; i < owned.length; i++) {
+    for (let j = i + 1; j < owned.length && owned[j].x - owned[i].x < CLUSTER_APART; j++) {
+      if (owned[i].cluster === owned[j].cluster) continue;
+      const d = Math.hypot(owned[i].x - owned[j].x, owned[i].y - owned[j].y);
+      if (d < nearest) {
+        nearest = d;
+        nearestPair = `${owned[i].id}↔${owned[j].id}`;
       }
     }
   }
-  // A heuristic on star centroids; the exact disk guarantee (gap, sun clear) lives in
-  // smoke-disk-placement.
-  check("cluster star fields are pairwise disjoint", clustersApart);
+  check(
+    `stars of different clusters keep ${CLUSTER_APART}px apart (nearest ${nearest === Infinity ? "n/a" : nearest.toFixed(0) + "px"})`,
+    nearest >= CLUSTER_APART - 1e-6,
+    nearestPair
+  );
 }
 
 // ---------------------------------------------------------------------------

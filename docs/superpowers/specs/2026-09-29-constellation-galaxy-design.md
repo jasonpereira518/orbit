@@ -192,7 +192,7 @@ view, star window and label caps unchanged.
 
 ### Tests
 
-- `scripts/smoke-graph-layout.ts` extended: determinism; disk non-overlap with gap; star–star / star–line clearance including across petals; figure fidelity (pure similarity transform); every contact placed exactly once; `SUN_CLEAR` empty; **affinity honesty** — mean distance of related cluster pairs < median of all pairs.
+- `scripts/smoke-graph-layout.ts` extended: determinism; disk non-overlap with gap; star–star / star–line clearance including across petals; no crossings between different figures (the four-star Crux template crosses itself by design); figure fidelity (pure similarity transform); every contact placed exactly once; `SUN_CLEAR` empty; **affinity honesty** — mean distance of related cluster pairs < median of all pairs.
 - New `scripts/smoke-role-function.ts` — title table incl. "Technical Recruiting Lead", "Staff Engineer", "VP Engineering", "Co-founder & CEO", empty title.
 - School normalization — "MIT" ≡ "Massachusetts Institute of Technology"; display name = majority spelling.
 - `smoke-constellation-payload-leak` passes unchanged.
