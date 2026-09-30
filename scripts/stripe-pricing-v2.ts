@@ -147,7 +147,14 @@ async function main() {
   const mode: Mode = modeArg;
   const key = process.env.STRIPE_SECRET_KEY?.trim();
   if (!key) fail("STRIPE_SECRET_KEY is not set");
-  if (keyMode(key) !== mode) fail(`--mode ${mode} but STRIPE_SECRET_KEY is a ${keyMode(key) ?? "unrecognised"} key`);
+  if (keyMode(key) !== mode) {
+    const found = keyMode(key);
+    fail(
+      found
+        ? `--mode ${mode} but STRIPE_SECRET_KEY is a ${found}-mode key`
+        : `--mode ${mode} but STRIPE_SECRET_KEY is not a secret or restricted key (expected ${mode === "live" ? "sk_live_… or rk_live_…" : "sk_test_… or rk_test_…"}; a publishable pk_… key cannot manage products)`
+    );
+  }
   if (mode === "live" && APPLY && !CONFIRM_LIVE) fail("live writes need --confirm-live as well as --apply");
 
   const stripe = new Stripe(key);
