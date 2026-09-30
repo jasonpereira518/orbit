@@ -35,6 +35,7 @@ export function ContactRelatedReachOut({
     email: email?.trim() || null,
     linkedinUrl: linkedinUrl?.trim() || null,
     canSendEmail: false,
+    sendBlock: null,
   };
 
   return (

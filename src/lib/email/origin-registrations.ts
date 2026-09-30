@@ -4,4 +4,4 @@
  * dispatchers, smoke tests), so a send dispatched from the drain runs the same hooks as one
  * dispatched from a request.
  */
-export {};
+import "@/lib/email/origin-hooks/follow-up";

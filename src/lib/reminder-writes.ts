@@ -18,6 +18,8 @@ import {
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
 import { findReminderListForUser, getInboxListId } from "@/lib/reminder-lists";
+import { revalidatePathIfRequestScoped, revalidateReminderPaths } from "@/lib/reminder-paths";
+import { completeReminder } from "@/lib/reminders";
 import { settle, unwrap } from "@/lib/settled";
 
 export type CreateReminderInput = {
@@ -182,4 +184,29 @@ export async function scheduleContactFollowUpForUser(
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
   return { reminder: row, dueDate: due.toISOString(), days };
+}
+
+/**
+ * Clears a contact's due follow-up and completes every pending reminder for them. Takes a
+ * `userId` so the email dispatcher can call it from the drain, where there is no request;
+ * `clearContactFollowUp` (the action) is a wrapper. Revalidation is a no-op outside a request.
+ */
+export async function clearContactFollowUpForUser(
+  userId: string,
+  contactId: string
+): Promise<{ remindersClosed: number }> {
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ nextFollowUpAt: null, followUpStatus: "none", updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+  const open = await db.query.reminders.findMany({
+    where: and(eq(reminders.userId, userId), eq(reminders.contactId, contactId), eq(reminders.status, "pending")),
+  });
+  for (const r of open) {
+    await completeReminder(userId, r.id);
+  }
+  revalidateReminderPaths(contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  return { remindersClosed: open.length };
 }
