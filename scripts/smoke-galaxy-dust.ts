@@ -33,7 +33,28 @@ console.log("\nLanes");
 check("at most 14 lanes, from the heaviest filaments", d.dust.lanes.length === 14 && d.dust.lanes.every((l) => l.path.length === 6 && l.width > 0 && l.alpha > 0 && l.alpha <= 0.35));
 console.log("\nStability");
 check("deterministic", JSON.stringify(galaxyBackdropData(galaxy)) === JSON.stringify(d));
-check("independent of filament order", JSON.stringify(galaxyBackdropData({ ...galaxy, filaments: [...filaments].reverse() }).dust.x.slice().sort()) === JSON.stringify(d.dust.x.slice().sort()));
+// Equal weights and equal `from` force the lane tie-break down to `to`.
+const tied = [
+  ...filaments,
+  ...["z", "y", "x"].map((to) => ({ from: "a0", to, weight: 9, path: path(-900, -700, 900, 800) })),
+];
+const tiedGalaxy: GalaxyStructure = { ...galaxy, filaments: tied };
+const tiedData = galaxyBackdropData(tiedGalaxy);
+check(
+  "independent of filament order (whole dust, lanes included)",
+  JSON.stringify(galaxyBackdropData({ ...tiedGalaxy, filaments: [...tied].reverse() }).dust.lanes) === JSON.stringify(tiedData.dust.lanes) &&
+    JSON.stringify(tiedData.dust.lanes.map((l) => l.path)) !== JSON.stringify(d.dust.lanes.map((l) => l.path))
+);
+check("…and so are the dust arrays, point for point", JSON.stringify(galaxyBackdropData({ ...tiedGalaxy, filaments: [...tied].reverse() }).dust) === JSON.stringify(tiedData.dust));
+console.log("\nClamping");
+const far: GalaxyStructure = {
+  coreRadius: 180, diskRadius: 0,
+  filaments: [{ from: "p", to: "q", weight: 1, path: path(-9000, -9000, 9000, 9000) }],
+};
+const farData = galaxyBackdropData(far);
+const farHalf = farData.width / 2;
+check("a filament past the box is clamped onto its edge", farData.dust.x.some((x) => Math.abs(x) === farHalf) || farData.dust.y.some((y) => Math.abs(y) === farHalf));
+check("…and nothing escapes the box", farData.dust.x.every((x) => Math.abs(x) <= farHalf) && farData.dust.y.every((y) => Math.abs(y) <= farHalf));
 const empty = galaxyBackdropData({ coreRadius: 180, diskRadius: 0, filaments: [] });
 check("an empty galaxy still has a box and no dust", empty.dust.x.length === 0 && empty.dust.lanes.length === 0 && empty.width >= 800);
 console.log("\ngalaxy-dust: all checks passed");

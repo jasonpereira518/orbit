@@ -9,7 +9,7 @@ import {
   useSkyBitmap,
   type DrawnCanvas,
 } from "@/components/graph/graph-nodes";
-import type { GalaxyBackdropData } from "@/lib/graph/galaxy-dust";
+import { galaxyBackdropZoom, type GalaxyBackdropData } from "@/lib/graph/galaxy-dust";
 import { cn } from "@/lib/utils";
 
 /**
@@ -42,11 +42,16 @@ function GalaxyBackdropNodeComponent({ data }: NodeProps & { data: GalaxyBackdro
     // Never skip the first draw: an empty canvas is a sky with no galaxy in it.
     if (moving && drawnOnce.current) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    if (alreadyDrawn(drawn.current, data, zoom, dpr)) return;
+    // The backing scale is min(zoom·dpr, cap/width), and the cap binds at nearly every zoom a
+    // real network reaches, so the pixels stop changing with the camera. Holding the zoom at the
+    // step where the cap binds makes every later quarter-octave step the same job, which
+    // `alreadyDrawn` skips.
+    const effZoom = galaxyBackdropZoom(zoom, data.width, dpr, GALAXY_BACKDROP_MAX_BACKING_PX);
+    if (alreadyDrawn(drawn.current, data, effZoom, dpr)) return;
     return drawNowUnlessHidden(canvas, () => {
       drawnOnce.current = true;
-      drawn.current = { data, zoom, dpr };
-      render({ kind: "galaxy", data, zoom, dpr, maxBackingPx: GALAXY_BACKDROP_MAX_BACKING_PX });
+      drawn.current = { data, zoom: effZoom, dpr };
+      render({ kind: "galaxy", data, zoom: effZoom, dpr, maxBackingPx: GALAXY_BACKDROP_MAX_BACKING_PX });
     });
   }, [data, zoom, moving, canvasRef, render]);
 

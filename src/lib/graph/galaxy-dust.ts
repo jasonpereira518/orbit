@@ -50,7 +50,16 @@ export function galaxyBackdropData(galaxy: GalaxyStructure): GalaxyBackdropData 
   const half = Math.max(galaxy.diskRadius * BOX_MARGIN, galaxy.coreRadius * 2, MIN_HALF);
   const dust: GalaxyDust = { x: [], y: [], alpha: [], radius: [], lanes: [] };
 
-  for (const f of galaxy.filaments) {
+  // Weight first, then the pair's names: the order the filaments arrive in must change nothing,
+  // neither which lanes are kept nor where in the arrays a dot lands.
+  const ordered = [...galaxy.filaments].sort(
+    (a, b) =>
+      b.weight - a.weight ||
+      (a.from < b.from ? -1 : a.from > b.from ? 1 : 0) ||
+      (a.to < b.to ? -1 : a.to > b.to ? 1 : 0)
+  );
+
+  for (const f of ordered) {
     if (f.path.length < 2) continue;
     const lengths = f.path.slice(1).map((p, i) => Math.hypot(p.x - f.path[i].x, p.y - f.path[i].y));
     const total = lengths.reduce((s, l) => s + l, 0);
@@ -70,8 +79,7 @@ export function galaxyBackdropData(galaxy: GalaxyStructure): GalaxyBackdropData 
     }
   }
 
-  [...galaxy.filaments]
-    .sort((a, b) => b.weight - a.weight || (a.from < b.from ? -1 : a.from > b.from ? 1 : 0))
+  ordered
     .slice(0, LANES)
     .forEach((f) => {
       const seed = `${f.from}|${f.to}`;
@@ -83,4 +91,15 @@ export function galaxyBackdropData(galaxy: GalaxyStructure): GalaxyBackdropData 
     });
 
   return { kind: "galaxyBackdrop", coreRadius: galaxy.coreRadius, diskRadius: galaxy.diskRadius, dust, minX: -half, minY: -half, width: half * 2, height: half * 2 };
+}
+
+/**
+ * The zoom the backdrop's bitmap is drawn at. The backing scale is `min(zoom·dpr, cap/width)`,
+ * so once `zoom` reaches `cap/(width·dpr)` the cap binds and the pixels stop changing with the
+ * camera. Holding the zoom at that point makes every later zoom step the SAME job, so the node's
+ * "already drawn" check skips it: at 10,000 contacts that is one draw ever. Below it the scale
+ * still follows the zoom, correctly (a small galaxy's box fits the cap only at high zoom).
+ */
+export function galaxyBackdropZoom(zoom: number, width: number, dpr: number, maxBackingPx: number) {
+  return Math.min(zoom, maxBackingPx / (Math.max(width, 1) * dpr));
 }

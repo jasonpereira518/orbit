@@ -46,7 +46,7 @@ export function drawSkyBitmap(ctx: Ctx, job: SkyBitmapJob) {
   ctx.clearRect(data.minX, data.minY, data.width, data.height);
   if (job.kind === "wash") drawWash(ctx, job.data, scale);
   else if (job.kind === "dust") drawDust(ctx, job.data, job.zoom);
-  else drawGalaxyBackdrop(ctx, job.data, job.zoom);
+  else drawGalaxyBackdrop(ctx, job.data, scale);
   ctx.globalAlpha = 1;
 }
 
@@ -109,11 +109,19 @@ function drawDust(ctx: Ctx, data: StarDustData, zoom: number) {
 }
 
 /**
+ * Dots per path before it is filled. One path and one fill for a whole alpha band is
+ * super-linear in Skia (2.5s for 16k dots at 10,000 contacts); measured with @napi-rs/canvas at
+ * 10,000 contacts the whole backdrop draws in ~120ms at 150 dots, ~70ms at 50 and ~48ms at 25 or
+ * fewer, so 25.
+ */
+export const DUST_CHUNK = 25;
+
+/**
  * The galaxy behind everything: a cool disk haze, a warm bulge, dark lanes across the strongest
  * relatedness chains, and dust along all of them. Every gradient fades to its OWN colour at zero
  * alpha (never `transparent`, which is black), as the washes do.
  */
-export function drawGalaxyBackdrop(ctx: Ctx, data: GalaxyBackdropData, zoom: number) {
+export function drawGalaxyBackdrop(ctx: Ctx, data: GalaxyBackdropData, scale: number) {
   if (data.diskRadius > 0) {
     const disk = ctx.createRadialGradient(0, 0, 0, 0, 0, data.diskRadius);
     disk.addColorStop(0, "rgba(150,175,255,0.085)");
@@ -144,20 +152,25 @@ export function drawGalaxyBackdrop(ctx: Ctx, data: GalaxyBackdropData, zoom: num
     ctx.stroke();
   }
 
-  // Dust in six alpha bands, one path and one fill each: thousands of dots, a handful of draws.
-  const minRadius = 0.75 / Math.max(zoom, 0.01);
+  // Dust in six alpha bands, filled in chunks of `DUST_CHUNK` dots: thousands of dots, in
+  // small fills. At least three quarters of a BACKING pixel, so a dim dot never vanishes; taken
+  // from the backing scale rather than the camera zoom, so the picture depends on nothing that
+  // changes once the backing-store cap binds.
+  const minRadius = 0.75 / Math.max(scale, 0.0001);
   const bands: number[][] = [[], [], [], [], [], []];
   data.dust.alpha.forEach((a, i) => bands[Math.min(5, Math.floor(a / 0.04))].push(i));
   bands.forEach((indices, band) => {
     if (indices.length === 0) return;
     ctx.globalAlpha = 0.04 * band + 0.02;
     ctx.fillStyle = "rgb(190,208,255)";
-    ctx.beginPath();
-    for (const i of indices) {
-      const r = Math.max(minRadius, data.dust.radius[i]);
-      ctx.moveTo(data.dust.x[i] + r, data.dust.y[i]);
-      ctx.arc(data.dust.x[i], data.dust.y[i], r, 0, Math.PI * 2);
+    for (let start = 0; start < indices.length; start += DUST_CHUNK) {
+      ctx.beginPath();
+      for (const i of indices.slice(start, start + DUST_CHUNK)) {
+        const r = Math.max(minRadius, data.dust.radius[i]);
+        ctx.moveTo(data.dust.x[i] + r, data.dust.y[i]);
+        ctx.arc(data.dust.x[i], data.dust.y[i], r, 0, Math.PI * 2);
+      }
+      ctx.fill();
     }
-    ctx.fill();
   });
 }
