@@ -11,6 +11,8 @@ export type ComposeRequest = {
   body?: string;
   /** Files already uploaded (a scheduled send reopened with Edit). */
   attachments?: { filename: string; size: number; pathname: string }[];
+  /** Reply into this conversation (a reply key, direct-email P5). */
+  replyTo?: string;
 };
 
 export function openCompose(req: ComposeRequest): void {

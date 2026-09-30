@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
-import { MAX_ATTACHMENT_BYTES_OUTLOOK } from "@/lib/email/config";
+import { MAX_ATTACHMENT_BYTES_OUTLOOK, MAX_ATTACHMENT_BYTES_OUTLOOK_REPLY } from "@/lib/email/config";
+import { buildMime, withBccHeader } from "@/lib/email/mime";
 import { MailProviderError, type MailProvider, type OutboundMessage } from "@/lib/email/providers/types";
 import { graphFetchWithRetry } from "@/lib/graph-fetch";
 import { getValidAccessToken, hasMailScope, hasSendScope } from "@/lib/outlook";
@@ -17,6 +18,10 @@ import { getValidAccessToken, hasMailScope, hasSendScope } from "@/lib/outlook";
  * Graph rules this relies on (v1.0 docs, checked Sep 30 2026): custom headers must be named
  * `x-…`, can only be set when the message is created or sent, and come back only when a single
  * message is read with `$select=internetMessageHeaders`.
+ *
+ * Replies (direct-email P5) post MIME instead (`Content-Type: text/plain`, base64 — still
+ * Mail.Send, checked Sep 30 2026): only the MIME form can carry In-Reply-To/References, since
+ * JSON `internetMessageHeaders` takes `x-` names only. New messages keep JSON.
  *
  * sendMail is deliberately NOT sent through `graphFetchWithRetry`: that helper retries 429/503/
  * 504, and retrying a non-idempotent send is how a person gets two copies. The outbox's own
@@ -96,18 +101,29 @@ export const outlookProvider: MailProvider = {
   async send(userId, msg) {
     // Files ride inline in sendMail, which caps them (Mail.Send only — no upload session).
     // Enqueue already refuses more; this keeps a stale row from failing at Graph instead.
+    const reply = Boolean(msg.inReplyTo);
     const attached = (msg.attachments ?? []).reduce((n, a) => n + a.bytes.length, 0);
-    if (attached > MAX_ATTACHMENT_BYTES_OUTLOOK) {
+    if (attached > (reply ? MAX_ATTACHMENT_BYTES_OUTLOOK_REPLY : MAX_ATTACHMENT_BYTES_OUTLOOK)) {
       throw new MailProviderError("permanent", "attachments over Outlook's sendMail limit");
     }
     const accessToken = await token(userId);
+    // Bcc rides in the MIME headers; Exchange strips it on delivery like any MTA.
+    const request = reply
+      ? {
+          contentType: "text/plain",
+          body: Buffer.from(
+            withBccHeader(buildMime({ ...msg, extraHeaders: [[ORBIT_SEND_HEADER, msg.messageId]] }), msg.bcc),
+            "utf8"
+          ).toString("base64"),
+        }
+      : { contentType: "application/json", body: JSON.stringify(sendMailPayload(msg, msg.messageId)) };
     let res: Response;
     try {
       res = await fetch(`${GRAPH}/sendMail`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify(sendMailPayload(msg, msg.messageId)),
-        signal: AbortSignal.timeout(20_000),
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": request.contentType },
+        body: request.body,
+        signal: AbortSignal.timeout(reply && msg.attachments?.length ? 60_000 : 20_000),
       });
     } catch (err) {
       // The request may have reached Graph. The outbox checks Sent before any retry.

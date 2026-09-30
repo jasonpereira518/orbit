@@ -230,6 +230,7 @@ const WIDGETS: Surface[] = [
  */
 export const COMPOSE_SURFACE_KEY = "feature.compose";
 export const OUTLOOK_SEND_SURFACE_KEY = "feature.outlook-send";
+export const REPLY_INBOX_SURFACE_KEY = "feature.reply-inbox";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
@@ -244,6 +245,14 @@ const FEATURES: Surface[] = [
     label: "Send from Outlook",
     description: "Send Orbit email from a connected Outlook or Microsoft 365 mailbox (Mail.Send).",
     // Until the privacy page discloses Mail.Send (direct-email P3, Task 8).
+    comingSoon: true,
+  },
+  {
+    key: REPLY_INBOX_SURFACE_KEY,
+    kind: "feature",
+    label: "Reply to inbox threads",
+    description: "Compose can reply to the latest email with a contact found in your mailbox (Gmail read / Mail.Read).",
+    // Until the privacy page discloses this use of the read scopes (direct-email P5).
     comingSoon: true,
   },
 ];

@@ -25,11 +25,11 @@ function check(label: string, ok: boolean, detail = "") {
 type Mode = "ok" | "400" | "401" | "403" | "413" | "429" | "500" | "503" | "504" | "network";
 let mode: Mode = "ok";
 let headerInSent: string | null = null;
-const calls: { url: string; method: string; body: string }[] = [];
+const calls: { url: string; method: string; body: string; contentType: string }[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input);
-  calls.push({ url, method: init?.method ?? "GET", body: String(init?.body ?? "") });
+  calls.push({ url, method: init?.method ?? "GET", body: String(init?.body ?? ""), contentType: new Headers(init?.headers).get("content-type") ?? "" });
   if (url.includes("/me/sendMail")) {
     if (mode === "network") throw new TypeError("fetch failed");
     if (mode !== "ok") return new Response(JSON.stringify({ error: { code: "x", message: "nope" } }), { status: Number(mode) });
@@ -126,6 +126,28 @@ async function main() {
     calls.length = 0;
     await kind("503");
     check("sendMail is never retried inside the provider", calls.filter((c) => c.url.includes("/me/sendMail")).length === 1);
+
+    console.log("replies go as MIME");
+    mode = "ok";
+    calls.length = 0;
+    await outlookProvider.send(USER, { ...MSG, inReplyTo: "<parent@x.org>", references: "<parent@x.org>" }, OPTS);
+    const mimeCall = calls.find((c) => c.url.endsWith("/me/sendMail"));
+    const mime = Buffer.from(mimeCall?.body ?? "", "base64").toString("utf8");
+    check("a reply posts base64 MIME as text/plain", mimeCall?.contentType === "text/plain" && !mimeCall.body.trim().startsWith("{"), mimeCall?.contentType);
+    check("with In-Reply-To", /^In-Reply-To: <parent@x\.org>$/m.test(mime));
+    check("and References", /^References: <parent@x\.org>$/m.test(mime));
+    check("and the duplicate-check header", mime.includes(`\r\nx-orbit-send-id: ${MSG.messageId}\r\n`));
+    check("Bcc rides in the MIME headers", /^Bcc: b@x\.org$/m.test(mime.split("\r\n\r\n")[0]!));
+    calls.length = 0;
+    await outlookProvider.send(USER, MSG, OPTS);
+    const jsonCall = calls.find((c) => c.url.endsWith("/me/sendMail"));
+    check("a new message keeps JSON", jsonCall?.contentType === "application/json" && jsonCall.body.trim().startsWith("{"));
+    const bigFile = { filename: "a.pdf", contentType: "application/pdf", bytes: new Uint8Array(2 * 1024 * 1024 + 1) };
+    calls.length = 0;
+    const bigErr = await outlookProvider
+      .send(USER, { ...MSG, inReplyTo: "<p@x>", references: "<p@x>", attachments: [bigFile] }, OPTS)
+      .then(() => null, (e) => e);
+    check("a reply over 2 MB of files is refused before any request", bigErr instanceof MailProviderError && bigErr.kind === "permanent" && calls.length === 0);
 
     console.log("attachments");
     const withFile = sendMailPayload(

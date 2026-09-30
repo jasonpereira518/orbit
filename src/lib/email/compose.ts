@@ -16,6 +16,13 @@ import { contactSearchCondition } from "@/lib/contact-search-rank";
 import { verifyAttachmentRefs, type AttachmentFailure, type AttachmentInput } from "@/lib/email/attachments";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { ENQUEUE_COPY, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
+import {
+  listReplyTargets,
+  replySubject,
+  resolveReplyTarget,
+  type ReplyTarget,
+  type ResolvedReply,
+} from "@/lib/email/reply-targets";
 import { getSendCapability, resolveSender, type MailboxId, type SendCapability } from "@/lib/email/sender";
 import { loadEmailSettings } from "@/lib/email/settings";
 import { appendSignature } from "@/lib/email/signature";
@@ -38,6 +45,8 @@ export type ComposeContext = {
   signature: string | null;
   /** Blob storage is configured, so the composer can offer attachments (P4). */
   attachmentsAvailable: boolean;
+  /** Conversations this can reply into, newest first (P5). Empty without a contact. */
+  replyTargets: ReplyTarget[];
   contact: {
     id: string;
     name: string;
@@ -53,7 +62,7 @@ export async function getComposeContext(userId: string, contactId: string | null
   const db = await getDb();
   const [capability, { signature }] = await Promise.all([getSendCapability(userId), loadEmailSettings(userId)]);
   const attachmentsAvailable = hasBlobStorage();
-  if (!contactId) return { capability, signature, attachmentsAvailable, contact: null };
+  if (!contactId) return { capability, signature, attachmentsAvailable, replyTargets: [], contact: null };
   const [row] = await db
     .select({
       id: contacts.id,
@@ -85,6 +94,8 @@ export async function getComposeContext(userId: string, contactId: string | null
     capability,
     signature,
     attachmentsAvailable,
+    // Only once the contact is confirmed as this user's.
+    replyTargets: await listReplyTargets(userId, contactId),
     contact: {
       id: row.id,
       name: row.preferredName || row.fullName,
@@ -158,11 +169,15 @@ export type ComposeInput = {
   attachments?: AttachmentInput[];
   /** ISO instant for a scheduled send; omitted = send after the undo window. */
   scheduledFor?: string;
+  /** A reply key from ComposeContext.replyTargets or a pending row's replyKey (P5). */
+  replyTo?: string;
 };
 
 export type ComposeResult =
   | { ok: true; sendId: string; sendAt: string; to: string[]; scheduled: boolean }
-  | { ok: false; reason: EnqueueRefusal | "empty_body" | "too_long" | "not_retryable"; message: string };
+  | { ok: false; reason: EnqueueRefusal | "empty_body" | "too_long" | "not_retryable" | "reply_gone"; message: string };
+
+const REPLY_GONE = "That conversation isn’t available any more — send it as a new email?";
 
 const ATTACHMENT_REFUSAL: Record<AttachmentFailure["reason"], EnqueueRefusal> = {
   too_many: "too_many_files",
@@ -187,22 +202,37 @@ export async function sendComposed(userId: string, input: ComposeInput): Promise
     sendAt = new Date(input.scheduledFor);
     if (Number.isNaN(sendAt.getTime())) return { ok: false, reason: "bad_schedule", message: ENQUEUE_COPY.bad_schedule };
   }
-  // Files are checked against the mailbox this send will actually use (Outlook takes ~3 MB).
+  let reply: ResolvedReply | null = null;
+  if (input.replyTo) {
+    reply = await resolveReplyTarget(userId, input.replyTo);
+    if (!reply) return { ok: false, reason: "reply_gone", message: REPLY_GONE };
+  }
+  // Files and threads depend on the mailbox this send will actually use (Outlook takes ~3 MB,
+  // 2 MB for a reply; a Gmail thread id is only valid inside its own mailbox).
   let refs: EmailAttachmentRef[] = [];
-  if (input.attachments?.length) {
+  let threadId: string | null = null;
+  if (input.attachments?.length || reply) {
     const sender = await resolveSender(userId, input.provider ?? null);
     if (!sender.ok) return { ok: false, reason: sender.reason, message: ENQUEUE_COPY[sender.reason] };
-    const verified = await verifyAttachmentRefs(userId, input.attachments, sender.provider);
-    if (!verified.ok) return { ok: false, reason: ATTACHMENT_REFUSAL[verified.reason], message: verified.message };
-    refs = verified.refs;
+    if (input.attachments?.length) {
+      const verified = await verifyAttachmentRefs(userId, input.attachments, sender.provider, { reply: Boolean(reply) });
+      if (!verified.ok) return { ok: false, reason: ATTACHMENT_REFUSAL[verified.reason], message: verified.message };
+      refs = verified.refs;
+    }
+    if (reply?.thread && reply.thread.provider === sender.provider && reply.thread.email === sender.fromEmail) {
+      threadId = reply.thread.threadId;
+    }
   }
   const { signature } = await loadEmailSettings(userId);
   const queued = await enqueueEmail(userId, {
     to: input.to,
     cc: input.cc,
     bcc: input.bcc,
-    subject,
+    subject: reply ? replySubject(reply.subject) : subject,
     bodyText: appendSignature(body, signature),
+    inReplyToRfcId: reply?.rfcMessageId ?? null,
+    inReplyToSendId: reply?.inReplyToSendId ?? null,
+    threadId,
     fromName: input.fromName,
     origin: "compose",
     originRef: input.contactId,
@@ -227,6 +257,8 @@ export type PendingSend = {
   /** Set when this is a scheduled send (P4), not one waiting out its undo window. */
   scheduledFor: string | null;
   attachments: { filename: string; size: number; pathname: string }[];
+  /** Edit keeps the reply: resolves to this row's own reply fields (P5). */
+  replyKey: string | null;
 };
 
 /** Failed sends these surfaces can resend; agent and recruiter failures are handled on their own screens. */
@@ -271,6 +303,7 @@ export async function listContactPendingSends(userId: string, contactId: string)
         ? r.sendAt.toISOString()
         : null,
     attachments: r.attachments.map((a) => ({ filename: a.filename, size: a.size, pathname: a.blobKey })),
+    replyKey: r.inReplyToRfcId ? `copy:${r.id}` : null,
   }));
 }
 
@@ -304,6 +337,8 @@ export async function retryFailedSend(userId: string, sendId: string, fromName: 
     idempotencyKey: old.idempotencyKey,
     contactIds: old.contactIds,
     threadId: old.providerThreadId,
+    inReplyToRfcId: old.inReplyToRfcId,
+    inReplyToSendId: old.inReplyToSendId,
     attachments: old.attachments,
     delayMs: UNDO_DELAY_MS,
   });
