@@ -1,4 +1,5 @@
 import { getValidAccessToken } from "@/lib/gmail";
+import { encodeHeader, formatAddress, sanitizeHeader, toBase64Url } from "@/lib/email/mime";
 
 /**
  * Sends mail as the user through the Gmail API.
@@ -31,50 +32,7 @@ export type GmailSendResult = {
   gmailThreadId: string | null;
 };
 
-/**
- * RFC 2047 encoded-word, so non-ASCII subjects survive transport.
- * Headers are 7-bit only; a bare "Café" arrives mojibaked.
- */
-function isAscii(value: string) {
-  for (let i = 0; i < value.length; i += 1) {
-    if (value.charCodeAt(i) > 127) return false;
-  }
-  return true;
-}
-
-function encodeHeader(value: string) {
-  if (isAscii(value)) return value;
-  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
-}
-
-/** Strip CR/LF from header values — an unescaped newline is a header-injection vector. */
-function sanitizeHeader(value: string) {
-  return value.replace(/[\r\n]+/g, " ").trim();
-}
-
-/**
- * Render a `Display Name <addr>` header value.
- *
- * ASCII names are quoted unconditionally — always valid, and it sidesteps having to
- * decide whether a given name contains RFC 5322 specials. Non-ASCII names use an
- * encoded-word instead, which must NOT be quoted.
- */
-export function formatAddress(name: string | null | undefined, email: string) {
-  const addr = sanitizeHeader(email);
-  const display = sanitizeHeader(name || "");
-  if (!display) return addr;
-  if (!isAscii(display)) return `${encodeHeader(display)} <${addr}>`;
-  const escaped = display.replace(/(["\\])/g, "\\$1");
-  return `"${escaped}" <${addr}>`;
-}
-
-function toBase64Url(input: string) {
-  return Buffer.from(input, "utf8")
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
+export { formatAddress } from "@/lib/email/mime";
 
 export function buildMimeMessage(input: GmailSendInput): string {
   const headers = [
