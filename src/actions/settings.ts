@@ -98,6 +98,8 @@ export async function getSettings() {
      * this account's AI key. On unless switched off; see the column in schema.ts.
      */
     workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
+    /** Email insights (opt-in). Off unless switched on; see `user_settings.email_intel_enabled`. */
+    emailIntelEnabled: (settings?.emailIntelEnabled ?? 0) !== 0,
     /** Radar's Monday email. On unless switched off (Settings, or its one-click link). */
     radarDigestEnabled: (settings?.radarDigestEnabled ?? 1) !== 0,
     /**

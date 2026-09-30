@@ -5335,6 +5335,7 @@
     },
     "hasApolloKey": false,
     "workHistoryAutoEnabled": true,
+    "emailIntelEnabled": false,
     "radarDigestEnabled": true,
     "hasApiKey": false,
     "providers": [
