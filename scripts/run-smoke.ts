@@ -290,6 +290,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-connector-claim": "pglite",
   "smoke-connector-outbox": "pglite",
   "smoke-email-provider-gmail": "pglite",
+  "smoke-email-provider-outlook": "pglite",
   "smoke-email-contacts": "pglite",
   "smoke-email-sends": "pglite",
   "smoke-email-origins": "pglite",

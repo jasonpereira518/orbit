@@ -19,6 +19,7 @@ import { MailProviderError, type SendResult } from "@/lib/email/providers/types"
 import { normalizeRecipients } from "@/lib/email/recipients";
 import { countEmailSendsToday, resolveSender } from "@/lib/email/sender";
 import { getEntitlements } from "@/lib/entitlements";
+import { markOutlookNeedsReauth } from "@/lib/outlook";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
 
@@ -337,6 +338,9 @@ async function settleFailed(
       .set({ status: "needs_reauth", nextSyncAt: null, updatedAt: new Date() })
       .where(eq(gmailConnections.userId, done.userId))
       .catch(() => null);
+  }
+  if (kind === "auth" && done.provider === "outlook") {
+    await markOutlookNeedsReauth(done.userId).catch(() => null);
   }
   await originHooks(done.origin)
     .onFailed?.(done, kind, message)
