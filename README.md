@@ -68,22 +68,27 @@ Your network is probably your most valuable asset, and you have no system for ke
 
 1. **Built for messy input.** Other CRMs need clean data entry. Orbit starts from the notes you actually take.
 2. **It tells you what to do next.** Orbit gives you a daily to-do list for your relationships, not just a database.
-3. **Your AI, at cost.** You connect your own Gemini, OpenAI, or Anthropic account. Orbit never marks up AI usage.
+3. **Your AI, your choice.** Bring your own Gemini, OpenAI, or Anthropic key on any plan, or use the AI included with Pro and Max.
 4. **You stay in control.** Orbit never sends anything without your approval, including messages an assistant drafts for you.
 5. **Personal, not corporate.** It's designed to feel like your own sky, not like enterprise software.
 
 ## Pricing
 
-| | **Free** | **Orbit Pro** | **Orbit Lifetime** |
+| | **Free** | **Orbit Pro** | **Orbit Max** |
 |---|---|---|---|
-| **Price** | $0 forever | $5/month or $50/year | $25 once for the first 100 buyers, then $75 |
+| **Price** | $0 forever | $8.99/month or $89.99/year | $19.99/month or $199.99/year |
 | **Contacts** | Up to 500 | Unlimited | Unlimited |
+| **AI** | Your own key | Included: 200 credits a month | Included: 500 credits a month |
 | **Capture, Chat, Constellation, Knowledge, reminders, LinkedIn import, export** | ✓ | ✓ | ✓ |
 | **Claude and ChatGPT connector** | ✓ | ✓ | ✓ |
-| **Recruiter tracking, Chrome extension, calendar sources** | | ✓ | ✓ |
-| **Contact enrichment** | | Included | Uses your own enrichment key |
+| **Google and Microsoft accounts** | One of the two | Both | Both |
+| **Recruiter tracking, calendar subscriptions** | | ✓ | ✓ |
+| **Voice notes** | 1 hour a month | 5 hours a month | 10 hours a month |
+| **Meeting transcription** | | 5 hours a month | 10 hours a month |
+| **Contact enrichment** | | 10 a month | 25 a month |
+| **REST API and webhooks** | | | ✓ |
 
-On every plan, AI runs on your own provider account and is billed to you at cost. Hitting a limit only stops you adding new contacts. Orbit never hides or deletes your data.
+Free: bring your own AI key. Pro and Max: AI included, with $5 packs of 250 credits if you ever need more, and nothing charged automatically. A year paid up front is two months free. Hitting a limit only stops you adding new contacts. Orbit never hides or deletes your data.
 
 ## Trust and privacy
 
@@ -96,7 +101,6 @@ On every plan, AI runs on your own provider account and is billed to you at cost
 ## Coming soon
 
 - **Events.** Remember the conferences and meetups you went to and the people you met there.
-- **Outreach.** Find the right people and run personal, tracked outreach at your own pace.
 - **Radar.** Every night, Orbit looks over your network and tells you who is worth a message this week, and why.
 
 ---
