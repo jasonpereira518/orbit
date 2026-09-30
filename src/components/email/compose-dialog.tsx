@@ -9,6 +9,7 @@ import { AttachmentList, type ComposeAttachment } from "@/components/email/attac
 import { ConnectMailboxButton } from "@/components/email/connect-mailbox-button";
 import { MailboxSelect } from "@/components/email/mailbox-select";
 import { RecipientField } from "@/components/email/recipient-field";
+import { ReplyPicker } from "@/components/email/reply-picker";
 import { ScheduleMenu, SchedulePicker } from "@/components/email/schedule-menu";
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import type { ComposeRequest } from "@/lib/compose-events";
 import { attachmentPrefixFor, BLOB_ACCESS, isBlockedFilename, safeFilename } from "@/lib/email/attachment-paths";
 import type { ComposeContext, ComposeRecipient } from "@/lib/email/compose";
 import { MAX_ATTACHMENTS, maxAttachmentBytesFor } from "@/lib/email/config";
+import { replySubject } from "@/lib/email/reply-subject";
 import { formatScheduled } from "@/lib/email/schedule-presets";
 import type { MailboxId } from "@/lib/email/sender";
 import { stripSignature } from "@/lib/email/signature";
@@ -62,6 +64,8 @@ export function ComposeDialog({
   );
   const fileInput = useRef<HTMLInputElement>(null);
   const [picking, setPicking] = useState(false);
+  // A reply key (P5). Not kept in the local draft: reopening starts as a new email.
+  const [replyTo, setReplyTo] = useState<string | null>(request.replyTo ?? null);
   const [sending, startSend] = useTransition();
   const [drafting, startDraft] = useTransition();
 
@@ -200,8 +204,11 @@ export function ComposeDialog({
           provider: fromProvider ?? undefined,
           attachments: files,
           scheduledFor: scheduledFor?.toISOString(),
+          replyTo: replyTo ?? undefined,
         });
         if (!res.ok) {
+          // The conversation went away: fall back to a new email, keeping what was written.
+          if (res.reason === "reply_gone") setReplyTo(null);
           setProblem(res.message);
           return;
         }
@@ -299,15 +306,23 @@ export function ComposeDialog({
                 <RecipientField id="compose-bcc" label="Bcc" value={bcc} onChange={setBcc} />
               </>
             )}
-            <Input
-              aria-label="Subject"
-              placeholder="Subject"
-              value={subject}
-              maxLength={200}
-              onChange={(e) => setSubject(e.target.value)}
-              className="rounded-none border-0 border-b border-border/60 px-0 shadow-none focus-visible:ring-0"
-              autoFocus={to.length > 0 && !subject}
-            />
+            <ReplyPicker targets={ready?.replyTargets ?? []} value={replyTo} onChange={setReplyTo} disabled={sending} />
+            {replyTo ? (
+              // The server fixes a reply's subject (Gmail threads only on a matching one).
+              <p aria-label="Subject" className="min-w-0 truncate border-b border-border/60 py-2">
+                {replySubject(ready?.replyTargets.find((t) => t.key === replyTo)?.subject ?? subject)}
+              </p>
+            ) : (
+              <Input
+                aria-label="Subject"
+                placeholder="Subject"
+                value={subject}
+                maxLength={200}
+                onChange={(e) => setSubject(e.target.value)}
+                className="rounded-none border-0 border-b border-border/60 px-0 shadow-none focus-visible:ring-0"
+                autoFocus={to.length > 0 && !subject}
+              />
+            )}
             <Textarea
               aria-label="Message"
               rows={9}

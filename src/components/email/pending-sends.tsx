@@ -61,7 +61,15 @@ export function PendingSends({
                 ? `Scheduled ${formatScheduled(new Date(s.scheduledFor), new Date())}`
                 : "Waiting to send";
         const files = s.attachments.length ? ` · ${s.attachments.length} ${s.attachments.length === 1 ? "file" : "files"}` : "";
-        const reopen = () => openCompose({ contactId, to: s.to, subject: s.subject, body: s.bodyText, attachments: s.attachments });
+        const reopen = () =>
+          openCompose({
+            contactId,
+            to: s.to,
+            subject: s.subject,
+            body: s.bodyText,
+            attachments: s.attachments,
+            replyTo: s.replyKey ?? undefined,
+          });
         return (
           <div key={s.id} className="flex flex-wrap items-center gap-2 text-sm">
             {failed ? (
