@@ -58,6 +58,7 @@ export async function sendComposedEmail(input: Omit<ComposeInput, "fromName">): 
           .map((a) => ({ pathname: a.pathname, filename: a.filename }))
       : undefined,
     scheduledFor: typeof input?.scheduledFor === "string" ? input.scheduledFor : undefined,
+    replyTo: typeof input?.replyTo === "string" && input.replyTo.length <= 600 ? input.replyTo : undefined,
   });
   // A scheduled send is the drain's to deliver; after() would sleep until then inside this action.
   if (result.ok && !result.scheduled) scheduleDispatch(result.sendId, new Date(result.sendAt));

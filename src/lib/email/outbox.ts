@@ -100,6 +100,8 @@ export type EnqueueInput = {
   /** Provider thread to reply into (recruiter replies). */
   threadId?: string | null;
   inReplyToRfcId?: string | null;
+  /** The Orbit send this replies to (P5), for the thread picker and retries. */
+  inReplyToSendId?: string | null;
   /** Skip the lookup when the caller already knows (e.g. a contact-page send). */
   contactIds?: string[];
   /**
@@ -192,6 +194,7 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
         rfcMessageId: newRfcMessageId(),
         providerThreadId: input.threadId ?? null,
         inReplyToRfcId: input.inReplyToRfcId ?? null,
+        inReplyToSendId: input.inReplyToSendId ?? null,
       })
       .returning(); // bare: a field selector breaks over the Db union
     return { ok: true, id: row!.id, sendAt: row!.sendAt, to: recipients.to, provider: sender.provider };

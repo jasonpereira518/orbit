@@ -24,7 +24,7 @@ import { attachmentPrefixFor } from "../src/lib/email/attachment-paths";
 import { setAttachmentBlobClientForTests } from "../src/lib/email/attachments";
 import { dispatchEmailSend } from "../src/lib/email/outbox";
 import { setProviderOverride } from "../src/lib/email/providers";
-import type { MailProvider, OutboundMessage } from "../src/lib/email/providers/types";
+import type { MailProvider, OutboundMessage, ProviderSendOptions } from "../src/lib/email/providers/types";
 import { saveEmailSignature } from "../src/lib/email/settings";
 import { setOutlookSendOverride } from "../src/lib/email/sender";
 import { MICROSOFT_SCOPES } from "../src/lib/microsoft-scopes";
@@ -38,13 +38,15 @@ function check(label: string, ok: boolean, detail = "") {
   if (!ok) failures++;
 }
 const sent: OutboundMessage[] = [];
+const sentOpts: ProviderSendOptions[] = [];
 const fake: MailProvider = {
   id: "gmail",
   async identity() {
     return { email: "me@acme-corp.io" };
   },
-  async send(_u, msg) {
+  async send(_u, msg, opts) {
     sent.push(msg);
+    sentOpts.push(opts);
     return { providerMessageId: `pm-${sent.length}`, providerThreadId: "pt" };
   },
   async findSent() {
@@ -223,6 +225,51 @@ async function main() {
     if (!again.ok) throw new Error(`retry refused: ${JSON.stringify(again)}`);
     const [copy] = await db.select().from(schema.emailSends).where(eq(schema.emailSends.id, again.sendId));
     check("retry copies the files", copy?.attachments?.[0]?.blobKey === file.pathname);
+
+    console.log("reply in thread");
+    await resetBucket();
+    const first = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Coffee?", body: "Hi", contactId: maya!.id, fromName: null });
+    if (!first.ok) throw new Error(`first send refused: ${JSON.stringify(first)}`);
+    await flush();
+    const replyCtx = await getComposeContext(USER, maya!.id);
+    const target = replyCtx?.replyTargets.find((t) => t.source === "orbit");
+    check("the composer offers the thread it just sent", target?.key === `orbit:${first.sendId}` && target.subject === "Coffee?", JSON.stringify(replyCtx?.replyTargets));
+    check("no targets without a contact", (await getComposeContext(USER, null))?.replyTargets.length === 0);
+    const reply = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "ignored", body: "Following up", contactId: maya!.id, fromName: null, replyTo: target!.key });
+    check("a reply queues", reply.ok, JSON.stringify(reply));
+    if (!reply.ok) throw new Error("stop");
+    const [row] = await db.select().from(schema.emailSends).where(eq(schema.emailSends.id, reply.sendId));
+    const [parent] = await db.select().from(schema.emailSends).where(eq(schema.emailSends.id, first.sendId));
+    check("subject is Re: the original, not what was typed", row?.subject === "Re: Coffee?", row?.subject);
+    check("it points at the parent", row?.inReplyToRfcId === parent?.rfcMessageId && row?.inReplyToSendId === first.sendId);
+    check("same Gmail mailbox → the thread id rides along", row?.providerThreadId === "pt" && parent?.providerThreadId === "pt", `${row?.providerThreadId}/${parent?.providerThreadId}`);
+    await flush();
+    check("the provider gets In-Reply-To", sent[sent.length - 1]?.inReplyTo === parent?.rfcMessageId && sent[sent.length - 1]?.subject === "Re: Coffee?");
+    check("and the thread id", sentOpts[sentOpts.length - 1]?.threadId === "pt");
+
+    const gone = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "x", body: "y", contactId: maya!.id, fromName: null, replyTo: `orbit:${crypto.randomUUID()}` });
+    check("an unknown key is refused, not sent as new", !gone.ok && gone.reason === "reply_gone", JSON.stringify(gone));
+    const notTheirs = await sendComposed(OTHER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "x", body: "y", contactId: null, fromName: null, replyTo: `orbit:${first.sendId}` });
+    check("another user cannot reply into it", !notTheirs.ok && notTheirs.reason === "reply_gone");
+
+    // Thread id only for the same mailbox: pretend the parent went from another address.
+    await db.update(schema.emailSends).set({ fromEmail: "old@acme-corp.io" }).where(eq(schema.emailSends.id, first.sendId));
+    await resetBucket();
+    const cross = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "", body: "z", contactId: maya!.id, fromName: null, replyTo: `orbit:${first.sendId}` });
+    const [crossRow] = cross.ok ? await db.select().from(schema.emailSends).where(eq(schema.emailSends.id, cross.sendId)) : [];
+    check("another mailbox's thread → headers only, no thread id", crossRow?.inReplyToRfcId === parent?.rfcMessageId && crossRow?.providerThreadId === null, JSON.stringify(cross));
+    if (cross.ok) await db.update(schema.emailSends).set({ status: "canceled" }).where(eq(schema.emailSends.id, cross.sendId));
+
+    await db.execute(sql`UPDATE email_sends SET status = 'failed', failure_kind = 'permanent', provider_thread_id = 'pt' WHERE id = ${reply.sendId}::uuid`);
+    await db.execute(sql`UPDATE email_sends SET dismissed_at = NULL WHERE id = ${reply.sendId}::uuid`);
+    await resetBucket();
+    const retriedReply = await retryFailedSend(USER, reply.sendId, null);
+    check("retry queues", retriedReply.ok, JSON.stringify(retriedReply));
+    const [retryRow] = retriedReply.ok ? await db.select().from(schema.emailSends).where(eq(schema.emailSends.id, retriedReply.sendId)) : [];
+    check("retry keeps In-Reply-To and the parent", retryRow?.inReplyToRfcId === parent?.rfcMessageId && retryRow?.inReplyToSendId === first.sendId);
+    const pendingReply = (await listContactPendingSends(USER, maya!.id)).find((p) => retriedReply.ok && p.id === retriedReply.sendId);
+    check("a pending reply carries a copy key for Edit", retriedReply.ok && pendingReply?.replyKey === `copy:${retriedReply.sendId}`, JSON.stringify(pendingReply));
+    check("a plain pending send has none", (await listContactPendingSends(USER, maya!.id)).filter((p) => p.id !== (retriedReply.ok ? retriedReply.sendId : "")).every((p) => p.replyKey === null));
   } finally {
     setAttachmentBlobClientForTests(null);
     setProviderOverride("gmail", null);
