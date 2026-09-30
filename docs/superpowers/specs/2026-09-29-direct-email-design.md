@@ -396,3 +396,15 @@ Decided while writing `docs/superpowers/plans/2026-09-29-direct-email-p1-engine.
 5. **Contact-timeline pending items move to P2** (they belong with Compose). P1 ships the failed-send account alert only.
 6. `email_sends` is purged in the **`contacts`** data category: deleting contacts must also stop their queued mail.
 7. (Implementation) The recipients column is **`to_emails`** in SQL (`to` in Drizzle): `to` is reserved, and the schema-ddl guard does not parse quoted identifiers. Shipped as **schema v140** (pricing-v2 claimed 139).
+
+## Planning amendments (P2 plan)
+
+Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p2-compose.md`:
+
+1. **Gate via a new `feature` surface kind.** `comingSoon` only worked on `page` surfaces (`COMING_SOON_KEYS` was built from pages). P2 adds `kind: "feature"`; a coming-soon feature lands in `hidden` for non-previewers, so the existing client hook (`useHiddenSurfaces`) and server guard (`requireUserForSurface`) both apply unchanged. `settings.email` is its companion. The surface key is `feature.compose`, not `action.compose`.
+2. **Signature is plain text in P2.** The repo has no HTML sanitizer; adding one for a signature isn't worth the dependency. `email_signature_html` stays unused until rich signatures are asked for.
+3. **"Default sending mailbox" is read-only in P2** ("Sending from me@…"). With only Gmail there is nothing to choose; P3 (Outlook) turns it into a picker.
+4. **The signature applies to Compose only.** Chat and follow-up drafts are AI-written with their own sign-off.
+5. **A Compose send clears a due follow-up** for every matched contact, the same as a Chat send.
+6. **The AI draft is body-only** (`generateContactFollowUpDraft` returns no subject). An empty subject becomes `Following up` when the AI draft is inserted.
+7. **The palette verb is typed:** `email maya` / `mail maya` turns People rows into "Email Maya" rows. No new row appears for ordinary searches.

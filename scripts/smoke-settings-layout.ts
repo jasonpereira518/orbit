@@ -214,6 +214,7 @@ const FROZEN_SECTION_IDS = [
   "settings-appearance",
   "settings-notifications",
   "settings-goals",
+  "settings-email",
   "settings-targets",
   "settings-ai",
   "settings-outreach",

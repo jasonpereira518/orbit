@@ -292,6 +292,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-email-contacts": "pglite",
   "smoke-email-sends": "pglite",
   "smoke-email-origins": "pglite",
+  "smoke-email-signature": "pglite",
   "smoke-connector-sync-pass": "pglite",
   "smoke-scan-handoff": "pglite",
   "smoke-capture-jobs": "pglite",

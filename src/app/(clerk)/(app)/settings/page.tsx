@@ -4,6 +4,7 @@ import { getDisplayProfile, isClerkConfigured } from "@/lib/auth";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
+import { EmailSettings } from "@/components/settings/email-settings";
 import { TargetCompaniesSettings } from "@/components/settings/target-companies-settings";
 import { getSchools, getTargetCompanies } from "@/actions/target-companies";
 import { CreditsSettings } from "@/components/settings/credits-settings";
@@ -198,6 +199,9 @@ export default async function SettingsPage() {
         ) : null}
         <Section id="settings-goals" hidden={hidden}>
           <GoalsSettings initialGoals={initialGoals} />
+        </Section>
+        <Section id="settings-email" hidden={hidden}>
+          <EmailSettings />
         </Section>
         <Section id="settings-targets" hidden={hidden}>
           <TargetCompaniesSettings

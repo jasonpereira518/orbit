@@ -36,6 +36,7 @@ export const SETTINGS_SECTIONS = [
   { id: "settings-appearance", label: "Appearance", group: "preferences" },
   { id: "settings-notifications", label: "Notifications", group: "preferences" },
   { id: "settings-goals", label: "Goals", group: "preferences" },
+  { id: "settings-email", label: "Email", group: "preferences" },
   { id: "settings-targets", label: "Targets", group: "preferences" },
   { id: "settings-ai", label: "AI provider", group: "integrations" },
   { id: "settings-outreach", label: "Outreach", group: "integrations" },
