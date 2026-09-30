@@ -65,6 +65,8 @@ const SUBTITLE_FILL = "rgba(255,255,255,0.55)";
 /** A cluster name is one line this tall (13px type); its subtitle another. */
 const NAME_LINE = 16;
 const SUBTITLE_LINE = 12;
+/** A core or petal caption is one line this tall (10px type). */
+const PETAL_LINE = 12;
 
 export type SkyFrame = {
   index: SkyIndex;
@@ -470,7 +472,11 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
           focus.searchDimActive
         );
         ctx.fillStyle = petal.role === "core" ? CORE_FILL : PETAL_FILL;
-        drawLabelText(ctx, petal.label.toUpperCase(), p.x, p.y);
+        const text = petal.label.toUpperCase();
+        drawLabelText(ctx, text, p.x, p.y);
+        // Drawn whatever else is on the sky, so star names placed after must clear it.
+        const w = fitText(ctx, text, Infinity).width;
+        placed.push({ x: p.x - w / 2, y: p.y, w, h: PETAL_LINE });
       }
       if ("letterSpacing" in ctx) (ctx as { letterSpacing: string }).letterSpacing = "0px";
       ctx.globalAlpha = 1;

@@ -23,6 +23,8 @@ import { RING_CAPACITY, RING_MIN_RADIUS } from "../src/lib/graph/cluster-anatomy
 import { buildClusterAffinity } from "../src/lib/constellation-affinity";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import { buildPeerEdges } from "../src/lib/network-metrics";
+import { clusterNameScale, petalNameFontPx } from "../src/components/graph/graph-nodes";
+import { petalNameBoxes, starLabelBox, starLabelWinners, type LabelBox } from "../src/lib/graph/star-style";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) {
@@ -586,6 +588,35 @@ console.log("\nCluster anatomy");
       const big = buildHybridGraphLayout(buildSyntheticGraphPayload(2500, { seed: 1 }).contacts, "Tester");
       const clash = petalNameOverlaps(big);
       check(`…nor in a 2500-contact network (${clash.overlaps}/${clash.labels} overlap)`, clash.labels > 20 && clash.overlaps === 0);
+
+      // Pulled back to 0.5 the star names grow (zoomRelief) and the petal names grow faster
+      // (clusterNameScale), so the two meet. The petal names are registered with the star-name
+      // pass first and win: a star whose name would land on one goes unnamed.
+      const zoom = 0.5;
+      const contacts = big.nodes.filter((n) => n.type === "contact");
+      const petals = petalNameBoxes(
+        big.nodes.filter((n) => n.type === "clusterLabel"),
+        petalNameFontPx(clusterNameScale(zoom))
+      );
+      const hits = (boxes: LabelBox[], ids: Set<string>) =>
+        contacts.filter((n) => ids.has(n.id)).filter((n) => {
+          const b = starLabelBox(n, zoom);
+          return boxes.some((o) => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+        }).length;
+      const unregistered = hits(petals, starLabelWinners(contacts, zoom, () => false));
+      const registered = hits(petals, starLabelWinners(contacts, zoom, () => false, petals));
+      check(
+        `at zoom 0.5 no star name wins a place on a petal name (${registered} with them registered, ${unregistered} without)`,
+        petals.length > 20 && unregistered > 0 && registered === 0
+      );
+      const someHit = contacts.find((n) => {
+        const b = starLabelBox(n, zoom);
+        return petals.some((o) => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+      })!;
+      check(
+        "…but a search hit still beats a petal name",
+        starLabelWinners(contacts, zoom, (id) => id === someHit.id, petals).has(someHit.id)
+      );
     }
 
     // A role cluster: each star wears its own company's colour; the label says how many companies.

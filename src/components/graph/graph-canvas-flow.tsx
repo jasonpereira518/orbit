@@ -36,7 +36,9 @@ import {
   StarDustNode,
   SunNode,
   CLUSTER_NAME_PIN_MIN_ZOOM,
+  clusterNameScale,
   clusterNameSize,
+  petalNameFontPx,
   type NebulaWashCluster,
   type NebulaWashData,
   type StarDustData,
@@ -78,9 +80,9 @@ import {
   PETAL_LABEL_MIN_ZOOM,
   petalNodeGeometry,
   showPetalLabels,
-  starSubtitle,
+  petalNameBoxes,
+  starLabelWinners,
   starVisual,
-  zoomRelief,
 } from "@/lib/graph/star-style";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { markOpenStage } from "@/lib/graph/open-marks";
@@ -351,15 +353,6 @@ const CLUSTER_NAME_HOME_SLACK = 1.12;
  */
 const CLUSTER_HOVER_REACH = 1.15;
 
-/** A label's box in layout px, as graph-nodes.tsx draws it: `max-w-[104px]`, `mt-2`, 11px + 9px lines. */
-const LABEL_MAX_W = 104;
-const LABEL_GAP = 8;
-const LABEL_NAME_H = 14;
-const LABEL_SUBTITLE_H = 12;
-/** Rough glyph advances for the two label lines, to size a box without measuring DOM text. */
-const LABEL_NAME_CHAR_W = 6.1;
-const LABEL_SUBTITLE_CHAR_W = 4.9;
-
 /**
  * Which cluster names are shown, so none overlap.
  *
@@ -485,85 +478,6 @@ function zoomStep(zoom: number) {
   return Math.pow(2, Math.round(Math.log2(Math.max(zoom, 0.01)) * 4) / 4);
 }
 
-/**
- * Which stars get a name, so no two names overlap.
- *
- * Labels are drawn in layout px and hang under their star, so two names that collide collide at
- * every zoom — a dense cluster (a big employer, say) became an unreadable smear of overlapping
- * names and titles. This places them greedily in priority order — search hits, then orbit score —
- * and a name that would overlap one already placed is left off. Hover or select any star to read
- * its name regardless (those are pinned, and not part of this pass).
- *
- * A uniform grid keeps it linear: each box is tested only against boxes in the cells it touches.
- */
-function labelWinners(
-  contacts: Iterable<LayoutNodes[number]>,
-  zoom: number,
-  isHit: (id: string) => boolean
-): Set<string> {
-  type Box = { x0: number; y0: number; x1: number; y1: number };
-  const candidates: Array<{ id: string; box: Box; hit: boolean; score: number }> = [];
-  let cellW = LABEL_MAX_W;
-  for (const n of contacts) {
-    const d = n.data as GraphNodeData;
-    const { disc } = starVisual(d, false);
-    const r = zoomRelief(disc, zoom);
-    const subtitle = starSubtitle(d);
-    const w =
-      Math.min(
-        LABEL_MAX_W,
-        Math.max(
-          (d.label?.length ?? 0) * LABEL_NAME_CHAR_W,
-          (subtitle?.length ?? 0) * LABEL_SUBTITLE_CHAR_W
-        )
-      ) * r;
-    const h = (LABEL_NAME_H + (subtitle ? LABEL_SUBTITLE_H : 0)) * r;
-    const top = n.position.y + (disc / 2 + LABEL_GAP) * r;
-    cellW = Math.max(cellW, w);
-    candidates.push({
-      id: n.id,
-      box: { x0: n.position.x - w / 2, x1: n.position.x + w / 2, y0: top, y1: top + h },
-      hit: isHit(n.id),
-      score: d.score ?? 0,
-    });
-  }
-  candidates.sort(
-    (a, b) =>
-      Number(b.hit) - Number(a.hit) || b.score - a.score || (a.id < b.id ? -1 : 1)
-  );
-
-  const cellH = (LABEL_NAME_H + LABEL_SUBTITLE_H) * 2;
-  const grid = new Map<string, Box[]>();
-  const winners = new Set<string>();
-  for (const c of candidates) {
-    const gx0 = Math.floor(c.box.x0 / cellW);
-    const gx1 = Math.floor(c.box.x1 / cellW);
-    const gy0 = Math.floor(c.box.y0 / cellH);
-    const gy1 = Math.floor(c.box.y1 / cellH);
-    let clear = true;
-    for (let gx = gx0; clear && gx <= gx1; gx++) {
-      for (let gy = gy0; clear && gy <= gy1; gy++) {
-        for (const o of grid.get(`${gx},${gy}`) ?? []) {
-          if (c.box.x0 < o.x1 && c.box.x1 > o.x0 && c.box.y0 < o.y1 && c.box.y1 > o.y0) {
-            clear = false;
-            break;
-          }
-        }
-      }
-    }
-    if (!clear) continue;
-    winners.add(c.id);
-    for (let gx = gx0; gx <= gx1; gx++) {
-      for (let gy = gy0; gy <= gy1; gy++) {
-        const key = `${gx},${gy}`;
-        const cell = grid.get(key);
-        if (cell) cell.push(c.box);
-        else grid.set(key, [c.box]);
-      }
-    }
-  }
-  return winners;
-}
 const NO_IDS: ReadonlySet<string> = new Set();
 
 /**
@@ -1378,12 +1292,30 @@ function GraphCanvasInner({
     } else if (wanted) {
       candidates = [...target].flatMap((id) => contactById.get(id) ?? []);
     }
-    return labelWinners(
+    // Core and petal names are drawn whatever this pass decides, so they are placed first (after
+    // the search hits) and a star whose name would land on one goes unnamed. All of them, not
+    // only those whose cluster name won a place: that set follows the pointer, and this must not.
+    const petals =
+      petalZoomReached && !summary
+        ? petalNameBoxes(clusterLabelNodes, petalNameFontPx(clusterNameScale(labelZoom)))
+        : [];
+    return starLabelWinners(
       candidates,
       labelZoom,
-      (id) => searchDimActive && searchHitIds.has(id)
+      (id) => searchDimActive && searchHitIds.has(id),
+      petals
     );
-  }, [contactById, labelZoom, searchDimActive, searchHitIds, summary, wanted, target]);
+  }, [
+    contactById,
+    labelZoom,
+    searchDimActive,
+    searchHitIds,
+    summary,
+    wanted,
+    target,
+    petalZoomReached,
+    clusterLabelNodes,
+  ]);
 
   /**
    * Every contact, as the dots the summary view draws in place of stars. Built only while the

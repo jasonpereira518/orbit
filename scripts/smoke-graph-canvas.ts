@@ -1123,6 +1123,31 @@ console.log("\nthe phone canvas draws the galaxy\n");
   check("the role cluster's subtitle is drawn under its name", engText.includes("Engineers") && engText.includes("across 4 companies"), engText.join("|"));
   check("...after the name", engText.indexOf("across 4 companies") > engText.indexOf("Engineers"));
 
+  // Petal names win against star names: a star just above a caption loses its name, one clear
+  // of it keeps it. The star is moved in a copy of the layout; nothing else about the sky changes.
+  const engCaption = anatomyIndex.clusterLabels.find((l) => l.label === "Northwind")!.petals!.find((p) => p.label === "Engineering")!;
+  const mover = anatomyLayout.nodes.find(
+    (n) => n.type === "contact" && (n.data as { clusterName?: string }).clusterName !== "Northwind"
+  )!;
+  const moverName = (mover.data as { label: string }).label;
+  const namesWithStarAt = (dyScreen: number) => {
+    const k = 0.6;
+    const nodes = anatomyLayout.nodes.map((n) =>
+      n.id === mover.id ? { ...n, position: { x: engCaption.x, y: engCaption.y + dyScreen / k } } : n
+    );
+    const rec = makeCtx();
+    drawSky(rec.ctx, { ...frameAt(centredOn(engCaption.x, engCaption.y, k)), index: buildSkyIndex({ nodes, edges: anatomyLayout.edges }) });
+    return textsOf(rec);
+  };
+  const onCaption = namesWithStarAt(-8);
+  const clearOfCaption = namesWithStarAt(40);
+  check(
+    "a star whose name would land on a petal name goes unnamed; the petal name stays",
+    onCaption.includes("ENGINEERING") && !onCaption.includes(moverName),
+    onCaption.join("|")
+  );
+  check("...and the same star clear of it keeps its name", clearOfCaption.includes(moverName), clearOfCaption.join("|"));
+
   const busy = runFrame(centredOn(nwCentre.x, nwCentre.y, 0.3));
   check("no frame ever assigns shadowBlur", !busy.assigned.some(([k]) => k === "shadowBlur"));
   check(

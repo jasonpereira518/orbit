@@ -673,6 +673,13 @@ const CLUSTER_COUNT_LINE_H = 12;
 const CLUSTER_SUBTITLE_EM = 0.82;
 /** Petal and core names are this much smaller than the cluster name. */
 const PETAL_NAME_EM = 0.7;
+/**
+ * A core or petal name's font size in layout px, for a cluster-name scale (`clusterNameScale`).
+ * The chart's star-name pass sizes their boxes from this too (`petalNameBoxes`).
+ */
+export function petalNameFontPx(scale: number) {
+  return CLUSTER_NAME_FONT_PX * scale * PETAL_NAME_EM;
+}
 /** Air, in unscaled px, between a pinned name's foot and the topmost petal name. */
 const PETAL_NAME_GAP = 4;
 /** The longer of the name and its subtitle, in name characters (the subtitle is set smaller). */
@@ -746,7 +753,7 @@ function PetalLabels({
     <span
       aria-hidden
       className="pointer-events-none absolute h-0 w-0"
-      style={{ ...style, fontSize: 11 * scale * PETAL_NAME_EM }}
+      style={{ ...style, fontSize: petalNameFontPx(scale) }}
     >
       {labels.map((p) => {
         const { dx, dy } = petalLabelOffset(anchor, p.anchor);
