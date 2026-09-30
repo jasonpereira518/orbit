@@ -68,6 +68,10 @@ const TABLE: Array<[string | null, RoleFunction, boolean]> = [
   ["Head of Recruiting", "people", true],
   ["EVP Marketing", "marketing", true],
   ["SVP Engineering", "engineering", true],
+  ["Owner & Creative Director", "design", true],
+  ["Partner, Art Director", "design", true],
+  ["President & Creative Director", "design", true],
+  ["Creative Director", "design", false],
 ];
 
 console.log("\nclassifyTitle");

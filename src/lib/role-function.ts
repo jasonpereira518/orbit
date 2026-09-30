@@ -54,6 +54,12 @@ const EXECUTIVE = /\b(head of|s?vp|evp|vice president|director)\b/i;
 /** Junior "Director"/"VP" titles that carry the word without the seniority. */
 const JUNIOR_EXEC =
   /\b(associate director|assistant director|assistant vice president|avp|account director|art director|creative director)\b/i;
+/**
+ * The one junior title that trips FOUNDER_EXEC on its own: "Assistant Vice President" matches
+ * "president". Every other junior title (associate/assistant/art/creative director) never
+ * matches FOUNDER_EXEC, so it must not cancel an owner's or partner's leadership.
+ */
+const JUNIOR_PRESIDENT = /\bassistant vice president\b/i;
 /** For recruiters, "partner" is a job title ("Talent Partner"), not an ownership stake. */
 const RECRUITER_EXEC = /\b(chief|co-?founder|founder)\b/i;
 /**
@@ -93,7 +99,7 @@ export function classifyTitle(title: string | null | undefined): TitleRole {
   }
   const isLeader =
     STRONG_EXEC.test(value) ||
-    (FOUNDER_EXEC.test(value) && !NOT_LEADER.test(value) && !JUNIOR_EXEC.test(value)) ||
+    (FOUNDER_EXEC.test(value) && !NOT_LEADER.test(value) && !JUNIOR_PRESIDENT.test(value)) ||
     isExecutive(value);
   for (const [fn, pattern] of FUNCTION_RULES) {
     if (pattern.test(value)) return { fn, isLeader };

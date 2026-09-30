@@ -15,7 +15,10 @@ import {
   type GraphContactInput,
   type NebulaData,
   type GraphNodeData,
+  type ClusterLabelData,
 } from "../src/lib/graph-layout";
+import { figureStarCount } from "../src/lib/constellation-shapes";
+import { RING_CAPACITY, RING_MIN_RADIUS } from "../src/lib/graph/cluster-anatomy";
 import { buildClusterAffinity } from "../src/lib/constellation-affinity";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import { buildPeerEdges } from "../src/lib/network-metrics";
@@ -82,6 +85,31 @@ const fixture: GraphContactInput[] = [
   contact("s1", { school: "MIT", orbitScore: 4 }),
   contact("s2", { school: "MIT", orbitScore: 2 }),
   contact("s3", { school: "MIT", orbitScore: 1 }),
+  // A company big enough to split into a leadership core and function petals.
+  ...["VP Engineering", "CTO", "Co-founder"].map((title, i) =>
+    contact(`nw-l${i}`, { company: "Northwind", title, orbitScore: 5 - i })
+  ),
+  ...Array.from({ length: 11 }, (_, i) =>
+    contact(`nw-e${i}`, {
+      company: "Northwind",
+      title: "Software Engineer",
+      school: i % 2 ? "MIT" : i % 3 ? "Waterloo" : null,
+      orbitScore: 1 + ((i * 3) % 5),
+    })
+  ),
+  ...Array.from({ length: 8 }, (_, i) =>
+    contact(`nw-d${i}`, { company: "Northwind", title: "Product Designer", orbitScore: 1 + ((i * 2) % 5) })
+  ),
+  ...Array.from({ length: 5 }, (_, i) =>
+    contact(`nw-s${i}`, { company: "Northwind", title: "Account Executive", orbitScore: 1 + (i % 5) })
+  ),
+  // A school with enough alumni to be a ring, and one too big for its rings.
+  ...Array.from({ length: 14 }, (_, i) =>
+    contact(`ch${i}`, { school: "Chapel Hill", orbitScore: 1 + (i % 5) })
+  ),
+  ...Array.from({ length: 52 }, (_, i) =>
+    contact(`su${i}`, { school: "State U", orbitScore: 1 + ((i * 2) % 5) })
+  ),
   // Singleton company → halo, not a cluster.
   contact("solo", { company: "Tiny Startup", orbitScore: 3 }),
   // One-off companies, same function → a cross-company role constellation.
@@ -128,12 +156,18 @@ console.log("\nFit assignment");
 
   // Figure members are the top of the placement order, aligned to shape stars.
   for (const f of fit.fits.values()) {
-    check(
-      `figure size matches shape (${f.cluster.name})`,
-      f.figureMemberIds.length ===
-        Math.min(f.shape.stars.length, f.cluster.count),
-      `${f.figureMemberIds.length} vs ${f.shape.stars.length}`
-    );
+    for (const p of f.parts) {
+      if (f.form === "ring") {
+        check(`ring keeps every member it can (${f.cluster.name})`, p.figureMemberIds.length === Math.min(f.cluster.count, RING_CAPACITY));
+        continue;
+      }
+      check(
+        `figure size matches shape (${f.cluster.name}/${p.key})`,
+        p.figureMemberIds.length ===
+          Math.min(p.shape.stars.length, figureStarCount(p.figureMemberIds.length + p.scatterMemberIds.length)),
+        `${p.figureMemberIds.length} vs ${p.shape.stars.length}`
+      );
+    }
   }
 }
 
@@ -174,9 +208,10 @@ console.log("\nLayout basics");
 console.log("\nShape fidelity (figures are undistorted asterisms)");
 
 {
-  for (const f of fit.fits.values()) {
-    const pts = f.figureMemberIds.map((id) => posById.get(id)!);
-    const stars = f.shape.stars.slice(0, f.figureMemberIds.length);
+  for (const f of fit.fits.values()) for (const part of f.parts) {
+    if (f.form === "ring") continue;
+    const pts = part.figureMemberIds.map((id) => posById.get(id)!);
+    const stars = part.shape.stars.slice(0, part.figureMemberIds.length);
     if (pts.length < 2) continue;
     // A similarity transform preserves all pairwise distance ratios.
     let ratio: number | null = null;
@@ -197,7 +232,7 @@ console.log("\nShape fidelity (figures are undistorted asterisms)");
         }
       }
     }
-    check(`figure is a pure similarity transform (${f.cluster.name})`, faithful);
+    check(`figure is a pure similarity transform (${f.cluster.name}/${part.key})`, faithful);
   }
 }
 
@@ -296,7 +331,9 @@ console.log("\nNo overlaps");
     worstSeg
   );
 
-  // Line–line: no two figure segments properly intersect (shared endpoints ok).
+  // Line–line: no two figure segments properly intersect (shared endpoints ok). Segments that share
+  // a star are skipped, so a template that crosses itself (the four-star Crux) is allowed: the
+  // guarantee is no crossings between different figures.
   const cross = (ox: number, oy: number, ax: number, ay: number, bx: number, by: number) =>
     (ax - ox) * (by - oy) - (ay - oy) * (bx - ox);
   let crossings = 0;
@@ -314,34 +351,129 @@ console.log("\nNo overlaps");
   }
   check("no two figure lines cross", crossings === 0, `${crossings} crossings`);
 
-  // Cluster–cluster: footprint separation via per-cluster bounding circles.
-  const clusterPoints = new Map<string, Array<{ x: number; y: number }>>();
-  for (const n of contactNodes) {
-    const d = n.data as GraphNodeData;
-    if (!d.clusterId || !fit.fits.has(d.clusterId)) continue;
-    const list = clusterPoints.get(d.clusterId) ?? [];
-    list.push(n.position);
-    clusterPoints.set(d.clusterId, list);
+  // Cluster–cluster, exactly: placeClusterDisks keeps every pair of footprint disks CLUSTER_GAP
+  // apart and every star sits FOOT_MARGIN inside its disk, so stars of different clusters are at
+  // least CLUSTER_GAP + 2·FOOT_MARGIN apart. Family satellites are seated in a foreign field on
+  // purpose, so only stars in some fit's figure/scatter lists count.
+  const CLUSTER_APART = LABEL_WIDTH + 2 * 34;
+  const owned: Array<{ id: string; cluster: string; x: number; y: number }> = [];
+  for (const f of fit.fits.values()) {
+    for (const id of [...f.figureMemberIds, ...f.scatterMemberIds]) {
+      const pos = posById.get(id)!;
+      owned.push({ id, cluster: f.cluster.id, x: pos.x, y: pos.y });
+    }
   }
-  const hulls = [...clusterPoints.entries()].map(([id, pts]) => {
-    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-    const r = pts.reduce((m, p) => Math.max(m, Math.hypot(p.x - cx, p.y - cy)), 0);
-    return { id, cx, cy, r };
-  });
-  let clustersApart = true;
-  for (let i = 0; i < hulls.length; i++) {
-    for (let j = i + 1; j < hulls.length; j++) {
-      const a = hulls[i];
-      const b = hulls[j];
-      if (Math.hypot(a.cx - b.cx, a.cy - b.cy) < a.r + b.r + STAR_MIN_DIST) {
-        clustersApart = false;
+  owned.sort((a, b) => a.x - b.x);
+  let nearest = Infinity;
+  let nearestPair = "";
+  for (let i = 0; i < owned.length; i++) {
+    for (let j = i + 1; j < owned.length && owned[j].x - owned[i].x < CLUSTER_APART; j++) {
+      if (owned[i].cluster === owned[j].cluster) continue;
+      const d = Math.hypot(owned[i].x - owned[j].x, owned[i].y - owned[j].y);
+      if (d < nearest) {
+        nearest = d;
+        nearestPair = `${owned[i].id}↔${owned[j].id}`;
       }
     }
   }
-  // A heuristic on star centroids; the exact disk guarantee (gap, sun clear) lives in
-  // smoke-disk-placement.
-  check("cluster star fields are pairwise disjoint", clustersApart);
+  check(
+    `stars of different clusters keep ${CLUSTER_APART}px apart (nearest ${nearest === Infinity ? "n/a" : nearest.toFixed(0) + "px"})`,
+    nearest >= CLUSTER_APART - 1e-6,
+    nearestPair
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nCluster anatomy");
+
+{
+  const label = (name: string) =>
+    layout.nodes.find((n) => n.type === "clusterLabel" && (n.data as { label?: string }).label === name)!
+      .data as ClusterLabelData;
+  const nw = [...fit.fits.values()].find((f) => f.cluster.name === "Northwind")!;
+  check("Northwind is a petal cluster with a core and three petals", nw.form === "petal" && nw.parts.map((p) => p.key).join() === "core,petal:engineering,petal:design,petal:sales");
+  check("its label node says so", label("Northwind").form === "petal");
+  const petalLabels = label("Northwind").petalLabels ?? [];
+  check("…with a label for the core and each petal", petalLabels.map((l) => l.label).join() === "Leadership,Engineering,Design,Sales & BD");
+  check("…each anchored inside the node's box", petalLabels.every((l) => {
+    const box = label("Northwind").box!;
+    return l.anchor.x >= 0 && l.anchor.x <= box.width && l.anchor.y >= 0 && l.anchor.y <= box.height;
+  }));
+  check("a plain figure has no petal labels", label("Google").petalLabels === undefined && label("Google").form === "figure");
+
+  // Parts sit on disjoint footprints: each part's stars stay apart from the other parts'.
+  const partStars = nw.parts.map((p) => [...p.figureMemberIds, ...p.scatterMemberIds].map((id) => posById.get(id)!));
+  let apart = Infinity;
+  for (let a = 0; a < partStars.length; a++)
+    for (let b = a + 1; b < partStars.length; b++)
+      for (const p of partStars[a]) for (const q of partStars[b]) apart = Math.min(apart, Math.hypot(p.x - q.x, p.y - q.y));
+  check(`stars of different parts keep clear (${apart.toFixed(0)}px ≥ 120)`, apart >= 120);
+
+  const star = (id: string) => contactNodes.find((n) => n.id === id)!.data as GraphNodeData;
+  check("stars know their part", star("nw-l0").partKey === "core" && star("nw-l0").partRole === "core" && star("nw-e0").partKey === "petal:engineering");
+  check("…and whether they lead", star("nw-l0").leader === true && star("nw-e0").leader === false);
+  check("a star in an ordinary cluster is 'main' and carries no leader flag", star("aws0").partRole === "main" && star("aws0").leader === undefined);
+
+  const ch = [...fit.fits.values()].find((f) => f.cluster.name === "Chapel Hill")!;
+  check("Chapel Hill is a ring", ch.form === "ring" && label("Chapel Hill").form === "ring");
+  check("a ring draws no figure lines", !layout.edges.some((e) => ch.cluster.contactIds.includes(e.source)));
+  check("ring members are figure stars", ch.cluster.contactIds.every((id) => (star(id).figureRole === "figure")));
+  const ringR = ch.cluster.contactIds.map((id) => posById.get(id)!);
+  const cx = ringR.reduce((s, p) => s + p.x, 0) / ringR.length;
+  const cy = ringR.reduce((s, p) => s + p.y, 0) / ringR.length;
+  const radii = ringR.map((p) => Math.hypot(p.x - cx, p.y - cy));
+  check(`ring members lie on one circle (spread ${(Math.max(...radii) - Math.min(...radii)).toFixed(1)}px)`, Math.max(...radii) - Math.min(...radii) < 3);
+  // On its own the circle check would pass with every member stacked at the centre.
+  const meanRadius = radii.reduce((a, b) => a + b, 0) / radii.length;
+  check(`…and the circle is open, not collapsed (mean radius ${meanRadius.toFixed(0)}px ≥ ${RING_MIN_RADIUS})`, meanRadius >= RING_MIN_RADIUS);
+  const su = [...fit.fits.values()].find((f) => f.cluster.name === "State U")!;
+  check("a school too big for its rings scatters the rest", su.scatterMemberIds.length === 52 - Math.min(52, RING_CAPACITY) && su.figureMemberIds.length === Math.min(52, RING_CAPACITY));
+  const suFigure = su.figureMemberIds.map((id) => posById.get(id)!);
+  const scx = suFigure.reduce((a, p) => a + p.x, 0) / suFigure.length;
+  const scy = suFigure.reduce((a, p) => a + p.y, 0) / suFigure.length;
+  const suOuter = Math.max(...suFigure.map((p) => Math.hypot(p.x - scx, p.y - scy)));
+  const suNearest = Math.min(...su.scatterMemberIds.map((id) => Math.hypot(posById.get(id)!.x - scx, posById.get(id)!.y - scy)));
+  check(
+    `the overflow scatters outside the ring (nearest ${suNearest.toFixed(0)}px > outer radius ${suOuter.toFixed(0)}px)`,
+    su.scatterMemberIds.length > 0 && suNearest > suOuter
+  );
+
+  // A petal company's family satellite is seated in its roomiest petal without belonging to it.
+  {
+    const titled = (i: number, title: string) =>
+      contact(`gg${i}`, { company: "Google", title, orbitScore: 1 + (i % 5) });
+    const titles = [
+      ...["VP Engineering", "CTO", "Co-founder"],
+      ...Array.from({ length: 10 }, () => "Software Engineer"),
+      ...Array.from({ length: 8 }, () => "Product Designer"),
+      ...Array.from({ length: 5 }, () => "Account Executive"),
+    ];
+    const gContacts = [...titles.map((t, i) => titled(i, t)), contact("gc-sat", { company: "Google Cloud", orbitScore: 3 })];
+    const gFit = buildConstellationFit(gContacts);
+    const gLayout = buildHybridGraphLayout(gContacts, "Tester");
+    const gPos = new Map(gLayout.nodes.filter((n) => n.type === "contact").map((n) => [n.id, n.position]));
+    const google = [...gFit.fits.values()].find((f) => f.cluster.name === "Google")!;
+    check("a titled 26-person Google splits into petals", google.form === "petal" && google.parts.length >= 3);
+    const sat = gLayout.nodes.find((n) => n.id === "gc-sat")!.data as GraphNodeData;
+    check("the Google Cloud satellite carries no part", sat.partKey === undefined && sat.partRole === undefined && sat.leader === undefined);
+    const centroid = (ids: string[]) => ({
+      x: ids.reduce((a, id) => a + gPos.get(id)!.x, 0) / ids.length,
+      y: ids.reduce((a, id) => a + gPos.get(id)!.y, 0) / ids.length,
+    });
+    const core = google.parts.find((p) => p.role === "core")!;
+    const roomiest = google.parts
+      .filter((p) => p.role === "petal")
+      .reduce((best, p) => (p.figureMemberIds.length + p.scatterMemberIds.length > best.figureMemberIds.length + best.scatterMemberIds.length ? p : best));
+    const at = gPos.get("gc-sat")!;
+    const dTo = (part: typeof core) => {
+      const c = centroid([...part.figureMemberIds, ...part.scatterMemberIds]);
+      return Math.hypot(at.x - c.x, at.y - c.y);
+    };
+    check(
+      `…and sits nearer the roomiest petal (${roomiest.key}, ${dTo(roomiest).toFixed(0)}px) than the core (${dTo(core).toFixed(0)}px)`,
+      dTo(roomiest) < dTo(core)
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
