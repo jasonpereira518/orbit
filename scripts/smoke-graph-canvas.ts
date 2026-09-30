@@ -1060,15 +1060,23 @@ console.log("\nthe phone canvas draws the galaxy\n");
   runIdle();
   check("a bake pending when the chart unmounts is dropped", bakedGalaxyBitmap(anatomyIndex.galaxy!) === undefined && redraws === 1);
 
-  // No requestIdleCallback (Safari): a zero-delay timeout instead, still outside the frame.
+  // No requestIdleCallback (Safari): wait for the next animation frame, then a timeout, so the bake
+  // stays out of the first paint.
   delete g.requestIdleCallback;
   delete g.cancelIdleCallback;
   const realSetTimeout = g.setTimeout;
+  const gRaf = globalThis as unknown as { requestAnimationFrame?: unknown };
+  const realRaf = gRaf.requestAnimationFrame;
   const timeouts: Array<[() => void, number]> = [];
+  const rafs: Array<() => void> = [];
   g.setTimeout = (cb: () => void, ms: number) => timeouts.push([cb, ms]);
+  gRaf.requestAnimationFrame = (cb: () => void) => rafs.push(cb);
   const noIdle = runFrame({ x: 195, y: 400, k: 0.4 });
+  check("without requestIdleCallback nothing is queued before the next frame", timeouts.length === 0 && rafs.length === 1 && galaxyBlits(noIdle).length === 0);
+  rafs[0]();
   g.setTimeout = realSetTimeout;
-  check("without requestIdleCallback the bake waits on a timeout", timeouts.length === 1 && galaxyBlits(noIdle).length === 0);
+  gRaf.requestAnimationFrame = realRaf;
+  check("...then the bake waits on a timeout", timeouts.length === 1 && galaxyBlits(runFrame({ x: 195, y: 400, k: 0.4 })).length === 0);
   timeouts[0][0]();
   check("...and blits once it has run", galaxyBlits(runFrame({ x: 195, y: 400, k: 0.4 })).length === 1 && redraws === 2);
   g.requestIdleCallback = (cb: () => void) => idleQueue.push(cb);

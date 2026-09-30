@@ -339,8 +339,8 @@ export function bakedGalaxyBitmap(
 }
 
 /**
- * Bake the galaxy outside the frame: in an idle callback where there is one, else a zero-delay
- * timeout (Safari has no `requestIdleCallback`), then call `onBaked` so the chart draws once more.
+ * Bake the galaxy outside the frame: in an idle callback where there is one, else a timeout queued
+ * after the next animation frame (Safari has no `requestIdleCallback`), then call `onBaked` so the chart draws once more.
  * At 10,000 contacts the bake is tens of ms of path filling; inside the first frame it held back
  * the chart's first paint, out here it only delays the backdrop. At most one per galaxy is queued
  * however many frames ask, and none once it is baked or has failed.
@@ -368,8 +368,19 @@ export function scheduleGalaxyBake(
       if (typeof cancelIdleCallback === "function") cancelIdleCallback(handle);
     };
   } else {
-    const handle = setTimeout(run, 0);
-    cancel = () => clearTimeout(handle);
+    // A bare zero-delay timeout still lands before the first paint; wait for the next frame first.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frame =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame(() => {
+            timer = setTimeout(run, 0);
+          })
+        : undefined;
+    if (frame === undefined) timer = setTimeout(run, 0);
+    cancel = () => {
+      if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }
   pendingCancels.add(cancel);
 }
