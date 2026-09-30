@@ -12,6 +12,9 @@
  * Every cache is bounded by the sky's own vocabulary (score tiers × cluster colours ×
  * emphasis states), so none of them needs eviction.
  */
+import { galaxyBackdropData } from "@/lib/graph/galaxy-dust";
+import type { GalaxyStructure } from "@/lib/graph/galaxy-structure";
+import { drawGalaxyBackdrop } from "@/lib/graph/sky-bitmap-draw";
 import { withAlpha } from "@/lib/school-color";
 import { CONSTELLATION_STAR_PX } from "@/lib/graph/starfield-scale";
 
@@ -223,6 +226,93 @@ export function nebulaSprite(color: string, seed: string): Sprite | null {
   return sprite;
 }
 
+/**
+ * A school's ring: a soft annulus that peaks on the outer ring, the same stops as the desktop
+ * `drawRing`. The sprite's edge is the ring's OUTER radius (1.3 x the ring's own), so a caller
+ * draws it `outer * 2 * k` across, centred on the ring.
+ */
+const ringCache = new Map<string, Sprite>();
+
+export function ringSprite(color: string): Sprite | null {
+  const cached = ringCache.get(color);
+  if (cached) return cached;
+  const made = makeCanvas(NEBULA_SPRITE_PX);
+  if (!made) return null;
+  const { canvas, ctx } = made;
+  const c = NEBULA_SPRITE_PX / 2;
+
+  const fill = ctx.createRadialGradient(c, c, 0, c, c, c);
+  fill.addColorStop(0, withAlpha(color, 0.05));
+  fill.addColorStop(0.3, withAlpha(color, 0.06));
+  fill.addColorStop(1 / 1.3, withAlpha(color, 0.12)); // the outer ring itself
+  fill.addColorStop(1, withAlpha(color, 0));
+  ctx.fillStyle = fill;
+  ctx.fillRect(0, 0, NEBULA_SPRITE_PX, NEBULA_SPRITE_PX);
+
+  const sprite: Sprite = { canvas, scale: 1 };
+  ringCache.set(color, sprite);
+  return sprite;
+}
+
+// ---------------------------------------------------------------------------
+// The galaxy backdrop
+// ---------------------------------------------------------------------------
+
+/** The baked backdrop and the world box its pixels cover. */
+export type GalaxyBitmap = {
+  canvas: HTMLCanvasElement;
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+};
+
+/** Side of the baked backdrop. 1024^2 is 4MB of pixels: one bitmap, once per galaxy. */
+export const GALAXY_BITMAP_PX = 1024;
+
+// Keyed by the GalaxyStructure object itself: a layout change builds a new one and so re-bakes,
+// an unchanged layout hands back the same object and never does. A WeakMap, so a superseded
+// layout's bitmap goes with it; `clearSpriteCaches` swaps in a fresh one.
+let galaxyCache = new WeakMap<GalaxyStructure, Map<number, GalaxyBitmap>>();
+
+/**
+ * The galaxy behind the sky, as one bitmap drawn by the SAME `drawGalaxyBackdrop` the desktop
+ * worker runs. Covers `galaxyBackdropData(galaxy)`'s box at `size / box.width` backing px per
+ * world unit; a frame blits it with a single `drawImage`.
+ */
+export function galaxyBackdropBitmap(
+  galaxy: GalaxyStructure,
+  size = GALAXY_BITMAP_PX
+): GalaxyBitmap | null {
+  let bySize = galaxyCache.get(galaxy);
+  const cached = bySize?.get(size);
+  if (cached) return cached;
+
+  const made = makeCanvas(size);
+  if (!made) return null;
+  const { canvas, ctx } = made;
+  const data = galaxyBackdropData(galaxy);
+  const scale = size / data.width;
+  ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
+  drawGalaxyBackdrop(ctx, data, scale);
+  ctx.globalAlpha = 1;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  const bitmap: GalaxyBitmap = {
+    canvas,
+    minX: data.minX,
+    minY: data.minY,
+    width: data.width,
+    height: data.height,
+  };
+  if (!bySize) {
+    bySize = new Map();
+    galaxyCache.set(galaxy, bySize);
+  }
+  bySize.set(size, bitmap);
+  return bitmap;
+}
+
 // ---------------------------------------------------------------------------
 // Background: milky way + the fixed starfield
 // ---------------------------------------------------------------------------
@@ -288,5 +378,7 @@ export function bakeBackground(
 export function clearSpriteCaches() {
   starCache.clear();
   nebulaCache.clear();
+  ringCache.clear();
+  galaxyCache = new WeakMap();
   sunCache = null;
 }

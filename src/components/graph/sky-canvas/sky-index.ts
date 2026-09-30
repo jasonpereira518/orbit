@@ -13,6 +13,8 @@ import type {
   LayoutNode,
   NebulaData,
 } from "@/lib/graph-layout";
+import type { ClusterForm } from "@/lib/constellation-parts";
+import type { GalaxyStructure } from "@/lib/graph/galaxy-structure";
 import { buildSkyGrid, type SkyGrid, type SkyTarget } from "@/lib/graph/hit-test";
 import { starVisual } from "@/lib/graph/star-style";
 
@@ -33,6 +35,19 @@ export type NebulaEntry = {
   color: string;
   clusterId?: string;
   company: string;
+  /** How the cluster is washed: see `constellation-parts.ts`. */
+  form: ClusterForm;
+  /** Petal company: one disk per part. Ring school: one disk, the ring. Otherwise undefined. */
+  parts?: NebulaData["parts"];
+};
+
+/** A split company's core or petal name, positioned by the top-centre of its text in WORLD coordinates. */
+export type PetalLabelEntry = {
+  key: string;
+  label: string;
+  role: "core" | "petal";
+  x: number;
+  y: number;
 };
 
 export type ClusterLabelEntry = {
@@ -43,6 +58,10 @@ export type ClusterLabelEntry = {
   count?: number;
   color: string;
   clusterId?: string;
+  /** Role clusters: "across N companies", drawn under the name. */
+  subtitle?: string;
+  /** A split company's core and petal names, hung under their parts. */
+  petals?: PetalLabelEntry[];
 };
 
 export type EdgeEntry = {
@@ -56,6 +75,8 @@ export type EdgeEntry = {
   opacity: number;
   strokeWidth: number;
   kind?: string;
+  /** Dash pattern in screen px (role clusters draw dotted). Solid when undefined. */
+  dash?: [number, number];
 };
 
 export type SkyIndex = {
@@ -67,14 +88,38 @@ export type SkyIndex = {
   clusterLabels: ClusterLabelEntry[];
   edges: EdgeEntry[];
   sun: { x: number; y: number; data: GraphNodeData } | null;
+  /** The backdrop's shape data; the canvas bakes it once per object (`galaxyBackdropBitmap`). */
+  galaxy?: GalaxyStructure;
   grid: SkyGrid;
   /** World bounding box of everything drawn, for the pan clamp. */
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 };
 
+/**
+ * A split company's captions in world coordinates. The label node sits on the name's anchor and
+ * each caption's anchor is in px from the node's box, so the box's origin is the node's position
+ * less the name's anchor (see `ClusterLabelData.petalLabels`).
+ */
+function petalEntries(
+  position: { x: number; y: number },
+  d: ClusterLabelData
+): PetalLabelEntry[] | undefined {
+  if (!d.petalLabels?.length || !d.anchor) return undefined;
+  const originX = position.x - d.anchor.x;
+  const originY = position.y - d.anchor.y;
+  return d.petalLabels.map((l) => ({
+    key: l.key,
+    label: l.label,
+    role: l.role,
+    x: originX + l.anchor.x,
+    y: originY + l.anchor.y,
+  }));
+}
+
 export function buildSkyIndex(layout: {
   nodes: LayoutNode[];
   edges: LayoutEdge[];
+  galaxy?: GalaxyStructure;
 }): SkyIndex {
   const stars: StarEntry[] = [];
   const nebulae: NebulaEntry[] = [];
@@ -101,6 +146,8 @@ export function buildSkyIndex(layout: {
         color: d.color,
         clusterId: d.clusterId,
         company: d.company,
+        form: d.form ?? "figure",
+        parts: d.parts,
       });
       continue;
     }
@@ -115,6 +162,8 @@ export function buildSkyIndex(layout: {
         count: d.count,
         color: d.nebulaColor || "#9fb4ff",
         clusterId: d.clusterId,
+        subtitle: d.subtitle,
+        petals: petalEntries(p, d),
       });
       continue;
     }
@@ -145,6 +194,7 @@ export function buildSkyIndex(layout: {
       opacity: Number(e.style?.opacity ?? 0.5),
       strokeWidth: Number(e.style?.strokeWidth ?? 1),
       kind,
+      ...(e.data?.dash ? { dash: e.data.dash } : {}),
     });
   }
 
@@ -192,6 +242,7 @@ export function buildSkyIndex(layout: {
     clusterLabels,
     edges,
     sun,
+    galaxy: layout.galaxy,
     grid: buildSkyGrid(targets),
     bounds: { minX, minY, maxX, maxY },
   };

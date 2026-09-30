@@ -62,6 +62,17 @@ import { buildHybridGraphLayout, type GraphContactInput } from "../src/lib/graph
 import { clusterNameSize } from "../src/components/graph/graph-nodes";
 import { buildSkyIndex } from "../src/components/graph/sky-canvas/sky-index";
 import {
+  PETAL_LABEL_CAP,
+  drawSky,
+  pickPetalLabels,
+  worldBoxVisible,
+  type SkyFrame,
+} from "../src/components/graph/sky-canvas/draw-sky";
+import { clearSpriteCaches, galaxyBackdropBitmap } from "../src/components/graph/sky-canvas/sky-sprites";
+import { galaxyBackdropData } from "../src/lib/graph/galaxy-dust";
+import { anatomyFixture } from "./lib/anatomy-fixture";
+import type { ClusterLabelData } from "../src/lib/graph-layout";
+import {
   FOCUS_DIM_OPACITY,
   SEARCH_DIM_OPACITY,
   edgeEmphasis,
@@ -815,6 +826,257 @@ console.log("\nthe index the renderer draws from\n");
 }
 
 // ---------------------------------------------------------------------------
+console.log("\nthe index carries the anatomy\n");
+// ---------------------------------------------------------------------------
+const anatomyLayout = buildHybridGraphLayout(anatomyFixture(), "Test User");
+const anatomyIndex = buildSkyIndex(anatomyLayout);
+{
+  const neb = (name: string) => anatomyIndex.nebulae.find((n) => n.company === name)!;
+  const lab = (name: string) => anatomyIndex.clusterLabels.find((l) => l.label === name)!;
+
+  check("the index carries the layout's galaxy", anatomyIndex.galaxy === anatomyLayout.galaxy && anatomyIndex.galaxy !== undefined);
+  check(
+    "a layout without a galaxy builds an index without one",
+    buildSkyIndex({ nodes: anatomyLayout.nodes, edges: anatomyLayout.edges }).galaxy === undefined
+  );
+  check(
+    "Northwind is a petal nebula with its four parts",
+    neb("Northwind").form === "petal" &&
+      (neb("Northwind").parts ?? []).map((p) => p.key).join() === "core,petal:engineering,petal:design,petal:sales"
+  );
+  check(
+    "the school is a ring nebula with one part",
+    neb("Chapel Hill").form === "ring" && neb("Chapel Hill").parts?.length === 1
+  );
+  check("a role cluster is open and a pair is binary", neb("Engineers").form === "open" && neb("Duo Labs").form === "binary");
+  check("forms without parts carry none", neb("Engineers").parts === undefined && neb("Duo Labs").parts === undefined);
+
+  const nwNode = anatomyLayout.nodes.find(
+    (n) => n.type === "clusterLabel" && (n.data as ClusterLabelData).label === "Northwind"
+  )!;
+  const nwData = nwNode.data as ClusterLabelData;
+  const petals = lab("Northwind").petals ?? [];
+  check("Northwind's label has a caption for the core and each petal", petals.length === 4, String(petals.length));
+  check(
+    "captions are finite world coordinates, in the layout's order",
+    petals.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)) &&
+      petals.map((p) => p.label).join() === "Leadership,Engineering,Design,Sales & BD" &&
+      petals[0].role === "core" &&
+      petals.slice(1).every((p) => p.role === "petal")
+  );
+  check(
+    "a caption's top-centre is the label node's position less its anchor plus the petal's anchor",
+    petals.every((p, i) => {
+      const a = nwData.petalLabels![i].anchor;
+      return close(p.x, nwNode.position.x - nwData.anchor!.x + a.x) && close(p.y, nwNode.position.y - nwData.anchor!.y + a.y);
+    })
+  );
+  const starsOfPart = (key: string) =>
+    anatomyIndex.stars.filter((s) => s.data.partKey === key);
+  check(
+    "every caption lies below every star of its part",
+    petals.every((p) => {
+      const stars = starsOfPart(p.key);
+      return stars.length > 0 && stars.every((s) => p.y > s.y);
+    })
+  );
+  check("the cluster name sits above the topmost star, the captions below the parts", petals.every((p) => p.y > lab("Northwind").y));
+  check("only a split company has captions", lab("Chapel Hill").petals === undefined && lab("Duo Labs").petals === undefined && lab("Engineers").petals === undefined);
+  check("the role cluster says how many companies", lab("Engineers").subtitle === "across 4 companies");
+  check("no other cluster has a subtitle", ["Northwind", "Chapel Hill", "Duo Labs"].every((n) => lab(n).subtitle === undefined));
+
+  const roleEdges = anatomyIndex.edges.filter((e) => anatomyLayout.edges.find((l) => l.source === e.source && l.target === e.target)?.data?.reason === "role");
+  check("the role cluster draws lines", roleEdges.length > 0);
+  check(
+    "role lines are dotted, in screen px, and faint",
+    roleEdges.every((e) => e.dash !== undefined && e.dash[0] === 2 && e.dash[1] === 5 && e.opacity === 0.35)
+  );
+  check("every other line is solid", anatomyIndex.edges.filter((e) => !roleEdges.includes(e)).every((e) => e.dash === undefined));
+  check("there are solid lines to tell apart", anatomyIndex.edges.length > roleEdges.length);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nthe phone canvas draws the galaxy\n");
+// ---------------------------------------------------------------------------
+{
+  // A recording 2D context that accepts any call, plus a `document` whose canvases are
+  // recording contexts: enough to run the real bake and the real frame without a browser.
+  type Call = { name: string; args: unknown[] };
+  const makeCtx = () => {
+    const calls: Call[] = [];
+    const assigned: Array<[string, unknown]> = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (_t, prop: string) => (...args: unknown[]) => {
+        calls.push({ name: prop, args });
+        if (prop.startsWith("create")) return { addColorStop() {} };
+        if (prop === "measureText") return { width: String(args[0]).length * 6 };
+        return undefined;
+      },
+      set: (_t, prop: string, value) => {
+        assigned.push([prop, value]);
+        return true;
+      },
+    });
+    return { ctx: ctx as unknown as CanvasRenderingContext2D, calls, assigned };
+  };
+  type FakeCanvas = { width: number; height: number; rec: ReturnType<typeof makeCtx>; getContext: () => unknown };
+  const made: FakeCanvas[] = [];
+  (globalThis as unknown as { document: unknown }).document = {
+    createElement: () => {
+      const rec = makeCtx();
+      const c: FakeCanvas = { width: 0, height: 0, rec, getContext: () => rec.ctx };
+      made.push(c);
+      return c;
+    },
+  };
+
+  const galaxy = anatomyLayout.galaxy;
+  const before = made.length;
+  const bitmap = galaxyBackdropBitmap(galaxy)!;
+  const box = galaxyBackdropData(galaxy);
+  const baked = made[made.length - 1];
+  check("the bake is one offscreen canvas of 1024 x 1024", made.length === before + 1 && baked.width === 1024 && baked.height === 1024);
+  check("...covering the backdrop's box", bitmap.minX === box.minX && bitmap.minY === box.minY && bitmap.width === box.width && bitmap.height === box.height);
+  const scale = 1024 / box.width;
+  const t = baked.rec.calls.find((c) => c.name === "setTransform")!.args as number[];
+  check(
+    "...drawn at the backing scale size/width, origin on the box",
+    close(t[0], scale) && close(t[3], scale) && close(t[4], -box.minX * scale) && close(t[5], -box.minY * scale)
+  );
+  check(
+    "...by the same drawing the desktop worker runs (bulge gradient, dust fills)",
+    baked.rec.calls.some((c) => c.name === "createRadialGradient") && baked.rec.calls.filter((c) => c.name === "fill").length > 0
+  );
+  check("asking again is free: the same galaxy gives the same bitmap", galaxyBackdropBitmap(galaxy) === bitmap && made.length === before + 1);
+  const other = buildHybridGraphLayout(anatomyFixture(), "Test User");
+  const otherBitmap = galaxyBackdropBitmap(other.galaxy)!;
+  check("a new layout's galaxy is baked again", otherBitmap !== bitmap && made.length === before + 2);
+  clearSpriteCaches();
+  check("clearing the sprite caches drops it", galaxyBackdropBitmap(galaxy) !== bitmap);
+  check("a different size is its own bake", galaxyBackdropBitmap(galaxy, 512)!.canvas.width === 512);
+
+  // The pure test for "is the box on screen".
+  const screenWorld = { minX: 0, minY: 0, maxX: 400, maxY: 800 };
+  check("a box over the view is visible", worldBoxVisible({ minX: -500, minY: -500, width: 1000, height: 1000 }, screenWorld));
+  check("a box inside the view is visible", worldBoxVisible({ minX: 100, minY: 100, width: 50, height: 50 }, screenWorld));
+  check("a box beside the view is not", !worldBoxVisible({ minX: 401, minY: 0, width: 100, height: 100 }, screenWorld));
+  check("a box above the view is not", !worldBoxVisible({ minX: 0, minY: -300, width: 100, height: 100 }, screenWorld));
+
+  // Driving the real frame.
+  const idle = { hoveredId: null, selectedContactId: null, searchHitIds: new Set<string>(), searchDimActive: false };
+  const frameAt = (camera: SkyFrame["camera"]): SkyFrame => ({
+    index: anatomyIndex,
+    camera,
+    width: 390,
+    height: 800,
+    focus: idle,
+    focusCluster: null,
+    focusCompany: null,
+    companyFilter: "all",
+    sunSelected: false,
+    background: null,
+  });
+  const runFrame = (camera: SkyFrame["camera"]) => {
+    const rec = makeCtx();
+    drawSky(rec.ctx, frameAt(camera));
+    return rec;
+  };
+  clearSpriteCaches();
+  const galaxyBlits = (rec: ReturnType<typeof makeCtx>) => {
+    const bmp = galaxyBackdropBitmap(anatomyIndex.galaxy!)!;
+    return rec.calls.filter((c) => c.name === "drawImage" && c.args[0] === bmp.canvas);
+  };
+
+  const onScreen = runFrame({ x: 195, y: 400, k: 0.4 });
+  check("a frame over the galaxy blits the backdrop exactly once", galaxyBlits(onScreen).length === 1, String(galaxyBlits(onScreen).length));
+  const blit = galaxyBlits(onScreen)[0].args as number[];
+  check(
+    "...through worldToScreen: the box's corner and its size at the zoom",
+    close(blit[1], box.minX * 0.4 + 195) && close(blit[2], box.minY * 0.4 + 400) && close(blit[3], box.width * 0.4)
+  );
+  const firstDraw = onScreen.calls.findIndex((c) => c.name === "drawImage");
+  check("...and it is the first image drawn, under the haze", onScreen.calls[firstDraw].args[0] === galaxyBackdropBitmap(anatomyIndex.galaxy!)!.canvas);
+  const away = runFrame({ x: 5e6, y: 5e6, k: 0.4 });
+  check("a frame looking elsewhere draws no backdrop", galaxyBlits(away).length === 0);
+  const noGalaxy = (() => {
+    const rec = makeCtx();
+    drawSky(rec.ctx, { ...frameAt({ x: 195, y: 400, k: 0.4 }), index: { ...anatomyIndex, galaxy: undefined } });
+    return rec;
+  })();
+  check("an index without a galaxy draws none", galaxyBlits(noGalaxy).length === 0);
+
+  // Washes by form: sprites blitted per nebula.
+  const imagesOf = (rec: ReturnType<typeof makeCtx>) => rec.calls.filter((c) => c.name === "drawImage").length;
+  const formCount = (form: string) => {
+    const rec = makeCtx();
+    drawSky(rec.ctx, {
+      ...frameAt({ x: 195, y: 400, k: 0.05 }),
+      index: { ...anatomyIndex, galaxy: undefined, nebulae: anatomyIndex.nebulae.filter((n) => n.form === form), stars: [], labelOrder: [], edges: [], sun: null, clusterLabels: [], grid: anatomyIndex.grid },
+    });
+    return imagesOf(rec);
+  };
+  check("a petal cluster blits its haze and one per part (1 + 4)", formCount("petal") === 5, String(formCount("petal")));
+  check("a ring blits one annulus", formCount("ring") === 1, String(formCount("ring")));
+  check("open and binary clusters are not washed", formCount("open") === 0 && formCount("binary") === 0);
+
+  // Dashes: looking at the role cluster's own lines.
+  const centredOn = (x: number, y: number, k: number) => ({ x: 195 - x * k, y: 400 - y * k, k });
+  const roleEdge = anatomyIndex.edges.find((e) => e.dash)!;
+  const dashCalls = (rec: ReturnType<typeof makeCtx>) => rec.calls.filter((c) => c.name === "setLineDash").map((c) => JSON.stringify(c.args[0]));
+  const dashed = dashCalls(runFrame(centredOn(roleEdge.ax, roleEdge.ay, 0.4)));
+  check("the role lines are dashed [2,5] in screen px, and the dash is reset after", dashed.includes("[2,5]") && dashed[dashed.indexOf("[2,5]") + 1] === "[]", dashed.join(" "));
+  const zoomedDash = dashCalls(runFrame(centredOn(roleEdge.ax, roleEdge.ay, 1.5)));
+  check("...whatever the zoom", zoomedDash.includes("[2,5]"));
+  const solid = anatomyIndex.edges.find((e) => !e.dash)!;
+  check(
+    "a frame over solid lines only sets no dash",
+    !dashCalls(runFrame(centredOn(solid.ax, solid.ay, 1.5))).includes("[2,5]")
+  );
+
+  // Captions and subtitles.
+  const textsOf = (rec: ReturnType<typeof makeCtx>) => rec.calls.filter((c) => c.name === "strokeText").map((c) => String(c.args[0]));
+  const nwNode = anatomyLayout.nodes.find((n) => n.type === "clusterLabel" && (n.data as ClusterLabelData).label === "Northwind")!;
+  const nwData = nwNode.data as ClusterLabelData;
+  const nwBox = nwData.box!;
+  const nwCentre = { x: nwNode.position.x - nwData.anchor!.x + nwBox.width / 2, y: nwNode.position.y - nwData.anchor!.y + nwBox.height / 2 };
+  const near = textsOf(runFrame(centredOn(nwCentre.x, nwCentre.y, PETAL_LABEL_MIN_ZOOM)));
+  check("petal names are drawn in capitals once the camera is close enough", ["LEADERSHIP", "ENGINEERING", "DESIGN", "SALES & BD"].every((t) => near.includes(t)), near.join("|"));
+  const far = textsOf(runFrame(centredOn(nwCentre.x, nwCentre.y, PETAL_LABEL_MIN_ZOOM - 0.01)));
+  check("...and not before", !far.includes("ENGINEERING") && !far.includes("LEADERSHIP"));
+  const engLabel = anatomyIndex.clusterLabels.find((l) => l.label === "Engineers")!;
+  const engText = textsOf(runFrame(centredOn(engLabel.x, engLabel.y, 0.6)));
+  check("the role cluster's subtitle is drawn under its name", engText.includes("Engineers") && engText.includes("across 4 companies"), engText.join("|"));
+  check("...after the name", engText.indexOf("across 4 companies") > engText.indexOf("Engineers"));
+
+  const busy = runFrame(centredOn(nwCentre.x, nwCentre.y, 0.3));
+  check("no frame ever assigns shadowBlur", !busy.assigned.some(([k]) => k === "shadowBlur"));
+  check(
+    "captions are stroked for legibility before they are filled",
+    busy.calls.findIndex((c) => c.name === "strokeText" && c.args[0] === "ENGINEERING") + 1 ===
+      busy.calls.findIndex((c) => c.name === "fillText" && c.args[0] === "ENGINEERING")
+  );
+  check(
+    "the core reads warm and the petals white",
+    busy.assigned.some(([k, v]) => k === "fillStyle" && /255, 233, 194, 0.7/.test(String(v))) &&
+      busy.assigned.some(([k, v]) => k === "fillStyle" && v === "rgba(255,255,255,0.55)")
+  );
+
+  // The cap and the order.
+  const synth = Array.from({ length: 70 }, (_, i) => ({
+    id: `l${i}`, x: 0, y: 0, label: `L${i}`, color: "#fff",
+    petals: [{ key: "core", label: `P${i}`, role: "core" as const, x: i * 10, y: 0 }],
+  }));
+  const picked = pickPetalLabels(synth, { minX: -10, minY: -10, maxX: 10000, maxY: 10 }, PETAL_LABEL_CAP);
+  check("at most PETAL_LABEL_CAP captions a frame", PETAL_LABEL_CAP === 40 && picked.length === 40);
+  check("...nearest the view's centre first", picked[0].petal.label === "P69");
+  check(
+    "...the nearest forty, none farther than one left out",
+    picked.map((p) => p.petal.label).sort().join() === Array.from({ length: 40 }, (_, i) => `P${30 + i}`).sort().join()
+  );
+  check("captions outside the view are not picked", pickPetalLabels(synth, { minX: -10, minY: -10, maxX: 95, maxY: 10 }, 40).length === 10);
+}
+
+// ---------------------------------------------------------------------------
 console.log("\ngesture constants\n");
 // ---------------------------------------------------------------------------
 {
@@ -876,6 +1138,8 @@ console.log("\npetal labels\n");
     `${plain.width} -> ${withSub.width}`
   );
 }
+
+delete (globalThis as { document?: unknown }).document;
 
 console.log("\nAll graph-canvas smoke checks passed.\n");
 process.exit(0);
