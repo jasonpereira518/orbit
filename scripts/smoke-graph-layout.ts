@@ -1,6 +1,6 @@
 /**
- * Exercises the packed sky-atlas constellation layout: undistorted asterism
- * figures, guaranteed non-overlap of stars and figure lines, shell packing,
+ * Exercises the galaxy constellation layout: undistorted asterism
+ * figures, guaranteed non-overlap of stars and figure lines, disk placement,
  * and the fit/edge agreement that used to be a hand-maintained invariant.
  * No DB, no network.
  * Run: npx tsx scripts/smoke-graph-layout.ts
@@ -82,7 +82,7 @@ const fixture: GraphContactInput[] = [
   contact("s1", { school: "MIT", orbitScore: 4 }),
   contact("s2", { school: "MIT", orbitScore: 2 }),
   contact("s3", { school: "MIT", orbitScore: 1 }),
-  // Singleton company → background rim, not a wedge.
+  // Singleton company → halo, not a cluster.
   contact("solo", { company: "Tiny Startup", orbitScore: 3 }),
   // One-off companies, same function → a cross-company role constellation.
   contact("r1", { company: "Acme Robotics", title: "Backend Engineer", orbitScore: 3 }),
@@ -339,6 +339,8 @@ console.log("\nNo overlaps");
       }
     }
   }
+  // A heuristic on star centroids; the exact disk guarantee (gap, sun clear) lives in
+  // smoke-disk-placement.
   check("cluster star fields are pairwise disjoint", clustersApart);
 }
 
@@ -425,6 +427,13 @@ console.log("\nNear = related (a realistic network)");
     forwardAt.size === flippedAt.size && worst < 1e-6,
     `largest move ${worst.toFixed(6)}px`
   );
+  const shape = (l: typeof big) =>
+    JSON.stringify([
+      Math.round(l.galaxy.diskRadius),
+      Math.round(l.galaxy.coreRadius),
+      l.galaxy.filaments.map((f) => `${f.from}>${f.to}`),
+    ]);
+  check("nor does the galaxy's shape", shape(big) === shape(flipped));
 }
 
 // ---------------------------------------------------------------------------

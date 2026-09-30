@@ -2,9 +2,9 @@
  * Do related companies sit together on the star map?
  *
  * Someone at Google DeepMind should be found beside Google, not a quarter-turn away or out on
- * the rim with everyone unclustered. Three ways that used to fail, each checked here:
+ * the halo with everyone unclustered. Three ways that used to fail, each checked here:
  *
- *   - a lone DeepMind contact is not a constellation, so it was scattered across the rim;
+ *   - a lone DeepMind contact is not a constellation, so it was scattered across the halo;
  *   - a family could end up apart, landing its smaller member on the far side;
  *   - related clusters were placed by list order, not relatedness.
  *

@@ -1456,7 +1456,7 @@ function GraphCanvasInner({
       draggable: false,
       selectable: false,
       focusable: false,
-      // Above the rings (-2), beneath the clusters' haze (0) and every real star.
+      // Beneath the clusters' haze (0) and every real star.
       zIndex: -1,
       style: { pointerEvents: "none" },
     };
@@ -1526,7 +1526,7 @@ function GraphCanvasInner({
       draggable: false,
       selectable: false,
       focusable: false,
-      // Exactly where the 485 wash boxes sat: above the rings (-2) and the dust (-1), beneath
+      // Exactly where the 485 wash boxes sat: above the star dust (-1), beneath
       // the stars and the cluster names. Keeping the number keeps the sky's order unchanged.
       zIndex: 0,
       style: { pointerEvents: "none" },

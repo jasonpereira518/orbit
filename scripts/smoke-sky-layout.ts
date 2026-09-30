@@ -27,6 +27,12 @@ function fingerprint(layout: ReturnType<typeof buildHybridGraphLayout>) {
   const h = createHash("sha256");
   for (const n of layout.nodes) h.update(`${n.id}|${n.type}|${n.position.x}|${n.position.y}|${JSON.stringify(n.data)}\n`);
   for (const e of layout.edges) h.update(`${e.id}|${e.source}|${e.target}|${JSON.stringify(e.style)}\n`);
+  const g = layout.galaxy;
+  h.update(
+    `galaxy|${Math.round(g.diskRadius)}|${Math.round(g.coreRadius)}|${g.filaments.length}|` +
+      g.filaments.map((f) => `${f.from}>${f.to}@${f.path.map((p) => `${p.x.toFixed(3)},${p.y.toFixed(3)}`).join(";")}`).join(",") +
+      "\n"
+  );
   return h.digest("hex");
 }
 

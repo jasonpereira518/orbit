@@ -1,5 +1,5 @@
 /**
- * Time `buildHybridGraphLayout` — the whole constellation layout, sun to deep-space rim — at
+ * Time `buildHybridGraphLayout` — the whole constellation layout, sun to halo — at
  * several network sizes, and fingerprint what it produced.
  *
  * The layout runs synchronously on the main thread whenever the chart mounts or its filters
@@ -30,6 +30,12 @@ function fingerprint(layout: ReturnType<typeof buildHybridGraphLayout>) {
     h.update(`${n.id}|${n.type}|${n.position.x.toFixed(6)}|${n.position.y.toFixed(6)}\n`);
   }
   for (const e of layout.edges) h.update(`${e.id}|${e.source}|${e.target}\n`);
+  const g = layout.galaxy;
+  h.update(
+    `galaxy|${Math.round(g.diskRadius)}|${Math.round(g.coreRadius)}|${g.filaments.length}|` +
+      g.filaments.map((f) => `${f.from}>${f.to}`).join(",") +
+      "\n"
+  );
   return h.digest("hex").slice(0, 16);
 }
 
