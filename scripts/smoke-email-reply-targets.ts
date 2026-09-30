@@ -5,9 +5,13 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
+import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import * as schema from "../src/db/schema";
-import { listReplyTargets, replySubject, resolveReplyTarget } from "../src/lib/email/reply-targets";
+import { encrypt } from "../src/lib/crypto";
+import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
+import { MICROSOFT_SCOPES } from "../src/lib/microsoft-scopes";
+import { listReplyTargets, replySubject, resolveReplyTarget, setReplyInboxOverride } from "../src/lib/email/reply-targets";
 import { purgeUserData } from "../src/lib/user-data";
 
 const USER = "smoke-reply-user";
@@ -112,6 +116,63 @@ async function main() {
     check("copy reuses a row's reply fields", cr?.rfcMessageId === "<parent@x>" && cr.inReplyToSendId === newest.id && cr.subject === "Retry me", JSON.stringify(cr));
     check("copy of a row that was not a reply is null", (await resolveReplyTarget(USER, `copy:${newest.id}`)) === null);
     check("copy of someone else's row is null", (await resolveReplyTarget(OTHER, `copy:${failed.id}`)) === null);
+
+    console.log("mailbox lookups (dark)");
+    const tokens = { accessTokenEncrypted: encrypt("t"), refreshTokenEncrypted: encrypt("r"), tokenExpiresAt: new Date(Date.now() + 3_600_000) };
+    await db.insert(schema.gmailConnections).values({
+      userId: USER, emailAddress: "me@acme-corp.io", ...tokens,
+      scopes: `${GOOGLE_SCOPES.gmailSend} ${GOOGLE_SCOPES.gmailRead}`, status: "active",
+    });
+    await db.insert(schema.outlookConnections).values({
+      userId: USER, emailAddress: "Me@Contoso.io", ...tokens,
+      scopes: `${MICROSOFT_SCOPES.mailSend} ${MICROSOFT_SCOPES.mail}`, status: "active",
+    });
+    const seen: string[] = [];
+    let outlookNewer = false;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      seen.push(decodeURIComponent(url));
+      if (url.includes("gmail.googleapis.com") && url.includes("/messages?q=")) return Response.json({ messages: [{ id: "g-1", threadId: "gt-1" }] });
+      if (url.includes("gmail.googleapis.com") && url.includes("/messages/g-1")) {
+        return Response.json({
+          id: "g-1", threadId: "gt-1", internalDate: String(Date.now() - 3_600_000),
+          payload: { headers: [{ name: "Message-ID", value: "<inbox-1@mail.gmail.com>" }, { name: "Subject", value: "Re: Plans" }] },
+        });
+      }
+      const graph = { id: "o-1", subject: "Dinner", internetMessageId: "<o1@outlook.com>", receivedDateTime: new Date(Date.now() - (outlookNewer ? 60_000 : 7_200_000)).toISOString() };
+      if (url.includes("graph.microsoft.com") && url.includes("$search=")) return Response.json({ value: [graph] });
+      if (url.includes("graph.microsoft.com") && url.includes("/messages/o-1")) return Response.json(graph);
+      return new Response("nope", { status: 404 });
+    }) as typeof fetch;
+    try {
+      const dark = await listReplyTargets(USER, maya!.id);
+      check("dark: no mailbox call and no inbox target", !dark.some((t) => t.source === "inbox") && seen.length === 0);
+      check("dark: an inbox key does not resolve", (await resolveReplyTarget(USER, "inbox:gmail:g-1")) === null && seen.length === 0);
+
+      setReplyInboxOverride(true);
+      const lit = await listReplyTargets(USER, maya!.id);
+      const inbox = lit.filter((t) => t.source === "inbox");
+      check("released: the newer mailbox hit is offered, once", inbox.length === 1 && inbox[0]!.key === "inbox:gmail:g-1" && inbox[0]!.subject === "Plans", JSON.stringify(lit));
+      check("Gmail is searched by the contact's address", seen.some((u) => u.includes("from:maya@work.org OR to:maya@work.org")));
+      check("Graph is searched by participants", seen.some((u) => u.includes('$search="participants:maya@work.org"')));
+      const ir = await resolveReplyTarget(USER, "inbox:gmail:g-1");
+      check("a Gmail key re-reads the message, with its thread", ir?.rfcMessageId === "<inbox-1@mail.gmail.com>" && ir.thread?.threadId === "gt-1" && ir.thread.email === "me@acme-corp.io", JSON.stringify(ir));
+      outlookNewer = true;
+      check("the Outlook hit wins when newer", (await listReplyTargets(USER, maya!.id)).some((t) => t.key === "inbox:outlook:o-1"));
+      const or = await resolveReplyTarget(USER, "inbox:outlook:o-1");
+      check("an Outlook key resolves by headers alone", or?.rfcMessageId === "<o1@outlook.com>" && or.thread === null && or.subject === "Dinner", JSON.stringify(or));
+      check("an unknown provider does not resolve", (await resolveReplyTarget(USER, "inbox:yahoo:1")) === null);
+      check("a missing message does not resolve", (await resolveReplyTarget(USER, "inbox:gmail:nope")) === null);
+
+      await db.update(schema.gmailConnections).set({ scopes: GOOGLE_SCOPES.gmailSend }).where(eq(schema.gmailConnections.userId, USER));
+      await db.update(schema.outlookConnections).set({ scopes: MICROSOFT_SCOPES.mailSend }).where(eq(schema.outlookConnections.userId, USER));
+      seen.length = 0;
+      check("without read scopes: nothing, and no call", !(await listReplyTargets(USER, maya!.id)).some((t) => t.source === "inbox") && seen.length === 0);
+    } finally {
+      globalThis.fetch = realFetch;
+      setReplyInboxOverride(null);
+    }
 
     console.log("junk keys");
     for (const k of ["", "orbit:not-a-uuid", "nope:1", "logged:", "inbox:gmail:x"]) {
