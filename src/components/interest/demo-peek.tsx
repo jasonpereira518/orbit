@@ -18,23 +18,23 @@ import { cn } from "@/lib/utils";
 const SLIDES = [
   {
     name: "suggestion",
-    caption: "Maya has gone quiet — and you said you'd check in monthly.",
-    alt: "A suggestion to reach out to Maya Okafor, marked dormant, last touched 46 days ago.",
+    caption: "Amanda has gone quiet — and you said you'd check in monthly.",
+    alt: "A suggestion to reach out to Amanda Smith, marked dormant, last touched 46 days ago.",
   },
   {
     name: "timeline",
     caption: "Everything about her in one place: email, meetings, LinkedIn.",
-    alt: "Maya's timeline: an email, a coffee meeting, a LinkedIn message and a call.",
+    alt: "Amanda's timeline: an email, a coffee meeting, a LinkedIn message and a call.",
   },
   {
     name: "draft",
     caption: "It remembers what you promised, and drafts the follow-up.",
-    alt: "An answer recalling the deck promised to Maya, with a drafted email ready to send.",
+    alt: "An answer recalling the deck promised to Amanda, with a drafted email ready to send.",
   },
   {
     name: "constellation",
     caption: "And you can always see where everyone sits.",
-    alt: "A star chart of the network, with Maya's card open beside the Figma constellation.",
+    alt: "A star chart of the network, with Amanda's card open beside the Figma constellation.",
   },
 ] as const;
 

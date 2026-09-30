@@ -58,6 +58,7 @@ export function useDemoTour({
   const [cursor, setCursor] = useState<Point | null>(null);
   const [pressing, setPressing] = useState(false);
   const [beat, setBeat] = useState(0);
+  const [typed, setTyped] = useState("");
 
   useEffect(() => {
     if (!active) return;
@@ -96,12 +97,21 @@ export function useDemoTour({
             setCursor(aimAt(el, root));
             await sleep(reduced ? 300 : 900);
           }
+          if (b.type) {
+            // Typed into the ask bar the way a person would, then sent by the click below.
+            for (let n = 1; n <= b.type.length; n++) {
+              setTyped(b.type.slice(0, n));
+              await sleep(reduced ? 0 : 45);
+            }
+            await sleep(reduced ? 100 : 350);
+          }
           if (b.action) {
             setPressing(true);
             await sleep(160);
             const action = typeof b.action === "function" ? b.action(stateRef.current) : b.action;
             if (action) dispatch(action);
             setPressing(false);
+            setTyped("");
             if (action && (action.type === "reset" || action.type === "openProfile" || action.type === "go" || action.type === "ask")) {
               paneRef.current?.scrollTo({ top: 0 });
             }
@@ -116,10 +126,11 @@ export function useDemoTour({
     return () => {
       cancelled = true;
       setPressing(false);
+      setTyped("");
     };
   }, [active, reduced, rootRef, paneRef, pausedRef, stateRef, dispatch]);
 
-  return { cursor, pressing, beat };
+  return { cursor, pressing, beat, typed };
 }
 
 export function TourCursor({ at, pressing, reduced }: { at: Point; pressing: boolean; reduced: boolean }) {

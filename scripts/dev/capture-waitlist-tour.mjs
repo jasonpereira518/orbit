@@ -31,7 +31,7 @@ const H = 315;
  * the element's own top-left, before it is clamped inside the window.
  */
 const CROPS = {
-  suggestion: { target: "suggestion-maya", dx: -28, dy: -64 },
+  suggestion: { target: "suggestion-amanda", dx: -28, dy: -64 },
   timeline: { target: "profile-timeline", dx: -8, dy: -6 },
   draft: { target: "chat-draft-card", dx: -14, dy: -22 },
   constellation: { target: "star-card", dx: -190, dy: -10 },
@@ -94,7 +94,7 @@ async function main() {
   // A click anywhere takes the demo over from the autoplay tour.
   await page.click(T("nav-dashboard"));
   await still("suggestion");
-  await page.click(T("suggest-open-maya"));
+  await page.click(T("suggest-open-amanda"));
   await still("timeline");
   await page.click(T("profile-ask"));
   await page.waitForSelector(T("chat-draft-btn"), { timeout: 30_000 });
@@ -103,7 +103,7 @@ async function main() {
   await still("draft");
   await page.click(T("nav-constellation"));
   await page.waitForTimeout(600);
-  await page.click(T("star-maya"), { force: true });
+  await page.click(T("star-amanda"), { force: true });
   await still("constellation");
 
   await browser.close();

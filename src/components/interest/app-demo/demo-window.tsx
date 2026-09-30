@@ -90,7 +90,7 @@ export function DemoWindow() {
   }, [state.toast]);
 
   const touring = state.mode === "tour";
-  const { cursor, pressing, beat } = useDemoTour({ active: touring, reduced, rootRef, paneRef, pausedRef, stateRef, dispatch });
+  const { cursor, pressing, beat, typed } = useDemoTour({ active: touring, reduced, rootRef, paneRef, pausedRef, stateRef, dispatch });
 
   /**
    * Any press or key inside the window — other than the mode button itself — hands the
@@ -215,7 +215,7 @@ export function DemoWindow() {
               aria-label={asked ? `Ask about ${asked.name}` : "Ask your network"}
             >
               <Search className="size-4 text-muted-foreground" aria-hidden="true" />
-              <span className="flex-1 text-sm text-muted-foreground">Ask your network…</span>
+              <span className={typed ? "flex-1 text-sm text-ink" : "flex-1 text-sm text-muted-foreground"}>{typed || "Ask your network…"}</span>
               <kbd className="rounded-md border border-border bg-muted/50 px-1.5 text-[11px] text-muted-foreground">⌘J</kbd>
               <span className="inline-flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
                 <ArrowUp className="size-4" aria-hidden="true" />

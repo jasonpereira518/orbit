@@ -422,7 +422,7 @@ function Answer({ turn, last }: { turn: AssistantTurn; last: boolean }) {
                       ))}
                     </div>
                     <div className="mt-2.5 flex gap-2">
-                      <button type="button" className={cn(BTN_PRIMARY, "rounded-full")} onClick={() => dispatch({ type: "sendDraft", turnId: turn.id })}>
+                      <button type="button" data-demo-target={last ? "chat-send-btn" : undefined} className={cn(BTN_PRIMARY, "rounded-full")} onClick={() => dispatch({ type: "sendDraft", turnId: turn.id })}>
                         <Mail className="size-3.5" aria-hidden="true" />
                         Send email…
                       </button>

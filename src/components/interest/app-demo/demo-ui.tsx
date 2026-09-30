@@ -114,8 +114,8 @@ export function Avatar({ person, size = 32, className }: { person: DemoPerson; s
           <circle cx={32} cy={32} r={32} />
         </clipPath>
         <linearGradient id={`${clip}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor={`hsl(${h} 45% 34%)`} />
-          <stop offset="100%" stopColor={`hsl(${(h + 40) % 360} 40% 20%)`} />
+          <stop offset="0%" stopColor={look.bg?.[0] ?? `hsl(${h} 45% 34%)`} />
+          <stop offset="100%" stopColor={look.bg?.[1] ?? `hsl(${(h + 40) % 360} 40% 20%)`} />
         </linearGradient>
       </defs>
       <g clipPath={`url(#${clip})`}>
