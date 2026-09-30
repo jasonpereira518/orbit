@@ -16,7 +16,7 @@ import { getCurrentUserProfile } from "@/lib/auth";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import "@/lib/email/origin-registrations";
 import { ENQUEUE_COPY, chargeEmailBurst, dispatchEmailSend, enqueueEmail } from "@/lib/email/outbox";
-import { getSendCapability } from "@/lib/email/sender";
+import { getSendCapability, listMailboxes } from "@/lib/email/sender";
 import {
   generateRecruiterDraftsBatch,
   isRecruiterIntent,
@@ -295,8 +295,13 @@ export async function sendRecruiterDrafts(
       return { sent: marked.length, failed: [], quotaRemaining: Math.max(0, remaining - marked.length) };
     }
 
-    if (!capability.ok && capability.reason !== "cap_reached") {
-      throw new UserFacingError(ENQUEUE_COPY[capability.reason]);
+    // Recruiter threads are Gmail threads (`gmailThreadId`), so replies always leave from
+    // Gmail — never from Outlook, even when Outlook is the default mailbox.
+    const gmail = (await listMailboxes(userId, false)).find((m) => m.id === "gmail");
+    if (!gmail?.canSend) {
+      throw new UserFacingError(
+        gmail?.needsReauth ? "Reconnect Gmail to send recruiter replies" : "Connect Gmail to send recruiter replies"
+      );
     }
     // One approved batch is one burst, not one per message; the daily cap counts each email.
     const limited = await chargeEmailBurst(userId);
@@ -351,6 +356,7 @@ export async function sendRecruiterDrafts(
         threadId: row.message.gmailThreadId,
         delayMs: 0,
         chargeBurst: false,
+        provider: "gmail",
       });
       if (!queued.ok) {
         failed.push({ id: row.message.id, recruiterName: row.recruiter.fullName, error: queued.message });

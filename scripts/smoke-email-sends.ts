@@ -232,6 +232,45 @@ async function main() {
     check("drain sent the due row", (await row(d1.id)).status === "sent", JSON.stringify(stats));
     check("drain left the future row queued", (await row(d2.id)).status === "queued");
 
+    // --- an Outlook row: dispatched through its provider, no ids, auth flags the connection
+    let outlookNext: "ok" | "auth" = "ok";
+    setProviderOverride("outlook", {
+      id: "outlook",
+      async identity() {
+        return { email: "me@contoso.io" };
+      },
+      async send() {
+        if (outlookNext === "auth") throw new MailProviderError("auth", "fake 401");
+        return { providerMessageId: null, providerThreadId: null };
+      },
+      async findSent() {
+        return "unknown";
+      },
+    });
+    await db.insert(schema.outlookConnections).values({
+      userId: USER,
+      emailAddress: "me@contoso.io",
+      accessTokenEncrypted: encrypt("t"),
+      refreshTokenEncrypted: encrypt("r"),
+      tokenExpiresAt: new Date(Date.now() + 3_600_000),
+      scopes: "Mail.Send",
+      status: "active",
+    });
+    const outlookRow = async () =>
+      rowsOf<{ id: string }>(
+        await db.execute(sql`INSERT INTO email_sends (user_id, provider, from_email, to_emails, subject, body_text, origin, status, send_at, rfc_message_id)
+          VALUES (${USER}, 'outlook', 'me@contoso.io', '["maya@work.org"]'::jsonb, 'Hi', 'Hello', 'compose', 'queued', now(), ${`<ol-${Date.now()}-${Math.random()}@orbit.mail>`}) RETURNING id`)
+      )[0]!.id;
+    const o1 = await outlookRow();
+    check("an Outlook row sends through the Outlook provider", (await dispatchEmailSend(o1)) === "sent");
+    check("with no provider message id", (await row(o1)).providerMessageId === null);
+    outlookNext = "auth";
+    const o2 = await outlookRow();
+    await dispatchEmailSend(o2);
+    const ol = await db.query.outlookConnections.findFirst({ where: eq(schema.outlookConnections.userId, USER) });
+    check("an Outlook auth failure flags the Outlook connection", ol?.status === "needs_reauth");
+    setProviderOverride("outlook", null);
+
     // --- source guard: the claim keeps the lease predicate and the DB-clock lease
     const src = readFileSync("src/lib/email/outbox.ts", "utf8");
     check("claim leases on the DB clock", src.includes("lease_until = now() +"));
@@ -239,6 +278,7 @@ async function main() {
     check("outbox never imports next/server directly", !/from "next\/server"/.test(src));
   } finally {
     setProviderOverride("gmail", null);
+    setProviderOverride("outlook", null);
     await resetBucket();
     await purgeUserData(USER, { keepSettings: false }).catch(() => {});
   }

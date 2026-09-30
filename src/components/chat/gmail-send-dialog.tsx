@@ -6,6 +6,7 @@ import { useCallback, useEffect, useId, useState } from "react";
 import { toast } from "@/lib/toast";
 
 import { startGmailOAuth } from "@/actions/gmail";
+import { startOutlookOAuth } from "@/actions/outlook";
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { getChatSendContext, sendChatDraftViaGmail, type ChatSendContext } from "@/actions/chat-send";
 import { useChatThreadId } from "@/components/chat/chat-thread-context";
@@ -14,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { SEND_SUBJECT_MAX, checkContent } from "@/lib/chat-send";
 import { stashSendResume } from "@/lib/chat-send-resume";
+import type { MailboxId } from "@/lib/email/sender";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -120,14 +122,16 @@ function SendPanel({
   const content = checkContent({ subject, body });
   const finalBody = content.ok ? content.body : body;
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (provider: MailboxId) => {
     setBusy(true);
     try {
+      // Kept across the consent redirect, so the draft is still here when the person returns.
       stashSendResume({ threadId, messageId, contactId, body, subject });
-      const { url } = await startGmailOAuth({
-        purpose: "send",
-        returnTo: threadId ? `/chat?thread=${encodeURIComponent(threadId)}` : "/chat",
-      });
+      const returnTo = threadId ? `/chat?thread=${encodeURIComponent(threadId)}` : "/chat";
+      const { url } =
+        provider === "outlook"
+          ? await startOutlookOAuth({ purposes: ["send"], returnTo })
+          : await startGmailOAuth({ purpose: "send", returnTo });
       window.location.href = url;
     } catch (err) {
       setBusy(false);
@@ -169,7 +173,10 @@ function SendPanel({
         return;
       }
       if (res.reason === "needs_reconnect" || res.reason === "missing_scope" || res.reason === "not_connected") {
-        setCtx({ ...ctx, identity: { ...ctx.identity, canSend: false, connected: res.reason !== "not_connected" } });
+        // Re-read what's blocking and which mailbox to fix, rather than guessing from the reason.
+        getChatSendContext(messageId, contactId)
+          .then((fresh) => fresh && setCtx(fresh))
+          .catch(() => null);
       }
       setProblem(res.message);
     } catch (err) {
@@ -203,7 +210,7 @@ function SendPanel({
         </p>
       ) : (
         <div className="flex flex-col gap-3 text-sm">
-          {ctx.identity.connected && ctx.identity.sendingAs && (
+          {ctx.identity.canSend && ctx.identity.sendingAs && (
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
               <dt className="text-muted-foreground">From</dt>
               <dd className="min-w-0 break-words font-medium">
@@ -213,7 +220,7 @@ function SendPanel({
               <dd className="min-w-0 break-words font-medium">{ctx.to ?? "—"}</dd>
             </dl>
           )}
-          {!(ctx.identity.connected && ctx.identity.sendingAs) && ctx.to && (
+          {!(ctx.identity.canSend && ctx.identity.sendingAs) && ctx.to && (
             <p>
               <span className="text-muted-foreground">To </span>
               <span className="font-medium">{ctx.to}</span>
@@ -242,7 +249,7 @@ function SendPanel({
 
           <Blocker ctx={ctx} name={name} contactId={contactId} onConnect={connect} busy={busy} />
 
-          {ctx.identity.connected && ctx.identity.sendingAs && ctx.identity.canSend && !ctx.recipientProblem && !ctx.alreadySent && (
+          {ctx.identity.canSend && ctx.identity.sendingAs && ctx.identity.canSend && !ctx.recipientProblem && !ctx.alreadySent && (
             <p className="text-xs text-muted-foreground">
               Replies land in this inbox, and the email appears in your Sent folder.
             </p>
@@ -306,7 +313,7 @@ function Blocker({
   ctx: ChatSendContext;
   name: string;
   contactId: string;
-  onConnect: () => void;
+  onConnect: (provider: MailboxId) => void;
   busy: boolean;
 }) {
   if (ctx.alreadySent) {
@@ -334,32 +341,44 @@ function Blocker({
       </p>
     );
   }
-  if (!ctx.identity.connected) {
+  const block = ctx.identity.block;
+  if (!block) return null;
+  if (block.reason === "cap_reached") {
+    return <p className="text-sm text-muted-foreground">You’ve reached today’s email limit. Try again tomorrow.</p>;
+  }
+  if (block.reason === "not_connected" || !block.provider) {
     return (
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-border/70 p-3">
-        <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-          Connect Gmail to send from your own address.
-        </p>
-        <Button type="button" variant="outline" size="sm" onClick={onConnect} disabled={busy}>
-          Connect Gmail
-        </Button>
-      </div>
-    );
-  }
-  if (!ctx.identity.canSend) {
-    return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/40 p-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">Allow Gmail to send</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Sending from your own address needs Google’s permission to send as you, which Orbit asks for only when you want it.
-          </p>
+        <p className="min-w-0 flex-1 text-sm text-muted-foreground">Connect your email to send from your own address.</p>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => onConnect("gmail")} disabled={busy}>
+            Connect Gmail
+          </Button>
+          {ctx.identity.outlookAvailable && (
+            <Button type="button" variant="outline" size="sm" onClick={() => onConnect("outlook")} disabled={busy}>
+              Connect Outlook
+            </Button>
+          )}
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={onConnect} disabled={busy}>
-          Allow
-        </Button>
       </div>
     );
   }
-  return null;
+  const mailbox = block.provider === "outlook" ? "Outlook" : "Gmail";
+  const company = block.provider === "outlook" ? "Microsoft" : "Google";
+  const reconnect = block.reason === "needs_reauth";
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/40 p-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{reconnect ? `Reconnect ${mailbox}` : `Allow ${mailbox} to send`}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {reconnect
+            ? `Your ${mailbox} connection expired. Reconnect it to send from your own address.`
+            : `Sending from your own address needs ${company}’s permission to send as you, which Orbit asks for only when you want it.`}
+        </p>
+      </div>
+      <Button type="button" variant="outline" size="sm" onClick={() => onConnect(block.provider!)} disabled={busy}>
+        {reconnect ? "Reconnect" : "Allow"}
+      </Button>
+    </div>
+  );
 }

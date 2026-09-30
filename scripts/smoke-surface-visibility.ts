@@ -25,6 +25,7 @@ import {
   COMING_SOON_COMPANIONS,
   COMING_SOON_KEYS,
   COMPOSE_SURFACE_KEY,
+  OUTLOOK_SEND_SURFACE_KEY,
   FEEDBACK_SURFACE_KEY,
   SURFACES,
   getSurface,
@@ -65,6 +66,10 @@ function registryChecks() {
   check("compose is registered as a feature surface", features.some((s) => s.key === COMPOSE_SURFACE_KEY));
   check("a feature surface declares no href", features.every((s) => s.href === undefined));
   check("compose ships coming-soon", COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+  check(
+    "outlook send ships coming-soon",
+    COMING_SOON_KEYS.has(OUTLOOK_SEND_SURFACE_KEY) && getSurface(OUTLOOK_SEND_SURFACE_KEY)?.kind === "feature"
+  );
 
   const widgets = surfacesOfKind("widget");
   check("the feedback widget is registered as a hideable surface", widgets.length === 1);

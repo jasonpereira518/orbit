@@ -22,3 +22,27 @@ export async function saveEmailSignature(userId: string, raw: string): Promise<s
     .onConflictDoUpdate({ target: userSettings.userId, set: { emailSignatureText: signature } });
   return signature;
 }
+
+/** Which mailbox sends when more than one can. Null = pick automatically (Gmail first). */
+export async function loadSendPreference(userId: string): Promise<{ defaultProvider: "gmail" | "outlook" | null }> {
+  const db = await getDb();
+  const row = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { defaultSendProvider: true },
+  });
+  const v = row?.defaultSendProvider;
+  return { defaultProvider: v === "gmail" || v === "outlook" ? v : null };
+}
+
+export async function saveDefaultSendProvider(
+  userId: string,
+  provider: "gmail" | "outlook" | null
+): Promise<"gmail" | "outlook" | null> {
+  const value = provider === "gmail" || provider === "outlook" ? provider : null;
+  const db = await getDb();
+  await db
+    .insert(userSettings)
+    .values({ userId, defaultSendProvider: value })
+    .onConflictDoUpdate({ target: userSettings.userId, set: { defaultSendProvider: value } });
+  return value;
+}

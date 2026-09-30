@@ -408,3 +408,16 @@ Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p2-compose
 5. **A Compose send clears a due follow-up** for every matched contact, the same as a Chat send.
 6. **The AI draft is body-only** (`generateContactFollowUpDraft` returns no subject). An empty subject becomes `Following up` when the AI draft is inserted.
 7. **The palette verb is typed:** `email maya` / `mail maya` turns People rows into "Email Maya" rows. No new row appears for ordinary searches.
+
+## Planning amendments (P3 plan)
+
+Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p3-outlook.md` (supersedes §6's create-then-send):
+
+1. **`Mail.Send` + `/me/sendMail`, not create-draft-then-send** (Jason, Sep 30 2026). Creating a draft requires `Mail.ReadWrite` ("read, update, create and delete your mail"); `Mail.Send` keeps Outlook's ask as narrow as Gmail's `gmail.send`. Graph answers `202` with no body, so Outlook sends store no provider message or thread id (`SendResult.providerMessageId` is nullable).
+2. **Duplicate check by custom header.** Each message carries `x-orbit-send-id: <rfc_message_id>` (Graph requires custom header names to start with `x-`, set only at creation, readable only via `$select` on a single-message GET). `findSent` lists recent Sent Items and matches that header — only with `Mail.Read`; otherwise `"unknown"`.
+3. **Status classification for sendMail:** 401/403 → auth; 400/413/other 4xx → permanent; 429 and 503 → transient; other 5xx and network errors → ambiguous.
+4. **Choosing a mailbox:** explicit per-send choice → `user_settings.default_send_provider` → the only sendable mailbox → Gmail. A blocked result names which provider to fix.
+5. **Recruiter sends stay on Gmail** (their threads are Gmail threads).
+6. **Chat's send dialog shows the resolved mailbox,** not Gmail's identity.
+7. **Outlook sending ships dark** behind `feature.outlook-send` until the privacy page discloses `Mail.Send` — that edit forces a `TERMS_VERSION` bump (re-consent), so it is Jason's call (fold into pricing v2's legal update, #370).
+8. **Copy becomes mailbox-neutral** ("Connect your email", "Allow Orbit to send from your email").

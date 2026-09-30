@@ -53,7 +53,7 @@ const MSG = {
 async function kind(m: Mode): Promise<string> {
   mode = m;
   try {
-    await gmailProvider.send(USER, MSG);
+    await gmailProvider.send(USER, MSG, { sendId: "row-1" });
     return "ok";
   } catch (e) {
     return e instanceof MailProviderError ? e.kind : `raw:${String(e)}`;
@@ -85,7 +85,7 @@ async function main() {
 
     mode = "ok";
     calls.length = 0;
-    const sent = await gmailProvider.send(USER, MSG);
+    const sent = await gmailProvider.send(USER, MSG, { sendId: "row-1" });
     check("returns provider ids", sent.providerMessageId === "m1" && sent.providerThreadId === "t1");
     const raw = Buffer.from(JSON.parse(calls[0]!.body).raw, "base64url").toString("utf8");
     check("Bcc travels in the raw header for Gmail", /^Bcc: b@x\.org$/m.test(raw.split("\r\n\r\n")[0]!));
@@ -98,11 +98,11 @@ async function main() {
     check("network drop → ambiguous", (await kind("network")) === "ambiguous");
     check("200 without id → ambiguous", (await kind("noid")) === "ambiguous");
 
-    check("findSent without read scope → unknown", (await gmailProvider.findSent(USER, "<found@x>")) === "unknown");
+    check("findSent without read scope → unknown", (await gmailProvider.findSent(USER, { rfcMessageId: "<found@x>", subject: "Hi", since: new Date(0) })) === "unknown");
     await db.update(schema.gmailConnections).set({ scopes: `${GOOGLE_SCOPES.gmailSend} ${GOOGLE_SCOPES.gmailRead}` }).where(where);
-    const found = await gmailProvider.findSent(USER, "<found@x>");
+    const found = await gmailProvider.findSent(USER, { rfcMessageId: "<found@x>", subject: "Hi", since: new Date(0) });
     check("findSent with read scope finds by rfc822msgid", typeof found === "object" && found?.providerMessageId === "m-found");
-    check("findSent miss → null", (await gmailProvider.findSent(USER, "<missing@x>")) === null);
+    check("findSent miss → null", (await gmailProvider.findSent(USER, { rfcMessageId: "<missing@x>", subject: "Hi", since: new Date(0) })) === null);
 
     await db.update(schema.gmailConnections).set({ status: "needs_reauth" }).where(where);
     const re = await resolveSender(USER);

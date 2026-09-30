@@ -86,7 +86,7 @@ import {
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
-import { getSendCapability, type SendBlockReason } from "@/lib/email/sender";
+import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 
 export type {
   ContactInput,
@@ -1392,6 +1392,10 @@ export type ContactFollowUpSendOptions = {
   canSendEmail: boolean;
   /** Why email can't be sent from Orbit right now, or null when it can. */
   sendBlock: SendBlockReason | "cap_reached" | null;
+  /** The mailbox to fix when `sendBlock` names one (null: nothing connected yet). */
+  sendBlockProvider: MailboxId | null;
+  /** Whether "Connect Outlook" may be offered alongside Gmail. */
+  outlookAvailable: boolean;
   hasEmail: boolean;
   hasLinkedIn: boolean;
   email: string | null;
@@ -1427,6 +1431,8 @@ export async function getContactFollowUpSendOptions(
     linkedinUrl,
     canSendEmail: Boolean(email && capability.ok),
     sendBlock: capability.ok ? null : capability.reason,
+    sendBlockProvider: capability.ok ? null : capability.provider,
+    outlookAvailable: capability.outlookAvailable,
   };
 }
 

@@ -239,7 +239,7 @@ run(async () => {
   try {
     const noMailbox = await approveDraft("priya@acme-corp.io");
     const refused = await noMailbox.run().then(() => null, (e: Error) => e.message);
-    check("with no mailbox connected, approval refuses", refused === "Connect Gmail to send from your own address", String(refused));
+    check("with no mailbox connected, approval refuses", refused === "Connect your email to send from your own address", String(refused));
     check("and the draft goes back to pending", (await getAgentSendRequest(USER, noMailbox.id))?.status === "pending");
 
     await db.insert(schema.gmailConnections).values({
