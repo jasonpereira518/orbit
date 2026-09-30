@@ -215,6 +215,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-recruiter-scan": "pure",
   "smoke-recruiter-triage": "pure",
   "smoke-email-intel-consent": "pure",
+  "smoke-email-intel-triage": "pure",
   "smoke-relative-date": "pure",
   "smoke-reveal-reduced-motion": "pure",
   "smoke-scan-image": "pure",
