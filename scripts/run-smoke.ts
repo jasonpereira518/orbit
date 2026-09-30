@@ -163,6 +163,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-follow-up-cadence": "pure",
   "smoke-gmail-batch": "pure",
   "smoke-gmail-send-mime": "pure",
+  "smoke-email-recipients": "pure",
   "smoke-graph-canvas": "pure",
   "smoke-hash-stream": "pure",
   "smoke-sky-layout": "pure",
