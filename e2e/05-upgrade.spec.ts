@@ -25,9 +25,8 @@ test("the pricing page lists Free, Pro and Max, monthly or annual", async ({ pag
   await expect(page.getByText("Most popular", { exact: true })).toBeVisible();
   await expect(page.getByText("Best value", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Orbit Lifetime" })).toHaveCount(0);
-  // The credit explainer section is gone; the FAQ still says what a credit is.
-  await expect(page.getByRole("heading", { name: /What.s a credit\?/ })).toHaveCount(0);
-  await expect(page.getByText("What is a credit?", { exact: true })).toBeVisible();
+  // No credit explainer, as a section or an FAQ answer.
+  await expect(page.getByText(/What.s a credit\?|What is a credit\?/)).toHaveCount(0);
 
   const annual = page.getByRole("radio", { name: /Annual/ });
   await untilHydrated(

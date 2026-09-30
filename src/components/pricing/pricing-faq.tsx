@@ -27,10 +27,6 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: `Max includes more of everything that costs Orbit money to run: ${max.monthlyCredits} AI credits a month instead of ${pro.monthlyCredits}, ${h(max.speech.meetingSeconds)} of meeting transcription instead of ${h(pro.speech.meetingSeconds)}, ${h(max.speech.shortformSeconds)} of voice notes instead of ${h(pro.speech.shortformSeconds)}, and ${max.hostedEnrichmentsPerMonth} contact enrichments a month instead of ${pro.hostedEnrichmentsPerMonth}. Max also includes the REST API and webhooks. Everything else is the same.`,
   },
   {
-    q: "What is a credit?",
-    a: `One credit is one cent of what the AI actually costs Orbit at its provider's rates, measured from the work each request really did — a quick chat answer is a fraction of a credit, a long meeting summary more. Orbit Pro includes ${pro.monthlyCredits} a month and Orbit Max ${max.monthlyCredits}, on monthly and annual billing alike; the allowance resets each month and does not roll over.`,
-  },
-  {
     q: "What happens when my AI credits run out?",
     a: "AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews; to keep going before then, add a $5 pack, move to Max, or switch to your own key. Everything else in Orbit keeps working.",
   },

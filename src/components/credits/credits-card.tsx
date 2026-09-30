@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { confirmCheckoutSession, startPlanSwitch } from "@/actions/billing";
@@ -110,9 +109,6 @@ export function CreditsCard() {
         <h3 id="credits-heading" className="font-heading text-base text-ink">
           AI credits
         </h3>
-        <Link href="/pricing#pricing-faq" className="text-xs text-muted-foreground underline-offset-2 hover:underline">
-          What’s a credit?
-        </Link>
       </div>
 
       {monthlyCredits > 0 && allowance && (
