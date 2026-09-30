@@ -434,3 +434,16 @@ Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p4-schedul
 6. **Attachments aren't kept in the local compose draft;** uploads not sent within 2 days are swept.
 7. **Retry and Edit carry attachments;** blobs are deleted 7 days after the final send settles.
 8. **Gmail sends with attachments use** `POST /upload/gmail/v1/users/me/messages/send?uploadType=multipart`; plain sends keep the JSON `raw` endpoint.
+
+## Planning amendments (P5 plan)
+
+Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p5-reply-thread.md`:
+
+1. **Outlook replies use MIME `sendMail`** (`Content-Type: text/plain`, base64) — still `Mail.Send` only. It is the only sendMail form that carries `In-Reply-To`/`References`; `x-orbit-send-id` is written as a MIME header. New messages keep JSON. Outlook reply attachments ≤ 2 MB (double base64 inside Graph's ~4 MB request).
+2. **Reply sources:** threads Orbit sent (`email_sends`), messages BCC-logged to Orbit (`interactions.external_id = mail:<Message-ID>:<contactId>`), and — dark — the latest mailbox message via existing read scopes.
+3. **Mailbox lookups ship dark** behind `feature.reply-inbox` (Jason, Sep 30 2026) until `/privacy` discloses the use (TERMS_VERSION bump, folded into #370). This replaces §8's "Gmail only after CASA": the gate is the user's granted read scope plus this surface, for both providers.
+4. **The client sends a key, never headers.** Keys: `orbit:<sendId>`, `logged:<interactionId>`, `inbox:gmail:<messageId>`, `inbox:outlook:<graphId>`, and `copy:<sendId>` (reuse a queued/failed row's reply fields — Edit and Retry). The server re-reads each by owner.
+5. **Subject is `Re: <original>`, fixed while replying** — Gmail only threads a `threadId` send whose subject matches.
+6. **Gmail `threadId` only when the thread lives in the sending mailbox** (same provider and address); otherwise headers alone thread it for recipients.
+7. **`References` = the parent's Message-ID only** (no chain column; no DDL). Recipients' clients thread on `In-Reply-To` + subject.
+8. **Retry now keeps `In-Reply-To`** (P1's retry copied the thread id but dropped it).

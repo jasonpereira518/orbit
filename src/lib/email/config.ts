@@ -41,6 +41,10 @@ export const ORPHAN_UPLOAD_TTL_MS = 2 * 24 * 60 * 60 * 1000;
 export const SCHEDULE_MIN_LEAD_MS = 60_000;
 export const SCHEDULE_MAX_LEAD_MS = 30 * 24 * 60 * 60 * 1000;
 
-export function maxAttachmentBytesFor(provider: "gmail" | "outlook" | "demo"): number {
-  return provider === "outlook" ? MAX_ATTACHMENT_BYTES_OUTLOOK : MAX_ATTACHMENT_BYTES_GMAIL;
+/** Outlook replies go as MIME, base64 twice over inside Graph's ~4 MB request (P5). */
+export const MAX_ATTACHMENT_BYTES_OUTLOOK_REPLY = 2 * 1024 * 1024;
+
+export function maxAttachmentBytesFor(provider: "gmail" | "outlook" | "demo", opts: { reply?: boolean } = {}): number {
+  if (provider !== "outlook") return MAX_ATTACHMENT_BYTES_GMAIL;
+  return opts.reply ? MAX_ATTACHMENT_BYTES_OUTLOOK_REPLY : MAX_ATTACHMENT_BYTES_OUTLOOK;
 }
