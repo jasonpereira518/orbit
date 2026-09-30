@@ -8,6 +8,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { recommendationFeedback, recommendations } from "@/db/schema";
+import { scheduleEmailEventReminder } from "@/lib/email-intel/reminders";
 import { scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import { recordFeedback } from "@/lib/radar/store";
 import { LIVE_RECOMMENDATION_STATUSES } from "@/lib/radar/types";
@@ -22,7 +23,7 @@ export type ScheduleDays = (typeof SCHEDULE_DAYS)[number];
 async function ownedPending(userId: string, id: string) {
   const db = await getDb();
   const [row] = await db
-    .select({ id: recommendations.id, contactId: recommendations.contactId, kind: recommendations.kind, status: recommendations.status })
+    .select({ id: recommendations.id, contactId: recommendations.contactId, kind: recommendations.kind, status: recommendations.status, evidence: recommendations.evidence })
     .from(recommendations)
     .where(and(eq(recommendations.id, id), eq(recommendations.userId, userId)))
     .limit(1);
@@ -33,7 +34,13 @@ async function ownedPending(userId: string, id: string) {
 export async function scheduleRecommendationForUser(userId: string, id: string, days: ScheduleDays) {
   const rec = await ownedPending(userId, id);
   if (!rec || rec.status !== "pending") return { ok: false as const };
-  const result = await scheduleContactFollowUpForUser(userId, rec.contactId, days);
+  // A card built from mail carries a reference to its email: accepting it creates the email's
+  // own task. Anything else, or an email that has since gone, is the generic follow-up.
+  const ref = rec.evidence?.find((e) => e.ref?.emailEventId)?.ref ?? null;
+  const fromEmail = ref
+    ? await scheduleEmailEventReminder(userId, { contactId: rec.contactId, eventId: ref.emailEventId, onThread: ref.onThread, days })
+    : null;
+  const result = fromEmail ?? (await scheduleContactFollowUpForUser(userId, rec.contactId, days));
   const db = await getDb();
   const now = new Date();
   await db
