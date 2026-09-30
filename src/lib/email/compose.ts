@@ -1,6 +1,6 @@
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contactIdentities, contacts } from "@/db/schema";
+import { contactIdentities, contacts, emailSends, type EmailFailureKind, type EmailOrigin } from "@/db/schema";
 import { DRAFT_MAX_CHARS, sanitizeDraft } from "@/lib/chat-draft";
 import { SEND_SUBJECT_MAX } from "@/lib/chat-send";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
@@ -170,4 +170,103 @@ export async function sendComposed(userId: string, input: ComposeInput): Promise
   });
   if (!queued.ok) return queued;
   return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to };
+}
+
+export type PendingSend = {
+  id: string;
+  status: "queued" | "sending" | "failed";
+  subject: string;
+  to: string[];
+  sendAt: string;
+  failureKind: EmailFailureKind | null;
+  origin: EmailOrigin;
+  bodyText: string;
+};
+
+/** Failed sends these surfaces can resend; agent and recruiter failures are handled on their own screens. */
+const RETRYABLE_ORIGINS: ReadonlySet<EmailOrigin> = new Set(["compose", "follow_up", "chat"]);
+
+/**
+ * What's waiting or went wrong for this contact — the outbox rows the timeline doesn't show:
+ * queued and in-flight sends, and failures from the last 7 days that nobody dismissed.
+ */
+export async function listContactPendingSends(userId: string, contactId: string): Promise<PendingSend[]> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(emailSends)
+    .where(
+      and(
+        eq(emailSends.userId, userId),
+        sql`${emailSends.contactIds} @> ${JSON.stringify([contactId])}::jsonb`,
+        or(
+          inArray(emailSends.status, ["queued", "sending"]),
+          and(
+            eq(emailSends.status, "failed"),
+            isNull(emailSends.dismissedAt),
+            gte(emailSends.updatedAt, sql`now() - interval '7 days'`)
+          )
+        )
+      )
+    )
+    .orderBy(desc(emailSends.createdAt))
+    .limit(10);
+  return rows.map((r) => ({
+    id: r.id,
+    status: r.status as PendingSend["status"],
+    subject: r.subject,
+    to: r.to,
+    sendAt: r.sendAt.toISOString(),
+    failureKind: r.failureKind,
+    origin: r.origin,
+    bodyText: r.bodyText,
+  }));
+}
+
+/**
+ * Send a definitely-failed email again, as a fresh row with its own undo window. The old row
+ * is dismissed. Its idempotency key is reusable: a failed, non-ambiguous row no longer holds it.
+ */
+export async function retryFailedSend(userId: string, sendId: string, fromName: string | null): Promise<ComposeResult> {
+  const db = await getDb();
+  const old = await db.query.emailSends.findFirst({
+    where: and(eq(emailSends.id, sendId), eq(emailSends.userId, userId)),
+  });
+  if (!old || old.status !== "failed" || old.dismissedAt) {
+    return { ok: false, reason: "not_retryable", message: "That email isn’t waiting to be retried" };
+  }
+  if (old.failureKind === "ambiguous") {
+    return { ok: false, reason: "not_retryable", message: "That may have sent — check your Sent folder first" };
+  }
+  if (!RETRYABLE_ORIGINS.has(old.origin)) {
+    return { ok: false, reason: "not_retryable", message: "Retry that from where you sent it" };
+  }
+  const queued = await enqueueEmail(userId, {
+    to: old.to,
+    cc: old.cc,
+    bcc: old.bcc,
+    subject: old.subject,
+    bodyText: old.bodyText,
+    fromName: fromName ?? old.fromName,
+    origin: old.origin,
+    originRef: old.originRef,
+    idempotencyKey: old.idempotencyKey,
+    contactIds: old.contactIds,
+    threadId: old.providerThreadId,
+    delayMs: UNDO_DELAY_MS,
+  });
+  if (!queued.ok) return queued;
+  await db.update(emailSends).set({ dismissedAt: new Date() }).where(eq(emailSends.id, old.id));
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to };
+}
+
+/** Hide a failed send from the contact page and the account alert. Only its owner can. */
+export async function dismissFailedSend(userId: string, sendId: string): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db
+    .update(emailSends)
+    .set({ dismissedAt: new Date() })
+    .where(and(eq(emailSends.id, sendId), eq(emailSends.userId, userId), eq(emailSends.status, "failed")))
+    .returning();
+  return rows.length > 0;
 }

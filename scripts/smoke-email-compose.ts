@@ -12,7 +12,14 @@ import * as schema from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
 import "../src/lib/email/origin-registrations";
-import { getComposeContext, searchRecipients, sendComposed } from "../src/lib/email/compose";
+import {
+  dismissFailedSend,
+  getComposeContext,
+  listContactPendingSends,
+  retryFailedSend,
+  searchRecipients,
+  sendComposed,
+} from "../src/lib/email/compose";
 import { dispatchEmailSend } from "../src/lib/email/outbox";
 import { setProviderOverride } from "../src/lib/email/providers";
 import type { MailProvider, OutboundMessage } from "../src/lib/email/providers/types";
@@ -128,6 +135,33 @@ async function main() {
     check("logged on the To contact and the CC contact", mayaLog.length === 1 && samLog.length === 1 && mayaLog[0]!.source === "email_send");
     const after = await db.query.contacts.findFirst({ where: eq(schema.contacts.id, maya!.id) });
     check("emailing someone answers their due follow-up", after?.followUpStatus === "none");
+
+    console.log("pending on the contact page");
+    await resetBucket();
+    const q = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Queued one", body: "Later", contactId: maya!.id, fromName: null });
+    if (!q.ok) throw new Error("stop");
+    const pending = await listContactPendingSends(USER, maya!.id);
+    check("a queued send shows on the contact", pending.some((p) => p.id === q.sendId && p.status === "queued"));
+    check("not on another contact", !(await listContactPendingSends(USER, sam!.id)).some((p) => p.id === q.sendId));
+    check("not for another user", (await listContactPendingSends(OTHER, maya!.id)).length === 0);
+    check("sent emails are not pending", !pending.some((p) => p.subject === "Coffee next week?"));
+
+    await db.execute(sql`UPDATE email_sends SET status = 'failed', failure_kind = 'permanent' WHERE id = ${q.sendId}::uuid`);
+    const failed = await listContactPendingSends(USER, maya!.id);
+    check("a failed send shows as failed", failed.some((p) => p.id === q.sendId && p.status === "failed"));
+    const retried = await retryFailedSend(USER, q.sendId, "Jason");
+    check("retry queues a fresh copy", retried.ok && retried.sendId !== q.sendId, JSON.stringify(retried));
+    if (!retried.ok) throw new Error("stop");
+    const afterRetry = await listContactPendingSends(USER, maya!.id);
+    check("and the failed one leaves the list", !afterRetry.some((p) => p.id === q.sendId));
+    check("retrying it twice is refused", !(await retryFailedSend(USER, q.sendId, null)).ok);
+
+    await db.execute(sql`UPDATE email_sends SET status = 'failed', failure_kind = 'ambiguous' WHERE id = ${retried.sendId}::uuid`);
+    const amb = await retryFailedSend(USER, retried.sendId, "Jason");
+    check("a possibly-sent email cannot be retried", !amb.ok && amb.reason === "not_retryable");
+    check("another user cannot dismiss it", !(await dismissFailedSend(OTHER, retried.sendId)));
+    check("but its owner can", await dismissFailedSend(USER, retried.sendId));
+    check("dismissed rows leave the list", !(await listContactPendingSends(USER, maya!.id)).some((p) => p.id === retried.sendId));
   } finally {
     setProviderOverride("gmail", null);
     await resetBucket();

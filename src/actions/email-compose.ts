@@ -1,16 +1,20 @@
 "use server";
 
 /**
- * Compose's server actions. Every one is gated on `feature.compose` (hidden while Compose is
- * coming-soon), takes the user from the session only, and wraps a request-free function in
- * `src/lib/email/compose.ts`.
+ * Compose's server actions. The composer's are gated on `feature.compose` (hidden while Compose
+ * is coming-soon); the pending-sends ones at the bottom are not. All take the user from the
+ * session only and wrap a request-free function in `src/lib/email/compose.ts`.
  */
-import { getCurrentUserProfile } from "@/lib/auth";
+import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import {
+  dismissFailedSend,
   getComposeContext,
+  listContactPendingSends,
+  retryFailedSend,
   searchRecipients,
   sendComposed,
   type ComposeContext,
+  type PendingSend,
   type ComposeInput,
   type ComposeRecipient,
   type ComposeResult,
@@ -69,4 +73,25 @@ export async function draftComposeWithAi(
   } catch (err) {
     return { ok: false, message: friendlyError(err, "Couldn’t draft that — write it yourself or try again?") };
   }
+}
+
+// The contact page's in-progress and failed sends. Gated on the user only, NOT on Compose:
+// failed Chat and follow-up sends from P1 show here too, whether or not Compose is released.
+
+export async function listContactPendingSendsAction(contactId: string): Promise<PendingSend[]> {
+  const userId = await requireUserId();
+  return listContactPendingSends(userId, String(contactId));
+}
+
+export async function retryFailedSendAction(sendId: string): Promise<ComposeResult> {
+  const userId = await requireUserId();
+  const profile = await getCurrentUserProfile().catch(() => null);
+  const result = await retryFailedSend(userId, String(sendId), profile?.name?.trim() || null);
+  if (result.ok) scheduleDispatch(result.sendId, new Date(result.sendAt));
+  return result;
+}
+
+export async function dismissFailedSendAction(sendId: string): Promise<{ dismissed: boolean }> {
+  const userId = await requireUserId();
+  return { dismissed: await dismissFailedSend(userId, String(sendId)) };
 }
