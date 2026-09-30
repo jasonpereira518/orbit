@@ -1,8 +1,22 @@
+import { sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
 import type { EmailAttachmentRef, EmailProviderId } from "@/db/schema";
 import * as blob from "@/lib/blob-lazy";
-import { attachmentPrefixFor, BLOB_ACCESS, isBlockedFilename, safeFilename } from "@/lib/email/attachment-paths";
-import { MAX_ATTACHMENTS, maxAttachmentBytesFor } from "@/lib/email/config";
+import {
+  ATTACHMENT_PREFIX,
+  attachmentPrefixFor,
+  BLOB_ACCESS,
+  isBlockedFilename,
+  safeFilename,
+} from "@/lib/email/attachment-paths";
+import {
+  ATTACHMENT_RETENTION_MS,
+  MAX_ATTACHMENTS,
+  maxAttachmentBytesFor,
+  ORPHAN_UPLOAD_TTL_MS,
+} from "@/lib/email/config";
 import { MailProviderError } from "@/lib/email/providers/types";
+import { reportError } from "@/lib/report-error";
 
 export { ATTACHMENT_PREFIX, attachmentPrefixFor, BLOB_ACCESS, isBlockedFilename, safeFilename } from "@/lib/email/attachment-paths";
 
@@ -135,4 +149,77 @@ export async function loadAttachmentBytes(
     out.push({ filename: ref.filename, contentType: ref.contentType, bytes: got.bytes });
   }
   return out;
+}
+
+/**
+ * Housekeeping (process-stalled): files of sends that settled more than
+ * `ATTACHMENT_RETENTION_MS` ago, and uploads never sent (older than `ORPHAN_UPLOAD_TTL_MS`).
+ * Rows are cleared first, then blobs deleted best-effort — a Blob outage leaves an orphan the
+ * next run's listing finds, never a row pointing at nothing it still needs.
+ */
+export async function sweepEmailAttachments(now = new Date(), limit = 200): Promise<{ settled: number; orphans: number }> {
+  const db = await getDb();
+  const cutoff = new Date(now.getTime() - ATTACHMENT_RETENTION_MS);
+  const picked = rowsOf<{ attachments: EmailAttachmentRef[] }>(
+    await db.execute(sql`
+      WITH picked AS (
+        SELECT id, attachments FROM email_sends
+         WHERE attachments <> '[]'::jsonb
+           AND status IN ('sent','canceled','failed')
+           AND updated_at < ${cutoff}
+         LIMIT ${limit}
+         FOR UPDATE SKIP LOCKED
+      )
+      UPDATE email_sends e SET attachments = '[]'::jsonb
+        FROM picked WHERE e.id = picked.id
+      RETURNING picked.attachments
+    `)
+  );
+  const settledKeys = picked.flatMap((r) => (r.attachments ?? []).map((a) => a.blobKey));
+  let settled = 0;
+  for (const key of settledKeys) {
+    if (await deleteQuietly(key)) settled++;
+  }
+
+  let orphans = 0;
+  try {
+    // One page a run; each run starts over. Fine at this volume.
+    const page = await client.list({ prefix: `${ATTACHMENT_PREFIX}/`, limit: 1000 });
+    const stale = page.blobs.filter((b) => new Date(b.uploadedAt).getTime() < now.getTime() - ORPHAN_UPLOAD_TTL_MS);
+    for (const b of stale) {
+      const live = rowsOf(
+        await db.execute(sql`
+          SELECT 1 FROM email_sends
+           WHERE attachments @> jsonb_build_array(jsonb_build_object('blobKey', ${b.pathname}::text))
+           LIMIT 1
+        `)
+      );
+      if (live.length) continue;
+      if (await deleteQuietly(b.pathname)) orphans++;
+    }
+  } catch (err) {
+    reportError(err, { where: "email.attachment-sweep", level: "warning" });
+  }
+  return { settled, orphans };
+}
+
+async function deleteQuietly(pathname: string): Promise<boolean> {
+  try {
+    await client.del(pathname);
+    return true;
+  } catch (err) {
+    reportError(err, { where: "email.attachment-sweep", level: "warning" });
+    return false;
+  }
+}
+
+/** Account deletion: every file under the user's prefix — sent, queued and never-sent alike. */
+export async function purgeEmailAttachmentsForUser(userId: string): Promise<void> {
+  const prefix = attachmentPrefixFor(userId);
+  let cursor: string | undefined;
+  do {
+    const page = await client.list({ prefix, cursor, limit: 1000 });
+    if (page.blobs.length) await client.del(page.blobs.map((b) => b.pathname));
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
 }

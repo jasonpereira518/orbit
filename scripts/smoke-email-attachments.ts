@@ -6,8 +6,13 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
+import { sql } from "drizzle-orm";
+import { getDb, rowsOf } from "../src/db";
+import { purgeUserData } from "../src/lib/user-data";
 import {
   attachmentPrefixFor,
+  purgeEmailAttachmentsForUser,
+  sweepEmailAttachments,
   isBlockedFilename,
   loadAttachmentBytes,
   safeFilename,
@@ -29,6 +34,8 @@ function putFake(pathname: string, size: number, contentType = "application/pdf"
   store.set(pathname, { size, contentType, bytes: new Uint8Array(Math.min(size, 16)).fill(7) });
 }
 let outage = false;
+const deleted: string[] = [];
+let listed: { pathname: string; url: string; uploadedAt: Date }[] = [];
 setAttachmentBlobClientForTests({
   async head(p: string) {
     const b = store.get(p);
@@ -40,9 +47,11 @@ setAttachmentBlobClientForTests({
     const b = store.get(p);
     return b ? { bytes: b.bytes } : null;
   },
-  async del() {},
-  async list() {
-    return { blobs: [], hasMore: false, cursor: undefined };
+  async del(p: string | string[]) {
+    deleted.push(...(Array.isArray(p) ? p : [p]));
+  },
+  async list({ prefix }: { prefix: string }) {
+    return { blobs: listed.filter((b) => b.pathname.startsWith(prefix)), hasMore: false, cursor: undefined };
   },
 });
 
@@ -105,6 +114,48 @@ async function main() {
   check("tokens are only for the user's own prefix", route.includes("attachmentPrefixFor(userId)"));
   check("only token requests are handled (no unauthenticated completion callback)", route.includes('body.type !== "blob.generate-client-token"'));
   check("the token route is not public", !fs.readFileSync("src/lib/public-routes.ts", "utf8").includes("/api/email/attachments"));
+
+  console.log("sweep");
+  const SWEEP = "smoke-attach-sweep";
+  const db = await getDb();
+  await purgeUserData(SWEEP, { keepSettings: false }).catch(() => {});
+  try {
+    const p = attachmentPrefixFor(SWEEP);
+    const day = 24 * 3600_000;
+    const ago = (ms: number) => new Date(Date.now() - ms);
+    const ref = (key: string) => JSON.stringify([{ blobKey: key, filename: "f.pdf", contentType: "application/pdf", size: 4 }]);
+    const row = async (status: string, key: string, updated: Date) => {
+      await db.execute(sql`
+        INSERT INTO email_sends (user_id, provider, from_email, to_emails, subject, body_text, origin, status, send_at, rfc_message_id, attachments, updated_at)
+        VALUES (${SWEEP}, 'gmail', 'me@acme-corp.io', '["a@work.org"]'::jsonb, 'S', 'B', 'compose', ${status}, now(), ${`<${key}@orbit.mail>`}, ${ref(key)}::jsonb, ${updated})`);
+    };
+    await row("sent", `${p}old/f.pdf`, ago(8 * day));
+    await row("sent", `${p}new/f.pdf`, ago(1 * day));
+    await row("queued", `${p}live/f.pdf`, ago(9 * day));
+    listed = [
+      { pathname: `${p}orphan/f.pdf`, url: "u", uploadedAt: ago(3 * day) },
+      { pathname: `${p}live/f.pdf`, url: "u", uploadedAt: ago(9 * day) },
+      { pathname: `${p}fresh/f.pdf`, url: "u", uploadedAt: ago(3600_000) },
+    ];
+    deleted.length = 0;
+    const swept = await sweepEmailAttachments();
+    const rows = rowsOf<{ id: string; attachments: unknown[] }>(
+      await db.execute(sql`SELECT rfc_message_id AS id, attachments FROM email_sends WHERE user_id = ${SWEEP}`)
+    );
+    const files = (k: string) => rows.find((r) => r.id.includes(k))?.attachments.length;
+    check("a send settled 8 days ago loses its files", files("old") === 0 && deleted.includes(`${p}old/f.pdf`), JSON.stringify(swept));
+    check("one settled yesterday keeps them", files("new") === 1 && !deleted.includes(`${p}new/f.pdf`));
+    check("an old unsent upload is deleted", deleted.includes(`${p}orphan/f.pdf`));
+    check("a file a queued send needs is kept", files("live") === 1 && !deleted.includes(`${p}live/f.pdf`));
+    check("a fresh upload is kept", !deleted.includes(`${p}fresh/f.pdf`));
+    check("counts add up", swept.settled === 1 && swept.orphans === 1, JSON.stringify(swept));
+
+    deleted.length = 0;
+    await purgeEmailAttachmentsForUser(SWEEP);
+    check("purge deletes everything under the user's prefix", deleted.length === 3 && deleted.every((d) => d.startsWith(p)));
+  } finally {
+    await purgeUserData(SWEEP, { keepSettings: false }).catch(() => {});
+  }
 
   setAttachmentBlobClientForTests(null);
   if (failures) throw new Error(`${failures} check(s) failed`);
