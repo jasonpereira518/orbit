@@ -44,3 +44,42 @@ export function statusFor(decision: ThreadDecision): EmailThreadStatus {
   if (decision === "skipped") return "skipped";
   return "done";
 }
+
+/** One message as the extractor reads it: text only, already cut. Never stored. */
+export type EmailIntelMessage = {
+  from: string;
+  to: string;
+  subject: string;
+  /** Epoch ms, or null when Gmail gave none. */
+  date: number | null;
+  body: string;
+};
+
+/** An event the model found and TypeScript kept. */
+export type ExtractedEvent = {
+  kind: Exclude<EmailEventKind, "other">;
+  company: string | null;
+  role: string | null;
+  stage: RecruiterStage | null;
+  summary: string;
+  /** Copied from the mail, at most 200 characters, verified against it. */
+  evidenceQuote: string;
+  occurredAt: Date;
+  dueAt: Date | null;
+  confidence: number;
+  people: EmailEventPerson[];
+  asks: string[];
+};
+
+/** Why events were dropped. Surfaced in run stats; the only honest way to tune the floor. */
+export type ExtractionRejects = {
+  badKind: number;
+  lowConfidence: number;
+  unverifiable: number;
+  empty: number;
+  suspicious: number;
+  duplicate: number;
+  capped: number;
+};
+
+export type ExtractionResult = { events: ExtractedEvent[]; rejected: ExtractionRejects };
