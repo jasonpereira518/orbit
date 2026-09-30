@@ -19,6 +19,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
+import { PlanDowngradeWatcher } from "@/components/celebration/plan-downgrade-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
@@ -46,6 +47,7 @@ const FloatingAskBar = dynamic(
 
 export function AppShell({
   children,
+  userId,
   clerkOn,
   demoMode,
   theme,
@@ -57,6 +59,7 @@ export function AppShell({
   viewingAsUser,
 }: {
   children: React.ReactNode;
+  userId: string;
   clerkOn: boolean;
   demoMode: boolean;
   theme: ThemePreference | null;
@@ -156,6 +159,7 @@ export function AppShell({
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
+          <PlanDowngradeWatcher key={userId} userId={userId} plan={plan} />
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
