@@ -8,7 +8,11 @@
  *     part built by the ordinary figure-plus-scatter code, and this module says where.
  *
  * Every spacing here is chosen so name labels cannot overlap: two stars need a centre distance
- * of at least the diagonal of a label-clearance box (112 × 44 → ~120), not merely 112 sideways.
+ * of at least the diagonal of a label-clearance box (112 × 44 has a diagonal of ~120), not merely
+ * 112 sideways. RING_SPACING is 124: that diagonal plus a small margin.
+ *
+ * Tolerance: distance checks (here and in the smoke) use an absolute 1e-6. Exact-capacity chords
+ * are deliberately NOT padded; float error at that scale is far below a pixel.
  */
 
 import { hashUnit } from "@/lib/hash";
@@ -44,7 +48,8 @@ export type RingLayout = {
  * caller scatters the rest. The seed only rotates the whole figure.
  */
 export function ringLayout(count: number, seed: string): RingLayout {
-  const n = Math.min(count, RING_CAPACITY);
+  // NaN would otherwise silently poison every comparison below; it becomes 0 stars.
+  const n = Math.min(Math.max(0, Math.floor(count) || 0), RING_CAPACITY);
   const outer = Math.min(
     RING_MAX_RADIUS,
     Math.max(RING_MIN_RADIUS, RING_SPACING / (2 * Math.sin(Math.PI / Math.max(3, n))))
@@ -91,6 +96,10 @@ export function arrangeParts(
   seed: string
 ): PartArrangement {
   const centers = new Map<string, { x: number; y: number }>();
+  // A non-finite or negative foot is treated as 0: NaN would otherwise silently poison every comparison.
+  const safeFoot = (foot: number) => (Number.isFinite(foot) && foot > 0 ? foot : 0);
+  if (core) core = { key: core.key, foot: safeFoot(core.foot) };
+  petals = petals.map((p) => ({ key: p.key, foot: safeFoot(p.foot) }));
   const coreFoot = core?.foot ?? 0;
   if (core) centers.set(core.key, { x: 0, y: 0 });
   if (petals.length === 0) return { centers, foot: coreFoot };
@@ -112,6 +121,7 @@ export function arrangeParts(
   }
 
   const need = (i: number) => f[i] + f[(i + 1) % n] + gap;
+  // For n === 2 the pair is counted from both ends; that is intended (the two arcs together fill the circle).
   const arcs = (radius: number) => {
     let total = 0;
     for (let i = 0; i < n; i++) total += 2 * Math.asin(Math.min(1, need(i) / (2 * radius)));
@@ -153,10 +163,13 @@ export function arrangeParts(
     return true;
   };
   let pts = place(R);
-  for (let tries = 0; tries < 200 && !clear(pts); tries++) {
+  for (let tries = 0; tries < 4000 && !clear(pts); tries++) {
     R *= 1.04;
     pts = place(R);
   }
+  // Distances grow with R, so the loop above ends long before its cap for any finite input and
+  // this throw is unreachable; it exists so the every-pair guarantee can never fail silently.
+  if (!clear(pts)) throw new Error(`arrangeParts: could not clear ${n} petals at gap ${gap}`);
   order.forEach((p, i) => centers.set(p.key, pts[i]));
   return { centers, foot: Math.max(coreFoot, R + Math.max(...f)) };
 }
