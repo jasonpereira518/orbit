@@ -87,6 +87,8 @@ above. Vercel Pro crons remove the rule entirely.
 | `radarfeeds.run_failed` | The last news sweep failed or was killed. Read its `cron_runs` row and the `job.radar.feeds` error. One feed being down marks the sweep `partial`, which is not an alert; `external_sources.consecutive_failures` says which feed and for how long. To turn a feed off, set its `enabled` to false. |
 | `radardigest.schedule_missed` | Radar's Monday email, which runs hourly through Sunday and Monday UTC, has not started for six days, so a whole Sunday passed without a run and nobody gets their weekly list. Check the ops workflow ran the `13 * * * 0,1` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/digest`. A run outside someone's Monday 06:00–09:00 sends them nothing, and the week claim means a repeated run never sends twice. |
 | `radardigest.run_failed` | The last Monday-email run failed or was killed. Read its `cron_runs` row and the `job.radar.digest` error. A send Resend refused marks the run `partial`, which is not an alert: that person's claim is released and the next hour retries; the `resend.rejected` error (kind `radar.digest`) carries Resend's reason, recorded once per run. `notConfigured` in the stats means `RESEND_API_KEY` or `RESEND_FROM_EMAIL` is unset. To stop the email for everyone, hide `page.radar`; for one person, set their `radar_digest_enabled` to 0. |
+| `emailintel.schedule_missed` | The email-insights sweep started once and then went quiet for over two hours (it runs every fifteen minutes), so new application updates are not being noticed. Check the ops workflow ran the `5,20,35,50 * * * *` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/email-intel/sweep`. Never having run is not an alert: the feature is opt-in. |
+| `emailintel.run_failed` | The last email-insights run failed or was killed. Read its `cron_runs` row (job `email-intel.sweep`) and the `email-intel.sweep` errors. One account failing, running out of its daily allowance, or out of time marks the run `partial`, which is not an alert. |
 | `backfill.failed` | `/admin/health` → error events, source `backfill.failed`: `kind` names the backfill, `message` says why. Two or more accounts means it is not one user's key — check the provider status panel and `ai.provider_outage`. |
 | `config.statement_timeout_unbounded` | Run `ALTER ROLE <app role> SET statement_timeout = '20s';` (Neon one-time settings below), then confirm `GET /api/health?token=$HEALTH_TOKEN` shows `config.statementTimeout: "20s"`. It clears on the next sweep. |
 | `embedding.backlog` | Check `backfill.failed`, `embedding.unembeddable` and `ai.provider_outage` first. One account: usually that user's key (they already see an account alert). Several: `/admin/health` → Nightly job stats — `embeddingsGenerated` 0 with `embeddingBackfillsKicked` > 0 means every kick is failing. |
@@ -126,6 +128,25 @@ Monday email. Every switch, smallest first:
 - **Releasing it:** delete `comingSoon: true` from `page.radar` in `src/lib/surfaces.ts`. While
   it is coming soon, the nightly pass and the news sweep run only for accounts that have opened
   Radar (admins previewing it), and the Monday email sends nothing.
+
+## Email insights: switches
+
+Email insights (`src/lib/email-intel/`) checks opted-in accounts' Gmail every fifteen minutes
+for new job and hiring-process threads and records where each application stands. It reads
+sender, subject, participants and Gmail's short preview only: no body, no model. Every switch,
+smallest first:
+
+- **One account:** `UPDATE user_settings SET email_intel_enabled = 0 WHERE user_id = '<id>';`
+  (the person can do it themselves in Settings). Disconnecting Gmail deletes what it recorded
+  and turns it off; an insights wipe in Settings also removes `email_threads` and `email_events`.
+- **Everyone:** delete the "Run the email-insights sweep" step from `.github/workflows/ops.yml`
+  and its `5,20,35,50 * * * *` schedule line. The route can stay; nothing calls it.
+- **Turning it on for someone** needs the recruiter plan (Pro or Lifetime) and Gmail's mail
+  scope (the `email_intel` purpose). `gmail.readonly` is a restricted scope, so until the CASA
+  assessment passes only listed Google test users can grant it.
+- **It ships dark:** the Settings switch renders only where Radar is live, so it appears with
+  Radar's release (delete `comingSoon: true` from `page.radar`), or for an admin using
+  "Preview unreleased".
 
 ## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
 
