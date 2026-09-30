@@ -120,6 +120,13 @@ export function useCaptureFanout(opts?: {
    * own completion, which must see the cancel however many renders ago it happened.
    */
   const cancelledRef = useRef(new Set<string>());
+  /**
+   * Stop was pressed. The pump's `running` is state, so a pump effect scheduled before Stop
+   * still sees `running` true when it runs, and it used to start two uploads the person had
+   * just cancelled; they then landed as `queued`, their jobs never discarded. A ref is read
+   * when the effect runs, not when it was scheduled, so that stale run starts nothing.
+   */
+  const stoppedRef = useRef(false);
   const settledRef = useRef(false);
   // Kept in a ref and synced in an effect rather than assigned during render: the callback
   // is usually an inline arrow, so depending on it directly would re-arm the settle effect
@@ -168,6 +175,7 @@ export function useCaptureFanout(opts?: {
       filesRef.current = files;
       hashesRef.current = hashes;
       cancelledRef.current = new Set();
+      stoppedRef.current = false;
       batchIdRef.current = newId();
       settledRef.current = false;
       setEntries(next);
@@ -177,6 +185,7 @@ export function useCaptureFanout(opts?: {
   );
 
   const reset = useCallback(() => {
+    stoppedRef.current = false;
     filesRef.current.clear();
     hashesRef.current.clear();
     settledRef.current = false;
@@ -189,6 +198,7 @@ export function useCaptureFanout(opts?: {
   const inFlightRef = useRef(new Set<string>());
 
   const cancelPending = useCallback(() => {
+    stoppedRef.current = true;
     setRunning(false);
     // In flight right now: let each request finish, then discard what it made (see the
     // header). Read from the ref, not `entries` — an upload the pump started this very
@@ -219,7 +229,7 @@ export function useCaptureFanout(opts?: {
 
   // The pump.
   useEffect(() => {
-    if (!running) return;
+    if (!running || stoppedRef.current) return;
     const batchGroupId = batchIdRef.current;
     if (!batchGroupId) return;
 

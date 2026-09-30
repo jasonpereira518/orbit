@@ -16,7 +16,6 @@ import type {
   ContactSignalPayload,
   ExternalSourceKind,
   RadarAiNote,
-  RadarApolloCursor,
   RadarAutopilot,
   RadarAutopilotAction,
   RadarDraft,
@@ -483,8 +482,10 @@ export const userSettings = pgTable("user_settings", {
   /** ISO week ("2026-W40") of the last digest sent, claimed in one statement before sending. */
   radarDigestLastWeek: text("radar_digest_last_week"),
   radarDigestUnsubTokenHash: text("radar_digest_unsub_token_hash"),
-  /** Where the nightly Apollo re-check (own key only) left off. */
-  radarApolloCursor: jsonb("radar_apollo_cursor").$type<RadarApolloCursor>(),
+  // `radar_apollo_cursor` is still in the database, unused: the Apollo re-check it was for was
+  // never built (job moves come from `contact_career_moves`). It leaves code first and the
+  // table in the next schema version, so the deployment still running when that migration
+  // lands never selects a column that is gone (the same two steps as wispr_api_key_encrypted).
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -2188,8 +2189,9 @@ export const recommendationFeedback = pgTable(
 );
 
 /**
- * Dated facts about one contact from outside Orbit's own tables: a job change, a headline
- * about their company, a public post. Written by the producers in `src/lib/radar/signals/`,
+ * Dated facts about one contact from outside Orbit's own tables: a headline about their
+ * company, a public post, one the extension saved. (Job moves have their own log,
+ * `contact_career_moves`.) Written by the producers in `src/lib/radar/signals/`,
  * read by the per-user run, deduplicated per account by `dedupe_hash` so the same fact seen
  * twice is one row. `payload` is sanitized, length-capped third-party text.
  */

@@ -176,8 +176,15 @@ as the base spec's `heads_up` table describes (points and half-lives unchanged).
   the move's own words ("Joined Ramp as Staff PM (from Stripe)"): 32 points for a new
   employer, 24 for leaving, 18 for a new title, decaying with a 10-day half-life. No Radar
   hooks, no Radar-owned Apollo re-check, and no "Update record" action: the contact is
-  already updated. `radar_apollo_cursor` and the `job_change` kind of `contact_signals` are
-  left over from the earlier design and are removed with the next schema change.
+  already updated. Two leftovers of the earlier design are going:
+  - The `job_change` kind of `contact_signals` is gone. It was never written, and the
+    column has no CHECK constraint, so removing it needed no migration.
+  - `radar_apollo_cursor` leaves in two steps. First the code stops naming it. Then the
+    next schema version drops it (`ALTER TABLE user_settings DROP COLUMN IF EXISTS
+    radar_apollo_cursor`, with its CREATE TABLE line, `ensureColumn` and `alters` ADD
+    removed). The deployment still serving while that migration runs selects every
+    `user_settings` column on each request, so it must never know the column (the
+    `wispr_api_key_encrypted` precedent, v89).
 - **Company news.** Global ingest-only tables: `external_sources`, `external_items` and
   `external_item_companies`.
   - An hourly sweep at `/api/radar/feeds/sweep` (`53 * * * *`, ledger `radar.feeds`) follows
