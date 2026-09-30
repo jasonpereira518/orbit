@@ -55,11 +55,14 @@ export function MobileNav({
   clerkOn,
   demoMode,
   hidden,
+  comingSoon,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
   /** Surfaces hidden from this viewer. Empty for an exempt operator. */
   hidden: ReadonlySet<string>;
+  /** Pages marked coming soon, whether or not this viewer is previewing them. */
+  comingSoon: ReadonlySet<string>;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -654,7 +657,7 @@ export function MobileNav({
                 >
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
-                  {isHrefComingSoon(item.href) && (
+                  {isHrefComingSoon(item.href, comingSoon) && (
                     <span className="rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning">
                       Soon
                     </span>

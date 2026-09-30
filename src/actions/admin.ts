@@ -23,6 +23,7 @@ import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
 import {
   PREVIEW_UNRELEASED_COOKIE,
+  setSurfaceComingSoon,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
@@ -322,6 +323,24 @@ export async function setSurfaceHiddenAction(input: {
   const adminUserId = await requireAdminUserId();
 
   await setSurfaceHidden(adminUserId, input.surfaceKey, input.hidden);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/**
+ * Mark a page coming soon (or release it) for everyone. Same shape and invalidation as
+ * `setSurfaceHiddenAction`: the app shell builds the sidebar's "Soon" tags from this, and
+ * the dashboard, settings and radar jobs all key off it.
+ */
+export async function setSurfaceComingSoonAction(input: {
+  surfaceKey: string;
+  soon: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
 
   revalidatePath("/", "layout");
   revalidatePath("/admin/product");

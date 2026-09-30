@@ -38,8 +38,11 @@ export type Surface = {
   reason?: string;
   /**
    * Pages only: not released yet. Ordinary users get the coming-soon screen in place of the
-   * route (and every route under it) and the nav item carries a "Soon" tag. Set in code, not
-   * by an operator toggle — releasing the page is deleting this line.
+   * route (and every route under it) and the nav item carries a "Soon" tag.
+   *
+   * This is the DEFAULT. An operator can mark any releasable page coming soon, or release one
+   * of these, from /admin/product; that override is stored as a flag row and wins over this
+   * line in both directions (see `effectiveComingSoonKeys`).
    */
   comingSoon?: true;
 };
@@ -274,11 +277,40 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
   return key !== null && hidden.has(key);
 }
 
-/** Settings anchor id → surface key, for filtering the settings page and its rail. */
-/** Page surfaces that are announced but not released. */
-export const COMING_SOON_KEYS: ReadonlySet<string> = new Set(
+/** Page surfaces that ship as announced-but-not-released, before any operator override. */
+export const DEFAULT_COMING_SOON_KEYS: ReadonlySet<string> = new Set(
   PAGES.filter((s) => s.comingSoon).map((s) => s.key)
 );
+
+/**
+ * Operator overrides of the default, stored as extra rows in `app_surface_flags` so no
+ * schema change is needed: `soon:<key>` marks a page coming soon, `live:<key>` releases one
+ * the code ships as coming soon. Absent both, the code default stands.
+ */
+export const SOON_FLAG_PREFIX = "soon:";
+export const LIVE_FLAG_PREFIX = "live:";
+
+/** Whether a page can be marked coming soon at all — never the escape-hatch pages. */
+export function canMarkComingSoon(key: string): boolean {
+  const surface = BY_KEY.get(key);
+  return surface?.kind === "page" && surface.alwaysVisible !== true;
+}
+
+/** The default set with the operator's override rows applied. Pure; the server reads the rows. */
+export function effectiveComingSoonKeys(flagRows: Iterable<string>): Set<string> {
+  const keys = new Set(DEFAULT_COMING_SOON_KEYS);
+  const rows = [...flagRows];
+  for (const row of rows) {
+    if (row.startsWith(SOON_FLAG_PREFIX)) {
+      const key = row.slice(SOON_FLAG_PREFIX.length);
+      if (canMarkComingSoon(key)) keys.add(key);
+    }
+  }
+  for (const row of rows) {
+    if (row.startsWith(LIVE_FLAG_PREFIX)) keys.delete(row.slice(LIVE_FLAG_PREFIX.length));
+  }
+  return keys;
+}
 
 /**
  * Surfaces elsewhere in the app that only make sense once a coming-soon page is released.
@@ -289,9 +321,13 @@ export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>>
   "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
 };
 
-export function isHrefComingSoon(href: string): boolean {
+/** True when `href` is a page in `soon` (the effective set; defaults to the code defaults). */
+export function isHrefComingSoon(
+  href: string,
+  soon: ReadonlySet<string> = DEFAULT_COMING_SOON_KEYS
+): boolean {
   const key = surfaceKeyForHref(href);
-  return key !== null && COMING_SOON_KEYS.has(key);
+  return key !== null && soon.has(key);
 }
 
 export function surfaceKeyForSettingsId(settingsId: string): string {

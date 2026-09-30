@@ -55,7 +55,7 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { getAttentionBrief } from "../src/lib/chat-attention";
 import { isSurfaceLive } from "../src/lib/surface-visibility";
-import { COMING_SOON_KEYS } from "../src/lib/surfaces";
+import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { loadRadarBriefing } from "../src/lib/radar/page-data";
 import { applyAutopilot, undoAutopilotForUser } from "../src/lib/radar/autopilot";
 import { draftChannel, draftTodayForRun } from "../src/lib/radar/drafts";
@@ -396,7 +396,7 @@ run(async () => {
   {
     const live = await pending();
     check("nothing points into Radar while it is coming soon",
-      (await isSurfaceLive(USER, "page.radar")) === !COMING_SOON_KEYS.has("page.radar"));
+      (await isSurfaceLive(USER, "page.radar")) === !DEFAULT_COMING_SOON_KEYS.has("page.radar"));
     startQueryCount();
     const unasked = await loadNotificationPanel(USER, new Date(), { withAlerts: false });
     stopQueryCount();

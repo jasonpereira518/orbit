@@ -42,7 +42,7 @@ import {
   unsubscribeRadarDigest,
   type DigestMessage,
 } from "../src/lib/radar/digest";
-import { COMING_SOON_KEYS } from "../src/lib/surfaces";
+import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const PREFIX = "smoke-radar-digest-";
@@ -314,7 +314,7 @@ async function main() {
   }
 
   console.log("\nthe route");
-  if (COMING_SOON_KEYS.has("page.radar")) {
+  if (DEFAULT_COMING_SOON_KEYS.has("page.radar")) {
     const started = new Date();
     process.env.CRON_SECRET = "smoke-radar-digest-secret";
     const { POST } = await import("../src/app/api/radar/digest/route");

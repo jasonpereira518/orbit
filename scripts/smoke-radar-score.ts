@@ -42,7 +42,7 @@ import type { RadarSignal, RecommendationKind } from "../src/lib/radar/types";
 import { cardLine, draftsReady, whatChanged, WHAT_CHANGED_MAX } from "../src/lib/radar/briefing";
 import { radarKeyFor } from "../src/lib/radar/focus-keys";
 import { APP_NAV, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
-import { COMING_SOON_KEYS, surfaceForPathname } from "../src/lib/surfaces";
+import { DEFAULT_COMING_SOON_KEYS, surfaceForPathname } from "../src/lib/surfaces";
 import { ROUTE_PATTERNS } from "../src/lib/analytics-routes";
 import { featureAreaForPath } from "../src/lib/feedback-report";
 
@@ -513,7 +513,7 @@ function briefingAndKeys() {
 function registration() {
   console.log("\nthe page is registered everywhere a route must be");
   check("the surface registry maps /radar to page.radar", surfaceForPathname("/radar")?.key === "page.radar");
-  check("it ships as coming-soon", COMING_SOON_KEYS.has("page.radar"));
+  check("it ships as coming-soon", DEFAULT_COMING_SOON_KEYS.has("page.radar"));
   check("the sidebar lists it", APP_NAV.some((item) => item.href === "/radar"));
   check("so does the phone's More menu", MOBILE_MORE_NAV.some((item) => item.href === "/radar"));
   check("analytics tracks it as a pattern", ROUTE_PATTERNS.includes("/radar"));
