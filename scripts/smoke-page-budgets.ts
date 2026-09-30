@@ -262,9 +262,11 @@ async function main() {
   // windowed read of `contact_career_moves`), the news probe (one indexed read of the global
   // news tables with the account's company keys; a write only when it finds news), and the
   // posts read (recent `contact_signals` posts, one windowed read, LIMIT 200). The nightly
-  // post check itself runs on `schedule` runs only and is not counted here.
+  // post check itself runs on `schedule` runs only and is not counted here. 27, up from 26:
+  // the email-insights opt-in check (`produceEmailSignals`), one statement that returns nothing
+  // for an account that has not opted in.
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
-  check("radar run issues ≤ 26 statements", radarRunCount <= 26, `got ${radarRunCount}`);
+  check("radar run issues ≤ 27 statements", radarRunCount <= 27, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),

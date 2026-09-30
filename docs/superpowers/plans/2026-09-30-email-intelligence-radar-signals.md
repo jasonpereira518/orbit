@@ -38,7 +38,7 @@
 - **No schema change, route, cron, or new AI operation.** The link from a card to its email is `RadarEvidence.ref`, inside an existing jsonb column.
 - **Opt-in only.** Email signals exist only for accounts with `user_settings.email_intel_enabled = 1`; the producer checks it in the same statement that reads events.
 - **The mail never reaches an unfenced prompt, an email, or a third party.** A card built from mail carries exactly one model-written sentence (`email_events.summary`, already schema-checked and injection-filtered by P2, cleaned again here) in its lead reason label. It never carries the quote, an address, or a message. That sentence may appear in the app, in Radar's fenced AI prompts (why-lines, rerank) and in chat; it must not appear in the Monday email and must not be spliced into the unfenced "user intent" of a draft prompt (Task 5).
-- **The run's statement budget is a deliberate ceiling.** `scripts/smoke-radar-run.ts` asserts the run issues at most 26 statements, and it issues exactly 26 today. This plan adds one (the opt-in check) and raises the ceiling to 27 with the reason written beside it (Task 3). An opted-in account also pays per-event ranking reads, bounded by `EMAIL_EVENTS_PER_RUN` and a wall-clock budget.
+- **The run's statement budget is a deliberate ceiling, pinned in two places.** `scripts/smoke-radar-run.ts` and `scripts/smoke-page-budgets.ts` (at 3,000 contacts) each assert the run issues at most 26 statements, and it issues exactly 26 today. This plan adds one (the opt-in check) and raises both ceilings to 27 with the reason written beside each (Task 3). An opted-in account also pays per-event ranking reads, bounded by `EMAIL_EVENTS_PER_RUN` and a wall-clock budget.
 - **The scorer stays pure.** No database, network or AI in `score.ts`; `now` is an argument.
 - **Every read and write is scoped by `user_id`;** accept-to-task must refuse another account's card and another account's event.
 - **Tests assert orderings and structure, not literals,** as `smoke-radar-score.ts` does, except where a string is the contract (a reason code, a fixed line).
@@ -66,7 +66,7 @@
 | `src/lib/legal.ts`, privacy page (modify) | Disclosure that notes can appear on Radar |
 | `docs/RUNBOOK.md`, the spec (modify) | Operations and decisions |
 | `scripts/smoke-radar-email-*.ts` (create) | `score` (pure), `signals`, `run`, `accept`, `text` |
-| `scripts/smoke-radar-run.ts` (modify) | The statement ceiling, 26 → 27 |
+| `scripts/smoke-radar-run.ts`, `scripts/smoke-page-budgets.ts` (modify) | The statement ceiling, 26 → 27, in both |
 
 ---
 
@@ -892,7 +892,7 @@ Only commit if no `error TS` appeared before `== tsc done`.
 
 **Files:**
 - Modify: `src/lib/radar/run.ts`
-- Modify: `scripts/smoke-radar-run.ts` (the statement ceiling and its comment)
+- Modify: `scripts/smoke-radar-run.ts` and `scripts/smoke-page-budgets.ts` (the statement ceiling and its comment, in each)
 - Create: `scripts/smoke-radar-email-run.ts`
 - Modify: `scripts/run-smoke.ts` (pglite block)
 
@@ -1105,6 +1105,24 @@ In `scripts/smoke-radar-run.ts` replace the statement ceiling and its comment:
   check("and a bounded number of them", statements <= 27, String(statements));
 ```
 
+`scripts/smoke-page-budgets.ts` pins the same ceiling again, at 3,000 contacts, and is easy to miss because the comment above points at it by name. Replace its lines:
+
+```ts
+  // post check itself runs on `schedule` runs only and is not counted here.
+  check("radar run succeeds at 3,000 contacts", radarRun.ok);
+  check("radar run issues ≤ 26 statements", radarRunCount <= 26, `got ${radarRunCount}`);
+```
+
+with:
+
+```ts
+  // post check itself runs on `schedule` runs only and is not counted here. 27, up from 26:
+  // the email-insights opt-in check (`produceEmailSignals`), one statement that returns nothing
+  // for an account that has not opted in.
+  check("radar run succeeds at 3,000 contacts", radarRun.ok);
+  check("radar run issues ≤ 27 statements", radarRunCount <= 27, `got ${radarRunCount}`);
+```
+
 - [ ] **Step 4: Run and watch it pass**
 
 ```bash
@@ -1112,9 +1130,10 @@ npx tsc --noEmit 2>&1 | grep -v "^npm notice"; echo "== tsc done"
 npx tsx scripts/smoke-radar-email-run.ts >/dev/null 2>&1; echo "email run smoke exit $?"
 npx tsx scripts/smoke-radar-run.ts 2>&1 | grep -E "bounded number|same statements|FAIL"
 npx tsx scripts/smoke-radar-run.ts >/dev/null 2>&1; echo "radar run smoke exit $?"
+npx tsx scripts/smoke-page-budgets.ts >/dev/null 2>&1; echo "page budgets smoke exit $?"
 ```
 
-Expected: no type errors, both smokes exit 0, and the statement lines read `27` (and `27 vs 27`). If the existing smoke reports more than 27, the producer issued a read before its one join: fix the producer, do not raise the ceiling further. If `of(eli)` is missing, the card fell below the lowest bucket: print `stats` and the signal's `fit`, and adjust the fixture's closeness, not the assertion.
+Expected: no type errors, all three smokes exit 0, and the statement lines read `27` (and `27 vs 27`). If the existing smoke reports more than 27, the producer issued a read before its one join: fix the producer, do not raise the ceiling further. If `of(eli)` is missing, the card fell below the lowest bucket: print `stats` and the signal's `fit`, and adjust the fixture's closeness, not the assertion.
 
 - [ ] **Step 5: Register, lint, commit**
 
@@ -1123,7 +1142,7 @@ Add `"smoke-radar-email-run": "pglite",` to `MANIFEST` after `"smoke-radar-email
 ```bash
 npx eslint src/lib/radar scripts/smoke-radar-email-run.ts scripts/smoke-radar-run.ts --max-warnings=0 2>&1 | grep -v "^npm notice"; echo "== eslint done"
 npx tsx scripts/run-smoke.ts --only smoke-radar-score smoke-radar-run smoke-radar-feeds smoke-radar-digest smoke-radar-metrics smoke-radar-email-score smoke-radar-email-signals smoke-radar-email-run 2>&1 | grep -E "^ ok |^FAIL|passed in"
-git add src/lib/radar/run.ts scripts/smoke-radar-run.ts scripts/smoke-radar-email-run.ts scripts/run-smoke.ts
+git add src/lib/radar/run.ts scripts/smoke-radar-run.ts scripts/smoke-page-budgets.ts scripts/smoke-radar-email-run.ts scripts/run-smoke.ts
 git commit -m "feat(radar): read email events in the run, and count the extra statement
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
