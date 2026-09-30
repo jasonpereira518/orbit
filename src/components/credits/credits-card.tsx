@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { confirmCheckoutSession, startPlanSwitch } from "@/actions/billing";
-import { dismissMaxNudge, getCreditsOverview, type CreditsOverview } from "@/actions/credits";
+import { dismissMaxNudge, getCreditsOverview, setCreditEmailEnabled, type CreditsOverview } from "@/actions/credits";
 import { BuyPackButton } from "@/components/credits/buy-pack-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -164,8 +164,41 @@ export function CreditsCard() {
         </div>
       )}
 
+      {monthlyCredits > 0 && <CreditEmailToggle initial={overview.creditEmailEnabled} />}
+
       <MaxNudgeDialog open={nudgeOpen} onOpenChange={setNudgeOpen} />
     </section>
+  );
+}
+
+/**
+ * The emails at 80% and 100% of the monthly credits. Saved as soon as it changes; a failed
+ * save puts the box back, so it never shows a choice that was not kept.
+ */
+function CreditEmailToggle({ initial }: { initial: boolean }) {
+  const [enabled, setEnabled] = useState(initial);
+  const [pending, start] = useTransition();
+  return (
+    <label className="flex items-start gap-2 border-t border-tier-border pt-3 text-sm text-muted-foreground">
+      <input
+        type="checkbox"
+        className="mt-0.5 size-4 shrink-0 accent-tier-accent"
+        checked={enabled}
+        disabled={pending}
+        onChange={(event) => {
+          const next = event.target.checked;
+          setEnabled(next);
+          start(async () => {
+            const result = await setCreditEmailEnabled(next).catch(() => ({ ok: false }));
+            if (!result.ok) {
+              setEnabled(!next);
+              toast.error("Couldn’t save that — try again?");
+            }
+          });
+        }}
+      />
+      <span>Email me when I’ve used 80% of my monthly credits, and when they run out.</span>
+    </label>
   );
 }
 

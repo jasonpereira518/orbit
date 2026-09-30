@@ -386,6 +386,11 @@ export const userSettings = pgTable("user_settings", {
   aiKeyPreference: text("ai_key_preference").$type<"included" | "own">(),
   /** The one-time "two packs plus Pro is about the price of Max" prompt, once shown. */
   maxNudgeSeenAt: timestamp("max_nudge_seen_at", { withTimezone: true }),
+  /** The emails at 80% and 100% of the monthly credits. 1 = on (the default). */
+  creditEmailEnabled: integer("credit_email_enabled").default(1).notNull(),
+  /** The allowance cycle (its start) and level (80 or 100) last emailed — see `credits/notices.ts`. */
+  creditNoticePeriodStart: timestamp("credit_notice_period_start", { withTimezone: true }),
+  creditNoticeLevel: integer("credit_notice_level").default(0).notNull(),
   /**
    * The last time this human was present. Two writers, deliberately sharing one column:
    *

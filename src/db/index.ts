@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   founding_subscription_id text,
   ai_key_preference text,
   max_nudge_seen_at timestamptz,
+  credit_email_enabled integer NOT NULL DEFAULT 1,
+  credit_notice_period_start timestamptz,
+  credit_notice_level integer NOT NULL DEFAULT 0,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
@@ -2414,7 +2417,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // Radar's DDL, and main's databases stamped 136 pick up the pricing tables. Scanned every
 // local and remote ref and every worktree's working src/db/index.ts on Sep 29 2026: 137 (this
 // branch) is the highest claimed anywhere, so 138 is the next free integer.
-export const SCHEMA_VERSION = 138;
+//
+// 139 = user_settings.credit_email_enabled, credit_notice_period_start and credit_notice_level:
+// the emails at 80% and 100% of an account's monthly AI credits, sent at most once per level
+// per allowance cycle. Scanned every local and remote ref and every worktree's working
+// src/db/index.ts on Sep 29 2026: 138 (this branch) is the highest claimed anywhere, so 139 is
+// the next free integer.
+export const SCHEMA_VERSION = 139;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3931,6 +3940,11 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
   `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
+  // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
+  // which cycle and level were last sent (claimed in one UPDATE before each send).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_notice_period_start timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_notice_level integer NOT NULL DEFAULT 0`,
   // v130 backfill: accounts created through a beta invitation BEFORE pricing v2 carry the comp
   // note the invitation wrote. They are founding-eligible (their comp itself is untouched).
   // Idempotent, and never un-sets a flag.

@@ -16,6 +16,8 @@ export type CreditsOverview = {
   equivalents: Array<{ action: ActionKey; count: number }>;
   /** Show the one-time "two packs plus Pro is about the price of Max" prompt now. */
   showMaxNudge: boolean;
+  /** Whether Orbit emails at 80% and 100% of the monthly credits. */
+  creditEmailEnabled: boolean;
 };
 
 /**
@@ -39,6 +41,7 @@ export async function getCreditsOverview(): Promise<CreditsOverview | null> {
     balance,
     equivalents,
     showMaxNudge: plan === "orbit" && balance.packsThisCycle >= 2 && !row?.maxNudgeSeenAt,
+    creditEmailEnabled: (row?.creditEmailEnabled ?? 1) === 1,
   };
 }
 
@@ -58,4 +61,15 @@ export async function dismissMaxNudge(): Promise<void> {
   const userId = await requireUserId();
   const db = await getDb();
   await db.update(userSettings).set({ maxNudgeSeenAt: new Date() }).where(eq(userSettings.userId, userId));
+}
+
+/** The emails at 80% and 100% of the monthly credits: on or off. The in-app notices stay either way. */
+export async function setCreditEmailEnabled(enabled: boolean): Promise<{ ok: boolean }> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ creditEmailEnabled: enabled === true ? 1 : 0, updatedAt: new Date() })
+    .where(eq(userSettings.userId, userId));
+  return { ok: true };
 }

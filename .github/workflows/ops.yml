@@ -160,6 +160,19 @@ jobs:
       #
       # Gated on the schedule only. A `secrets.*` reference in an `if:` is not permitted and
       # fails the whole workflow at parse time — see commit e9bc98e.
+      # The credit emails at 80% and 100% of the monthly AI credits. Rides the ten-minute
+      # schedule like the drains above: a notice can wait ten minutes, and its own route keeps
+      # its latency off the sweep. Every send is claimed first, so an overlapping run is a no-op.
+      - name: Send the credit emails
+        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 120 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/credits/notices"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
       - name: Run the connector sync (every 15 minutes)
         if: github.event.schedule == '*/15 * * * *' && steps.health.outcome == 'success'
         run: |

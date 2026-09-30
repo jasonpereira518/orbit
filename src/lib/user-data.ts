@@ -762,6 +762,11 @@ const PRESERVED_SETTINGS_COLUMNS = {
   foundingSubscriptionId: true,
   aiKeyPreference: true,
   maxNudgeSeenAt: true,
+  // Credit emails: the person's choice, and what was already sent this cycle (so deleting
+  // data mid-cycle never re-sends a notice).
+  creditEmailEnabled: true,
+  creditNoticePeriodStart: true,
+  creditNoticeLevel: true,
   compedNote: true,
   compedAt: true,
   compedBy: true,
