@@ -40,8 +40,39 @@ const SUN_MIN_DIST = 150;
 /** Always-on label box under each star (see graph-nodes.tsx). */
 const LABEL_WIDTH = 104;
 const LABEL_HEIGHT = 30;
-/** The layout's CLUSTER_LABEL_GAP (22) + CLUSTER_LABEL_HEAD (48): room above the top star for the name. */
-const CLUSTER_NAME_HEAD_ALLOWANCE = 70;
+/** A petal name is one text line this tall (the layout's PETAL_LABEL_HEIGHT). */
+const PETAL_LABEL_HEIGHT = 16;
+
+/**
+ * Every petal name that lands on one of its own cluster's star names. A star's name and subtitle
+ * hang under it (x ± 52, y + 8 … y + 34); a petal name is x ± 50 wide and PETAL_LABEL_HEIGHT tall
+ * from its anchor, which the label node turns into an absolute position.
+ */
+function petalNameOverlaps(l: ReturnType<typeof buildHybridGraphLayout>) {
+  const starsOf = new Map<string, Array<{ x: number; y: number }>>();
+  for (const n of l.nodes) {
+    if (n.type !== "contact") continue;
+    const id = (n.data as GraphNodeData).clusterId;
+    if (!id) continue;
+    (starsOf.get(id) ?? starsOf.set(id, []).get(id)!).push(n.position);
+  }
+  let labels = 0;
+  let overlaps = 0;
+  for (const n of l.nodes) {
+    if (n.type !== "clusterLabel") continue;
+    const d = n.data as ClusterLabelData;
+    for (const pl of d.petalLabels ?? []) {
+      labels++;
+      const ax = n.position.x - d.anchor!.x + pl.anchor.x;
+      const ay = n.position.y - d.anchor!.y + pl.anchor.y;
+      const hit = (starsOf.get(d.clusterId!) ?? []).some(
+        (p) => ax - 50 < p.x + 52 && ax + 50 > p.x - 52 && ay < p.y + 34 && ay + PETAL_LABEL_HEIGHT > p.y + 8
+      );
+      if (hit) overlaps++;
+    }
+  }
+  return { labels, overlaps };
+}
 
 function contact(
   id: string,
@@ -118,6 +149,9 @@ const fixture: GraphContactInput[] = [
   // One-off companies, same function → a cross-company role constellation.
   contact("r1", { company: "Acme Robotics", title: "Backend Engineer", orbitScore: 3 }),
   contact("r2", { company: "Nimbus Labs", title: "Software Engineer", orbitScore: 4 }),
+  // Two product managers with no company at all → a role cluster with nothing to count.
+  contact("pm1", { title: "Product Manager", orbitScore: 3 }),
+  contact("pm2", { title: "Product Manager", orbitScore: 2 }),
   // Deep space.
   ...Array.from({ length: 7 }, (_, i) =>
     contact(`d${i}`, { orbitScore: 1 + (i % 5) })
@@ -398,9 +432,9 @@ console.log("\nCluster anatomy");
   check("its label node says so", label("Northwind").form === "petal");
   const petalLabels = label("Northwind").petalLabels ?? [];
   check("…with a label for the core and each petal", petalLabels.map((l) => l.label).join() === "Leadership,Engineering,Design,Sales & BD");
-  check("…each anchored inside the node's box", petalLabels.every((l) => {
+  check("…each fitting inside the node's box", petalLabels.every((l) => {
     const box = label("Northwind").box!;
-    return l.anchor.x >= 0 && l.anchor.x <= box.width && l.anchor.y >= 0 && l.anchor.y <= box.height;
+    return l.anchor.x >= 0 && l.anchor.x <= box.width && l.anchor.y >= 0 && l.anchor.y + PETAL_LABEL_HEIGHT <= box.height;
   }));
   check("a plain figure has no petal labels", label("Google").petalLabels === undefined && label("Google").form === "figure");
 
@@ -533,23 +567,37 @@ console.log("\nCluster anatomy");
     check("core lines are warm white", coreEdges.length > 0 && coreEdges.every((e) => /255,\s*233,\s*194/.test(String(e.style?.stroke))));
 
     // A petal's name sits below its lowest star (so it can never collide with the cluster name,
-    // which sits above the topmost star), and still inside the node's box.
+    // which sits above the topmost star), and the whole label fits inside the node's box. The
+    // box's origin comes from the label node itself, the way a renderer finds it.
+    const nwNode = layout.nodes.find((n) => n.type === "clusterLabel" && (n.data as ClusterLabelData).label === "Northwind")!;
     const box = label("Northwind").box!;
-    const nwTop = Math.min(...nw.cluster.contactIds.map((id) => posById.get(id)!.y));
-    const boxTop = nwTop - CLUSTER_NAME_HEAD_ALLOWANCE;
+    const boxTop = nwNode.position.y - label("Northwind").anchor!.y;
     const petalOk = nw.parts
       .filter((p) => p.role !== "main")
       .every((p) => {
         const l = petalLabels.find((x) => x.key === p.key)!;
         const bottom = Math.max(...[...p.figureMemberIds, ...p.scatterMemberIds].map((id) => posById.get(id)!.y));
-        return l.anchor.y + boxTop > bottom && l.anchor.y <= box.height;
+        return l.anchor.y + boxTop > bottom && l.anchor.y + PETAL_LABEL_HEIGHT <= box.height;
       });
     check("petal names sit below their part, inside the box", petalOk);
+    const nwClash = petalNameOverlaps(layout);
+    check(`no petal name lands on a star's name (Northwind fixture: ${nwClash.overlaps}/${nwClash.labels})`, nwClash.labels >= 4 && nwClash.overlaps === 0);
+    {
+      const big = buildHybridGraphLayout(buildSyntheticGraphPayload(2500, { seed: 1 }).contacts, "Tester");
+      const clash = petalNameOverlaps(big);
+      check(`…nor in a 2500-contact network (${clash.overlaps}/${clash.labels} overlap)`, clash.labels > 20 && clash.overlaps === 0);
+    }
 
     // A role cluster: each star wears its own company's colour; the label says how many companies.
     const rolePair = ["r1", "r2"].map((id) => star(id));
     check("role cluster stars wear their own company's colour", rolePair[0].clusterKind === "role" && rolePair[0].clusterColor !== rolePair[1].clusterColor);
     check("the role cluster's label counts its companies", label("Engineers").subtitle === "across 2 companies");
+    const pm = layout.nodes.filter((n) => n.id === "pm1" || n.id === "pm2").map((n) => n.data as GraphNodeData);
+    check(
+      "a role cluster whose people have no company carries no subtitle",
+      pm.length === 2 && pm[0].clusterKind === "role" && pm[0].clusterId === pm[1].clusterId &&
+        label(pm[0].clusterName!).subtitle === undefined
+    );
     check("only role clusters carry a subtitle", label("Google").subtitle === undefined && label("Northwind").subtitle === undefined);
   }
 }

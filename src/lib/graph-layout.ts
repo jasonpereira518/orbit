@@ -16,7 +16,7 @@ import {
   LABEL_WIDTH,
 } from "@/lib/graph/cluster-geometry";
 import { type BuiltCluster, type ClusterKind, type ClusterRef } from "@/lib/constellation-clusters";
-import { companyFamilyRoot } from "@/lib/company-family";
+import { canonicalCompanyClusterName, companyFamilyRoot } from "@/lib/company-family";
 import { buildClusterAffinity } from "@/lib/constellation-affinity";
 import { placeClusterDisks } from "@/lib/graph/disk-placement";
 import { buildGalaxyStructure, type GalaxyStructure } from "@/lib/graph/galaxy-structure";
@@ -163,8 +163,10 @@ export type ClusterLabelData = {
   subtitle?: string;
   /**
    * A split company's core and petal names. `anchor` is the top-centre of the name's text, in px
-   * from the box's top-left, a little below the part's lowest star — clear of the cluster name,
-   * which sits above the topmost star.
+   * from the box's top-left, below the part's lowest star and that star's own name — clear of the
+   * cluster name, which sits above the topmost star. The box is grown to contain the label.
+   * A renderer turns it into an absolute layout position by taking the box's origin from the
+   * label node: `x = node.position.x - data.anchor.x + anchor.x`, likewise for `y`.
    */
   petalLabels?: Array<{
     key: string;
@@ -265,8 +267,14 @@ const CLUSTER_LABEL_GAP = 22;
 const CLUSTER_LABEL_HEAD = 48;
 /** Margin around the stars on the other three sides of the box. */
 const CLUSTER_LABEL_PAD = 24;
-/** Layout px between a petal's lowest star and the top of its name. */
-const PETAL_LABEL_GAP = 22;
+/**
+ * Layout px between a petal's lowest star and the top of its name. A star's own name and
+ * subtitle hang under it (LABEL_HEIGHT of room, renderers draw the name then a subtitle), so the
+ * gap is the clearance two stars need vertically: the petal's name starts below that stack.
+ */
+const PETAL_LABEL_GAP = LABEL_CLEAR_Y;
+/** A petal name is one text line this tall; the node's box is grown to contain it. */
+const PETAL_LABEL_HEIGHT = 16;
 
 function toPosition(x: number, y: number): PolarPosition {
   return { x, y, angle: Math.atan2(y, x), radius: Math.hypot(x, y) };
@@ -494,11 +502,14 @@ export function* buildHybridGraphLayoutSteps(
     contactById ??= new Map(contacts.map((c) => [c.id, c]));
     const companies = new Set<string>();
     for (const id of ids) {
-      const company = (contactById.get(id)?.company ?? "").trim().toLowerCase();
+      // The app's canonical names, so "AWS" and "Amazon Web Services" count once, as they cluster.
+      const raw = (contactById.get(id)?.company ?? "").trim();
+      const company = (canonicalCompanyClusterName(raw) || raw).toLowerCase();
       if (company) companies.add(company);
     }
-    const n = Math.max(1, companies.size);
-    return `across ${n} ${n === 1 ? "company" : "companies"}`;
+    // Members with no company at all leave nothing to count: say nothing rather than guess.
+    const n = companies.size;
+    return n === 0 ? undefined : `across ${n} ${n === 1 ? "company" : "companies"}`;
   };
   const clusterNodes: LayoutNode[] = [];
   const clusterColorById = new Map<string, string>();
@@ -544,7 +555,7 @@ export function* buildHybridGraphLayoutSteps(
                 radius: g.foot,
               }))
             : geom.fit.form === "ring" && geom.parts[0].ringRadius !== undefined
-              ? [{ key: "main", role: "main" as const, x: center.x, y: center.y, radius: geom.parts[0].ringRadius }]
+              ? [{ key: "main", role: "main" as const, x: center.x + geom.parts[0].center.x, y: center.y + geom.parts[0].center.y, radius: geom.parts[0].ringRadius }]
               : undefined,
       },
       position: { x: cx, y: cy },
@@ -570,7 +581,6 @@ export function* buildHybridGraphLayoutSteps(
     const boxLeft = left - CLUSTER_LABEL_PAD;
     const boxTop = top - CLUSTER_LABEL_GAP - CLUSTER_LABEL_HEAD;
     const boxWidth = right + CLUSTER_LABEL_PAD - boxLeft;
-    const boxHeight = bottom + CLUSTER_LABEL_PAD - boxTop;
     const petalLabels =
       geom.fit.form === "petal"
         ? geom.parts
@@ -599,6 +609,9 @@ export function* buildHybridGraphLayoutSteps(
               };
             })
         : undefined;
+    // The box holds the stars and, for a petal company, each petal's name below its part.
+    let boxHeight = bottom + CLUSTER_LABEL_PAD - boxTop;
+    for (const l of petalLabels ?? []) boxHeight = Math.max(boxHeight, l.anchor.y + PETAL_LABEL_HEIGHT);
     const subtitle = cluster.kind === "role" ? roleSubtitle(cluster.contactIds) : undefined;
     clusterNodes.push({
       id: `cluster-${cluster.id}`,
