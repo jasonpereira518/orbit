@@ -42,7 +42,7 @@ import type { RadarSignal, RecommendationKind } from "../src/lib/radar/types";
 import { cardLine, draftsReady, whatChanged, WHAT_CHANGED_MAX } from "../src/lib/radar/briefing";
 import { radarKeyFor } from "../src/lib/radar/focus-keys";
 import { APP_NAV, APP_NAV_CORE, APP_NAV_EXTRAS, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
-import { COMING_SOON_KEYS, surfaceForPathname } from "../src/lib/surfaces";
+import { DEFAULT_COMING_SOON_KEYS, isHrefComingSoon, surfaceForPathname } from "../src/lib/surfaces";
 import { ROUTE_PATTERNS } from "../src/lib/analytics-routes";
 import { featureAreaForPath } from "../src/lib/feedback-report";
 
@@ -513,10 +513,12 @@ function briefingAndKeys() {
 function registration() {
   console.log("\nthe page is registered everywhere a route must be");
   check("the surface registry maps /radar to page.radar", surfaceForPathname("/radar")?.key === "page.radar");
-  check("it ships as coming-soon", COMING_SOON_KEYS.has("page.radar"));
+  check("it ships as coming-soon", DEFAULT_COMING_SOON_KEYS.has("page.radar"));
   check("the sidebar lists it", APP_NAV.some((item) => item.href === "/radar"));
-  check("under the coming-soon divider, not in the main group",
-    APP_NAV_EXTRAS.some((i) => i.href === "/radar") && !APP_NAV_CORE.some((i) => i.href === "/radar"));
+  check("first after Dashboard in the default order", APP_NAV_CORE[1]?.href === "/radar", APP_NAV_CORE.map((i) => i.href).join(" "));
+  // The sidebar's own split (AppSidebar): anything coming soon drops below the divider.
+  const belowDivider = [...APP_NAV_CORE, ...APP_NAV_EXTRAS].filter((i) => isHrefComingSoon(i.href, DEFAULT_COMING_SOON_KEYS));
+  check("so while it is coming soon the sidebar puts it below the divider", belowDivider.some((i) => i.href === "/radar"), belowDivider.map((i) => i.href).join(" "));
   check("so does the phone's More menu", MOBILE_MORE_NAV.some((item) => item.href === "/radar"));
   check("analytics tracks it as a pattern", ROUTE_PATTERNS.includes("/radar"));
   check("feedback from it is filed under Radar", featureAreaForPath("/radar") === "radar");

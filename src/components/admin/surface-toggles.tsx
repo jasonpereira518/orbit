@@ -2,13 +2,14 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, HardHat, Lock } from "lucide-react";
+import { Eye, EyeOff, HardHat, Hourglass, Lock } from "lucide-react";
 import {
   setPreviewUnreleasedAction,
+  setSurfaceComingSoonAction,
   setSurfaceHiddenAction,
   setViewAsUserAction,
 } from "@/actions/admin";
-import type { Surface } from "@/lib/surfaces";
+import { canMarkComingSoon, type Surface } from "@/lib/surfaces";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,15 +23,20 @@ import { cn } from "@/lib/utils";
 function SurfaceRow({
   surface,
   hidden,
+  comingSoon,
 }: {
   surface: Surface;
   hidden: boolean;
+  comingSoon: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [optimistic, setOptimistic] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [soonOptimistic, setSoonOptimistic] = useState<boolean | null>(null);
 
+  const isSoon = soonOptimistic ?? comingSoon;
+  const canSoon = canMarkComingSoon(surface.key);
   const isHidden = optimistic ?? hidden;
   const locked = surface.alwaysVisible === true;
 
@@ -44,6 +50,21 @@ function SurfaceRow({
         router.refresh();
       } catch (err) {
         setOptimistic(null);
+        setError(err instanceof Error ? err.message : "Could not save that.");
+      }
+    });
+  }
+
+  function toggleSoon() {
+    const next = !isSoon;
+    setSoonOptimistic(next);
+    setError(null);
+    start(async () => {
+      try {
+        await setSurfaceComingSoonAction({ surfaceKey: surface.key, soon: next });
+        router.refresh();
+      } catch (err) {
+        setSoonOptimistic(null);
         setError(err instanceof Error ? err.message : "Could not save that.");
       }
     });
@@ -70,6 +91,26 @@ function SurfaceRow({
         </p>
         {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
       </div>
+
+      {canSoon && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={isSoon}
+          aria-label={`${isSoon ? "Release" : "Mark as coming soon:"} ${surface.label}`}
+          disabled={pending}
+          onClick={toggleSoon}
+          className={cn(
+            "flex w-28 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors duration-fast disabled:opacity-60",
+            isSoon
+              ? "border-warning/40 bg-warning/10 text-warning"
+              : "border-border/70 text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Hourglass className="size-3" aria-hidden />
+          {isSoon ? "Coming soon" : "Released"}
+        </button>
+      )}
 
       {locked ? (
         <span className="flex shrink-0 items-center gap-1 pt-0.5 text-xs text-muted-foreground">
@@ -111,11 +152,15 @@ function SurfaceRow({
 export function SurfaceToggles({
   surfaces,
   hidden,
+  comingSoon = [],
 }: {
   surfaces: Surface[];
   hidden: string[];
+  /** Page keys currently marked coming soon. Only pages render the toggle. */
+  comingSoon?: string[];
 }) {
   const hiddenSet = new Set(hidden);
+  const soonSet = new Set(comingSoon);
   return (
     <ul className="divide-y divide-border/50">
       {surfaces.map((surface) => (
@@ -123,6 +168,7 @@ export function SurfaceToggles({
           key={surface.key}
           surface={surface}
           hidden={hiddenSet.has(surface.key)}
+          comingSoon={soonSet.has(surface.key)}
         />
       ))}
     </ul>
@@ -167,8 +213,8 @@ export function ViewAsUserButton({ active }: { active: boolean }) {
 }
 
 /**
- * Opts the operator's own session past a coming-soon page (`comingSoon` in
- * `src/lib/surfaces.ts`), which is closed to admins by default so an unreleased feature
+ * Opts the operator's own session past a coming-soon page (marked from the Pages list
+ * below), which is closed to admins by default so an unreleased feature
  * cannot ship early just because whoever is building it is an admin.
  *
  * No redirect either direction — unlike `ViewAsUserButton`, turning this on or off does not
