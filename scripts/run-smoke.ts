@@ -215,6 +215,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-role-function": "pure",
   "smoke-school-key": "pure",
   "smoke-constellation-clusters": "pure",
+  "smoke-cluster-affinity": "pure",
   "smoke-relative-date": "pure",
   "smoke-reveal-reduced-motion": "pure",
   "smoke-scan-image": "pure",
