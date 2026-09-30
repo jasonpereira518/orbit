@@ -892,8 +892,10 @@ const anatomyIndex = buildSkyIndex(anatomyLayout);
 
   const roleEdges = anatomyIndex.edges.filter((e) => anatomyLayout.edges.find((l) => l.source === e.source && l.target === e.target)?.data?.reason === "role");
   check("the role cluster draws lines", roleEdges.length > 0);
+  // The phone draws the index's dash in constant screen px; the desktop's SVG `2 5` dasharray is
+  // in layout units and scales with the zoom. The same pattern, not the same size on screen.
   check(
-    "role lines are dotted, in screen px, and faint",
+    "role lines are dotted, in screen px on the phone, and faint",
     roleEdges.every((e) => e.dash !== undefined && e.dash[0] === 2 && e.dash[1] === 5 && e.opacity === 0.35)
   );
   check("every other line is solid", anatomyIndex.edges.filter((e) => !roleEdges.includes(e)).every((e) => e.dash === undefined));
@@ -1094,7 +1096,8 @@ console.log("\nthe phone canvas draws the galaxy\n");
   check("a ring blits one annulus", formCount("ring") === 1, String(formCount("ring")));
   check("open and binary clusters are not washed", formCount("open") === 0 && formCount("binary") === 0);
 
-  // Dashes: looking at the role cluster's own lines.
+  // Dashes: looking at the role cluster's own lines. Constant screen px at every zoom (unlike the
+  // desktop's layout-unit dasharray, which scales with the camera).
   const centredOn = (x: number, y: number, k: number) => ({ x: 195 - x * k, y: 400 - y * k, k });
   const roleEdge = anatomyIndex.edges.find((e) => e.dash)!;
   const dashCalls = (rec: ReturnType<typeof makeCtx>) => rec.calls.filter((c) => c.name === "setLineDash").map((c) => JSON.stringify(c.args[0]));

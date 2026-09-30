@@ -297,8 +297,9 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
     ctx.globalAlpha = bucket.alpha;
     ctx.strokeStyle = bucket.stroke;
     ctx.lineWidth = bucket.wide;
-    // Dash lengths are screen px, like the DOM's `stroke-dasharray`: the dots stay the same
-    // size whatever the zoom.
+    // Dash lengths are constant screen px: the dots stay the same size whatever the zoom. Not
+    // quite the desktop's look — its `stroke-dasharray: 2 5` is in layout units under React
+    // Flow's transform, so there the dots grow and shrink with the zoom.
     if (bucket.dash) ctx.setLineDash(bucket.dash);
     ctx.beginPath();
     for (let i = 0; i < bucket.segs.length; i += 4) {
