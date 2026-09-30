@@ -217,6 +217,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-constellation-clusters": "pure",
   "smoke-cluster-affinity": "pure",
   "smoke-disk-placement": "pure",
+  "smoke-galaxy-structure": "pure",
   "smoke-relative-date": "pure",
   "smoke-reveal-reduced-motion": "pure",
   "smoke-scan-image": "pure",
