@@ -50,8 +50,44 @@ export function petalLabelOffset(anchor: { x: number; y: number }, petal: { x: n
  * (where the cluster stands in for its people), and only while the cluster's own name won its
  * place in the collision pass — the parts' names are its detail, so they never outlive it.
  */
-export function showPetalLabels(o: { labelZoom: number; summary: boolean; nameShown: boolean }) {
-  return o.labelZoom >= PETAL_LABEL_MIN_ZOOM && !o.summary && o.nameShown;
+export function showPetalLabels(o: { zoomReached: boolean; summary: boolean; nameShown: boolean }) {
+  return o.zoomReached && !o.summary && o.nameShown;
+}
+
+/**
+ * The label node's geometry when it carries petal names: the cluster's whole box, with its
+ * origin on the name's anchor, so the name sits exactly where it did and React Flow culls the
+ * node by the cluster (the captions hang hundreds of px below the name) rather than by the name
+ * alone. `undefined` for every other cluster, which keeps the name's own small box.
+ */
+export function petalNodeGeometry(o: {
+  showPetals: boolean;
+  box?: { width: number; height: number };
+  anchor?: { x: number; y: number };
+}) {
+  if (!o.showPetals || !o.box || !o.anchor || o.box.width <= 0 || o.box.height <= 0) return undefined;
+  return {
+    width: o.box.width,
+    height: o.box.height,
+    originX: o.anchor.x / o.box.width,
+    originY: o.anchor.y / o.box.height,
+  };
+}
+
+/**
+ * How far below its anchor a pinned name may slide, in layout px of `y`: the floor of its
+ * bottom edge. The box's bottom, or just above the topmost petal name when there is one; never
+ * above the anchor itself, so a petal name close under the top star cannot invert the range.
+ */
+export function pinnedNameFloor(
+  box: { height: number },
+  anchor: { y: number },
+  petalTop: number | null,
+  sc: number,
+  gap = 4
+) {
+  if (petalTop === null) return box.height;
+  return Math.max(anchor.y, petalTop - gap * sc);
 }
 
 /**

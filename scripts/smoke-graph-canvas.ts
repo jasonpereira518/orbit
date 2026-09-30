@@ -50,6 +50,8 @@ import {
   PETAL_LABEL_MIN_ZOOM,
   STAR_HIT_PAD,
   petalLabelOffset,
+  petalNodeGeometry,
+  pinnedNameFloor,
   showPetalLabels,
   starSize,
   starSubtitle,
@@ -57,6 +59,7 @@ import {
   zoomRelief,
 } from "../src/lib/graph/star-style";
 import { buildHybridGraphLayout, type GraphContactInput } from "../src/lib/graph-layout";
+import { clusterNameSize } from "../src/components/graph/graph-nodes";
 import { buildSkyIndex } from "../src/components/graph/sky-canvas/sky-index";
 import {
   FOCUS_DIM_OPACITY,
@@ -840,11 +843,38 @@ console.log("\npetal labels\n");
     off.dx === 40 && off.dy === 252,
     JSON.stringify(off)
   );
-  const z = PETAL_LABEL_MIN_ZOOM;
-  check("shown when close, unsummarised and the name is shown", showPetalLabels({ labelZoom: z, summary: false, nameShown: true }));
-  check("hidden below the zoom floor", !showPetalLabels({ labelZoom: z * 0.9, summary: false, nameShown: true }));
-  check("hidden in the summary view", !showPetalLabels({ labelZoom: 1, summary: true, nameShown: true }));
-  check("hidden when the cluster's name lost the collision pass", !showPetalLabels({ labelZoom: 1, summary: false, nameShown: false }));
+  check("shown when close, unsummarised and the name is shown", showPetalLabels({ zoomReached: true, summary: false, nameShown: true }));
+  check("hidden below the zoom floor", !showPetalLabels({ zoomReached: false, summary: false, nameShown: true }));
+  check("hidden in the summary view", !showPetalLabels({ zoomReached: true, summary: true, nameShown: true }));
+  check("hidden when the cluster's name lost the collision pass", !showPetalLabels({ zoomReached: true, summary: false, nameShown: false }));
+
+  const box = { width: 400, height: 800 };
+  const anchor = { x: 100, y: 48 };
+  check("a cluster without petal names keeps the name's own box", petalNodeGeometry({ showPetals: false, box, anchor }) === undefined);
+  check("no box or anchor, no geometry", petalNodeGeometry({ showPetals: true }) === undefined);
+  const g = petalNodeGeometry({ showPetals: true, box, anchor });
+  check(
+    "a petal cluster's node is the cluster box with its origin on the name's anchor",
+    g?.width === 400 && g.height === 800 && g.originX === 0.25 && g.originY === 0.06,
+    JSON.stringify(g)
+  );
+
+  check("a pinned name travels the whole box when there are no petal names", pinnedNameFloor(box, anchor, null, 1) === 800);
+  check("a pinned name stops above the topmost petal name", pinnedNameFloor(box, anchor, 300, 2) === 292);
+  check("a petal name right under the anchor never inverts the range", pinnedNameFloor(box, anchor, 50, 2) === 48);
+
+  const plain = clusterNameSize("Engineers", false, 1);
+  const withSub = clusterNameSize("Engineers", false, 1, "across 12 companies");
+  check(
+    "a subtitle adds a line to the name's box",
+    withSub.height > plain.height,
+    `${plain.height} -> ${withSub.height}`
+  );
+  check(
+    "a subtitle longer than the name widens the box",
+    withSub.width > plain.width,
+    `${plain.width} -> ${withSub.width}`
+  );
 }
 
 console.log("\nAll graph-canvas smoke checks passed.\n");

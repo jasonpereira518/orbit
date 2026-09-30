@@ -76,6 +76,7 @@ import {
 } from "@/lib/graph/sky-selection";
 import {
   PETAL_LABEL_MIN_ZOOM,
+  petalNodeGeometry,
   showPetalLabels,
   starSubtitle,
   starVisual,
@@ -1675,10 +1676,12 @@ function GraphCanvasInner({
         const showPetals =
           Boolean(label.petalLabels?.length) &&
           showPetalLabels({
-            labelZoom: petalZoomReached ? PETAL_LABEL_MIN_ZOOM : 0,
+            zoomReached: petalZoomReached,
             summary,
             nameShown: !nameHidden,
           });
+        // A petal cluster's node spans its box, so it is culled with the cluster, not the name.
+        const petalGeometry = petalNodeGeometry({ showPetals, box: label.box, anchor: label.anchor });
         out.push(
           withEmphasis(
             n,
@@ -1686,7 +1689,10 @@ function GraphCanvasInner({
             () =>
               ({
                 ...n,
-                ...measuredOf(measured, n.id),
+                // A petal node's box is known, and differs from the name's last measurement.
+                ...(petalGeometry && !pinnable
+                  ? { measured: { width: petalGeometry.width, height: petalGeometry.height } }
+                  : measuredOf(measured, n.id)),
                 hidden: nameHidden,
                 ...(nameRaised ? { zIndex: 60 } : null),
                 // Placed by the name's anchor: the cluster-sized box around it when the name
@@ -1701,7 +1707,13 @@ function GraphCanvasInner({
                         label.anchor.y / label.box.height,
                       ] as [number, number],
                     }
-                  : { origin: [0.5, 1] as [number, number] }),
+                  : petalGeometry
+                    ? {
+                        width: petalGeometry.width,
+                        height: petalGeometry.height,
+                        origin: [petalGeometry.originX, petalGeometry.originY] as [number, number],
+                      }
+                    : { origin: [0.5, 1] as [number, number] }),
                 data: { ...label, summary, pinnable, showPetals },
                 ariaLabel: summary
                   ? `${label.label}, ${label.count ?? 0} ${
@@ -1712,7 +1724,7 @@ function GraphCanvasInner({
                 style: {
                   opacity,
                   transition: "opacity 200ms ease",
-                  ...(pinnable ? { pointerEvents: "none" as const } : null),
+                  ...(pinnable || petalGeometry ? { pointerEvents: "none" as const } : null),
                 },
               }) as Node
           )

@@ -30,6 +30,7 @@ import { withAlpha } from "@/lib/school-color";
 import {
   STAR_HIT_PAD,
   petalLabelOffset,
+  pinnedNameFloor,
   starVisual,
   zoomRelief as starZoomRelief,
 } from "@/lib/graph/star-style";
@@ -654,8 +655,7 @@ export function clusterNameSize(
   const sc = clusterNameScale(zoom);
   return {
     width:
-      (Math.max(label.length, (subtitle?.length ?? 0) * CLUSTER_SUBTITLE_EM) * CLUSTER_NAME_CHAR_W +
-        16) *
+      (clusterNameChars(label, subtitle) * CLUSTER_NAME_CHAR_W + 16) *
       sc,
     height:
       (CLUSTER_NAME_LINE_H +
@@ -675,6 +675,10 @@ const CLUSTER_SUBTITLE_EM = 0.82;
 const PETAL_NAME_EM = 0.7;
 /** Air, in unscaled px, between a pinned name's foot and the topmost petal name. */
 const PETAL_NAME_GAP = 4;
+/** The longer of the name and its subtitle, in name characters (the subtitle is set smaller). */
+function clusterNameChars(label: string, subtitle?: string) {
+  return Math.max(label.length, (subtitle?.length ?? 0) * CLUSTER_SUBTITLE_EM);
+}
 /** Rough advance of the 11px semibold, letter-spaced name — enough to keep it on screen. */
 const CLUSTER_NAME_CHAR_W = 7.4;
 /** Below this zoom the name never pins; the whole sky is in view and every name is too. */
@@ -750,7 +754,7 @@ function PetalLabels({
           <span
             key={p.key}
             className={cn(
-              "pointer-events-none absolute whitespace-nowrap text-center text-[1em] font-medium uppercase leading-none tracking-[0.14em]",
+              "pointer-events-none absolute whitespace-nowrap font-medium uppercase leading-none tracking-[0.14em]",
               p.role === "core" ? null : "text-white/55"
             )}
             style={{
@@ -781,6 +785,9 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
   if (data.pinnable && data.box && data.anchor) {
     return <PinnableClusterName {...props} scale={scale} showCount={showCount} />;
   }
+  if (data.showPetals && data.box && data.anchor) {
+    return <PetalClusterName data={data} scale={scale} showCount={showCount} />;
+  }
 
   /**
    * Zoomed out: just the name, as its own node. The node is placed by its bottom-centre
@@ -793,7 +800,7 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
    */
   return (
     <div
-      className="nopan nodrag relative flex cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
+      className="nopan nodrag flex cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
       title={`Zoom to ${data.label}`}
       // Drawn at its size rather than scaled up: scaling magnifies glyphs the browser already
       // rasterised, which is why names went soft as the camera came in. It also makes the node's
@@ -801,8 +808,43 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
       style={{ fontSize: 11 * scale }}
     >
       <ClusterNameText data={data} showCount={showCount} />
-      {/* The node's origin is the name's bottom-centre; the labels hang from that point. */}
-      <PetalLabels data={data} scale={scale} style={{ left: "50%", top: "100%" }} />
+    </div>
+  );
+}
+
+/**
+ * A petal-form cluster's name while its core and petal names are shown: the same box-sized node
+ * the pinnable name uses, minus the pinning. The captions hang far below the name, and React Flow
+ * culls a node by its box, so a name-sized node would take every caption with it the moment the
+ * name left the view — just when a reader is down at a petal. The chart gives this node the
+ * cluster's box (`petalNodeGeometry`) and lets pointers through everywhere but the name.
+ */
+function PetalClusterName({
+  data,
+  scale,
+  showCount,
+}: {
+  data: ClusterLabelData;
+  scale: number;
+  showCount: boolean;
+}) {
+  const box = data.box!;
+  const anchor = data.anchor!;
+  return (
+    <div className="pointer-events-none relative" style={{ width: box.width, height: box.height }}>
+      <div
+        className="nopan nodrag pointer-events-auto absolute flex w-max cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
+        title={`Zoom to ${data.label}`}
+        style={{
+          left: anchor.x,
+          top: anchor.y,
+          transform: "translate(-50%, -100%)",
+          fontSize: 11 * scale,
+        }}
+      >
+        <ClusterNameText data={data} showCount={showCount} />
+      </div>
+      <PetalLabels data={data} scale={scale} style={{ left: anchor.x, top: anchor.y }} />
     </div>
   );
 }
@@ -850,7 +892,7 @@ function PinnableClusterName({
         (showCount ? CLUSTER_COUNT_LINE_H : 0) +
         (data.subtitle ? CLUSTER_COUNT_LINE_H : 0)) *
       sc;
-    const halfW = (data.label.length * CLUSTER_NAME_CHAR_W * sc) / 2;
+    const halfW = (clusterNameChars(data.label, data.subtitle) * CLUSTER_NAME_CHAR_W * sc) / 2;
 
     const viewTop = (CLUSTER_NAME_PIN_TOP_PX - ty) / k - positionAbsoluteY;
     const viewLeft = (CLUSTER_NAME_PIN_SIDE_PX - tx) / k - positionAbsoluteX;
@@ -858,7 +900,7 @@ function PinnableClusterName({
 
     // Down, never below the box (past that the cluster is leaving and the name goes with it), and
     // never onto its petal names.
-    const floor = petalTop === null ? box.height : Math.max(anchor.y, petalTop - PETAL_NAME_GAP * sc);
+    const floor = pinnedNameFloor(box, anchor, petalTop, sc, PETAL_NAME_GAP);
     const dy = Math.min(Math.max(0, viewTop - (anchor.y - nameH)), floor - anchor.y);
     // Across, within the view where it fits and never beyond the cluster's own edges.
     let x = anchor.x;
