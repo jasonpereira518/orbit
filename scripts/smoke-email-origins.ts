@@ -85,6 +85,29 @@ async function followUpSection() {
   check("one interaction, source follow_up", logged.length === 1 && logged[0]!.source === "follow_up", JSON.stringify(logged.map((l) => l.source)));
 }
 
+async function chatSection() {
+  console.log("chat");
+  const db = await getDb();
+  const [c] = await db
+    .insert(schema.contacts)
+    .values({ userId: USER, fullName: "Ben", email: "ben@acme-corp.io", followUpStatus: "due", nextFollowUpAt: new Date() })
+    .returning();
+  const key = `chat-send:11111111-1111-4111-8111-111111111111:${c!.id}`;
+  const { outcome } = await sendNow({
+    to: ["ben@acme-corp.io"],
+    subject: "Hi",
+    bodyText: "Hey Ben",
+    origin: "chat",
+    originRef: "11111111-1111-4111-8111-111111111111",
+    idempotencyKey: key,
+    contactIds: [c!.id],
+  });
+  const logged = await db.select().from(schema.interactions).where(eq(schema.interactions.contactId, c!.id));
+  check("chat send is logged under its chat-send key", outcome === "sent" && logged.length === 1 && logged[0]!.externalId === key && logged[0]!.source === "chat_send");
+  const after = await db.query.contacts.findFirst({ where: eq(schema.contacts.id, c!.id) });
+  check("emailing from Chat answers the follow-up", after?.followUpStatus === "none");
+}
+
 async function main() {
   const db = await getDb();
   await purgeUserData(USER, { keepSettings: false }).catch(() => {});
@@ -100,6 +123,7 @@ async function main() {
       status: "active",
     });
     await followUpSection();
+    await chatSection();
   } finally {
     setProviderOverride("gmail", null);
     await resetBucket();

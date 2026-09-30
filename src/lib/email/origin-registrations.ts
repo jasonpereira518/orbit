@@ -5,3 +5,4 @@
  * dispatched from a request.
  */
 import "@/lib/email/origin-hooks/follow-up";
+import "@/lib/email/origin-hooks/chat";
