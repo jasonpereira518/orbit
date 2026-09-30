@@ -6,3 +6,4 @@
  */
 import "@/lib/email/origin-hooks/follow-up";
 import "@/lib/email/origin-hooks/chat";
+import "@/lib/email/origin-hooks/agent";

@@ -30,6 +30,14 @@ import {
   rejectAgentSend,
 } from "../src/lib/agent-sends";
 import { countSendsToday } from "../src/lib/outreach-send";
+import { approveAgentSend } from "../src/lib/agent-send-approve";
+import { encrypt } from "../src/lib/crypto";
+import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
+import { countEmailSendsToday } from "../src/lib/email/sender";
+import { dispatchEmailSend } from "../src/lib/email/outbox";
+import { setProviderOverride } from "../src/lib/email/providers";
+import { MailProviderError, type MailProvider } from "../src/lib/email/providers/types";
+import * as schema from "../src/db/schema";
 import { generateApiKey } from "../src/lib/api/keys";
 import { POST } from "../src/app/api/mcp/route";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
@@ -114,7 +122,7 @@ run(async () => {
     const imports = source.slice(0, Math.max(source.indexOf("export "), 0) || source.length);
     check(
       `${label} imports no approval or send path`,
-      !/from "@\/lib\/(agent-send-approve|gmail-send|outreach-send)"/.test(imports),
+      !/from "@\/lib\/(agent-send-approve|gmail-send|outreach-send|email\/(outbox|providers|schedule))/.test(imports),
       "an approval must not be one import away from a tool"
     );
   }
@@ -204,6 +212,72 @@ run(async () => {
     (await claimAgentSendForApproval(USER, retryable.id)) !== null
   );
   await db.execute(sql`DELETE FROM agent_send_requests WHERE id = ${retryable.id}`);
+
+  // --- Approval sends through the user's own mailbox, via the outbox ---------------------------
+  let next: "ok" | "permanent" | "ambiguous" = "ok";
+  let providerCalls = 0;
+  const fake: MailProvider = {
+    id: "gmail",
+    async identity() {
+      return { email: "me@acme-corp.io" };
+    },
+    async send() {
+      providerCalls++;
+      if (next !== "ok") throw new MailProviderError(next, `fake ${next}`);
+      return { providerMessageId: `pm-${providerCalls}`, providerThreadId: null };
+    },
+    async findSent() {
+      return "unknown";
+    },
+  };
+  setProviderOverride("gmail", fake);
+  const approveDraft = async (to: string) => {
+    const d = await createAgentSendRequest(USER, { toEmail: to, subject: "Hi", body: "Good to meet you." });
+    await db.execute(sql`DELETE FROM rate_limit_buckets WHERE bucket = ${`emailSend:${USER}`}`);
+    return { id: d.id, run: () => approveAgentSend(USER, d.id, { confirmRecipient: true }) };
+  };
+  try {
+    const noMailbox = await approveDraft("priya@acme-corp.io");
+    const refused = await noMailbox.run().then(() => null, (e: Error) => e.message);
+    check("with no mailbox connected, approval refuses", refused === "Connect Gmail to send from your own address.", String(refused));
+    check("and the draft goes back to pending", (await getAgentSendRequest(USER, noMailbox.id))?.status === "pending");
+
+    await db.insert(schema.gmailConnections).values({
+      userId: USER,
+      emailAddress: "me@acme-corp.io",
+      accessTokenEncrypted: encrypt("t"),
+      refreshTokenEncrypted: encrypt("r"),
+      tokenExpiresAt: new Date(Date.now() + 3_600_000),
+      scopes: GOOGLE_SCOPES.gmailSend,
+      status: "active",
+    });
+    const before = await countEmailSendsToday(USER);
+    const good = await noMailbox.run();
+    check("approval sends", good.sent && good.status === "sent" && good.via === "gmail", JSON.stringify(good));
+    const row = await getAgentSendRequest(USER, noMailbox.id);
+    check("the draft reads as sent", row?.status === "sent");
+    check("and counts against the shared email cap", (await countEmailSendsToday(USER)) === before + 1);
+
+    next = "permanent";
+    const bad = await approveDraft("sam@acme-corp.io");
+    const badResult = await bad.run();
+    check("a refused send reports failure", !badResult.sent && badResult.status === "failed", JSON.stringify(badResult));
+    check("and returns the draft to pending", (await getAgentSendRequest(USER, bad.id))?.status === "pending");
+
+    next = "ambiguous";
+    const maybe = await approveDraft("lee@acme-corp.io");
+    const maybeResult = await maybe.run();
+    check("an unsure send is retried, not reported sent", maybeResult.status === "retrying");
+    await db.execute(sql`UPDATE email_sends SET send_at = now() - interval '1 second' WHERE origin_ref = ${maybe.id}`);
+    const [queued] = await db.select().from(schema.emailSends).where(sql`origin_ref = ${maybe.id}`);
+    const calls = providerCalls;
+    await dispatchEmailSend(queued!.id);
+    const parked = await getAgentSendRequest(USER, maybe.id);
+    check("a send that may have gone out is parked as failed, never resent", parked?.status === "failed" && providerCalls === calls, JSON.stringify(parked?.status));
+    check("and cannot be approved again", (await maybe.run().then(() => "sent", (e: Error) => e.message)) === "That draft is no longer waiting for approval");
+  } finally {
+    setProviderOverride("gmail", null);
+  }
 
   // --- Expiry ---------------------------------------------------------------------------------
   const stale = await createAgentSendRequest(USER, {

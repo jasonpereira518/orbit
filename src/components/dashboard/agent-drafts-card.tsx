@@ -72,7 +72,13 @@ function DraftRow({ draft, onDone }: { draft: AgentSendSummary; onDone: () => vo
           toast.error(result.error);
           return;
         }
-        toast.success(`Sent to ${draft.toEmail}`);
+        if (result.value.status === "sent") {
+          toast.success(`Sent to ${draft.toEmail}`);
+        } else if (result.value.status === "retrying") {
+          toast.message("Gmail is slow to respond — Orbit will keep trying and let you know if it doesn’t send.");
+        } else {
+          toast.error(result.value.error ?? "That didn’t send.");
+        }
         onDone();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t send that — try again?"));
