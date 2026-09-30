@@ -5,8 +5,11 @@
 import {
   buildConstellationFit,
   constellationFitEdges,
+  orderConstellationMembers,
   RING_SHAPE,
 } from "../src/lib/constellation-fit";
+import { buildConstellationClusters } from "../src/lib/constellation-clusters";
+import { assignClusterShapes, figureStarCount } from "../src/lib/constellation-shapes";
 import { RING_CAPACITY } from "../src/lib/graph/cluster-anatomy";
 import type { GraphContactInput } from "../src/lib/graph-layout";
 
@@ -46,6 +49,12 @@ const contacts: GraphContactInput[] = [
   // A plain company, a pair, a school, a big school.
   ...group(6, { company: "Plainco" }),
   ...group(2, { company: "Pairco" }),
+  // Plain companies whose figures compete with the petals' and the ring's for the same shapes:
+  // enough of each size that a reordered request list is bound to hand one of them a new figure.
+  ...["Zephyr", "Lumen", "Harbor", "Vertex", "Cobalt", "Juniper"].flatMap((company) => group(9, { company })),
+  ...["Orion", "Basalt", "Fable", "Marlin", "Tundra", "Quartz"].flatMap((company) => group(7, { company })),
+  ...["Quill", "Ripple", "Saffron", "Tamarind", "Umber", "Willow"].flatMap((company) => group(5, { company })),
+  ...group(4, { company: "Ember" }),
   ...group(14, { school: "Chapel Hill" }),
   ...group(60, { school: "State U" }),
 ];
@@ -66,7 +75,13 @@ console.log("\nParts");
   const nw = byName("Northwind");
   check("Northwind has a core and three petals", nw.parts.map((p) => p.key).join() === "core,petal:engineering,petal:design,petal:sales");
   check("every member is in exactly one part, as figure or scatter", JSON.stringify(nw.parts.flatMap((p) => [...p.figureMemberIds, ...p.scatterMemberIds]).sort()) === JSON.stringify([...nw.cluster.contactIds].sort()));
-  check("each part's figure is at most its shape's size and at most 9", nw.parts.every((p) => p.figureMemberIds.length === Math.min(p.shape.stars.length, p.figureMemberIds.length) && p.figureMemberIds.length <= 9));
+  check(
+    "each part's figure is as big as its shape and the cap allow, and at most 9",
+    nw.parts.every((p) => {
+      const total = p.figureMemberIds.length + p.scatterMemberIds.length;
+      return p.figureMemberIds.length === Math.min(p.shape.stars.length, figureStarCount(total)) && p.figureMemberIds.length <= 9;
+    })
+  );
   const eng = nw.parts.find((p) => p.key === "petal:engineering")!;
   check("a petal with 10 members traces a 9-star figure and scatters one", eng.figureMemberIds.length === 9 && eng.scatterMemberIds.length === 1);
   check("the aggregates are the parts joined", nw.figureMemberIds.join() === nw.parts.flatMap((p) => p.figureMemberIds).join() && nw.shape === nw.parts[0].shape);
@@ -107,6 +122,34 @@ console.log("\nStability");
   for (let i = 0; i < schools.length; i++) if (schools[i] && schools[i] !== schools[i - 1]) runs += 1;
   const distinct = new Set(schools.filter(Boolean)).size;
   check(`classmates sit on adjacent stars (${runs} runs for ${distinct} schools)`, runs === distinct);
+}
+
+console.log("\nShape stability (a cluster that is not split keeps the figure it always had)");
+{
+  const { clusters } = buildConstellationClusters(contacts);
+  // Exactly the request list the fit builds for its own-id pass: every cluster, in order.
+  const classic = assignClusterShapes(clusters.map((c) => ({ id: c.id, contactIds: c.contactIds })));
+  const byId = new Map(contacts.map((c) => [c.id, c]));
+  const plain = [...fit.fits.values()].filter((f) => f.form !== "petal" && f.form !== "ring");
+  check("the fixture has non-split clusters to pin", plain.length >= 2);
+  for (const f of plain) {
+    const shape = classic.get(f.cluster.id)!;
+    check(`${f.cluster.name} (${f.form}) keeps its classic shape (${shape.id})`, f.parts[0].shape.id === shape.id);
+    const members = orderConstellationMembers(f.cluster.contactIds.map((id) => byId.get(id)!));
+    const expected = members.slice(0, Math.min(shape.stars.length, figureStarCount(members.length))).map((c) => c.id);
+    check(`${f.cluster.name} (${f.form}) keeps the same stars on it`, JSON.stringify(f.figureMemberIds) === JSON.stringify(expected));
+  }
+  // Rings (and petal companies) still ask for a classic shape under their own id, though they
+  // never draw it. Dropping or reordering those requests would hand the shape to a later cluster
+  // and move an existing constellation: the cluster after Chapel Hill must get what it gets
+  // when every cluster, rings included, asks first.
+  const at = clusters.findIndex((c) => c.name === "Chapel Hill");
+  const after = clusters.slice(at + 1).find((c) => fit.fits.has(c.id) && fit.fits.get(c.id)!.form !== "petal" && fit.fits.get(c.id)!.form !== "ring");
+  check("a cluster follows Chapel Hill in the request order", at >= 0 && Boolean(after));
+  check(
+    `…and still gets the shape it gets when the ring asked first (${after ? classic.get(after.id)!.id : "-"})`,
+    Boolean(after) && fit.fits.get(after!.id)!.parts[0].shape.id === classic.get(after!.id)!.id
+  );
 }
 
 console.log("\nconstellation-fit: all checks passed");
