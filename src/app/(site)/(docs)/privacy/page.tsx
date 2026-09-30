@@ -267,6 +267,11 @@ export default function PrivacyPage() {
               bodies, and it does not use this mail to train models or for advertising.
             </p>
             <p>
+              The notes it keeps can appear as reasons on your Radar cards, in the short lines
+              and drafts Radar writes with your AI provider, and in your in-app briefing. They
+              are never put in Radar&rsquo;s Monday email.
+            </p>
+            <p>
               Turning it off stops the checking; disconnecting Gmail, or deleting your insights
               in Settings, removes what it recorded.
             </p>

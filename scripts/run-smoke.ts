@@ -400,6 +400,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-radar-email-signals": "pglite",
   "smoke-radar-email-run": "pglite",
   "smoke-radar-email-accept": "pglite",
+  "smoke-radar-email-text": "pglite",
   "smoke-radar-metrics": "pglite",
   "smoke-radar-feeds": "pglite",
   "smoke-radar-digest": "pglite",

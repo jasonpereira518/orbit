@@ -81,7 +81,7 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your own AI key. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads, and for hiring conversations the text of the latest messages, which it sends to your AI provider to note the company, role, stage, dates and people. Message bodies are never stored.",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your own AI key. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads, and for hiring conversations the text of the latest messages, which it sends to your AI provider to note the company, role, stage, dates and people. The notes can appear on your Radar cards. Message bodies are never stored.",
     askedWhen: "Connect Gmail on Recruiters, turn on Confirmation emails on Events, or turn on Email insights in Settings",
   },
   {

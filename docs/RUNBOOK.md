@@ -167,6 +167,14 @@ smallest first:
   is listing and triage; `extract_*` is model work (`keyProblems`, `budgetStops` and `released`
   are ordinary; `failed` and `errors` are worth a look; `rejected_*` counts events the
   validator dropped and is the way to tell an over-strict floor from a quiet mailbox).
+- **Radar cards from mail:** for an opted-in account, Radar's nightly pass reads the last 21 days
+  of `email_events`, asks `rankEventContacts` who in the network to reach for each (at most 20
+  events, three people each, inside an 8-second budget) and scores the result like any other
+  signal (`email_*` reason codes). Turning the account's switch off stops it; its email cards
+  leave the list on the next run (a manual Refresh in Radar does it at once). The Monday email
+  never carries text derived from mail (`digestLineFor`), and a draft's intent uses fixed words.
+  If a card built from mail looks wrong, `SELECT * FROM email_events WHERE id = '<id>'` (the id is
+  in the card's evidence `ref`) shows what was extracted and the quote it came from.
 
 ## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
 
