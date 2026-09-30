@@ -7416,6 +7416,11 @@
         "stats": {
           "contactCount": 26,
           "dueFollowUpCount": 5
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
         }
       }
     }
