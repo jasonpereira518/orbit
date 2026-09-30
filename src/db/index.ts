@@ -1132,6 +1132,7 @@ CREATE TABLE IF NOT EXISTS waitlist_poll_votes (
   option_id text NOT NULL,
   voter_key text NOT NULL,
   signup_id uuid,
+  stars jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2170,7 +2171,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 129 = interest_list_signups.signup_event_label for operator-added event signups. Scanned
 // every local and remote ref on Sep 27 2026: 128 is the highest claimed anywhere, so 129
 // is the next free integer.
-export const SCHEMA_VERSION = 129;
+//
+// 134 = waitlist_poll_votes.stars, the feature poll's star budgets (3 stars, +1 per friend who
+// joined through your link, capped at +10). Scanned every local and remote ref and every
+// worktree's working src/db/index.ts on Sep 29 2026: 133 is the highest claimed anywhere
+// (origin/main is at 132), so 134 is the next free integer. This branch is stacked on an
+// older main (129); merging main in later needs its own new number, per 118/120/127 above.
+export const SCHEMA_VERSION = 134;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3945,6 +3952,9 @@ const alters = [
   // Schema v109: `site_settings.waitlist_demo_enabled`. Null (never set) reads as on, so no
   // backfill: the demo stays up until an admin takes it down from the waitlist admin page.
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS waitlist_demo_enabled boolean`,
+  // Schema v134: the feature poll's star budgets. Null on older votes, which read as the whole
+  // base budget on their `option_id` — no backfill needed.
+  `ALTER TABLE waitlist_poll_votes ADD COLUMN IF NOT EXISTS stars jsonb`,
   // Schema v117: learned brand colors for companies and schools outside the curated table.
   `CREATE TABLE IF NOT EXISTS org_brand_colors (name_key text NOT NULL, kind text NOT NULL, name text NOT NULL, hex text, domain text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,

@@ -115,6 +115,7 @@ export const WAITLIST_ALLOWED_PATHS = [
   "api/interest-list/unsubscribe$",
   "api/interest-list/ticket-image$",
   "api/interest-list/progress$",
+  "api/waitlist-poll/results$",
   "api/track$",
   "api/csp-report$",
   "_vercel/",
