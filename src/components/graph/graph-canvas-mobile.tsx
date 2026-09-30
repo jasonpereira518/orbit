@@ -228,10 +228,10 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     (animated: boolean) => {
       const pane = paneRef.current;
       if (pane.width < 2) return;
-      const camera = fitStarsToPane(layout.nodes, pane, HOME_INSET);
+      const camera = fitStarsToPane(layout.nodes, pane, HOME_INSET, layout.galaxy);
       flyTo(camera, animated ? CAMERA_MS.move : 0);
     },
-    [flyTo, layout.nodes]
+    [flyTo, layout.nodes, layout.galaxy]
   );
 
   // --- sizing -------------------------------------------------------------
