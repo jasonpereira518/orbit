@@ -52,6 +52,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "avatar.resolve": "photo lookup",
   "lifetime-confirm": "checkout check",
   "poll.vote": "vote",
+  "poll.results": "results check",
   "work-history": "work-history lookup",
   "work-history-background": "background work-history check",
 };
