@@ -1,5 +1,6 @@
 "use server";
 
+import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { cookies } from "next/headers";
@@ -133,9 +134,13 @@ export async function startOutlookOAuth(input: {
   if (purposes.length === 0 || !purposes.every(isMicrosoftPurpose)) {
     throw new Error("Unknown Microsoft connection purpose");
   }
-  // Connecting Microsoft is free: the spec puts contacts, meetings and sending on every plan,
-  // and the one paid feature (the recruiter inbox scan) is gated where it runs, not here.
+  // Connecting Microsoft is free for the Free Plan's ONE Google or Microsoft account; a
+  // second provider needs a paid plan (`connection-limits.ts`). Paid features that use the
+  // connection (the recruiter inbox scan) are gated where they run.
   const userId = await requireUserId();
+  if (!(await canConnect(userId, "microsoft"))) {
+    return { url: refusedConnectUrl(safeReturnPath(input.returnTo) ?? "", "microsoft") };
+  }
   const summary = getOutlookOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError ? ` (${summary.redirectUriError})` : "";

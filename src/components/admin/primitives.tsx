@@ -319,10 +319,11 @@ const SOURCE_LABEL: Record<PlanSource, string> = {
 };
 
 /**
- * Plan and its source together — the source is what makes the number honest, since comps
- * are currently the only thing writing a paid plan.
+ * Plan and its source together — the source is what makes the number honest.
  *
- * Gold marks anything Jason did by hand, consistently throughout the console.
+ * Colored by plan, like everywhere else in the product (Pro blue, Max gold, Lifetime
+ * silver). A comp — anything set by hand — is marked by a DASHED border rather than gold,
+ * since gold now means Max.
  */
 export function PlanBadge({
   plan,
@@ -336,12 +337,13 @@ export function PlanBadge({
   const comped = source === "comp";
   return (
     <Badge
+      data-plan={plan}
       variant={plan === "free" ? "secondary" : "outline"}
       title={title}
       className={cn(
         "gap-1 font-normal tabular-nums",
-        comped && "border-accent/50 bg-accent/10 text-accent-foreground",
-        !comped && plan !== "free" && "border-primary/40 text-primary"
+        plan !== "free" && "border-tier-border bg-tier-surface text-tier-accent",
+        comped && "border-dashed"
       )}
     >
       {PLAN_LABELS[plan]}

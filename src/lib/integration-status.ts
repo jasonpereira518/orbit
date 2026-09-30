@@ -125,7 +125,7 @@ function meetingsStatus(
 function inboxCapability(granted: boolean, plan: Plan): { inbox?: CapabilityStatus } {
   if (plan === "unknown") return {};
   if (!plan.canUseRecruiters) {
-    return { inbox: { state: "locked", detail: "Part of Orbit Pro and Lifetime" } };
+    return { inbox: { state: "locked", detail: "Part of Orbit Pro and Max" } };
   }
   return { inbox: { state: granted ? "available" : "not_allowed" } };
 }

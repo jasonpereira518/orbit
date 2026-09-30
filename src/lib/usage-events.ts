@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { usageEvents } from "@/db/schema";
 import { estimateCostMicros } from "@/lib/ai-pricing";
 import { classifyAiError } from "@/lib/errors";
+import { settleManagedUsage } from "@/lib/credits/ledger";
 import type { AiProvider } from "@/lib/ai-providers";
 
 export type UsageKind =
@@ -57,8 +58,8 @@ export type UsageMeta = {
   model: string;
   kind: UsageKind;
   /**
-   * Whose API key paid. "orbit" = a managed key the AI gate issued (Lifetime or demo
-   * accounts only) — and the meter the managed allowance reads. Always `grant.keyOwner`.
+   * Whose API key paid. "orbit" = a managed key the AI gate issued (Pro and Max, or a
+   * localhost demo account) — and what settles the credit ledger. Always `grant.keyOwner`.
    */
   keyOwner: "user" | "orbit";
   /**
@@ -122,11 +123,19 @@ export function usageRow(rec: UsageRecord) {
  */
 export function recordUsage(rec: UsageRecord): void {
   const write = async () => {
+    const row = usageRow(rec);
     try {
       const db = await getDb();
-      await db.insert(usageEvents).values(usageRow(rec));
+      await db.insert(usageEvents).values(row);
     } catch {
       // Telemetry must never surface as a user-visible failure.
+    }
+    // A call on Orbit's key spends credits (pricing v2). Separate from the insert on
+    // purpose: a lost telemetry row must not also lose the charge, and vice versa.
+    try {
+      await settleManagedUsage(row);
+    } catch (err) {
+      console.error("[credits] settling a managed call did not complete", err);
     }
   };
 

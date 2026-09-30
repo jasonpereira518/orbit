@@ -41,7 +41,8 @@ type OperationSpec = {
   thinking?: ThinkingLevel;
   /**
    * Bulk work running on the person's behalf rather than something they are waiting on.
-   * On Orbit's managed keys it stops at `MANAGED_AI_BUDGET.backgroundShare` of the month.
+   * On Orbit's keys it runs only while more than `BACKGROUND_FLOOR_SHARE` of the monthly
+   * credits remain (`src/lib/managed-ai-policy.ts`).
    */
   background?: boolean;
 };

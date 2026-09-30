@@ -11,6 +11,8 @@ export type TourBeat = {
   caption: string;
   /** The click. A function when the action depends on state (the draft's turn id). */
   action?: DemoAction | ((state: DemoState) => DemoAction | null);
+  /** Text typed into the ask bar, a letter at a time, before the click. */
+  type?: string;
   /** How long to hold after the click (or the arrival), in ms. */
   dwell: number;
 };
@@ -18,7 +20,7 @@ export type TourBeat = {
 export const TOUR: TourBeat[] = [
   {
     target: `suggestion-${TOUR_PERSON}`,
-    caption: "Orbit noticed Maya has gone quiet — you said you'd check in monthly.",
+    caption: "Orbit noticed Amanda has gone quiet — you said you'd check in monthly.",
     dwell: 2600,
   },
   {
@@ -35,7 +37,8 @@ export const TOUR: TourBeat[] = [
   {
     target: "profile-ask",
     caption: "Ask Orbit about her.",
-    action: { type: "ask", q: "What did I promise Maya?" },
+    type: "What did I promise Amanda?",
+    action: { type: "ask", q: "What did I promise Amanda?" },
     dwell: 600,
   },
   {
@@ -48,7 +51,7 @@ export const TOUR: TourBeat[] = [
     dwell: 800,
   },
   {
-    target: "chat-draft-card",
+    target: "chat-send-btn",
     caption: "It drafts. You decide what gets sent.",
     dwell: 2600,
   },
@@ -60,7 +63,7 @@ export const TOUR: TourBeat[] = [
   },
   {
     target: `star-${TOUR_PERSON}`,
-    caption: "Maya, in the Figma constellation — one of your mid-orbit ties.",
+    caption: "Amanda, in the Figma constellation — one of your mid-orbit ties.",
     action: { type: "star", id: TOUR_PERSON },
     dwell: 3200,
   },

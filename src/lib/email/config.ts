@@ -8,6 +8,7 @@ import type { Plan } from "@/lib/plan-limits";
 export const EMAIL_SEND_DAILY_CAP: Record<Plan, number> = {
   free: 20,
   orbit: 100,
+  max: 100,
   lifetime: 100,
 };
 

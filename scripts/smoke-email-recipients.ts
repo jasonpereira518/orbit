@@ -48,7 +48,7 @@ check("a comma pair is not one mailbox", !pair.ok && pair.reason === "invalid_re
 const ph = normalizeRecipients({ to: ["someone@example.com"] });
 check("placeholder domains are refused", !ph.ok && ph.reason === "placeholder" && ph.address === "someone@example.com");
 
-check("caps per plan", EMAIL_SEND_DAILY_CAP.free === 20 && EMAIL_SEND_DAILY_CAP.orbit === 100 && EMAIL_SEND_DAILY_CAP.lifetime === 100);
+check("caps per plan", EMAIL_SEND_DAILY_CAP.free === 20 && EMAIL_SEND_DAILY_CAP.orbit === 100 && EMAIL_SEND_DAILY_CAP.max === 100 && EMAIL_SEND_DAILY_CAP.lifetime === 100);
 check("backoff ladder", [1, 2, 3, 4, 9].map(emailBackoffSeconds).join() === "60,300,1800,7200,7200");
 check("attempt limit", MAX_EMAIL_ATTEMPTS === 5);
 

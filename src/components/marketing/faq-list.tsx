@@ -14,8 +14,11 @@ export type FaqItem = { q: string; a: ReactNode };
  * left shoves the right-hand item down with it. Splitting the list into two
  * self-contained columns keeps each side's growth to itself — opening an item
  * only moves the questions beneath it, in its own column.
+ *
+ * `columns={1}` keeps a single stack at every width, for a list that already sits in a
+ * narrow column of its own (the waitlist's FAQ, beside its heading).
  */
-export function FaqList({ items }: { items: readonly FaqItem[] }) {
+export function FaqList({ items, columns: count = 2 }: { items: readonly FaqItem[]; columns?: 1 | 2 }) {
   const baseId = useId();
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const reduced = useReducedMotion();
@@ -23,14 +26,14 @@ export function FaqList({ items }: { items: readonly FaqItem[] }) {
   // Split in halves rather than alternating, so each column still reads top to
   // bottom and the single-column layout below lg keeps the authored order.
   const half = Math.ceil(items.length / 2);
-  const columns = [items.slice(0, half), items.slice(half)];
+  const columns = count === 1 ? [items] : [items.slice(0, half), items.slice(half)];
 
   const transition = reduced
     ? { duration: 0 }
     : { duration: 0.32, ease: [0.22, 1, 0.36, 1] as const };
 
   return (
-    <div className="grid gap-3 lg:grid-cols-2 lg:items-start">
+    <div className={count === 1 ? "grid gap-3" : "grid gap-3 lg:grid-cols-2 lg:items-start"}>
       {columns.map((column, columnIndex) => (
         <div key={columnIndex} className="grid content-start gap-3">
           {column.map((item, index) => {

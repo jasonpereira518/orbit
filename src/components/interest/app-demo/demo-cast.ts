@@ -5,7 +5,7 @@
  * A broad professional mix on purpose — old colleagues, a mentor, a recruiter, a prospect,
  * a founder friend — so any visitor recognises someone. Companies repeat so the
  * Constellation has figures to draw: Figma ×3, Stripe ×3, Deloitte ×2, Michigan alumni ×3.
- * Maya Okafor carries the tour's story; keep her suggestion, promise and Figma star intact.
+ * Amanda Smith carries the tour's story; keep her suggestion, promise and Figma star intact.
  */
 
 export type TimelineType = "Email" | "Meeting" | "Call" | "LinkedIn" | "In person" | "Note";
@@ -56,7 +56,7 @@ export const CLUSTERS: Record<ClusterId, { label: string; kind: "company" | "sch
 
 /** Stars joined into each figure, in drawing order. */
 export const CLUSTER_CHAINS: Record<ClusterId, string[]> = {
-  figma: ["maya", "daniel", "priya", "maya"],
+  figma: ["amanda", "daniel", "priya", "amanda"],
   stripe: ["elena", "marcus", "aisha"],
   deloitte: ["tom", "sofia"],
   michigan: ["jordan", "hannah", "ben"],
@@ -64,8 +64,8 @@ export const CLUSTER_CHAINS: Record<ClusterId, string[]> = {
 
 export const DEMO_PEOPLE: DemoPerson[] = [
   {
-    id: "maya",
-    name: "Maya Okafor",
+    id: "amanda",
+    name: "Amanda Smith",
     hue: 12,
     title: "Product Lead",
     company: "Figma",
@@ -125,12 +125,12 @@ export const DEMO_PEOPLE: DemoPerson[] = [
     closeness: 44,
     lastTouchDays: 88,
     followUpDays: null,
-    howMet: "Introduced by Maya Okafor",
+    howMet: "Introduced by Amanda Smith",
     standing: "Runs research at Figma; open to comparing notes on interview synthesis.",
-    nextStep: "Ask Maya for a refresher intro before reaching out.",
+    nextStep: "Ask Amanda for a refresher intro before reaching out.",
     tags: ["research", "intro"],
     timeline: [
-      { id: "p1", type: "Meeting", daysAgo: 88, note: "Intro call via Maya — research ops, synthesis tools", source: "Google Calendar" },
+      { id: "p1", type: "Meeting", daysAgo: 88, note: "Intro call via Amanda — research ops, synthesis tools", source: "Google Calendar" },
     ],
     cluster: "figma",
     star: { x: 112, y: 178 },
@@ -383,12 +383,14 @@ export type Look = {
   hair: string;
   style: HairStyle;
   shirt: string;
+  /** Backdrop gradient stops, when it should not follow the person's hue. */
+  bg?: [string, string];
   glasses?: boolean;
   beard?: boolean;
 };
 
 export const LOOKS: Record<string, Look> = {
-  maya: { skin: "#8d5524", hair: "#1b1b1b", style: "curly", shirt: "#f2c14e" },
+  amanda: { skin: "#f6d9c0", hair: "#c89b4a", style: "long", shirt: "#f2c14e", bg: ["#c8323c", "#7f1d24"] },
   daniel: { skin: "#f1c27d", hair: "#141414", style: "short", shirt: "#3b82f6", glasses: true },
   priya: { skin: "#c68642", hair: "#171010", style: "long", shirt: "#a78bfa" },
   elena: { skin: "#e0ac69", hair: "#5a3825", style: "wavy", shirt: "#f472b6" },
@@ -416,13 +418,13 @@ export type SuggestionReason = "Dormant" | "LinkedIn quiet" | "Post-event" | "Sc
 
 /** What the recommendation engine surfaces on the Dashboard, in rank order. */
 export const DEMO_SUGGESTIONS: { personId: string; reason: SuggestionReason; why: string }[] = [
-  { personId: "maya", reason: "Dormant", why: "You said check in monthly — last touch 46 days ago" },
+  { personId: "amanda", reason: "Dormant", why: "You said check in monthly — last touch 46 days ago" },
   { personId: "grace", reason: "Post-event", why: "Met at SaaStr 5 days ago — no follow-up logged yet" },
   { personId: "tom", reason: "LinkedIn quiet", why: "He messaged about his new role — thread quiet for 12 days" },
   { personId: "jordan", reason: "Score bump", why: "Three calls this month — Jordan moved into your inner orbit" },
 ];
 
-export const TOUR_PERSON = "maya";
+export const TOUR_PERSON = "amanda";
 
 export function personById(id: string | null | undefined): DemoPerson | undefined {
   return id ? DEMO_PEOPLE.find((p) => p.id === id) : undefined;

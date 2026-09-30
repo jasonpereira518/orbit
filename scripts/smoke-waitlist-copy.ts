@@ -215,8 +215,8 @@ async function main() {
 
   console.log("\nThe demo's chat answers from its cast:");
   const { answerQuestion } = await import("../src/components/interest/app-demo/demo-chat");
-  const promise = answerQuestion("What did I promise Maya?");
-  check("a promise question answers with the promise", promise.kind === "promise" && promise.text.includes("design offsite") && promise.draft?.personId === "maya");
+  const promise = answerQuestion("What did I promise Amanda?");
+  check("a promise question answers with the promise", promise.kind === "promise" && promise.text.includes("design offsite") && promise.draft?.personId === "amanda");
   check("…citing Gmail or Calendar", promise.sources.some((s) => s.source === "Gmail" || s.source === "Google Calendar"));
   check("a company question lists the people there", answerQuestion("Who do I know at Stripe?").kind === "company");
   check("an intro question picks a match", answerQuestion("Who should meet Grace Liu?").text.includes("Elena"));
@@ -232,15 +232,15 @@ async function main() {
   const st = await import("../src/components/interest/app-demo/demo-state");
   let s = st.initialDemoState("explore");
   const due0 = st.stats(s).due;
-  s = st.demoReducer(s, { type: "setFollowUp", id: "maya", days: 0 });
+  s = st.demoReducer(s, { type: "setFollowUp", id: "amanda", days: 0 });
   check("setting a follow-up due today raises the Due count", st.stats(s).due === due0 + 1);
-  check("…and answers the engine's nudge", !st.activeSuggestions(s).some((x) => x.personId === "maya"));
-  s = st.demoReducer(s, { type: "ask", q: "What did I promise Maya?" });
+  check("…and answers the engine's nudge", !st.activeSuggestions(s).some((x) => x.personId === "amanda"));
+  s = st.demoReducer(s, { type: "ask", q: "What did I promise Amanda?" });
   const turn = s.chat.find((t) => t.role === "assistant")!;
   s = st.demoReducer(s, { type: "draft", turnId: turn.id });
   s = st.demoReducer(s, { type: "sendDraft", turnId: turn.id });
-  const maya = (await import("../src/components/interest/app-demo/demo-cast")).personById("maya")!;
-  check("sending a draft logs it to the timeline via Gmail", st.timelineOf(s, maya)[0]?.source === "Gmail" && st.lastTouchOf(s, maya) === 0);
+  const amanda = (await import("../src/components/interest/app-demo/demo-cast")).personById("amanda")!;
+  check("sending a draft logs it to the timeline via Gmail", st.timelineOf(s, amanda)[0]?.source === "Gmail" && st.lastTouchOf(s, amanda) === 0);
   check("reset keeps the mode", st.demoReducer({ ...s, mode: "tour" }, { type: "reset" }).mode === "tour");
 
   if (failures > 0) {

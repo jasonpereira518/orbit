@@ -2,31 +2,32 @@
 
 import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
-import { startProCheckout } from "@/actions/billing";
-import { planCopy, type BillingPeriod } from "@/lib/plan-copy";
+import { startSubscriptionCheckout } from "@/actions/billing";
+import { planCopy } from "@/lib/plan-copy";
+import type { BillingPeriod, PurchasablePlan } from "@/lib/plans/plan-config";
 import { cn } from "@/lib/utils";
 
 /**
- * Sends the buyer to Stripe Checkout for the Orbit Pro subscription, honouring the
- * page's billing-period toggle.
+ * Sends the buyer to Stripe Checkout for Orbit Pro or Orbit Max, billed monthly or yearly.
  *
- * The action returns a URL rather than redirecting so refusals (already subscribed,
- * not on sale yet) can be shown right here, next to the button that caused them.
+ * The action returns a URL rather than redirecting so refusals (already subscribed, not on
+ * sale yet) show right here, next to the button that caused them. A founding discount, when
+ * the account has one, is applied by the action and shown by Stripe's checkout page — the
+ * label always quotes the list price the card above it shows.
  */
-export function ProCheckoutButton({
-  period,
+export function SubscriptionCheckoutButton({
+  plan,
+  period = "monthly",
   className,
 }: {
-  period: BillingPeriod;
+  plan: PurchasablePlan;
+  period?: BillingPeriod;
   className?: string;
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-
-  // Reads the amount from PLAN_COPY so the button can never quote a different price
-  // than the card above it.
-  const amount = planCopy("orbit").price[period].amount;
-  const label = `Start Pro — ${amount}/${period === "annual" ? "year" : "month"}`;
+  const copy = planCopy(plan);
+  const label = `Start ${copy.name.replace("Orbit ", "")} — ${copy.price[period].amount}/${period === "annual" ? "year" : "month"}`;
 
   return (
     <div className="space-y-2">
@@ -36,7 +37,7 @@ export function ProCheckoutButton({
         onClick={() => {
           setError(null);
           start(async () => {
-            const result = await startProCheckout(period);
+            const result = await startSubscriptionCheckout(plan, period);
             if ("url" in result) {
               // A full navigation, not router.push: the destination is Stripe's domain.
               window.location.href = result.url;
@@ -54,7 +55,7 @@ export function ProCheckoutButton({
         {pending ? "Opening checkout…" : label}
       </button>
       {error && (
-        <p role="alert" className="text-center text-xs text-brand-pro">
+        <p role="alert" className="text-center text-xs text-[#e8f3f1]">
           {error}
         </p>
       )}

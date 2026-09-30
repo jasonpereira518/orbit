@@ -24,7 +24,7 @@ export type NarratedAnswer = ChatAnswer & { steps: DemoStep[] };
 
 /** The canned questions on the chat's suggestion cards, with the reason line under each. */
 export const CHAT_SUGGESTIONS = [
-  { q: "What did I promise Maya?", why: "Follow-up gone quiet 46 days" },
+  { q: "What did I promise Amanda?", why: "Follow-up gone quiet 46 days" },
   { q: "Who do I know at Stripe?", why: "3 people · 1 inner orbit" },
   { q: "Who should I follow up with this week?", why: "From your reminders and suggestions" },
   { q: "Who should meet Grace Liu?", why: "Met at SaaStr 5 days ago" },
@@ -34,15 +34,15 @@ export const CHAT_SUGGESTIONS = [
 const INTROS: Record<string, { to: string; why: string }> = {
   grace: { to: "elena", why: "Elena runs logistics partnerships at Stripe and asked you for founders scaling ops." },
   elena: { to: "grace", why: "Grace is evaluating payments partners for Northwind's ops team." },
-  sofia: { to: "maya", why: "Maya made the jump from consulting to product and is building a team." },
-  maya: { to: "priya", why: "Priya runs research at Figma — Maya's new team will lean on her." },
+  sofia: { to: "amanda", why: "Amanda made the jump from consulting to product and is building a team." },
+  amanda: { to: "priya", why: "Priya runs research at Figma — Amanda's new team will lean on her." },
   ben: { to: "aisha", why: "Aisha recruits platform PMs at Stripe; Ben knows the senior PM market." },
   jordan: { to: "hannah", why: "Hannah scaled engineering at Notion — exactly what Loop needs next." },
 };
 
 const DRAFTS: Record<string, string> = {
-  maya:
-    "Hi Maya — sorry this took a while! Here's the deck from the design offsite we talked about over coffee. Happy to walk you through how we ran discovery on Atlas — would a call next week work?",
+  amanda:
+    "Hi Amanda — sorry this took a while! Here's the deck from the design offsite we talked about over coffee. Happy to walk you through how we ran discovery on Atlas — would a call next week work?",
   grace:
     "Hi Grace — great meeting you after the ops panel at SaaStr. You mentioned you're evaluating payments partners; I'd love to introduce you to Elena Rossi, who leads logistics partnerships at Stripe. Open to it?",
   elena:

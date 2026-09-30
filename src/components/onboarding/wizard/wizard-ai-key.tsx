@@ -11,17 +11,17 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 import { integrationHref } from "@/components/settings/sections";
-import { useLifetimeIncludesAi } from "@/components/lifetime-ai-offer";
+import { useViewerPlan } from "@/components/viewer-plan";
 
 /**
  * The setup wizard's "connect your AI key" step, shown before the capture path when AI
  * would not run for the account yet (`getSettings().hasApiKey`, the AI gate's verdict).
  *
- * AI is bring-your-own-key on every plan but Lifetime, and the capture path is the first
- * thing a new user tries — so without this step the guided setup led straight into a hard
- * error with a link back to Settings. A Lifetime account never sees it: Orbit's managed key
- * makes `hasApiKey` true with no key saved. Deliberately skippable: importing or adding
- * people by hand needs no key at all.
+ * The Free Plan is bring-your-own-key, and the capture path is the first thing a new user
+ * tries — so without this step the guided setup led straight into a hard error with a link
+ * back to Settings. A Pro or Max account never sees it: included AI makes `hasApiKey` true
+ * with no key saved. Deliberately skippable: importing or adding people by hand needs no key
+ * at all. The other way out — Pro and Max include AI — is offered alongside, not instead.
  */
 export function WizardAiKey({
   onSaved,
@@ -34,7 +34,8 @@ export function WizardAiKey({
   const [apiKey, setApiKey] = useState("");
   const [pending, start] = useTransition();
   const meta = AI_PROVIDERS.find((p) => p.id === provider);
-  const lifetimeIncludesAi = useLifetimeIncludesAi();
+  const { plan, includedAiAvailable } = useViewerPlan();
+  const offerIncludedAi = plan === "free" && includedAiAvailable;
 
   function save() {
     const key = apiKey.trim();
@@ -57,16 +58,16 @@ export function WizardAiKey({
   return (
     <div className="space-y-5">
       <p className="text-sm text-muted-foreground">
-        Orbit reads your notes and answers questions about your network with an AI model
-        that runs on your own key — at cost, never marked up, and never shared. You can
-        change it any time under Settings.
-        {lifetimeIncludesAi && (
+        Orbit reads your notes and answers questions about your network with an AI model.
+        On the Free Plan it runs on your own key, which is never shared, and you can change
+        it any time under Settings.
+        {offerIncludedAi && (
           <>
-            {" "}With{" "}
+            {" "}Or skip the key:{" "}
             <Link href="/pricing" className="font-medium text-primary underline-offset-2 hover:underline">
-              Orbit Lifetime
-            </Link>
-            , AI is included and no key is needed.
+              Orbit Pro and Orbit Max
+            </Link>{" "}
+            include AI.
           </>
         )}
       </p>
