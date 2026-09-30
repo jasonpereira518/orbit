@@ -115,6 +115,7 @@ async function main() {
     const u = await must(enqueueEmail(USER, { ...base, delayMs: 10_000 }));
     check("not due before the window", (await dispatchEmailSend(u.id)) === "not_due");
     check("undo cancels", (await cancelEmailSend(USER, u.id)) === "canceled");
+    check("a second undo still says canceled", (await cancelEmailSend(USER, u.id)) === "canceled");
     await makeDue(u.id);
     check("canceled row never sends", (await dispatchEmailSend(u.id)) === "not_claimable" && sent.length === 1);
     check("undo of a sent row says already_sent", (await cancelEmailSend(USER, q.id)) === "already_sent");

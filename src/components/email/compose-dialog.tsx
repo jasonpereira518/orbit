@@ -9,7 +9,7 @@ import { AttachmentList, type ComposeAttachment } from "@/components/email/attac
 import { ConnectMailboxButton } from "@/components/email/connect-mailbox-button";
 import { MailboxSelect } from "@/components/email/mailbox-select";
 import { RecipientField } from "@/components/email/recipient-field";
-import { ScheduleMenu } from "@/components/email/schedule-menu";
+import { ScheduleMenu, SchedulePicker } from "@/components/email/schedule-menu";
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -23,6 +23,7 @@ import type { ComposeContext, ComposeRecipient } from "@/lib/email/compose";
 import { MAX_ATTACHMENTS, maxAttachmentBytesFor } from "@/lib/email/config";
 import { formatScheduled } from "@/lib/email/schedule-presets";
 import type { MailboxId } from "@/lib/email/sender";
+import { stripSignature } from "@/lib/email/signature";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 
@@ -60,6 +61,7 @@ export function ComposeDialog({
     (request.attachments ?? []).map((a) => ({ ...a, id: a.pathname, progress: 100 }))
   );
   const fileInput = useRef<HTMLInputElement>(null);
+  const [picking, setPicking] = useState(false);
   const [sending, startSend] = useTransition();
   const [drafting, startDraft] = useTransition();
 
@@ -83,6 +85,8 @@ export function ComposeDialog({
         } else if (!request.to?.length && c?.contact?.emails[0]) {
           setTo([c.contact.emails[0]]);
         }
+        // A reopened send carries the signature it went out with; the composer adds its own.
+        if (request.body && c?.signature) setBody(stripSignature(request.body, c.signature));
       })
       .catch(() => {
         if (!cancelled) setCtx("unavailable");
@@ -229,7 +233,7 @@ export function ComposeDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (sending && !next ? undefined : onOpenChange(next))}>
-      <DialogContent className="gap-3 sm:max-w-xl max-sm:top-auto max-sm:bottom-3 max-sm:max-h-[85dvh] max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:rounded-3xl">
+      <DialogContent className="gap-3 sm:max-h-[calc(100dvh-2rem)] sm:max-w-xl sm:overflow-y-auto max-sm:top-auto max-sm:bottom-3 max-sm:max-h-[85dvh] max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:rounded-3xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>Sends from your own email after a 10-second undo window.</DialogDescription>
@@ -371,9 +375,25 @@ export function ComposeDialog({
                 {lowOnSends && capability?.ok && (
                   <span className="text-xs text-muted-foreground">{capability.remainingToday} left today</span>
                 )}
-                <ScheduleMenu disabled={!canSend} sending={sending} onSendNow={() => send()} onSchedule={(at) => send(at)} />
+                <ScheduleMenu
+                  disabled={!canSend}
+                  sending={sending}
+                  onSendNow={() => send()}
+                  onSchedule={(at) => send(at)}
+                  onPickCustom={() => setPicking(true)}
+                />
               </div>
             </div>
+            {picking && (
+              <SchedulePicker
+                disabled={!canSend}
+                onCancel={() => setPicking(false)}
+                onConfirm={(at) => {
+                  setPicking(false);
+                  send(at);
+                }}
+              />
+            )}
           </div>
         )}
       </DialogContent>

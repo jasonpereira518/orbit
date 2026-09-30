@@ -5,7 +5,7 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
-import { appendSignature, cleanSignature, SIGNATURE_MAX } from "../src/lib/email/signature";
+import { appendSignature, cleanSignature, SIGNATURE_MAX, stripSignature } from "../src/lib/email/signature";
 import { loadEmailSettings, saveEmailSignature } from "../src/lib/email/settings";
 import { purgeUserData } from "../src/lib/user-data";
 
@@ -25,6 +25,8 @@ async function main() {
 
   check("append uses the standard delimiter", appendSignature("Hi Maya", "Jason") === "Hi Maya\n\n-- \nJason");
   check("no signature, body unchanged", appendSignature("Hi Maya", null) === "Hi Maya");
+  check("strip undoes append", stripSignature(appendSignature("Hi Maya", "Jason"), "Jason") === "Hi Maya");
+  check("strip leaves a body without it alone", stripSignature("Hi Maya\n-- Jason", "Jason") === "Hi Maya\n-- Jason");
   check("an already signed body is not signed twice", appendSignature("Hi Maya\n\n-- \nJason", "Jason") === "Hi Maya\n\n-- \nJason");
 
   await purgeUserData(USER, { keepSettings: false }).catch(() => {});

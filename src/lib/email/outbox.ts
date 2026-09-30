@@ -226,9 +226,11 @@ export async function cancelEmailSend(
   if (canceled.length) return "canceled";
   const existing = await db.query.emailSends.findFirst({
     where: and(eq(emailSends.id, id), eq(emailSends.userId, userId)),
-    columns: { id: true },
+    columns: { status: true },
   });
-  return existing ? "already_sent" : "not_found";
+  if (!existing) return "not_found";
+  // Idempotent: a second cancel (Undo after Edit already took it off the schedule) is not "sent".
+  return existing.status === "canceled" ? "canceled" : "already_sent";
 }
 
 export type DispatchOutcome = "sent" | "retry" | "failed" | "not_due" | "not_claimable";

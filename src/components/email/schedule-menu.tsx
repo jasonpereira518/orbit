@@ -21,74 +21,63 @@ function timeLabel(hhmm: string) {
 
 /**
  * Send, as a split button: the main half sends now (after the undo window); the chevron offers
- * a later time. "Pick date & time" opens an inline picker under the buttons rather than a
- * popover — the composer is itself a dialog, and a bottom sheet on phones.
+ * a later time. "Pick date & time" asks the composer to show `SchedulePicker` on its own row,
+ * rather than a popover — the composer is itself a dialog, and a bottom sheet on phones.
  */
 export function ScheduleMenu({
   disabled,
   sending,
   onSendNow,
   onSchedule,
+  onPickCustom,
 }: {
   disabled: boolean;
   sending: boolean;
   onSendNow: () => void;
   onSchedule: (at: Date) => void;
+  onPickCustom: () => void;
 }) {
-  const [picking, setPicking] = useState(false);
   const presets = useMemo(() => schedulePresets(new Date()), []);
   const now = new Date();
 
   return (
-    <div className="flex flex-col items-end gap-2">
-      <div className="flex items-center">
-        <Button type="button" size="sm" onClick={onSendNow} disabled={disabled} className="rounded-r-none">
-          {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-          Send
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                type="button"
-                size="sm"
-                disabled={disabled}
-                aria-label="Send later"
-                className="rounded-l-none border-l border-primary-foreground/25 px-2"
-              >
-                <ChevronDown className="size-3.5" aria-hidden />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end" className="w-auto min-w-56">
-            <DropdownMenuItem onClick={() => onSchedule(presets.tomorrowMorning)}>
-              <Clock className="size-3.5" aria-hidden />
-              Send {formatScheduled(presets.tomorrowMorning, now).replace(/^around /, "")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onSchedule(presets.mondayMorning)}>
-              <Clock className="size-3.5" aria-hidden />
-              Send {formatScheduled(presets.mondayMorning, now).replace(/^around /, "")}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setPicking(true)}>Pick date &amp; time…</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      {picking && (
-        <SchedulePicker
-          disabled={disabled}
-          onCancel={() => setPicking(false)}
-          onConfirm={(at) => {
-            setPicking(false);
-            onSchedule(at);
-          }}
+    <div className="flex items-center">
+      <Button type="button" size="sm" onClick={onSendNow} disabled={disabled} className="rounded-r-none">
+        {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+        Send
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              size="sm"
+              disabled={disabled}
+              aria-label="Send later"
+              className="rounded-l-none border-l border-primary-foreground/25 px-2"
+            >
+              <ChevronDown className="size-3.5" aria-hidden />
+            </Button>
+          }
         />
-      )}
+        <DropdownMenuContent align="end" className="w-auto min-w-56">
+          <DropdownMenuItem onClick={() => onSchedule(presets.tomorrowMorning)}>
+            <Clock className="size-3.5" aria-hidden />
+            Send {formatScheduled(presets.tomorrowMorning, now).replace(/^around /, "")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onSchedule(presets.mondayMorning)}>
+            <Clock className="size-3.5" aria-hidden />
+            Send {formatScheduled(presets.mondayMorning, now).replace(/^around /, "")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onPickCustom}>Pick date &amp; time…</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
 
-function SchedulePicker({
+export function SchedulePicker({
   disabled,
   onCancel,
   onConfirm,
@@ -115,7 +104,7 @@ function SchedulePicker({
         : null;
 
   return (
-    <div role="group" aria-label="Pick a send time" className="w-full max-w-72 rounded-xl border border-border/70 p-2">
+    <div role="group" aria-label="Pick a send time" className="ml-auto w-full max-w-72 rounded-xl border border-border/70 p-2">
       <MonthCalendar month={month} selected={day} onSelect={setDay} onMonthChange={setMonth} minDate={new Date()} />
       <div className="mt-2 flex items-center gap-2">
         <Select value={time} onValueChange={(v) => typeof v === "string" && setTime(v)} items={options}>
