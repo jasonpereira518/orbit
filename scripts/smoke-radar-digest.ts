@@ -13,7 +13,8 @@
  *   - the off switch: a signed token turns it off, a forged or never-issued one does not,
  *     and the link's GET changes nothing (mail scanners fetch every link);
  *   - the timezone capture refuses a zone this runtime does not know;
- *   - the route stands down while Radar is coming soon.
+ *   - the route stands down while Radar is coming soon, and once released stops short of
+ *     claiming anyone while Resend is not configured.
  *
  * The clock is fixed years ahead so accounts other scripts leave in the shared database are
  * never "active this month" here. Leaves nothing behind.
@@ -314,7 +315,7 @@ async function main() {
   }
 
   console.log("\nthe route");
-  if (DEFAULT_COMING_SOON_KEYS.has("page.radar")) {
+  {
     const started = new Date();
     process.env.CRON_SECRET = "smoke-radar-digest-secret";
     const { POST } = await import("../src/app/api/radar/digest/route");
@@ -324,12 +325,17 @@ async function main() {
         headers: { Authorization: "Bearer smoke-radar-digest-secret" },
       })
     );
-    const body = (await res.json()) as { standDown?: boolean };
-    check("while Radar is coming soon, the route sends nobody anything", res.status === 200 && body.standDown === true, JSON.stringify(body));
+    const body = (await res.json()) as { standDown?: boolean; notConfigured?: boolean };
+    if (DEFAULT_COMING_SOON_KEYS.has("page.radar")) {
+      check("while Radar is coming soon, the route sends nobody anything", res.status === 200 && body.standDown === true, JSON.stringify(body));
+    } else {
+      // Released: the gate lets the run through, and with no Resend key (smoke/_env removes
+      // it) it stops before claiming anyone's week, so no week is spent on an unsendable email.
+      check("once released, the route gets past the gate", res.status === 200 && body.standDown !== true, JSON.stringify(body));
+      check("and without Resend it claims nobody's week", body.notConfigured === true, JSON.stringify(body));
+    }
     await db.delete(cronRuns).where(and(eq(cronRuns.job, "radar.digest"), gte(cronRuns.startedAt, started)));
     delete process.env.CRON_SECRET;
-  } else {
-    console.log("  skip  Radar is released; the stand-down is covered while it is coming soon");
   }
 
   await reset();

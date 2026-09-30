@@ -285,12 +285,12 @@ async function main() {
     check(
       "override rows apply on top of the code defaults, live winning",
       (() => {
-        const eff = effectiveComingSoonKeys(["soon:page.knowledge", "live:page.radar", "soon:page.settings"]);
-        return eff.has("page.knowledge") && !eff.has("page.radar") && !eff.has("page.settings") && eff.has("page.events");
+        const eff = effectiveComingSoonKeys(["soon:page.knowledge", "live:page.events", "soon:page.settings"]);
+        return eff.has("page.knowledge") && !eff.has("page.events") && !eff.has("page.settings") && eff.has("page.outreach");
       })()
     );
     const SOON_TARGET = "page.knowledge";
-    const RELEASE_TARGET = "page.radar";
+    const RELEASE_TARGET = [...DEFAULT_COMING_SOON_KEYS][0]!;
     try {
       await setSurfaceComingSoon(ADMIN, SOON_TARGET, true);
       await setSurfaceComingSoon(ADMIN, RELEASE_TARGET, false);
