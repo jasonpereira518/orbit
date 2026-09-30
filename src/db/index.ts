@@ -102,8 +102,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_digest_enabled integer NOT NULL DEFAULT 1,
   radar_digest_tz text,
   radar_digest_last_week text,
-  radar_digest_unsub_token_hash text,
-  radar_apollo_cursor jsonb
+  radar_digest_unsub_token_hash text
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
@@ -2339,7 +2338,15 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // so the merge takes its own number and every database re-runs the full list once. Scanned
 // every remote ref on Sep 29 2026: 135 is the highest claimed anywhere, so 136 is the next
 // free integer.
-export const SCHEMA_VERSION = 136;
+//
+// 141 = drops user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo re-check
+// that was never built (job moves come from contact_career_moves). #371 took it out of the
+// code first, so the deployment still serving while this migration runs never selects it:
+// the same two steps as wispr_api_key_encrypted (#245, then v89). 137 through 139 are claimed
+// by claude/pricing-v2 (#370) and 140 by claude/orbit-direct-email-cc0746. Scanned every
+// remote ref on Sep 30 2026: 140 is the highest claimed anywhere, so 141 is the next free
+// integer.
+export const SCHEMA_VERSION = 141;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3469,7 +3476,6 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "radar_digest_tz", "text");
   await ensureColumn(client, "user_settings", "radar_digest_last_week", "text");
   await ensureColumn(client, "user_settings", "radar_digest_unsub_token_hash", "text");
-  await ensureColumn(client, "user_settings", "radar_apollo_cursor", "jsonb");
   await ensureColumn(client, "contacts", "bluesky_handle", "text");
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
   await ensureColumn(client, "recommendations", "base_score", "integer");
@@ -4186,7 +4192,6 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_tz text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_last_week text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_unsub_token_hash text`,
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_apollo_cursor jsonb`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bluesky_handle text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
@@ -4201,6 +4206,10 @@ const alters = [
   `DROP INDEX IF EXISTS recommendations_live_uidx`,
   // Schema v136: what autopilot scheduled for a card, so its Undo reverses exactly that.
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,
+  // Schema v141: user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo
+  // re-check that was never built. #371 took it out of the code first, so the deployment
+  // still serving while this runs never selects it (the wispr_api_key_encrypted precedent, v89).
+  `ALTER TABLE user_settings DROP COLUMN IF EXISTS radar_apollo_cursor`,
 ];
 
 /**
