@@ -4145,9 +4145,16 @@ export const waitlistPollVotes = pgTable(
   "waitlist_poll_votes",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    /** The voter's top pick (most stars; ties to authored order). Kept for the admin console
+     * and older readers; the tally reads `stars`. */
     optionId: text("option_id").notNull(),
     voterKey: text("voter_key").notNull(),
     signupId: uuid("signup_id"),
+    /**
+     * Stars per option id, e.g. `{"network-chat": 2, "events": 1}` (v134). Null on votes cast
+     * before stars existed: those count as the whole base budget on `option_id`.
+     */
+    stars: jsonb("stars").$type<Record<string, number>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

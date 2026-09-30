@@ -46,6 +46,9 @@ export const PUBLIC_ROUTES = [
   // The referral tracker's poll. The share token in the query is the credential, exactly as
   // on the pass page; the answer is that pass's own referral count and place.
   "/api/interest-list/progress",
+  // The feature poll's live tallies: star totals per option and a voter count, nothing about
+  // any one voter.
+  "/api/waitlist-poll/results",
   // Not actually public: these authenticate via requireExtensionUserId, which reads the
   // Clerk state clerkMiddleware populates. They are exempted from auth.protect() only so
   // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302

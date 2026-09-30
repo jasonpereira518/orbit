@@ -18,12 +18,13 @@
  * visitor can act on.
  */
 import { cache } from "react";
-import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { interestListSignups } from "@/db/schema";
 import {
   INTEREST_LIST_COUNT_FLOOR,
   SPOTS_PER_REFERRAL,
+  TRACKER_SLOTS,
   slugFromEmail,
   slugWithSuffix,
   type InterestTicket,
@@ -264,14 +265,24 @@ export const getTicketByShareToken = cache(
   }
 );
 
-export type ProgressSnapshot = { referrals: number; position: number };
+export type ProgressSnapshot = {
+  referrals: number;
+  position: number;
+  /**
+   * The planets of the friends who joined through this pass, in join order, first
+   * `TRACKER_SLOTS` — the tracker draws each in its circle. Planets only: nothing that says
+   * who a friend is. Exactly the rows `lineSql` counts as referrals.
+   */
+  friendPlanets: WelcomePlanet[];
+};
 
 const PROGRESS_TTL_MS = 5_000;
 const PROGRESS_MEMO_MAX = 500;
 const progressMemo = new Map<string, { at: number; value: ProgressSnapshot | null }>();
 
 /**
- * What the tracker's poll reads: a pass's live referral count and place, or null when the
+ * What the tracker's poll reads: a pass's live referral count, place and friends' planets,
+ * or null when the
  * token names nobody still waiting. `standingFor` ranks the whole line, so answers are
  * held for five seconds per token — a referrer watching their pass costs one line read per
  * five seconds however many tabs they have open. Per-instance, like the proof memo.
@@ -287,11 +298,26 @@ export async function getProgressByShareToken(token: string): Promise<ProgressSn
     .where(and(eq(interestListSignups.shareToken, token), isNull(interestListSignups.unsubscribedAt)))
     .limit(1);
   const value = row
-    ? await standingFor(row).then((s) => ({ referrals: s.referrals, position: s.position }))
+    ? await Promise.all([standingFor(row), friendPlanetsFor(db, row.id)]).then(([s, friendPlanets]) => ({
+        referrals: s.referrals,
+        position: s.position,
+        friendPlanets,
+      }))
     : null;
   if (progressMemo.size >= PROGRESS_MEMO_MAX) progressMemo.clear();
   progressMemo.set(token, { at: Date.now(), value });
   return value;
+}
+
+/** The still-waiting friends this row referred, oldest first: their planets, capped. */
+async function friendPlanetsFor(db: Awaited<ReturnType<typeof getDb>>, id: string): Promise<WelcomePlanet[]> {
+  const rows = await db
+    .select({ planet: interestListSignups.welcomePlanet })
+    .from(interestListSignups)
+    .where(and(eq(interestListSignups.referredById, id), isNull(interestListSignups.unsubscribedAt)))
+    .orderBy(asc(interestListSignups.createdAt), asc(interestListSignups.id))
+    .limit(TRACKER_SLOTS);
+  return rows.map((r) => asWelcomePlanet(r.planet));
 }
 
 /** Called by the join core once a referral is credited, so the referrer's next poll sees it. */
