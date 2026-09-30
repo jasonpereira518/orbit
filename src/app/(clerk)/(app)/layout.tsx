@@ -156,6 +156,7 @@ export default async function AppLayout({
           color the shell and the page ask for is registered by then. */}
       <LearnedBrandColors brands={brandColors.learned} />
       <AppShell
+      userId={userId}
       clerkOn={clerkOn}
       demoMode={demoMode}
       theme={theme}
