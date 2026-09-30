@@ -3,6 +3,9 @@
  * review deck can be exercised without an AI key. Refuses to run against a remote database.
  *
  * Run (dev server stopped): DATABASE_URL="" npx tsx scripts/dev-seed-capture-job.ts
+ *
+ * `--batch` seeds the same people as two already-read files of one upload instead (Ada in
+ * both), so /capture folds them into one combined review on load.
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
@@ -14,6 +17,7 @@ if (process.env.DATABASE_URL) {
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "";
 process.env.CLERK_SECRET_KEY = "";
 
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { captureJobs, contacts } from "../src/db/schema";
@@ -64,6 +68,23 @@ async function main() {
     mentions: [{ text: "Charles Babbage", context: "Ada's collaborator", nearPerson: "Ada Lovelace", contactId: null, confidence: 0, matchedBy: null }],
     mentionedOnly: [],
   };
+
+  if (process.argv.includes("--batch")) {
+    const batchGroupId = randomUUID();
+    const [ada, grace, alan] = result.items;
+    const files = [
+      { label: "demo-day.txt", text: NOTE, items: [ada!, grace!] },
+      { label: "follow-up-call.txt", text: "Follow-up call with Ada and Alan.", items: [{ ...ada!, key: "0-Ada Lovelace", notes: "Follow-up call with Ada." }, { ...alan!, key: "1-Alan Turing" }] },
+    ];
+    for (const f of files) {
+      await db.insert(captureJobs).values({
+        userId: USER, sourceKind: "messy", status: "ready", inputText: f.text, sourceText: f.text, sourceHash: hashSourceNote(f.text),
+        batchGroupId, sourceLabel: f.label, result: { ...result, items: f.items, suggestedReminders: [] },
+      });
+    }
+    console.log(`seeded an upload of 2 read files (batch ${batchGroupId}) for ${USER}`);
+    return;
+  }
 
   const [job] = await db
     .insert(captureJobs)
