@@ -2,7 +2,7 @@
 
 Spec: `docs/superpowers/specs/2026-09-29-radar-flagship-design.md`. Everything lands on
 `claude/inspiring-fermi-npcgb7` (PR #368), with one commit per task, in this order. The release
-stays gated (`comingSoon` on `page.radar`) until Jason removes it.
+stays gated (`comingSoon` on `page.radar`) until Jason removes it (removed Sep 30 2026).
 
 Rules carried from P0:
 - Hand-written DDL in `src/db/index.ts`. `user_settings` columns go in three places. Named

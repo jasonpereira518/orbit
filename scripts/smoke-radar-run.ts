@@ -395,7 +395,7 @@ run(async () => {
   console.log("\nthe rest of the app sees the same list");
   {
     const live = await pending();
-    check("nothing points into Radar while it is coming soon",
+    check("the rest of the app points into Radar exactly when it is released",
       (await isSurfaceLive(USER, "page.radar")) === !COMING_SOON_KEYS.has("page.radar"));
     startQueryCount();
     const unasked = await loadNotificationPanel(USER, new Date(), { withAlerts: false });
