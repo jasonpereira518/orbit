@@ -54,9 +54,9 @@ export type ChatSendResult =
   | { ok: false; reason: ChatSendReason; message: string };
 
 const COPY: Record<ChatSendReason, string> = {
-  not_connected: "Connect Gmail to send from your own address.",
-  needs_reconnect: "Gmail needs to be reconnected before it can send.",
-  missing_scope: "Orbit doesn’t have Google’s permission to send as you yet.",
+  not_connected: "Connect your email to send from your own address.",
+  needs_reconnect: "Your email needs to be reconnected before it can send.",
+  missing_scope: "Orbit doesn’t have permission to send from your email yet.",
   no_email: "There’s no email address on this contact yet.",
   invalid_recipient: "The email address on this contact doesn’t look like a single valid address, so nothing was sent.",
   placeholder: "That’s a placeholder address, so there’s no real inbox to send to.",
