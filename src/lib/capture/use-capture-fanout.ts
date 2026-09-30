@@ -121,11 +121,10 @@ export function useCaptureFanout(opts?: {
    */
   const cancelledRef = useRef(new Set<string>());
   /**
-   * Set by Stop, cleared by the next `start`. The pump checks THIS rather than trusting its own
-   * `running`: React runs the pump effect after the commit it belongs to, sometimes a tick
-   * later, so a pump from the render before Stop can still run after Stop with `running` true
-   * in its closure. It used to start the first uploads right over the rows Stop had skipped,
-   * and they landed `queued` — a note the person cancelled, read anyway.
+   * Stop was pressed. The pump's `running` is state, so a pump effect scheduled before Stop
+   * still sees `running` true when it runs, and it used to start two uploads the person had
+   * just cancelled; they then landed as `queued`, their jobs never discarded. A ref is read
+   * when the effect runs, not when it was scheduled, so that stale run starts nothing.
    */
   const stoppedRef = useRef(false);
   const settledRef = useRef(false);
@@ -186,6 +185,7 @@ export function useCaptureFanout(opts?: {
   );
 
   const reset = useCallback(() => {
+    stoppedRef.current = false;
     filesRef.current.clear();
     hashesRef.current.clear();
     settledRef.current = false;

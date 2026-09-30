@@ -59,6 +59,8 @@ export const GET = extensionRoute<undefined, MeResponse>({
         hasAiKey: ai.hasKey,
         hasApolloKey,
         aiProvider: ai.provider,
+        // From the row authentication already read: no extra query.
+        radarCaptureLinkedinActivity: settings.radarCaptureLinkedinActivity === 1,
       },
       stats: {
         contactCount: contactRow?.value ?? 0,

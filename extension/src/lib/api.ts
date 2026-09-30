@@ -8,6 +8,8 @@ import type {
   PageContext,
   ParseResponse,
   ResolveResponse,
+  SaveActivityRequest,
+  SaveActivityResponse,
   SaveContactRequest,
   SaveContactResponse,
   StartersRequest,
@@ -100,6 +102,9 @@ export function createApi(getToken: TokenGetter) {
 
     followUp: (body: FollowUpRequest, signal?: AbortSignal) =>
       post<FollowUpResponse>("/follow-ups", body, signal),
+
+    saveActivity: (body: SaveActivityRequest, signal?: AbortSignal) =>
+      post<SaveActivityResponse>("/signals", body, signal),
 
     // GET /contacts?q= exists server-side but has no client here yet: it is
     // the seam for a future "link this page to an existing contact" flow.

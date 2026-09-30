@@ -435,10 +435,10 @@ async function seed() {
   await db.insert(schema.contactSignals).values({
     userId: USER,
     contactId: contact.id,
-    kind: "job_change",
+    kind: "company_news",
     occurredAt: new Date(),
     source: "manual",
-    payload: { field: "company", from: "Acme", to: "Globex" },
+    payload: { title: "Globex raises a Series B", company: "Globex" },
     dedupeHash: "smoke-purge-signal",
   });
 
