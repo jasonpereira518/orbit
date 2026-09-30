@@ -165,6 +165,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-gmail-send-mime": "pure",
   "smoke-email-recipients": "pure",
   "smoke-email-mime": "pure",
+  "smoke-email-actions": "pure",
   "smoke-graph-canvas": "pure",
   "smoke-hash-stream": "pure",
   "smoke-sky-layout": "pure",
