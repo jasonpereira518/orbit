@@ -86,52 +86,44 @@ function TierPlanet({
         opacity: unlocked ? 1 : isNext ? 0.75 : 0.32,
         filter: unlocked ? "none" : isNext ? "grayscale(0.35)" : "grayscale(1)",
       }}
-      animate={
-        flashing
-          ? { y: 0, scale: [1, 1.08, 1] }
-          : float
-            ? { y: [0, -3, 0], scale: 1 }
-            : { y: 0, scale: 1 }
-      }
+      animate={flashing ? { scale: [1, 1.08, 1] } : { scale: 1 }}
       transition={
         flashing
           ? { duration: 0.55, ease: EASE_HOUSE, times: [0, 0.45, 1] }
-          : float
-            ? {
-                y: {
-                  duration: 5.2,
-                  ease: "easeInOut",
-                  repeat: Infinity,
-                  delay: floatIndex * 0.45,
-                },
-                scale: { duration: 0.4, ease: EASE_HOUSE },
-              }
-            : { duration: 0.4, ease: EASE_HOUSE }
+          : { duration: 0.4, ease: EASE_HOUSE }
       }
     >
-      {art.planet === "sun" ? (
-        <picture>
-          <source type="image/avif" srcSet="/landing/planets/sun.avif" />
-          <source type="image/webp" srcSet="/landing/planets/sun.webp" />
-          <img
-            src="/landing/planets/sun.png"
-            alt=""
-            width={art.size}
-            height={art.size}
-            draggable={false}
-            style={{
-              width: art.size,
-              height: art.size,
-              objectFit: "contain",
-              filter: glow,
-            }}
-          />
-        </picture>
-      ) : (
-        <span style={{ filter: glow }}>
-          <PlanetArt planet={art.planet} size={art.size} />
-        </span>
-      )}
+      {/* The bob is a CSS animation on its own box, not a motion loop: a `repeat: Infinity`
+          motion value ran on the main thread every frame of the page's life, offscreen
+          included, and restyled the planet each time. A CSS transform runs on the compositor. */}
+      <span
+        className={cn("inline-flex items-center justify-center", float && "tracker-planet-bob")}
+        style={float ? { animationDelay: `${floatIndex * 0.45}s` } : undefined}
+      >
+        {art.planet === "sun" ? (
+          <picture>
+            <source type="image/avif" srcSet="/landing/planets/sun.avif" />
+            <source type="image/webp" srcSet="/landing/planets/sun.webp" />
+            <img
+              src="/landing/planets/sun.png"
+              alt=""
+              width={art.size}
+              height={art.size}
+              draggable={false}
+              style={{
+                width: art.size,
+                height: art.size,
+                objectFit: "contain",
+                filter: glow,
+              }}
+            />
+          </picture>
+        ) : (
+          <span style={{ filter: glow }}>
+            <PlanetArt planet={art.planet} size={art.size} />
+          </span>
+        )}
+      </span>
     </motion.span>
   );
 }
