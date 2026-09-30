@@ -2445,7 +2445,13 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // but claude/waitlist-ship took 141 and pricing v2 142 on main meanwhile; a database already
 // at 142 would never run a 141, so it takes its own number. Scanned every remote ref on Sep 30
 // 2026: 142 (main) is the highest claimed anywhere, so 143 is the next free integer.
-export const SCHEMA_VERSION = 143;
+//
+// 144 = contact_briefs.goal_fit, how a person bears on the user's active goals, judged by the
+// brief's model call and shown on the Knowledge page's dossier. Nullable with no backfill: a
+// brief with no fit is "not judged yet", and the dossier regenerates it on open. Scanned every
+// remote ref on Sep 30 2026: 143 (main, the radar_apollo_cursor drop) is the highest claimed
+// anywhere, so 144 is the next free integer.
+export const SCHEMA_VERSION = 144;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2511,6 +2517,9 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS confidence_score integer`,
   // The brief's single "what to do next" clause.
   `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS next_step text`,
+  // Schema v144: how the person bears on the user's active goals ({ judged, items }, see
+  // contactBriefs.goalFit). Null = never judged; no backfill.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS goal_fit jsonb`,
   // Multi-file capture: one file = one meeting = one job, grouped by batch_group_id.
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS batch_group_id uuid`,
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,
