@@ -109,6 +109,8 @@ Output per cluster: local positions + footprint radius `foot`.
 
 Deterministic: seeded hashes only, fixed iteration counts, stable ordering.
 
+**As built.** Seeding places clusters in size order, with each cluster's strongest already-placed relatives seated right after it (top 3 by affinity, plus any family-strength link). Relaxing runs 20 force steps, and legalization mirrors the seed order. Independence from contact order is a tested property: affinity weights are quantized to 1e-9, summation order is fixed, and member ordering breaks ties by id.
+
 ### Phase C — halo
 
 Field stars sit beyond `diskRadius` with density falling off exponentially and hash-noised angles,
@@ -133,7 +135,7 @@ gently bowed curve between cluster centres, width ∝ weight.
 
 - `RING_RADII` and the `orbitRings` node are removed.
 - Cluster label nodes gain `shape` and optional petal sub-labels (`petalLabels: Array<{ label, anchor }>`).
-- Drag-position key bumps to `orbit-graph-positions-v6`.
+- There is no persisted drag-position key: nothing in `src` stores star positions, so nothing needs bumping.
 
 ## 3. Visual design
 
