@@ -107,9 +107,11 @@ async function main() {
   check("  all share one batch id", active.every((r) => r.batchGroupId === batch));
   check("  each keeps its own filename", new Set(active.map((r) => r.sourceLabel)).size > 1);
 
-  // The singular resume still answers with one row, unchanged — the queue is additive.
+  // The singular resume never opens one file of an upload on its own: the upload is
+  // reviewed together once every file is read (`mergeCaptureBatchRows`), and until then the
+  // queue — `findActiveCaptureJobs` above — is the only way in.
   const single = await findActiveCaptureJob(USER);
-  check("findActiveCaptureJob still returns exactly one", single !== null && ids.includes(single.id));
+  check("findActiveCaptureJob never resumes one file of an upload", single === null);
 
   console.log("\nthe discard rule, in both directions");
 

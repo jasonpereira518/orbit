@@ -2,13 +2,31 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Check, ChevronDown, CircleDashed, MessageSquarePlus, PenLine, Sparkles } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  ChevronDown,
+  CircleDashed,
+  Clock,
+  Copy,
+  Handshake,
+  Mail,
+  Mic,
+  NotebookPen,
+  PanelLeftClose,
+  Pencil,
+  PenLine,
+  Plus,
+  Sparkles,
+  Undo2,
+  Users,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { firstName, personById } from "../demo-cast";
 import { CHAT_SUGGESTIONS, type DemoStep } from "../demo-chat";
 import { useDemo } from "../demo-context";
 import type { ChatTurn } from "../demo-state";
-import { Avatar, BTN, BTN_PRIMARY, CARD, DISPLAY, INPUT, SourceIcon } from "../demo-ui";
+import { Avatar, BTN, BTN_GHOST, BTN_PRIMARY, CARD, DISPLAY } from "../demo-ui";
 
 type AssistantTurn = Extract<ChatTurn, { role: "assistant" }>;
 
@@ -53,9 +71,9 @@ function formatMs(ms: number) {
 function OrbitMark({ reduced }: { reduced: boolean }) {
   return (
     <span className="relative inline-flex size-4 shrink-0 items-center justify-center" aria-hidden="true">
-      <span className="size-1.5 rounded-full bg-[#f2c14e]" />
+      <span className="size-1.5 rounded-full bg-tier-lifetime" />
       <motion.span
-        className="absolute inset-0 rounded-full border border-[var(--d-primary)]/60 border-t-transparent"
+        className="absolute inset-0 rounded-full border border-primary/60 border-t-transparent"
         animate={reduced ? undefined : { rotate: 360 }}
         transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
       />
@@ -72,7 +90,7 @@ function OrbitScene({ ids, reduced }: { ids: string[]; reduced: boolean }) {
   ];
   return (
     <div className="relative size-[96px] shrink-0" aria-hidden="true">
-      <span className="absolute left-1/2 top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#f2c14e] shadow-[0_0_14px_#f2c14e]" />
+      <span className="absolute left-1/2 top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-tier-lifetime shadow-[0_0_14px_var(--tier-lifetime)]" />
       {rings.map((ring, ri) => (
         <motion.div
           key={ri}
@@ -124,12 +142,12 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
 
   if (!done) {
     return (
-      <div className="rounded-xl border border-[var(--d-primary)]/30 bg-[var(--d-muted)]/50">
+      <div className="rounded-xl border border-primary/30 bg-muted/50">
         <button
           type="button"
           onClick={() => setLiveOpen((v) => !v)}
           aria-expanded={liveOpen}
-          className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-[var(--d-ink)]"
+          className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-ink"
         >
           <OrbitMark reduced={reduced} />
           <span className="min-w-0 flex-1 text-left" aria-live="polite" aria-atomic="true">
@@ -143,11 +161,11 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
                 transition={{ duration: 0.16 }}
               >
                 {current.label}
-                {current.detail && <span className="text-[var(--d-dim)]/80"> · {current.detail}</span>}
+                {current.detail && <span className="text-muted-foreground/80"> · {current.detail}</span>}
               </motion.span>
             </AnimatePresence>
           </span>
-          <ChevronDown className={cn("size-3.5 shrink-0 text-[var(--d-dim)] transition-transform", liveOpen && "rotate-180")} aria-hidden="true" />
+          <ChevronDown className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", liveOpen && "rotate-180")} aria-hidden="true" />
         </button>
         {liveOpen && (
           <div className="flex items-center gap-4 px-3 pb-3">
@@ -157,10 +175,10 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
                   key={s.kind}
                   initial={reduced ? false : { opacity: 0, x: -4 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className="relative text-xs leading-snug text-[var(--d-dim)]"
+                  className="relative text-xs leading-snug text-muted-foreground"
                 >
-                  <Check className="absolute -left-[1.15rem] top-px size-3.5 text-[var(--d-primary)]" aria-hidden="true" />
-                  <span className="text-[var(--d-ink)]/80">{s.label}</span>
+                  <Check className="absolute -left-[1.15rem] top-px size-3.5 text-primary" aria-hidden="true" />
+                  <span className="text-ink/80">{s.label}</span>
                   {s.detail && <span> · {s.detail}</span>}
                 </motion.li>
               ))}
@@ -178,7 +196,7 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
         type="button"
         onClick={() => setFinalOpen((v) => !v)}
         aria-expanded={finalOpen}
-        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--d-border)]/70 px-2.5 py-1 text-xs text-[var(--d-dim)] transition-colors hover:bg-white/5 hover:text-[var(--d-ink)]"
+        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-white/5 hover:text-ink"
       >
         <CircleDashed className="size-3.5 shrink-0" aria-hidden="true" />
         <span className="truncate">
@@ -192,13 +210,13 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
             initial={reduced ? false : { height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={reduced ? { opacity: 0 } : { height: 0, opacity: 0 }}
-            className="mt-2 space-y-2 overflow-hidden border-l border-[var(--d-border)]/70 pl-3"
+            className="mt-2 space-y-2 overflow-hidden border-l border-border/70 pl-3"
           >
             {steps.map((s) => (
-              <li key={s.kind} className="text-xs text-[var(--d-dim)]">
-                <span className="text-[var(--d-ink)]/80">{s.kind === "answer" ? "Wrote the answer" : s.label}</span>
-                <span className="text-[var(--d-dim)]/70"> · {formatMs(s.kind === "answer" ? totalMs - steps.reduce((a, x) => a + x.ms, 0) : s.ms)}</span>
-                {s.detail && <span className="block text-[var(--d-dim)]/70">{s.detail}</span>}
+              <li key={s.kind} className="text-xs text-muted-foreground">
+                <span className="text-ink/80">{s.kind === "answer" ? "Wrote the answer" : s.label}</span>
+                <span className="text-muted-foreground/70"> · {formatMs(s.kind === "answer" ? totalMs - steps.reduce((a, x) => a + x.ms, 0) : s.ms)}</span>
+                {s.detail && <span className="block text-muted-foreground/70">{s.detail}</span>}
                 {s.kind === "read" && s.refs && (
                   <span className="mt-1 flex flex-wrap gap-1">
                     {s.refs.map((id) => (
@@ -206,7 +224,7 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
                         key={id}
                         type="button"
                         onClick={() => dispatch({ type: "openProfile", id })}
-                        className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-[var(--d-ink)]/80 hover:bg-white/10"
+                        className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-ink/80 hover:bg-white/10"
                       >
                         {personById(id)!.name}
                       </button>
@@ -220,6 +238,22 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
       </AnimatePresence>
     </div>
   );
+}
+
+/** The real draft editor's rewrite chips, as small deterministic edits of the draft's own words. */
+const REWRITES: { label: string; apply: (body: string) => string }[] = [
+  { label: "Shorter", apply: (b) => b.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ") },
+  { label: "Warmer", apply: (b) => (b.startsWith("Hope you") ? b : `Hope you're doing well! ${b}`) },
+  { label: "More direct", apply: (b) => b.replace(/^(Hi [^—–-]+[—–-]\s*)?(sorry[^!.]*[!.]\s*)?/i, (m, hi = "") => hi) },
+  { label: "More formal", apply: (b) => b.replace(/^Hi ([^—–,-]+)\s*[—–,-]\s*/, "Dear $1, ") },
+];
+
+/** What a source chip's popover quotes: the person's own entry of that type. */
+function snippetFor(personId: string, label: string) {
+  const p = personById(personId);
+  if (!p) return "";
+  const type = label.split(" · ")[0];
+  return (p.timeline.find((t) => t.type === type) ?? p.timeline[0])?.note ?? p.standing;
 }
 
 function Paragraphs({ text }: { text: string }) {
@@ -244,6 +278,24 @@ function Answer({ turn, last }: { turn: AssistantTurn; last: boolean }) {
   const steps = turn.answer.steps;
   const writingAt = steps.length - 1;
   const [at, setAt] = useState(done ? writingAt : 0);
+  const [openSrc, setOpenSrc] = useState<number | null>(null);
+
+  // A source popover closes on Escape or a press anywhere outside it, like any popover.
+  useEffect(() => {
+    if (openSrc === null) return;
+    const outside = (e: PointerEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest("[data-src-pop]")) setOpenSrc(null);
+    };
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenSrc(null);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [openSrc]);
 
   // Walk the stages at their own pace, then hand over to the writing.
   useEffect(() => {
@@ -259,32 +311,53 @@ function Answer({ turn, last }: { turn: AssistantTurn; last: boolean }) {
 
   return (
     <div className="flex gap-3">
-      <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--d-primary)]/15 text-[var(--d-primary)]">
+      <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
         <Sparkles className="size-3.5" aria-hidden="true" />
       </span>
       <div className="min-w-0 flex-1 space-y-2.5">
         <Activity steps={steps} at={at} done={done} totalMs={totalMs} />
         {text && (
-          <p className="text-sm leading-relaxed text-[var(--d-ink)]">
+          <p className="text-sm leading-relaxed text-ink">
             <Paragraphs text={text} />
           </p>
         )}
 
         {finished && (
           <motion.div initial={reduced ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="space-y-2.5">
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Sources</span>
               {turn.answer.sources.map((s, i) => {
                 const p = personById(s.personId)!;
+                const open = openSrc === i;
                 return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => dispatch({ type: "openProfile", id: p.id })}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[var(--d-border)] bg-[var(--d-muted)] px-2 py-0.5 text-[11px] text-[var(--d-dim)] hover:text-[var(--d-ink)]"
-                  >
-                    <SourceIcon source={s.source} className="size-3" />
-                    {firstName(p)} · {s.label}
-                  </button>
+                  <span key={i} data-src-pop className="relative">
+                    <button
+                      type="button"
+                      aria-expanded={open}
+                      aria-label={`Source ${i + 1}: ${p.name}, ${s.label}`}
+                      onClick={() => setOpenSrc(open ? null : i)}
+                      className={cn(
+                        "inline-flex size-5 items-center justify-center rounded-full text-[11px] tabular-nums transition-colors",
+                        open ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-ink"
+                      )}
+                    >
+                      {i + 1}
+                    </button>
+                    {open && (
+                      <div role="dialog" className="absolute left-0 top-full z-30 mt-2 w-64 rounded-xl border border-border bg-popover p-3 text-left shadow-xl">
+                        <div className="flex items-center gap-2.5">
+                          <Avatar person={p} size={28} />
+                          <div className="min-w-0">
+                            <button type="button" onClick={() => dispatch({ type: "openProfile", id: p.id })} className="block truncate text-sm font-medium text-ink hover:underline">
+                              {p.name}
+                            </button>
+                            <p className="text-xs text-muted-foreground">{s.label}</p>
+                          </div>
+                        </div>
+                        <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-ink/80">“{snippetFor(s.personId, s.label).replace(/^[“"]+|[”"]+$/g, "")}”</p>
+                      </div>
+                    )}
+                  </span>
                 );
               })}
             </div>
@@ -302,33 +375,64 @@ function Answer({ turn, last }: { turn: AssistantTurn; last: boolean }) {
             )}
 
             {turn.draft && draftTo && turn.draft.state !== "discarded" && (
-              <div data-demo-target={last ? "chat-draft-card" : undefined} className="rounded-xl border border-[var(--d-border)] bg-[var(--d-muted)] p-3">
-                <p className="text-[11px] text-[var(--d-dim)]">
-                  To <span className="text-[var(--d-ink)]">{draftTo.name}</span> · via Gmail
-                </p>
+              <div data-demo-target={last ? "chat-draft-card" : undefined} className="rounded-xl border border-border/70 bg-background p-3">
+                <div className="flex items-center gap-2.5">
+                  <Avatar person={draftTo} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-ink">{draftTo.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      To {firstName(draftTo)} · via Gmail
+                    </p>
+                  </div>
+                  <span className="rounded-4xl bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">Draft</span>
+                  {turn.draft.state === "editing" && (
+                    <span className="flex gap-0.5 text-muted-foreground">
+                      {[Pencil, Undo2, Copy].map((Icon, k) => (
+                        <span key={k} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted/50">
+                          <Icon className="size-3.5" aria-hidden="true" />
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </div>
                 {turn.draft.state === "editing" ? (
                   <>
-                    <label className="sr-only" htmlFor={`demo-draft-${turn.id}`}>
-                      Draft to {draftTo.name}
-                    </label>
-                    <textarea
-                      id={`demo-draft-${turn.id}`}
-                      value={turn.draft.body}
-                      onChange={(e) => dispatch({ type: "editDraft", turnId: turn.id, body: e.target.value })}
-                      rows={4}
-                      className={cn(INPUT, "mt-2 resize-none text-xs leading-relaxed")}
-                    />
-                    <div className="mt-2 flex gap-2">
-                      <button type="button" className={BTN_PRIMARY} onClick={() => dispatch({ type: "sendDraft", turnId: turn.id })}>
-                        Send via Gmail
+                    <div className="mt-2.5 rounded-lg bg-muted/50 p-2">
+                      <label className="sr-only" htmlFor={`demo-draft-${turn.id}`}>
+                        Draft to {draftTo.name}
+                      </label>
+                      <textarea
+                        id={`demo-draft-${turn.id}`}
+                        value={turn.draft.body}
+                        onChange={(e) => dispatch({ type: "editDraft", turnId: turn.id, body: e.target.value })}
+                        rows={4}
+                        className="w-full resize-none bg-transparent text-xs leading-relaxed text-ink focus:outline-none"
+                      />
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {REWRITES.map((r) => (
+                        <button
+                          key={r.label}
+                          type="button"
+                          onClick={() => dispatch({ type: "editDraft", turnId: turn.id, body: r.apply(turn.draft!.body) })}
+                          className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-ink"
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-2.5 flex gap-2">
+                      <button type="button" data-demo-target={last ? "chat-send-btn" : undefined} className={cn(BTN_PRIMARY, "rounded-full")} onClick={() => dispatch({ type: "sendDraft", turnId: turn.id })}>
+                        <Mail className="size-3.5" aria-hidden="true" />
+                        Send email…
                       </button>
-                      <button type="button" className={BTN} onClick={() => dispatch({ type: "discardDraft", turnId: turn.id })}>
+                      <button type="button" className={cn(BTN, "rounded-full")} onClick={() => dispatch({ type: "discardDraft", turnId: turn.id })}>
                         Discard
                       </button>
                     </div>
                   </>
                 ) : (
-                  <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-emerald-200">
+                  <p className="mt-2.5 inline-flex items-center gap-1.5 text-xs text-emerald-300">
                     <Check className="size-3.5" aria-hidden="true" />
                     Sent — logged to {firstName(draftTo)}&apos;s timeline
                   </p>
@@ -342,11 +446,22 @@ function Answer({ turn, last }: { turn: AssistantTurn; last: boolean }) {
   );
 }
 
+/** The rail's older chats: made-up, like everything else, and only there to look lived in. */
+const HISTORY: { group: string; items: string[] }[] = [
+  { group: "Yesterday", items: ["Investors to update this week"] },
+  { group: "Previous 7 days", items: ["Who could intro me to Stripe?", "Designers I should stay close to"] },
+];
+
+const SUGGESTION_ICONS = [Clock, Users, Sparkles, Handshake];
+
+/** The real chat (`chat-panel.tsx`): a history rail, the thread, then the composer and suggestion pills. */
 export function ChatScreen() {
   const { state, dispatch } = useDemo();
   const [draft, setDraft] = useState("");
   const threadRef = useRef<HTMLDivElement>(null);
   const lastAssistant = [...state.chat].reverse().find((t) => t.role === "assistant")?.id;
+  const firstQuestion = state.chat.find((t) => t.role === "user");
+  const title = firstQuestion && firstQuestion.role === "user" ? firstQuestion.text : "New chat";
 
   // Keep the newest message in view — inside the thread only, never the page.
   useEffect(() => {
@@ -367,73 +482,116 @@ export function ChatScreen() {
 
   return (
     <div className="flex h-full flex-col gap-4">
-      <header className="flex items-end justify-between gap-4">
-        <div>
-          <h2 className={cn(DISPLAY, "text-3xl")}>Chat with your network</h2>
-          <p className="mt-1 text-sm text-[var(--d-dim)]">Ask who can help, who to follow up with, or who knows what.</p>
-        </div>
-        {state.chat.length > 0 && (
-          <button type="button" className={BTN} onClick={() => dispatch({ type: "newChat" })}>
-            <MessageSquarePlus className="size-3.5" aria-hidden="true" />
-            New chat
-          </button>
-        )}
+      <header>
+        <h2 className={cn(DISPLAY, "text-3xl")}>Chat with your network</h2>
+        <p className="mt-1 text-muted-foreground">Ask who can help, who to follow up with, or who knows what.</p>
       </header>
 
-      <div className={cn(CARD, "flex min-h-0 flex-1 flex-col")}>
-        <div ref={threadRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain p-5">
-          {state.chat.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-5">
-              <p className={cn(DISPLAY, "text-2xl")}>Ask your network</p>
-              <div className="grid w-full max-w-xl grid-cols-2 gap-2">
-                {CHAT_SUGGESTIONS.map((s) => (
-                  <button
-                    key={s.q}
-                    type="button"
-                    onClick={() => submit(s.q)}
-                    className="rounded-xl border border-[var(--d-border)]/70 bg-[var(--d-muted)] px-3 py-2.5 text-left transition-colors hover:border-[var(--d-primary)]/40"
-                  >
-                    <p className="text-xs font-medium text-[var(--d-ink)]">{s.q}</p>
-                    <p className="mt-0.5 text-[11px] text-[var(--d-dim)]">{s.why}</p>
-                  </button>
+      <div className={cn(CARD, "flex min-h-0 flex-1 overflow-hidden")}>
+        <aside className="hidden w-48 shrink-0 flex-col border-r border-border/60 p-3 lg:flex" aria-label="Chat history">
+          <div className="flex items-center gap-1.5">
+            <button type="button" className={cn(BTN, "h-8 flex-1")} onClick={() => dispatch({ type: "newChat" })}>
+              <Plus className="size-3.5" aria-hidden="true" />
+              New chat
+            </button>
+            <span className="inline-flex size-8 items-center justify-center rounded-lg border border-border text-muted-foreground">
+              <PanelLeftClose className="size-3.5" aria-hidden="true" />
+            </span>
+          </div>
+          <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-hidden text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Today</p>
+              <p className={cn("mt-1.5 line-clamp-2 leading-snug", state.chat.length > 0 ? "text-ink" : "text-ink/85")}>{title === "New chat" ? "Who should I follow up with?" : title}</p>
+            </div>
+            {HISTORY.map((g) => (
+              <div key={g.group}>
+                <p className="text-xs text-muted-foreground">{g.group}</p>
+                {g.items.map((it) => (
+                  <p key={it} className="mt-1.5 line-clamp-2 leading-snug text-ink/85">
+                    {it}
+                  </p>
                 ))}
               </div>
-            </div>
-          ) : (
-            state.chat.map((t) =>
-              t.role === "user" ? (
-                <div key={t.id} className="flex justify-end">
-                  <p className="max-w-[75%] rounded-2xl rounded-br-md bg-[var(--d-primary)]/15 px-3.5 py-2 text-sm text-[var(--d-ink)]">{t.text}</p>
-                </div>
-              ) : (
-                <Answer key={t.id} turn={t} last={t.id === lastAssistant} />
-              )
-            )
-          )}
-        </div>
+            ))}
+          </div>
+        </aside>
 
-        <form
-          className="flex items-center gap-2 border-t border-[var(--d-border)]/60 p-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit(draft);
-          }}
-        >
-          <label className="sr-only" htmlFor="demo-chat-input">
-            Ask about your network
-          </label>
-          <input
-            id="demo-chat-input"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Ask about your network…"
-            className={INPUT}
-            autoComplete="off"
-          />
-          <button type="submit" aria-label="Send" className={cn(BTN_PRIMARY, "size-9 shrink-0 rounded-full p-0")} disabled={!draft.trim()}>
-            <ArrowUp className="size-4" />
-          </button>
-        </form>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-ink">{title}</p>
+              <p className="text-xs text-muted-foreground">Questions about people in your network</p>
+            </div>
+            <button type="button" className={BTN_GHOST + " border border-border"}>
+              <NotebookPen className="size-3.5" aria-hidden="true" />
+              Context
+            </button>
+          </div>
+
+          <div ref={threadRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain p-5">
+            {state.chat.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+                <p className={cn(DISPLAY, "text-3xl")}>Ask your network</p>
+                <p className="max-w-md text-muted-foreground">
+                  Who can help, who to follow up with, or who knows what — try a suggestion below.
+                </p>
+              </div>
+            ) : (
+              state.chat.map((t) =>
+                t.role === "user" ? (
+                  <div key={t.id} className="flex justify-end">
+                    <p className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">{t.text}</p>
+                  </div>
+                ) : (
+                  <Answer key={t.id} turn={t} last={t.id === lastAssistant} />
+                )
+              )
+            )}
+          </div>
+
+          <div className="space-y-2.5 p-3 pt-0">
+            <form
+              className="flex items-center gap-2 rounded-full border border-input bg-input/30 py-1.5 pl-3 pr-1.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submit(draft);
+              }}
+            >
+              <Plus className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <label className="sr-only" htmlFor="demo-chat-input">
+                Ask about your network
+              </label>
+              <input
+                id="demo-chat-input"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Ask about your network…"
+                className="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+                autoComplete="off"
+              />
+              <Mic className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <button type="submit" aria-label="Send" className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-60" disabled={!draft.trim()}>
+                <ArrowUp className="size-4" />
+              </button>
+            </form>
+            <div className="flex gap-2 overflow-hidden" aria-label="Suggested questions">
+              {CHAT_SUGGESTIONS.map((sg, i) => {
+                const Icon = SUGGESTION_ICONS[i % SUGGESTION_ICONS.length]!;
+                return (
+                  <button
+                    key={sg.q}
+                    type="button"
+                    onClick={() => submit(sg.q)}
+                    className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-border px-3 text-sm text-ink/90 transition-colors hover:border-primary/40"
+                  >
+                    <Icon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    {sg.q}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

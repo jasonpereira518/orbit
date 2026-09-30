@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { billingEvents } from "@/db/schema";
 import type { ChargePurpose } from "@/lib/billing-stripe";
 import {
+  CREDIT_PACK_METADATA_VALUE,
   getStripe,
   LIFETIME_METADATA_KEY,
   LIFETIME_METADATA_VALUE,
@@ -18,8 +19,11 @@ import {
  *      its `paymentIntentId` in `detail` — free, and it covers every new purchase.
  *   2. The Checkout Session that created the payment intent. Covers Lifetime purchases
  *      booked before (1) existed; its `orbit_plan` metadata says what was bought.
- *   3. An invoice payment for the payment intent. Only Orbit Pro raises invoices, so any
- *      match is a subscription charge.
+ *   3. An invoice payment for the payment intent. Only the subscriptions raise invoices, so
+ *      any match is a subscription charge.
+ *
+ * Credit packs (pricing v2) resolve the same way: their `cs:` booking records the payment
+ * intent (step 1), and their session carries `orbit_plan=credit_pack` (step 2).
  *
  * Anything else — a manual charge made in the dashboard, say — is "unknown" and revokes
  * nothing. A lookup that throws propagates on purpose: the webhook answers 500 and Stripe
@@ -30,6 +34,8 @@ import {
 export type ChargePurposeLookups = {
   /** A Lifetime booking on our own ledger was paid with this payment intent. */
   lifetimeOnLedger(paymentIntentId: string): Promise<boolean>;
+  /** A credit-pack booking on our own ledger was paid with this payment intent. */
+  packOnLedger?(paymentIntentId: string): Promise<boolean>;
   /** `orbit_plan` metadata of the Checkout Session that created this payment intent. */
   checkoutSessionPlan(paymentIntentId: string): Promise<string | null>;
   /** This payment intent paid an invoice. */
@@ -46,6 +52,21 @@ export const stripeChargePurposeLookups: ChargePurposeLookups = {
         and(
           eq(billingEvents.source, "stripe"),
           eq(billingEvents.kind, "lifetime"),
+          sql`${billingEvents.detail}->>'paymentIntentId' = ${paymentIntentId}`
+        )
+      )
+      .limit(1);
+    return rows.length > 0;
+  },
+  async packOnLedger(paymentIntentId) {
+    const db = await getDb();
+    const rows = await db
+      .select({ id: billingEvents.id })
+      .from(billingEvents)
+      .where(
+        and(
+          eq(billingEvents.source, "stripe"),
+          eq(billingEvents.kind, "credit_pack"),
           sql`${billingEvents.detail}->>'paymentIntentId' = ${paymentIntentId}`
         )
       )
@@ -74,8 +95,10 @@ export async function resolveChargePurpose(
 ): Promise<ChargePurpose> {
   if (!paymentIntentId) return "unknown";
   if (await lookups.lifetimeOnLedger(paymentIntentId)) return "lifetime";
+  if (await lookups.packOnLedger?.(paymentIntentId)) return "credit_pack";
   const plan = await lookups.checkoutSessionPlan(paymentIntentId);
   if (plan === LIFETIME_METADATA_VALUE) return "lifetime";
+  if (plan === CREDIT_PACK_METADATA_VALUE) return "credit_pack";
   if (await lookups.hasInvoicePayment(paymentIntentId)) return "subscription";
   return "unknown";
 }

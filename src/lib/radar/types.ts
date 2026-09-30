@@ -148,15 +148,11 @@ export type RadarAutopilotAction = { reminderId: string; dueDate: string; at: st
 /** Per-kind autopilot opt-in. Absent or false means off; nothing is ever sent either way. */
 export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
 
-/** Where the nightly Apollo re-check left off, and when the current lap began. */
-export type RadarApolloCursor = { after: string | null; lapStartedAt: string };
-
 /**
  * Dated facts about a contact that come from outside Orbit's own tables. Stored in
  * `contact_signals`, deduplicated per account, and read by the scorer like any other signal.
  */
 export const CONTACT_SIGNAL_KINDS = [
-  "job_change",
   "company_news",
   "social_post",
   "linkedin_activity",
@@ -169,10 +165,6 @@ export type ContactSignalKind = (typeof CONTACT_SIGNAL_KINDS)[number];
  * to a model. `url` has already been through `safeHttpUrl`.
  */
 export type ContactSignalPayload = {
-  /** job_change: which field moved, and from what to what. */
-  field?: "title" | "company";
-  from?: string | null;
-  to?: string;
   /** company_news: the headline and the company it matched. */
   title?: string;
   company?: string;

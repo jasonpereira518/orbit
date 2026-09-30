@@ -128,6 +128,22 @@ async function main() {
   );
   check("the people it passed moved back one", (await pos(1)) === first + 1);
 
+  console.log("\nfriends' planets…");
+  const friendRows = await db
+    .select({ email: interestListSignups.email, planet: interestListSignups.welcomePlanet })
+    .from(interestListSignups)
+    .where(like(interestListSignups.email, `${PREFIX}friend%`))
+    .orderBy(interestListSignups.createdAt, interestListSignups.id);
+  const progress3 = await getProgressByShareToken(refLast);
+  check(
+    "progress carries one planet per friend, in join order",
+    JSON.stringify(progress3?.friendPlanets) === JSON.stringify(friendRows.map((r) => r.planet)) &&
+      progress3?.friendPlanets.length === progress3?.referrals,
+    JSON.stringify({ got: progress3?.friendPlanets, want: friendRows.map((r) => r.planet) })
+  );
+  const seedProgress = await getProgressByShareToken(`${PREFIX}share-3`);
+  check("no friends, no planets", seedProgress?.friendPlanets.length === 0);
+
   for (const n of [4, 5, 6, 7, 8, 9, 10]) await join(`friend${n}`, refLast);
   check(
     "each tier is announced exactly once: 1, 3, 5, 10 friends",

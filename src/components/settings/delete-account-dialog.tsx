@@ -58,7 +58,7 @@ export function DeleteAccountDialog({ trigger }: { trigger: React.ReactNode }) {
           <DialogTitle className="text-destructive">Delete your account</DialogTitle>
           <DialogDescription>
             This erases every contact, note, import and setting, including saved API keys and
-            connected accounts, cancels an active Orbit Pro subscription, and removes your
+            connected accounts, cancels an active Orbit subscription, and removes your
             sign-in. It can’t be undone — export first if you want a copy.
           </DialogDescription>
         </DialogHeader>

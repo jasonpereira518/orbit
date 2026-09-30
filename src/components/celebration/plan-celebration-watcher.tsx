@@ -194,7 +194,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const upgraded = params.get("upgraded");
-    if (upgraded !== "pro" && upgraded !== "lifetime") return;
+    if (upgraded !== "pro" && upgraded !== "max" && upgraded !== "lifetime") return;
     const sessionId = params.get("session_id");
 
     let cancelled = false;
@@ -205,7 +205,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
         try {
           const { status } = await confirmCheckoutSession(sessionId);
           if (status === "processing") {
-            toast.info("Your payment is still clearing — Lifetime switches on the moment it does");
+            toast.info("Your payment is still clearing — your plan switches on the moment it does");
           }
         } catch {
           // The webhook is still the guarantee; polling below picks it up.
@@ -278,7 +278,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
 
     const params = new URLSearchParams(window.location.search);
     const forced = params.get("celebrate");
-    if (forced === "orbit" || forced === "lifetime") {
+    if (forced === "orbit" || forced === "max" || forced === "lifetime") {
       const url = new URL(window.location.href);
       url.searchParams.delete("celebrate");
       router.replace(url.pathname + url.search + url.hash);

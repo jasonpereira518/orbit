@@ -7,19 +7,25 @@
  *
  * Client-safe: no DB, no env, no server imports.
  */
-import type { Plan } from "@/lib/plan-limits";
+import { PLAN_CONFIG, PLANS, type Plan } from "@/lib/plans/plan-config";
 
 export type SpeechKind = "meeting" | "shortform";
 
 /** Warn once the month is this far gone. */
 const WARN_AT = 0.9;
 
+/**
+ * Seconds per month, per meter and plan — read from the single plan table.
+ * Meetings: Free none, Pro 5 h, Max and Lifetime 10 h. Voice notes and the chat mic
+ * (short-form): Free 1 h, Pro 5 h, Max and Lifetime 10 h.
+ */
 export const SPEECH_LIMITS: Record<SpeechKind, Record<Plan, number>> = {
-  // Meetings are a paid feature: 5 h on Pro, 10 h on Lifetime.
-  meeting: { free: 0, orbit: 18_000, lifetime: 36_000 },
-  // Voice notes and the chat mic. Generous on purpose — this is an abuse ceiling, not a meter
-  // anyone should watch.
-  shortform: { free: 3_600, orbit: 18_000, lifetime: 18_000 },
+  meeting: Object.fromEntries(
+    PLANS.map((plan) => [plan, PLAN_CONFIG[plan].speech.meetingSeconds])
+  ) as Record<Plan, number>,
+  shortform: Object.fromEntries(
+    PLANS.map((plan) => [plan, PLAN_CONFIG[plan].speech.shortformSeconds])
+  ) as Record<Plan, number>,
 };
 
 export function limitFor(kind: SpeechKind, plan: Plan): number {

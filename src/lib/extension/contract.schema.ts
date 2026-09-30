@@ -102,6 +102,7 @@ export const pageContextSchema = z.object({
     truncated: z.boolean(),
     charCount: z.number().int().nonnegative(),
     fromSelection: z.boolean(),
+    postBody: z.string().max(4000).optional(),
   }),
   warnings: z.array(z.string().max(64)).max(20),
 });

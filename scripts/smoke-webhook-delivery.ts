@@ -57,6 +57,11 @@ async function seedEndpoint(opts: { url?: string; types?: string[]; status?: str
 run(async () => {
   const db = await getDb();
   await db.execute(sql`DELETE FROM webhook_endpoints WHERE user_id = ${USER}`);
+  // Outbound webhooks are a Max feature (pricing v2): the account delivering them is on Max.
+  await db.execute(sql`
+    INSERT INTO user_settings (user_id, comped_plan, comped_at) VALUES (${USER}, 'max', now())
+    ON CONFLICT (user_id) DO UPDATE SET comped_plan = 'max', comped_at = now()
+  `);
 
   // --- Address classification ----------------------------------------------------------------
   const mustBlock = [
@@ -186,6 +191,7 @@ run(async () => {
   check("under the cap, everyone every time", rotatingWindow(subs.slice(0, 5), 20, 3).length === 5);
 
   await db.execute(sql`DELETE FROM webhook_endpoints WHERE user_id = ${USER}`);
+  await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${USER}`);
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

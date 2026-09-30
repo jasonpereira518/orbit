@@ -8,12 +8,13 @@
  * it displaced — there is no list of them. A batch has this, so the twelve meetings somebody
  * just uploaded stay reachable instead of eleven being thrown away.
  *
- * Review stays one capture at a time. The card deck downstream is built around a single job,
- * and per-file review is the entire point of the mode — each file is a different meeting with
- * a different date and different people. There is deliberately no "save all": accepting
- * twelve sets of cards unseen is how junk contacts get made.
+ * Each file is read in the background as its own job, but the upload is REVIEWED together:
+ * once no file is still being read, the page folds the ready ones into a single job
+ * (`mergeCaptureBatchRows`) and opens one deck, a card per person per note. So a ready row
+ * here is waiting for the rest, not something to open on its own; only a failed row opens,
+ * to show its error and let it be retried. There is still no "save all" — every card is seen.
  */
-import { Check, ChevronRight, CircleAlert, Loader2 } from "lucide-react";
+import { Check, CircleAlert, Loader2 } from "lucide-react";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import type { CaptureJobStatus } from "@/lib/capture/types";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,7 @@ const STATUS_LABEL: Partial<Record<CaptureJobStatus, string>> = {
   transcribed: "Read",
   queued: "Queued",
   extracting: "Pulling out people",
-  ready: "Ready to review",
+  ready: "Read",
   reviewing: "In review",
   saving: "Saving",
   saved: "Saved",
@@ -79,13 +80,15 @@ export function CaptureQueuePanel({
       <ul className="space-y-1.5">
         {jobs.map((job) => {
           const isBusy = BUSY.includes(job.status);
+          // Only a failure opens alone; a ready file joins the combined review.
+          const opensAlone = job.status === "failed";
           const isActive = job.id === activeJobId;
           const people = peopleCount(job);
           return (
             <li key={job.id}>
               <button
                 type="button"
-                disabled={isBusy}
+                disabled={!opensAlone}
                 onClick={() => onOpen(job.id)}
                 aria-current={isActive ? "true" : undefined}
                 className={cn(
@@ -93,7 +96,8 @@ export function CaptureQueuePanel({
                   isActive
                     ? "border-primary/40 bg-primary/5"
                     : "border-border/60 hover:bg-muted/50",
-                  isBusy && "cursor-default opacity-70 hover:bg-transparent"
+                  !opensAlone && "cursor-default hover:bg-transparent",
+                  isBusy && "opacity-70"
                 )}
               >
                 <span className="min-w-0 flex-1">
@@ -116,10 +120,9 @@ export function CaptureQueuePanel({
                 ) : isBusy ? (
                   <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
                 ) : (
-                  <>
-                    <Badge variant="secondary">Review</Badge>
-                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                  </>
+                  <Badge variant="secondary" className="font-normal">
+                    {busy > 0 ? "Waiting for the rest" : "Reviewing together"}
+                  </Badge>
                 )}
               </button>
             </li>

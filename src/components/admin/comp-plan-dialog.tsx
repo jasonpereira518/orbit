@@ -27,20 +27,13 @@ import type { PlanSource } from "@/lib/entitlements";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 
-type Choice = "lifetime" | "orbit" | "none";
+type Choice = "orbit" | "max" | "none";
 
 /**
- * The cost asymmetry here is the whole reason this is a dialog rather than a two-item menu,
- * because it runs exactly opposite to intuition:
- *
- *  - Comping LIFETIME is nearly free to Orbit. `entitlementsForPlan` gives it
- *    `canUseHostedEnrichment: false`, so it never touches Orbit's Apollo credits — the one
- *    metered cost with no ceiling. It does get `canUseHostedSending`, but every plan is
- *    capped at `DAILY_SEND_LIMIT` a day, so that exposure is bounded and knowable.
- *  - Comping ORBIT PRO costs real money. It sets `canUseHostedEnrichment: true`, unlocking
- *    Orbit's own Apollo credits, which nothing in the product rate-limits.
- *
- * "Lifetime sounds more generous" is exactly backwards, so the dialog says so out loud.
+ * A comp is Pro or Max (pricing v2). Both cost Orbit real money every month — included AI on
+ * Orbit's keys, transcription hours and Apollo enrichments — so the dialog says how much, up
+ * front. Lifetime is not a comp choice: it has its own Grant action (`LifetimeButton`), which
+ * also ends a live subscription at its period end and shows the admin what will happen first.
  */
 const CHOICES: Array<{
   value: Choice;
@@ -49,22 +42,21 @@ const CHOICES: Array<{
   lines: string[];
 }> = [
   {
-    value: "lifetime",
-    title: "Orbit Lifetime",
-    tag: { label: "recommended", tone: "good" },
-    lines: [
-      "Everything uncapped, permanently.",
-      "Enrichment stays on their own Apollo key — the one uncapped cost.",
-      "Sending is included, but capped per day like every plan.",
-    ],
-  },
-  {
     value: "orbit",
     title: "Orbit Pro",
     tag: { label: "costs you money", tone: "warn" },
     lines: [
-      "Everything in Lifetime, plus enrichment on Orbit's own Apollo credits.",
-      "You pay for every prospect search and enrichment they run, with no daily ceiling.",
+      "Up to 200 AI credits a month on Orbit's keys (about $2).",
+      "5 hours of meeting transcription and 10 Apollo enrichments a month on Orbit's accounts.",
+    ],
+  },
+  {
+    value: "max",
+    title: "Orbit Max",
+    tag: { label: "costs you more", tone: "warn" },
+    lines: [
+      "Up to 500 AI credits a month on Orbit's keys (about $5).",
+      "10 hours of transcription, 25 enrichments a month, and the REST API.",
     ],
   },
   {
@@ -167,9 +159,7 @@ function CompPlanDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const [choice, setChoice] = useState<Choice>(
-    currentSource === "comp" ? "none" : "lifetime"
-  );
+  const [choice, setChoice] = useState<Choice>(currentSource === "comp" ? "none" : "orbit");
   const [reason, setReason] = useState(compedNote ?? "");
   const [pending, startTransition] = useTransition();
 

@@ -19,7 +19,11 @@ import {
   loadAdminUserRows,
   subscriptionsNeedingAttention,
 } from "@/lib/admin-metrics";
-import { MONTHLY_CENTS, mrrReconciliation } from "@/lib/billing-events";
+import { mrrReconciliation } from "@/lib/billing-events";
+import { loadCreditsMoney, planDistribution } from "@/lib/credits/admin-credits";
+import { getManagedAiSwitchState } from "@/lib/managed-ai-switch";
+import { ManagedAiSwitch } from "@/components/admin/managed-ai-switch";
+import { PLAN_LABELS } from "@/lib/plans/plan-config";
 import {
   compedForegoneCents,
   cashFlowSeries,
@@ -63,8 +67,15 @@ export default async function AdminMoneyPage() {
     mrrMovementSeries("month", 6),
     cashFlowSeries(3),
     revenueAtRiskCents(),
-    compedForegoneCents(MONTHLY_CENTS),
+    compedForegoneCents(),
     recentMovements(12),
+  ]);
+
+  const spendable = new Set(rows.filter((r) => r.plan === "orbit" || r.plan === "max").map((r) => r.userId));
+  const [credits, distribution, managedSwitch] = await Promise.all([
+    loadCreditsMoney(spendable),
+    planDistribution(rows),
+    getManagedAiSwitchState(),
   ]);
 
   const plans = buildPlanBreakdown(rows);
@@ -153,7 +164,7 @@ export default async function AdminMoneyPage() {
           <MetricTile
             label="Cash in, this month"
             value={formatCents(thisMonth?.cashInCents ?? 0)}
-            hint="invoices paid + Lifetime"
+            hint="invoices, credit packs, legacy Lifetime"
           />
           <MetricTile
             label="Contribution"
@@ -229,6 +240,111 @@ export default async function AdminMoneyPage() {
             </p>
           </AdminPanel>
         </div>
+
+        <AdminPanel title="Plans">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div data-plan="free">
+              <MetricTile label={PLAN_LABELS.free} value={distribution.free} hint="accounts" />
+            </div>
+            {(["orbit", "max", "lifetime"] as const).map((plan) => {
+              const d = distribution[plan];
+              return (
+                <div key={plan} data-plan={plan} className="rounded-xl border-l-2 border-tier-border">
+                  <MetricTile
+                    label={PLAN_LABELS[plan]}
+                    value={d.founding + d.standard}
+                    hint={plan === "lifetime" ? "admin-granted or bought before v2" : `${d.founding} founding · ${d.standard} standard`}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            Founding means a paying subscription whose founding discount is still running. Comped
+            accounts count under their plan and are never founding.
+          </p>
+        </AdminPanel>
+
+        <AdminPanel title="Credits and included AI, last 30 days">
+          {!credits.reconciliation.ok && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/5 p-3 text-sm">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+              <p>
+                Pack ledger and grants disagree: {credits.reconciliation.packsBooked} pack sales booked vs{" "}
+                {credits.reconciliation.packGrants} packs granted. A webhook was dropped or a grant failed — check
+                webhook deliveries.
+              </p>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricTile
+              label="Credit packs"
+              value={formatCents(credits.packs.cashInWindowCents)}
+              hint={`${credits.packs.soldInWindow} sold · one-time, not MRR${
+                credits.packs.revokedAllTime > 0 ? ` · ${credits.packs.revokedAllTime} revoked ever` : ""
+              }`}
+            />
+            <MetricTile
+              label="Pack liability"
+              value={formatCents(credits.liability.cents)}
+              tone={credits.liability.cents > 0 ? "accent" : "muted"}
+              hint={`${credits.liability.unusedCredits} unused credits${
+                credits.liability.frozenCents > 0 ? ` · ${formatCents(credits.liability.frozenCents)} frozen` : ""
+              }`}
+            />
+            <MetricTile
+              label="Allowance used"
+              value={
+                credits.allowance.grantedCredits > 0
+                  ? `${Math.round((credits.allowance.usedCredits / credits.allowance.grantedCredits) * 100)}%`
+                  : "—"
+              }
+              hint={`${credits.allowance.usedCredits} of ${credits.allowance.grantedCredits} credits · ${credits.allowance.accounts} accounts this cycle`}
+            />
+            <MetricTile
+              label="Included AI cost"
+              value={formatCents(Math.round(credits.managedAi.costMicros / 10_000))}
+              hint={`${credits.managedAi.calls} calls · ${credits.managedAi.accounts} accounts`}
+            />
+          </div>
+
+          <div className="mt-4 border-t border-border/60 pt-4">
+            <ManagedAiSwitch state={managedSwitch} />
+          </div>
+
+          {credits.managedAi.topSpenders.length > 0 && (
+            <div className="mt-4 border-t border-border/60 pt-4">
+              <AdminTable
+                minWidth="sm"
+                head={
+                  <>
+                    <Th>Account</Th>
+                    <Th numeric>Calls</Th>
+                    <Th numeric>Model cost</Th>
+                  </>
+                }
+              >
+                {credits.managedAi.topSpenders.map((row) => (
+                  <tr key={row.userId} className="border-b border-border/40 last:border-b-0">
+                    <Td>
+                      <Link href={`/admin/users/${encodeURIComponent(row.userId)}`} className="hover:text-primary">
+                        {row.userId}
+                      </Link>
+                    </Td>
+                    <Td numeric>{row.calls}</Td>
+                    <Td numeric>{formatCents(Math.round(row.micros / 10_000))}</Td>
+                  </tr>
+                ))}
+              </AdminTable>
+            </div>
+          )}
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            Liability is what buyers paid for the pack credits they have not used yet — the most a
+            refund of every live pack could return. Frozen credits belong to accounts no longer on
+            Pro or Max and come back if they resubscribe. Included AI cost is real model cost on
+            Orbit&apos;s keys; it is also a line of burn on the Runway page.
+          </p>
+        </AdminPanel>
 
         <AdminPanel title="Subscription health">
           {needsAttention.length === 0 ? (

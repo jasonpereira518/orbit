@@ -1,4 +1,5 @@
 import { isNotNull, sql } from "drizzle-orm";
+import { sweepExpiredHolds } from "@/lib/credits/ledger";
 import { NextResponse } from "next/server";
 import { getDb, rowsOf } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
@@ -177,6 +178,7 @@ export async function GET(request: Request) {
     meetingSessionsSwept: 0,
     /** Phone-scan grants past their expiry. */
     handoffsSwept: 0,
+    creditHoldsSwept: 0,
     /** Background AI sent to a provider's Batch API: what came back this sweep. */
     aiBatchesApplied: 0,
     aiBatchesPending: 0,
@@ -245,6 +247,9 @@ export async function GET(request: Request) {
       stats.meetingSessionsSwept = await sweepAbandonedMeetingSessions();
       // Expired scan grants. Minting sweeps too, but only when someone mints.
       stats.handoffsSwept = await sweepExpiredHandoffs();
+      // Credit holds whose call died without settling. They stopped counting when they
+      // expired; this only keeps the table small.
+      stats.creditHoldsSwept = await sweepExpiredHolds();
     } catch (err) {
       // Housekeeping must never fail the job-resumption backstop this route exists for,
       // but a silent failure here is how a table grows unbounded — so it downgrades the

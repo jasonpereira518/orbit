@@ -4,6 +4,7 @@ import { userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { getEntitlements } from "@/lib/entitlements";
 import { getStripe } from "@/lib/stripe";
+import { resolvePortalConfigurationId } from "@/lib/stripe-prices";
 
 /**
  * Opens Stripe's hosted customer portal, where a subscriber cancels, changes card or reads
@@ -26,7 +27,11 @@ export const BILLING_PORTAL_COPY = {
   unavailable: "Couldn’t open billing just now — try again in a moment",
 } as const;
 
-type CreateSession = (args: { customer: string; return_url: string }) => Promise<{ url: string | null }>;
+type CreateSession = (args: {
+  customer: string;
+  return_url: string;
+  configuration?: string;
+}) => Promise<{ url: string | null }>;
 
 export async function createBillingPortalUrl(
   userId: string,
@@ -46,9 +51,12 @@ export async function createBillingPortalUrl(
   const createSession: CreateSession =
     deps.createSession ?? ((args) => getStripe().billingPortal.sessions.create(args));
   try {
+    // The pricing v2 configuration (Pro ↔ Max, downgrades at period end, never Lifetime).
+    const configuration = deps.createSession ? undefined : await resolvePortalConfigurationId();
     const session = await createSession({
       customer,
       return_url: `${getAppBaseUrl()}/settings#settings-plan`,
+      ...(configuration ? { configuration } : {}),
     });
     return session.url ? { url: session.url } : { error: BILLING_PORTAL_COPY.unavailable };
   } catch (err) {
