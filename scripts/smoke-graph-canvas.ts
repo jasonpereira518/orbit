@@ -1148,6 +1148,28 @@ console.log("\nthe phone canvas draws the galaxy\n");
   );
   check("...and the same star clear of it keeps its name", clearOfCaption.includes(moverName), clearOfCaption.join("|"));
 
+  // A cluster name's collision box is as wide as its subtitle when that is the wider line.
+  const namesBeside = (bx: number) => {
+    const rec = makeCtx();
+    drawSky(rec.ctx, {
+      ...frameAt({ x: 195, y: 400, k: 1 }),
+      index: {
+        ...anatomyIndex, galaxy: undefined, nebulae: [], stars: [], labelOrder: [], edges: [], sun: null,
+        clusterLabels: [
+          { id: "a", x: 0, y: 0, label: "Ab", color: "#fff", subtitle: "a long subtitle, twenty-six" },
+          { id: "b", x: bx, y: 0, label: "Cd", color: "#fff" },
+        ],
+      },
+    });
+    return textsOf(rec);
+  };
+  check(
+    "a name under a long subtitle's reach waits, though it clears the short name itself",
+    namesBeside(70).includes("Ab") && !namesBeside(70).includes("Cd"),
+    namesBeside(70).join("|")
+  );
+  check("...and one clear of the subtitle is drawn", namesBeside(150).includes("Cd"));
+
   const busy = runFrame(centredOn(nwCentre.x, nwCentre.y, 0.3));
   check("no frame ever assigns shadowBlur", !busy.assigned.some(([k]) => k === "shadowBlur"));
   check(

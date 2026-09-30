@@ -421,11 +421,19 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
       const subLine = label.subtitle ? SUBTITLE_LINE : 0;
       const p = { x: anchor.x, y: anchor.y - NAME_LINE - subLine };
       const fitted = fitText(ctx, label.label, LABEL_MAX_WIDTH);
+      // The subtitle is set smaller but may be the longer line: the box is as wide as the wider.
+      let subtitle: { text: string; width: number } | null = null;
+      if (label.subtitle) {
+        ctx.font = "500 11px system-ui, sans-serif";
+        subtitle = fitText(ctx, label.subtitle, LABEL_MAX_WIDTH * 1.5);
+        ctx.font = "600 13px system-ui, sans-serif";
+      }
+      const wide = Math.max(fitted.width, subtitle?.width ?? 0);
       // Wide gaps between cluster names, as on desktop: a few well-spaced names, not a wall.
       const rect = {
-        x: p.x - fitted.width / 2 - 20,
+        x: p.x - wide / 2 - 20,
         y: p.y - 8,
-        w: fitted.width + 40,
+        w: wide + 40,
         h: 32 + subLine,
       };
       if (label.label !== frame.focusCompany && placed.some((r) => overlaps(rect, r))) {
@@ -441,10 +449,10 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
       );
       ctx.fillStyle = label.color;
       drawLabelText(ctx, fitted.text, p.x, p.y);
-      if (label.subtitle) {
+      if (subtitle) {
         ctx.font = "500 11px system-ui, sans-serif";
         ctx.fillStyle = SUBTITLE_FILL;
-        drawLabelText(ctx, fitText(ctx, label.subtitle, LABEL_MAX_WIDTH * 1.5).text, p.x, p.y + NAME_LINE);
+        drawLabelText(ctx, subtitle.text, p.x, p.y + NAME_LINE);
         ctx.font = "600 13px system-ui, sans-serif";
       }
     }
