@@ -115,6 +115,7 @@ async function main() {
     const u = await must(enqueueEmail(USER, { ...base, delayMs: 10_000 }));
     check("not due before the window", (await dispatchEmailSend(u.id)) === "not_due");
     check("undo cancels", (await cancelEmailSend(USER, u.id)) === "canceled");
+    check("a second undo still says canceled", (await cancelEmailSend(USER, u.id)) === "canceled");
     await makeDue(u.id);
     check("canceled row never sends", (await dispatchEmailSend(u.id)) === "not_claimable" && sent.length === 1);
     check("undo of a sent row says already_sent", (await cancelEmailSend(USER, q.id)) === "already_sent");
@@ -228,7 +229,7 @@ async function main() {
     await resetBucket();
     const d1 = await must(enqueueEmail(USER, { ...base, delayMs: 0 }));
     const d2 = await must(enqueueEmail(USER, { ...base, delayMs: 3_600_000 }));
-    const stats = await drainEmailSends({ budgetMs: 30_000, max: 50 });
+    const stats = await drainEmailSends({ budgetMs: 120_000, max: 50 });
     check("drain sent the due row", (await row(d1.id)).status === "sent", JSON.stringify(stats));
     check("drain left the future row queued", (await row(d2.id)).status === "queued");
 

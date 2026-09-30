@@ -79,6 +79,12 @@ const CHAT_REASON_FOR: Record<EnqueueRefusal, ChatSendReason> = {
   invalid_recipient: "invalid_recipient",
   placeholder: "placeholder",
   empty_body: "invalid",
+  // Chat never schedules or attaches.
+  bad_schedule: "invalid",
+  too_many_files: "invalid",
+  too_large: "invalid",
+  blocked_type: "invalid",
+  file_missing: "invalid",
 };
 
 const fail = (reason: ChatSendReason): { ok: false; reason: ChatSendReason; message: string } => ({

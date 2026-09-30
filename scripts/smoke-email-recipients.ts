@@ -3,7 +3,7 @@
  * Run: npx tsx scripts/smoke-email-recipients.ts
  */
 import { normalizeRecipients } from "../src/lib/email/recipients";
-import { emailBackoffSeconds, EMAIL_SEND_DAILY_CAP, MAX_EMAIL_ATTEMPTS } from "../src/lib/email/config";
+import { emailBackoffSeconds, EMAIL_SEND_DAILY_CAP, MAX_EMAIL_ATTEMPTS, maxAttachmentBytesFor } from "../src/lib/email/config";
 
 function check(label: string, ok: boolean, detail?: string) {
   if (!ok) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -51,5 +51,6 @@ check("placeholder domains are refused", !ph.ok && ph.reason === "placeholder" &
 check("caps per plan", EMAIL_SEND_DAILY_CAP.free === 20 && EMAIL_SEND_DAILY_CAP.orbit === 100 && EMAIL_SEND_DAILY_CAP.max === 100 && EMAIL_SEND_DAILY_CAP.lifetime === 100);
 check("backoff ladder", [1, 2, 3, 4, 9].map(emailBackoffSeconds).join() === "60,300,1800,7200,7200");
 check("attempt limit", MAX_EMAIL_ATTEMPTS === 5);
+check("attachment limits per mailbox", maxAttachmentBytesFor("outlook") === 3 * 1024 * 1024 && maxAttachmentBytesFor("gmail") === 20 * 1024 * 1024);
 
 console.log("\nAll email-recipient checks passed.");

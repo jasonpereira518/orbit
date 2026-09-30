@@ -7,10 +7,19 @@ import {
   type EmailFailureKind,
   type EmailOrigin,
   type EmailProviderId,
+  type EmailAttachmentRef,
   type EmailSendRecord,
 } from "@/db/schema";
 import { logInteractionForUser } from "@/lib/contact-writes";
-import { EMAIL_LEASE_SECONDS, EMAIL_SEND_DAILY_CAP, MAX_EMAIL_ATTEMPTS, emailBackoffSeconds } from "@/lib/email/config";
+import {
+  EMAIL_LEASE_SECONDS,
+  EMAIL_SEND_DAILY_CAP,
+  MAX_EMAIL_ATTEMPTS,
+  SCHEDULE_MAX_LEAD_MS,
+  SCHEDULE_MIN_LEAD_MS,
+  emailBackoffSeconds,
+} from "@/lib/email/config";
+import { loadAttachmentBytes } from "@/lib/email/attachments";
 import { resolveRecipientContacts } from "@/lib/email/contacts";
 import { newRfcMessageId } from "@/lib/email/mime";
 import { originHooks } from "@/lib/email/origins";
@@ -48,7 +57,12 @@ export type EnqueueRefusal =
   | "invalid_recipient"
   | "placeholder"
   | "empty_body"
-  | "duplicate";
+  | "duplicate"
+  | "bad_schedule"
+  | "too_many_files"
+  | "too_large"
+  | "blocked_type"
+  | "file_missing";
 
 export const ENQUEUE_COPY: Record<EnqueueRefusal, string> = {
   not_connected: "Connect your email to send from your own address",
@@ -62,6 +76,11 @@ export const ENQUEUE_COPY: Record<EnqueueRefusal, string> = {
   placeholder: "That's a placeholder address, not a real inbox",
   empty_body: "Write something before sending",
   duplicate: "That message is already on its way",
+  bad_schedule: "Pick a time between a minute and 30 days from now",
+  too_many_files: "Attach up to 10 files",
+  too_large: "Those attachments are too big to send",
+  blocked_type: "One of those files can’t be sent by email",
+  file_missing: "One of those files isn’t available — attach it again",
 };
 
 export type EnqueueInput = {
@@ -94,6 +113,10 @@ export type EnqueueInput = {
    * only if it can send; an explicit choice is refused rather than silently swapped.
    */
   provider?: MailboxId;
+  /** Already verified by the caller (`verifyAttachmentRefs`). */
+  attachments?: EmailAttachmentRef[];
+  /** Send at this time instead of after `delayMs` (a scheduled send, P4). */
+  sendAt?: Date;
 };
 
 export type EnqueueResult =
@@ -128,6 +151,13 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
   if (!sender.ok) return refuse(sender.reason);
   if (input.provider && sender.provider !== input.provider) return refuse("not_connected");
 
+  if (input.sendAt) {
+    const lead = input.sendAt.getTime() - Date.now();
+    if (!Number.isFinite(lead) || lead < SCHEDULE_MIN_LEAD_MS || lead > SCHEDULE_MAX_LEAD_MS) {
+      return refuse("bad_schedule");
+    }
+  }
+
   if (input.chargeBurst !== false) {
     const limited = await chargeEmailBurst(userId);
     if (limited) return limited;
@@ -157,7 +187,8 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
         originRef: input.originRef ?? null,
         idempotencyKey: input.idempotencyKey ?? null,
         status: "queued",
-        sendAt: sql`now() + (${Math.max(0, input.delayMs) / 1000}::double precision * interval '1 second')`,
+        sendAt: input.sendAt ?? sql`now() + (${Math.max(0, input.delayMs) / 1000}::double precision * interval '1 second')`,
+        attachments: input.attachments ?? [],
         rfcMessageId: newRfcMessageId(),
         providerThreadId: input.threadId ?? null,
         inReplyToRfcId: input.inReplyToRfcId ?? null,
@@ -195,9 +226,11 @@ export async function cancelEmailSend(
   if (canceled.length) return "canceled";
   const existing = await db.query.emailSends.findFirst({
     where: and(eq(emailSends.id, id), eq(emailSends.userId, userId)),
-    columns: { id: true },
+    columns: { status: true },
   });
-  return existing ? "already_sent" : "not_found";
+  if (!existing) return "not_found";
+  // Idempotent: a second cancel (Undo after Edit already took it off the schedule) is not "sent".
+  return existing.status === "canceled" ? "canceled" : "already_sent";
 }
 
 export type DispatchOutcome = "sent" | "retry" | "failed" | "not_due" | "not_claimable";
@@ -245,6 +278,8 @@ export async function dispatchEmailSend(id: string, opts: { worker?: string } = 
 
   let result: SendResult;
   try {
+    // Inside the try: a Blob outage is transient, a vanished file permanent — same as a send.
+    const files = send.attachments.length ? await loadAttachmentBytes(send.attachments) : undefined;
     result = await provider.send(
       send.userId,
       {
@@ -258,6 +293,7 @@ export async function dispatchEmailSend(id: string, opts: { worker?: string } = 
         messageId: send.rfcMessageId,
         inReplyTo: send.inReplyToRfcId,
         references: send.inReplyToRfcId,
+        attachments: files,
       },
       { threadId: send.providerThreadId, sendId: send.id }
     );
@@ -398,8 +434,9 @@ export async function drainEmailSends(opts: { budgetMs: number; max: number }) {
     `)
   );
   for (const { id } of due) {
-    // One provider call is capped at 20s (plus a Sent check); stop while there is room for it.
-    if (deadline - Date.now() < 22_000) break;
+    // One provider call is capped at 20s (60s for Gmail with files, plus a Blob read); stop while
+    // there is room for a typical one — a slow item simply finishes in the next run.
+    if (deadline - Date.now() < 30_000) break;
     stats.attempted++;
     const outcome = await dispatchEmailSend(id).catch((err) => {
       reportError(err, { where: "email.drain-item" });

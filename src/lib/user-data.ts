@@ -3,6 +3,8 @@ import { del } from "@/lib/blob-lazy";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
+import { hasBlobStorage } from "@/lib/contact-avatar";
+import { purgeEmailAttachmentsForUser } from "@/lib/email/attachments";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
@@ -661,6 +663,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(companies).where(eq(companies.userId, userId));
       // After the rows: a Blob outage leaves orphaned objects, never undeleted people.
       await deleteAvatarBlobs(photoUrls);
+      // Email attachments live under the user's own prefix, so the listing finds every one —
+      // sent, queued or never sent — without a row to read first.
+      if (hasBlobStorage()) await purgeEmailAttachmentsForUser(userId).catch(() => {});
     },
   },
   tags: {

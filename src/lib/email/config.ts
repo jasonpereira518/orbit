@@ -27,3 +27,20 @@ export function emailBackoffSeconds(attempt: number): number {
   const i = Math.min(Math.max(attempt, 1), EMAIL_BACKOFF_MINUTES.length) - 1;
   return EMAIL_BACKOFF_MINUTES[i]! * 60;
 }
+
+/** Attachments (P4). Totals are raw bytes, before base64. */
+export const MAX_ATTACHMENTS = 10;
+/** Gmail: 20 MB raw ≈ 27 MB as base64 MIME — under the 35 MB upload cap and Gmail's 25 MB attachment rule. */
+export const MAX_ATTACHMENT_BYTES_GMAIL = 20 * 1024 * 1024;
+/** Outlook with Mail.Send only: attachments ride inline in sendMail, which takes ~3 MB (P3 decision 1). */
+export const MAX_ATTACHMENT_BYTES_OUTLOOK = 3 * 1024 * 1024;
+export const ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const ORPHAN_UPLOAD_TTL_MS = 2 * 24 * 60 * 60 * 1000;
+
+/** Scheduled send bounds (P4). */
+export const SCHEDULE_MIN_LEAD_MS = 60_000;
+export const SCHEDULE_MAX_LEAD_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function maxAttachmentBytesFor(provider: "gmail" | "outlook" | "demo"): number {
+  return provider === "outlook" ? MAX_ATTACHMENT_BYTES_OUTLOOK : MAX_ATTACHMENT_BYTES_GMAIL;
+}

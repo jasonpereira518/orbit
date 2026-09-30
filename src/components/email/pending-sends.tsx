@@ -10,6 +10,7 @@ import { useHiddenSurfaces } from "@/components/layout/hidden-surfaces";
 import { Button } from "@/components/ui/button";
 import { openCompose } from "@/lib/compose-events";
 import type { PendingSend } from "@/lib/email/compose";
+import { formatScheduled } from "@/lib/email/schedule-presets";
 import { friendlyError } from "@/lib/errors";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import { toast } from "@/lib/toast";
@@ -56,7 +57,11 @@ export function PendingSends({
             ? "Didn’t send"
             : s.status === "sending"
               ? "Sending now"
-              : "Waiting to send";
+              : s.scheduledFor
+                ? `Scheduled ${formatScheduled(new Date(s.scheduledFor), new Date())}`
+                : "Waiting to send";
+        const files = s.attachments.length ? ` · ${s.attachments.length} ${s.attachments.length === 1 ? "file" : "files"}` : "";
+        const reopen = () => openCompose({ contactId, to: s.to, subject: s.subject, body: s.bodyText, attachments: s.attachments });
         return (
           <div key={s.id} className="flex flex-wrap items-center gap-2 text-sm">
             {failed ? (
@@ -66,9 +71,29 @@ export function PendingSends({
             )}
             <div className="min-w-0 flex-1">
               <p className="truncate font-medium">{s.subject || "(no subject)"}</p>
-              <p className="text-xs text-muted-foreground">{status}</p>
+              <p className="text-xs text-muted-foreground">
+                {status}
+                {files}
+              </p>
             </div>
             <div className="flex items-center gap-1">
+              {s.status === "queued" && s.scheduledFor && canEdit && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() =>
+                    act(async () => {
+                      // Take it off the schedule first: two copies must never be possible.
+                      const { result } = await cancelEmailSendAction(s.id);
+                      if (result === "canceled") reopen();
+                      else toast.message("Already sent");
+                    })
+                  }
+                >
+                  Edit
+                </Button>
+              )}
               {s.status === "queued" && (
                 <Button
                   size="sm"
@@ -111,7 +136,7 @@ export function PendingSends({
                   onClick={() =>
                     act(async () => {
                       await dismissFailedSendAction(s.id);
-                      openCompose({ contactId, to: s.to, subject: s.subject, body: s.bodyText });
+                      reopen();
                     })
                   }
                 >
