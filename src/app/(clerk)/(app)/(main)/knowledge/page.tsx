@@ -34,7 +34,14 @@ export default async function KnowledgePage({
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <RenderStamp />
-      <div className={cn("flex-wrap items-end justify-between gap-4", selectedId ? "hidden lg:flex" : "flex")}>
+      <div
+        className={cn(
+          // Pinned on desktop: the title and the view switch stay put while the list or dossier
+          // scrolls. Not below `lg`, where the app's own top bar already sits at the top edge.
+          "flex-wrap items-end justify-between gap-4 pb-3 pt-1 lg:sticky lg:top-0 lg:z-20 lg:-mt-1 lg:bg-background",
+          selectedId ? "hidden lg:flex" : "flex"
+        )}
+      >
         <div>
           <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
             Knowledge base
@@ -86,7 +93,9 @@ async function People({ selectedId }: { selectedId: string | null }) {
     <div className="grid items-start gap-6 lg:grid-cols-[19rem_minmax(0,1fr)] xl:grid-cols-[22rem_minmax(0,1fr)]">
       <aside
         className={cn(
-          "lg:sticky lg:top-4 lg:flex lg:max-h-[calc(100dvh-8rem)] lg:flex-col",
+          // Sits below the pinned header and must end above the page's bottom padding. A taller rail
+          // is shoved up by the dossier's last card and slides under the header.
+          "lg:sticky lg:top-24 lg:flex lg:max-h-[calc(100dvh-13rem)] lg:flex-col",
           selectedId ? "hidden lg:flex" : "block"
         )}
       >
