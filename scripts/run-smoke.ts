@@ -287,6 +287,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-integration-statuses": "pglite", // drives getIntegrationStatuses against real rows
   "smoke-connector-claim": "pglite",
   "smoke-connector-outbox": "pglite",
+  "smoke-email-provider-gmail": "pglite",
   "smoke-connector-sync-pass": "pglite",
   "smoke-scan-handoff": "pglite",
   "smoke-capture-jobs": "pglite",
