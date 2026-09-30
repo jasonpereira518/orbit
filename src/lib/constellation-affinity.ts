@@ -29,7 +29,9 @@ export type AffinityContact = {
   sharedInterests?: string[] | null;
 };
 
-export type AffinityEdge = { a: string; b: string; weight: number };
+/** What contributed most to an edge's weight (family wins a tie, then alumni). */
+export type AffinityKind = "family" | "alumni" | "tags";
+export type AffinityEdge = { a: string; b: string; weight: number; kind: AffinityKind };
 
 export const AFFINITY = {
   /** Pull between two clusters of one company family. */
@@ -50,10 +52,12 @@ export const AFFINITY = {
   maxFamilyClusters: 12,
 } as const;
 
-const byWeight = (x: AffinityEdge, y: AffinityEdge) =>
-  y.weight - x.weight || x.a.localeCompare(y.a) || x.b.localeCompare(y.b);
-
+// Plain code-point order: the dashboard preview is laid out on the server and /graph in the
+// browser, and a locale-aware comparison could order ids differently in the two.
 const ascending = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+
+const byWeight = (x: AffinityEdge, y: AffinityEdge) =>
+  y.weight - x.weight || ascending(x.a, y.a) || ascending(x.b, y.b);
 
 export function buildClusterAffinity(
   contacts: AffinityContact[],
@@ -62,18 +66,27 @@ export function buildClusterAffinity(
 ): AffinityEdge[] {
   const size = new Map(clusters.map((c) => [c.id, c.count]));
   const total = new Map<string, AffinityEdge>();
+  // What each kind of tie contributed to an edge, to name the one that dominates it.
+  const parts = new Map<string, Record<AffinityKind, number>>();
 
-  const bump = (x: string, y: string, amount: number) => {
+  const bump = (x: string, y: string, amount: number, kind: AffinityKind) => {
     if (x === y) return;
     const [a, b] = x < y ? [x, y] : [y, x];
     const key = `${a.length}:${a}${b}`;
     const edge = total.get(key);
     if (edge) edge.weight += amount;
-    else total.set(key, { a, b, weight: amount });
+    else total.set(key, { a, b, weight: amount, kind });
+    const part = parts.get(key) ?? { family: 0, alumni: 0, tags: 0 };
+    part[kind] += amount;
+    parts.set(key, part);
   };
-  const pairs = (ids: string[], amountOf: (x: string, y: string) => number) => {
+  const pairs = (
+    ids: string[],
+    kind: AffinityKind,
+    amountOf: (x: string, y: string) => number
+  ) => {
     for (let i = 0; i < ids.length; i++) {
-      for (let j = i + 1; j < ids.length; j++) bump(ids[i], ids[j], amountOf(ids[i], ids[j]));
+      for (let j = i + 1; j < ids.length; j++) bump(ids[i], ids[j], amountOf(ids[i], ids[j]), kind);
     }
   };
   const scaled = (x: string, y: string) => 1 / Math.sqrt((size.get(x) ?? 1) * (size.get(y) ?? 1));
@@ -91,10 +104,10 @@ export function buildClusterAffinity(
   for (const members of byFamily.values()) {
     if (members.length < 2) continue;
     const top = members
-      .sort((x, y) => y.count - x.count || x.id.localeCompare(y.id))
+      .sort((x, y) => y.count - x.count || ascending(x.id, y.id))
       .slice(0, AFFINITY.maxFamilyClusters)
       .map((m) => m.id);
-    pairs(top, () => AFFINITY.family);
+    pairs(top, "family", () => AFFINITY.family);
   }
 
   const inScope = contacts.filter((c) => size.has(byContactId.get(c.id)?.id ?? ""));
@@ -117,14 +130,15 @@ export function buildClusterAffinity(
     const counts = bySchool.get(group)!;
     if (counts.size < 2) continue;
     const top = [...counts.entries()]
-      .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+      .sort((x, y) => y[1] - x[1] || ascending(x[0], y[0]))
       .slice(0, AFFINITY.maxSchoolClusters);
     for (let i = 0; i < top.length; i++) {
       for (let j = i + 1; j < top.length; j++) {
         bump(
           top[i][0],
           top[j][0],
-          (AFFINITY.alumni * Math.min(top[i][1], top[j][1])) * scaled(top[i][0], top[j][0])
+          (AFFINITY.alumni * Math.min(top[i][1], top[j][1])) * scaled(top[i][0], top[j][0]),
+          "alumni"
         );
       }
     }
@@ -148,12 +162,20 @@ export function buildClusterAffinity(
   for (const value of [...byValue.keys()].sort(ascending)) {
     const set = byValue.get(value)!;
     if (set.size < 2 || set.size > AFFINITY.maxTagClusters) continue;
-    pairs([...set].sort(), (x, y) => AFFINITY.tags * scaled(x, y));
+    pairs([...set].sort(ascending), "tags", (x, y) => AFFINITY.tags * scaled(x, y));
   }
 
   // Sparse: each cluster keeps its strongest links.
   // Quantized so no last-digit residue of the sums can reorder links or tip the placement.
-  for (const e of total.values()) e.weight = Math.round(e.weight * 1e9) / 1e9;
+  for (const [key, e] of total) {
+    e.weight = Math.round(e.weight * 1e9) / 1e9;
+    const part = parts.get(key)!;
+    e.kind = part.family >= part.alumni && part.family >= part.tags
+      ? "family"
+      : part.alumni >= part.tags
+        ? "alumni"
+        : "tags";
+  }
   const strong = [...total.values()].filter((e) => e.weight >= AFFINITY.minWeight);
   const incident = new Map<string, AffinityEdge[]>();
   for (const e of strong) {

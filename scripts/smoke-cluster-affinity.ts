@@ -44,6 +44,7 @@ console.log("\nFamily");
   const gd = find(edges, "company:google", "company:google deepmind");
   check("Google and DeepMind are related", Boolean(gd));
   check("family is a strong pull", (gd?.weight ?? 0) >= AFFINITY.family);
+  check("a family edge is kind family", gd?.kind === "family", String(gd?.kind));
   check("unrelated companies are not", !find(edges, "company:google", "company:stripe"));
 }
 
@@ -64,6 +65,7 @@ console.log("\nAlumni");
   check("two companies sharing a school (in any spelling) are related", Boolean(ab));
   // min(2 alumni, 2 alumni) / sqrt(3 members * 3 members) = 2/3
   check("weight is shared alumni over √(sizes)", Math.abs((ab?.weight ?? 0) - (2 / 3) * AFFINITY.alumni) < 1e-9, String(ab?.weight));
+  check("an alumni-only edge is kind alumni", ab?.kind === "alumni", String(ab?.kind));
   check("a company with no shared school is not pulled in", !find(edges, "company:acme", "company:gamma"));
 }
 
@@ -84,7 +86,23 @@ console.log("\nTags and interests");
   check("a rare shared value relates two clusters", Boolean(xy));
   // one shared value / sqrt(2*2) = 0.5, times the tag coefficient
   check("weight is shared values over √(sizes)", Math.abs((xy?.weight ?? 0) - 0.5 * AFFINITY.tags) < 1e-9, String(xy?.weight));
+  check("a tags-only edge is kind tags", xy?.kind === "tags", String(xy?.kind));
   check("a generic value (>20 clusters) relates nothing", !find(edges, "company:xco", "company:zco0"));
+}
+
+console.log("\nKind is the dominant contributor");
+{
+  // Google and DeepMind are family (1) and also share a school (2/3): family dominates.
+  const edges = affinityOf([
+    person("g1", "Google", { school: "MIT" }),
+    person("g2", "Google", { school: "MIT" }),
+    person("g3", "Google"),
+    person("d1", "Google DeepMind", { school: "MIT" }),
+    person("d2", "Google DeepMind", { school: "MIT" }),
+    person("d3", "Google DeepMind"),
+  ]);
+  const gd = find(edges, "company:google", "company:google deepmind");
+  check("family plus alumni is kind family", gd?.kind === "family" && (gd?.weight ?? 0) > 1, JSON.stringify(gd));
 }
 
 console.log("\nBounds and determinism");

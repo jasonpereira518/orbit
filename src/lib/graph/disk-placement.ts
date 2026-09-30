@@ -3,10 +3,12 @@
  *
  * Three passes, all deterministic (seeded hashes, fixed iteration counts, stable order):
  *   1. SEED — biggest first, each cluster followed at once by its closest relatives (its top few
- *      links, and every strong link), while the sky beside it is still open. A cluster with an
- *      already-placed relative goes tangent to the strongest one, at the free angle nearest the
- *      sun; one with none goes to the nearest free ring around the sun, searching from a
- *      running frontier instead of the sun itself. The seed alone is already legal.
+ *      links, and every family link), smallest footprint first so a small relative hugs it, while
+ *      the sky beside it is still open. A cluster with an already-placed relative goes tangent
+ *      to the strongest one, at the free angle nearest the sun (a fine search, since it wants to
+ *      be tangent); one with none goes to the nearest free ring around the sun (a coarser
+ *      search), starting from a running frontier instead of the sun. The seed alone is already
+ *      legal.
  *   2. RELAX — a fixed number of force steps. Affinity edges pull a pair together until their
  *      disks are tangent; overlapping disks push apart; a pull toward the sun, stronger for
  *      bigger clusters, makes the galaxy dense in the middle; the sun's clear zone repels.
@@ -47,14 +49,12 @@ const ATTRACT = 0.3;
 const REPEL = 0.5;
 /** Per-step pull toward the sun, as a fraction of distance, at the biggest cluster's weight. */
 const GRAVITY = 0.015;
-/** Strongest partners seated straight after a cluster, while its surroundings are free. */
-const SEED_PARTNERS = 3;
 /**
- * A link at least this heavy is seated with its cluster however many stronger links it has.
- * 1 is a company-family link (`AFFINITY.family`): a family must stay together even when a
- * cluster's school and tag links outweigh it.
+ * Strongest partners seated straight after a cluster, while its surroundings are free. Family
+ * links are always seated too: they are capped at 12 clusters per family, so this is bounded,
+ * and a family must stay together even when a cluster's school and tag ties outweigh it.
  */
-const STRONG_LINK = 1;
+const SEED_PARTNERS = 3;
 const MAX_STEP = 80;
 const SEARCH_STEP = 24;
 /**
@@ -141,24 +141,30 @@ export function* placeClusterDisks(
 ): Generator<void, DiskPlacement, void> {
   const { sunClear, gap } = options;
   const iterations = options.iterations ?? DISK_ITERATIONS;
-  const order = [...inputs].sort((a, b) => b.size - a.size || a.id.localeCompare(b.id));
+  // Code-point order, not locale order: server and browser must agree.
+  const order = [...inputs].sort(
+    (a, b) => b.size - a.size || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
   const n = order.length;
   const centers = new Map<string, { x: number; y: number }>();
   if (n === 0) return { centers, diskRadius: 0 };
 
   const index = new Map(order.map((d, i) => [d.id, i]));
-  const foot = order.map((d) => d.foot);
+  // A footprint that is not a finite number would turn every comparison in `free` false and
+  // silently let disks overlap; treat it as a point.
+  const foot = order.map((d) => (Number.isFinite(d.foot) && d.foot > 0 ? d.foot : 0));
   const size = order.map((d) => d.size);
   const maxSize = Math.max(1, size[0]);
   const xs = new Float64Array(n);
   const ys = new Float64Array(n);
-  const links: Array<Array<{ j: number; w: number }>> = order.map(() => []);
+  const links: Array<Array<{ j: number; w: number; family: boolean }>> = order.map(() => []);
   for (const e of affinity) {
     const i = index.get(e.a);
     const j = index.get(e.b);
     if (i === undefined || j === undefined || i === j) continue;
-    links[i].push({ j, w: e.weight });
-    links[j].push({ j: i, w: e.weight });
+    const family = e.kind === "family";
+    links[i].push({ j, w: e.weight, family });
+    links[j].push({ j: i, w: e.weight, family });
   }
   // Forces are summed link by link, and float addition is not associative: a fixed order is
   // what makes the result independent of the order the affinity list arrived in.
@@ -196,12 +202,14 @@ export function* placeClusterDisks(
     return true;
   };
 
+  const cosTable = new Float64Array(Math.max(TANGENT_ANGLES, SEARCH_ANGLES));
+  const sinTable = new Float64Array(Math.max(TANGENT_ANGLES, SEARCH_ANGLES));
   /**
    * The free spot for disk `i` nearest the sun, searching outward from (bx, by) in rings of
    * growing distance. Ends at a spot beyond everything placed, so it always finds one.
+   * `tangent` searches finely (rings 0.3 x foot apart, 24 angles) because it is looking for a
+   * spot beside a relative; the default is coarse (0.7 x foot, 16 angles) — any free spot will do.
    */
-  const cosTable = new Float64Array(TANGENT_ANGLES);
-  const sinTable = new Float64Array(TANGENT_ANGLES);
   const findSpot = (i: number, bx: number, by: number, minDist: number, tangent = false) => {
     const angleCount = tangent ? TANGENT_ANGLES : SEARCH_ANGLES;
     const r = foot[i];
@@ -254,7 +262,7 @@ export function* placeClusterDisks(
       const partners = links[i]
         .filter(({ j }) => !placedFlag[j])
         .sort((p, q) => q.w - p.w || p.j - q.j)
-        .filter(({ w }, rank) => rank < SEED_PARTNERS || w >= STRONG_LINK);
+        .filter(({ family }, rank) => rank < SEED_PARTNERS || family);
       // Seated smallest first: a small relative takes the spot hugging the cluster, and the
       // bigger ones go around it rather than crowding it out.
       partners.sort((p, q) => foot[p.j] - foot[q.j] || p.j - q.j);

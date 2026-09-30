@@ -45,7 +45,7 @@ const dist = (p: DiskPlacement, a: string, b: string) => {
 console.log("\nNo overlap");
 {
   const inputs = disks(60);
-  const chain: AffinityEdge[] = inputs.slice(1).map((d, i) => ({ a: inputs[i].id, b: d.id, weight: 0.6 }));
+  const chain: AffinityEdge[] = inputs.slice(1).map((d, i) => ({ a: inputs[i].id, b: d.id, weight: 0.6, kind: "alumni" as const }));
   const { placement, yields } = run(inputs, chain);
   let worst = Infinity;
   for (let i = 0; i < inputs.length; i++) {
@@ -91,7 +91,7 @@ console.log("\nNear = related");
   for (let f = 0; f < 8; f++) {
     const ids = Array.from({ length: 5 }, (_, k) => `f${f}k${k}`);
     ids.forEach((id) => inputs.push({ id, foot: 120 + Math.round(hashUnit(id, 2) * 80), size: 10 }));
-    for (let i = 0; i < 5; i++) for (let j = i + 1; j < 5; j++) affinity.push({ a: ids[i], b: ids[j], weight: 1 });
+    for (let i = 0; i < 5; i++) for (let j = i + 1; j < 5; j++) affinity.push({ a: ids[i], b: ids[j], weight: 1, kind: "family" });
   }
   const { placement } = run(inputs, affinity);
   const within: number[] = [];
@@ -119,6 +119,24 @@ console.log("\nThe biggest cluster anchors the middle");
   check(`its near edge is close to the sun (${reach.toFixed(0)} ≤ ${OPTS.sunClear + 2 * OPTS.gap})`, reach <= OPTS.sunClear + 2 * OPTS.gap);
 }
 
+console.log("\nA hub of strong non-family links");
+{
+  // 60 alumni ties, each heavier than a family link, on one cluster. Only family links skip the
+  // partner cap; these are seated as usual, so the seed is not one 60-cluster search.
+  const inputs = disks(200, "h");
+  const hub = inputs[0].id;
+  const links: AffinityEdge[] = inputs
+    .slice(1, 61)
+    .map((d) => ({ a: hub, b: d.id, weight: 1.5, kind: "alumni" as const }));
+  const g = placeClusterDisks(inputs, links, OPTS);
+  const t0 = performance.now();
+  g.next();
+  const seedMs = performance.now() - t0;
+  console.log(`  seeding step took ${seedMs.toFixed(1)} ms`);
+  check("the hub's non-family links do not all seat at once (seed step < 60 ms)", seedMs < 60, seedMs.toFixed(1));
+  for (;;) if (g.next().done) break;
+}
+
 console.log("\nEdge cases");
 {
   const empty = run([], []).placement;
@@ -126,7 +144,7 @@ console.log("\nEdge cases");
   const one = run([{ id: "solo", foot: 200, size: 9 }], []).placement;
   const c = one.centers.get("solo")!;
   check("a single disk sits just outside the sun's clear zone", Math.abs(Math.hypot(c.x, c.y) - (OPTS.sunClear + 200)) < 30);
-  const stray = run([{ id: "a", foot: 100, size: 2 }], [{ a: "a", b: "ghost", weight: 1 }]).placement;
+  const stray = run([{ id: "a", foot: 100, size: 2 }], [{ a: "a", b: "ghost", weight: 1, kind: "family" }]).placement;
   check("an edge to an unknown cluster is ignored", stray.centers.size === 1);
 }
 

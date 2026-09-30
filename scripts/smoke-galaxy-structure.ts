@@ -18,7 +18,7 @@ const centers = new Map([
   ["D", { x: 700, y: 300 }],
 ]);
 const OPTS = { sunClear: 180, diskRadius: 1000 };
-const edge = (a: string, b: string, weight: number): AffinityEdge => ({ a, b, weight });
+const edge = (a: string, b: string, weight: number): AffinityEdge => ({ a, b, weight, kind: "alumni" });
 
 console.log("\nFilaments");
 {

@@ -27,6 +27,9 @@ export type GalaxyStructure = {
   filaments: GalaxyFilament[];
 };
 
+// Code-point order, not locale order: server and browser must agree.
+const byId = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+
 export const FILAMENT_POINTS = 6;
 export const MAX_FILAMENTS = 400;
 /** How far a filament bows sideways, as a fraction of its length. */
@@ -44,7 +47,7 @@ export function buildGalaxyStructure(
   // Kruskal over the strongest links first (`affinity` arrives sorted; sort again to be safe).
   const links = affinity
     .filter((e) => centers.has(e.a) && centers.has(e.b))
-    .sort((x, y) => y.weight - x.weight || x.a.localeCompare(y.a) || x.b.localeCompare(y.b));
+    .sort((x, y) => y.weight - x.weight || byId(x.a, y.a) || byId(x.b, y.b));
   const parent = new Map<string, string>();
   const root = (id: string): string => {
     let cur = id;
