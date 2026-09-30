@@ -229,12 +229,21 @@ const WIDGETS: Surface[] = [
  * removes every entry point to it and makes its server actions refuse (`requireUserForSurface`).
  */
 export const COMPOSE_SURFACE_KEY = "feature.compose";
+export const OUTLOOK_SEND_SURFACE_KEY = "feature.outlook-send";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
     kind: "feature",
     label: "Compose email",
     description: "Write and send email to anyone from a contact's page or ⌘K, from your own mailbox.",
+    comingSoon: true,
+  },
+  {
+    key: OUTLOOK_SEND_SURFACE_KEY,
+    kind: "feature",
+    label: "Send from Outlook",
+    description: "Send Orbit email from a connected Outlook or Microsoft 365 mailbox (Mail.Send).",
+    // Until the privacy page discloses Mail.Send (direct-email P3, Task 8).
     comingSoon: true,
   },
 ];
