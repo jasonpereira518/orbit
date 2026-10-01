@@ -143,6 +143,12 @@ export const AI_OPERATIONS = {
     thinking: "minimal",
     background: true,
   },
+  "relationship.digest": {
+    label: "Relationship analysis (conversations)",
+    tier: "fast",
+    thinking: "minimal",
+    background: true,
+  },
 } as const satisfies Record<string, OperationSpec>;
 
 export type AiOperationId = keyof typeof AI_OPERATIONS;
