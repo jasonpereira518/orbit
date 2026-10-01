@@ -44,7 +44,11 @@ export function conversationToRows(
   const key = conversationKey(c);
   // Rule: group transcripts carry one header line, and the transcript's TAIL is cut so
   // header + transcript stays within the session cap the server enforces.
-  const header = c.isGroup ? `${groupHeader(c).slice(0, MAX_HEADER)}\n` : "";
+  // Rule: the owner the person picked is often a real name the parser could not mark as
+  // self; the header names everyone BUT them. A copy — the caller's parse stays untouched.
+  const owned =
+    selfKey == null ? c : { ...c, participants: c.participants.map((p) => (p.key === selfKey ? { ...p, isSelf: true } : p)) };
+  const header = c.isGroup ? `${groupHeader(owned).slice(0, MAX_HEADER)}\n` : "";
   const shaped = sessions.map((s) => ({
     startAt: s.startAt,
     endAt: s.endAt,

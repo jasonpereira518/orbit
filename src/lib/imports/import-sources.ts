@@ -37,3 +37,8 @@ export function createsContacts(
 ): boolean {
   return importType !== "calendar_ics" && importType !== "calendar_csv";
 }
+
+/** Chat imports log one interaction per conversation session, not per meeting. */
+export function isChatImport(importType: string | null | undefined): boolean {
+  return importType === "whatsapp_chat" || importType === "imessage_chat";
+}

@@ -43,16 +43,13 @@ export type ReviewConversation = {
 };
 
 /**
- * Rule: an auto-link stands; otherwise a 1:1 takes its best candidate, or a new contact when
- * there is none. A group member is analyzed only when linked — never created unasked.
+ * Rule: an auto-link stands; otherwise a 1:1 is a new contact until the person picks a
+ * candidate themselves — a bare-name match silently attaching a chat to the wrong person is
+ * worse than a duplicate. A group member is analyzed only when linked — never created unasked.
  */
-export function defaultChoice(
-  isGroup: boolean,
-  p: { autoContactId: string | null; candidates: ChatCandidate[] },
-): MemberChoice {
+export function defaultChoice(isGroup: boolean, p: { autoContactId: string | null }): MemberChoice {
   if (p.autoContactId) return `c:${p.autoContactId}`;
-  if (isGroup) return "skip";
-  return p.candidates[0] ? `c:${p.candidates[0].contactId}` : "new";
+  return isGroup ? "skip" : "new";
 }
 
 export function choiceToDecision(choice: MemberChoice): ParticipantDecision {

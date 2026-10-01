@@ -5,6 +5,7 @@
  */
 import "./smoke/_env";
 import { conversationKey, groupHeader, sessionExternalId, splitSessions } from "../src/lib/conversations/sessions";
+import { conversationToRows } from "../src/lib/conversations/to-rows";
 import type { Conversation } from "../src/lib/conversations/types";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -58,5 +59,25 @@ const g = conv([[0, "Ana", "hi"]], {
   ],
 });
 check("group header", groupHeader(g) === '# Group chat "Founders" with Ana, Ben');
+
+// The owner chosen in the UI is a real name the parser could not mark as self.
+const named = conv([[0, "Ana", "hi"], [1, "Jason P", "hello all"]], {
+  isGroup: true, title: "Founders Club",
+  participants: [
+    { key: "Ana", displayName: "Ana", phoneE164: null, email: null, isSelf: false },
+    { key: "Ben", displayName: "Ben", phoneE164: null, email: null, isSelf: false },
+    { key: "Jason P", displayName: "Jason P", phoneE164: null, email: null, isSelf: false },
+  ],
+});
+const namedRows = conversationToRows(named, "Jason P", { Ana: { contactId: null, create: true } });
+const namedTranscript = namedRows[0]?.sessions[0]?.transcript ?? "";
+check("toRows: only the linked member gets a row", namedRows.length === 1 && namedRows[0].participant.key === "Ana");
+check(
+  "toRows: group header leaves out the chosen owner",
+  namedTranscript.split("\n")[0] === '# Group chat "Founders Club" with Ana, Ben',
+  namedTranscript,
+);
+check("toRows: the chosen owner speaks as Me", namedTranscript.includes(" Me] hello all") && !namedTranscript.includes("Jason P]"), namedTranscript);
+check("toRows: the parsed conversation is not mutated", named.participants.every((p) => !p.isSelf));
 
 console.log("\nsmoke-chat-sessions: all checks passed");

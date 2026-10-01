@@ -148,6 +148,23 @@ check(
   "...and never claims 0 created",
   !calendar.includes("0 added") && !calendar.includes("0 updated"),
 );
+for (const [importType, n, want] of [
+  ["whatsapp_chat", 3, "3 chat sessions"],
+  ["imessage_chat", 1, "1 chat session"],
+] as const) {
+  const chat = render([
+    item({
+      id: `chat-${importType}`,
+      importType,
+      fileName: "WhatsApp Chat with Ana.txt",
+      contactsCreated: 1,
+      contactsUpdated: 0,
+      duplicatesFound: 0,
+      stats: { interactionsLogged: n },
+    }),
+  ]);
+  check(`a ${importType} import reports chat sessions`, chat.includes(want) && !chat.includes("meetings logged"));
+}
 
 const capped = render([item({ stats: { blockedByPlan: 40 } })]);
 check("the plan cap is named", capped.includes("40 waiting on your plan"));
