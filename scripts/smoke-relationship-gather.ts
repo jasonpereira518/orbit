@@ -26,6 +26,8 @@ function msg(i: number, text: string, dayOffset = i): WindowMessage {
 check("speaker: out → Me", speakerFor("out", "Maya Chen") === "Me");
 check("speaker: in → first name", speakerFor("in", "Maya Chen") === "Maya");
 check("speaker: null → ?", speakerFor(null, "Maya Chen") === "?");
+check("speaker: chat session → Chat", speakerFor("out", "Maya Chen", "message") === "Chat" && speakerFor(null, "Maya Chen", "message") === "Chat");
+check("speaker: linkedin_message unchanged", speakerFor("in", "Maya Chen", "linkedin_message") === "Maya");
 check("line format", formatMessageLine(msg(0, "hi  there\nsecond line")) === "[2026-01-01 Maya] hi there second line");
 
 check("empty rows → null", buildWindow("c1", [], ["linkedin"]) === null);

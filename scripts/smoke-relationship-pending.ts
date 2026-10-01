@@ -153,6 +153,38 @@ async function main() {
   await db.delete(interactions).where(eq(interactions.contactId, micro.contactId));
   await db.delete(contacts).where(eq(contacts.id, micro.contactId));
 
+  // Newest rows: a backlog past rowLimit keeps the NEWEST rows, oldest-first, and says older ones exist.
+  const backlog = await seed(
+    USER,
+    "Backlog Thread",
+    Array.from({ length: 8 }, (_, i): [string, string] => [`2026-08-0${i + 1}T10:00:00Z`, `m${i + 1}`])
+  );
+  const cut = (await loadMessageWindows(USER, [backlog.contactId], { rowLimit: 5 })).get(backlog.contactId);
+  check("rowLimit: window exists", !!cut);
+  check("rowLimit: first message is the 4th row", cut?.messages[0].text === "m4", cut?.messages[0].text);
+  check("rowLimit: keeps the newest row", cut?.messages[cut.messages.length - 1].text === "m8");
+  check("rowLimit: oldest-first", cut?.messages.map((m) => m.text).join(",") === "m4,m5,m6,m7,m8");
+  check("rowLimit: truncatedBefore set to first kept row", cut?.truncatedBefore?.toISOString() === "2026-08-04T10:00:00.000Z");
+  const uncut = (await loadMessageWindows(USER, [backlog.contactId], { rowLimit: 8 })).get(backlog.contactId);
+  check("rowLimit: exactly-fitting backlog is read from the start", uncut?.messages[0].text === "m1");
+
+  // A chat session row speaks as "Chat", whatever its direction.
+  const [chatContact] = await db.insert(contacts).values({ userId: USER, fullName: "Chat Person", source: "whatsapp" }).returning();
+  await db.insert(interactions).values({
+    userId: USER,
+    contactId: chatContact.id,
+    interactionType: "message",
+    interactionDate: new Date("2026-09-28T10:00:00Z"),
+    source: "whatsapp",
+    externalId: "chat-session:1",
+    rawNotes: "[10:00 Me] hi\n[10:01 Chat Person] hey",
+    topics: [],
+    direction: "out",
+  });
+  const chat = (await loadMessageWindows(USER, [chatContact.id])).get(chatContact.id);
+  check("session speaker: Chat", chat?.messages[0].speaker === "Chat");
+  check("session line renders [date Chat] [", !!chat?.text.startsWith("[2026-09-28 Chat] ["), chat?.text);
+
   // User sweep honours the settings switch.
   await seed(OFF_USER, "Off Thread", [["2026-09-20T10:00:00Z", "hi"]]);
   await db.update(userSettings).set({ relationshipEngineEnabled: 0 }).where(eq(userSettings.userId, OFF_USER));

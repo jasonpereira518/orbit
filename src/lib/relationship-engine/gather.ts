@@ -17,7 +17,13 @@ export const MAX_CHUNKS = 3;
 /** Rows read per contact per pass; far more than three windows of real messages. */
 const ROW_LIMIT = 2_000;
 
-export function speakerFor(direction: "in" | "out" | null, contactFullName: string): string {
+export function speakerFor(
+  direction: "in" | "out" | null,
+  contactFullName: string,
+  interactionType?: string
+): string {
+  // A chat session is one row holding a whole transcript with its own per-line speakers.
+  if (interactionType === "message") return "Chat";
   if (direction === "out") return "Me";
   if (direction === "in") return contactFullName.trim().split(/\s+/)[0] || "Them";
   return "?";
@@ -28,7 +34,13 @@ export function formatMessageLine(m: WindowMessage): string {
   return `[${day} ${m.speaker}] ${m.text.replace(/\s+/g, " ").trim()}`;
 }
 
-export function buildWindow(contactId: string, rows: WindowMessage[], sources: string[]): MessageWindow | null {
+export function buildWindow(
+  contactId: string,
+  rows: WindowMessage[],
+  sources: string[],
+  /** True when older unread rows exist beyond `rows` (the read was cut at the row limit). */
+  olderUnread = false
+): MessageWindow | null {
   if (rows.length === 0) return null;
   const lines = rows.map(formatMessageLine);
 
@@ -39,7 +51,8 @@ export function buildWindow(contactId: string, rows: WindowMessage[], sources: s
     total -= lines[start].length + 1;
     start += 1;
   }
-  const truncatedBefore = start > 0 ? rows[start].at : null;
+  // The earlier of: the first row the char budget kept, and the first row the row limit kept.
+  const truncatedBefore = olderUnread ? rows[0].at : start > 0 ? rows[start].at : null;
 
   // The window is the oldest kept rows up to WINDOW_CHARS; a single over-long message is clipped.
   const kept: WindowMessage[] = [];
@@ -75,13 +88,15 @@ export type WindowBound = { at: Date; interactionId: string };
  * `opts.until` caps a contact's rows at (interaction_date, id) <= the bound: the batch
  * applier re-reads exactly the window the model was sent, never a message that arrived
  * while the batch was out (that one must stay past the watermark, i.e. pending).
+ * `opts.rowLimit` caps rows read per contact; the NEWEST rows past the watermark are kept.
  */
 export async function loadMessageWindows(
   userId: string,
   contactIds: string[],
-  opts: { until?: Map<string, WindowBound> } = {}
+  opts: { until?: Map<string, WindowBound>; rowLimit?: number } = {}
 ): Promise<Map<string, MessageWindow>> {
   const windows = new Map<string, MessageWindow>();
+  const rowLimit = opts.rowLimit ?? ROW_LIMIT;
   const ids = [...new Set(contactIds)];
   if (!ids.length) return windows;
   const db = await getDb();
@@ -117,20 +132,21 @@ export async function loadMessageWindows(
              ? sql`AND (date_trunc('milliseconds', m.interaction_date), m.id) <= (${bound.at.toISOString()}::timestamptz, ${bound.interactionId}::uuid)`
              : sql``
          }
-       ORDER BY m.interaction_date ASC, m.id ASC
-       LIMIT ${ROW_LIMIT}
+       ORDER BY m.interaction_date DESC, m.id DESC
+       LIMIT ${rowLimit}
     `);
-    const rows = rowsOf<Row>(result);
+    // Newest rowLimit rows, flipped back to oldest-first for the window.
+    const rows = rowsOf<Row>(result).reverse();
 
     const messages: WindowMessage[] = rows.map((r) => ({
       interactionId: r.id,
       at: new Date(r.interaction_date),
       direction: r.direction ?? null,
-      speaker: speakerFor(r.direction ?? null, p.fullName),
+      speaker: speakerFor(r.direction ?? null, p.fullName, r.interaction_type),
       text: r.raw_notes ?? "",
     }));
     const sources = [...new Set(rows.map((r) => sourceLabel(r.interaction_type, r.source)))];
-    const window = buildWindow(p.id, messages, sources);
+    const window = buildWindow(p.id, messages, sources, rows.length === rowLimit);
     if (window) windows.set(p.id, window);
   }
   return windows;
