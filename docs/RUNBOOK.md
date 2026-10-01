@@ -173,6 +173,14 @@ smallest first:
   signal (`email_*` reason codes). Turning the account's switch off stops it; its email cards
   leave the list on the next run (a manual Refresh in Radar does it at once). The Monday email
   never carries text derived from mail (`digestLineFor`), and a draft's intent uses fixed words.
+- **"From your inbox" on Radar:** for an opted-in account, `/radar` also lists up to five people the
+  last 21 days of `email_events` name who are not contacts (by address or by name) and were not
+  dismissed (`loadInboxPeople`, four statements, one for an account that has not opted in). Add
+  creates a contact through `resolveOrCreateContact` (`source = 'email_intel'`; name, address,
+  title, nothing else) and refreshes Radar once, bounded; Dismiss writes an `ignored_people` row
+  with `context = 'Named in an email'`. Gmail disconnect and an insights wipe delete those rows
+  (`deleteInboxDismissals`). To stop it for everyone, remove the `InboxPeople` mount in
+  `radar-view.tsx`; the cards from mail are unaffected.
   If a card built from mail looks wrong, `SELECT * FROM email_events WHERE id = '<id>'` (the id is
   in the card's evidence `ref`) shows what was extracted and the quote it came from.
 

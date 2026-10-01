@@ -128,8 +128,18 @@ A new signal kind, `email_event`, produced by `src/lib/radar/signals/email.ts`: 
 - Mail-derived text stays in the app and inside the fence Radar's AI prompts already use. It is withheld from the Monday email (a fixed line) and from the unfenced "user intent" of a draft prompt (fixed phrases per reason).
 - Autopilot is unchanged: it still schedules the generic follow-up for the kinds a person opted into.
 - Radar is already released, so this is visible to opted-in accounts on deploy; the opt-in is the release control.
-- Deferred to P4b: "Add to Orbit" chips for named strangers and a "From your inbox" strip, which need a contact-creating write path and their own UI.
+- Unresolved people are P4b (section 7b).
 - The Radar run's statement ceiling in `scripts/smoke-radar-run.ts` rises from 26 to 27 for the opt-in check; an opted-in account also pays per-event ranking reads, bounded by 20 events and an 8-second budget.
+
+### 7b. People the email names who are not in the network (P4b)
+
+A card needs a contact, so a stranger the email names (the recruiter who wrote to you, the hiring manager) cannot be one. They are offered in a strip on `/radar`, "From your inbox", with two buttons each:
+
+- **One surface, not chips on cards.** A card cannot carry a person who is not a contact, and a chip on "the event's top card" would make the strip's person depend on whichever card happened to rank first. The strip lists the people directly.
+- **Who is offered** (`loadInboxPeople`, `inbox-pick.ts`): named in an event of the last 21 days that is not dismissed, with an address (the address is the join key that lets the next Radar run find them on the thread; a name alone makes duplicates), not the user's own, not a role mailbox, applicant-tracking system or bulk sender (`classifySenderKind`), not a department name, not tripping the injection detector, not already a contact by address (`contact_identities`) or by name, and not dismissed. Hiring updates first, then jobs, events, news; at most five. Four statements, one for an account that has not opted in.
+- **Add** goes through `resolveOrCreateContact`. The client sends only the address as an opaque key; the name, title and address are read again from the stored event through the same filters, so a request can only add someone the strip offered that account. The contact carries name, address, title and `source: "email_intel"`: no company (an agency recruiter's company is not the email's), no notes, no summary. A full plan is told so and nothing is created. Radar then updates once, bounded to 8 seconds, so the cards the new contact makes possible are there when the page redraws.
+- **Dismiss** writes an `ignored_people` row (`reason: "rejected"`, fixed `context: "Named in an email"`), so the person is also on Capture's Ignored people list and can be added from there. Those rows are deleted with the rest of the feature's data (Gmail disconnect, insights wipe). No schema change.
+- **Containment.** The strip shows a name, a title, one model-written sentence and a kind, in the app only. It never shows an address or a quote; no prompt, email or digest module imports it (a source-level smoke pins that).
 
 ### 8. Search (P5)
 
