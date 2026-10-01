@@ -80,6 +80,16 @@ function selectsColumn(statement: string, column: string) {
   return new RegExp(`(^|[\\s,.(])"?${column}"?\\s*(,|\\bfrom\\b)`, "i").test(statement);
 }
 
+// Fixed contact ids, in this order. The rerank prompt numbers its candidates (c1, c2, ...) by
+// sorting `contactId:kind`, and the stubbed rerank reply below adjusts by those numbers, so
+// with random uuids WHICH people get +15 / -9 / +3 changed every run. One in eight runs
+// promoted Inbound Ines into Today, which makes her a draft-eligible card, and the overnight
+// draft call (a real call, correctly made) landed in the `sent` window the notes checks count.
+// Pinned: c1 is Meeting Mo (promoted, and a prep card, which is never drafted), c2 is Inbound
+// Ines (demoted, so she stays out of Today), c3 is Dormant Dana.
+const CAST = ["Meeting Mo", "Inbound Ines", "Dormant Dana", "Intro Ivan", "Item Ike", "Opp Olu", "Event Eve", "Job Jo", "Pinned Pat", "Scheduled Sam", "Never Nia", "Guessed Gus"];
+const castId = (name: string) => `5a0c0000-0000-4000-8000-${String(CAST.indexOf(name) + 1).padStart(12, "0")}`;
+
 async function reset() {
   const db = await getDb();
   await db.delete(radarRuns).where(eq(radarRuns.userId, USER));
@@ -98,6 +108,7 @@ async function seed() {
       .insert(contacts)
       .values({
         userId: USER,
+        id: castId(key),
         fullName: key,
         company: "Acme",
         firstInteractionAt: ago(400),
