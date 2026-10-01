@@ -17,8 +17,10 @@
  * Per card: the kind, the person's title and company, their closeness tier, the reason and
  * evidence LABELS the scorer wrote, and the one-line standing from their contact brief. Not
  * their name: the ranking does not need it, so the prompt does not carry it. Never notes,
- * mail or message bodies. The account's goal texts, which the person typed, go in a fence of
- * their own. Everything third-party-shaped is cleaned to single lines and fenced.
+ * quotes from mail or message bodies; a card built from email carries one model-written
+ * sentence about it, inside the same fence. The account's goal texts, which the person typed,
+ * go in a fence of their own. Everything third-party-shaped is cleaned to single lines and
+ * fenced.
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";

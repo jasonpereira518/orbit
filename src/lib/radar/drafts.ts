@@ -16,6 +16,7 @@ import { recommendations } from "@/db/schema";
 import type { AiAccess } from "@/lib/ai-access";
 import { guardModelOutput } from "@/lib/ai-security";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
+import { EMAIL_DRAFT_INTENTS } from "@/lib/radar/email-text";
 import { reportUnlessQuiet } from "@/lib/report-error";
 import { KIND_LABELS, leadReason, type RadarDraft, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
 import { deadlineReached } from "@/lib/time-budget";
@@ -50,6 +51,10 @@ export function draftChannel(target: Pick<DraftTarget, "reasons" | "hasEmail">):
 /** What the draft is for, in the card's own words, so it is about the reason the card exists. */
 export function draftIntent(target: Pick<DraftTarget, "kind" | "reasons">): string {
   const lead = leadReason(target.reasons);
+  // The intent goes into the draft prompt unfenced. A card built from mail carries a sentence
+  // a model wrote from someone else's email, so it gets a fixed phrase instead.
+  const fixed = lead ? EMAIL_DRAFT_INTENTS[lead.code] : undefined;
+  if (fixed) return `${KIND_LABELS[target.kind]}: ${fixed}`;
   return lead ? `${KIND_LABELS[target.kind]}: ${lead.label}` : KIND_LABELS[target.kind];
 }
 

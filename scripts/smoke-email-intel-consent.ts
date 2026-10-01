@@ -42,4 +42,7 @@ check("it states the evidence quote limit", /under 200 characters/i.test(privacy
 check("it no longer claims the mail never reaches an AI provider", !/does not send this mail to an AI provider/i.test(privacy));
 check("it disclaims training and advertising", /does not use this mail to train models or for advertising/i.test(privacy));
 check("the Gmail disclosure names the AI provider", /AI provider/i.test(gmailRow?.use ?? ""));
+check("the privacy page says the notes can appear on Radar", /can appear as reasons on your Radar cards/i.test(privacy));
+check("and that they stay out of the Monday email", /never put in Radar(&rsquo;|’|')s Monday email/i.test(privacy));
+check("the Gmail disclosure says so too", /can appear on your Radar cards/i.test(gmailRow?.use ?? ""));
 console.log("\nAll email-intel consent checks passed.");
