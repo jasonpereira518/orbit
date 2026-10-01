@@ -13,7 +13,7 @@ import {
 } from "@/components/admin/health-live";
 import { getAdminHealth } from "@/lib/admin-health";
 import { cn } from "@/lib/utils";
-import { loadProviderStatuses } from "@/lib/admin-providers";
+import { isProviderProblem, loadProviderStatuses } from "@/lib/admin-providers";
 import { ProviderRefreshButton } from "@/components/admin/provider-refresh-button";
 import {
   AiOperationsPanel,
@@ -100,8 +100,7 @@ export default async function AdminHealthPage() {
       <HealthLiveProvider initial={initialLive}>
         <HealthLiveBody
           providerProblems={
-            providers?.filter((p) => p.status === "degraded" || p.status === "unavailable")
-              .length ?? 0
+            providers?.filter(isProviderProblem).length ?? 0
           }
           providerPanel={
             <>
@@ -135,7 +134,7 @@ export default async function AdminHealthPage() {
                     href={p.href}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="w-24 shrink-0 truncate hover:text-primary"
+                    className="w-36 shrink-0 truncate hover:text-primary"
                   >
                     {p.label}
                   </a>
