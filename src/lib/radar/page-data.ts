@@ -8,6 +8,7 @@
  */
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
+import { loadInboxPeople, type InboxPerson } from "@/lib/email-intel/inbox-people";
 import { BRIEFING_TOP, draftsReady, whatChanged, type ChangeLine } from "@/lib/radar/briefing";
 import { openRadarAi } from "@/lib/radar/explain";
 import { loadRadarState } from "@/lib/radar/run";
@@ -40,6 +41,8 @@ export type RadarPageData = {
   changes: ChangeLine[];
   /** Job moves, headlines and posts Radar noticed in the last seven days. */
   signalsThisWeek: number;
+  /** People the account's email names who are not in the network yet. Empty unless Email insights is on. */
+  inboxPeople: InboxPerson[];
 };
 
 type PageState = {
@@ -51,6 +54,7 @@ type PageState = {
   capture_linkedin: number | null;
   has_contacts: boolean;
   signals_week: number | string;
+  email_intel: number | null;
 };
 
 async function loadPageState(userId: string): Promise<PageState | null> {
@@ -60,7 +64,7 @@ async function loadPageState(userId: string): Promise<PageState | null> {
     await db.execute(sql`
       SELECT s.radar_last_run_at AS last_run_at, s.radar_next_at AS next_at, s.radar_paused AS paused,
              s.radar_autopilot AS autopilot, s.radar_digest_enabled AS digest_enabled,
-             s.radar_capture_linkedin_activity AS capture_linkedin,
+             s.radar_capture_linkedin_activity AS capture_linkedin, s.email_intel_enabled AS email_intel,
              EXISTS (SELECT 1 FROM contacts WHERE user_id = ${userId}) AS has_contacts,
              (SELECT count(*) FROM contact_signals WHERE user_id = ${userId} AND created_at > ${since}::timestamptz)
                + (SELECT count(*) FROM contact_career_moves WHERE user_id = ${userId} AND detected_at > ${since}::timestamptz)
@@ -84,6 +88,9 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
   const paused = state?.paused === 1;
   const now = new Date();
   const nextAt = toDate(state?.next_at);
+  // Read only for an account that opted in, so everyone else pays nothing for it. A failure
+  // here must never cost the page its cards.
+  const inboxPeople = state?.email_intel === 1 ? await loadInboxPeople(userId, now).catch(() => []) : [];
   return {
     recommendations,
     lastRunAt: toDate(state?.last_run_at),
@@ -100,6 +107,7 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
     autopilotActions,
     changes: whatChanged(recommendations, now),
     signalsThisWeek: Number(state?.signals_week ?? 0),
+    inboxPeople,
   };
 }
 

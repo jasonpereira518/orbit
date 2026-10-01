@@ -6,6 +6,7 @@ import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
+import { INBOX_IGNORED_CONTEXT } from "@/lib/email-intel/types";
 import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
@@ -249,6 +250,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // insights-only delete says so explicitly.
       await db.delete(emailEvents).where(eq(emailEvents.userId, userId));
       await db.delete(emailThreads).where(eq(emailThreads.userId, userId));
+      // The names dismissed from Radar's "From your inbox" strip came from that mail too.
+      await db
+        .delete(ignoredPeople)
+        .where(and(eq(ignoredPeople.userId, userId), eq(ignoredPeople.context, INBOX_IGNORED_CONTEXT)));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
       // Passages of the person's own notes. Derived, but derived from the most personal text
       // in the product — leaving these behind after a deletion would leave the notes behind.

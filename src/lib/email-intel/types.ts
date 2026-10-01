@@ -87,3 +87,13 @@ export type ExtractionRejects = {
 };
 
 export type ExtractionResult = { events: ExtractedEvent[]; rejected: ExtractionRejects };
+
+/**
+ * The `context` of the `ignored_people` row written when someone dismisses a person from the
+ * "From your inbox" strip. It is also how the purge finds those rows: a dismissal is a name
+ * taken from the person's mail, so deleting Email insights data deletes it too.
+ */
+export const INBOX_IGNORED_CONTEXT = "Named in an email";
+
+/** `contacts.source` for a person added from the strip. */
+export const EMAIL_INTEL_CONTACT_SOURCE = "email_intel";

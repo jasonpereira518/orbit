@@ -272,6 +272,13 @@ export default function PrivacyPage() {
               are never put in Radar&rsquo;s Monday email.
             </p>
             <p>
+              Radar can also list people an email names who are not in your orbit yet, showing
+              the name and job title the email gave. Orbit adds one only when you press Add; it
+              then saves their name, email address and job title as a contact, and nothing else
+              from the email. Dismissing someone keeps only their name, on the Ignored people
+              list, until you delete your insights data or disconnect Gmail.
+            </p>
+            <p>
               Turning it off stops the checking; disconnecting Gmail, or deleting your insights
               in Settings, removes what it recorded.
             </p>
