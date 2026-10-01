@@ -258,11 +258,16 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(recommendations).where(eq(recommendations.userId, userId));
       await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
       await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
-      // Relationship engine output: run history and per-contact digests. Derived from the
-      // person's conversations (the memory_chunks precedent). Digests also cascade from
-      // contacts, but an insights-only delete keeps the contacts.
+      // Relationship engine output: run history is deleted; per-contact digests have their
+      // derived text cleared (the memory_chunks precedent) but the rows stay. A digest row
+      // is also the read watermark: deleting it would make every conversation pending again
+      // and the engine would re-read (and re-bill) the whole history on its next pass.
+      // Digests cascade from contacts, so a contacts delete still removes them outright.
       await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, userId));
-      await db.delete(relationshipDigests).where(eq(relationshipDigests.userId, userId));
+      await db
+        .update(relationshipDigests)
+        .set({ summary: null, whatTheyDo: null, workingOn: null, topics: [], openThreads: [] })
+        .where(eq(relationshipDigests.userId, userId));
       // What Radar learned from the outside world about these contacts (headlines, posts).
       // Also cascades from contacts; deleted here for the same reason.
       await db.delete(contactSignals).where(eq(contactSignals.userId, userId));
