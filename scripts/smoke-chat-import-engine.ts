@@ -251,7 +251,7 @@ async function main() {
   );
   id = await seedJob(bigRows);
   await runJob(id);
-  let job = await db.query.imports.findFirst({ where: eq(imports.id, id) });
+  const job = await db.query.imports.findFirst({ where: eq(imports.id, id) });
   cs = await contactsOf();
   ints = await interactionsOf();
   check("big chat: job completed", job?.status === "completed", `${job?.status} ${job?.errorMessage ?? ""}`);
