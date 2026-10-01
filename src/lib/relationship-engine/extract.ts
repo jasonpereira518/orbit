@@ -101,8 +101,24 @@ const SUBSTANCE_RE =
   /[?\d]|\b(today|tonight|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|next week|this week|next month|am|pm|noon)\b/i;
 
 /** No model call for a thread with nothing in it to understand. */
+const TRANSCRIPT_STAMP_RE = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} [^\]]*\]\s*/;
+
+/**
+ * A chat-session row (speaker "Chat", set by gather.ts) holds a whole transcript. Its
+ * "[2026-09-27 10:00 Maya]" stamps carry digits, so the rules below must see the message
+ * bodies only: one entry per transcript line, stamp and "# Group chat" header removed.
+ */
+function bodiesOf(m: { speaker: string; text: string }): string[] {
+  if (m.speaker !== "Chat") return [m.text.trim()];
+  return m.text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("# Group chat"))
+    .map((l) => l.replace(TRANSCRIPT_STAMP_RE, "").trim());
+}
+
 export function isTrivialWindow(window: MessageWindow): boolean {
-  const texts = window.messages.map((m) => m.text.trim()).filter(Boolean);
+  const texts = window.messages.flatMap(bodiesOf).filter(Boolean);
   if (texts.length === 0) return true;
   if (texts.every((t) => PLEASANTRY_RE.test(t))) return true;
   if (texts.some((t) => SUBSTANCE_RE.test(t))) return false;

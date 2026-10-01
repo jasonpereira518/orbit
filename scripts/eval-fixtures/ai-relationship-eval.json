@@ -118,8 +118,7 @@
       "now": "2026-09-30T12:00:00Z",
       "chat": true,
       "messages": [
-        { "at": "2026-09-27T10:00:00Z", "from": "them", "text": "Happy birthday!!" },
-        { "at": "2026-09-27T10:01:00Z", "from": "me", "text": "Thank you!!" }
+        { "at": "2026-09-27T10:00:00Z", "from": "them", "text": "[2026-09-27 10:00 Sam] Happy birthday!!\n[2026-09-27 10:01 Me] Thank you!!" }
       ],
       "expect": { "facts": [], "commitments": [], "reminders": 0, "openThreads": 0, "trivial": true }
     }
