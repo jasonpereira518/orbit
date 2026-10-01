@@ -37,6 +37,11 @@ export function clearChatHandoff(): void {
   emit();
 }
 
+/** The current snapshot; stable between changes, as `useSyncExternalStore` requires. */
+export function getChatHandoff(): File[] {
+  return pending;
+}
+
 export function useChatHandoff(): File[] {
-  return useSyncExternalStore(subscribe, () => pending, () => NONE);
+  return useSyncExternalStore(subscribe, getChatHandoff, () => NONE);
 }

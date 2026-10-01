@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { MessageCircle } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { previewChatConversations } from "@/actions/chat-imports";
@@ -135,8 +135,12 @@ export function ChatMessagesImport() {
   // Files dropped elsewhere on the page: read exactly as if picked here. Held (not dropped)
   // while an import or a read is in flight, and cleared the moment they are taken.
   const handedOff = useChatHandoff();
+  // StrictMode runs effects twice on mount with the same props; the ref makes the second
+  // run see these files as already taken instead of reading them again.
+  const consumed = useRef<File[] | null>(null);
   useEffect(() => {
-    if (!handedOff.length || busy) return;
+    if (!handedOff.length || busy || consumed.current === handedOff) return;
+    consumed.current = handedOff;
     clearChatHandoff();
     loadFiles(handedOff);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadFiles is a fresh closure each render; the handoff and idle state are the triggers

@@ -184,6 +184,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-icon-button-names": "pure",
+  "smoke-chat-handoff": "pure",
   "smoke-import-detect": "pure",
   "smoke-import-errors": "pure",
   "smoke-import-history-render": "pure",
