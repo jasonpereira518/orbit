@@ -4,12 +4,13 @@ import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { getEvidenceSnippet } from "@/actions/chat";
+import type { EvidenceSnippet } from "@/lib/chat-evidence-snippet";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { cn } from "@/lib/utils";
 
-type Snippet = Awaited<ReturnType<typeof getEvidenceSnippet>>;
+type Snippet = EvidenceSnippet;
 
 /**
  * A `[eN]` marker in an answer, rendered as a small numbered chip. Clicking it fetches the
@@ -56,42 +57,53 @@ export function SourceChip({ messageId, id, number }: { messageId: string; id: s
         ) : !snippet.found ? (
           <p className="text-xs text-muted-foreground">That note has been removed.</p>
         ) : (
-          <div className="flex flex-col gap-1.5 text-xs">
-            <div className="flex items-center gap-2">
-              {snippet.contactId && (
-                <ContactAvatar
-                  contactId={snippet.contactId}
-                  fullName={snippet.contactName ?? ""}
-                  profileImageUrl={null}
-                  size="sm"
-                  className="size-6 shrink-0"
-                />
-              )}
-              <span className={cn("min-w-0 flex-1 truncate font-medium text-foreground", !snippet.contactId && "text-muted-foreground")}>
-                {snippet.contactName ?? "Not tied to a contact"}
-              </span>
-            </div>
-            {snippet.kind === "interaction" && (
-              <p className="text-muted-foreground">
-                {snippet.date} · {interactionTypeLabel(snippet.interactionType)}
-              </p>
-            )}
-            {snippet.snippet && <p className="leading-relaxed text-foreground">{snippet.snippet}</p>}
-            {snippet.contactId && (
-              <Link
-                href={
-                  snippet.kind === "interaction"
-                    ? `/contacts/${snippet.contactId}?interaction=${snippet.interactionId}`
-                    : `/contacts/${snippet.contactId}`
-                }
-                className="mt-0.5 text-primary underline underline-offset-2"
-              >
-                Open in profile
-              </Link>
-            )}
-          </div>
+          <EvidenceSnippetBody snippet={snippet} />
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** What a found citation shows: who, what and when, the words, and a way to the profile. Pure, so it renders without a popover. */
+export function EvidenceSnippetBody({ snippet }: { snippet: Extract<Snippet, { found: true }> }) {
+  return (
+    <div className="flex flex-col gap-1.5 text-xs">
+      <div className="flex items-center gap-2">
+        {snippet.contactId && (
+          <ContactAvatar
+            contactId={snippet.contactId}
+            fullName={snippet.contactName ?? ""}
+            profileImageUrl={null}
+            size="sm"
+            className="size-6 shrink-0"
+          />
+        )}
+        <span className={cn("min-w-0 flex-1 truncate font-medium text-foreground", !snippet.contactId && "text-muted-foreground")}>
+          {snippet.contactName ?? (snippet.kind === "email_event" ? "From your email" : "Not tied to a contact")}
+        </span>
+      </div>
+      {snippet.kind === "interaction" && (
+        <p className="text-muted-foreground">
+          {snippet.date} · {interactionTypeLabel(snippet.interactionType)}
+        </p>
+      )}
+      {snippet.kind === "email_event" && <p className="text-muted-foreground">{snippet.date} · Email</p>}
+      {snippet.snippet && <p className="leading-relaxed text-foreground">{snippet.snippet}</p>}
+      {snippet.kind === "email_event" && snippet.quote && (
+        <p className="border-l-2 border-border pl-2 leading-relaxed text-muted-foreground">In the email: “{snippet.quote}”</p>
+      )}
+      {snippet.contactId && (
+        <Link
+          href={
+            snippet.kind === "interaction"
+              ? `/contacts/${snippet.contactId}?interaction=${snippet.interactionId}`
+              : `/contacts/${snippet.contactId}`
+          }
+          className="mt-0.5 text-primary underline underline-offset-2"
+        >
+          Open in profile
+        </Link>
+      )}
+    </div>
   );
 }

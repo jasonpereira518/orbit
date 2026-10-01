@@ -27,6 +27,7 @@ import { persistAssistantTurn } from "@/lib/chat-persist";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { loadEvidenceSnippet } from "@/lib/chat-evidence-snippet";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { traced } from "@/lib/perf-trace";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
@@ -251,40 +252,7 @@ export async function getEvidenceSnippet(messageId: string, id: string) {
   const source = message?.evidence?.[id];
   if (!source) return { found: false as const };
 
-  if (source.kind === "contact") {
-    const contact = await db.query.contacts.findFirst({
-      where: and(eq(contacts.id, source.contactId), eq(contacts.userId, userId)),
-      columns: { id: true, fullName: true, preferredName: true, aiSummary: true, notes: true },
-    });
-    if (!contact) return { found: false as const };
-    return {
-      found: true as const,
-      kind: "contact" as const,
-      contactId: contact.id,
-      contactName: contact.preferredName || contact.fullName,
-      snippet: (contact.aiSummary || contact.notes || "").trim().slice(0, 600),
-    };
-  }
-
-  const row = await db.query.interactions.findFirst({
-    where: and(eq(interactions.id, source.sourceId), eq(interactions.userId, userId)),
-    columns: { contactId: true, interactionType: true, interactionDate: true, aiSummary: true, rawNotes: true },
-  });
-  if (!row) return { found: false as const };
-  const contact = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, row.contactId), eq(contacts.userId, userId)),
-    columns: { id: true, fullName: true, preferredName: true },
-  });
-  return {
-    found: true as const,
-    kind: "interaction" as const,
-    interactionId: source.sourceId,
-    contactId: contact?.id ?? row.contactId,
-    contactName: contact ? contact.preferredName || contact.fullName : null,
-    interactionType: row.interactionType,
-    date: row.interactionDate.toISOString().slice(0, 10),
-    snippet: (row.aiSummary || row.rawNotes || "").trim().slice(0, 600),
-  };
+  return loadEvidenceSnippet(userId, source);
 }
 
 /** How many messages editing `assistantMessageId` would discard — for the confirm dialog. */
