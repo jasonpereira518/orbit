@@ -268,26 +268,35 @@ export async function generateAndStoreContactBrief(
   });
   const hasDigest = Boolean(digest?.summary || digest?.whatTheyDo);
 
+  const recentColumns = {
+    id: true,
+    interactionDate: true,
+    interactionType: true,
+    aiSummary: true,
+    rawNotes: true,
+  } as const;
+  // Unfiltered: drives the stored recent discussions and the basis interaction, as before.
   const recent = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.contactId, contactId),
-      // Excluded in SQL, not after the limit: dozens of chat messages must not push a meeting
-      // out of the newest 20. coalesce keeps NULL-source rows (NOT over NULL would drop them).
-      hasDigest
-        ? sql`NOT (${interactions.interactionType} = 'linkedin_message' OR (${interactions.interactionType} = 'message' AND coalesce(${interactions.source}, '') IN ('whatsapp', 'imessage')))`
-        : undefined
-    ),
-    columns: {
-      id: true,
-      interactionDate: true,
-      interactionType: true,
-      aiSummary: true,
-      rawNotes: true,
-    },
+    where: and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)),
+    columns: recentColumns,
     orderBy: [desc(interactions.interactionDate)],
     limit: 20,
   });
+  // The prompt's transcript only: with a digest, raw chat messages are left out. Excluded in
+  // SQL, not after the limit, so dozens of messages cannot push a meeting out of the newest
+  // 20. coalesce keeps NULL-source rows (NOT over NULL would drop them).
+  const promptInteractions = hasDigest
+    ? await db.query.interactions.findMany({
+        where: and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, contactId),
+          sql`NOT (${interactions.interactionType} = 'linkedin_message' OR (${interactions.interactionType} = 'message' AND coalesce(${interactions.source}, '') IN ('whatsapp', 'imessage')))`
+        ),
+        columns: recentColumns,
+        orderBy: [desc(interactions.interactionDate)],
+        limit: 20,
+      })
+    : recent;
 
   // What the brief could never see before: the things this relationship actually owes.
   // Loaded in parallel and each guarded, because a brief that fails because one side query
@@ -347,7 +356,7 @@ export async function generateAndStoreContactBrief(
     ...openItems.slice(0, OPEN_ITEM_LIMIT).map((i) => `- ${i.text}`),
   ];
 
-  const interactionSnippets = recent
+  const interactionSnippets = promptInteractions
     .map((i) => {
       const text = (i.aiSummary || i.rawNotes || "").trim();
       if (!text) return null;

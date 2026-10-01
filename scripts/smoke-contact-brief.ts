@@ -142,6 +142,8 @@ async function modelPath() {
   check("  and its open thread", lastPrompt.includes("Send the deck"));
   check("  raw messages are replaced", !lastPrompt.includes("· linkedin_message]") && !lastPrompt.includes("chatline"));
   check("  a meeting is kept", lastPrompt.includes("· meeting]"));
+  const stored = await getContactBrief(user, d.id);
+  check("  stored recent discussions still include a chat line", stored!.recentDiscussions.some((r) => r.line.startsWith("chatline")));
 
   await db.delete(contacts).where(eq(contacts.userId, user));
   await db.delete(userSettings).where(eq(userSettings.userId, user));
