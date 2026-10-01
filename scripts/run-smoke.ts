@@ -327,6 +327,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-email-intel-route": "pglite",
   "smoke-email-intel-resolve": "pglite",
   "smoke-email-intel-rank": "pglite",
+  "smoke-email-intel-inbox-load": "pglite",
   "smoke-email-intel-sweep": "pglite",
   "smoke-job-changes": "pglite",
   "smoke-contact-search-rank": "pglite",
