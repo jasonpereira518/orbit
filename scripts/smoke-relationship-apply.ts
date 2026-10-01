@@ -148,6 +148,20 @@ async function main() {
   const rOrphan = await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated: { ...validated, facts: [] }, plan: orphanPlan });
   check("orphan not re-created", rOrphan.actionItemsCreated === 0);
 
+  // (a) Orphan the retry plan does NOT mention (regenerated plan words things differently / is empty).
+  const orphan2Text = "Crash orphan, reworded on retry";
+  await db.insert(actionItems).values({ userId: USER, contactId: c.id, interactionId: msgs[1].id, text: orphan2Text, position: 8, status: "open", itemHash: actionItemHash(msgs[1].id, orphan2Text), owedBy: "me" });
+  // (b) An item anchored on a NON-message interaction (a note) made during the run: not the engine's.
+  const [noteRow] = await db.insert(interactions).values({ userId: USER, contactId: c.id, interactionType: "note", interactionDate: NOW, source: "manual", rawNotes: "met for coffee", topics: [] }).returning();
+  const noteText = "Follow up from the coffee note";
+  const [noteItem] = await db.insert(actionItems).values({ userId: USER, contactId: c.id, interactionId: noteRow.id, text: noteText, position: 7, status: "open", itemHash: actionItemHash(noteRow.id, noteText), owedBy: null }).returning();
+  const emptyRetry = { ...plan, actionItems: [], facts: [], closeActionItemIds: [] };
+  await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated: { ...validated, facts: [] }, plan: emptyRetry });
+  const batchNow = await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, runRow!.noteBatchId!) });
+  const listedIds = new Set(batchNow!.result.actionItems.map((x) => x.id));
+  check("sweep snapshots orphan absent from retry plan", [...listedIds].length >= 4 && (await db.query.actionItems.findFirst({ where: eq(actionItems.itemHash, actionItemHash(msgs[1].id, orphan2Text)) }))! && listedIds.has((await db.query.actionItems.findFirst({ where: eq(actionItems.itemHash, actionItemHash(msgs[1].id, orphan2Text)) }))!.id));
+  check("sweep ignores non-message-anchored item", !listedIds.has(noteItem.id));
+
   // An action item with no reminder (no due date) must still be undoable.
   const bare = { ...plan, actionItems: [{ text: "Think about the intro", owedBy: null, interactionId: msgs[0].id, reminder: null }], facts: [], closeActionItemIds: [] };
   const rBare = await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated: { ...validated, facts: [] }, plan: bare });
@@ -156,11 +170,11 @@ async function main() {
   // Undo: pending reminders dismissed, open action items removed, run undone.
   const undo = await undoRelationshipRun(USER, run.id);
   check("undo dismisses pending reminders", undo.remindersDismissed === 1, JSON.stringify(undo));
-  check("undo removes open action items (incl. reminder-less and crash orphan)", undo.actionItemsRemoved === 3, JSON.stringify(undo));
+  check("undo removes open action items (incl. reminder-less and crash orphan)", undo.actionItemsRemoved === 4, JSON.stringify(undo));
   const after = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, run.id) });
   check("run marked undone", after?.status === "undone");
   const left = await db.query.actionItems.findMany({ where: and(eq(actionItems.contactId, c.id), eq(actionItems.status, "open")) });
-  check("no open engine action items left", left.length === 0);
+  check("no open engine action items left; note item survives", left.length === 1 && left[0].id === noteItem.id, String(left.length));
 
   await reset();
   console.log("\nsmoke-relationship-apply: all checks passed");

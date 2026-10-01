@@ -12,7 +12,7 @@
 // Bare `.returning()` throughout: a partial selector breaks on this repo's neon-http/PGlite split.
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
   contacts,
@@ -27,6 +27,7 @@ import {
 import { actionItemHash } from "@/lib/action-items";
 import { detectJobChanges, loadJobBaseline, recordJobChanges } from "@/lib/job-changes";
 import { emptyNoteBatchResult } from "@/lib/note-batches";
+import { MESSAGE_INTERACTION_SQL } from "@/lib/relationship-engine/pending";
 import { undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { buildSuggestionItemHash, isoDay } from "@/lib/suggested-reminder-utils";
@@ -241,18 +242,35 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
       }
     }
 
-    // Snapshot every open item of this contact created during this run that the batch does
-    // not list yet. Not just `inserted`: after a crash between the insert and the snapshot,
-    // the retry's insert conflicts and returns nothing, and undo would never find the item.
-    const [runRow, batchRow] = await Promise.all([
-      db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, runId), columns: { createdAt: true } }),
-      db.query.noteBatches.findFirst({ where: eq(noteBatches.id, batchId), columns: { result: true } }),
-    ]);
+  }
+
+  // Sweep: snapshot every open, engine-anchored action item of this contact created since
+  // the run started that the batch does not list yet. Contact-wide and independent of this
+  // call's plan: after a crash between the insert and the snapshot, a retry whose regenerated
+  // plan words items differently (or has none) would otherwise never see the orphan, and undo
+  // would miss it. "Engine-anchored" = its interaction is a message row, so items a person or
+  // capture made on a note/meeting during the run are never snapshotted (and never undo-deleted).
+  const [runRow, batchRow] = await Promise.all([
+    db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, runId), columns: { createdAt: true } }),
+    db.query.noteBatches.findFirst({ where: eq(noteBatches.id, batchId), columns: { result: true } }),
+  ]);
+  if (runRow) {
     const listed = new Set((batchRow?.result.actionItems ?? []).map((x) => x.id));
-    for (const a of all) {
-      if (a.status !== "open" || a.contactId !== contactId || listed.has(a.id)) continue;
-      if (runRow && a.createdAt < runRow.createdAt) continue;
-      batchAdd.actionItems.push({ id: a.id, contactId, text: a.text, reminderId: a.reminderId ?? null });
+    const swept = await db.execute(sql`
+      SELECT a.id, a.text, a.reminder_id AS "reminderId"
+        FROM action_items a
+        JOIN interactions m ON m.id = a.interaction_id AND m.user_id = a.user_id
+       WHERE a.user_id = ${userId}
+         AND a.contact_id = ${contactId}::uuid
+         AND a.status = 'open'
+         AND a.created_at >= ${runRow.createdAt.toISOString()}::timestamptz
+         AND ${MESSAGE_INTERACTION_SQL}
+    `);
+    const sweptRows = rowsOf<{ id: string; text: string; reminderId: string | null }>(swept);
+    const have = new Set(batchAdd.actionItems.map((x) => x.id));
+    for (const r of sweptRows) {
+      if (listed.has(r.id) || have.has(r.id)) continue;
+      batchAdd.actionItems.push({ id: r.id, contactId, text: r.text, reminderId: r.reminderId ?? null });
     }
   }
   await appendBatchResult(batchId, batchAdd);
