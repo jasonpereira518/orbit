@@ -369,6 +369,9 @@ export async function runImportJob(importId: string): Promise<void> {
     // alone, so re-running an already-finished or since-deleted job is an expected, everyday
     // occurrence here, not an edge case.
     if (["completed", "failed", "cancelled"].includes(importRow.status)) return;
+    // A chunked upload still arriving: not this engine's yet, and a setup failure below
+    // must not mark it failed. `startStaged` flips it to processing and kicks the run.
+    if (importRow.status === "staging") return;
 
     // Resolved once, from the type recorded on the job row. Import kinds with no server-side
     // runner (the client-driven ones) resolve to `null` and are left alone rather than being
