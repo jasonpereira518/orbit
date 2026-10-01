@@ -1686,10 +1686,10 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
           interactionId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
           at: new Date(m.at),
           direction: m.from === "me" ? "out" : "in",
-          speaker: m.from === "me" ? "Me" : first,
+          speaker: c.chat ? "Chat" : m.from === "me" ? "Me" : first,
           text: m.text,
         })),
-        ["linkedin"]
+        [c.chat ? "whatsapp" : "linkedin"]
       );
       if (!window) throw new Error("empty window");
       if (c.expect.trivial) {
@@ -1721,6 +1721,12 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
         remindersLeftInRun: 25,
       });
       let missed = false;
+      // Someone else's detail (a group chat's other member) written to this contact is invented.
+      const leaked = [...v.facts, v.whatTheyDo ?? "", v.workingOn ?? ""].filter((f) =>
+        (c.forbiddenFacts ?? []).some((phrase) => mentions(f, phrase))
+      ).length;
+      invented += leaked;
+      if (leaked) missed = true;
       for (const phrase of c.expect.facts) {
         const ok = [...v.facts, v.whatTheyDo ?? "", v.workingOn ?? ""].some((f) => mentions(f, phrase));
         count(facts, ok);

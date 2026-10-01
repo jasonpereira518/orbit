@@ -259,6 +259,13 @@ export type RelationshipEvalFixture = {
     contactName: string;
     /** ISO "now" the rules run at. */
     now: string;
+    /**
+     * Chat-import case: the messages are session transcripts (as a chat-import row holds them),
+     * so the window speaker is "Chat" and the source a chat app, not a named person.
+     */
+    chat?: boolean;
+    /** Phrases no fact, `whatTheyDo` or `workingOn` may mention (someone else's detail). */
+    forbiddenFacts?: string[];
     messages: Array<{ at: string; from: "me" | "them"; text: string }>;
     expect: {
       /** Phrases that must appear in some fact. */
