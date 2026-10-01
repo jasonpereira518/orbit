@@ -73,12 +73,20 @@ Expected: branch `claude/email-intel-search`, `0` changes, and nothing listening
 
 ### Task 1: Stand the stack up
 
-- [ ] **Step 1 (you): The environment file.** Copy the main checkout's file *without* its database and server model key, then add the branch's connection string yourself:
+- [ ] **Step 1: The environment file, from an allowlist.** The main checkout's `.env.local` holds far more than a live check needs, including a **live Stripe key** (`sk_live…`), Resend, Vercel and Neon tokens and server model keys. Copy only what this run uses (Clerk test instance, Google client, the encryption secret, the app URL, the admin ids), and no `DATABASE_URL`, no server model key (a server key would mask the user-key path that Task 8 tests):
 
 ```bash
-grep -v -E '^(DATABASE_URL|OPENAI_API_KEY)=' /Users/jasonpereira/Projects/orbit/.env.local > /Users/jasonpereira/Projects/claude-worktrees/orbit/email-search-context-7329e6/.env.local
+cd /Users/jasonpereira/Projects/claude-worktrees/orbit/email-search-context-7329e6
+grep -E '^(ENCRYPTION_SECRET|NEXT_PUBLIC_CLERK_[A-Z_]+|CLERK_SECRET_KEY|GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|GOOGLE_REDIRECT_URI|NEXT_PUBLIC_APP_URL|NEXT_PUBLIC_GOOGLE_[A-Z_]+|ADMIN_USER_IDS)=' /Users/jasonpereira/Projects/orbit/.env.local > .env.local && chmod 600 .env.local
+```
+
+  **(claude)** can run that. **(you)** then append the branch's connection string yourself, so a session never handles it:
+
+```bash
 echo 'DATABASE_URL=<paste the live-check-p5 pooled connection string>' >> /Users/jasonpereira/Projects/claude-worktrees/orbit/email-search-context-7329e6/.env.local
 ```
+
+  Do **not** start the server before the second line is in: without `DATABASE_URL` it would run real Clerk sign-in against local PGlite, and the probes could not reach it.
 
 - [ ] **Step 2 (claude): Start the server** (`npm run dev`, or the `orbit-web` preview configuration if port 3000 is configured there) and wait for "Ready". The first request migrates the branch to schema 145.
 
