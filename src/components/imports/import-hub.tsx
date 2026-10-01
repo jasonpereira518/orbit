@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   HardDrive,
   Loader2,
+  MessageCircle,
   MessageSquare,
 } from "lucide-react";
 import {
@@ -225,6 +226,13 @@ const LinkedInMessagesImport = dynamic(
     })),
   { loading: () => <PanelSkeleton /> },
 );
+const ChatMessagesImport = dynamic(
+  () =>
+    import("@/components/imports/chat-messages-import").then((m) => ({
+      default: m.ChatMessagesImport,
+    })),
+  { loading: () => <PanelSkeleton /> },
+);
 const CalendarImportSection = dynamic(
   () =>
     import("@/components/imports/calendar-import-section").then((m) => ({
@@ -236,6 +244,7 @@ const CalendarImportSection = dynamic(
 type RowId =
   | "import-panel-connections"
   | "import-panel-messages"
+  | "import-panel-chats"
   | "import-contacts-file"
   | "import-google-contacts"
   | "import-outlook-contacts"
@@ -253,6 +262,7 @@ const ROW_FOR_ANCHOR: Record<string, RowId | undefined> = {
   "import-google-contacts": "import-google-contacts",
   "import-outlook-contacts": "import-outlook-contacts",
   "import-panel-messages": "import-panel-messages",
+  "import-panel-chats": "import-panel-chats",
   "import-panel-calendar": "import-panel-calendar",
 };
 
@@ -279,7 +289,7 @@ function rowForImportJobKind(kind: ImportJobKind): RowId | null {
     case "drive_docs":
       return null;
     case "chat":
-      return null;
+      return "import-panel-chats";
   }
 }
 
@@ -295,6 +305,7 @@ export function ImportHub({
   outlook,
   drive,
   latestFinish,
+  chatImports = false,
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
@@ -310,6 +321,8 @@ export function ImportHub({
   drive?: DriveImportInput;
   /** The most recent completed import, drawn as the done card when nothing is running. */
   latestFinish?: LatestFinishedImport | null;
+  /** `feature.chat-imports` is live for this viewer; the WhatsApp/iMessage row exists only then. */
+  chatImports?: boolean;
 }) {
   const job = useImportJob();
   const queue = useImportQueue();
@@ -652,6 +665,18 @@ export function ImportHub({
           >
             <LinkedInMessagesImport />
           </ImportSourceRow>
+
+          {chatImports ? (
+            <ImportSourceRow
+              {...row("import-panel-chats")}
+              icon={MessageCircle}
+              accent={MESSAGES_ACCENT}
+              title="Chat messages"
+              status="WhatsApp and iMessage exports, read on your device"
+            >
+              <ChatMessagesImport />
+            </ImportSourceRow>
+          ) : null}
 
           <ImportSourceRow
             {...row("import-contacts-file")}

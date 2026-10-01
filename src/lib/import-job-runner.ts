@@ -115,7 +115,10 @@ function emit() {
  * "0 contacts imported" for the whole run would be actively misleading there.
  */
 function importedLabelFor(kind: ServerOwnedKind): string {
-  return kind === "calendar" ? "meetings logged" : "contacts imported";
+  if (kind === "calendar") return "meetings logged";
+  // Each staged chat row is one participant, linked or created, not necessarily a new contact.
+  if (kind === "chat") return "people";
+  return "contacts imported";
 }
 
 function importedFigure(
@@ -680,7 +683,7 @@ export function startImportJob(
       : input.kind === "drive_docs"
         ? "files"
         : input.kind === "chat"
-          ? "conversations"
+          ? "people"
           : input.ids.length === 1
             ? "person"
             : "people";

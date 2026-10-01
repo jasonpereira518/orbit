@@ -92,6 +92,8 @@ export function ImportFilePicker({
   disabled,
   fileName,
   onFile,
+  onFiles,
+  multiple = false,
   emptyLabel = "No file chosen",
   buttonLabel = "Choose file",
   className,
@@ -99,7 +101,10 @@ export function ImportFilePicker({
   accept: string;
   disabled?: boolean;
   fileName?: string | null;
-  onFile: (file: File) => void;
+  onFile?: (file: File) => void;
+  /** With `multiple`, every picked file at once (the chat card takes several exports). */
+  onFiles?: (files: File[]) => void;
+  multiple?: boolean;
   emptyLabel?: string;
   buttonLabel?: string;
   className?: string;
@@ -112,12 +117,14 @@ export function ImportFilePicker({
         ref={inputRef}
         type="file"
         accept={accept}
+        multiple={multiple}
         disabled={disabled}
         className="sr-only"
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          onFile(file);
+          const files = [...(e.target.files ?? [])];
+          if (!files.length) return;
+          if (onFiles) onFiles(files);
+          else onFile?.(files[0]);
           e.target.value = "";
         }}
       />

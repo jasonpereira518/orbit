@@ -176,8 +176,9 @@ async function main() {
   const phoneConv = byKey.get("c-phone")!;
   const phoneP = phoneConv.participants.find((p) => p.key === "+1 415 555 0134")!;
   check("auto-link by phone", phoneP.autoContactId === priya, JSON.stringify(phoneP));
+  check("auto-link names the contact", phoneP.autoContactName === "Priya Nair", JSON.stringify(phoneP));
   const maya = byKey.get("c-maya")!.participants.find((p) => p.key === "Maya Chen")!;
-  check("ambiguous name: no auto-link", maya.autoContactId === null, JSON.stringify(maya));
+  check("ambiguous name: no auto-link", maya.autoContactId === null && maya.autoContactName === null, JSON.stringify(maya));
   check("ambiguous name: 2 candidates", maya.candidates.length === 2, JSON.stringify(maya));
   check("self: saved self name is the suggested owner", phoneConv.suggestedSelfKey === "Jay P");
   const jay = phoneConv.participants.find((p) => p.key === "Jay P")!;

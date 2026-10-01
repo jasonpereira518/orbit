@@ -65,7 +65,13 @@ export type ChatPreviewResult = {
     key: string;
     /** The label the owner most likely is, or null → ask. iMessage: "Me". */
     suggestedSelfKey: string | null;
-    participants: Array<{ key: string; autoContactId: string | null; candidates: ChatCandidate[] }>;
+    participants: Array<{
+      key: string;
+      autoContactId: string | null;
+      /** The auto-linked contact's name, so the review can say who without a second lookup. */
+      autoContactName: string | null;
+      candidates: ChatCandidate[];
+    }>;
   }>;
   estimate: { micros: number; model: string } | null;
 };
@@ -254,7 +260,7 @@ export async function buildChatPreview(
 
     const participants = c.participants.map((p) => {
       // Rule: owners get no candidates.
-      if (owners.has(p.key)) return { key: p.key, autoContactId: null, candidates: [] as ChatCandidate[] };
+      if (owners.has(p.key)) return { key: p.key, autoContactId: null, autoContactName: null, candidates: [] as ChatCandidate[] };
       // Rule (estimate): the conversation's input tokens split evenly across non-owners.
       nonOwnerShares.push({ inputTokens: Math.ceil(conversationTokens / Math.max(1, nonOwnerCount)) });
 
@@ -268,7 +274,13 @@ export async function buildChatPreview(
       }
       // Rule (auto-link): exactly one identifier owner links outright.
       if (identityOwners.size === 1) {
-        return { key: p.key, autoContactId: [...identityOwners.keys()][0], candidates: [] as ChatCandidate[] };
+        const contactId = [...identityOwners.keys()][0];
+        return {
+          key: p.key,
+          autoContactId: contactId,
+          autoContactName: contactById.get(contactId)?.fullName ?? null,
+          candidates: [] as ChatCandidate[],
+        };
       }
 
       const candidates: ChatCandidate[] = [];
@@ -281,7 +293,12 @@ export async function buildChatPreview(
       const matches = findDuplicateCandidatesIndexed(index, { fullName: p.displayName, email: p.email });
       // Rule (auto-link): otherwise the best name-index match links at or above the merge bar.
       if (identityOwners.size === 0 && matches[0] && matches[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-        return { key: p.key, autoContactId: matches[0].contact.id, candidates: [] as ChatCandidate[] };
+        return {
+          key: p.key,
+          autoContactId: matches[0].contact.id,
+          autoContactName: matches[0].contact.fullName,
+          candidates: [] as ChatCandidate[],
+        };
       }
       for (const m of matches) {
         if (m.confidence < CANDIDATE_FLOOR) continue;
@@ -290,7 +307,7 @@ export async function buildChatPreview(
       }
       // Rule: up to 3 candidates, best first.
       candidates.sort((a, b) => b.confidence - a.confidence);
-      return { key: p.key, autoContactId: null, candidates: candidates.slice(0, MAX_CANDIDATES) };
+      return { key: p.key, autoContactId: null, autoContactName: null, candidates: candidates.slice(0, MAX_CANDIDATES) };
     });
 
     return { key: c.key, suggestedSelfKey, participants };
