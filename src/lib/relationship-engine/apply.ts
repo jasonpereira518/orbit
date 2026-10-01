@@ -146,6 +146,7 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
 
   // 1. Action items (one per planned item), then their reminders.
   const batchAdd: Pick<NoteBatchResult, "reminders" | "actionItems"> = { reminders: [], actionItems: [] };
+  let passItemIds: string[] = [];
   if (plan.actionItems.length) {
     const rows = plan.actionItems.map((a, i) => ({
       userId,
@@ -167,11 +168,25 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
       where: and(eq(actionItems.userId, userId), inArray(actionItems.itemHash, rows.map((r) => r.itemHash))),
     });
     const idByHash = new Map(all.map((a) => [a.itemHash, a.id]));
+    passItemIds = all.map((a) => a.id);
+
+    // An item gets a reminder once. The mandated hash includes the due DAY, and undated due
+    // dates are clamped to "tomorrow", so a retry on another day would hash differently and
+    // insert a second reminder (even over one the person dismissed). So: any reminder row
+    // already pointing at the item, in any status, blocks a new one.
+    const existingForItems = await db.query.reminders.findMany({
+      where: and(eq(reminders.userId, userId), inArray(reminders.actionItemId, passItemIds)),
+      columns: { id: true, actionItemId: true },
+    });
+    const hasReminder = new Set(existingForItems.map((r) => r.actionItemId));
+    const reminderOfItem = new Map<string, string>();
+    for (const r of existingForItems) if (r.actionItemId && !reminderOfItem.has(r.actionItemId)) reminderOfItem.set(r.actionItemId, r.id);
+    for (const a of all) if (a.reminderId) hasReminder.add(a.id);
 
     const listId = await getInboxListId(userId);
     const reminderRows = plan.actionItems
       .map((a) => ({ a, id: idByHash.get(actionItemHash(a.interactionId, a.text))! }))
-      .filter(({ a, id }) => a.reminder && id)
+      .filter(({ a, id }) => a.reminder && id && !hasReminder.has(id))
       .map(({ a, id }) => {
         const r = a.reminder!;
         return {
@@ -196,46 +211,48 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
           itemHash: buildSuggestionItemHash(`relationship:${r.interactionId}`, isoDay(r.dueDate), r.title),
         };
       });
-    if (reminderRows.length) {
+    // Two planned items for one action item (same hash) would collide on the insert; first wins.
+    const seenItem = new Set<string>();
+    const uniqueRows = reminderRows.filter((r) => (seenItem.has(r.actionItemId) ? false : (seenItem.add(r.actionItemId), true)));
+    if (uniqueRows.length) {
       const created = await db
         .insert(reminders)
-        .values(reminderRows)
+        .values(uniqueRows)
         .onConflictDoNothing({ target: [reminders.userId, reminders.itemHash] })
         .returning();
       result.remindersCreated = created.length;
       for (const r of created) {
+        if (r.actionItemId) reminderOfItem.set(r.actionItemId, r.id);
         batchAdd.reminders.push({
           id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
           dateBasis: r.dateBasis ?? "window", rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
         });
       }
     }
-    // Link each action item to its reminder. Looked up by hash rather than taken from the
-    // insert's RETURNING, so a retry after a crash between the two inserts still links an
-    // item whose reminder already exists (the insert above would have skipped it).
-    const reminderIdByHash = new Map<string, string>();
-    if (reminderRows.length) {
-      const found = await db.query.reminders.findMany({
-        where: and(eq(reminders.userId, userId), inArray(reminders.itemHash, reminderRows.map((r) => r.itemHash))),
-        columns: { id: true, itemHash: true },
-      });
-      for (const f of found) if (f.itemHash) reminderIdByHash.set(f.itemHash, f.id);
-    }
-    const linkedItem = new Map<string, string>();
-    for (const row of reminderRows) {
-      const rid = reminderIdByHash.get(row.itemHash);
-      if (rid && !linkedItem.has(row.actionItemId)) {
-        linkedItem.set(row.actionItemId, rid);
+    // Link items to their reminder (also repairs a crash between the two inserts).
+    for (const a of all) {
+      const rid = reminderOfItem.get(a.id);
+      if (rid && !a.reminderId) {
+        a.reminderId = rid;
         await db
           .update(actionItems)
           .set({ reminderId: rid })
-          .where(and(eq(actionItems.id, row.actionItemId), eq(actionItems.userId, userId), sql`${actionItems.reminderId} IS NULL`));
+          .where(and(eq(actionItems.id, a.id), eq(actionItems.userId, userId), sql`${actionItems.reminderId} IS NULL`));
       }
     }
-    // Every action item THIS pass created goes in the batch snapshot, reminder or not:
-    // undo deletes exactly the items listed here, so an item with no due date must be listed too.
-    for (const a of inserted) {
-      batchAdd.actionItems.push({ id: a.id, contactId, text: a.text, reminderId: linkedItem.get(a.id) ?? null });
+
+    // Snapshot every open item of this contact created during this run that the batch does
+    // not list yet. Not just `inserted`: after a crash between the insert and the snapshot,
+    // the retry's insert conflicts and returns nothing, and undo would never find the item.
+    const [runRow, batchRow] = await Promise.all([
+      db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, runId), columns: { createdAt: true } }),
+      db.query.noteBatches.findFirst({ where: eq(noteBatches.id, batchId), columns: { result: true } }),
+    ]);
+    const listed = new Set((batchRow?.result.actionItems ?? []).map((x) => x.id));
+    for (const a of all) {
+      if (a.status !== "open" || a.contactId !== contactId || listed.has(a.id)) continue;
+      if (runRow && a.createdAt < runRow.createdAt) continue;
+      batchAdd.actionItems.push({ id: a.id, contactId, text: a.text, reminderId: a.reminderId ?? null });
     }
   }
   await appendBatchResult(batchId, batchAdd);
@@ -278,8 +295,15 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
       patch.company = jc.company;
       if (!contact.title?.trim() && jc.title) patch.title = jc.title;
     }
-    const earliest = plan.actionItems
-      .map((a) => a.reminder?.dueDate)
+    // From reminders that actually exist for this pass's items, not from planned dates.
+    const live = passItemIds.length
+      ? await db.query.reminders.findMany({
+          where: and(eq(reminders.userId, userId), inArray(reminders.actionItemId, passItemIds), eq(reminders.status, "pending")),
+          columns: { dueDate: true },
+        })
+      : [];
+    const earliest = live
+      .map((r) => r.dueDate)
       .filter((d): d is Date => Boolean(d))
       .sort((a, b) => a.getTime() - b.getTime())[0];
     if (earliest && (!contact.nextFollowUpAt || earliest < contact.nextFollowUpAt)) patch.nextFollowUpAt = earliest;
@@ -302,6 +326,8 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
   // 4. Digest + watermark, last.
   const previous = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, contactId) });
   const topics = mergeTopics(previous?.topics ?? [], validated.topics, window.last.at);
+  // Same newest message as the stored watermark: this window was already counted.
+  const replay = previous?.watermarkInteractionId === window.last.interactionId;
   const sources = [...new Set([...(previous?.sources ?? []), ...window.sources])];
   const values = {
     contactId,
@@ -311,7 +337,7 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     summary: validated.summary || previous?.summary || null,
     topics,
     openThreads: plan.openThreads,
-    messageCount: (previous?.messageCount ?? 0) + window.messages.length,
+    messageCount: replay ? (previous?.messageCount ?? 0) : (previous?.messageCount ?? 0) + window.messages.length,
     sources,
     watermarkAt: window.last.at,
     watermarkInteractionId: window.last.interactionId,
@@ -325,8 +351,8 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
   };
   await db.insert(relationshipDigests).values(values).onConflictDoUpdate({ target: relationshipDigests.contactId, set: values });
 
-  // 5. Run counters.
-  await db
+  // 5. Run counters (not again for a replayed window).
+  if (!replay) await db
     .update(relationshipRuns)
     .set({
       processed: sql`${relationshipRuns.processed} + 1`,

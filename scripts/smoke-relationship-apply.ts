@@ -20,6 +20,7 @@ import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
 import { planDigestWrites } from "../src/lib/relationship-engine/rules";
 import type { ValidatedDigest } from "../src/lib/relationship-engine/types";
 import { pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
+import { actionItemHash } from "../src/lib/action-items";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-rel-apply-user";
@@ -110,6 +111,16 @@ async function main() {
   await db.update(reminders).set({ status: "dismissed" }).where(eq(reminders.userId, USER));
   const r3 = await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated, plan });
   check("dismissed not recreated", r3.remindersCreated === 0);
+
+  // Retry planned on a LATER day: undated due dates shift, so the hash differs. No second
+  // reminder per action item, and the dismissed one is not resurrected.
+  const laterPlan = planDigestWrites(validated, {
+    contactId: c.id, contactFirstName: "Maya", now: new Date(NOW.getTime() + 86_400_000), closeness: 3, cadenceDays: null, existingThreads: [], remindersLeftInRun: 25,
+  });
+  const r4 = await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated, plan: laterPlan, now: new Date(NOW.getTime() + 86_400_000) });
+  const allRem = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
+  check("later-day retry adds no reminder", r4.remindersCreated === 0 && allRem.length === 2, `${JSON.stringify(r4)} rows=${allRem.length}`);
+  check("dismissed stays dismissed", allRem.every((r) => r.status === "dismissed"));
   await db.update(reminders).set({ status: "pending" }).where(eq(reminders.userId, USER));
 
   // previous digest exposes action items as ai:<id> keys.
@@ -125,6 +136,18 @@ async function main() {
   check("closed action item done", closed?.status === "done");
   check("closed reminder done", closedReminder?.status === "done");
 
+  const dg = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, c.id) });
+  check("replays do not inflate message_count", dg?.messageCount === 2, String(dg?.messageCount));
+  const runAfterReplay = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, run.id) });
+  check("replays do not inflate run counters", runAfterReplay?.processed === 1, String(runAfterReplay?.processed));
+
+  // Crash between action-item insert and batch snapshot: the item exists, the batch does not list it.
+  const orphanText = "Crash orphan item";
+  await db.insert(actionItems).values({ userId: USER, contactId: c.id, interactionId: msgs[0].id, text: orphanText, position: 9, status: "open", itemHash: actionItemHash(msgs[0].id, orphanText), owedBy: null });
+  const orphanPlan = { ...plan, actionItems: [{ text: orphanText, owedBy: null, interactionId: msgs[0].id, reminder: null }], facts: [], closeActionItemIds: [] };
+  const rOrphan = await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated: { ...validated, facts: [] }, plan: orphanPlan });
+  check("orphan not re-created", rOrphan.actionItemsCreated === 0);
+
   // An action item with no reminder (no due date) must still be undoable.
   const bare = { ...plan, actionItems: [{ text: "Think about the intro", owedBy: null, interactionId: msgs[0].id, reminder: null }], facts: [], closeActionItemIds: [] };
   const rBare = await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated: { ...validated, facts: [] }, plan: bare });
@@ -133,7 +156,7 @@ async function main() {
   // Undo: pending reminders dismissed, open action items removed, run undone.
   const undo = await undoRelationshipRun(USER, run.id);
   check("undo dismisses pending reminders", undo.remindersDismissed === 1, JSON.stringify(undo));
-  check("undo removes open action items (incl. reminder-less)", undo.actionItemsRemoved === 2, JSON.stringify(undo));
+  check("undo removes open action items (incl. reminder-less and crash orphan)", undo.actionItemsRemoved === 3, JSON.stringify(undo));
   const after = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, run.id) });
   check("run marked undone", after?.status === "undone");
   const left = await db.query.actionItems.findMany({ where: and(eq(actionItems.contactId, c.id), eq(actionItems.status, "open")) });
