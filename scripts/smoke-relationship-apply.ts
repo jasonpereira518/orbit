@@ -186,6 +186,18 @@ async function main() {
   const left = await db.query.actionItems.findMany({ where: and(eq(actionItems.contactId, c.id), eq(actionItems.status, "open")) });
   check("no open engine action items left; note item survives", left.length === 1 && left[0].id === noteItem.id, String(left.length));
 
+  // OPEN ITEMS carries the 20 most recent open action items, deterministically.
+  const [c2] = await db.insert(contacts).values({ userId: USER, fullName: "Many Items", source: "linkedin_messages" }).returning();
+  await db.insert(actionItems).values(
+    Array.from({ length: 21 }, (_, i) => ({
+      userId: USER, contactId: c2.id, interactionId: msgs[0].id, text: `Item ${i}`, position: i, status: "open" as const,
+      itemHash: actionItemHash(msgs[0].id, `many-${i}`), owedBy: null, createdAt: new Date(NOW.getTime() - (21 - i) * 86_400_000),
+    }))
+  );
+  const many = await loadPreviousDigest(USER, c2.id);
+  const texts = many.previous!.openItems.map((o) => o.text);
+  check("open items: 20, newest kept, oldest dropped", texts.length === 20 && !texts.includes("Item 0") && texts.includes("Item 20"), JSON.stringify(texts));
+
   // The run's batch was undone or deleted out from under it: the next apply gets a fresh one.
   const [run2] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
   const b1 = await ensureRunNoteBatch(USER, run2.id);

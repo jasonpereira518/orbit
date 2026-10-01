@@ -20,11 +20,15 @@ export const MESSAGE_INTERACTION_SQL: SQL = sql`(
   OR (m.interaction_type = 'message' AND m.source IN ('whatsapp', 'imessage'))
 ) AND btrim(coalesce(m.raw_notes, '')) <> ''`;
 
-/** True when interaction `m` is past digest `d`'s watermark (or there is none). Shared with gather.ts. */
+/**
+ * True when interaction `m` is past digest `d`'s watermark (or there is none). Shared with gather.ts.
+ * The watermark is written from a JS Date (milliseconds); a microsecond interaction_date is
+ * truncated to match, or the row at the watermark would read as newer and stay pending forever.
+ */
 export const WATERMARK_AFTER_SQL: SQL = sql`(
   d.watermark_at IS NULL
-  OR m.interaction_date > d.watermark_at
-  OR (m.interaction_date = d.watermark_at AND m.id > d.watermark_interaction_id)
+  OR date_trunc('milliseconds', m.interaction_date) > d.watermark_at
+  OR (date_trunc('milliseconds', m.interaction_date) = d.watermark_at AND m.id > d.watermark_interaction_id)
 )`;
 
 /**

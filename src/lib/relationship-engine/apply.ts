@@ -11,7 +11,7 @@
  */
 // Bare `.returning()` throughout: a partial selector breaks on this repo's neon-http/PGlite split.
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
@@ -104,6 +104,8 @@ export async function loadPreviousDigest(
     db.query.actionItems.findMany({
       where: and(eq(actionItems.userId, userId), eq(actionItems.contactId, contactId), eq(actionItems.status, "open")),
       columns: { id: true, text: true },
+      // The 20 most recent: deterministic, and what new messages are most likely to close.
+      orderBy: [desc(actionItems.createdAt), desc(actionItems.id)],
       limit: 20,
     }),
   ]);

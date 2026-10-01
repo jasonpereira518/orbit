@@ -160,7 +160,7 @@ async function promptFor(userId: string, contactId: string, window: MessageWindo
   const db = await getDb();
   const [{ previous }, contact] = await Promise.all([
     loadPreviousDigest(userId, contactId),
-    db.query.contacts.findFirst({ where: eq(contacts.id, contactId), columns: { fullName: true } }),
+    db.query.contacts.findFirst({ where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)), columns: { fullName: true } }),
   ]);
   return buildDigestPrompt({ contactName: contact?.fullName ?? "Contact", window, previous });
 }

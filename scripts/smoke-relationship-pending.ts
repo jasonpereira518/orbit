@@ -10,7 +10,7 @@ import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-rel-pending";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-rel-pending";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, interactions, relationshipDigests, userSettings } from "../src/db/schema";
 import {
@@ -136,6 +136,22 @@ async function main() {
   check("  and claimable", (await claimPendingContacts(USER, 10, new Set())).includes(old.contactId));
   await db.update(relationshipDigests).set({ attempts: 4, updatedAt: new Date(Date.now() + 120_000) }).where(eq(relationshipDigests.contactId, old.contactId));
   check("  and parked again after another failure", (await pendingRelationshipContactCount(USER)) === 1);
+
+  // A microsecond interaction_date with the watermark written from a JS Date (milliseconds)
+  // must not stay pending forever.
+  const micro = await seed(USER, "Micro Thread", [["2026-09-27T10:00:00.123Z", "see you at the offsite"]]);
+  await db.execute(sql`UPDATE interactions SET interaction_date = '2026-09-27T10:00:00.123456Z'::timestamptz WHERE id = ${micro.rows[0].id}::uuid`);
+  const microBefore = await pendingRelationshipContactCount(USER);
+  await db.insert(relationshipDigests).values({
+    contactId: micro.contactId,
+    userId: USER,
+    watermarkAt: new Date("2026-09-27T10:00:00.123Z"),
+    watermarkInteractionId: micro.rows[0].id,
+  });
+  check("microsecond message at the watermark → not pending", (await pendingRelationshipContactCount(USER)) === microBefore - 1);
+  await db.delete(relationshipDigests).where(eq(relationshipDigests.contactId, micro.contactId));
+  await db.delete(interactions).where(eq(interactions.contactId, micro.contactId));
+  await db.delete(contacts).where(eq(contacts.id, micro.contactId));
 
   // User sweep honours the settings switch.
   await seed(OFF_USER, "Off Thread", [["2026-09-20T10:00:00Z", "hi"]]);
