@@ -363,6 +363,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-calendar-source-rows": "pglite",
   "smoke-housekeeping-sweeps": "pglite",
   "smoke-linkedin-direction": "pglite",
+  "smoke-relationship-pending": "pglite",
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
