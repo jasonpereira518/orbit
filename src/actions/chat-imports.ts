@@ -66,7 +66,7 @@ export async function appendChatRows(
   try {
     return await appendStagedRows(userId, importId, startIndex, rows);
   } catch (err) {
-    return failure(err, "Couldn’t upload that part of the import — try again", "chat-imports.append");
+    return failure(err, "Couldn’t upload that part of the import — start the import again", "chat-imports.append");
   }
 }
 
