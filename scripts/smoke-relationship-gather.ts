@@ -49,6 +49,12 @@ check("big: kept backlog fits MAX_CHUNKS", keptChars <= MAX_CHUNKS * WINDOW_CHAR
 check("big: truncatedBefore = first kept message", w.truncatedBefore!.getTime() === big[keptFrom].at.getTime());
 check("big: window starts at oldest kept", w.messages[0].interactionId === big[keptFrom].interactionId);
 
+// Both cuts apply (row limit hit upstream AND char budget): first KEPT message's date, not rows[0].
+const both = buildWindow("c1", big, ["linkedin"], true)!;
+check("both cuts: truncatedBefore = first kept message", both.truncatedBefore!.getTime() === both.messages[0].at.getTime() && both.messages[0].interactionId !== big[0].interactionId);
+const limitOnly = buildWindow("c1", [msg(0, "one"), msg(1, "two")], ["linkedin"], true)!;
+check("row limit only: truncatedBefore = first kept message", limitOnly.truncatedBefore!.getTime() === limitOnly.messages[0].at.getTime());
+
 // A single message longer than a window is clipped, never dropped (the watermark must move).
 const huge = buildWindow("c1", [msg(0, "y".repeat(50_000))], ["linkedin"])!;
 check("huge single message: one message, clipped", huge.messages.length === 1 && huge.text.length <= WINDOW_CHARS);

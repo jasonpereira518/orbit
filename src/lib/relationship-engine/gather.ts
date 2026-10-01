@@ -51,8 +51,9 @@ export function buildWindow(
     total -= lines[start].length + 1;
     start += 1;
   }
-  // The earlier of: the first row the char budget kept, and the first row the row limit kept.
-  const truncatedBefore = olderUnread ? rows[0].at : start > 0 ? rows[start].at : null;
+  // The first KEPT message's date: history before this date was not read (cut by the char
+  // budget here, or by the row limit upstream — either way rows[start] is the first kept row).
+  const truncatedBefore = start > 0 || olderUnread ? rows[start].at : null;
 
   // The window is the oldest kept rows up to WINDOW_CHARS; a single over-long message is clipped.
   const kept: WindowMessage[] = [];
@@ -133,10 +134,13 @@ export async function loadMessageWindows(
              : sql``
          }
        ORDER BY m.interaction_date DESC, m.id DESC
-       LIMIT ${rowLimit}
+       LIMIT ${rowLimit + 1}
     `);
-    // Newest rowLimit rows, flipped back to oldest-first for the window.
-    const rows = rowsOf<Row>(result).reverse();
+    // One extra row says exactly whether older unread rows exist; drop it, then flip the
+    // newest rowLimit rows back to oldest-first for the window.
+    const fetched = rowsOf<Row>(result);
+    const olderUnread = fetched.length > rowLimit;
+    const rows = (olderUnread ? fetched.slice(0, rowLimit) : fetched).reverse();
 
     const messages: WindowMessage[] = rows.map((r) => ({
       interactionId: r.id,
@@ -146,7 +150,7 @@ export async function loadMessageWindows(
       text: r.raw_notes ?? "",
     }));
     const sources = [...new Set(rows.map((r) => sourceLabel(r.interaction_type, r.source)))];
-    const window = buildWindow(p.id, messages, sources, rows.length === rowLimit);
+    const window = buildWindow(p.id, messages, sources, olderUnread);
     if (window) windows.set(p.id, window);
   }
   return windows;

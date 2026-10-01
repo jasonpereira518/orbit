@@ -157,7 +157,7 @@ async function main() {
   const backlog = await seed(
     USER,
     "Backlog Thread",
-    Array.from({ length: 8 }, (_, i): [string, string] => [`2026-08-0${i + 1}T10:00:00Z`, `m${i + 1}`])
+    Array.from({ length: 8 }, (_, i): [string, string] => [`2026-08-${String(i + 1).padStart(2, "0")}T10:00:00Z`, `m${i + 1}`])
   );
   const cut = (await loadMessageWindows(USER, [backlog.contactId], { rowLimit: 5 })).get(backlog.contactId);
   check("rowLimit: window exists", !!cut);
@@ -166,7 +166,7 @@ async function main() {
   check("rowLimit: oldest-first", cut?.messages.map((m) => m.text).join(",") === "m4,m5,m6,m7,m8");
   check("rowLimit: truncatedBefore set to first kept row", cut?.truncatedBefore?.toISOString() === "2026-08-04T10:00:00.000Z");
   const uncut = (await loadMessageWindows(USER, [backlog.contactId], { rowLimit: 8 })).get(backlog.contactId);
-  check("rowLimit: exactly-fitting backlog is read from the start", uncut?.messages[0].text === "m1");
+  check("rowLimit: exactly-fitting backlog is read from the start, not truncated", uncut?.messages[0].text === "m1" && uncut.truncatedBefore === null);
 
   // A chat session row speaks as "Chat", whatever its direction.
   const [chatContact] = await db.insert(contacts).values({ userId: USER, fullName: "Chat Person", source: "whatsapp" }).returning();
