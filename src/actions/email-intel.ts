@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections, userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { deleteEmailEventChunks } from "@/lib/email-intel/search-index";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { requireEntitlement } from "@/lib/entitlements";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
@@ -46,6 +47,9 @@ export async function setEmailIntel(enabled: boolean): Promise<ActionResult<void
           updatedAt: new Date(),
         },
       });
+    // Off means chat stops finding what the mail said, at once. The events stay on file (turning
+    // it back on re-indexes them), as the copy says; only the search index is removed.
+    if (!enabled) await deleteEmailEventChunks(userId);
     revalidatePath("/settings");
   });
 }

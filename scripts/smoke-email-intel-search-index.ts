@@ -10,6 +10,7 @@ import { getDb } from "../src/db";
 import { contacts, emailEvents, emailThreads, memoryChunks, userSettings } from "../src/db/schema";
 import { syncIdentitiesForContact } from "../src/lib/contact-identity";
 import { mergeContacts } from "../src/lib/contact-merge";
+import { backfillMemoryChunks, usersWithPendingMemoryWork } from "../src/lib/memory-backfill";
 import {
   deleteEmailEventChunks,
   indexEmailEventsForUser,
@@ -202,6 +203,14 @@ async function main() {
   const stats = await runEmailEventIndexing({ deadline: Date.now() + 30_000 });
   check("indexes every account with something waiting", stats.users >= 2 && stats.indexed >= 2 && stats.errors === 0, JSON.stringify(stats));
   check("and stops at its deadline", (await runEmailEventIndexing({ deadline: Date.now() - 1 })).users === 0);
+
+  console.log("\nIn the sweeps that already exist");
+  await db.delete(memoryChunks).where(and(eq(memoryChunks.userId, U), eq(memoryChunks.sourceKind, "email_event")));
+  check("the daily cron lists an account whose mail is waiting for a passage", (await usersWithPendingMemoryWork(50, async () => false)).includes(U));
+  const swept = await backfillMemoryChunks(U);
+  check("the notes sweep indexes the mail as well", swept.emailEvents >= 2, JSON.stringify(swept));
+  check("and does not count mail as notes still to do", swept.remaining === 0);
+  check("a second sweep has nothing to do", (await backfillMemoryChunks(U)).emailEvents === 0);
 
   console.log("\nSwitching it off");
   await db.update(userSettings).set({ emailIntelEnabled: 0 }).where(eq(userSettings.userId, U));
