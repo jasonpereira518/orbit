@@ -369,6 +369,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-relationship-validate": "pure",
   "smoke-relationship-rules": "pure",
   "smoke-relationship-apply": "pglite",
+  "smoke-relationship-runner": "pglite",
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",

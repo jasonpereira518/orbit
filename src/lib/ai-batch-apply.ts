@@ -16,6 +16,7 @@ import {
   touchImport,
   type RecruiterBatchPayload,
 } from "@/lib/gmail-scan-processor";
+import { applyRelationshipBatch, releaseRelationshipBatch } from "@/lib/relationship-engine/runner";
 import { reportError } from "@/lib/report-error";
 
 /**
@@ -46,6 +47,10 @@ type Applier = {
 };
 
 const APPLIERS: Partial<Record<AiOperationId, Applier>> = {
+  "relationship.digest": {
+    apply: (job, outcomes) => applyRelationshipBatch(job, outcomes),
+    release: (job) => releaseRelationshipBatch(job),
+  },
   "import.enrich": {
     apply: async (job, outcomes) => {
       const payload = job.payload as unknown as EnrichBatchPayload;
