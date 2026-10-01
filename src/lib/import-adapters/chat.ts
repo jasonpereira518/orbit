@@ -26,6 +26,9 @@ function range(p: ChatConversationRowPayload) {
 
 export function chatAdapter(source: "whatsapp" | "imessage"): ImportAdapter<ChatConversationRowPayload> {
   return {
+    // A long chat is staged as several rows per participant (to-rows' size bounds); they are
+    // one person, settled once.
+    samePersonPaths: [["conversationKey"], ["participant", "key"]],
     resolvedContactId(p) {
       return p.resolvedContactId ?? null;
     },

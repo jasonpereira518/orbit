@@ -52,6 +52,8 @@ import { withReference } from "@/lib/errors";
  * per-chunk ceiling that would catch a per-row regression long before chunk width would.
  */
 export const CHUNK_SIZE = 250;
+/** Rows per interactions INSERT; see the chunk loop's interaction write. */
+export const INTERACTION_INSERT_ROWS = 1_000;
 /** Stay well under the 300s function ceiling, leaving room for the self-continuation call. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
@@ -161,7 +163,63 @@ export type ImportAdapter<P> = {
    * embedding path.
    */
   finalize?(userId: string, contactIds: string[]): Promise<void>;
+  /**
+   * JSON paths into the payload whose values together name ONE person across this job's rows
+   * (chat: `conversationKey` + `participant.key` — a long chat is split into several rows).
+   * The first such row settles the person (pin, match or create); every later row with the
+   * same values merges into that same contact rather than matching or creating on its own,
+   * which on a name-only identity would add the person once per row. Rows done by an earlier
+   * invocation of the same job count too. Segments are plain identifiers (letters, digits, _).
+   */
+  samePersonPaths?: readonly (readonly string[])[];
 };
+
+const PATH_SEGMENT_RE = /^[A-Za-z0-9_]+$/;
+
+/** The person key `samePersonPaths` names for one payload; null when any part is missing. */
+function samePersonKeyOf(
+  paths: readonly (readonly string[])[],
+  payload: unknown
+): string | null {
+  const parts: string[] = [];
+  for (const path of paths) {
+    let v: unknown = payload;
+    for (const seg of path) {
+      v = v && typeof v === "object" ? (v as Record<string, unknown>)[seg] : undefined;
+    }
+    if (typeof v !== "string" || !v) return null;
+    parts.push(v);
+  }
+  return parts.join("\u001f");
+}
+
+/**
+ * Person key → contact id, from this job's rows an earlier invocation already finished. One
+ * statement per invocation, reading only the key fields (never the payloads' sessions).
+ */
+async function loadSamePersonContacts(
+  importId: string,
+  paths: readonly (readonly string[])[]
+): Promise<Map<string, string>> {
+  const db = await getDb();
+  const cols = paths.map((path, i) => {
+    if (!path.length || !path.every((seg) => PATH_SEGMENT_RE.test(seg))) {
+      throw new Error(`Invalid samePersonPaths segment: ${path.join(".")}`);
+    }
+    return sql.raw(`payload #>> '{${path.join(",")}}' AS k${i}`);
+  });
+  const result = await db.execute(sql`
+    SELECT contact_id, ${sql.join(cols, sql`, `)} FROM import_job_rows
+    WHERE import_id = ${importId} AND status = 'done' AND contact_id IS NOT NULL
+  `);
+  const out = new Map<string, string>();
+  for (const row of rowsOf<Record<string, string | null>>(result)) {
+    const parts = paths.map((_, i) => row[`k${i}`]);
+    if (parts.some((v) => !v) || !row.contact_id) continue;
+    out.set(parts.join("\u001f"), row.contact_id);
+  }
+  return out;
+}
 
 /** Kick a self-continuation request so remaining rows keep processing in a fresh invocation. */
 async function scheduleContinuation(importId: string) {
@@ -409,6 +467,12 @@ export async function runImportJob(importId: string): Promise<void> {
     let contactById: Map<string, DuplicateSubject>;
     let companyResolve: Awaited<ReturnType<typeof createCompanyResolver>>;
     let engines: Engines = NO_ENGINES;
+    // See `ImportAdapter.samePersonPaths`: person key → the contact that key settled on, and
+    // the contacts this invocation created (absent from `contactById`, which pins read).
+    const samePerson = new Map<string, string>();
+    const createdById = new Map<string, DuplicateSubject>();
+    const personKeyOf = (payload: unknown) =>
+      adapter.samePersonPaths ? samePersonKeyOf(adapter.samePersonPaths, payload) : null;
     try {
       existingContacts = await db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
@@ -427,6 +491,12 @@ export async function runImportJob(importId: string): Promise<void> {
       companyResolve = await createCompanyResolver(userId);
       // Opened once per invocation, like the index: Jev checks name-evidence folds below.
       engines = await openEngines(userId);
+      if (adapter.samePersonPaths) {
+        // A contact deleted since its row finished settles nobody.
+        for (const [key, contactId] of await loadSamePersonContacts(importId, adapter.samePersonPaths)) {
+          if (contactById.has(contactId)) samePerson.set(key, contactId);
+        }
+      }
     } catch (err) {
       await failImport(
         importId,
@@ -589,13 +659,32 @@ export async function runImportJob(importId: string): Promise<void> {
           }
         }
 
+        // See `ImportAdapter.samePersonPaths`. Later rows of a person whose first row creates
+        // in this chunk wait for that contact's id (`followers`), resolved after the create.
+        const followers: { row: PendingRow; key: string }[] = [];
+        const creatingKeys = new Set<string>();
+
         for (const row of pendingRows) {
           // The adapter was chosen from this job's own `importType` and the rows belong to
           // that job, so the payload union is narrowed once here rather than at each of the
           // dozen field reads inside the adapter.
           const payload = row.payload as ImportJobRowPayload;
+          const personKey = personKeyOf(payload);
+          if (personKey) {
+            const settled = samePerson.get(personKey);
+            const subject = settled ? (contactById.get(settled) ?? createdById.get(settled)) : undefined;
+            if (subject) {
+              toUpdate.push({ row, contactId: subject.id, input: adapter.toMerge(payload, subject) });
+              continue;
+            }
+            if (creatingKeys.has(personKey)) {
+              followers.push({ row, key: personKey });
+              continue;
+            }
+          }
           const pinned = pinnedSubject(payload);
           if (pinned) {
+            if (personKey) samePerson.set(personKey, pinned.id);
             toUpdate.push({ row, contactId: pinned.id, input: adapter.toMerge(payload, pinned) });
             continue;
           }
@@ -615,12 +704,14 @@ export async function runImportJob(importId: string): Promise<void> {
           const canFold = best ? best.confidence >= matchConfidence && !heldForReview : false;
 
           if (best && canFold) {
+            if (personKey) samePerson.set(personKey, best.contact.id);
             toUpdate.push({
               row,
               contactId: best.contact.id,
               input: adapter.toMerge(payload, best.contact),
             });
           } else if (createsContacts) {
+            if (personKey) creatingKeys.add(personKey);
             toCreate.push({
               row,
               input: adapter.toCreate(payload),
@@ -711,6 +802,9 @@ export async function runImportJob(importId: string): Promise<void> {
               created.forEach((contact, i) => {
                 addToDuplicateIndex(duplicateIndex, contact);
                 contactIdByRowId.set(batch[i].row.id, contact.id);
+                createdById.set(contact.id, contact);
+                const personKey = personKeyOf(batch[i].row.payload);
+                if (personKey) samePerson.set(personKey, contact.id);
                 provenanceByRowId.set(batch[i].row.id, {
                   created: true,
                   // The PERSISTED contact, not `batch[i].input`. The two differ: the input's
@@ -749,6 +843,38 @@ export async function runImportJob(importId: string): Promise<void> {
             },
             onBadRow
           );
+        }
+
+        // Followers join their first row's contact. When that row got none — refused by the
+        // plan cap, or isolated as a bad row — they share its fate rather than each creating
+        // the person on its own.
+        if (followers.length > 0) {
+          const blockedIds = new Set(planBlockedRows.map((r) => r.id));
+          const leaderFate = new Map<string, "blocked" | "failed">();
+          for (const item of toCreate) {
+            const key = personKeyOf(item.row.payload);
+            if (!key || contactIdByRowId.has(item.row.id) || leaderFate.has(key)) continue;
+            leaderFate.set(key, blockedIds.has(item.row.id) ? "blocked" : "failed");
+          }
+          for (const f of followers) {
+            const settled = samePerson.get(f.key);
+            const subject = settled ? (contactById.get(settled) ?? createdById.get(settled)) : undefined;
+            if (subject) {
+              toUpdate.push({
+                row: f.row,
+                contactId: subject.id,
+                input: adapter.toMerge(f.row.payload as ImportJobRowPayload, subject),
+              });
+            } else if (leaderFate.get(f.key) === "blocked") {
+              planBlockedRows.push(f.row);
+              blockedByPlanTotal += 1;
+            } else {
+              // Not through `onBadRow`: one poison row is not a systemic fault, and charging
+              // its followers to the chunk's budget would fail the whole import over it.
+              failedRowsTotal++;
+              await markRowFailed(f.row, new Error("Couldn’t save this person’s earlier rows"));
+            }
+          }
         }
 
         if (toUpdate.length > 0) {
@@ -844,26 +970,32 @@ export async function runImportJob(importId: string): Promise<void> {
             }
             const dedupedInteractionRows = [...byExternalId.values(), ...noExternalId];
 
-            const loggedInteractions = await db
-              .insert(interactions)
-              .values(dedupedInteractionRows)
-              .onConflictDoUpdate({
-                target: [interactions.userId, interactions.externalId],
-                targetWhere: sql`${interactions.externalId} is not null`,
-                set: {
-                  interactionDate: sql`excluded.interaction_date`,
-                  rawNotes: sql`excluded.raw_notes`,
-                  aiSummary: sql`excluded.ai_summary`,
-                  topics: sql`excluded.topics`,
-                  source: sql`excluded.source`,
-                  // `coalesce`, not a bare overwrite: a resumed pre-change job row carries no
-                  // direction, and letting its NULL clobber a direction an earlier re-upload
-                  // established would undo the backfill it just did.
-                  direction: sql`coalesce(excluded.direction, ${interactions.direction})`,
-                },
-              })
-              .returning();
-            interactionsLoggedTotal += loggedInteractions.length;
+            // At most INTERACTION_INSERT_ROWS per statement: a chat chunk can carry thousands of
+            // sessions, and one INSERT of them all would pass Postgres's 65,535-parameter cap
+            // and the driver's request size. Deduped above across the whole chunk, so no two
+            // statements can touch the same conflict target either.
+            for (let i = 0; i < dedupedInteractionRows.length; i += INTERACTION_INSERT_ROWS) {
+              const loggedInteractions = await db
+                .insert(interactions)
+                .values(dedupedInteractionRows.slice(i, i + INTERACTION_INSERT_ROWS))
+                .onConflictDoUpdate({
+                  target: [interactions.userId, interactions.externalId],
+                  targetWhere: sql`${interactions.externalId} is not null`,
+                  set: {
+                    interactionDate: sql`excluded.interaction_date`,
+                    rawNotes: sql`excluded.raw_notes`,
+                    aiSummary: sql`excluded.ai_summary`,
+                    topics: sql`excluded.topics`,
+                    source: sql`excluded.source`,
+                    // `coalesce`, not a bare overwrite: a resumed pre-change job row carries no
+                    // direction, and letting its NULL clobber a direction an earlier re-upload
+                    // established would undo the backfill it just did.
+                    direction: sql`coalesce(excluded.direction, ${interactions.direction})`,
+                  },
+                })
+                .returning();
+              interactionsLoggedTotal += loggedInteractions.length;
+            }
           }
         }
 

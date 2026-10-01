@@ -228,7 +228,77 @@ async function main() {
   check("imessage source", ints.length === 2 && ints.every((i) => i.source === "imessage"));
   check("imessage job completed", (await db.query.imports.findFirst({ where: eq(imports.id, id) }))?.status === "completed");
 
-  // 8. finalize completed above without throwing (kick is best-effort).
+  // 8. A big chat: one participant split across many rows (to-rows' 50-session bound) is ONE
+  // contact, and > 1,000 interactions land through the chunked insert.
+  await reset();
+  const sessionsFor = (rowNo: number, n: number) =>
+    Array.from({ length: n }, (_, j) => {
+      const start = new Date(Date.UTC(2024, 0, 1) + (rowNo * n + j) * 86_400_000);
+      return {
+        startAt: start.toISOString(),
+        endAt: new Date(start.getTime() + 600_000).toISOString(),
+        messageCount: 2,
+        direction: "in" as const,
+        transcript: `[${start.toISOString().slice(0, 16).replace("T", " ")} Big Bea] day ${rowNo}-${j}`,
+      };
+    });
+  const bigRows = Array.from({ length: 25 }, (_, r) =>
+    row({
+      conversationKey: "big-1",
+      participant: { key: "Big Bea", displayName: "Big Bea", phoneE164: null, email: null },
+      sessions: sessionsFor(r, 50),
+    })
+  );
+  id = await seedJob(bigRows);
+  await runJob(id);
+  let job = await db.query.imports.findFirst({ where: eq(imports.id, id) });
+  cs = await contactsOf();
+  ints = await interactionsOf();
+  check("big chat: job completed", job?.status === "completed", `${job?.status} ${job?.errorMessage ?? ""}`);
+  check("big chat: one participant split across rows is one contact", cs.length === 1, JSON.stringify(cs.map((c) => c.fullName)));
+  check("big chat: 1,250 interactions written", ints.length === 1_250 && ints.every((i) => i.contactId === cs[0].id), String(ints.length));
+  check("big chat: interactionsLogged counts them all", job?.stats?.interactionsLogged === 1_250, String(job?.stats?.interactionsLogged));
+  check("big chat: every row done", (await status(id)).every((s) => s === "done"));
+
+  // 9. Across engine chunks (250 rows each): row 251 of the same participant still lands on them.
+  await reset();
+  const longRows = Array.from({ length: 300 }, (_, r) =>
+    row({
+      conversationKey: "long-1",
+      participant: { key: "Long Lu", displayName: "Long Lu", phoneE164: null, email: null },
+      sessions: sessionsFor(r, 1),
+    })
+  );
+  id = await seedJob(longRows);
+  await runJob(id);
+  cs = await contactsOf();
+  ints = await interactionsOf();
+  check("across chunks: still one contact", cs.length === 1, String(cs.length));
+  check("across chunks: 300 interactions on them", ints.length === 300 && ints.every((i) => i.contactId === cs[0].id), String(ints.length));
+
+  // 10. A resumed job: the participant's first row was done by an earlier invocation.
+  await reset();
+  id = await seedJob(
+    [0, 1].map((r) =>
+      row({
+        conversationKey: "resume-1",
+        participant: { key: "Res Ro", displayName: "Res Ro", phoneE164: null, email: null },
+        sessions: sessionsFor(r, 2),
+      })
+    )
+  );
+  const [earlier] = await db.insert(contacts).values({ userId: USER, fullName: "Res Ro" }).returning();
+  await db
+    .update(importJobRows)
+    .set({ status: "done", contactId: earlier.id })
+    .where(and(eq(importJobRows.importId, id), eq(importJobRows.rowIndex, 0)));
+  await runJob(id);
+  cs = await contactsOf();
+  ints = await interactionsOf();
+  check("resume: no second contact for the same participant", cs.length === 1 && cs[0].id === earlier.id, JSON.stringify(cs.map((c) => c.id)));
+  check("resume: the remaining row's sessions land on them", ints.length === 2 && ints.every((i) => i.contactId === earlier.id), String(ints.length));
+
+  // 11. finalize completed above without throwing (kick is best-effort).
   check("finalize did not break the job", true);
 
   await reset();
