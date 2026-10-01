@@ -54,6 +54,10 @@ import { runEmbeddingBackfill } from "../../src/lib/embedding-backfill";
 import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
 import { analyzeMeetingTranscript } from "../../src/lib/meeting-digest";
+import { buildWindow } from "../../src/lib/relationship-engine/gather";
+import { buildDigestPrompt, extractRelationshipDigest, isTrivialWindow } from "../../src/lib/relationship-engine/extract";
+import { locateExcerpt, validateDigest } from "../../src/lib/relationship-engine/validate";
+import { planDigestWrites } from "../../src/lib/relationship-engine/rules";
 import type {
   CalendarEvalFixture,
   CaptureChecksEvalFixture,
@@ -68,6 +72,7 @@ import type {
   ExtensionEvalFixture,
   OcrEvalFixture,
   RecruiterEvalFixture,
+  RelationshipEvalFixture,
   ResearchEvalFixture,
   TranscribeEvalFixture,
 } from "./eval-ai-fixtures";
@@ -117,7 +122,8 @@ export type TaskName =
   | "transcribe"
   | "chat"
   | "research"
-  | "digest";
+  | "digest"
+  | "relationship";
 
 export const TASK_NAMES: TaskName[] = [
   "capture",
@@ -136,6 +142,7 @@ export const TASK_NAMES: TaskName[] = [
   "chat",
   "research",
   "digest",
+  "relationship",
 ];
 
 /** Overridable so the harness itself can be exercised on throwaway fixtures. */
@@ -1651,6 +1658,111 @@ export async function runDigestTask({ userId, limit, log }: RunOpts): Promise<Ta
   };
 }
 
+/* -------------------------------------------------------------------- relationship ----- */
+
+/**
+ * The relationship engine's per-contact pass on message history: window, prompt, model,
+ * validation, then the autonomy rules (what may become a reminder vs an open thread). Pure
+ * path, no database. The trivial case must be skipped before any model call.
+ */
+export async function runRelationshipTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<RelationshipEvalFixture>("ai-relationship-eval.json").cases.slice(0, limit);
+  const facts = tally();
+  const commitRecall = tally();
+  const commitPrecision = tally();
+  const dates = tally();
+  const silent = tally();
+  let invented = 0;
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+
+  for (const c of cases) {
+    try {
+      const first = c.contactName.split(" ")[0];
+      const window = buildWindow(
+        c.id,
+        c.messages.map((m, i) => ({
+          interactionId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+          at: new Date(m.at),
+          direction: m.from === "me" ? "out" : "in",
+          speaker: m.from === "me" ? "Me" : first,
+          text: m.text,
+        })),
+        ["linkedin"]
+      );
+      if (!window) throw new Error("empty window");
+      if (c.expect.trivial) {
+        const ok = isTrivialWindow(window);
+        count(silent, ok);
+        if (!ok) misses.push(c.id);
+        log(`  ${ok ? "ok  " : "MISS"} relationship/${c.id} (trivial)`);
+        continue;
+      }
+      const prompt = buildDigestPrompt({ contactName: c.contactName, window, previous: null });
+      const answer = await timed(latenciesMs, () => extractRelationshipDigest(userId, prompt));
+      // An excerpt that is not verbatim in any message is an invented item.
+      const excerpts = [
+        ...answer.facts.map((f) => f.excerpt),
+        ...answer.commitments.map((x) => x.excerpt),
+        ...answer.implied.map((x) => x.excerpt),
+      ];
+      invented += excerpts.filter((e) => !locateExcerpt(window, e)).length;
+      const v = validateDigest(answer, window, new Set());
+      const plan = planDigestWrites(v, {
+        contactId: c.id,
+        contactFirstName: first,
+        now: new Date(c.now),
+        closeness: 3,
+        cadenceDays: null,
+        existingThreads: [],
+        remindersLeftInRun: 25,
+      });
+      let missed = false;
+      for (const phrase of c.expect.facts) {
+        const ok = [...v.facts, v.whatTheyDo ?? "", v.workingOn ?? ""].some((f) => mentions(f, phrase));
+        count(facts, ok);
+        missed ||= !ok;
+      }
+      const found = [
+        ...v.dated.map((d) => ({ text: d.text, owedBy: d.owedBy as "me" | "them" | null, dueIso: d.dueDate.toISOString().slice(0, 10) as string | undefined })),
+        ...v.undated.filter((u) => u.origin === "explicit").map((u) => ({ text: u.text, owedBy: u.owedBy, dueIso: undefined as string | undefined })),
+      ];
+      for (const e of c.expect.commitments) {
+        const hit = found.find((f) => mentions(f.text, e.phrase) && f.owedBy === e.owedBy);
+        count(commitRecall, Boolean(hit));
+        missed ||= !hit;
+        if (e.dueIso) {
+          const ok = hit?.dueIso === e.dueIso;
+          count(dates, ok);
+          missed ||= !ok;
+        }
+      }
+      for (const f of found) count(commitPrecision, c.expect.commitments.some((e) => mentions(f.text, e.phrase)));
+      if (plan.remindersPlanned !== c.expect.reminders) missed = true;
+      if (missed) misses.push(c.id);
+      log(`  ${missed ? "MISS" : "ok  "} relationship/${c.id} (reminders ${plan.remindersPlanned}/${c.expect.reminders}, threads ${plan.openThreads.length}/${c.expect.openThreads})`);
+    } catch (err) {
+      misses.push(c.id);
+      count(facts, false);
+      log(`  FAIL relationship/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      factRecall: rate(facts),
+      commitmentRecall: rate(commitRecall),
+      commitmentPrecision: rate(commitPrecision),
+      dateAccuracy: rate(dates),
+      inventedItems: invented,
+      silentOnTrivial: rate(silent),
+    },
+  };
+}
+
 export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   capture: runCaptureTask,
   recruiter: runRecruiterTask,
@@ -1668,4 +1780,5 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   chat: runChatTask,
   research: runResearchTask,
   digest: runDigestTask,
+  relationship: runRelationshipTask,
 };
