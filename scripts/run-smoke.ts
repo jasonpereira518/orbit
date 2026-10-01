@@ -220,6 +220,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-email-intel-extract": "pure",
   "smoke-email-intel-relevance": "pure",
   "smoke-email-intel-inbox-pick": "pure",
+  "smoke-email-intel-inbox-ui": "pure",
   "smoke-email-intel-triage": "pure",
   "smoke-relative-date": "pure",
   "smoke-reveal-reduced-motion": "pure",

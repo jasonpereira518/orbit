@@ -44,6 +44,14 @@ async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {
         }))}
         changes={page.changes}
         signalsThisWeek={page.signalsThisWeek}
+        inboxPeople={page.inboxPeople.map((p) => ({
+          key: p.key,
+          name: p.name,
+          title: p.title,
+          kind: p.kind,
+          summary: p.summary,
+          at: p.at.toISOString(),
+        }))}
         focusId={focus}
       />
       {networkStats && (

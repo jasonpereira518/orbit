@@ -14,6 +14,7 @@ import { upsertThreadResult } from "../src/lib/email-intel/store";
 import type { EmailEventKind, EmailEventPerson } from "../src/lib/email-intel/types";
 import { normalizePersonKey } from "../src/lib/ignored-people";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
+import { loadRadarPage } from "../src/lib/radar/page-data";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const U = "smoke-eil-u";
@@ -150,6 +151,18 @@ async function main() {
   startQueryCount();
   await loadInboxPeople("smoke-eil-nobody", NOW);
   check("an account with nothing on file costs one statement", stopQueryCount() === 1);
+
+  console.log("\nOn the Radar page");
+  startQueryCount();
+  const pageOff = await loadRadarPage(W);
+  const pageOffStatements = stopQueryCount();
+  startQueryCount();
+  const pageOn = await loadRadarPage(U);
+  const pageOnStatements = stopQueryCount();
+  check("an account that has not opted in is handed nobody", pageOff.inboxPeople.length === 0);
+  check("an opted-in account is handed the same people", pageOn.inboxPeople.map((p) => p.key).join(",") === offered.map((p) => p.key).join(","));
+  check("the page stays inside its six statements for an account that has not opted in", pageOffStatements <= 6, String(pageOffStatements));
+  check("opting in adds at most the loader's four", pageOnStatements - pageOffStatements <= 4, `${pageOnStatements} vs ${pageOffStatements}`);
 
   console.log("\nAnother account");
   const theirs = await loadInboxPeople(V, NOW);
