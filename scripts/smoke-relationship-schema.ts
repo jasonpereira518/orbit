@@ -49,6 +49,7 @@ async function main() {
     "user_settings.relationship_engine_enabled",
     (await columns("user_settings")).has("relationship_engine_enabled")
   );
+  check("user_settings.chat_self_names", (await columns("user_settings")).has("chat_self_names"));
   console.log("\nsmoke-relationship-schema: all checks passed");
   process.exit(0);
 }

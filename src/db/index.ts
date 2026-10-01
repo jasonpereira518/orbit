@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
   work_history_auto_enabled integer NOT NULL DEFAULT 1,
   relationship_engine_enabled integer NOT NULL DEFAULT 1,
+  chat_self_names jsonb NOT NULL DEFAULT '[]',
   timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
@@ -2495,7 +2496,9 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // action_items.owed_by, user_settings.relationship_engine_enabled. 144–146 are claimed by the
 // unmerged direct-email stack (claude/direct-email-p1…p4); re-scan every ref and worktree
 // before merging and take a higher number if any of them landed above this.
-export const SCHEMA_VERSION = 147;
+//
+// 148 = user_settings.chat_self_names (relationship engine P2). 147 is P1 (PR #398).
+export const SCHEMA_VERSION = 148;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3527,6 +3530,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
   await ensureColumn(client, "action_items", "owed_by", "text");
 
   try {
@@ -4390,6 +4394,8 @@ const alters = [
   // it adds to tables that older databases already have.
   `ALTER TABLE action_items ADD COLUMN IF NOT EXISTS owed_by text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS relationship_engine_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v148: sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me").
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_self_names jsonb NOT NULL DEFAULT '[]'`,
 ];
 
 /**
