@@ -18,6 +18,7 @@ import {
   pendingRelationshipContactCount,
   usersWithPendingRelationshipWork,
 } from "../src/lib/relationship-engine/pending";
+import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-rel-pending-user";
@@ -74,6 +75,10 @@ async function main() {
   const order = await claimPendingContacts(USER, 10, new Set());
   check("claim: newest conversation first", order[0] === fresh.contactId && order[1] === old.contactId, JSON.stringify(order));
   check("claim: blank thread never claimed", !order.includes(blank.contactId));
+  // Drift guard: gather must produce a window for every contact the claim returns.
+  const windows = await loadMessageWindows(USER, [...order, blank.contactId]);
+  check("gather: window for every claimed contact", order.every((id) => windows.has(id)), JSON.stringify(order));
+  check("gather: blank thread has no window", !windows.has(blank.contactId));
   check("claim: exclude set honoured", !(await claimPendingContacts(USER, 10, new Set([fresh.contactId]))).includes(fresh.contactId));
 
   // Watermark at the only message → not pending.

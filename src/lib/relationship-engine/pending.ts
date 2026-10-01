@@ -20,6 +20,13 @@ export const MESSAGE_INTERACTION_SQL: SQL = sql`(
   OR (m.interaction_type = 'message' AND m.source IN ('whatsapp', 'imessage'))
 ) AND btrim(coalesce(m.raw_notes, '')) <> ''`;
 
+/** True when interaction `m` is past digest `d`'s watermark (or there is none). Shared with gather.ts. */
+export const WATERMARK_AFTER_SQL: SQL = sql`(
+  d.watermark_at IS NULL
+  OR m.interaction_date > d.watermark_at
+  OR (m.interaction_date = d.watermark_at AND m.id > d.watermark_interaction_id)
+)`;
+
 function pendingFrom(now: Date): SQL {
   return sql`
     FROM contacts c
@@ -31,11 +38,7 @@ function pendingFrom(now: Date): SQL {
          WHERE m.user_id = c.user_id
            AND m.contact_id = c.id
            AND ${MESSAGE_INTERACTION_SQL}
-           AND (
-             d.watermark_at IS NULL
-             OR m.interaction_date > d.watermark_at
-             OR (m.interaction_date = d.watermark_at AND m.id > d.watermark_interaction_id)
-           )
+           AND ${WATERMARK_AFTER_SQL}
       )
   `;
 }

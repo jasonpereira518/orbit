@@ -6,9 +6,10 @@
  * MAX_CHUNKS windows is cut from the OLD end — what is open now lives in recent messages —
  * and the cut is recorded so the run summary can say "older history not read".
  */
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { getDb } from "@/db";
-import { contacts, interactions, relationshipDigests } from "@/db/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
+import { contacts } from "@/db/schema";
+import { MESSAGE_INTERACTION_SQL, WATERMARK_AFTER_SQL } from "@/lib/relationship-engine/pending";
 import type { MessageWindow, WindowMessage } from "@/lib/relationship-engine/types";
 
 export const WINDOW_CHARS = 20_000;
@@ -75,52 +76,43 @@ export async function loadMessageWindows(userId: string, contactIds: string[]): 
   const db = await getDb();
 
   const people = await db
-    .select({
-      id: contacts.id,
-      fullName: contacts.fullName,
-      watermarkAt: relationshipDigests.watermarkAt,
-      watermarkInteractionId: relationshipDigests.watermarkInteractionId,
-    })
+    .select({ id: contacts.id, fullName: contacts.fullName })
     .from(contacts)
-    .leftJoin(relationshipDigests, eq(relationshipDigests.contactId, contacts.id))
     .where(and(eq(contacts.userId, userId), inArray(contacts.id, ids)));
 
+  type Row = {
+    id: string;
+    interaction_type: string;
+    source: string | null;
+    interaction_date: Date | string;
+    direction: "in" | "out" | null;
+    raw_notes: string | null;
+  };
+
   for (const p of people) {
-    const after = p.watermarkAt
-      ? sql`AND (${interactions.interactionDate} > ${p.watermarkAt.toISOString()}::timestamptz
-               OR (${interactions.interactionDate} = ${p.watermarkAt.toISOString()}::timestamptz
-                   AND ${interactions.id} > ${p.watermarkInteractionId}::uuid))`
-      : sql``;
-    const rows = await db
-      .select({
-        id: interactions.id,
-        interactionType: interactions.interactionType,
-        source: interactions.source,
-        interactionDate: interactions.interactionDate,
-        direction: interactions.direction,
-        rawNotes: interactions.rawNotes,
-      })
-      .from(interactions)
-      .where(
-        and(
-          eq(interactions.userId, userId),
-          eq(interactions.contactId, p.id),
-          sql`(${interactions.interactionType} = 'linkedin_message'
-               OR (${interactions.interactionType} = 'message' AND ${interactions.source} IN ('whatsapp', 'imessage')))
-              AND btrim(coalesce(${interactions.rawNotes}, '')) <> '' ${after}`
-        )
-      )
-      .orderBy(asc(interactions.interactionDate), asc(interactions.id))
-      .limit(ROW_LIMIT);
+    // Same row predicate and watermark clause the pending query uses (pending.ts), so a
+    // claimed contact always has a window.
+    const result = await db.execute(sql`
+      SELECT m.id, m.interaction_type, m.source, m.interaction_date, m.direction, m.raw_notes
+        FROM interactions m
+        LEFT JOIN relationship_digests d ON d.contact_id = m.contact_id
+       WHERE m.user_id = ${userId}
+         AND m.contact_id = ${p.id}::uuid
+         AND ${MESSAGE_INTERACTION_SQL}
+         AND ${WATERMARK_AFTER_SQL}
+       ORDER BY m.interaction_date ASC, m.id ASC
+       LIMIT ${ROW_LIMIT}
+    `);
+    const rows = rowsOf<Row>(result);
 
     const messages: WindowMessage[] = rows.map((r) => ({
       interactionId: r.id,
-      at: new Date(r.interactionDate),
+      at: new Date(r.interaction_date),
       direction: r.direction ?? null,
       speaker: speakerFor(r.direction ?? null, p.fullName),
-      text: r.rawNotes ?? "",
+      text: r.raw_notes ?? "",
     }));
-    const sources = [...new Set(rows.map((r) => sourceLabel(r.interactionType, r.source)))];
+    const sources = [...new Set(rows.map((r) => sourceLabel(r.interaction_type, r.source)))];
     const window = buildWindow(p.id, messages, sources);
     if (window) windows.set(p.id, window);
   }
