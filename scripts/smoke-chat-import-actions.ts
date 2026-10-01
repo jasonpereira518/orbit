@@ -21,9 +21,12 @@ import {
   contacts,
   imports,
   importJobRows,
+  interactions,
   userSettings,
   type ChatConversationRowPayload,
 } from "../src/db/schema";
+import { runImportJobById } from "../src/lib/import-job-dispatch";
+import { conversationKey, sessionExternalId } from "../src/lib/conversations/sessions";
 import { claimIdentities } from "../src/lib/contact-identity";
 import { identityKeysFor } from "../src/lib/duplicates";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -61,6 +64,7 @@ async function rejects(label: string, fn: () => Promise<unknown>) {
 async function reset() {
   const db = await getDb();
   for (const u of [USER, OTHER]) {
+    await db.delete(interactions).where(eq(interactions.userId, u));
     await db.delete(importJobRows).where(eq(importJobRows.userId, u));
     await db.delete(imports).where(eq(imports.userId, u));
     await db.delete(contactIdentities).where(eq(contactIdentities.userId, u));
@@ -142,6 +146,69 @@ function conversation(isGroup: boolean): Conversation {
     title: isGroup ? "Climbing crew" : "Sam Rivera",
     isGroup,
     participants,
+    messages,
+    dateOrderGuessed: false,
+    skippedLines: 0,
+  };
+}
+
+async function runJob(importId: string) {
+  try {
+    await runImportJobById(importId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.startsWith("Invariant: static generation store missing")) throw err;
+  }
+}
+
+/** The browser's whole path for one conversation: rows → staging → the engine. */
+async function importConversation(c: Conversation, selfKey: string | null, decisions: Parameters<typeof conversationToRows>[2]) {
+  const rows = conversationToRows(c, selfKey, decisions);
+  const { importId } = await beginStaging(USER, { source: c.source, fileName: c.fileName, selfNames: [] }, LIVE);
+  await appendStagedRows(USER, importId, 0, rows, LIVE);
+  await startStaged(USER, importId, LIVE);
+  await runJob(importId);
+  return rows;
+}
+
+/** What the browser sends the preview for a parsed conversation. */
+function toPreview(c: Conversation): ChatPreviewConversation {
+  return {
+    key: conversationKey(c, null),
+    source: c.source,
+    title: c.title,
+    titleFromFile: c.titleFromFile ?? false,
+    isGroup: c.isGroup,
+    participants: c.participants.map((p) => ({ key: p.key, displayName: p.displayName, phoneE164: p.phoneE164, email: p.email })),
+    messageCount: c.messages.length,
+    chars: 100,
+    firstAt: c.messages[0].at,
+    lastAt: c.messages[c.messages.length - 1].at,
+  };
+}
+
+function chat(
+  title: string,
+  labels: string[],
+  opts: { isGroup?: boolean; titleFromFile?: boolean; source?: "whatsapp" | "imessage"; extra?: number } = {},
+): Conversation {
+  const messages = labels.map((k, i) => ({ senderKey: k, at: new Date(Date.UTC(2025, 3, 1, 10, i)).toISOString(), text: `hello ${i}` }));
+  for (let i = 0; i < (opts.extra ?? 0); i++) {
+    messages.push({ senderKey: labels[0], at: new Date(Date.UTC(2025, 4, 1, 10, i)).toISOString(), text: `later ${i}` });
+  }
+  return {
+    source: opts.source ?? "whatsapp",
+    fileName: `${title}.txt`,
+    title,
+    titleFromFile: opts.titleFromFile ?? false,
+    isGroup: opts.isGroup ?? labels.length > 2,
+    participants: labels.map((k) => ({
+      key: k,
+      displayName: k,
+      phoneE164: /^\+\d+$/.test(k) ? k : null,
+      email: null,
+      isSelf: k === "You" || k === "Me",
+    })),
     messages,
     dateOrderGuessed: false,
     skippedLines: 0,
@@ -288,6 +355,91 @@ async function main() {
   check(
     "sweep: a started import stays",
     (await db.query.imports.findFirst({ where: eq(imports.id, importId) }))?.status === "processing",
+  );
+
+  // ── Owner detection (I-4) ──────────────────────────────────────────────────────────
+  await reset();
+  await db.update(userSettings).set({ firstName: "Jason", lastName: "Pereira" }).where(eq(userSettings.userId, USER));
+  const owners = await buildChatPreview(
+    USER,
+    [
+      toPreview(chat("Maya Chen", ["Jason", "Maya Chen"])),
+      toPreview(chat("Maya Chen 2", ["jason   Pereira", "Maya Chen"])),
+      toPreview(chat("Maya Chen", ["Maya Chen", "J P"], { titleFromFile: true })),
+      toPreview(chat("Maya", ["J P"], { titleFromFile: true })),
+      toPreview(chat("Book club", ["Me", "Jason Pereira", "Lee Park"], { source: "imessage" })),
+      toPreview(chat("Lee", ["You", "Lee Park"], { source: "imessage" })),
+    ].map((c, i) => ({ ...c, key: `own-${i}` })),
+    LIVE,
+  );
+  const own = (i: number) => owners.conversations.find((c) => c.key === `own-${i}`)!;
+  check("owner: a bare first name is not the owner", own(0).ownerKeys.length === 0 && own(0).suggestedSelfKey === null, JSON.stringify(own(0)));
+  check("owner: a bare first name is still offered as a person", own(0).participants.some((p) => p.key === "Jason"));
+  check("owner: the exact full name is (case and spacing aside)", own(1).ownerKeys.join() === "jason   Pereira" && own(1).suggestedSelfKey === "jason   Pereira", JSON.stringify(own(1).ownerKeys));
+  check("owner: WhatsApp file-titled 1:1 — the label that is not the title", own(2).ownerKeys.join() === "J P", JSON.stringify(own(2).ownerKeys));
+  check("owner: a lone sender who is not the title is not assumed", own(3).ownerKeys.length === 0 && own(3).suggestedSelfKey === null, JSON.stringify(own(3)));
+  check("owner: every owner label is returned", own(4).ownerKeys.sort().join() === "Jason Pereira,Me" && own(4).suggestedSelfKey === "Me", JSON.stringify(own(4).ownerKeys));
+  check("owner: owners get no candidates", own(4).participants.filter((p) => p.key !== "Lee Park").every((p) => !p.autoContactId && p.candidates.length === 0));
+  check("owner: \"You\" is WhatsApp's owner label, not iMessage's", own(5).ownerKeys.length === 0, JSON.stringify(own(5).ownerKeys));
+
+  // ── Re-exports link to the contact the first import made (I-3) ───────────────────────
+  await reset();
+  const firstDm = chat("Sam Rivera", ["You", "Sam Rivera"]);
+  await importConversation(firstDm, "You", {});
+  const [samMade] = await db.select().from(contacts).where(eq(contacts.userId, USER));
+  check("re-export: the first import created Sam", samMade?.fullName === "Sam Rivera");
+  await addContact("Sam Rivera"); // a namesake: a name match alone could not choose
+  const firstGroup = chat("Climbing crew", ["You", "Ana Ruiz", "Ben Ode"], { isGroup: true });
+  await importConversation(firstGroup, "You", { "Ana Ruiz": { contactId: null, create: true } });
+  const anaMade = (await db.select().from(contacts).where(eq(contacts.userId, USER))).find((c) => c.fullName === "Ana Ruiz")!;
+  await addContact("Ana Ruiz");
+
+  // The same chats, exported again later: a file-name title this time, more messages, a new sender.
+  const againDm = chat("Sam Rivera", ["You", "Sam Rivera"], { titleFromFile: true, extra: 3 });
+  const againGroup = chat("Climbing crew", ["You", "Ana Ruiz", "Ben Ode", "Cleo Fay"], { isGroup: true, extra: 2 });
+  check(
+    "re-export: staged keys unchanged",
+    conversationToRows(againDm, "You", {})[0].conversationKey === conversationToRows(firstDm, "You", {})[0].conversationKey &&
+      conversationToRows(againGroup, "You", { "Ana Ruiz": { contactId: null, create: true } })[0].conversationKey ===
+        conversationToRows(firstGroup, "You", { "Ana Ruiz": { contactId: null, create: true } })[0].conversationKey,
+  );
+  const again = await buildChatPreview(USER, [toPreview(againDm), toPreview(againGroup)], LIVE);
+  const samAgain = again.conversations[0].participants.find((p) => p.key === "Sam Rivera")!;
+  check("re-export: the 1:1 links to the contact the first import created", samAgain.autoContactId === samMade.id, JSON.stringify(samAgain));
+  const groupAgain = again.conversations[1].participants;
+  check(
+    "re-export: the group member links to the contact holding the group",
+    groupAgain.find((p) => p.key === "Ana Ruiz")?.autoContactId === anaMade.id,
+    JSON.stringify(groupAgain),
+  );
+  check("re-export: a member nobody holds stays unlinked", groupAgain.find((p) => p.key === "Ben Ode")?.autoContactId === null);
+  check("re-export: the new sender stays unlinked", groupAgain.find((p) => p.key === "Cleo Fay")?.autoContactId === null);
+
+  // Owner unknown in a two-person chat: the one imported before as the other side is the contact.
+  const unknownOwner = chat("Sam Rivera", ["Sam Rivera", "J Pee"]);
+  const inferred = (await buildChatPreview(USER, [toPreview(unknownOwner)], LIVE)).conversations[0];
+  check("re-export: the other side inferred, the remaining label is the owner", inferred.ownerKeys.join() === "J Pee", JSON.stringify(inferred.ownerKeys));
+  check("re-export: and the other side links", inferred.participants.find((p) => p.key === "Sam Rivera")?.autoContactId === samMade.id);
+
+  // A held conversation and an identifier owner that disagree: offered both, linked to neither.
+  const holder = await addContact("Old Holder");
+  const phoneOwner = await addContact("Phone Owner", "+14155550177");
+  const disputed = chat("+14155550177", ["You", "+14155550177"]);
+  const disputedKey = conversationKey(disputed, "You");
+  await db.insert(interactions).values({
+    userId: USER,
+    contactId: holder,
+    interactionType: "message",
+    interactionDate: new Date("2025-01-01T00:00:00Z"),
+    source: "whatsapp",
+    externalId: sessionExternalId("whatsapp", disputedKey, "2025-01-01T00:00:00.000Z", holder),
+  });
+  const conflict = (await buildChatPreview(USER, [toPreview(disputed)], LIVE)).conversations[0].participants.find((p) => p.key === "+14155550177")!;
+  check("disagree: no auto-link", conflict.autoContactId === null, JSON.stringify(conflict));
+  check(
+    "disagree: both offered",
+    conflict.candidates.some((x) => x.contactId === holder) && conflict.candidates.some((x) => x.contactId === phoneOwner),
+    JSON.stringify(conflict.candidates),
   );
 
   // ── conversationToRows ─────────────────────────────────────────────────────────────

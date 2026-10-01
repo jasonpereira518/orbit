@@ -28,6 +28,7 @@ import { conversationKey } from "@/lib/conversations/sessions";
 import { conversationToRows, type ChatConversationRow, type ParticipantDecision } from "@/lib/conversations/to-rows";
 import type { ChatSource, Conversation } from "@/lib/conversations/types";
 import { parseWhatsAppExport } from "@/lib/conversations/whatsapp";
+import { NO_SELF, needsSelfPick } from "@/lib/conversations/owner";
 import { clearChatHandoff, useChatHandoff } from "@/lib/imports/chat-handoff";
 import { awaitImportJob, startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { UserFacingError, friendlyError } from "@/lib/errors";
@@ -65,6 +66,7 @@ function toPreviewInput({ key, conversation: c }: Loaded): PreviewInput {
     key,
     source: c.source,
     title: c.title,
+    titleFromFile: c.titleFromFile ?? false,
     isGroup: c.isGroup,
     participants: c.participants.map((p) => ({
       key: p.key,
@@ -81,19 +83,6 @@ function toPreviewInput({ key, conversation: c }: Loaded): PreviewInput {
 
 function plural(n: number, word: string) {
   return `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
-}
-
-/**
- * Rule: WhatsApp exports name the owner by their own name, so a WhatsApp chat the preview
- * could not place the owner in asks. A one-sender chat does not: its only sender is the
- * other person far more often than an owner talking to no one.
- */
-function needsSelfPick(l: Loaded, p: PreviewConversation | undefined): boolean {
-  return (
-    l.conversation.source === "whatsapp" &&
-    p?.suggestedSelfKey === null &&
-    l.conversation.participants.filter((x) => !x.isSelf).length > 1
-  );
 }
 
 /**
@@ -124,6 +113,7 @@ export function ChatMessagesImport() {
   const [loaded, setLoaded] = useState<Loaded[]>([]);
   const [ignored, setIgnored] = useState<string[]>([]);
   const [preview, setPreview] = useState<ChatPreview | null>(null);
+  // null: not chosen yet (Import waits); NO_SELF: "None of these".
   const [selfLabel, setSelfLabel] = useState<string | null>(null);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [choices, setChoices] = useState<Record<string, Record<string, MemberChoice>>>({});
@@ -152,7 +142,7 @@ export function ChatMessagesImport() {
   );
 
   const unknownSelf = useMemo(
-    () => loaded.filter((l) => needsSelfPick(l, previewByKey.get(l.key))),
+    () => loaded.filter((l) => needsSelfPick(l.conversation, previewByKey.get(l.key))),
     [loaded, previewByKey],
   );
   const selfOptions = useMemo(() => selfLabelOptions(unknownSelf), [unknownSelf]);
@@ -161,15 +151,26 @@ export function ChatMessagesImport() {
     const suggested = previewByKey.get(l.key)?.suggestedSelfKey ?? null;
     if (suggested != null) return suggested;
     // Rule: the picked label applies to every conversation that contains it.
-    if (l.conversation.source === "whatsapp" && selfLabel && l.conversation.participants.some((p) => p.key === selfLabel)) {
+    if (
+      l.conversation.source === "whatsapp" &&
+      selfLabel &&
+      selfLabel !== NO_SELF &&
+      l.conversation.participants.some((p) => p.key === selfLabel)
+    ) {
       return selfLabel;
     }
     return null;
   }
 
+  /** Rule: every owner label the preview found is left out, not just the one speaking as "Me". */
+  function ownerKeysFor(l: Loaded): string[] {
+    return previewByKey.get(l.key)?.ownerKeys ?? [];
+  }
+
   const review: ReviewConversation[] = loaded.map((l) => {
     const c = l.conversation;
     const selfKey = selfKeyFor(l);
+    const owners = new Set(ownerKeysFor(l));
     const fromPreview = new Map((previewByKey.get(l.key)?.participants ?? []).map((p) => [p.key, p]));
     return {
       key: l.key,
@@ -180,7 +181,7 @@ export function ChatMessagesImport() {
       lastAt: c.messages[c.messages.length - 1].at,
       included: !excluded.has(l.key),
       members: c.participants
-        .filter((p) => !p.isSelf && p.key !== selfKey)
+        .filter((p) => !p.isSelf && p.key !== selfKey && !owners.has(p.key))
         .map((p) => {
           const pp = fromPreview.get(p.key) ?? { autoContactId: null, autoContactName: null, candidates: [] };
           return {
@@ -196,6 +197,12 @@ export function ChatMessagesImport() {
   });
 
   const includedMessages = review.filter((c) => c.included).reduce((n, c) => n + c.messageCount, 0);
+  const selfOptionItems = [
+    ...selfOptions.map((label) => ({ value: label, label })),
+    { value: NO_SELF, label: "None of these" },
+  ];
+  // Rule: while a chat asks who the owner is, Import waits for an answer.
+  const awaitingSelf = unknownSelf.length > 0 && selfLabel === null;
 
   function reset() {
     setLoaded([]);
@@ -219,7 +226,10 @@ export function ChatMessagesImport() {
             skipped.push(f.fileName);
             continue;
           }
-          const key = conversationKey(conversation);
+          // Before the preview, the parser's own owner marks are all there is: this key only
+          // pairs the card with its preview (and spots one chat picked twice). The staged
+          // rows' key is recomputed once the owner is known.
+          const key = conversationKey(conversation, null);
           // The same chat picked twice: keep the fuller export.
           const prior = byKey.get(key);
           if (!prior || prior.conversation.messages.length < conversation.messages.length) {
@@ -237,10 +247,11 @@ export function ChatMessagesImport() {
         const res = await previewChatConversations(next.map(toPreviewInput));
         // Refusals arrive as data — see `previewChatConversations`.
         if ("error" in res) throw new UserFacingError(res.error);
-        const unknown = next.filter((l) => needsSelfPick(l, res.conversations.find((c) => c.key === l.key)));
         setLoaded(next);
         setPreview(res);
-        setSelfLabel(selfLabelOptions(unknown)[0] ?? null);
+        // Rule: nothing preselected. A chat asks only when the preview found no strong owner
+        // sign in it, so a default here would be a guess the person might not notice.
+        setSelfLabel(null);
         setExcluded(new Set());
         setChoices({});
         toast.success(`Loaded ${plural(next.length, "chat")}`);
@@ -259,7 +270,7 @@ export function ChatMessagesImport() {
       const conv = review.find((r) => r.key === l.key);
       const decisions: Record<string, ParticipantDecision> = {};
       for (const m of conv?.members ?? []) decisions[m.key] = choiceToDecision(m.choice);
-      const rows = conversationToRows(l.conversation, selfKeyFor(l), decisions);
+      const rows = conversationToRows(l.conversation, selfKeyFor(l), decisions, ownerKeysFor(l));
       if (!rows.length) continue;
       const bucket = rowsBySource.get(l.conversation.source) ?? { rows: [], files: [] };
       bucket.rows.push(...rows);
@@ -272,7 +283,9 @@ export function ChatMessagesImport() {
       const fileName =
         bucket.files.length === 1 ? bucket.files[0] : `${bucket.files.length} ${SOURCE_LABEL[source]} chats`;
       const selfNames =
-        source === "whatsapp" && selfLabel && !/^(you|me)$/i.test(selfLabel) ? [selfLabel.slice(0, 200)] : [];
+        source === "whatsapp" && selfLabel && selfLabel !== NO_SELF && !/^(you|me)$/i.test(selfLabel)
+          ? [selfLabel.slice(0, 200)]
+          : [];
       return [{ kind: "chat" as const, source, fileName: fileName.slice(0, 255), selfNames, rows: bucket.rows }];
     });
     if (jobs.length === 0) {
@@ -352,22 +365,22 @@ export function ChatMessagesImport() {
         </p>
       ) : null}
 
-      {preview && unknownSelf.length > 0 && selfOptions.length > 0 ? (
+      {preview && unknownSelf.length > 0 ? (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/60 px-3 py-2.5 text-sm">
           <span className="text-muted-foreground">Which sender is you?</span>
           <Select
             value={selfLabel}
             onValueChange={(v) => setSelfLabel(v ?? null)}
-            items={selfOptions.map((label) => ({ value: label, label }))}
+            items={selfOptionItems}
             disabled={busy}
           >
             <SelectTrigger aria-label="Which sender is you" className="h-8 max-w-64">
-              <SelectValue />
+              <SelectValue placeholder="Choose" />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false} className="p-1">
-              {selfOptions.map((label) => (
-                <SelectItem key={label} value={label} className="py-1.5 pl-2">
-                  {label}
+              {selfOptionItems.map((item) => (
+                <SelectItem key={item.value} value={item.value} className="py-1.5 pl-2">
+                  {item.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -402,7 +415,7 @@ export function ChatMessagesImport() {
 
       <div className="flex flex-wrap gap-2">
         <Button
-          disabled={!preview || busy || includedMessages === 0}
+          disabled={!preview || busy || includedMessages === 0 || awaitingSelf}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={startImport}
         >

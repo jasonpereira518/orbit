@@ -25,6 +25,8 @@ export type Conversation = {
   fileName: string;
   /** iMessage: from the file name. WhatsApp: from "WhatsApp Chat with X.txt", else the other sender. */
   title: string;
+  /** WhatsApp: the title came from "WhatsApp Chat with X" — the other person's name, as saved. */
+  titleFromFile?: boolean;
   isGroup: boolean;
   participants: ChatParticipant[];
   /** Oldest first. */

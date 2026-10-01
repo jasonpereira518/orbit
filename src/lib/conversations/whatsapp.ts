@@ -4,18 +4,18 @@
  *   Android: 13/03/2024, 09:15 - Maya Chen: text
  * A line that does not start with a timestamp continues the previous message. Lines without
  * "Name: " after the timestamp are system notices and are dropped, as are media/deleted stubs.
- * Day/month order is decided per file: any first field > 12 → day-first; any second field > 12
- * → month-first; otherwise the caller's locale decides and the result is flagged.
+ * Day/month order is decided per file: any first field > 12 -> day-first; any second field > 12
+ * -> month-first; otherwise the caller's locale decides and the result is flagged.
  */
 import { normalizePhoneLoose } from "@/lib/conversations/phone";
 import type { ChatMessage, ChatParticipant, Conversation } from "@/lib/conversations/types";
 
 export const WHATSAPP_LINE_RE =
-  /^[‎‏]?\[?(\d{1,2})[/.](\d{1,2})[/.](\d{2,4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:[\s  ]*([AaPp])\.?\s?[Mm]\.?)?\]?\s*(?:-\s)?(.*)$/;
+  /^[\u200e\u200f]?\[?(\d{1,2})[/.](\d{1,2})[/.](\d{2,4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:[\s\u202f\u00a0]*([AaPp])\.?\s?[Mm]\.?)?\]?\s*(?:-\s)?(.*)$/;
 const SENDER_RE = /^([^:]{1,80}):\s([\s\S]*)$/;
 const DROP_BODY_RE =
-  /^[‎‏]?(?:<Media omitted>|<attached: .*>|(?:image|video|audio|sticker|GIF|document|Contact card) omitted|This message was deleted|You deleted this message|Missed (?:voice|video) call|null)$/i;
-const MARKS_RE = /^[‎‏]+/;
+  /^[\u200e\u200f]?(?:<Media omitted>|<attached: .*>|(?:image|video|audio|sticker|GIF|document|Contact card) omitted|This message was deleted|You deleted this message|Missed (?:voice|video) call|null)$/i;
+const MARKS_RE = /^[\u200e\u200f]+/;
 const SELF_LABELS = new Set(["you", "me"]);
 
 type Raw = { d1: number; d2: number; y: number; h: number; mi: number; s: number; ampm: string | null; rest: string };
@@ -88,10 +88,12 @@ export function parseWhatsAppExport(
     isSelf: SELF_LABELS.has(key.toLowerCase()),
   }));
   const others = participants.filter((p) => !p.isSelf);
+  const fileTitle = titleFromFileName(fileName);
   return {
     source: "whatsapp",
     fileName,
-    title: titleFromFileName(fileName) ?? (others.length === 1 ? others[0].displayName : fileName.replace(/\.(txt|zip)$/i, "")),
+    title: fileTitle ?? (others.length === 1 ? others[0].displayName : fileName.replace(/\.(txt|zip)$/i, "")),
+    titleFromFile: fileTitle != null,
     isGroup: participants.length > 2,
     participants,
     messages,

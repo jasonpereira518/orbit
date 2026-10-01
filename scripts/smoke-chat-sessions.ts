@@ -6,6 +6,7 @@
 import "./smoke/_env";
 import { conversationKey, groupHeader, sessionExternalId, splitSessions } from "../src/lib/conversations/sessions";
 import { clampCodePoints } from "../src/lib/conversations/clamp";
+import { needsSelfPick } from "../src/lib/conversations/owner";
 import { attributionLine, conversationToRows } from "../src/lib/conversations/to-rows";
 import type { Conversation } from "../src/lib/conversations/types";
 
@@ -44,8 +45,7 @@ check("200-message cap", sm.length === 3 && sm[0].messageCount === 200 && sm[2].
 const long = conv(Array.from({ length: 30 }, (_, i) => [i, "Maya", "y".repeat(1_000)] as [number, string, string]));
 check("12k-char cap", splitSessions(long, "You").every((x) => x.transcript.length <= 12_000));
 
-check("key stable across content", conversationKey(c) === conversationKey(conv([[0, "Maya", "different text"]])));
-check("key differs by title", conversationKey(c) !== conversationKey({ ...c, title: "Other" }));
+check("key stable across content", conversationKey(c, "You") === conversationKey(conv([[0, "Maya", "different text"]]), "You"));
 check(
   "external id format",
   sessionExternalId("whatsapp", "abc", at(0), "11111111-1111-4111-8111-111111111111") ===
@@ -143,5 +143,43 @@ const heavyRows = conversationToRows(heavy, "You", {});
 const heavyTotal = heavyRows.reduce((n, r) => n + JSON.stringify(r).length, 0);
 check("rows: a 2.5 MB participant splits into ≥ 3 rows", heavyTotal > 2_500_000 && heavyRows.length >= 3, `${heavyRows.length} rows, ${heavyTotal} chars`);
 check("rows: each row ≤ 1,000,000 chars of JSON", heavyRows.every((r) => JSON.stringify(r).length <= 1_000_000), heavyRows.map((r) => JSON.stringify(r).length).join(","));
+
+// ── Conversation keys survive re-exports (I-3) ─────────────────────────────────────────
+const p = (key: string, isSelf = false) => ({ key, displayName: key, phoneE164: null, email: null, isSelf });
+const grp = (title: string, members: string[], msgs: Array<[number, string, string]>) =>
+  conv(msgs, { isGroup: true, title, participants: [...members.map((m) => p(m)), p("You", true)] });
+const before = grp("Founders", ["Ana", "Ben"], [[0, "Ana", "hi"], [1, "Ben", "yo"]]);
+const after = grp("Founders", ["Ana", "Ben", "Cleo"], [[0, "Ana", "hi"], [1, "Ben", "yo"], [2, "Cleo", "joined!"], [3, "Ana", "welcome"]]);
+check("key: a group re-exported with a new sender and message keeps its key", conversationKey(before, null) === conversationKey(after, null));
+check("key: groups differ by title", conversationKey(before, null) !== conversationKey(grp("Climbing", ["Ana", "Ben"], [[0, "Ana", "hi"]]), null));
+const generic1 = grp("WhatsApp Chat", ["Ana", "Ben"], [[0, "Ana", "hi"]]);
+const generic2 = grp("WhatsApp Chat", ["Dee", "Eve"], [[0, "Dee", "hi"]]);
+check("key: a generic title falls back to the participants", conversationKey(generic1, null) !== conversationKey(generic2, null));
+check("key: '_chat' and empty titles are generic too", conversationKey(grp("_chat", ["Ana", "Ben"], [[0, "Ana", "x"]]), null) !== conversationKey(grp("_chat", ["Dee"], [[0, "Dee", "x"]]), null) && conversationKey(grp("", ["Ana", "Ben"], [[0, "Ana", "x"]]), null) !== conversationKey(grp("", ["Dee"], [[0, "Dee", "x"]]), null));
+// A 1:1 is keyed by the other person, whatever the file was called and whoever the owner label is.
+const dmA = conv([[0, "Maya", "hi"]], { title: "Maya", participants: [p("Maya"), p("Jason Pereira")] });
+const dmB = conv([[0, "Maya", "hi"], [9, "Jason Pereira", "hey"]], { title: "WhatsApp Chat - Maya", participants: [p("Maya"), p("Jason Pereira")] });
+check("key: a 1:1 is keyed by the non-owner participant", conversationKey(dmA, "Jason Pereira") === conversationKey(dmB, "Jason Pereira"));
+check("key: an owner marked isSelf counts as the owner", conversationKey(c, null) === conversationKey({ ...c, title: "Renamed" }, "You"));
+check("key: a group titled like a person is not that person's 1:1", conversationKey(grp("Maya", ["Maya", "Ben"], [[0, "Maya", "x"]]), null) !== conversationKey(dmA, "Jason Pereira"));
+const rowsKey = conversationToRows(dmB, "Jason Pereira", {})[0].conversationKey;
+check("key: to-rows uses the owner-aware key", rowsKey === conversationKey(dmA, "Jason Pereira"));
+const ownersRows = conversationToRows(
+  conv([[0, "Maya", "hi"], [1, "Jay", "yo"], [2, "Jason Pereira", "hey"]], { isGroup: true, title: "Trio", participants: [p("Maya"), p("Jay"), p("Jason Pereira")] }),
+  "Jason Pereira",
+  { Maya: { contactId: null, create: true }, Jay: { contactId: null, create: true } },
+  ["Jay", "Jason Pereira"],
+);
+check("toRows: every owner key is left out", ownersRows.length === 1 && ownersRows[0].participant.key === "Maya", JSON.stringify(ownersRows.map((r) => r.participant.key)));
+check("toRows: every owner key is left out of the header", ownersRows[0].sessions[0].transcript.startsWith('# Group chat "Trio" with Maya\n'), ownersRows[0].sessions[0].transcript.slice(0, 80));
+
+// ── Who asks for the owner (I-4) ───────────────────────────────────────────────────────
+const wa = (title: string, labels: string[]) => conv([[0, labels[0], "hi"]], { title, participants: labels.map((l) => p(l, l === "You")) });
+check("pick: an owner sign in the preview → no ask", !needsSelfPick(wa("Maya", ["Maya", "Jason"]), { ownerKeys: ["Jason"] }));
+check("pick: two unknown senders → ask", needsSelfPick(wa("Maya", ["Maya", "Jason"]), { ownerKeys: [] }));
+check("pick: a lone sender who is not the title → ask", needsSelfPick(wa("Maya", ["Jason"]), { ownerKeys: [] }));
+check("pick: a lone sender who is the title → no ask", !needsSelfPick(wa("Maya", ["maya "]), { ownerKeys: [] }));
+check("pick: iMessage never asks", !needsSelfPick({ ...wa("Maya", ["Maya", "Jason"]), source: "imessage" }, { ownerKeys: [] }));
+check("pick: no preview yet → no ask", !needsSelfPick(wa("Maya", ["Maya", "Jason"]), undefined));
 
 console.log("\nsmoke-chat-sessions: all checks passed");

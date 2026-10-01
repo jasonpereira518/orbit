@@ -12,11 +12,12 @@
  */
 import { and, eq, lt, sql } from "drizzle-orm";
 import { z } from "zod";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import {
   contacts,
   imports,
   importJobRows,
+  interactions,
   userSettings,
   type ChatConversationRowPayload,
 } from "@/db/schema";
@@ -34,12 +35,12 @@ import { UserFacingError } from "@/lib/errors";
 import { IMESSAGE_CHAT_IMPORT_TYPE, WHATSAPP_CHAT_IMPORT_TYPE } from "@/lib/import-adapters/chat";
 import { stageImportRows } from "@/lib/import-job-rows";
 import { isImportId } from "@/lib/imports/import-ids";
-import { isSelf } from "@/lib/meeting-digest";
 import { loadMeetingSelf } from "@/lib/meeting-sessions";
 import { CHAT_IMPORTS_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { MAX_APPEND_ROWS, SESSION_MAX_CHARS } from "@/lib/conversations/types";
+import { conversationKey } from "@/lib/conversations/sessions";
 import type { ChatConversationRow } from "@/lib/conversations/to-rows";
 
 /** The browser-side row type and the stored payload type must not drift apart. */
@@ -52,6 +53,8 @@ export type ChatPreviewConversation = {
   key: string;
   source: "whatsapp" | "imessage";
   title: string;
+  /** WhatsApp: the title is the other person's saved name, from "WhatsApp Chat with X". */
+  titleFromFile?: boolean;
   isGroup: boolean;
   participants: ChatPreviewParticipant[];
   messageCount: number;
@@ -63,8 +66,15 @@ export type ChatCandidate = { contactId: string; fullName: string; confidence: n
 export type ChatPreviewResult = {
   conversations: Array<{
     key: string;
-    /** The label the owner most likely is, or null → ask. iMessage: "Me". */
+    /** The owner label to speak as "Me": the first of `ownerKeys`, or null → ask. */
     suggestedSelfKey: string | null;
+    /**
+     * Every label with a strong sign of being the owner: the export's own owner label ("Me"
+     * in iMessage, "You" in WhatsApp), the person's exact full name, a saved chat self name,
+     * the WhatsApp file-title rule, or a 1:1 whose other side was imported before. None of
+     * them is ever offered as a contact.
+     */
+    ownerKeys: string[];
     participants: Array<{
       key: string;
       autoContactId: string | null;
@@ -122,6 +132,7 @@ const previewSchema = z
       key: z.string().max(300),
       source: z.enum(["whatsapp", "imessage"]),
       title: z.string().max(1_000),
+      titleFromFile: z.boolean().optional(),
       isGroup: z.boolean(),
       participants: z
         .array(
@@ -190,6 +201,41 @@ function identityId(k: IdentityKey) {
   return `${k.kind}\u001f${k.value}`;
 }
 
+/** Interaction external ids for a chat start `chat:<source>:<conversationKey>:`. */
+function chatIdPattern(source: ChatSource, key: string) {
+  return `chat:${source}:${key.replace(/[\\%_]/g, (ch) => `\\${ch}`)}:%`;
+}
+
+type Holder = { contactId: string; fullName: string };
+
+/**
+ * Rule (re-exports): who already holds each of these conversations — the contacts whose
+ * interactions carry `chat:<source>:<key>:…`. One statement per 500 keys.
+ */
+async function conversationHolders(userId: string, wanted: Array<{ source: ChatSource; key: string }>) {
+  const out = new Map<string, Holder[]>();
+  const unique = [...new Map(wanted.map((w) => [`${w.source}:${w.key}`, w])).values()];
+  const db = await getDb();
+  for (let i = 0; i < unique.length; i += 500) {
+    const patterns = unique.slice(i, i + 500).map((w) => chatIdPattern(w.source, w.key));
+    const result = await db.execute(sql`
+      SELECT DISTINCT i.contact_id, c.full_name,
+        split_part(i.external_id, ':', 2) AS source, split_part(i.external_id, ':', 3) AS key
+      FROM ${interactions} i
+      JOIN ${contacts} c ON c.id = i.contact_id AND c.user_id = ${userId}
+      WHERE i.user_id = ${userId}
+        AND i.external_id LIKE ANY (ARRAY[${sql.join(patterns.map((pt) => sql`${pt}`), sql`, `)}]::text[])
+    `);
+    for (const r of rowsOf<{ contact_id: string; full_name: string; source: string; key: string }>(result)) {
+      const id = `${r.source}:${r.key}`;
+      const list = out.get(id) ?? [];
+      list.push({ contactId: r.contact_id, fullName: r.full_name });
+      out.set(id, list);
+    }
+  }
+  return (source: ChatSource, key: string) => out.get(`${source}:${key}`) ?? [];
+}
+
 export async function buildChatPreview(
   userId: string,
   convs: ChatPreviewConversation[],
@@ -213,30 +259,89 @@ export async function buildChatPreview(
     }),
   ]);
   const savedSelf = new Set((settings?.chatSelfNames ?? []).map(normLabel));
+  const first = meetingSelf.firstName?.trim();
+  const last = meetingSelf.lastName?.trim();
+  const ownFullName = first && last ? normLabel(`${first} ${last}`) : null;
   const contactById = new Map(existing.map((c) => [c.id, c]));
   // Rule: the name index is built once per call, never per participant.
   const index = buildDuplicateIndex(existing);
 
   /**
-   * Rule (self): the owner is a saved self name (case-insensitive), the person's own name
-   * per `isSelf`, or the export's own owner label — "Me" (iMessage) / "You" (WhatsApp).
+   * Rule (self): a label is the owner only on a strong sign — the export's own owner label
+   * ("Me" in iMessage, "You" in WhatsApp), a saved chat self name, or the person's exact
+   * full name (case and spacing aside). A bare first name is not one: "Jason" in a chat is
+   * as likely to be a friend called Jason.
    */
-  const ownerLabel = (p: ChatPreviewParticipant) =>
-    [p.key, p.displayName].some(
-      (label) => label === "Me" || label === "You" || savedSelf.has(normLabel(label)) || isSelf(label, meetingSelf),
+  const strongOwner = (c: ChatPreviewConversation, p: ChatPreviewParticipant) =>
+    [p.key, p.displayName].some((label) => {
+      if (label === (c.source === "imessage" ? "Me" : "You")) return true;
+      const n = normLabel(label);
+      return savedSelf.has(n) || (ownFullName != null && n === ownFullName);
+    });
+
+  const ownersOf = list.map((c) => {
+    const owners = new Set(c.participants.filter((p) => strongOwner(c, p)).map((p) => p.key));
+    // Rule (file title): a WhatsApp 1:1 named "WhatsApp Chat with X" is X's chat. When X
+    // wrote in it and exactly one other label did, that other label is the owner.
+    if (owners.size === 0 && !c.isGroup && c.source === "whatsapp" && c.titleFromFile) {
+      const title = normLabel(c.title);
+      const titled = c.participants.filter((p) => normLabel(p.displayName) === title);
+      const rest = c.participants.filter((p) => normLabel(p.displayName) !== title);
+      if (titled.length >= 1 && rest.length === 1) owners.add(rest[0].key);
+    }
+    return owners;
+  });
+
+  // Rule (re-exports): the keys each conversation may have been staged under before. A
+  // group's key does not depend on the owner; a 1:1's is its other person, so a 1:1 whose
+  // owner is still unknown asks once per candidate other person.
+  const keyInput = (c: ChatPreviewConversation, owners: Set<string>) => ({
+    source: c.source,
+    title: c.title,
+    isGroup: c.isGroup,
+    participants: c.participants.map((p) => ({ key: p.key, isSelf: owners.has(p.key) })),
+  });
+  /** A 1:1's key if `p` is its other person (everyone else the owner). */
+  const dmKey = (c: ChatPreviewConversation, p: ChatPreviewParticipant) =>
+    conversationKey(
+      { ...keyInput(c, new Set()), participants: c.participants.map((q) => ({ key: q.key, isSelf: q.key !== p.key })) },
+      null,
     );
+  const keysOfConv = list.map((c, i) => {
+    const owners = ownersOf[i];
+    const keys = [conversationKey(keyInput(c, owners), null)];
+    const nonOwners = c.participants.filter((p) => !owners.has(p.key));
+    if (!c.isGroup && nonOwners.length > 1) {
+      for (const p of nonOwners) keys.push(dmKey(c, p));
+    }
+    return keys;
+  });
+  const holdersOf = await conversationHolders(
+    userId,
+    list.flatMap((c, i) => keysOfConv[i].map((key) => ({ source: c.source, key }))),
+  );
+
+  // Rule (re-exports, owner): a two-person chat with no owner sign, where exactly one of
+  // the two was imported before as the other side — the remaining one is the owner.
+  list.forEach((c, i) => {
+    const owners = ownersOf[i];
+    const nonOwners = c.participants.filter((p) => !owners.has(p.key));
+    if (c.isGroup || nonOwners.length !== 2) return;
+    const seen = nonOwners.filter((p) => holdersOf(c.source, dmKey(c, p)).length > 0);
+    if (seen.length === 1) owners.add(nonOwners.find((p) => p !== seen[0])!.key);
+  });
 
   // Every identifier in the whole preview, looked up in ONE query.
   const keysOf = new Map<ChatPreviewParticipant, IdentityKey[]>();
   const allKeys = new Map<string, IdentityKey>();
-  for (const c of list) {
+  list.forEach((c, i) => {
     for (const p of c.participants) {
-      if (ownerLabel(p)) continue;
+      if (ownersOf[i].has(p.key)) continue;
       const keys = identityKeysFor({ phone: p.phoneE164, email: p.email });
       keysOf.set(p, keys);
       for (const k of keys) allKeys.set(identityId(k), k);
     }
-  }
+  });
   const ownersById = new Map<string, Set<string>>();
   for (const o of await findIdentityOwners(userId, [...allKeys.values()])) {
     const id = identityId(o.key);
@@ -246,23 +351,32 @@ export async function buildChatPreview(
   }
 
   const nonOwnerShares: Array<{ inputTokens: number }> = [];
-  const conversations: ChatPreviewResult["conversations"] = list.map((c) => {
-    let suggestedSelfKey: string | null = null;
-    const owners = new Set<string>();
-    for (const p of c.participants) {
-      if (!ownerLabel(p)) continue;
-      owners.add(p.key);
-      // Rule: the first owner label found is the suggestion.
-      suggestedSelfKey ??= p.key;
-    }
-    const nonOwnerCount = c.participants.filter((p) => !owners.has(p.key)).length;
+  const conversations: ChatPreviewResult["conversations"] = list.map((c, ci) => {
+    const owners = ownersOf[ci];
+    const ownerKeys = c.participants.filter((p) => owners.has(p.key)).map((p) => p.key);
+    const nonOwners = c.participants.filter((p) => !owners.has(p.key));
     const conversationTokens = Math.ceil(c.chars / 4);
+    const groupHolders = c.isGroup || nonOwners.length !== 1 ? holdersOf(c.source, conversationKey(keyInput(c, owners), null)) : [];
+
+    /**
+     * Rule (re-exports, link): the contact that already holds this conversation. A 1:1's
+     * other person is its single holder; in a group (or a 1:1 with no single other person),
+     * the one holder whose name is this participant's label.
+     */
+    const priorFor = (p: ChatPreviewParticipant): string | null => {
+      if (!c.isGroup && nonOwners.length === 1) {
+        const held = holdersOf(c.source, conversationKey(keyInput(c, owners), null));
+        return held.length === 1 ? held[0].contactId : null;
+      }
+      const named = groupHolders.filter((h) => normLabel(h.fullName) === normLabel(p.displayName));
+      return named.length === 1 ? named[0].contactId : null;
+    };
 
     const participants = c.participants.map((p) => {
       // Rule: owners get no candidates.
       if (owners.has(p.key)) return { key: p.key, autoContactId: null, autoContactName: null, candidates: [] as ChatCandidate[] };
       // Rule (estimate): the conversation's input tokens split evenly across non-owners.
-      nonOwnerShares.push({ inputTokens: Math.ceil(conversationTokens / Math.max(1, nonOwnerCount)) });
+      nonOwnerShares.push({ inputTokens: Math.ceil(conversationTokens / Math.max(1, nonOwners.length)) });
 
       const identityOwners = new Map<string, string>();
       for (const k of keysOf.get(p) ?? []) {
@@ -272,37 +386,42 @@ export async function buildChatPreview(
           }
         }
       }
-      // Rule (auto-link): exactly one identifier owner links outright.
+      const prior = priorFor(p);
+      const linked = (contactId: string) => ({
+        key: p.key,
+        autoContactId: contactId,
+        autoContactName: contactById.get(contactId)?.fullName ?? null,
+        candidates: [] as ChatCandidate[],
+      });
+      // Rule (auto-link): exactly one identifier owner links outright — unless the contact
+      // holding this conversation is someone else, which a person has to settle.
       if (identityOwners.size === 1) {
         const contactId = [...identityOwners.keys()][0];
-        return {
-          key: p.key,
-          autoContactId: contactId,
-          autoContactName: contactById.get(contactId)?.fullName ?? null,
-          candidates: [] as ChatCandidate[],
-        };
+        if (!prior || prior === contactId) return linked(contactId);
       }
+      // Rule (auto-link): with no identifier owner, the contact that already holds this
+      // conversation wins over any name match.
+      if (identityOwners.size === 0 && prior) return linked(prior);
 
       const candidates: ChatCandidate[] = [];
-      // Two contacts each holding one of this participant's identifiers is a conflict for a
-      // person to settle: they are offered first, and no name match can auto-link past them.
+      // Identifier owners that disagree (with each other, or with the conversation's holder)
+      // are a conflict for a person to settle: offered first, and nothing links past them.
       for (const [contactId, reason] of identityOwners) {
         const contact = contactById.get(contactId);
         if (contact) candidates.push({ contactId, fullName: contact.fullName, confidence: 0.95, reason });
       }
+      if (prior && !candidates.some((x) => x.contactId === prior)) {
+        const contact = contactById.get(prior);
+        if (contact) candidates.push({ contactId: prior, fullName: contact.fullName, confidence: 0.9, reason: "Imported this chat before" });
+      }
       const matches = findDuplicateCandidatesIndexed(index, { fullName: p.displayName, email: p.email });
       // Rule (auto-link): otherwise the best name-index match links at or above the merge bar.
-      if (identityOwners.size === 0 && matches[0] && matches[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-        return {
-          key: p.key,
-          autoContactId: matches[0].contact.id,
-          autoContactName: matches[0].contact.fullName,
-          candidates: [] as ChatCandidate[],
-        };
+      if (identityOwners.size === 0 && !prior && matches[0] && matches[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+        return linked(matches[0].contact.id);
       }
       for (const m of matches) {
         if (m.confidence < CANDIDATE_FLOOR) continue;
-        if (candidates.some((c) => c.contactId === m.contact.id)) continue;
+        if (candidates.some((x) => x.contactId === m.contact.id)) continue;
         candidates.push({ contactId: m.contact.id, fullName: m.contact.fullName, confidence: m.confidence, reason: m.reason });
       }
       // Rule: up to 3 candidates, best first.
@@ -310,7 +429,7 @@ export async function buildChatPreview(
       return { key: p.key, autoContactId: null, autoContactName: null, candidates: candidates.slice(0, MAX_CANDIDATES) };
     });
 
-    return { key: c.key, suggestedSelfKey, participants };
+    return { key: c.key, suggestedSelfKey: ownerKeys[0] ?? null, ownerKeys, participants };
   });
 
   return { conversations, estimate: await estimateFor(userId, nonOwnerShares) };

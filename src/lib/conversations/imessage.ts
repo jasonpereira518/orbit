@@ -19,7 +19,7 @@ const MONTHS: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4,
 // \s covers U+00A0 and U+202F, which macOS 14+ puts before AM/PM.
 export const IMESSAGE_HEADER_RE = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s?([AP]M)\b/;
 /** Legacy/inline tapback text ("Loved “…”"); current exports nest tapbacks under "Tapbacks:". */
-const TAPBACK_RE = /^(?:Loved|Liked|Disliked|Laughed at|Emphasized|Questioned|Removed an? [a-z]+ from) [“"]/;
+const TAPBACK_RE = /^(?:Loved|Liked|Disliked|Laughed at|Emphasized|Questioned|Removed an? [a-z]+ from) [\u201c"]/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ATTACHMENT_PATH_RE = /^(?:~|\/|[A-Za-z]:\\).*\.[A-Za-z0-9]{2,5}$/;
 const REPLY_TRAILER = "This message responded to an earlier message.";

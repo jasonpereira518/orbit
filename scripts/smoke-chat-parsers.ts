@@ -31,7 +31,11 @@ const ios = [
   "[14/03/2024, 18:00:00] Maya Chen: Perfect, see you then",
 ].join("\n");
 const a = parseWhatsAppExport(ios, "WhatsApp Chat with Maya Chen.txt", { localeDayFirst: false });
-check("ios: title from file name", a.title === "Maya Chen");
+check("ios: title from file name", a.title === "Maya Chen" && a.titleFromFile === true);
+check(
+  "title not from file name is flagged so",
+  parseWhatsAppExport("[13/03/2024, 09:15:02] Maya Chen: hi", "_chat.txt").titleFromFile === false,
+);
 check("ios: 1:1", a.isGroup === false && a.participants.length === 2);
 check("ios: system + media + deleted dropped", a.messages.length === 3, JSON.stringify(a.messages.map((m) => m.text)));
 check("ios: continuation joined", a.messages[1].text === "Yes — lunch at 1?\nAlso bring the deck");

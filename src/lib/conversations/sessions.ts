@@ -11,9 +11,38 @@ import {
   type ChatSession, type ChatSource, type Conversation,
 } from "@/lib/conversations/types";
 
-export function conversationKey(c: Conversation): string {
-  const keys = c.participants.map((p) => p.key).sort().join("\u001f");
-  return fnv1a64(`${c.source}\u001f${c.title}\u001f${keys}`);
+/** What a key is computed from — the preview has these fields without the messages. */
+export type ConversationKeyInput = {
+  source: ChatSource;
+  title: string;
+  isGroup: boolean;
+  participants: ReadonlyArray<{ key: string; isSelf?: boolean }>;
+};
+
+/** Titles that name no particular group: the export's own placeholders. */
+const GENERIC_TITLE_RE = /^(?:_?chat|whatsapp chat)$/i;
+
+/**
+ * The same chat exported again must keep its key, or its sessions land twice and the preview
+ * cannot find who it went to last time. So the key leaves out whatever a re-export changes:
+ * - a group is its title (members come and go); a placeholder title falls back to the
+ *   sorted participant labels;
+ * - a 1:1 is the other person's label (the file name and the owner's own label vary).
+ *   With no single other person (owner unknown) it falls back to the participant labels.
+ * The kind is part of the hash, so a group titled "Maya" is not Maya's 1:1.
+ */
+export function conversationKey(c: ConversationKeyInput, selfKey: string | null): string {
+  const all = c.participants.map((p) => p.key).sort().join("\u001f");
+  if (c.isGroup) {
+    const title = c.title.replace(/\s+/g, " ").trim();
+    return title && !GENERIC_TITLE_RE.test(title)
+      ? fnv1a64(`${c.source}\u001fgroup\u001f${title}`)
+      : fnv1a64(`${c.source}\u001fgroup-members\u001f${all}`);
+  }
+  const others = c.participants.filter((p) => !p.isSelf && p.key !== selfKey);
+  return others.length === 1
+    ? fnv1a64(`${c.source}\u001fdm\u001f${others[0].key}`)
+    : fnv1a64(`${c.source}\u001fdm-members\u001f${all}`);
 }
 
 export function sessionExternalId(source: ChatSource, key: string, startAtIso: string, contactId: string): string {

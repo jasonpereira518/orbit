@@ -73,11 +73,16 @@ export function conversationToRows(
   c: Conversation,
   selfKey: string | null,
   decisions: Record<string, ParticipantDecision>,
+  /** Every label the preview recognised as the owner; none of them gets a row. */
+  ownerKeys: readonly string[] = [],
 ): ChatConversationRow[] {
   // Rule: the owner the person picked is often a real name the parser could not mark as
   // self; the header names everyone BUT them. A copy — the caller's parse stays untouched.
-  const owned =
-    selfKey == null ? c : { ...c, participants: c.participants.map((p) => (p.key === selfKey ? { ...p, isSelf: true } : p)) };
+  const owners = new Set(ownerKeys);
+  if (selfKey != null) owners.add(selfKey);
+  const owned = owners.size
+    ? { ...c, participants: c.participants.map((p) => (owners.has(p.key) ? { ...p, isSelf: true } : p)) }
+    : c;
 
   // Who gets rows. Rule: the owner never gets a row; absent a decision, a 1:1 creates its
   // contact and a group member is skipped — unmatched group members are never auto-created.
@@ -96,7 +101,7 @@ export function conversationToRows(
   const prefixChars = Math.max(0, ...members.map((m) => prefixOf(m.displayName).length));
   // Rule: split and key once per conversation — every participant's rows share them.
   const sessions = splitSessions(c, selfKey, { prefixChars });
-  const key = conversationKey(c);
+  const key = conversationKey(owned, selfKey);
   const title = clampCodePoints(c.title, MAX_TITLE);
 
   const rows: ChatConversationRow[] = [];
