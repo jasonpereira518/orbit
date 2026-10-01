@@ -40,6 +40,7 @@ import type {
   EmailThreadStatus,
   ThreadDecision,
 } from "@/lib/email-intel/types";
+import type { MemorySourceKind } from "@/lib/memory-chunks";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -2445,7 +2446,7 @@ export const memoryChunks = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
-    sourceKind: text("source_kind").$type<"interaction" | "note_batch" | "brief">().notNull(),
+    sourceKind: text("source_kind").$type<MemorySourceKind>().notNull(),
     sourceId: uuid("source_id").notNull(),
     /** The passage's primary subject. Null when nobody has been resolved from it yet. */
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),

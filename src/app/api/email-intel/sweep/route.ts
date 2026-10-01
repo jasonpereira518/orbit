@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { runEmailIntelExtraction, type EmailIntelExtractStats } from "@/lib/email-intel/extractor";
+import { runEmailEventIndexing, type EmailEventIndexingStats } from "@/lib/email-intel/search-index";
 import { runEmailIntelSweep } from "@/lib/email-intel/sweep";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
@@ -22,6 +23,7 @@ export const maxDuration = 300;
 
 const INGEST_DEADLINE_MS = 100_000;
 const START_DEADLINE_MS = 240_000;
+const INDEX_DEADLINE_MS = 280_000;
 
 /** Flat numbers for the `cron_runs` stats column. */
 function flatten(prefix: string, stats: Record<string, unknown>): Record<string, number> {
@@ -50,6 +52,15 @@ export async function POST(request: Request) {
       reportError(err, { where: "email-intel.extract.run" });
     }
 
+    // Make what was just stored searchable from chat now, not at tomorrow's backstop. No model
+    // call, and a failure here is a warning, never a failed sweep.
+    let indexing: EmailEventIndexingStats | null = null;
+    try {
+      indexing = await runEmailEventIndexing({ deadline: started + INDEX_DEADLINE_MS });
+    } catch (err) {
+      reportError(err, { where: "email-intel.index.run", level: "warning" });
+    }
+
     const partial =
       ingest.partial > 0 ||
       ingest.exhausted > 0 ||
@@ -64,9 +75,13 @@ export async function POST(request: Request) {
       // Out of time, out of daily budget, or a person's key being refused is the ordinary
       // partial shape, not a failure.
       status: partial ? "partial" : "ok",
-      stats: { ...flatten("ingest_", ingest), ...(extraction ? flatten("extract_", extraction) : {}) },
+      stats: {
+        ...flatten("ingest_", ingest),
+        ...(extraction ? flatten("extract_", extraction) : {}),
+        ...(indexing ? flatten("index_", indexing) : {}),
+      },
     });
-    return NextResponse.json({ ok: true, ingest, extraction });
+    return NextResponse.json({ ok: true, ingest, extraction, indexing });
   } catch (err) {
     await finishCronRun(handle, { status: "failed", error: err });
     return NextResponse.json({ error: "email intel sweep failed" }, { status: 500 });

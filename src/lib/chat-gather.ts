@@ -20,6 +20,7 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { createToolDriver, type ModelTool, type ToolCall } from "@/lib/ai-tools";
 import type { ChatContext } from "@/lib/chat-context";
+import type { NotePassage } from "@/lib/chat-evidence";
 import { chooseDepth, type DepthDecision } from "@/lib/chat-depth";
 import { NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { runToolLoop, type ExecutedCall, type ToolLoopOutcome } from "@/lib/chat-tool-loop";
@@ -37,18 +38,12 @@ const MAX_RESULT_CHARS = 6_000;
 /** The whole evidence block the answer sees — the answer prompt's other blocks need room too. */
 const MAX_EVIDENCE_CHARS = 20_000;
 
-/**
- * One `search_notes` result about a single interaction, structured rather than flattened into
- * `evidence` — citable, unlike the rest of what the research step looks up. Only interaction-
- * sourced passages: a note_batch or brief passage has no single dated event to cite and no
- * profile page to deep-link to, so it stays inside the uncited `evidence` text instead.
- */
-export type NotePassage = { sourceId: string; contactId: string | null; date: string | null; snippet: string };
+export type { NotePassage };
 
 export type GatherResult = {
   /** Rendered for the answer prompt; null when nothing useful was gathered. */
   evidence: string | null;
-  /** `search_notes` results naming a single interaction — see `NotePassage`. */
+  /** `search_notes` results naming a single note or email event — see `NotePassage`. */
   notePassages: NotePassage[];
   /** Contacts the lookups surfaced — added to the recommendation allowlist. */
   contactIds: string[];
@@ -210,16 +205,19 @@ function renderEvidence(calls: ExecutedCall[]): string | null {
  * (the string the research model saw, already possibly truncated at `MAX_RESULT_CHARS`), so a
  * passage is never cited from text that got cut off mid-object.
  */
-function extractNotePassages(calls: ExecutedCall[]): NotePassage[] {
+export function extractNotePassages(calls: ExecutedCall[]): NotePassage[] {
   const out: NotePassage[] = [];
   for (const c of calls) {
     if (!c.ok || c.call.name !== "search_notes") continue;
     const rows = Array.isArray(c.result) ? c.result : [];
     for (const row of rows) {
       const r = row as { sourceId?: unknown; kind?: unknown; date?: unknown; contactIds?: unknown; snippet?: unknown };
-      if (r.kind !== "interaction" || typeof r.sourceId !== "string" || typeof r.snippet !== "string") continue;
+      // A note, or what the user's mail said. A note_batch or brief passage has no single dated
+      // event to cite and no profile page to deep-link to, so it stays in the uncited text.
+      if ((r.kind !== "interaction" && r.kind !== "email_event") || typeof r.sourceId !== "string" || typeof r.snippet !== "string") continue;
       const contactId = Array.isArray(r.contactIds) && typeof r.contactIds[0] === "string" ? r.contactIds[0] : null;
       out.push({
+        kind: r.kind,
         sourceId: r.sourceId,
         contactId,
         date: typeof r.date === "string" ? r.date : null,

@@ -12,6 +12,7 @@
  */
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
+import { indexEmailEventsForUser, usersWithPendingEmailEventWork } from "@/lib/email-intel/search-index";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import {
   buildMemoryChunks,
@@ -83,6 +84,12 @@ export type MemoryBackfillResult = {
   chunks: number;
   /** Interactions still unindexed for this user. Non-zero means call again. */
   remaining: number;
+  /**
+   * Email events given a passage this run. Reported apart from `remaining` on purpose: an
+   * event that cannot be written safely stays waiting, and counting it would make the drain's
+   * re-kick loop spin on work that will never finish.
+   */
+  emailEvents: number;
 };
 
 /** Everything indexing one interaction needs, in the shape the claim query returns it. */
@@ -282,7 +289,16 @@ export async function backfillMemoryChunks(
     }
   }
 
-  return { scanned, indexed, chunks, remaining: await pendingMemorySourceCount(userId) };
+  // The user's mail, indexed alongside their notes (see `@/lib/email-intel/search-index`). Never
+  // allowed to cost the notes their sweep: it runs after them, and a failure is only a warning.
+  const emailEvents = await indexEmailEventsForUser(userId, { reconcile: true })
+    .then((r) => r.indexed)
+    .catch((err) => {
+      console.warn("[memory-backfill] could not index email events", err);
+      return 0;
+    });
+
+  return { scanned, indexed, chunks, remaining: await pendingMemorySourceCount(userId), emailEvents };
 }
 
 /** Interactions with text and no passages yet. The same predicate the sweep claims with. */
@@ -310,7 +326,7 @@ export async function usersWithPendingMemoryWork(
   canEmbed: (userId: string) => Promise<boolean>
 ): Promise<string[]> {
   const db = await getDb();
-  const [unindexed, unembedded] = await Promise.all([
+  const [unindexed, unembedded, emailUsers] = await Promise.all([
     db.execute(sql`select distinct i.user_id ${staleInteractions()} limit ${limit}`),
     // Over-fetched, because some of these will be filtered out below.
     db.execute(sql`
@@ -318,9 +334,15 @@ export async function usersWithPendingMemoryWork(
        where m.embedded_hash is distinct from m.content_hash
        limit ${limit * 4}
     `),
+    // Mail waiting for a passage, and passages that should no longer exist.
+    usersWithPendingEmailEventWork(limit).catch(() => [] as string[]),
   ]);
 
   const picked = new Set(rowsOf<{ user_id: string }>(unindexed).map((r) => r.user_id));
+  for (const userId of emailUsers) {
+    if (picked.size >= limit) break;
+    picked.add(userId);
+  }
   // An account with passages awaiting embedding but no embeddings backend — an Anthropic
   // key — has work that can never be done. Left in, those accounts would fill this list
   // every day and starve the ones that can make progress.

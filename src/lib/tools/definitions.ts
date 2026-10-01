@@ -540,11 +540,13 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     name: "search_notes",
     title: "Search your notes",
     description:
-      "Search what the user has written — notes, meeting and call logs — by meaning and by " +
-      "words. Use it for what was discussed, said or promised, and when; for details that are " +
-      "not in a contact's summary; and for questions that name a topic rather than a person. " +
-      "Narrow by person with contactId and by date with after/before (YYYY-MM-DD). Returns " +
-      "dated passages with the people they mention.",
+      "Search what the user has written — notes, meeting and call logs — and the short notes " +
+      "Orbit keeps from their career email (hiring-process updates, job postings, news and " +
+      "events; kind \"email_event\"), by meaning and by words. Use it for what was discussed, " +
+      "said or promised, and when; for details that are not in a contact's summary; and for " +
+      "questions that name a topic rather than a person. Narrow by person with contactId and " +
+      "by date with after/before (YYYY-MM-DD). Returns dated passages with the people they " +
+      "mention.",
     inputSchema: {
       query: z.string().min(1).max(200).describe("What to look for, in plain words."),
       contactId: z.string().uuid().optional().describe("Only passages about this person."),
