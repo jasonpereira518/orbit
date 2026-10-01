@@ -34,7 +34,7 @@ import {
   parseDigestAnswer,
   type RelationshipDigestAnswer,
 } from "@/lib/relationship-engine/extract";
-import { loadMessageWindows } from "@/lib/relationship-engine/gather";
+import { loadMessageWindows, type WindowBound } from "@/lib/relationship-engine/gather";
 import { claimPendingContacts, pendingRelationshipContactCount } from "@/lib/relationship-engine/pending";
 import { REMINDERS_PER_RUN, planDigestWrites } from "@/lib/relationship-engine/rules";
 import type { MessageWindow } from "@/lib/relationship-engine/types";
@@ -307,20 +307,52 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
   }
 }
 
-/** Batch answers: re-read each contact's window as it stood at submit, then the inline path. */
+/** True when the stored watermark is already at or past `bound` (the window was applied). */
+function watermarkReached(at: Date | null, interactionId: string | null, bound: WindowBound): boolean {
+  if (!at) return false;
+  if (at.getTime() !== bound.at.getTime()) return at.getTime() > bound.at.getTime();
+  return (interactionId ?? "") >= bound.interactionId;
+}
+
+/**
+ * Batch answers: judged against exactly what the model read. Each item's window is re-read
+ * capped at the payload's bound (lastAt, lastInteractionId), so a message that arrived while
+ * the batch was out stays past the watermark and pending. An item whose digest no longer
+ * points at this job (released, resubmitted, purged) or whose watermark already reached the
+ * bound is skipped: someone else owns that contact now.
+ */
 export async function applyRelationshipBatch(
-  job: Pick<AiBatchJobRow, "userId" | "payload">,
+  job: Pick<AiBatchJobRow, "id" | "userId" | "payload">,
   outcomes: BatchOutcome[],
   kick: (userId: string) => Promise<void> = kickRelationshipRun
 ): Promise<void> {
+  const db = await getDb();
   const payload = job.payload as unknown as RelationshipBatchPayload;
-  const byCustomId = new Map(payload.items.map((i) => [i.customId, i.contactId]));
+  const byCustomId = new Map(payload.items.map((i) => [i.customId, i]));
   const now = new Date();
-  const contactIds = outcomes.map((o) => byCustomId.get(o.customId)).filter((id): id is string => Boolean(id));
-  const windows = await loadMessageWindows(job.userId, contactIds);
+  const contactIds = outcomes.map((o) => byCustomId.get(o.customId)?.contactId).filter((id): id is string => Boolean(id));
+  const digests = contactIds.length
+    ? await db.query.relationshipDigests.findMany({
+        where: and(eq(relationshipDigests.userId, job.userId), inArray(relationshipDigests.contactId, contactIds)),
+        columns: { contactId: true, batchJobId: true, watermarkAt: true, watermarkInteractionId: true },
+      })
+    : [];
+  const digestOf = new Map(digests.map((d) => [d.contactId, d]));
+  const live = new Map<string, WindowBound>();
   for (const outcome of outcomes) {
-    const contactId = byCustomId.get(outcome.customId);
-    if (!contactId) continue;
+    const item = byCustomId.get(outcome.customId);
+    if (!item) continue;
+    const d = digestOf.get(item.contactId);
+    const bound = { at: new Date(item.lastAt), interactionId: item.lastInteractionId };
+    if (!d || d.batchJobId !== job.id) continue;
+    if (Number.isNaN(bound.at.getTime()) || !bound.interactionId) continue;
+    if (watermarkReached(d.watermarkAt, d.watermarkInteractionId, bound)) continue;
+    live.set(item.contactId, bound);
+  }
+  const windows = await loadMessageWindows(job.userId, [...live.keys()], { until: live });
+  for (const outcome of outcomes) {
+    const contactId = byCustomId.get(outcome.customId)?.contactId;
+    if (!contactId || !live.has(contactId)) continue;
     const window = windows.get(contactId);
     try {
       if (!window) continue;
@@ -328,18 +360,19 @@ export async function applyRelationshipBatch(
       await processDigestAnswer(job.userId, payload.runId, contactId, window, parseDigestAnswer(outcome.text), now);
     } catch (err) {
       await recordDigestFailure(job.userId, contactId, err);
+      await db.update(relationshipRuns).set({ failed: sql`${relationshipRuns.failed} + 1` }).where(eq(relationshipRuns.id, payload.runId));
       reportError(err, { where: "job.ai-batch.apply.relationship", userId: job.userId, level: "warning", extra: { contactId } });
     }
   }
-  // Nothing stays in flight for 30h: clear every payload item still pointing at this job
+  // Nothing stays in flight for 30h: clear every payload item still pointing at THIS job
   // (no window, no contact, or missing from the outcomes), whatever happened to it above.
-  const db = await getDb();
+  // A marker another job owns is that job's to clear.
   const allIds = payload.items.map((i) => i.contactId);
   if (allIds.length > 0) {
     await db
       .update(relationshipDigests)
       .set({ batchJobId: null, batchPendingUntil: null })
-      .where(and(eq(relationshipDigests.userId, job.userId), inArray(relationshipDigests.contactId, allIds), sql`${relationshipDigests.batchJobId} is not null`));
+      .where(and(eq(relationshipDigests.userId, job.userId), inArray(relationshipDigests.contactId, allIds), eq(relationshipDigests.batchJobId, job.id)));
   }
   await kick(job.userId);
 }

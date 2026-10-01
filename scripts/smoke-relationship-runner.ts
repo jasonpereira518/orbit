@@ -17,11 +17,14 @@ import {
 } from "../src/db/schema";
 import { AiAccessError } from "../src/lib/ai-access";
 import { INLINE_PER_RUN, runRelationshipPass, applyRelationshipBatch, type RelationshipBatchPayload } from "../src/lib/relationship-engine/runner";
-import { pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
+import { claimPendingContacts, pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
 import type { RelationshipDigestAnswer } from "../src/lib/relationship-engine/extract";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-rel-runner-user";
+const JOB = "11111111-1111-4111-8111-111111111111";
+const JOB2 = "22222222-2222-4222-8222-222222222222";
+const OTHER_JOB = "33333333-3333-4333-8333-333333333333";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -87,9 +90,14 @@ async function main() {
   await reset();
   await seedContacts(27, REAL);
   let submittedRequests = 0;
+  let submitted = null as RelationshipBatchPayload | null;
   res = await runRelationshipPass(USER, {
     extract: async () => ANSWER,
-    submit: async (_u, op, reqs) => { submittedRequests += reqs.length; return op === "relationship.digest" ? "11111111-1111-4111-8111-111111111111" : null; },
+    submit: async (_u, op, reqs, p) => {
+      submittedRequests += reqs.length;
+      submitted = p as unknown as RelationshipBatchPayload;
+      return op === "relationship.digest" ? JOB : null;
+    },
   });
   check("25 inline", res.processed === 25, JSON.stringify(res));
   check("2 submitted", res.submitted === 2 && submittedRequests === 2);
@@ -97,14 +105,11 @@ async function main() {
   check("run still running while batch out", res.status === "running");
 
   // Batch answers arrive → applied, run finishes on the next pass.
-  const out = await db.query.relationshipDigests.findMany({ where: eq(relationshipDigests.batchJobId, "11111111-1111-4111-8111-111111111111") });
-  const [run] = await db.query.relationshipRuns.findMany({ where: eq(relationshipRuns.userId, USER) });
-  const payload: RelationshipBatchPayload = {
-    runId: run.id,
-    items: out.map((d, i) => ({ customId: `r${i}`, contactId: d.contactId, lastAt: "", lastInteractionId: "" })),
-  };
+  const out = await db.query.relationshipDigests.findMany({ where: eq(relationshipDigests.batchJobId, JOB) });
+  check("payload carries the window bound", submitted !== null && out.length === 2 && submitted!.items.every((it) => it.lastAt && it.lastInteractionId));
+  const payload = submitted!;
   await applyRelationshipBatch(
-    { userId: USER, payload } as never,
+    { id: JOB, userId: USER, payload } as never,
     payload.items.map((it) => ({ customId: it.customId, text: JSON.stringify(ANSWER), error: null, usage: {} as never })),
     async () => {}
   );
@@ -113,6 +118,51 @@ async function main() {
   check("batch applied: none still out", applied.every((d) => d.batchJobId === null));
   res = await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null });
   check("run finishes after batch", res.status === "done");
+
+  // The applier judges the answer against what the model read: a message that arrives while
+  // the batch is out stays pending, and a job that no longer owns the contact applies nothing.
+  await reset();
+  await seedContacts(27, REAL);
+  submitted = null;
+  await runRelationshipPass(USER, {
+    extract: async () => ANSWER,
+    submit: async (_u, _op, _reqs, p) => { submitted = p as unknown as RelationshipBatchPayload; return JOB2; },
+  });
+  const p2 = submitted!;
+  const [late, stale] = p2.items;
+  await db.insert(interactions).values({
+    userId: USER, contactId: late.contactId, interactionType: "linkedin_message", interactionDate: new Date(), source: "linkedin_messages",
+    externalId: "li-msg:late", rawNotes: "One more thing: can you also look at our hiring plan before Friday?", topics: [], direction: "in" as const,
+  });
+  await db.update(relationshipDigests).set({ batchJobId: OTHER_JOB }).where(eq(relationshipDigests.contactId, stale.contactId));
+  await applyRelationshipBatch(
+    { id: JOB2, userId: USER, payload: p2 } as never,
+    p2.items.map((it) => ({ customId: it.customId, text: JSON.stringify(ANSWER), error: null, usage: {} as never })),
+    async () => {}
+  );
+  const lateRow = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, late.contactId) });
+  check("late message: applied up to the bound", lateRow?.summary === "Talked fundraising." && lateRow.watermarkInteractionId === late.lastInteractionId && lateRow.watermarkAt?.getTime() === new Date(late.lastAt).getTime(), JSON.stringify(lateRow));
+  check("late message: contact pending again", (await claimPendingContacts(USER, 50, new Set())).includes(late.contactId));
+  const staleRow = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, stale.contactId) });
+  check("stale job: nothing applied", staleRow?.summary == null && staleRow?.watermarkAt == null, JSON.stringify(staleRow));
+  check("stale job: other job's marker untouched", staleRow?.batchJobId === OTHER_JOB);
+
+  // A failed batch item counts against the run, like an inline failure.
+  await reset();
+  await seedContacts(27, REAL);
+  submitted = null;
+  await runRelationshipPass(USER, {
+    extract: async () => ANSWER,
+    submit: async (_u, _op, _reqs, p) => { submitted = p as unknown as RelationshipBatchPayload; return JOB; },
+  });
+  const p3 = submitted!;
+  await applyRelationshipBatch(
+    { id: JOB, userId: USER, payload: p3 } as never,
+    p3.items.map((it) => ({ customId: it.customId, text: null, error: "boom", usage: {} as never })),
+    async () => {}
+  );
+  const failedRun = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, p3.runId) });
+  check("batch failures counted on the run", failedRun?.failed === 2, JSON.stringify(failedRun));
 
   // Batch unavailable → falls back inline (new run past the inline cap).
   await reset();

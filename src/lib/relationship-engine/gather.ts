@@ -69,7 +69,18 @@ function sourceLabel(interactionType: string, source: string | null): string {
   return source ?? "messages";
 }
 
-export async function loadMessageWindows(userId: string, contactIds: string[]): Promise<Map<string, MessageWindow>> {
+export type WindowBound = { at: Date; interactionId: string };
+
+/**
+ * `opts.until` caps a contact's rows at (interaction_date, id) <= the bound: the batch
+ * applier re-reads exactly the window the model was sent, never a message that arrived
+ * while the batch was out (that one must stay past the watermark, i.e. pending).
+ */
+export async function loadMessageWindows(
+  userId: string,
+  contactIds: string[],
+  opts: { until?: Map<string, WindowBound> } = {}
+): Promise<Map<string, MessageWindow>> {
   const windows = new Map<string, MessageWindow>();
   const ids = [...new Set(contactIds)];
   if (!ids.length) return windows;
@@ -90,6 +101,7 @@ export async function loadMessageWindows(userId: string, contactIds: string[]): 
   };
 
   for (const p of people) {
+    const bound = opts.until?.get(p.id);
     // Same row predicate and watermark clause the pending query uses (pending.ts), so a
     // claimed contact always has a window.
     const result = await db.execute(sql`
@@ -100,6 +112,11 @@ export async function loadMessageWindows(userId: string, contactIds: string[]): 
          AND m.contact_id = ${p.id}::uuid
          AND ${MESSAGE_INTERACTION_SQL}
          AND ${WATERMARK_AFTER_SQL}
+         ${
+           bound
+             ? sql`AND (date_trunc('milliseconds', m.interaction_date), m.id) <= (${bound.at.toISOString()}::timestamptz, ${bound.interactionId}::uuid)`
+             : sql``
+         }
        ORDER BY m.interaction_date ASC, m.id ASC
        LIMIT ${ROW_LIMIT}
     `);
