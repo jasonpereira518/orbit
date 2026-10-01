@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { MessageCircle } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { previewChatConversations } from "@/actions/chat-imports";
@@ -28,6 +28,7 @@ import { conversationKey } from "@/lib/conversations/sessions";
 import { conversationToRows, type ChatConversationRow, type ParticipantDecision } from "@/lib/conversations/to-rows";
 import type { ChatSource, Conversation } from "@/lib/conversations/types";
 import { parseWhatsAppExport } from "@/lib/conversations/whatsapp";
+import { clearChatHandoff, useChatHandoff } from "@/lib/imports/chat-handoff";
 import { awaitImportJob, startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { UserFacingError, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -130,6 +131,16 @@ export function ChatMessagesImport() {
   const chatJob = job?.kind === "chat" && job.status === "running" ? job : null;
   const importProgress = chatJob?.progress ?? null;
   const busy = pending || job?.status === "running";
+
+  // Files dropped elsewhere on the page: read exactly as if picked here. Held (not dropped)
+  // while an import or a read is in flight, and cleared the moment they are taken.
+  const handedOff = useChatHandoff();
+  useEffect(() => {
+    if (!handedOff.length || busy) return;
+    clearChatHandoff();
+    loadFiles(handedOff);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadFiles is a fresh closure each render; the handoff and idle state are the triggers
+  }, [handedOff, busy]);
 
   const previewByKey = useMemo(
     () => new Map<string, PreviewConversation>((preview?.conversations ?? []).map((c) => [c.key, c])),

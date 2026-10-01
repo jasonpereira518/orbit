@@ -45,6 +45,7 @@ import {
   useWindowFileDrop,
   useWindowFilePaste,
 } from "@/lib/use-window-file-drop";
+import { handOffChatFiles } from "@/lib/imports/chat-handoff";
 import { detectImportFiles } from "@/lib/imports/detect-import-file";
 import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
@@ -418,12 +419,35 @@ export function ImportHub({
    */
   const refreshAfterUndo = useCallback(() => router.refresh(), [router]);
 
-  const handleFiles = useCallback(async (files: DroppedFile[]) => {
-    const result = await detectImportFiles(files, {
-      maxBytes: MAX_CONTACTS_FILE_BYTES,
-    });
-    await stageDrop(result);
-  }, []);
+  const handleFiles = useCallback(
+    async (files: DroppedFile[]) => {
+      const result = await detectImportFiles(files, {
+        maxBytes: MAX_CONTACTS_FILE_BYTES,
+        chatImports,
+      });
+      if (result.chatFiles.length) {
+        // Open the row first: the card mounts with it and picks the files up on mount.
+        setOpen("import-panel-chats");
+        handOffChatFiles(result.chatFiles);
+        requestAnimationFrame(() =>
+          document
+            .getElementById("import-panel-chats")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        );
+      }
+      // A chat-only drop stages nothing; skipping avoids flashing an empty "done" queue.
+      if (
+        result.chatFiles.length &&
+        !result.staged.length &&
+        !result.ignored.length &&
+        !result.skipped.length
+      ) {
+        return;
+      }
+      await stageDrop(result);
+    },
+    [chatImports, setOpen],
+  );
 
   /**
    * A LinkedIn profile link dragged in from another tab (or pasted onto the page) adds that
@@ -571,6 +595,7 @@ export function ImportHub({
 
       <ImportDropzone
         onFiles={(files) => void handleFiles(files)}
+        chatImports={chatImports}
         busy={reading}
         extraAction={
           driveConfigured ? (

@@ -37,7 +37,7 @@ export function detectChatSource(_fileName: string, head: string): ChatSource | 
 }
 
 /** The chat member of a zip: `_chat.txt` first, else the first other `.txt`. macOS `__MACOSX/` twins never count. */
-function pickChatMember<T extends { name: string; dir: boolean }>(members: T[]): T | null {
+export function pickChatMember<T extends { name: string; dir: boolean }>(members: T[]): T | null {
   const txt = members.filter((m) => !m.dir && /\.txt$/i.test(m.name) && !/(^|\/)__MACOSX\//.test(m.name));
   return txt.find((m) => /(^|\/)_chat\.txt$/i.test(m.name)) ?? txt[0] ?? null;
 }
