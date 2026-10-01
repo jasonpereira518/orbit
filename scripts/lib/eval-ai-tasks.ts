@@ -1672,6 +1672,7 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
   const commitPrecision = tally();
   const dates = tally();
   const silent = tally();
+  const planOk = tally();
   let invented = 0;
   const misses: string[] = [];
   const latenciesMs: number[] = [];
@@ -1705,6 +1706,8 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
         ...answer.facts.map((f) => f.excerpt),
         ...answer.commitments.map((x) => x.excerpt),
         ...answer.implied.map((x) => x.excerpt),
+        ...(answer.job_change ? [answer.job_change.excerpt] : []),
+        ...answer.closed.map((x) => x.excerpt),
       ];
       invented += excerpts.filter((e) => !locateExcerpt(window, e)).length;
       const v = validateDigest(answer, window, new Set());
@@ -1738,12 +1741,20 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
         }
       }
       for (const f of found) count(commitPrecision, c.expect.commitments.some((e) => mentions(f.text, e.phrase)));
-      if (plan.remindersPlanned !== c.expect.reminders) missed = true;
+      const planRight = plan.remindersPlanned === c.expect.reminders && plan.openThreads.length === c.expect.openThreads;
+      count(planOk, planRight);
+      if (!planRight) missed = true;
       if (missed) misses.push(c.id);
       log(`  ${missed ? "MISS" : "ok  "} relationship/${c.id} (reminders ${plan.remindersPlanned}/${c.expect.reminders}, threads ${plan.openThreads.length}/${c.expect.openThreads})`);
     } catch (err) {
       misses.push(c.id);
-      count(facts, false);
+      // A failed case scores every expectation it carried as a miss.
+      for (const _ of c.expect.facts) count(facts, false);
+      for (const e of c.expect.commitments) {
+        count(commitRecall, false);
+        if (e.dueIso) count(dates, false);
+      }
+      count(planOk, false);
       log(`  FAIL relationship/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -1759,6 +1770,7 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
       dateAccuracy: rate(dates),
       inventedItems: invented,
       silentOnTrivial: rate(silent),
+      planAccuracy: rate(planOk),
     },
   };
 }

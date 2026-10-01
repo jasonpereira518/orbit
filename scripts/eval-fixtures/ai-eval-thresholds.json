@@ -89,6 +89,7 @@
     "commitmentPrecision": { "maxDrop": 0.05 },
     "dateAccuracy": { "maxDrop": 0 },
     "inventedItems": { "maxRise": 0 },
-    "silentOnTrivial": { "maxDrop": 0 }
+    "silentOnTrivial": { "maxDrop": 0 },
+    "planAccuracy": { "maxDrop": 0.05 }
   }
 }
