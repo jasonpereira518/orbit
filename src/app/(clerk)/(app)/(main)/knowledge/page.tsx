@@ -32,13 +32,18 @@ export default async function KnowledgePage({
   const selectedId = view === "people" && typeof sp.p === "string" && UUID.test(sp.p) ? sp.p : null;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    // The page does not scroll: it fills the route (`data-fill-route`), the header holds its
+    // place, and the list and the dossier each scroll inside their own pane. The floating
+    // bell and feedback buttons get their gutter from `data-clear-floating-controls`.
+    <div
+      data-fill-route
+      data-clear-floating-controls
+      className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4"
+    >
       <RenderStamp />
       <div
         className={cn(
-          // Pinned on desktop: the title and the view switch stay put while the list or dossier
-          // scrolls. Not below `lg`, where the app's own top bar already sits at the top edge.
-          "flex-wrap items-end justify-between gap-4 pb-3 pt-1 lg:sticky lg:top-0 lg:z-20 lg:-mt-1 lg:bg-background",
+          "shrink-0 flex-wrap items-end justify-between gap-4",
           selectedId ? "hidden lg:flex" : "flex"
         )}
       >
@@ -90,15 +95,10 @@ async function People({ selectedId }: { selectedId: string | null }) {
   }
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[19rem_minmax(0,1fr)] xl:grid-cols-[22rem_minmax(0,1fr)]">
-      <aside
-        className={cn(
-          // Sits below the pinned header and must end above the page's bottom padding. A taller rail
-          // is shoved up by the dossier's last card and slides under the header.
-          "lg:sticky lg:top-24 lg:flex lg:max-h-[calc(100dvh-13rem)] lg:flex-col",
-          selectedId ? "hidden lg:flex" : "block"
-        )}
-      >
+    // From `lg` each pane scrolls on its own inside a bounded row. Below it the two are
+    // separate screens and this body is the one thing that scrolls.
+    <div className="grid min-h-0 flex-1 items-start gap-6 overflow-y-auto lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:overflow-hidden xl:grid-cols-[22rem_minmax(0,1fr)]">
+      <aside className={cn("lg:flex lg:min-h-0 lg:flex-col", selectedId ? "hidden lg:flex" : "block")}>
         <PeopleIndex
           rows={people.rows}
           total={people.total}
@@ -107,7 +107,10 @@ async function People({ selectedId }: { selectedId: string | null }) {
         />
       </aside>
 
-      <section aria-label="Person" className={cn("min-w-0", !selectedId && "hidden lg:block")}>
+      <section
+        aria-label="Person"
+        className={cn("min-w-0 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain", !selectedId && "hidden lg:block")}
+      >
         {selectedId ? (
           <Suspense key={selectedId} fallback={<DossierSkeleton />}>
             <DossierPane contactId={selectedId} />

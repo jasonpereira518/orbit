@@ -26,8 +26,12 @@ export function DossierSkeleton() {
  */
 export function KnowledgePageSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <div className="space-y-2">
+    <div
+      data-fill-route
+      data-clear-floating-controls
+      className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4"
+    >
+      <div className="shrink-0 space-y-2">
         <Skeleton className="h-9 w-56" />
         <Skeleton className="h-4 w-80 max-w-full" />
       </div>

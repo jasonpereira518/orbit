@@ -56,7 +56,7 @@ export function PeopleIndex({
   }, [rows, query, sort]);
 
   return (
-    <div className="flex min-h-0 flex-col gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -97,7 +97,7 @@ export function PeopleIndex({
         </p>
       ) : null}
 
-      <ul className="min-h-0 divide-y divide-border/50 overflow-y-auto rounded-2xl border border-border/60 bg-card/40">
+      <ul className="min-h-0 divide-y divide-border/50 overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:overflow-y-auto lg:overscroll-contain">
         {visible.length === 0 ? (
           <li className="px-4 py-8 text-center text-sm text-muted-foreground">No one matches that.</li>
         ) : (
