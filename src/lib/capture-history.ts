@@ -21,7 +21,7 @@ export type CaptureHistoryItem = {
   /** ISO. */
   createdAt: string;
   status: "saved" | "undone";
-  entryPoint: "capture" | "profile";
+  entryPoint: "capture" | "profile" | "relationship";
   kinds: CaptureSourceKind[];
   title: string | null;
   excerpt: string;

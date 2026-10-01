@@ -31,7 +31,7 @@ export type ExperienceSectionProps = {
   contactId: string;
   /** Null when nothing has been captured yet — the empty state is the entry point. */
   profile: {
-    source: "extension" | "web" | "apollo";
+    source: "extension" | "web" | "apollo" | "messages";
     capturedAt: string;
     warnings: string[];
     headline: string | null;

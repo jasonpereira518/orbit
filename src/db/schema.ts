@@ -458,6 +458,8 @@ export const userSettings = pgTable("user_settings", {
    * 0/1, not boolean, per this table's convention (see `timelineBackfillEnabled`).
    */
   workHistoryAutoEnabled: integer("work_history_auto_enabled").default(1).notNull(),
+  /** 1 = analyze imported conversations with the relationship engine (on by default). */
+  relationshipEngineEnabled: integer("relationship_engine_enabled").default(1).notNull(),
   /**
    * One-shot marker: has this row already been force-flipped to
    * `timeline_backfill_enabled = 1` by the v108 migration? Exists only so that migration's
@@ -1200,7 +1202,7 @@ export const noteBatches = pgTable(
     userId: text("user_id").notNull(),
     sourceHash: text("source_hash").notNull(),
     sourceText: text("source_text").notNull(),
-    entryPoint: text("entry_point").$type<"capture" | "profile">().default("capture").notNull(),
+    entryPoint: text("entry_point").$type<"capture" | "profile" | "relationship">().default("capture").notNull(),
     seedContactId: uuid("seed_contact_id"),
     /** The date relative phrases were counted from. */
     anchorDate: timestamp("anchor_date", { withTimezone: true }).notNull(),
@@ -1306,6 +1308,11 @@ export const actionItems = pgTable(
     /** sha256(interactionId + "|" + lower(btrim(text))) — btrim semantics (ASCII spaces only), mirrored by actionItemHash in src/lib/action-items.ts. */
     itemHash: text("item_hash").notNull(),
     reminderId: uuid("reminder_id").references(() => reminders.id, { onDelete: "set null" }),
+    /**
+     * Who owes this: "me" (the account owner) or "them" (the contact). Written by the
+     * relationship engine from conversations; null on capture items and on rows that predate it.
+     */
+    owedBy: text("owed_by").$type<"me" | "them">(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1539,6 +1546,89 @@ export const contactBriefs = pgTable("contact_briefs", {
   inputHash: text("input_hash"),
 });
 
+export type RelationshipTopic = { label: string; lastDiscussedAt: string };
+
+/** An unresolved loop too old to remind about. `key` is stable: sha256(interactionId|lower(text)) prefix. */
+export type RelationshipOpenThread = {
+  key: string;
+  text: string;
+  owedBy: "me" | "them" | null;
+  sinceIso: string;
+  interactionId: string;
+  excerpt: string;
+};
+
+/** A stated date that passed within the flag lookback — offered, never written. */
+export type RelationshipRunFlag = {
+  key: string;
+  contactId: string;
+  title: string;
+  dueDateIso: string;
+  sourceExcerpt: string;
+  interactionId: string;
+};
+
+export type RelationshipRunStatus = "queued" | "running" | "waiting_key" | "done" | "failed" | "undone";
+
+/**
+ * The relationship engine's memory of one relationship. "Pending" is NOT stored here: a
+ * contact is pending when it has message interactions newer than the watermark (see
+ * src/lib/relationship-engine/pending.ts).
+ */
+export const relationshipDigests = pgTable(
+  "relationship_digests",
+  {
+    contactId: uuid("contact_id").primaryKey().references(() => contacts.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    whatTheyDo: text("what_they_do"),
+    workingOn: text("working_on"),
+    summary: text("summary"),
+    topics: jsonb("topics").$type<RelationshipTopic[]>().default([]).notNull(),
+    openThreads: jsonb("open_threads").$type<RelationshipOpenThread[]>().default([]).notNull(),
+    messageCount: integer("message_count").default(0).notNull(),
+    sources: jsonb("sources").$type<string[]>().default([]).notNull(),
+    watermarkAt: timestamp("watermark_at", { withTimezone: true }),
+    watermarkInteractionId: uuid("watermark_interaction_id"),
+    historyTruncatedBefore: timestamp("history_truncated_before", { withTimezone: true }),
+    attempts: integer("attempts").default(0).notNull(),
+    lastError: text("last_error"),
+    /** Set while this contact's window is out at a provider batch; keeps it out of the pending set. */
+    batchJobId: uuid("batch_job_id"),
+    batchPendingUntil: timestamp("batch_pending_until", { withTimezone: true }),
+    runId: uuid("run_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("relationship_digests_user_idx").on(t.userId)]
+);
+export type RelationshipDigestRow = typeof relationshipDigests.$inferSelect;
+
+/** One engine run: the unit of progress, counts, flags and Undo (via `note_batch_id`). */
+export const relationshipRuns = pgTable(
+  "relationship_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    importId: uuid("import_id"),
+    status: text("status").$type<RelationshipRunStatus>().default("queued").notNull(),
+    claimToken: text("claim_token"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    inlineUsed: integer("inline_used").default(0).notNull(),
+    processed: integer("processed").default(0).notNull(),
+    skipped: integer("skipped").default(0).notNull(),
+    failed: integer("failed").default(0).notNull(),
+    remindersCreated: integer("reminders_created").default(0).notNull(),
+    factsAdded: integer("facts_added").default(0).notNull(),
+    openThreadsAdded: integer("open_threads_added").default(0).notNull(),
+    flags: jsonb("flags").$type<RelationshipRunFlag[]>().default([]).notNull(),
+    noteBatchId: uuid("note_batch_id"),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("relationship_runs_user_status_idx").on(t.userId, t.status)]
+);
+export type RelationshipRunRow = typeof relationshipRuns.$inferSelect;
+
 /** One entry on a LinkedIn profile: a job, or a school. */
 export type ContactExperienceKind = "role" | "education";
 /**
@@ -1555,7 +1645,7 @@ export type ContactExperienceKind = "role" | "education";
  * `scripts/smoke-contact-profile.ts`, so restoring that path is additive rather than
  * another change to the stored shape.
  */
-export type ContactProfileSource = "extension" | "web" | "apollo";
+export type ContactProfileSource = "extension" | "web" | "apollo" | "messages";
 
 export type ProfileSkill = { name: string };
 export type ProfileCertification = { name: string; issuer: string | null; year: number | null };
