@@ -6,6 +6,7 @@
  */
 import type { ChatConversationRowPayload } from "@/db/schema";
 import type { ImportAdapter, InteractionInsert } from "@/lib/import-engine";
+import { clampCodePoints } from "@/lib/conversations/clamp";
 import { sessionExternalId } from "@/lib/conversations/sessions";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 
@@ -67,7 +68,7 @@ export function chatAdapter(source: "whatsapp" | "imessage"): ImportAdapter<Chat
           source,
           externalId: sessionExternalId(source, p.conversationKey, s.startAt, contactId),
           rawNotes: s.transcript,
-          aiSummary: s.transcript.slice(0, 240),
+          aiSummary: clampCodePoints(s.transcript, 240),
           topics: [],
           direction: s.direction,
         }));

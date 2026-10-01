@@ -5,7 +5,8 @@
  */
 import "./smoke/_env";
 import { conversationKey, groupHeader, sessionExternalId, splitSessions } from "../src/lib/conversations/sessions";
-import { conversationToRows } from "../src/lib/conversations/to-rows";
+import { clampCodePoints } from "../src/lib/conversations/clamp";
+import { attributionLine, conversationToRows } from "../src/lib/conversations/to-rows";
 import type { Conversation } from "../src/lib/conversations/types";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -79,5 +80,68 @@ check(
 );
 check("toRows: the chosen owner speaks as Me", namedTranscript.includes(" Me] hello all") && !namedTranscript.includes("Jason P]"), namedTranscript);
 check("toRows: the parsed conversation is not mutated", named.participants.every((p) => !p.isSelf));
+
+// ── Code-point-safe caps (I-2) ─────────────────────────────────────────────────────────
+const hasLoneSurrogate = (t: string) =>
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(t);
+check("clamp: short strings untouched", clampCodePoints("abc", 5) === "abc");
+check("clamp: a cut inside an emoji drops its high half", clampCodePoints("ab\u{1F600}", 3) === "ab");
+check("clamp: a cut after an emoji keeps it", clampCodePoints("ab\u{1F600}c", 4) === "ab\u{1F600}");
+// An over-long single message whose cap lands inside an emoji.
+const emojiLine = conv([[0, "Mia", "\u{1F600}".repeat(7_000)]]);
+const emojiSessions = splitSessions(emojiLine, "You");
+check(
+  "sessions: an over-long line is never cut inside an emoji",
+  emojiSessions.every((x) => !hasLoneSurrogate(x.transcript) && x.transcript.length <= 12_000),
+);
+// A group whose session sits right at the cap: header + attribution + transcript fits with no cut.
+const tight = conv(
+  Array.from({ length: 30 }, (_, i) => [i, i % 2 ? "Ana" : "Ben", `${"\u{1F600}".repeat(150)}${"z".repeat(99 + (i % 3))}`] as [number, string, string]),
+  {
+    isGroup: true, title: "Emoji \u{1F389} club",
+    participants: [
+      { key: "Ana", displayName: "Ana \u{1F33B}", phoneE164: null, email: null, isSelf: false },
+      { key: "Ben", displayName: "Ben", phoneE164: null, email: null, isSelf: false },
+      { key: "You", displayName: "You", phoneE164: null, email: null, isSelf: true },
+    ],
+  },
+);
+const tightRows = conversationToRows(tight, "You", { Ana: { contactId: null, create: true }, Ben: { contactId: null, create: true } });
+const plainSessions = splitSessions(tight, "You");
+check("toRows: every transcript within 12,000", tightRows.every((r) => r.sessions.every((x) => x.transcript.length <= 12_000)));
+check("toRows: no lone surrogate anywhere", tightRows.every((r) => !hasLoneSurrogate(JSON.stringify(r))));
+check(
+  "toRows: no message is cut — every transcript ends on a whole line",
+  tightRows.every((r) => r.sessions.every((x) => /z{99,101}$/.test(x.transcript))),
+);
+check("toRows: the split left room (more sessions than a header-less split)", tightRows[0].sessions.length >= plainSessions.length);
+
+// ── Attribution line (I-5) ─────────────────────────────────────────────────────────────
+const anaRow = tightRows.find((r) => r.participant.key === "Ana")!;
+const benRow = tightRows.find((r) => r.participant.key === "Ben")!;
+check(
+  "attribution: the second line names the row's own sender",
+  anaRow.sessions.every((x) => x.transcript.split("\n")[1] === attributionLine("Ana \u{1F33B}")) &&
+    benRow.sessions.every((x) => x.transcript.split("\n")[1] === '# This contact appears as "Ben"'),
+  anaRow.sessions[0].transcript.slice(0, 200),
+);
+const oneToOne = conversationToRows(c, "You", {});
+check("attribution: a 1:1 has no header lines", oneToOne[0].sessions.every((x) => x.transcript.startsWith("[")));
+
+// ── Large chats split into several rows (I-1) ──────────────────────────────────────────
+const daily = conv(Array.from({ length: 120 }, (_, i) => [i * 24 * 60, "Maya", `day ${i}`] as [number, string, string]));
+const dailyRows = conversationToRows(daily, "You", {});
+check("rows: 120 sessions → 3 rows of ≤ 50", dailyRows.length === 3 && dailyRows.every((r) => r.sessions.length <= 50), dailyRows.map((r) => r.sessions.length).join(","));
+check(
+  "rows: one participant's rows share key, participant and decision",
+  dailyRows.every((r) => r.conversationKey === dailyRows[0].conversationKey && r.participant.key === "Maya" && r.createIfUnmatched && r.resolvedContactId === null),
+);
+check("rows: sessions in order, none lost", dailyRows.flatMap((r) => r.sessions).map((x) => x.startAt).join() === splitSessions(daily, "You").map((x) => x.startAt).join());
+// ~2.5 MB of transcript for one participant: 250 sessions of ~10k chars, under 50 per row by count.
+const heavy = conv(Array.from({ length: 250 }, (_, i) => [i * 24 * 60, "Maya", "w".repeat(10_000)] as [number, string, string]));
+const heavyRows = conversationToRows(heavy, "You", {});
+const heavyTotal = heavyRows.reduce((n, r) => n + JSON.stringify(r).length, 0);
+check("rows: a 2.5 MB participant splits into ≥ 3 rows", heavyTotal > 2_500_000 && heavyRows.length >= 3, `${heavyRows.length} rows, ${heavyTotal} chars`);
+check("rows: each row ≤ 1,000,000 chars of JSON", heavyRows.every((r) => JSON.stringify(r).length <= 1_000_000), heavyRows.map((r) => JSON.stringify(r).length).join(","));
 
 console.log("\nsmoke-chat-sessions: all checks passed");

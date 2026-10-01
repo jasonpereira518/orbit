@@ -72,6 +72,10 @@ check(
   isTrivialWindow(chatWindow('# Group chat "Founders" with Ana Ruiz, Ben Ode\n[2026-09-27 10:00 Ana Ruiz] Happy birthday!!\n[2026-09-27 10:05 Me] Thanks!'))
 );
 check(
+  "chat trivial: the attribution line is not content (even with digits in the name)",
+  isTrivialWindow(chatWindow('# Group chat "Founders" with Ana 2, Ben Ode\n# This contact appears as "Ana 2"\n[2026-09-27 10:00 Ana 2] Happy birthday!!\n[2026-09-27 10:05 Me] Thanks!'))
+);
+check(
   "chat not trivial: a short plan",
   !isTrivialWindow(chatWindow("[2026-09-27 10:00 Maya] Coffee next Tuesday at 3?\n[2026-09-27 10:05 Me] Yes!"))
 );
@@ -155,5 +159,9 @@ check("prompt: contact name fenced on a first read too", fenced(firstTime.user, 
 check("prompt: date rule stated", /date of the message/i.test(prompt.system));
 check("prompt: confidence scale stated", /confidence.{0,40}0 to 1/i.test(prompt.system));
 check("prompt: group chat rule stated", prompt.system.includes("# Group chat"));
+check(
+  "prompt: attribution line rule stated",
+  prompt.system.includes("# This contact appears as") && /appears under the name given in that line/.test(prompt.system),
+);
 
 console.log("\nsmoke-relationship-extract: all checks passed");

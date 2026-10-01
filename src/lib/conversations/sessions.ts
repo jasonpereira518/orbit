@@ -4,6 +4,7 @@
  * is a few hundred rows, not 10,000. Transcript times are rendered in the local zone the
  * parser read them in.
  */
+import { clampCodePoints } from "@/lib/conversations/clamp";
 import { fnv1a64 } from "@/lib/conversations/hash";
 import {
   SESSION_GAP_MS, SESSION_MAX_CHARS, SESSION_MAX_MESSAGES,
@@ -34,7 +35,19 @@ function line(atIso: string, speaker: string, text: string): string {
   return `[${stamp} ${speaker}] ${text.replace(/\s*\n\s*/g, " / ")}`;
 }
 
-export function splitSessions(c: Conversation, selfKey: string | null): ChatSession[] {
+/**
+ * `prefixChars`: room to keep free in every session for header lines the caller prepends
+ * (plus the newline joining them), so prefix + transcript never exceeds SESSION_MAX_CHARS and
+ * nothing has to be cut afterwards.
+ */
+export function splitSessions(
+  c: Conversation,
+  selfKey: string | null,
+  opts: { prefixChars?: number } = {},
+): ChatSession[] {
+  const prefix = opts.prefixChars ? opts.prefixChars + 1 : 0;
+  // Never below a sliver: a caller's header is capped well under the session size.
+  const budget = Math.max(1_000, SESSION_MAX_CHARS - prefix);
   const sessions: ChatSession[] = [];
   type Cur = { lines: string[]; chars: number; start: string; end: string; count: number; lastSender: string };
   let cur: Cur | null = null;
@@ -54,9 +67,9 @@ export function splitSessions(c: Conversation, selfKey: string | null): ChatSess
     const t = new Date(m.at).getTime();
     const speaker = selfKey != null && m.senderKey === selfKey ? "Me" : m.senderKey;
     let l = line(m.at, speaker, m.text);
-    if (l.length > SESSION_MAX_CHARS) l = l.slice(0, SESSION_MAX_CHARS);
+    if (l.length > budget) l = clampCodePoints(l, budget);
     const gap = t - prevAt > SESSION_GAP_MS;
-    if (!cur || gap || cur.count >= SESSION_MAX_MESSAGES || cur.chars + l.length + 1 > SESSION_MAX_CHARS) {
+    if (!cur || gap || cur.count >= SESSION_MAX_MESSAGES || cur.chars + l.length + 1 > budget) {
       flush();
       cur = { lines: [], chars: 0, start: m.at, end: m.at, count: 0, lastSender: m.senderKey };
     }

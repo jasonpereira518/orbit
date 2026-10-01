@@ -98,7 +98,7 @@
       "chat": true,
       "forbiddenFacts": ["Berlin"],
       "messages": [
-        { "at": "2026-09-28T10:00:00Z", "from": "them", "text": "# Group chat \"Founders\" with Ana Ruiz, Ben Ode\n[2026-09-28 10:00 Ana Ruiz] I'll introduce you to my investor next week\n[2026-09-28 10:02 Ben Ode] Big news, I'm moving to Berlin in the spring\n[2026-09-28 10:03 Me] Thanks Ana, that would be great" }
+        { "at": "2026-09-28T10:00:00Z", "from": "them", "text": "# Group chat \"Founders\" with Ana Ruiz, Ben Ode\n# This contact appears as \"Ana Ruiz\"\n[2026-09-28 10:00 Ana Ruiz] I'll introduce you to my investor next week\n[2026-09-28 10:02 Ben Ode] Big news, I'm moving to Berlin in the spring\n[2026-09-28 10:03 Me] Thanks Ana, that would be great" }
       ],
       "expect": { "facts": [], "commitments": [{ "phrase": "intro", "owedBy": "them", "dueIso": "2026-10-05" }], "reminders": 1, "openThreads": 0 }
     },

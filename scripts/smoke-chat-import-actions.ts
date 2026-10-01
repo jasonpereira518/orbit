@@ -13,6 +13,7 @@ import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-chat-actions";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-chat-actions";
 
+import { isDeepStrictEqual } from "node:util";
 import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
@@ -322,6 +323,36 @@ async function main() {
   const { importId: roundTrip } = await beginStaging(USER, { source: "whatsapp", fileName: "rt.zip", selfNames: [] }, LIVE);
   const rt = await appendStagedRows(USER, roundTrip, 0, [...one, ...capped], LIVE);
   check("toRows: rows pass append validation", rt.appended === 2);
+
+  // Emoji at every cut: the rows round-trip through jsonb byte for byte (a lone surrogate
+  // would be refused by Postgres, or come back altered).
+  // Both header parities, so a cut lands mid-emoji in one of them under any header-blind rule.
+  const emojiRows = [0, 1].flatMap((pad) => {
+    const g = conversation(true);
+    g.title = "Party \u{1F389}" + "!".repeat(pad);
+    g.messages = Array.from({ length: 40 }, (_, i) => ({
+      senderKey: i % 2 ? "Ana Ruiz" : "Sam Rivera",
+      at: new Date(Date.UTC(2025, 2, 1, 10, i)).toISOString(),
+      text: "\u{1F600}".repeat(180),
+    }));
+    g.messages.push({ senderKey: "Ana Ruiz", at: "2025-03-01T12:00:00.000Z", text: "\u{1F600}".repeat(7_000) });
+    return conversationToRows(g, "You", {
+      "Ana Ruiz": { contactId: null, create: true },
+      "Sam Rivera": { contactId: null, create: true },
+    });
+  });
+  const { importId: emojiImport } = await beginStaging(USER, { source: "whatsapp", fileName: "emoji.zip", selfNames: [] }, LIVE);
+  await appendStagedRows(USER, emojiImport, 0, emojiRows, LIVE);
+  const back = await db
+    .select({ payload: importJobRows.payload })
+    .from(importJobRows)
+    .where(eq(importJobRows.importId, emojiImport))
+    .orderBy(asc(importJobRows.rowIndex));
+  check(
+    "jsonb: emoji-cut rows round-trip unchanged",
+    back.length === emojiRows.length && back.every((r, i) => isDeepStrictEqual(r.payload, emojiRows[i])),
+    `${back.length} of ${emojiRows.length}`,
+  );
 
   console.log("Chat import actions: all checks passed");
   process.exit(0);
