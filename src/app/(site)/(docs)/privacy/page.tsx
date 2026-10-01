@@ -279,6 +279,13 @@ export default function PrivacyPage() {
               list, until you delete your insights data or disconnect Gmail.
             </p>
             <p>
+              Your chat assistant can search the same notes. When you ask a question, the notes
+              that match are sent with it to the AI provider that runs your account&rsquo;s AI
+              features, and an answer can cite them. Turning Email insights off removes them
+              from chat search at once; disconnecting Gmail or deleting your insights data
+              removes them for good.
+            </p>
+            <p>
               Turning it off stops the checking; disconnecting Gmail, or deleting your insights
               in Settings, removes what it recorded.
             </p>

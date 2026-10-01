@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-30-email-intelligence-design.md` (section 8, rewritten by this plan's Task 5). Builds on P1 and P2 (`email_events`, the opt-in), P3 (`resolveEmails`) and P4b (`reconcile` after an add). This is the last phase of the original spec.
 
-**How this plan was checked.** Before it was written up, every file in Tasks 1-5 was applied to a clean copy of P4b's branch, typechecked, linted, and the three new smokes run (114 checks, all green) together with the existing memory, embedding-backfill, chat, tool-registry, email-intel and Radar smokes, then the full suite (458 of 458) and `npm run build`. The dry run found three defects in earlier drafts, all fixed below: widening `memory_chunks.source_kind`'s inline union in `schema.ts` made an unrelated smoke fail `tsc` (the schema now references the one shared `MemorySourceKind` type, which does not); an unescaped quote in the `ai.ts` prompt line; and three stale keys in `smoke-provider-exhaustive`'s line-number allowlist, which shifted by five. The code blocks below are generated from the files that passed, not retyped. It did **not** run a real chat answer (that needs an AI key), a live Gmail account, or any real mail, so how good the retrieval is on real data is unmeasured; Task 5 Step 6 is the manual check.
+**How this plan was checked.** Before it was written up, every file in Tasks 1-5 was applied to a clean copy of P4b's branch, typechecked, linted, and the three new smokes run (114 checks, all green) together with the existing memory, embedding-backfill, chat, tool-registry, email-intel and Radar smokes, then the full suite (458 of 458) and `npm run build`. The dry run found two defects in earlier drafts, both fixed below (an unescaped quote in the `ai.ts` prompt line, and three stale keys in `smoke-provider-exhaustive`'s line-number allowlist, which shifted by five), and one trap that is not a defect: after a schema type changes, the incremental `tsc` cache (`tsconfig.tsbuildinfo`) can report a spurious error in `scripts/smoke-ai-shared-prefix.ts` (`TS2345`, `NeonHttpQueryResult`). It is a stale cache: delete `tsconfig.tsbuildinfo` and re-run. (The first draft of this plan blamed the schema edit; widening the inline union was tested with a clean cache and is fine.) The code blocks below are generated from the files that passed, not retyped. It did **not** run a real chat answer (that needs an AI key), a live Gmail account, or any real mail, so how good the retrieval is on real data is unmeasured; Task 5 Step 6 is the manual check.
 
 ## Decisions that differ from the spec
 
@@ -35,6 +35,7 @@
 - **One predicate for "what is waiting"** (`staleEmailEvents`), shared by the claim and the backstop's user list.
 - **The pglite tier shares one database.** A smoke that opts users in (`email_intel_enabled = 1`) must opt them out again before it exits (`smoke-email-intel-sweep` counts armed accounts), and creates and deletes only its own rows.
 - Pure smokes import nothing DB-related; PGlite ones start with `import "./smoke/_env";` and end with `process.exit(0)`. Register each in `MANIFEST` in `scripts/run-smoke.ts`; `npx tsx scripts/run-smoke.ts --check` must pass.
+- After a change to a schema type, delete `tsconfig.tsbuildinfo` (gitignored) before trusting a `tsc` error in a file you did not touch.
 - Check exit codes, not the tail of the output: `npx tsx scripts/<name>.ts >/dev/null 2>&1; echo $?`.
 - Gate every commit on a clean `npx tsc --noEmit` (chain with `&&`, never `;`).
 - In zsh, `git show "$ref:path"` fires modifiers and unquoted globs like `--include=*.ts` fail; wrap in `bash -c '...'` or quote.
@@ -572,7 +573,7 @@ Expected: non-zero (`Cannot find module '../src/lib/email-intel/search-index'`).
 
 - [ ] **Step 3: `email_event` is a source kind**
 
-The schema references the one shared type rather than widening its own inline union. (Widening the inline `$type<"interaction" | ...>` made `scripts/smoke-ai-shared-prefix.ts` fail `tsc` on an unrelated line, a quirk of this repo's `Db` union type; the shared type does not.)
+The schema references the one shared type rather than repeating its own inline union, so the list of kinds lives in one place. If `tsc` now reports a `TS2345` in `scripts/smoke-ai-shared-prefix.ts`, it is a stale incremental cache, not this change: `rm tsconfig.tsbuildinfo` and re-run.
 
 Edit `src/lib/memory-chunks.ts` and `src/db/schema.ts`:
 

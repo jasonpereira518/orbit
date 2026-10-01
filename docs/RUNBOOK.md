@@ -181,6 +181,19 @@ smallest first:
   with `context = 'Named in an email'`. Gmail disconnect and an insights wipe delete those rows
   (`deleteInboxDismissals`). To stop it for everyone, remove the `InboxPeople` mount in
   `radar-view.tsx`; the cards from mail are unaffected.
+- **Chat search over mail:** each `email_events` row of an opted-in account becomes one
+  `memory_chunks` row (`source_kind = 'email_event'`, `source_id` the event, summary + facts +
+  the one quote, never an address), so `search_notes` finds it and chat cites it as `[eN]`
+  "from your email". Indexing is no model call: the email sweep indexes what it just stored
+  (`index_*` in its `cron_runs` stats), and the daily embedding backfill does the same plus
+  re-checks who each chunk names; embeddings come from the existing passage phase.
+  Turning the switch off deletes the account's mail chunks at once (`deleteEmailEventChunks`);
+  a switch flipped in SQL is caught by the same prune on the next sweep (`pruneEmailEventChunks`).
+  Gmail disconnect and an insights wipe delete them with the events. To stop it for everyone,
+  drop the `indexEmailEventsForUser` call in `memory-backfill.ts` and the `runEmailEventIndexing`
+  step in the sweep route, then `DELETE FROM memory_chunks WHERE source_kind = 'email_event';`.
+  `SELECT count(*) FROM memory_chunks WHERE source_kind = 'email_event' GROUP BY user_id;`
+  shows who is indexed.
   If a card built from mail looks wrong, `SELECT * FROM email_events WHERE id = '<id>'` (the id is
   in the card's evidence `ref`) shows what was extracted and the quote it came from.
 
