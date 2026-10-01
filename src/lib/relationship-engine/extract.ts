@@ -80,7 +80,7 @@ export function isTrivialWindow(window: MessageWindow): boolean {
   if (texts.length === 0) return true;
   if (texts.every((t) => PLEASANTRY_RE.test(t))) return true;
   const chars = texts.reduce((n, t) => n + t.length, 0);
-  return texts.length < 3 && chars < 120;
+  return texts.length < 3 && chars < 200;
 }
 
 const SYSTEM = `You read a conversation between the user ("Me") and one contact for a personal networking CRM, and keep a running understanding of the relationship.

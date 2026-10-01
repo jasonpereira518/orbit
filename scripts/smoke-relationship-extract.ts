@@ -36,7 +36,11 @@ check("trivial: thanks for connecting", isTrivialWindow(w(["Thanks for connectin
 check("trivial: two short lines", isTrivialWindow(w(["hey", "hi"])));
 check(
   "not trivial: a real ask in two lines",
-  !isTrivialWindow(w(["Could you intro me to someone on the Stripe payments team? We're raising our seed next month and I'd love advice from someone who has done it.", "Yes, happy to — I'll email Priya on Monday."]))
+  !isTrivialWindow(w(["Could you intro me to someone on the Stripe payments team? We're raising our seed next month and I'd love advice from someone who has done it. Our lead investor wants a warm intro before the partner meeting.", "Yes, happy to — I'll email Priya on Monday."]))
+);
+check(
+  "trivial: two non-pleasantry messages around 150 chars",
+  isTrivialWindow(w(["Can you send me that article about seed round valuations you mentioned last week when we spoke?", "Sure, I will dig it up and forward it over this afternoon."]))
 );
 check("not trivial: three messages", !isTrivialWindow(w(["hi", "hey", "coffee?"])));
 
