@@ -357,18 +357,22 @@ async function main() {
     [
       { name: "Engine Reminder", created: true },
       { name: "User Reminder", created: true },
+      { name: "Unbatched AI Reminder", created: true },
     ],
     { importType: LINKEDIN_IMPORT_TYPE, runEndedAt: RUN_END },
   );
-  const [engineReminded, userReminded] = engine.ids;
+  const [engineReminded, userReminded, nullBatchReminded] = engine.ids;
   const ENGINE_BATCH = "00000000-0000-4000-8000-0000000000e1";
   await db.insert(relationshipRuns).values({ userId: USER, status: "done", noteBatchId: ENGINE_BATCH });
   await db.insert(reminders).values({ userId: USER, contactId: engineReminded, title: "Follow up", createdBy: "ai", noteBatchId: ENGINE_BATCH });
   await db.insert(reminders).values({ userId: USER, contactId: userReminded, title: "Mine", createdBy: "user" });
+  // NULL note_batch_id must not make the exclusion NULL (which would drop the reminder).
+  await db.insert(reminders).values({ userId: USER, contactId: nullBatchReminded, title: "AI, no batch", createdBy: "ai", noteBatchId: null });
   const enginePreview = await previewUndo(USER, engine.importId, NOW);
   const engineCandidate = (id: string) => enginePreview!.candidates.find((c) => c.contactId === id);
   check("an engine-made reminder is not a user trace", engineCandidate(engineReminded)?.removable === true, String(engineCandidate(engineReminded)?.reason));
   check("a user-made reminder still keeps the person", engineCandidate(userReminded)?.reason === "reminded");
+  check("an AI reminder with no batch still keeps the person", engineCandidate(nullBatchReminded)?.reason === "reminded");
 
   // Another user's import is invisible.
   const foreign = await seedImport(OTHER, [{ name: "Not Yours", created: true }]);
