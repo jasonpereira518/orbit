@@ -412,6 +412,7 @@ CREATE TABLE IF NOT EXISTS relationship_runs (
   finished_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS relationship_runs_user_status_idx ON relationship_runs(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS relationship_runs_one_active_uidx ON relationship_runs(user_id) WHERE status IN ('queued', 'running', 'waiting_key');
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,

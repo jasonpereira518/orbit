@@ -16,7 +16,7 @@ import {
   actionItems, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
 import { AiAccessError } from "../src/lib/ai-access";
-import { runRelationshipPass, applyRelationshipBatch, type RelationshipBatchPayload } from "../src/lib/relationship-engine/runner";
+import { INLINE_PER_RUN, runRelationshipPass, applyRelationshipBatch, type RelationshipBatchPayload } from "../src/lib/relationship-engine/runner";
 import { pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
 import type { RelationshipDigestAnswer } from "../src/lib/relationship-engine/extract";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -139,6 +139,29 @@ async function main() {
   const parked = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.userId, USER) });
   check("three failures → attempts 3", parked?.attempts === 3 && parked.lastError === "bad json");
   check("parked contact not pending", (await pendingRelationshipContactCount(USER)) === 0);
+
+  // Batch unavailable + slow extract + short budget → the fallback respects the budget.
+  await reset();
+  await seedContacts(30, REAL);
+  const [seedRun] = await db.insert(relationshipRuns).values({ userId: USER, status: "queued", inlineUsed: INLINE_PER_RUN }).returning();
+  res = await runRelationshipPass(USER, {
+    budgetMs: 400,
+    extract: async () => { await new Promise((r) => setTimeout(r, 150)); return ANSWER; },
+    submit: async () => null,
+  });
+  check("fallback stops at the budget", res.status === "running" && res.remaining > 0 && res.processed < 30, JSON.stringify(res));
+  const after = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, seedRun.id) });
+  check("lease released after budget stop", after?.claimToken === null && after?.leaseUntil === null);
+
+  // Two concurrent first passes → one run row.
+  await reset();
+  await seedContacts(3, REAL);
+  const pair = await Promise.all([
+    runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null }),
+    runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null }),
+  ]);
+  const rows = await db.query.relationshipRuns.findMany({ where: eq(relationshipRuns.userId, USER) });
+  check("concurrent passes → one run row", rows.length === 1, `${rows.length} rows, ${JSON.stringify(pair)}`);
 
   await reset();
   console.log("\nsmoke-relationship-runner: all checks passed");

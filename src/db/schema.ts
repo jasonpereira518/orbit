@@ -1625,7 +1625,13 @@ export const relationshipRuns = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
-  (t) => [index("relationship_runs_user_status_idx").on(t.userId, t.status)]
+  (t) => [
+    index("relationship_runs_user_status_idx").on(t.userId, t.status),
+    // One active run per user, enforced: two concurrent first passes cannot both insert.
+    uniqueIndex("relationship_runs_one_active_uidx")
+      .on(t.userId)
+      .where(sql`${t.status} in ('queued', 'running', 'waiting_key')`),
+  ]
 );
 export type RelationshipRunRow = typeof relationshipRuns.$inferSelect;
 

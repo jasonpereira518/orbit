@@ -95,7 +95,12 @@ async function claimRun(userId: string, importId: string | null, now: Date): Pro
     where: and(eq(relationshipRuns.userId, userId), inArray(relationshipRuns.status, ACTIVE)),
   });
   if (!run) {
-    [run] = await db.insert(relationshipRuns).values({ userId, importId, status: "queued" }).returning();
+    // The partial unique index makes a concurrent first insert lose cleanly; re-select the winner.
+    [run] = await db.insert(relationshipRuns).values({ userId, importId, status: "queued" }).onConflictDoNothing().returning();
+    run ??= await db.query.relationshipRuns.findFirst({
+      where: and(eq(relationshipRuns.userId, userId), inArray(relationshipRuns.status, ACTIVE)),
+    });
+    if (!run) return null;
   }
   const token = randomUUID();
   const [claimed] = await db
@@ -180,20 +185,89 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
   const claim = await claimRun(userId, opts.importId ?? null, now);
   if (!claim) return { ...result, status: "busy", remaining: await pendingRelationshipContactCount(userId, now) };
   const { run, token } = claim;
-  // The run's note batch exists before any apply, inline or batched, so two concurrent
-  // first applies can never create two.
-  await ensureRunNoteBatch(userId, run.id);
   let inlineUsed = run.inlineUsed;
   const attempted = new Set<string>();
-  const queued: Array<{ contactId: string; window: MessageWindow; system: string; user: string }> = [];
+  let queue: Array<{ contactId: string; window: MessageWindow; system: string; user: string }> = [];
+  let batchUnavailable = false;
+  const overBudget = () => Date.now() - start >= budgetMs;
+
+  /** One inline attempt. Returns true when a key-level error paused the run (lease released). */
+  const attemptInline = async (contactId: string, window: MessageWindow, prompt: { system: string; user: string }): Promise<boolean> => {
+    try {
+      const answer = await extract(userId, prompt);
+      await processDigestAnswer(userId, run.id, contactId, window, answer, now);
+      inlineUsed += 1;
+      result.processed += 1;
+      return false;
+    } catch (err) {
+      if (isKeyLevelAiError(err)) {
+        await releaseRun(run.id, token, { status: "waiting_key", inlineUsed, lastError: String((err as Error)?.message ?? err).slice(0, 500) });
+        return true;
+      }
+      await recordDigestFailure(userId, contactId, err);
+      await db.update(relationshipRuns).set({ failed: sql`${relationshipRuns.failed} + 1` }).where(eq(relationshipRuns.id, run.id));
+      result.failed += 1;
+      return false;
+    }
+  };
+
+  /** Submit the queue; what the batch API will not take is done inline, within the budget. */
+  const flushQueue = async (): Promise<boolean> => {
+    const slice = queue;
+    queue = [];
+    if (slice.length === 0) return false;
+    const payload: RelationshipBatchPayload = {
+      runId: run.id,
+      items: slice.map((q, n) => ({
+        customId: `r${n}`,
+        contactId: q.contactId,
+        lastAt: q.window.last.at.toISOString(),
+        lastInteractionId: q.window.last.interactionId,
+      })),
+    };
+    const jobId = await submit(
+      userId,
+      "relationship.digest",
+      slice.map((q, n) => ({ customId: `r${n}`, system: q.system, user: q.user, temperature: 0.1, maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS })),
+      payload as unknown as Record<string, unknown>
+    );
+    if (jobId) {
+      const until = new Date(now.getTime() + BATCH_STALE_HOURS * 3_600_000);
+      for (const q of slice) {
+        await db
+          .insert(relationshipDigests)
+          .values({ contactId: q.contactId, userId, batchJobId: jobId, batchPendingUntil: until, runId: run.id })
+          .onConflictDoUpdate({ target: relationshipDigests.contactId, set: { batchJobId: jobId, batchPendingUntil: until, runId: run.id } });
+      }
+      result.submitted += slice.length;
+      return false;
+    }
+    batchUnavailable = true;
+    for (const q of slice) {
+      // Unprocessed contacts keep no marker, so they simply stay pending for the next pass.
+      if (overBudget()) break;
+      if (await attemptInline(q.contactId, q.window, { system: q.system, user: q.user })) return true;
+    }
+    return false;
+  };
+
+  const keyPaused = async (): Promise<PassResult> => ({
+    ...result,
+    status: "waiting_key",
+    remaining: await pendingRelationshipContactCount(userId, now),
+  });
 
   try {
-    claiming: while (Date.now() - start < budgetMs) {
+    // The run's note batch exists before any apply, inline or batched, so two concurrent
+    // first applies can never create two.
+    await ensureRunNoteBatch(userId, run.id);
+
+    claiming: while (!overBudget()) {
       const ids = await claimPendingContacts(userId, CLAIM_SIZE, attempted, now);
       if (ids.length === 0) break;
       const windows = await loadMessageWindows(userId, ids);
       for (const contactId of ids) {
-        if (Date.now() - start >= budgetMs) break claiming;
+        if (overBudget()) break claiming;
         attempted.add(contactId);
         const window = windows.get(contactId);
         if (!window) continue;
@@ -203,71 +277,16 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
           continue;
         }
         const prompt = await promptFor(userId, contactId, window);
-        if (inlineUsed >= INLINE_PER_RUN) {
-          queued.push({ contactId, window, ...prompt });
+        if (inlineUsed < INLINE_PER_RUN || batchUnavailable) {
+          if (await attemptInline(contactId, window, prompt)) return await keyPaused();
           continue;
         }
-        try {
-          const answer = await extract(userId, prompt);
-          await processDigestAnswer(userId, run.id, contactId, window, answer, now);
-          inlineUsed += 1;
-          result.processed += 1;
-        } catch (err) {
-          if (isKeyLevelAiError(err)) {
-            await releaseRun(run.id, token, { status: "waiting_key", inlineUsed, lastError: String((err as Error)?.message ?? err).slice(0, 500) });
-            return { ...result, status: "waiting_key", remaining: await pendingRelationshipContactCount(userId, now) };
-          }
-          await recordDigestFailure(userId, contactId, err);
-          await db.update(relationshipRuns).set({ failed: sql`${relationshipRuns.failed} + 1` }).where(eq(relationshipRuns.id, run.id));
-          result.failed += 1;
-        }
+        queue.push({ contactId, window, ...prompt });
+        // Bounded memory: a full queue goes out now, then the loop carries on if budget remains.
+        if (queue.length >= MAX_BATCH_REQUESTS && (await flushQueue())) return await keyPaused();
       }
     }
-
-    // Submit the queue; anything the batch API will not take is done inline.
-    for (let i = 0; i < queued.length; i += MAX_BATCH_REQUESTS) {
-      const slice = queued.slice(i, i + MAX_BATCH_REQUESTS);
-      const payload: RelationshipBatchPayload = {
-        runId: run.id,
-        items: slice.map((q, n) => ({
-          customId: `r${n}`,
-          contactId: q.contactId,
-          lastAt: q.window.last.at.toISOString(),
-          lastInteractionId: q.window.last.interactionId,
-        })),
-      };
-      const jobId = await submit(
-        userId,
-        "relationship.digest",
-        slice.map((q, n) => ({ customId: `r${n}`, system: q.system, user: q.user, temperature: 0.1, maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS })),
-        payload as unknown as Record<string, unknown>
-      );
-      if (jobId) {
-        const until = new Date(now.getTime() + BATCH_STALE_HOURS * 3_600_000);
-        for (const q of slice) {
-          await db
-            .insert(relationshipDigests)
-            .values({ contactId: q.contactId, userId, batchJobId: jobId, batchPendingUntil: until, runId: run.id })
-            .onConflictDoUpdate({ target: relationshipDigests.contactId, set: { batchJobId: jobId, batchPendingUntil: until, runId: run.id } });
-        }
-        result.submitted += slice.length;
-        continue;
-      }
-      for (const q of slice) {
-        try {
-          const answer = await extract(userId, { system: q.system, user: q.user });
-          await processDigestAnswer(userId, run.id, q.contactId, q.window, answer, now);
-          result.processed += 1;
-        } catch (err) {
-          if (isKeyLevelAiError(err)) {
-            await releaseRun(run.id, token, { status: "waiting_key", inlineUsed });
-            return { ...result, status: "waiting_key", remaining: await pendingRelationshipContactCount(userId, now) };
-          }
-          await recordDigestFailure(userId, q.contactId, err);
-          result.failed += 1;
-        }
-      }
-    }
+    if (await flushQueue()) return await keyPaused();
 
     result.remaining = await pendingRelationshipContactCount(userId, now);
     const out = await db.query.relationshipDigests.findFirst({
@@ -311,6 +330,16 @@ export async function applyRelationshipBatch(
       await recordDigestFailure(job.userId, contactId, err);
       reportError(err, { where: "job.ai-batch.apply.relationship", userId: job.userId, level: "warning", extra: { contactId } });
     }
+  }
+  // Nothing stays in flight for 30h: clear every payload item still pointing at this job
+  // (no window, no contact, or missing from the outcomes), whatever happened to it above.
+  const db = await getDb();
+  const allIds = payload.items.map((i) => i.contactId);
+  if (allIds.length > 0) {
+    await db
+      .update(relationshipDigests)
+      .set({ batchJobId: null, batchPendingUntil: null })
+      .where(and(eq(relationshipDigests.userId, job.userId), inArray(relationshipDigests.contactId, allIds), sql`${relationshipDigests.batchJobId} is not null`));
   }
   await kick(job.userId);
 }
