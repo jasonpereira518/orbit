@@ -63,10 +63,18 @@ export async function ensureRunNoteBatch(userId: string, runId: string): Promise
     where: and(eq(relationshipRuns.id, runId), eq(relationshipRuns.userId, userId)),
     columns: { noteBatchId: true },
   });
-  if (run?.noteBatchId) return run.noteBatchId;
+  if (run?.noteBatchId) {
+    const stored = await db.query.noteBatches.findFirst({
+      where: and(eq(noteBatches.id, run.noteBatchId), eq(noteBatches.userId, userId)),
+      columns: { status: true },
+    });
+    if (stored?.status === "saved") return run.noteBatchId;
+    // Undone or deleted out from under the run: new writes need a live batch, or their
+    // reminders would point at a record Undo no longer reaches.
+  }
   const sourceHash = `relationship:${runId}`;
   const existing = await db.query.noteBatches.findFirst({
-    where: and(eq(noteBatches.userId, userId), eq(noteBatches.sourceHash, sourceHash)),
+    where: and(eq(noteBatches.userId, userId), eq(noteBatches.sourceHash, sourceHash), eq(noteBatches.status, "saved")),
     columns: { id: true },
   });
   const batchId =

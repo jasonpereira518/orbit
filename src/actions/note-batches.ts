@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contacts, noteBatches, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { CAPTURE_BATCH_SQL, isCaptureBatchFor } from "@/lib/capture-history";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
 import { deleteNoteBatchForUser, dismissNoteReminderForUser, undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
@@ -13,7 +14,7 @@ export async function getNoteBatch(batchId: string) {
   const userId = await requireUserId();
   const db = await getDb();
   const batch = await db.query.noteBatches.findFirst({
-    where: and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId)),
+    where: and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId), CAPTURE_BATCH_SQL),
   });
   if (!batch) return null;
 
@@ -54,6 +55,8 @@ export async function getNoteBatch(batchId: string) {
 
 export async function undoNoteBatch(batchId: string) {
   const userId = await requireUserId();
+  // A relationship run's batch is undone through the run, never as a capture.
+  if (!(await isCaptureBatchFor(userId, batchId))) throw new Error("Batch not found");
   const out = await undoNoteBatchForUser(userId, batchId);
   revalidateReminderPaths();
   revalidatePath(`/capture/${batchId}`);
@@ -64,6 +67,7 @@ export async function undoNoteBatch(batchId: string) {
 /** Delete a capture from the history. The people and interactions it saved stay. */
 export async function deleteNoteBatch(batchId: string) {
   const userId = await requireUserId();
+  if (!(await isCaptureBatchFor(userId, batchId))) return { deleted: false };
   const deleted = await deleteNoteBatchForUser(userId, batchId);
   revalidateReminderPaths();
   revalidatePath("/capture");

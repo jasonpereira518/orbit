@@ -15,7 +15,8 @@ import { getDb } from "../src/db";
 import {
   actionItems, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
-import { applyDigestPlan, loadPreviousDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { undoNoteBatchForUser } from "../src/lib/note-batch-save";
 import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
 import { planDigestWrites } from "../src/lib/relationship-engine/rules";
 import type { ValidatedDigest } from "../src/lib/relationship-engine/types";
@@ -175,6 +176,19 @@ async function main() {
   check("run marked undone", after?.status === "undone");
   const left = await db.query.actionItems.findMany({ where: and(eq(actionItems.contactId, c.id), eq(actionItems.status, "open")) });
   check("no open engine action items left; note item survives", left.length === 1 && left[0].id === noteItem.id, String(left.length));
+
+  // The run's batch was undone or deleted out from under it: the next apply gets a fresh one.
+  const [run2] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
+  const b1 = await ensureRunNoteBatch(USER, run2.id);
+  check("ensureRunNoteBatch is stable", (await ensureRunNoteBatch(USER, run2.id)) === b1);
+  await undoNoteBatchForUser(USER, b1);
+  const b2 = await ensureRunNoteBatch(USER, run2.id);
+  const b2Row = await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, b2) });
+  const run2Row = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, run2.id) });
+  check("undone batch → fresh saved batch stored on the run", b2 !== b1 && b2Row?.status === "saved" && run2Row?.noteBatchId === b2);
+  await db.delete(noteBatches).where(eq(noteBatches.id, b2));
+  const b3 = await ensureRunNoteBatch(USER, run2.id);
+  check("deleted batch → fresh batch", b3 !== b2 && Boolean(await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, b3) })));
 
   await reset();
   console.log("\nsmoke-relationship-apply: all checks passed");
