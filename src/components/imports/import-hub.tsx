@@ -278,6 +278,8 @@ function rowForImportJobKind(kind: ImportJobKind): RowId | null {
       return "import-calendar-file";
     case "drive_docs":
       return null;
+    case "chat":
+      return null;
   }
 }
 
