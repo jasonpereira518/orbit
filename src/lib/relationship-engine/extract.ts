@@ -96,11 +96,16 @@ export function parseDigestAnswer(raw: string): RelationshipDigestAnswer {
 const PLEASANTRY_RE =
   /^(thanks|thank you|thx|ty)?[\s,!.]*(for (connecting|the connection|accepting|the add))?[\s,!.]*$|^(likewise|you too|same here|nice to (meet|connect with) you|great to connect|happy to connect|hi|hey|hello)[\s,!.]*$/i;
 
+/** A question, a number or a time word: a short thread can still hold a plan ("Coffee Tue at 3?"). */
+const SUBSTANCE_RE =
+  /[?\d]|\b(today|tonight|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|next week|this week|next month|am|pm|noon)\b/i;
+
 /** No model call for a thread with nothing in it to understand. */
 export function isTrivialWindow(window: MessageWindow): boolean {
   const texts = window.messages.map((m) => m.text.trim()).filter(Boolean);
   if (texts.length === 0) return true;
   if (texts.every((t) => PLEASANTRY_RE.test(t))) return true;
+  if (texts.some((t) => SUBSTANCE_RE.test(t))) return false;
   const chars = texts.reduce((n, t) => n + t.length, 0);
   return texts.length < 3 && chars < 200;
 }
@@ -136,26 +141,25 @@ export function buildDigestPrompt(input: {
   previous: PreviousDigest | null;
 }): { system: string; user: string } {
   const prev = input.previous;
-  const previousBlock = prev
-    ? fenceUntrusted(
-        "PREVIOUS",
-        [
-          `Summary: ${prev.summary ?? "(none)"}`,
-          `What they do: ${prev.whatTheyDo ?? "(unknown)"}`,
-          `Working on: ${prev.workingOn ?? "(unknown)"}`,
-          `Topics: ${prev.topics.join(", ") || "(none)"}`,
-        ].join("\n")
-      )
-    : "PREVIOUS: (first time reading this conversation)";
-  const openBlock = prev?.openItems.length
-    ? `OPEN ITEMS (key: text):\n${prev.openItems.map((o) => `${o.key}: ${o.text}`).join("\n")}`
-    : "OPEN ITEMS: (none)";
+  // The contact's name, earlier model output and open-item text all come from other people's
+  // words (or a model that read them), so all of it sits inside the fence.
+  const previousLines = prev
+    ? [
+        `Summary: ${prev.summary ?? "(none)"}`,
+        `What they do: ${prev.whatTheyDo ?? "(unknown)"}`,
+        `Working on: ${prev.workingOn ?? "(unknown)"}`,
+        `Topics: ${prev.topics.join(", ") || "(none)"}`,
+      ]
+    : ["(first time reading this conversation)"];
+  const openLines = prev?.openItems.length
+    ? ["OPEN ITEMS (key: text):", ...prev.openItems.map((o) => `${o.key}: ${o.text}`)]
+    : ["OPEN ITEMS: (none)"];
+  const previousBlock = fenceUntrusted("PREVIOUS", [`Contact: ${input.contactName}`, ...previousLines, "", ...openLines].join("\n"));
   return {
     system: SYSTEM,
     user: [
-      `Contact: ${input.contactName}`,
+      `CONTACT, PREVIOUS UNDERSTANDING AND OPEN ITEMS:`,
       previousBlock,
-      openBlock,
       `NEW MESSAGES (oldest first):`,
       fenceUntrusted("MESSAGES", input.window.text),
     ].join("\n\n"),
