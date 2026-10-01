@@ -22,6 +22,7 @@ import {
   importJobRows,
   imports,
   interactions,
+  relationshipRuns,
   reminders,
   tags,
 } from "../src/db/schema";
@@ -55,6 +56,7 @@ function check(label: string, condition: boolean, detail?: string) {
 async function reset() {
   const db = await getDb();
   await db.delete(reminders).where(inArray(reminders.userId, [USER, OTHER]));
+  await db.delete(relationshipRuns).where(inArray(relationshipRuns.userId, [USER, OTHER]));
   await db.delete(interactions).where(inArray(interactions.userId, [USER, OTHER]));
   await db.delete(contacts).where(inArray(contacts.userId, [USER, OTHER]));
   await db.delete(imports).where(inArray(imports.userId, [USER, OTHER]));
@@ -347,6 +349,26 @@ async function main() {
     String(bookCandidate(bookUntouched)?.reason),
   );
   check("…but notes the user rewrote are", bookCandidate(bookRewritten)?.reason === "noted");
+
+  // The relationship engine's reminders (created_by 'ai', note_batch_id of one of its runs)
+  // are the import's own consequence; a user-made reminder is still a trace.
+  const engine = await seedImport(
+    USER,
+    [
+      { name: "Engine Reminder", created: true },
+      { name: "User Reminder", created: true },
+    ],
+    { importType: LINKEDIN_IMPORT_TYPE, runEndedAt: RUN_END },
+  );
+  const [engineReminded, userReminded] = engine.ids;
+  const ENGINE_BATCH = "00000000-0000-4000-8000-0000000000e1";
+  await db.insert(relationshipRuns).values({ userId: USER, status: "done", noteBatchId: ENGINE_BATCH });
+  await db.insert(reminders).values({ userId: USER, contactId: engineReminded, title: "Follow up", createdBy: "ai", noteBatchId: ENGINE_BATCH });
+  await db.insert(reminders).values({ userId: USER, contactId: userReminded, title: "Mine", createdBy: "user" });
+  const enginePreview = await previewUndo(USER, engine.importId, NOW);
+  const engineCandidate = (id: string) => enginePreview!.candidates.find((c) => c.contactId === id);
+  check("an engine-made reminder is not a user trace", engineCandidate(engineReminded)?.removable === true, String(engineCandidate(engineReminded)?.reason));
+  check("a user-made reminder still keeps the person", engineCandidate(userReminded)?.reason === "reminded");
 
   // Another user's import is invisible.
   const foreign = await seedImport(OTHER, [{ name: "Not Yours", created: true }]);
