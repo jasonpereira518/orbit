@@ -27,18 +27,23 @@ export const WATERMARK_AFTER_SQL: SQL = sql`(
   OR (m.interaction_date = d.watermark_at AND m.id > d.watermark_interaction_id)
 )`;
 
+/**
+ * A contact parked at MAX_ATTEMPTS is re-armed by a message row that arrived after its last
+ * failure (failures write updated_at): new text may be what the model needed, and without
+ * this the contact would never be read again. One more failure parks it again.
+ */
 function pendingFrom(now: Date): SQL {
   return sql`
     FROM contacts c
     LEFT JOIN relationship_digests d ON d.contact_id = c.id
-    WHERE coalesce(d.attempts, 0) < ${MAX_ATTEMPTS}
-      AND (d.batch_pending_until IS NULL OR d.batch_pending_until < ${now.toISOString()}::timestamptz)
+    WHERE (d.batch_pending_until IS NULL OR d.batch_pending_until < ${now.toISOString()}::timestamptz)
       AND EXISTS (
         SELECT 1 FROM interactions m
          WHERE m.user_id = c.user_id
            AND m.contact_id = c.id
            AND ${MESSAGE_INTERACTION_SQL}
            AND ${WATERMARK_AFTER_SQL}
+           AND (coalesce(d.attempts, 0) < ${MAX_ATTEMPTS} OR m.created_at > d.updated_at)
       )
   `;
 }

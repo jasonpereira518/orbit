@@ -16,53 +16,75 @@ const conf = z
   .nullish()
   .transform((v) => (v == null || Number.isNaN(v) ? 0.5 : Math.min(1, Math.max(0, v))));
 const excerpt = z.string().nullish().transform((v) => v?.trim() || "");
-const owed = z.enum(["me", "them"]);
+
+/** Models write "Me", "I", "They", "contact"…; anything else (e.g. "both") is no owner. */
+function normalizeOwed(v: unknown): "me" | "them" | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim().toLowerCase();
+  if (s === "me" || s === "i" || s === "user") return "me";
+  if (s === "them" || s === "they" || s === "contact") return "them";
+  return null;
+}
+// `.optional()` first: in zod 4 a bare unknown→transform makes the key required.
+const owedOptional = z.unknown().optional().transform(normalizeOwed);
+const owedRequired = owedOptional.pipe(z.enum(["me", "them"]));
+const withinDays = z.unknown().optional().transform((v) => {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const days = Math.round(v);
+  return days >= 1 && days <= 365 ? days : null;
+});
+
+/**
+ * An array whose items are checked one at a time: an item that fails its schema is dropped,
+ * never the whole answer. A model that gets one commitment wrong still gets the rest applied.
+ */
+function eachValid<T extends z.ZodType>(item: T) {
+  return z
+    .array(z.unknown())
+    .nullish()
+    .transform((v) =>
+      (v ?? []).flatMap((x) => {
+        const r = item.safeParse(x);
+        return r.success ? [r.data as z.output<T>] : [];
+      })
+    );
+}
+
+const jobChange = z.object({ company: z.string().trim().min(1), title: str, excerpt });
 
 export const relationshipDigestSchema = z.object({
   what_they_do: str,
   working_on: str,
-  job_change: z
-    .object({ company: z.string().min(1), title: str, excerpt })
-    .nullish()
-    .transform((v) => v ?? null),
+  job_change: z.unknown().optional().transform((v) => {
+    const r = jobChange.safeParse(v);
+    return r.success ? r.data : null;
+  }),
   summary: z.string().nullish().transform((v) => v?.trim() || ""),
-  topics: z.array(z.string()).nullish().transform((v) => (v ?? []).map((t) => t.trim()).filter(Boolean).slice(0, 8)),
-  facts: z
-    .array(z.object({ text: z.string().min(1), excerpt }))
-    .nullish()
-    .transform((v) => v ?? []),
-  commitments: z
-    .array(
-      z.object({
-        title: z.string().min(1),
-        owed_by: owed,
-        raw_date_phrase: str,
-        date: z.string().nullish().transform((v) => v ?? ""),
-        date_kind: str,
-        year_stated: z.boolean().nullish().transform((v) => v ?? false),
-        kind: str,
-        confidence: conf,
-        excerpt,
-      })
-    )
-    .nullish()
-    .transform((v) => v ?? []),
-  implied: z
-    .array(
-      z.object({
-        text: z.string().min(1),
-        owed_by: owed.nullish().transform((v) => v ?? null),
-        within_days: z.number().int().nullish().transform((v) => v ?? null),
-        confidence: conf,
-        excerpt,
-      })
-    )
-    .nullish()
-    .transform((v) => v ?? []),
-  closed: z
-    .array(z.object({ key: z.string().min(1), excerpt }))
-    .nullish()
-    .transform((v) => v ?? []),
+  topics: eachValid(z.string().trim().min(1)).transform((v) => v.slice(0, 8)),
+  facts: eachValid(z.object({ text: z.string().min(1), excerpt })),
+  commitments: eachValid(
+    z.object({
+      title: z.string().min(1),
+      owed_by: owedRequired,
+      raw_date_phrase: str,
+      date: z.string().nullish().transform((v) => v ?? ""),
+      date_kind: str,
+      year_stated: z.unknown().optional().transform((v) => v === true),
+      kind: str,
+      confidence: conf,
+      excerpt,
+    })
+  ),
+  implied: eachValid(
+    z.object({
+      text: z.string().min(1),
+      owed_by: owedOptional,
+      within_days: withinDays,
+      confidence: conf,
+      excerpt,
+    })
+  ),
+  closed: eachValid(z.object({ key: z.string().min(1), excerpt })),
 });
 
 export type RelationshipDigestAnswer = z.infer<typeof relationshipDigestSchema>;
@@ -102,6 +124,7 @@ Rules:
 - "excerpt" must be copied character for character from ONE message. Anything you cannot quote, leave out.
 - commitments are things someone said they would do. implied are follow-ups the conversation calls for that nobody promised ("let's catch up when you're back in NYC").
 - owed_by "me" means the user owes it; "them" means the contact owes it.
+- confidence is a number from 0 to 1 (0.9 = very sure), never a percentage.
 - Relative dates ("next Tuesday", "tomorrow") are relative to the date of the message they appear in, shown in brackets at the start of each line — not to today. Put the phrase exactly as written in raw_date_phrase.
 - closed lists keys from OPEN ITEMS that the new messages show are done or no longer needed.
 - Leave out commitments that later messages in this same conversation show were already done.

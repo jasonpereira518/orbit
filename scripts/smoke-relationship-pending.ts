@@ -116,8 +116,26 @@ async function main() {
   check("stale batch → pending", (await pendingRelationshipContactCount(USER)) === 2);
 
   // Three failed attempts → parked.
-  await db.update(relationshipDigests).set({ attempts: 3 }).where(eq(relationshipDigests.contactId, old.contactId));
+  // (A failure writes updated_at; the messages above all predate it.)
+  await db.update(relationshipDigests).set({ attempts: 3, updatedAt: new Date() }).where(eq(relationshipDigests.contactId, old.contactId));
   check("attempts >= 3 → not pending", (await pendingRelationshipContactCount(USER)) === 1);
+
+  // A message that arrives after the last failure re-arms a parked contact (claim agrees).
+  await db.insert(interactions).values({
+    userId: USER,
+    contactId: old.contactId,
+    interactionType: "linkedin_message",
+    interactionDate: new Date("2026-09-26T10:00:00Z"),
+    source: "linkedin_messages",
+    externalId: "li-msg:old:after-park",
+    rawNotes: "any update on the deck?",
+    topics: [],
+    createdAt: new Date(Date.now() + 60_000),
+  });
+  check("parked + newer message → pending again", (await pendingRelationshipContactCount(USER)) === 2);
+  check("  and claimable", (await claimPendingContacts(USER, 10, new Set())).includes(old.contactId));
+  await db.update(relationshipDigests).set({ attempts: 4, updatedAt: new Date(Date.now() + 120_000) }).where(eq(relationshipDigests.contactId, old.contactId));
+  check("  and parked again after another failure", (await pendingRelationshipContactCount(USER)) === 1);
 
   // User sweep honours the settings switch.
   await seed(OFF_USER, "Off Thread", [["2026-09-20T10:00:00Z", "hi"]]);
