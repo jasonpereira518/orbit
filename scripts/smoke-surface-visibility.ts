@@ -18,11 +18,13 @@ import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
 import {
   isSurfaceHiddenError,
   requireVisibleSurface,
+  isSurfaceLive,
   resolveSurfaceVisibility,
   setSurfaceHidden,
 } from "../src/lib/surface-visibility";
 import {
   COMING_SOON_COMPANIONS,
+  CHAT_IMPORTS_SURFACE_KEY,
   COMING_SOON_KEYS,
   FEEDBACK_SURFACE_KEY,
   SURFACES,
@@ -237,6 +239,22 @@ async function main() {
         "every coming-soon companion is a real surface hung off a coming-soon page",
         companions.every((k) => getSurface(k) !== undefined) &&
           Object.keys(COMING_SOON_COMPANIONS).every((k) => COMING_SOON_KEYS.has(k))
+      );
+      check(
+        "feature.chat-imports is a feature-kind coming-soon surface",
+        getSurface(CHAT_IMPORTS_SURFACE_KEY)?.kind === "feature" &&
+          getSurface(CHAT_IMPORTS_SURFACE_KEY)?.comingSoon === true &&
+          surfacesOfKind("feature").some((s) => s.key === CHAT_IMPORTS_SURFACE_KEY) &&
+          COMING_SOON_KEYS.has(CHAT_IMPORTS_SURFACE_KEY)
+      );
+      check(
+        "chat imports are closed for an ordinary user",
+        !(await isSurfaceLive(USER, CHAT_IMPORTS_SURFACE_KEY))
+      );
+      check(
+        "chat imports are closed for an admin without the preview cookie",
+        !(await isSurfaceLive(ADMIN, CHAT_IMPORTS_SURFACE_KEY)) &&
+          forAdmin.comingSoon.has(CHAT_IMPORTS_SURFACE_KEY)
       );
       check(
         "coming-soon never leaks into what the admin console reports as hidden",

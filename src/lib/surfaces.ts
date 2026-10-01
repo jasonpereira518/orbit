@@ -14,7 +14,7 @@ import { SETTINGS_SECTIONS } from "@/components/settings/sections";
  * surface goes dark, and unhiding restores it as it was.
  */
 
-export type SurfaceKind = "page" | "dashboard" | "settings" | "widget";
+export type SurfaceKind = "page" | "dashboard" | "settings" | "widget" | "feature";
 
 export type Surface = {
   /** Stable storage key. Never rename one — the flag rows are keyed on it. */
@@ -37,7 +37,7 @@ export type Surface = {
   alwaysVisible?: true;
   reason?: string;
   /**
-   * Pages only: not released yet. Ordinary users get the coming-soon screen in place of the
+   * Pages and features: not released yet. Ordinary users get the coming-soon screen in place of the
    * route (and every route under it) and the nav item carries a "Soon" tag. Set in code, not
    * by an operator toggle — releasing the page is deleting this line.
    */
@@ -236,7 +236,32 @@ const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   };
 });
 
-export const SURFACES: Surface[] = [...PAGES, ...DASHBOARD_CARDS, ...WIDGETS, ...SETTINGS];
+/** The key the chat-imports feature (WhatsApp / iMessage exports) gates on. */
+export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
+
+/**
+ * Capabilities that are not a page, a card, a widget or a settings section: a feature that
+ * several of those would otherwise each have to gate. Coming-soon works exactly as it does
+ * for pages (closed for admins too until the preview cookie is set).
+ */
+const FEATURES: Surface[] = [
+  {
+    key: CHAT_IMPORTS_SURFACE_KEY,
+    kind: "feature",
+    label: "Chat imports (WhatsApp, iMessage)",
+    description:
+      "Upload WhatsApp and iMessage exports for relationship analysis. Hidden until the privacy policy discloses chat content.",
+    comingSoon: true,
+  },
+];
+
+export const SURFACES: Surface[] = [
+  ...PAGES,
+  ...DASHBOARD_CARDS,
+  ...WIDGETS,
+  ...SETTINGS,
+  ...FEATURES,
+];
 
 const BY_KEY = new Map(SURFACES.map((s) => [s.key, s]));
 
@@ -274,9 +299,9 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
 }
 
 /** Settings anchor id → surface key, for filtering the settings page and its rail. */
-/** Page surfaces that are announced but not released. */
+/** Page and feature surfaces that are announced but not released. */
 export const COMING_SOON_KEYS: ReadonlySet<string> = new Set(
-  PAGES.filter((s) => s.comingSoon).map((s) => s.key)
+  [...PAGES, ...FEATURES].filter((s) => s.comingSoon).map((s) => s.key)
 );
 
 /**
