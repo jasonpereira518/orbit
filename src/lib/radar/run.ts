@@ -473,6 +473,20 @@ export async function maybeRefreshRadar(userId: string, now: Date = new Date()):
   await runRadarForUser(userId, { trigger: "page", now, ai: false, budgetMs: 20_000 });
 }
 
+/**
+ * A person was just added to the network: rebuild now, so the cards they make possible are
+ * there when the page redraws instead of tomorrow. Best effort and bounded, like a stale page
+ * view: an account that has never run (its first visit builds the list), a paused one, or one
+ * already updating does nothing.
+ */
+export async function refreshRadarForNewContact(userId: string, now: Date = new Date()): Promise<boolean> {
+  const state = await loadRadarState(userId);
+  if (!state || state.paused || !state.lastRunAt) return false;
+  if (!(await claimRadarLease(userId, now))) return false;
+  const stats = await runRadarForUser(userId, { trigger: "page", now, ai: false, budgetMs: 8_000 });
+  return stats.ok;
+}
+
 /** Rows of `radar_runs` for one account, newest first. For the page stamp and the smoke. */
 export async function countRadarRuns(userId: string): Promise<number> {
   const db = await getDb();
