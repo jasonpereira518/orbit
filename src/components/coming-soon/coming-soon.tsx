@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PartyPopper, Send, Sparkles, type LucideIcon } from "lucide-react";
+import { PartyPopper, Radar, Send, Sparkles, type LucideIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,11 @@ type Feature = { icon: LucideIcon; teaser: string };
 
 /** Keyed by surface key. A page marked coming-soon without an entry gets the fallback. */
 const FEATURES: Record<string, Feature> = {
+  "page.radar": {
+    icon: Radar,
+    teaser:
+      "A short list, every morning, of who to reach out to and why, so the people who matter never go quiet. We're still tuning the instruments.",
+  },
   "page.events": {
     icon: PartyPopper,
     teaser:

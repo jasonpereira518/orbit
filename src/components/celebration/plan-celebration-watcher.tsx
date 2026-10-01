@@ -97,6 +97,8 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   const start = useCallback((next: PaidPlan, startAt: "accrete" | "ignite") => {
     keyRef.current += 1;
     pendingRef.current = null;
+    document.documentElement.setAttribute("data-plan-upgrade-active", "");
+    activeRef.current = { plan: next, startAt, key: keyRef.current };
     setActive({ plan: next, startAt, key: keyRef.current });
   }, []);
 
@@ -105,6 +107,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     if (!pending || activeRef.current) return;
     if (document.visibilityState !== "visible") return;
     if (document.documentElement.hasAttribute("data-warp")) return;
+    if (document.documentElement.hasAttribute("data-plan-downgrade")) return;
     start(pending, "accrete");
   }, [start]);
 
@@ -172,7 +175,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     const observer = new MutationObserver(() => tryStartPending());
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-warp"],
+      attributeFilter: ["data-warp", "data-plan-downgrade"],
     });
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
@@ -325,12 +328,18 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   }, [router]);
 
   const onDone = useCallback(() => {
+    document.documentElement.removeAttribute("data-plan-upgrade-active");
+    activeRef.current = null;
     setActive(null);
     // A handoff already refreshed; this covers the plain-fade exits (reduced
     // motion, or no app logo laid out to fly to). `refresh` de-dupes an
     // in-flight request, so the double call is free.
     router.refresh();
   }, [router]);
+
+  useEffect(() => () => {
+    document.documentElement.removeAttribute("data-plan-upgrade-active");
+  }, []);
 
   if (!active) return null;
   return createPortal(

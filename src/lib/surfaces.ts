@@ -58,13 +58,16 @@ const PAGES: Surface[] = [
     reason: "Onboarding and the app shell both redirect here.",
   },
   {
-    // Released. Hiding it in /admin/product stands down the nightly pass, the news sweep and
-    // the Monday email, and nothing points into it (see "Radar: switches" in docs/RUNBOOK.md).
+    // Ships dark again: released in #380, put back the same day. The page, the nightly
+    // pass's spend, the Monday email and the dashboard briefing all follow the effective
+    // coming-soon set. An admin previews it from /admin/product, where a `live:page.radar`
+    // override releases it without a deploy; releasing in code is deleting the line below.
     key: "page.radar",
     kind: "page",
     label: "Radar",
     description: "Who to reach out to this week, and why, rebuilt every night.",
     href: "/radar",
+    comingSoon: true,
   },
   {
     key: "page.events",
