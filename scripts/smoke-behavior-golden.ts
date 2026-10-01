@@ -160,12 +160,31 @@ function normalizeString(s: string): string {
 }
 
 /**
- * A search vector indexes those written days too, as a bare day-of-month lexeme ('25':32).
- * A vector cannot say which number was a day, so every one- and two-digit lexeme is
- * dropped ('3' in "3-4x" goes with them); the vector still compares on its words.
+ * A search vector indexes those written days too, as a bare day-of-month lexeme ('25':32), and
+ * the month beside it as a word ('jul':31). A vector cannot say which number was a day, so every
+ * one- and two-digit lexeme is dropped ('3' in "3-4x" goes with them), and so is a month name
+ * sitting right before one of them — the month a seeded "N days ago" lands in moves with the
+ * calendar, where "may" in a sentence stays. The vector still compares on its words.
  */
+const MONTH_LEXEMES = new Set(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]);
+
 function normalizeTsv(s: string): string {
-  return normalizeString(s).replace(/'\d{1,2}':[0-9A-D,]+ ?/g, "").trim();
+  const text = normalizeString(s);
+  const positionsOf = (list: string) => list.split(",").map((p) => Number.parseInt(p, 10));
+  const lexemes = [...text.matchAll(/'([^']*)':([0-9A-D,]+)/g)];
+  const dayPositions = new Set<number>();
+  for (const [, word, list] of lexemes) {
+    if (/^\d{1,2}$/.test(word)) for (const p of positionsOf(list)) dayPositions.add(p);
+  }
+  return text
+    .replace(/'([^']*)':([0-9A-D,]+) ?/g, (whole, word: string, list: string) => {
+      if (/^\d{1,2}$/.test(word)) return "";
+      if (!MONTH_LEXEMES.has(word)) return whole;
+      const kept = list.split(",").filter((p) => !dayPositions.has(Number.parseInt(p, 10) + 1));
+      if (kept.length === 0) return "";
+      return `'${word}':${kept.join(",")} `;
+    })
+    .trim();
 }
 
 function normalize(value: unknown): unknown {
