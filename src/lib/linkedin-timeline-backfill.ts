@@ -39,8 +39,7 @@
  * but they turn out not to be needed. `resolveConversations` resolves each conversation to
  * one primary participant, so a conversation maps to exactly one contact; where two
  * conversations resolve to the *same* person, one merged thread is a better input to the
- * extractor than two partial ones, and it is already how `enrichContactsFromMessages`
- * (the other post-hoc reader of these same rows) regroups them. Events are therefore keyed
+ * extractor than two partial ones, and it is how the engine regroups the same rows. Events are therefore keyed
  * `li-event:<contactId>:…` rather than `li-event:<conversationId>:…`.
  *
  * That namespace difference is also what keeps this from re-deriving events for threads
@@ -94,9 +93,9 @@ const CLAIM_SIZE = 100;
 /**
  * Messages handed to the extractor per contact, **oldest first**.
  *
- * Ascending, unlike `enrichContactsFromMessages`' descending read of the same rows, and the
- * difference is load-bearing rather than stylistic: that function summarizes a relationship
- * and wants the most *recent* 80 messages, while the first event this extractor emits is
+ * Ascending rather than newest-first, and the
+ * difference is load-bearing rather than stylistic: summarizing a relationship
+ * wants the most *recent* messages, while the first event this extractor emits is
  * the initial reach-out — the earliest message in the thread. Taking the newest 80 of a
  * long thread would stamp a "first reach-out" that is nothing of the sort. 80 matches the
  * extractor's own internal `.slice(0, 80)`, so a lower number here would silently discard
@@ -122,8 +121,7 @@ export const TIME_BUDGET_MS = 4.5 * 60 * 1000;
  * whose messages are all blank would otherwise be claimed, yield nothing, and be claimed
  * again on the next iteration forever.
  *
- * Matched on `interaction_type` alone rather than also on `source`, matching
- * `enrichContactsFromMessages`: `'linkedin_message'` is only ever written by the LinkedIn
+ * Matched on `interaction_type` alone rather than also on `source`: `'linkedin_message'` is only ever written by the LinkedIn
  * messages importer, and the source string differs between the pre-engine rows
  * (`'linkedin_messages_import'`) and the engine's (`'linkedin_messages'`), so filtering on
  * it would quietly exclude every thread imported before Task 14.
@@ -220,7 +218,7 @@ export async function usersWithPendingTimelineEvents(limit: number): Promise<str
   return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);
 }
 
-/** The columns a LinkedIn thread is rebuilt from, by this runner and by `message-enrichment`. */
+/** The columns a LinkedIn thread is rebuilt from, by the timeline backfill. */
 export type LinkedInThreadMessage = {
   rawNotes: string | null;
   aiSummary: string | null;

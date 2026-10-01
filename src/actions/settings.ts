@@ -2,6 +2,7 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
 import {
@@ -11,6 +12,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
+import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
 import {
   DATA_CATEGORY_IDS,
@@ -221,6 +223,9 @@ export async function saveAiSettings(input: {
     model: input.model,
     encryptedKey: encrypted,
   });
+
+  // A run parked in waiting_key resumes as soon as AI can run again.
+  if (newKey) after(() => kickRelationshipRun(userId));
 
   revalidatePath("/settings");
   revalidatePath("/chat");

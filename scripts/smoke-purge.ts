@@ -280,6 +280,10 @@ async function seed() {
     itemHash: "action-item-hash",
   });
 
+  // The relationship engine's per-contact digest and the run that produced it.
+  await db.insert(schema.relationshipDigests).values({ userId: USER, contactId: contact.id, summary: "Talks about the deck." });
+  await db.insert(schema.relationshipRuns).values({ userId: USER, status: "done" });
+
   await db.insert(schema.interactionMentions).values({
     userId: USER,
     interactionId: interaction.id,
@@ -445,7 +449,7 @@ async function seed() {
   // Background AI still in flight at a provider when the account went.
   await db.insert(schema.aiBatchJobs).values({
     userId: USER,
-    operation: "import.enrich",
+    operation: "relationship.digest",
     provider: "gemini",
     model: "gemini-3.5-flash",
     keyOwner: "user",

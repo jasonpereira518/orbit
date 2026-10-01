@@ -65,6 +65,7 @@ import {
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
+  relationshipRuns,
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
@@ -292,6 +293,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // user's own prose about named people, which makes it the most sensitive row in the
       // file.
       await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
+      // The relationship engine's run ledger (counters and flags per run). It keys on the user,
+      // not a contact, so no contact delete reaches it.
+      await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, userId));
       // Meeting transcripts: the words of everyone on a call, verbatim. Segments first and
       // explicitly, though they cascade from the session — they carry their own `user_id`,
       // and a transcript that outlived its account would be the worst leak this function
