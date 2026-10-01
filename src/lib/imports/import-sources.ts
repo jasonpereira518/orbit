@@ -9,6 +9,8 @@
 export const IMPORT_SOURCE_LABEL: Record<string, string> = {
   linkedin_connections: "LinkedIn connections",
   linkedin_messages: "LinkedIn messages",
+  whatsapp_chat: "WhatsApp chats",
+  imessage_chat: "iMessage chats",
   contacts_file: "Contacts file",
   google_contacts: "Google Contacts",
   outlook_contacts: "Outlook Contacts",

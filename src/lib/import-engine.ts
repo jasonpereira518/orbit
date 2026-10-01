@@ -99,6 +99,12 @@ export type ReminderInsert = typeof reminders.$inferInsert;
  * habit each importer has to remember.
  */
 export type ImportAdapter<P> = {
+  /**
+   * A contact the person already picked for this row (an import preview's picker). When it
+   * names one of this user's contacts the row merges into it and identity matching is not
+   * consulted. A stale id (deleted or merged since the preview) falls back to identity().
+   */
+  resolvedContactId?(payload: P): string | null;
   /** Fields the duplicate index probes. `null` marks the row skipped. */
   identity(payload: P): DuplicateProbe | null;
   /** The contact to insert when nothing matches confidently. */
@@ -397,6 +403,7 @@ export async function runImportJob(importId: string): Promise<void> {
 
     let existingContacts: DuplicateSubject[];
     let duplicateIndex: DuplicateIndex;
+    let contactById: Map<string, DuplicateSubject>;
     let companyResolve: Awaited<ReturnType<typeof createCompanyResolver>>;
     let engines: Engines = NO_ENGINES;
     try {
@@ -413,6 +420,7 @@ export async function runImportJob(importId: string): Promise<void> {
         },
       });
       duplicateIndex = buildDuplicateIndex(existingContacts);
+      contactById = new Map(existingContacts.map((c) => [c.id, c]));
       companyResolve = await createCompanyResolver(userId);
       // Opened once per invocation, like the index: Jev checks name-evidence folds below.
       engines = await openEngines(userId);
@@ -549,9 +557,16 @@ export async function runImportJob(importId: string): Promise<void> {
         // confident "different people" becomes a new contact plus a review item instead.
         // Jev only (`engines` has no LLM); without it this is a no-op.
         const vetoedRows = new Set<string>();
+        // A pin always names a contact that existed when this invocation opened; contacts
+        // created later in the same job are deliberately not in `contactById`.
+        const pinnedSubject = (payload: ImportJobRowPayload) => {
+          const id = adapter.resolvedContactId?.(payload) ?? null;
+          return id ? contactById.get(id) : undefined;
+        };
         if (engines.jev) {
           const nameFolds: Array<{ rowId: string; probe: DuplicateProbe; best: DuplicateMatch }> = [];
           for (const row of pendingRows) {
+            if (pinnedSubject(row.payload as ImportJobRowPayload)) continue;
             const probe = adapter.identity(row.payload as ImportJobRowPayload);
             if (!probe) continue;
             const best = findDuplicateCandidatesIndexed(duplicateIndex, probe)[0];
@@ -576,6 +591,11 @@ export async function runImportJob(importId: string): Promise<void> {
           // that job, so the payload union is narrowed once here rather than at each of the
           // dozen field reads inside the adapter.
           const payload = row.payload as ImportJobRowPayload;
+          const pinned = pinnedSubject(payload);
+          if (pinned) {
+            toUpdate.push({ row, contactId: pinned.id, input: adapter.toMerge(payload, pinned) });
+            continue;
+          }
           const probe = adapter.identity(payload);
           if (!probe) {
             toSkip.push(row);
