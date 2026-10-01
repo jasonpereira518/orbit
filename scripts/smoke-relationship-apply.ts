@@ -1,6 +1,6 @@
 /**
  * The writer: idempotent re-apply, dismissed items never recreated, key-fact dedupe,
- * title/company only when empty, next_follow_up_at, watermark advance, open threads, closing
+ * title/company never written (P1), next_follow_up_at, watermark advance, open threads, closing
  * action items, and run undo.
  *
  * Run: npx tsx scripts/smoke-relationship-apply.ts
@@ -13,7 +13,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-rel-apply";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
-  actionItems, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
+  actionItems, contactCareerMoves, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
 import { applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
 import { undoNoteBatchForUser } from "../src/lib/note-batch-save";
@@ -83,7 +83,8 @@ async function main() {
 
   const contact = await db.query.contacts.findFirst({ where: eq(contacts.id, c.id) });
   check("key facts appended", JSON.stringify(contact!.keyFacts) === JSON.stringify(["Has two kids", "Moved to Austin"]));
-  check("company filled when empty", contact!.company === "Stripe" && contact!.title === "PM");
+  // P1 never writes title/company (fingerprinted fields; deferred pending an owner decision).
+  check("company/title left empty despite a job change", !contact!.company && !contact!.title, `${contact!.company}/${contact!.title}`);
   check("ai_summary untouched", contact!.aiSummary == null);
   check("next_follow_up_at set", contact!.nextFollowUpAt != null);
 
@@ -103,6 +104,14 @@ async function main() {
   const batch = await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, runRow!.noteBatchId!) });
   check("batch entry point", batch?.entryPoint === "relationship");
   check("batch result lists reminders", batch?.result.reminders.length === 2);
+
+  // A known company and a job change: still no write, and no career move recorded.
+  await db.update(contacts).set({ company: "Acme", title: "Engineer" }).where(eq(contacts.id, c.id));
+  await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated, plan });
+  const known = await db.query.contacts.findFirst({ where: eq(contacts.id, c.id) });
+  check("known company untouched", known!.company === "Acme" && known!.title === "Engineer");
+  check("no career move recorded", (await db.query.contactCareerMoves.findMany({ where: eq(contactCareerMoves.contactId, c.id) })).length === 0);
+  await db.update(contacts).set({ company: null, title: null }).where(eq(contacts.id, c.id));
 
   // Re-apply the same plan: nothing new.
   const r2 = await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated, plan });

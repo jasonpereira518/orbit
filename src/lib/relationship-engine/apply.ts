@@ -25,7 +25,6 @@ import {
   type RelationshipTopic,
 } from "@/db/schema";
 import { actionItemHash } from "@/lib/action-items";
-import { detectJobChanges, loadJobBaseline, recordJobChanges } from "@/lib/job-changes";
 import { emptyNoteBatchResult } from "@/lib/note-batches";
 import { MESSAGE_INTERACTION_SQL } from "@/lib/relationship-engine/pending";
 import { undoNoteBatchForUser } from "@/lib/note-batch-save";
@@ -37,8 +36,6 @@ import type {
   PreviousDigest,
   ValidatedDigest,
 } from "@/lib/relationship-engine/types";
-
-const JOB_CHANGE_MAX_AGE_DAYS = 90;
 
 export type ApplyInput = {
   userId: string;
@@ -299,10 +296,13 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     }
   }
 
-  // 3. Contact fields: key facts, empty title/company, next follow-up.
+  // 3. Contact fields: key facts and next follow-up.
+  // Deferred in P1: no title/company write and no job-change log from messages, even when
+  // validated.jobChange is set. Title/company are fingerprinted (identity matching) fields and
+  // the spec contradicts itself on whether the engine may fill them; pending an owner decision.
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: { keyFacts: true, title: true, company: true, nextFollowUpAt: true },
+    columns: { keyFacts: true, nextFollowUpAt: true },
   });
   if (contact) {
     const have = new Set((contact.keyFacts ?? []).map((f) => f.trim().toLowerCase()));
@@ -315,12 +315,6 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     result.factsAdded = newFacts.length;
     const patch: Partial<typeof contacts.$inferInsert> = {};
     if (newFacts.length) patch.keyFacts = [...(contact.keyFacts ?? []), ...newFacts];
-    const jc = validated.jobChange;
-    const fresh = jc && now.getTime() - jc.messageAt.getTime() <= JOB_CHANGE_MAX_AGE_DAYS * 86_400_000;
-    if (jc && fresh && !contact.company?.trim()) {
-      patch.company = jc.company;
-      if (!contact.title?.trim() && jc.title) patch.title = jc.title;
-    }
     // From reminders that actually exist for this pass's items, not from planned dates.
     const live = passItemIds.length
       ? await db.query.reminders.findMany({
@@ -335,17 +329,6 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     if (earliest && (!contact.nextFollowUpAt || earliest < contact.nextFollowUpAt)) patch.nextFollowUpAt = earliest;
     if (Object.keys(patch).length) {
       await db.update(contacts).set({ ...patch, updatedAt: now }).where(eq(contacts.id, contactId));
-    }
-    // A move away from a company we already know goes through the job-change log.
-    if (jc && fresh && contact.company?.trim()) {
-      const baseline = await loadJobBaseline(userId, contactId, now);
-      const changes = detectJobChanges(baseline, [
-        {
-          kind: "role", organization: jc.company, title: jc.title, fieldOfStudy: null, location: null, description: null,
-          startYear: jc.messageAt.getUTCFullYear(), startMonth: jc.messageAt.getUTCMonth() + 1, endYear: null, endMonth: null, isCurrent: true,
-        },
-      ]);
-      if (changes.length) await recordJobChanges(userId, contactId, changes, { source: "messages", now });
     }
   }
 
