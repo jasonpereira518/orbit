@@ -4,6 +4,7 @@
  */
 import "./smoke/_env";
 import { parseWhatsAppExport } from "../src/lib/conversations/whatsapp";
+import { parseIMessageExport } from "../src/lib/conversations/imessage";
 import { fnv1a64 } from "../src/lib/conversations/hash";
 import { normalizePhoneLoose } from "../src/lib/conversations/phone";
 import { normalizePhone } from "../src/lib/duplicates";
@@ -70,6 +71,71 @@ check("group: 'added' notice dropped", g.messages.length === 3);
 
 const junk = parseWhatsAppExport("hello world\nnot a chat", "notes.txt");
 check("junk: empty, not thrown", junk.messages.length === 0);
+
+// ---- iMessage (imessage-exporter --format txt, layout verified against the project source) ----
+// Real layout: "<date>[ (Read by you after N)]", sender, body; tapbacks are a nested "Tapbacks:" block
+// of indented "<Kind> by <who>" lines; a reply parent ends with "This message responded to an earlier
+// message."; attachments are bare file paths; announcements are one line "<date> <who> <action>.".
+const im = [
+  "Mar 05, 2024  2:03:45 PM",
+  "+14155550134",
+  "Are we still on for Thursday?",
+  "",
+  "Mar 05, 2024  2:05:01 PM (Read by them after 2 minutes)",
+  "Me",
+  "Yes! 6pm at Tartine",
+  "",
+  "Can't wait",
+  "Tapbacks:",
+  "    Loved by +14155550134",
+  "",
+  "",
+  "Mar 06, 2024  9:00:00 AM",
+  "+14155550134",
+  "Loved \u201cYes! 6pm at Tartine\u201d",
+  "",
+  "Mar 06, 2024  9:01:00 AM",
+  "+14155550134",
+  "/Users/x/Library/Messages/Attachments/ab/IMG_0001.heic",
+  "",
+  "Mar 06, 2024  9:02:00 AM Me named the conversation Dinner",
+  "",
+  "Mar 06, 2024  9:03:00 AM",
+  "Me",
+  "Replying here",
+  "This message responded to an earlier message.",
+  "",
+  "    Mar 06, 2024  9:04:00 AM",
+  "    +14155550134",
+  "    nested reply",
+  "",
+].join("\n");
+const i1 = parseIMessageExport(im, "+14155550134.txt");
+check("imessage: real messages only", i1.messages.length === 4, JSON.stringify(i1.messages));
+check("imessage: multi-line body keeps blank, drops Tapbacks block", i1.messages[1].text === "Yes! 6pm at Tartine\n\nCan't wait", JSON.stringify(i1.messages[1]));
+check("imessage: reply trailer stripped, nested reply kept", i1.messages[2].text === "Replying here" && i1.messages[3].text === "nested reply");
+check("imessage: Me is self", i1.participants.find((p) => p.key === "Me")?.isSelf === true);
+check("imessage: handle phone", i1.participants.find((p) => !p.isSelf)?.phoneE164 === "+14155550134");
+check("imessage: title from file", i1.title === "+14155550134" && i1.isGroup === false);
+check("imessage: PM", new Date(i1.messages[0].at).getHours() === 14);
+
+// Legacy inline tapback lines are dropped too.
+const legacy = parseIMessageExport("Mar 06, 2024  9:00:00 AM\n+14155550134\nLoved \u201chi\u201d\n", "x.txt");
+check("imessage: inline tapback dropped", legacy.messages.length === 0);
+
+// macOS 14+ puts U+202F before AM/PM.
+const nnbsp = parseIMessageExport("Jan 02, 2025  10:00:00\u202fPM\nAna\nhi\n", "Ana.txt");
+check("imessage: narrow nbsp before PM", new Date(nnbsp.messages[0]?.at).getHours() === 22);
+
+const email = parseIMessageExport("Jan 02, 2025  10:00:00 AM\nana@example.com\nhi there\n", "ana@example.com.txt");
+check("imessage: email handle", email.participants.find((p) => !p.isSelf)?.email === "ana@example.com");
+
+const grp = parseIMessageExport(
+  "Jan 02, 2025  10:00:00 AM\n+14155550134\nhey all\n\nJan 02, 2025  10:01:00 AM\n+14155550199\nhi\n",
+  "+14155550134, +14155550199.txt"
+);
+check("imessage: group from file name", grp.isGroup === true);
+check("imessage: junk is empty", parseIMessageExport("hello\nworld", "n.txt").messages.length === 0);
 
 console.log("\nsmoke-chat-parsers: all checks passed");
 process.exit(0);
