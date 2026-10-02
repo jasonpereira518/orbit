@@ -5521,7 +5521,8 @@
     "basisInteractionId": "<interactions:Thirty minutes on what a Codex integration would need. She w>",
     "nextStep": null,
     "model": "demo-seed",
-    "inputHash": null
+    "inputHash": null,
+    "goalFit": null
   },
   "v1 me": {
     "status": 200,

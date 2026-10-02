@@ -296,6 +296,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ignored-people": "pglite",
   "smoke-contact-delete": "pglite",
   "smoke-contact-brief": "pglite",
+  "smoke-knowledge-people": "pglite",
   "smoke-contact-form-limit": "pglite",
   "smoke-contact-merge": "pglite",
   "smoke-contact-resolve": "pglite",
