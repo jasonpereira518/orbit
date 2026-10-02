@@ -2,10 +2,23 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { count, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { adminProviderSnapshots, userSettings } from "@/db/schema";
+import { probeDeepgramKey } from "@/lib/deepgram";
 import { getStripe, LIFETIME_METADATA_KEY, LIFETIME_METADATA_VALUE } from "@/lib/stripe";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
-export type ProviderName = "vercel" | "neon" | "clerk" | "stripe";
+export type ProviderName =
+  | "vercel"
+  | "neon"
+  | "clerk"
+  | "stripe"
+  | "blob"
+  | "resend"
+  | "slack"
+  | "deepgram"
+  | "anthropic"
+  | "openai"
+  | "google"
+  | "microsoft";
 export type ProviderState =
   | "healthy"
   | "degraded"
@@ -28,24 +41,50 @@ const LABELS: Record<ProviderName, string> = {
   neon: "Neon",
   clerk: "Clerk",
   stripe: "Stripe",
+  blob: "Vercel Blob",
+  resend: "Resend",
+  slack: "Slack alerts",
+  deepgram: "Deepgram",
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google sign-in",
+  microsoft: "Microsoft sign-in",
 };
 const DEFAULT_LINKS: Record<ProviderName, string> = {
   vercel: "https://vercel.com/dashboard",
   neon: "https://console.neon.tech/app/projects",
   clerk: "https://dashboard.clerk.com/",
   stripe: "https://dashboard.stripe.com/",
+  blob: "https://vercel.com/dashboard/stores",
+  resend: "https://resend.com/emails",
+  slack: "https://api.slack.com/apps",
+  deepgram: "https://console.deepgram.com/",
+  anthropic: "https://status.claude.com/",
+  openai: "https://status.openai.com/",
+  google: "https://console.cloud.google.com/apis/credentials",
+  microsoft: "https://entra.microsoft.com/",
 };
+
+/**
+ * Providers Orbit does not run and cannot fix: a partial outage there is worth showing
+ * but not worth a banner on the Health page. Only `unavailable` raises it for these.
+ */
+const UPSTREAM: ReadonlySet<ProviderName> = new Set(["anthropic", "openai", "google", "microsoft"]);
+
+/** Whether a row should count toward the Health banner's "providers down" total. */
+export function isProviderProblem(row: Pick<ProviderStatus, "provider" | "status">): boolean {
+  if (row.status === "unavailable") return true;
+  return row.status === "degraded" && !UPSTREAM.has(row.provider);
+}
+
+const ALL_PROVIDERS = Object.keys(LABELS) as ProviderName[];
 const FRESH_MS = 60_000;
 const TIMEOUT_MS = 3_500;
 
 function configuredLink(provider: ProviderName): string {
-  const overrides: Partial<Record<ProviderName, string | undefined>> = {
-    vercel: process.env.ADMIN_VERCEL_DASHBOARD_URL,
-    neon: process.env.ADMIN_NEON_DASHBOARD_URL,
-    clerk: process.env.ADMIN_CLERK_DASHBOARD_URL,
-    stripe: process.env.ADMIN_STRIPE_DASHBOARD_URL,
-  };
-  return overrides[provider]?.trim() || DEFAULT_LINKS[provider];
+  // ADMIN_<PROVIDER>_DASHBOARD_URL, e.g. ADMIN_STRIPE_DASHBOARD_URL.
+  const override = process.env[`ADMIN_${provider.toUpperCase()}_DASHBOARD_URL`]?.trim();
+  return override || DEFAULT_LINKS[provider];
 }
 
 function summaryOf(status: ProviderStatus) {
@@ -345,11 +384,165 @@ async function checkStripe(): Promise<ProviderStatus> {
   };
 }
 
+
+/* ------------------------------------------------------------ newer providers ------- */
+
+function row(
+  provider: ProviderName,
+  status: ProviderState,
+  detail: string,
+  metrics: ProviderStatus["metrics"] = {}
+): ProviderStatus {
+  return {
+    provider,
+    label: LABELS[provider],
+    status,
+    detail,
+    checkedAt: new Date(),
+    stale: false,
+    href: configuredLink(provider),
+    metrics,
+  };
+}
+
+/** GET with a timeout that hands back the status code instead of throwing on non-2xx. */
+async function fetchRaw(
+  url: string,
+  init: { method?: string; headers?: Record<string, string> } = {}
+): Promise<{ status: number; json: unknown }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: init.method ?? "GET",
+      headers: init.headers,
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    const json = await response.json().catch(() => null);
+    return { status: response.status, json };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Atlassian Statuspage's `status.indicator`, as a provider state. Pure, for the smoke. */
+export function stateFromStatuspageIndicator(indicator: unknown): ProviderState {
+  if (indicator === "none") return "healthy";
+  if (indicator === "minor" || indicator === "maintenance") return "degraded";
+  if (indicator === "major" || indicator === "critical") return "unavailable";
+  return "degraded";
+}
+
+/**
+ * A provider's public Statuspage feed. No credential, so it is never "unconfigured" — and
+ * it answers "is the provider up", not "does our key work", which is the honest scope of
+ * a check that needs no secret.
+ */
+function statuspageCheck(provider: ProviderName, url: string): () => Promise<ProviderStatus> {
+  return async () => {
+    const { status, json } = await fetchRaw(url);
+    if (status !== 200) throw new Error(`HTTP ${status}`);
+    const body = json as { status?: { indicator?: string; description?: string } } | null;
+    const indicator = body?.status?.indicator;
+    if (!indicator) throw new Error("unexpected status payload");
+    const state = stateFromStatuspageIndicator(indicator);
+    return row(
+      provider,
+      state,
+      state === "healthy"
+        ? `${LABELS[provider]} reports all systems operational.`
+        : `${LABELS[provider]} reports: ${body?.status?.description ?? indicator}.`,
+      { indicator }
+    );
+  };
+}
+
+/** An OAuth provider's public discovery document: is the sign-in endpoint reachable. */
+function discoveryCheck(
+  provider: ProviderName,
+  envKey: string,
+  url: string
+): () => Promise<ProviderStatus> {
+  return async () => {
+    if (!process.env[envKey]?.trim()) {
+      return row(provider, "unconfigured", `Add ${envKey} to connect ${LABELS[provider]} accounts.`);
+    }
+    const started = Date.now();
+    const { status } = await fetchRaw(url);
+    const latencyMs = Date.now() - started;
+    return status === 200
+      ? row(provider, "healthy", `Sign-in endpoint reachable in ${latencyMs} ms.`, { latencyMs })
+      : row(provider, "unavailable", `Sign-in endpoint answered HTTP ${status}.`, { httpStatus: status });
+  };
+}
+
+async function checkSlack(): Promise<ProviderStatus> {
+  const token = process.env.SLACK_BOT_TOKEN?.trim();
+  if (!token) {
+    return row("slack", "unconfigured", "Add SLACK_BOT_TOKEN to check the alert bot.");
+  }
+  // auth.test is read-only and posts nothing. A revoked token fails here, which is the
+  // failure that silences every ops alert without anything else noticing.
+  const { status, json } = await fetchRaw("https://slack.com/api/auth.test", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = json as { ok?: boolean; error?: string; team?: string } | null;
+  if (status !== 200 || !body) throw new Error(`HTTP ${status}`);
+  return body.ok
+    ? row("slack", "healthy", "The alert bot's token is valid.", { workspace: body.team ?? null })
+    : row("slack", "unavailable", `Slack rejected the alert bot's token (${body.error ?? "unknown"}).`, {
+        error: body.error ?? null,
+      });
+}
+
+async function checkBlob(): Promise<ProviderStatus> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+  if (!token) {
+    return row("blob", "unconfigured", "Add BLOB_READ_WRITE_TOKEN; avatars are inlined in Postgres without it.");
+  }
+  const { list } = await import("@vercel/blob");
+  const started = Date.now();
+  await list({ limit: 1, token });
+  const latencyMs = Date.now() - started;
+  return row("blob", "healthy", `Blob store reachable in ${latencyMs} ms.`, { latencyMs });
+}
+
+async function checkDeepgram(): Promise<ProviderStatus> {
+  const feed = await statuspageCheck("deepgram", "https://status.deepgram.com/api/v2/status.json")();
+  // The key probe lives in deepgram.ts, the only file allowed to read that key.
+  const key = await probeDeepgramKey();
+  if (key === "unconfigured") {
+    return { ...feed, detail: `${feed.detail} Add the Deepgram key to check it too.` };
+  }
+  if (key === "rejected") {
+    return row("deepgram", "unavailable", "Deepgram rejected Orbit's API key; voice notes will fail.");
+  }
+  return feed;
+}
+
 const CHECKS: Record<ProviderName, () => Promise<ProviderStatus>> = {
   vercel: checkVercel,
   neon: checkNeon,
   clerk: checkClerk,
   stripe: checkStripe,
+  blob: checkBlob,
+  resend: statuspageCheck("resend", "https://resend-status.com/api/v2/status.json"),
+  slack: checkSlack,
+  deepgram: checkDeepgram,
+  anthropic: statuspageCheck("anthropic", "https://status.anthropic.com/api/v2/status.json"),
+  openai: statuspageCheck("openai", "https://status.openai.com/api/v2/status.json"),
+  google: discoveryCheck(
+    "google",
+    "GOOGLE_CLIENT_ID",
+    "https://accounts.google.com/.well-known/openid-configuration"
+  ),
+  microsoft: discoveryCheck(
+    "microsoft",
+    "MICROSOFT_CLIENT_ID",
+    "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"
+  ),
 };
 
 async function saveSnapshot(status: ProviderStatus): Promise<void> {
@@ -396,7 +589,7 @@ async function checkOne(
     // Recorded on main's `error_events` rather than a telemetry table of its own. This
     // failure meets that module's admission test: it is otherwise invisible (the panel
     // just shows a stale or unavailable row), it is recorded nowhere else, and its volume
-    // is bounded by a four-provider poll behind a cache.
+    // is bounded by a twelve-provider poll behind a cache.
     await recordErrorEvent({
       source: ERROR_SOURCES.providerHealthCheck,
       kind: errorKind,
@@ -425,7 +618,7 @@ export async function loadProviderStatuses(options: {
   const db = await getDb();
   const cachedRows = await db.query.adminProviderSnapshots.findMany();
   const cached = new Map(cachedRows.map((row) => [row.provider, row]));
-  const providers: ProviderName[] = ["vercel", "neon", "clerk", "stripe"];
+  const providers = ALL_PROVIDERS;
   const settled = await Promise.allSettled(
     providers.map((provider) =>
       checkOne(
