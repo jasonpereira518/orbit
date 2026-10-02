@@ -11053,7 +11053,7 @@
       "ai_summary": "Ben Carter is Computer Science Student at UNC Chapel Hill. How you met: Hackathon judging at UNC. Built a genuinely good retrieval demo at HackNC in a weekend. Graduating in May and looking for an internship. Worth staying close to.",
       "company_id": "<companies:UNC Chapel Hill>",
       "first_name": "Ben",
-      "search_tsv": "'a':38,46,61,69 'an':54,77 'and':51,74 'at':17C,26,35,43,66 'ben':1A,20 'built':37,60 'carter':2A,21 'chapel':4B,7B,12C,28 'close':58,81 'computer':9B,23 'demo':42,65 'for':53,76 'genuinely':39,62 'good':40,63 'graduating':48,71 'hackathon':15C,33 'hacknc':19C,44,67 'hill':5B,8B,13C,29 'how':30 'in':45,49,68,72 'internship':55,78 'is':22 'judging':16C,34 'looking':52,75 'may':50,73 'met':32 'nc':14C 'retrieval':41,64 'science':10B,24 'staying':57,80 'student':11B,25 'to':59,82 'unc':3B,6B,18C,27,36 'weekend':47,70 'worth':56,79 'you':31",
+      "search_tsv": "'a':38,46,61,69 'an':54,77 'and':51,74 'at':17C,26,35,43,66 'ben':1A,20 'built':37,60 'carter':2A,21 'chapel':4B,7B,12C,28 'close':58,81 'computer':9B,23 'demo':42,65 'for':53,76 'genuinely':39,62 'good':40,63 'graduating':48,71 'hackathon':15C,33 'hacknc':19C,44,67 'hill':5B,8B,13C,29 'how':30 'in':45,49,68,72 'internship':55,78 'is':22 'judging':16C,34 'looking':52,75 'met':32 'nc':14C 'retrieval':41,64 'science':10B,24 'staying':57,80 'student':11B,25 'to':59,82 'unc':3B,6B,18C,27,36 'weekend':47,70 'worth':56,79 'you':31",
       "met_context": "HackNC",
       "orbit_score": 2,
       "cadence_days": null,
