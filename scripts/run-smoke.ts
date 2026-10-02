@@ -416,6 +416,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-feedback-submit": "pglite",
   "smoke-provider-connections": "pglite",
   "smoke-provider-status": "pglite",
+  "smoke-cross-service-checks": "pglite",
   "smoke-purge": "pglite",
   "smoke-purge-selective": "pglite",
   "smoke-purge-resume": "pglite",

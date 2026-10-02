@@ -14,6 +14,8 @@ import {
 import { getAdminHealth } from "@/lib/admin-health";
 import { cn } from "@/lib/utils";
 import { isProviderProblem, loadProviderStatuses } from "@/lib/admin-providers";
+import { crossCheckIssues, getCrossServiceChecks } from "@/lib/admin-cross-checks";
+import { CrossServicePanel } from "@/components/admin/cross-service-panel";
 import { ProviderRefreshButton } from "@/components/admin/provider-refresh-button";
 import {
   AiOperationsPanel,
@@ -64,6 +66,12 @@ export default async function AdminHealthPage() {
     loadProviderStatuses().catch(() => null),
   ]);
 
+  // Needs the bug-signature count (avatars), so it runs after the fan-out; it is database
+  // reads only and degrades to "unavailable" rather than failing the page.
+  const cross = await getCrossServiceChecks({
+    inlinedAvatars: bugs?.inlinedAvatars ?? null,
+  }).catch(() => null);
+
   const totalBroken =
     health.connections.length +
     health.calendars.length +
@@ -102,6 +110,8 @@ export default async function AdminHealthPage() {
           providerProblems={
             providers?.filter(isProviderProblem).length ?? 0
           }
+          crossIssues={crossCheckIssues(cross)}
+          crossPanel={<CrossServicePanel checks={cross} />}
           providerPanel={
             <>
         {/* First on the page: this answers "is Orbit itself up", not "is this account

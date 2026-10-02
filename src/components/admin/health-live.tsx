@@ -122,13 +122,18 @@ function relativeMinutes(date: Date | string) {
  */
 export function HealthLiveBody({
   providerProblems,
+  crossIssues,
   providerPanel,
+  crossPanel,
   bugsPanel,
   aiDataPanels,
 }: {
   /** Providers reporting degraded or unavailable (unconfigured is not a problem). */
   providerProblems: number;
+  /** Cross-service checks that disagree (warn or danger). */
+  crossIssues: number;
   providerPanel: React.ReactNode;
+  crossPanel: React.ReactNode;
   bugsPanel: React.ReactNode;
   aiDataPanels: React.ReactNode;
 }) {
@@ -147,7 +152,11 @@ export function HealthLiveBody({
     webhooks?.byOutcome.some((o) => o.outcome === "invalid" || o.outcome === "error")
   );
   const systemIssues =
-    (sweepBad ? 1 : 0) + (cronBad ? 1 : 0) + (webhooksBad ? 1 : 0) + providerProblems;
+    (sweepBad ? 1 : 0) +
+    (cronBad ? 1 : 0) +
+    (webhooksBad ? 1 : 0) +
+    providerProblems +
+    crossIssues;
 
   type Problem = { label: string; tab: string; tone: "danger" | "warn" };
   const problems: Problem[] = [];
@@ -166,6 +175,13 @@ export function HealthLiveBody({
   if (webhooksBad) problems.push({ label: "Webhook failures", tab: "systems", tone: "danger" });
   if (providerProblems > 0) {
     problems.push({ label: `${plural(providerProblems, "provider")} down`, tab: "systems", tone: "danger" });
+  }
+  if (crossIssues > 0) {
+    problems.push({
+      label: crossIssues === 1 ? "1 cross-service mismatch" : `${crossIssues} cross-service mismatches`,
+      tab: "systems",
+      tone: "warn",
+    });
   }
   const anyDanger = problems.some((p) => p.tone === "danger");
 
@@ -523,6 +539,8 @@ export function HealthLiveBody({
       />
 
       <div className="mb-6">{providerPanel}</div>
+
+      <div className="mb-6">{crossPanel}</div>
 
       <div className="space-y-6">
         <div>
