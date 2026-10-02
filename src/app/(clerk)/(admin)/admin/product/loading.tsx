@@ -14,19 +14,15 @@ function ToggleRows({ count }: { count: number }) {
   );
 }
 
-/** Mirrors /admin/product: header, preview, the constellation filter, then the toggle panels. */
+/** Mirrors /admin/product: header, the two preview cards, the tab row, then the page list. */
 export default function AdminProductLoading() {
   return (
     <AdminLoading
       title="Product"
       subtitle="Loading surfaces…"
       blocks={[
-        { panel: true, title: "Preview", body: <Skeleton className="h-3 w-full max-w-md" /> },
-        { panel: true, title: "Constellation", height: "h-44" },
-        { panel: true, title: "Pages", body: <ToggleRows count={4} /> },
-        { panel: true, title: "Dashboard cards", body: <ToggleRows count={3} /> },
-        { panel: true, title: "Widgets", body: <ToggleRows count={1} /> },
-        { panel: true, title: "Settings sections", body: <ToggleRows count={3} /> },
+        { panel: true, title: "Preview", body: <Skeleton className="h-10 w-full max-w-xl" /> },
+        { panel: true, title: "Pages, in sidebar order", body: <ToggleRows count={8} /> },
       ]}
     />
   );

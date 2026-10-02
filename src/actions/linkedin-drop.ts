@@ -7,6 +7,7 @@ import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { identityKeysFor, linkedinSlug } from "@/lib/duplicates";
 import { PaywallError } from "@/lib/entitlements";
 import { resolvePastedLinkedInProfiles } from "@/lib/linkedin-capture";
+import { kickWorkHistoryResearch } from "@/lib/work-history-research";
 import {
   MAX_PASTED_LINKEDIN_PROFILES,
   extractLinkedInProfileRefs,
@@ -123,6 +124,12 @@ export async function addContactsFromLinkedInUrls(
   }
 
   if (added.length) {
+    // Their work history, found by web search in its own function — it takes longer than
+    // this request should, and lands on their profiles when it is done.
+    await kickWorkHistoryResearch(
+      userId,
+      added.map((a) => a.contactId)
+    );
     revalidatePath("/contacts");
     revalidatePath("/");
     revalidatePath("/graph");

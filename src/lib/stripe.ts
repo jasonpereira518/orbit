@@ -1,14 +1,14 @@
 import Stripe from "stripe";
 
 /**
- * Stripe sells both paid tiers: the one-time Orbit Lifetime purchase and the recurring
- * Orbit Pro subscription. (Pro was originally architected on Clerk Billing; no Clerk
- * subscription was ever sold, and its webhook mirror in `api/webhooks/clerk` is legacy.)
+ * Stripe sells the two subscription tiers (Orbit Pro and Orbit Max, monthly) and the $5
+ * credit pack. Orbit Lifetime is no longer sold — admins grant it — but purchases made
+ * before pricing v2 still exist and can still be refunded, so the webhook keeps handling them.
  *
  * Entitlements are never read from Stripe. The webhook mirrors a completed purchase into
- * `user_settings.lifetime_purchased_at` (Lifetime) or the `subscription_*` columns (Pro),
- * and `src/lib/entitlements.ts` resolves from the database alone — so request and
- * background code agree, and there is one source of truth.
+ * the `subscription_*` columns (or `lifetime_purchased_at`, for legacy Lifetime), and
+ * `src/lib/entitlements.ts` resolves from the database alone — so request and background
+ * code agree, and there is one source of truth.
  *
  * Server-only, though not via the `server-only` package: that throws under plain Node and
  * would break the `scripts/smoke-*.ts` convention, which imports these modules directly.
@@ -16,18 +16,7 @@ import Stripe from "stripe";
  * pulls in Node built-ins the browser chunker cannot resolve.
  */
 
-export {
-  LIFETIME_PRICE_ID,
-  PRO_MONTHLY_PRICE_ID,
-  PRO_ANNUAL_PRICE_ID,
-  LIFETIME_METADATA_KEY,
-  LIFETIME_METADATA_VALUE,
-  PRO_METADATA_VALUE,
-  SUBSCRIPTION_USER_METADATA_KEY,
-  PRO_BILLING_PERIOD_METADATA_KEY,
-  isStripeConfigured,
-  isProCheckoutConfigured,
-} from "@/lib/stripe-config";
+export * from "@/lib/stripe-config";
 
 let client: Stripe | null = null;
 
@@ -42,7 +31,7 @@ export function getStripe(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
     throw new Error(
-      "STRIPE_SECRET_KEY is not set. Add it before enabling Lifetime checkout."
+      "STRIPE_SECRET_KEY is not set. Add it before enabling checkout."
     );
   }
   client ??= new Stripe(key);

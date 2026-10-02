@@ -21,6 +21,7 @@ export default async function RunwayPage() {
     monthlyBurnUsd,
     expenseBurnUsd,
     infraMonthlyUsd,
+    managedAiMonthlyUsd,
     infraEntered,
     recentExpenses,
     runwayMonths,
@@ -39,7 +40,7 @@ export default async function RunwayPage() {
           <MetricTile
             label="Monthly burn"
             value={usd(monthlyBurnUsd)}
-            hint="expenses + infrastructure"
+            hint="expenses + infrastructure + included AI"
             tone={infraEntered ? "default" : "danger"}
           />
           <MetricTile
@@ -67,6 +68,9 @@ export default async function RunwayPage() {
                   not entered — burn is understated and runway overstated
                 </span>
               )}
+            </DefinitionRow>
+            <DefinitionRow label="Included AI (Pro and Max)">
+              {usd(managedAiMonthlyUsd)} · model cost on Orbit&apos;s keys, trailing 30 days
             </DefinitionRow>
             <DefinitionRow label="= Monthly burn">
               <span className="font-medium text-foreground">{usd(monthlyBurnUsd)}</span>

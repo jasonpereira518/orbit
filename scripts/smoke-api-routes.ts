@@ -50,8 +50,8 @@ run(async () => {
   // The API is a paid feature; comp the account so the routes are reachable.
   await db.execute(sql`
     INSERT INTO user_settings (user_id, comped_plan, comped_at)
-    VALUES (${USER}, 'orbit', now())
-    ON CONFLICT (user_id) DO UPDATE SET comped_plan = 'orbit', comped_at = now()
+    VALUES (${USER}, 'max', now())
+    ON CONFLICT (user_id) DO UPDATE SET comped_plan = 'max', comped_at = now()
   `);
 
   // --- An unauthenticated call answers JSON, not a redirect ---------------------------------
@@ -74,7 +74,7 @@ run(async () => {
   check("a valid key reaches /me", me.status === 200, String(me.status));
   const meBody = (await me.json()) as Envelope;
   const meData = meBody.data as { plan: string; scopes: string[]; keyPrefix: string };
-  check("it reports the plan", meData.plan === "orbit", meData.plan);
+  check("it reports the plan", meData.plan === "max", meData.plan);
   check("it reports the key's scopes", meData.scopes.includes("write"));
   check("it identifies the key without revealing it", meData.keyPrefix === key.prefix);
 
@@ -328,6 +328,10 @@ run(async () => {
   await db.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM api_keys WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM webhook_endpoints WHERE user_id = ${USER}`);
+  // The comped Max row would read as a Pro/Max account with no managed key to the ops sweep
+  // that runs later in the same suite (one shared PGlite).
+  await db.execute(sql`DELETE FROM gate_events WHERE user_id = ${USER}`);
+  await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${USER}`);
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

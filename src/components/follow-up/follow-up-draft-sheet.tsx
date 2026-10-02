@@ -28,11 +28,17 @@ export function FollowUpDraftSheet({
   onOpenChange,
   contactId,
   contactName,
+  initialDraft,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contactId: string;
   contactName: string;
+  /**
+   * A draft already written for this person (Radar writes one overnight for Today's cards).
+   * Shown the moment the sheet opens, with no model call; Regenerate still asks for a new one.
+   */
+  initialDraft?: string | null;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState("");
@@ -68,15 +74,22 @@ export function FollowUpDraftSheet({
         report
       );
       // Opening the sheet shows the draft already written for this context; only
-      // Regenerate below pays for a new one.
-      const draftRead = draftContactFollowUp(contactId, { reuse: true }).then(
-        (result) => {
-          if (session === sessionRef.current) setDraft(result.body);
-        },
-        report
-      );
+      // Regenerate below pays for a new one. A draft handed in (Radar's) needs no read at all.
+      const handed = initialDraft?.trim();
+      if (handed) setDraft(handed);
+      const draftRead = handed
+        ? Promise.resolve()
+        : draftContactFollowUp(contactId, { reuse: true }).then(
+            (result) => {
+              if (session === sessionRef.current) setDraft(result.body);
+            },
+            report
+          );
       await Promise.all([optionsRead, draftRead]);
     });
+    // `initialDraft` is read when the sheet opens, not tracked: a draft arriving while the
+    // sheet is open must not overwrite what the person is editing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contactId]);
 
   function regenerate() {

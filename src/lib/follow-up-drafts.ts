@@ -4,6 +4,8 @@ import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
 import { parseAiJson } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
+import type { AiAccess } from "@/lib/ai-access";
+import type { AiOperationId } from "@/lib/ai-operations";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { withWritingPreferences } from "@/lib/writing-instructions";
 
@@ -140,6 +142,9 @@ async function draftFromContext(input: {
   reuse?: boolean;
   /** The sender's style notes, passed in by the action that owns the request. */
   writingInstructions?: string | null;
+  operation?: AiOperationId;
+  access?: AiAccess;
+  signal?: AbortSignal;
 }): Promise<FollowUpDraft> {
   const contactName = input.contact.preferredName || input.contact.fullName;
   const profileBlock = buildProfileBlock(input.contact);
@@ -190,7 +195,9 @@ async function draftFromContext(input: {
       : "Do not write a sign-off, signature, or placeholder name — end on the final sentence.";
 
   const content = await cachedCompleteJson(input.userId, {
-    operation: "followup.draft",
+    operation: input.operation ?? "followup.draft",
+    access: input.access,
+    signal: input.signal,
     temperature: 0.5,
     system: `You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
 The user is following up with someone they already know — not cold outreach.
@@ -285,6 +292,14 @@ export async function generateContactFollowUpDraft(
     intent?: string | null;
     reuse?: boolean;
     writingInstructions?: string | null;
+    /**
+     * For work done on the person's behalf rather than at their click (Radar's overnight
+     * drafts): a background operation, so managed budgets treat it as one, and the run's
+     * already-resolved AI access and deadline.
+     */
+    operation?: AiOperationId;
+    access?: AiAccess;
+    signal?: AbortSignal;
   }
 ): Promise<FollowUpDraft> {
   const { contact, recent } = await loadContactContext(userId, contactId);
@@ -298,5 +313,8 @@ export async function generateContactFollowUpDraft(
     intent: options?.intent,
     reuse: options?.reuse,
     writingInstructions: options?.writingInstructions,
+    operation: options?.operation,
+    access: options?.access,
+    signal: options?.signal,
   });
 }

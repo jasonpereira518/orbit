@@ -23,14 +23,16 @@ import {
   type ReferralTier,
   buildShareUrl,
   buildTicketUrl,
-  interestListSchema,
-  interestNameSchema,
-  type InterestListInput,
   type InterestListResult,
-  type InterestNameInput,
   type InterestNameResult,
   type InterestTicket,
 } from "@/lib/interest-list";
+import {
+  interestListSchema,
+  interestNameSchema,
+  type InterestListInput,
+  type InterestNameInput,
+} from "@/lib/interest-list-schema";
 import {
   buildUnsubscribeUrl,
   generateUnsubscribeToken,

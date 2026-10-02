@@ -2626,3 +2626,203 @@ export async function chatWithNetwork(
     evidence: prompt.evidence,
   };
 }
+
+/** One page a web-grounded answer drew on. */
+export type WebSource = { url: string; title: string | null };
+
+/**
+ * Anthropic's web search tool version for a model. The dynamic-filtering variant needs a
+ * 4.6-or-later Opus/Sonnet or a 5-series model; anything older (Haiku 4.5, Sonnet 4.5) only
+ * accepts the basic one, and the wrong one is a 400.
+ */
+export function anthropicWebSearchToolType(model: string): "web_search_20260209" | "web_search_20250305" {
+  return /^claude-(?:(?:opus|sonnet)-4-[6-9]|(?:opus|sonnet|fable|mythos)-[5-9])/.test(model)
+    ? "web_search_20260209"
+    : "web_search_20250305";
+}
+
+/** A searched answer runs several fetches before it writes a word — more than a plain call. */
+const WEB_SEARCH_TIMEOUT_MS = 120_000;
+
+/** Server-tool turns Anthropic may pause mid-search; each resume is one more request. */
+const MAX_WEB_SEARCH_RESUMES = 3;
+
+/**
+ * A JSON answer grounded in a live web search, run on the account's own provider.
+ *
+ * Every provider Orbit talks to searches the web server-side, so this needs no search
+ * vendor and no key beyond the one the person already configured: Gemini grounds with
+ * Google Search, OpenAI and Anthropic run their hosted `web_search` tools, and OpenRouter
+ * its `web` plugin. Structured-output modes are off here — none of the providers combine a
+ * JSON response format with search — so the answer is read with `parseAiJson`, which finds
+ * the object inside any prose around it.
+ *
+ * Token usage is reported like any other call. Per-search fees are billed by the provider
+ * on top and are NOT in those counts; callers bound them with `maxSearches` and by running
+ * rarely.
+ */
+export async function webSearchJson(
+  userId: string,
+  input: {
+    system: string;
+    user: string;
+    operation: AiOperationId;
+    /** Upper bound on searches per call where the provider has one (Anthropic max_uses; OpenRouter results). */
+    maxSearches?: number;
+    maxOutputTokens?: number;
+    signal?: AbortSignal;
+    access?: AiAccess;
+  },
+): Promise<{ json: string; sources: WebSource[] }> {
+  const { operation } = input;
+  const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
+  const grant = await access.completion(operation);
+  const { provider, keyOwner } = grant;
+  const model = modelForOperation(operation, grant);
+  const maxOutputTokens = input.maxOutputTokens ?? 4096;
+  const maxSearches = input.maxSearches ?? 5;
+  const system = `${input.system}${JSON_SYSTEM_SUFFIX}`;
+  const callSignal = () => {
+    const own = aiSignal(WEB_SEARCH_TIMEOUT_MS);
+    return input.signal ? AbortSignal.any([own, input.signal]) : own;
+  };
+
+  return runOnGrant(grant, withUsage(
+    { userId, operation, provider, model, kind: "completion", keyOwner },
+    async (report) => {
+      try {
+        if (provider === "gemini") {
+          const client = await geminiClient(grant);
+          const response = await client.models.generateContent({
+            model,
+            contents: input.user,
+            config: {
+              abortSignal: callSignal(),
+              temperature: 0.1,
+              maxOutputTokens,
+              systemInstruction: system,
+              tools: [{ googleSearch: {} }],
+              ...geminiThinking(model, operation),
+            },
+          });
+          report(tokensFromGemini(response));
+          const content = response.text;
+          if (!content) throw new Error("Empty AI response");
+          const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+          const sources = chunks
+            .map((c) => (c.web?.uri ? { url: c.web.uri, title: c.web.title ?? null } : null))
+            .filter((s): s is WebSource => s !== null);
+          return { json: normalizeJsonResponse(content), sources };
+        }
+
+        if (provider === "openrouter") {
+          const client = await openAiShapedClient(grant);
+          // OpenRouter's search is a request plugin, not a tool, and its SDK types do not
+          // know it — hence the widened params object.
+          const response = await client.chat.completions.create(
+            withOpenRouterRouting(provider, {
+              model,
+              max_tokens: maxOutputTokens,
+              messages: [
+                { role: "system" as const, content: system },
+                { role: "user" as const, content: input.user },
+              ],
+              // Billed per result returned; three identify a person as well as five do.
+              plugins: [{ id: "web", max_results: Math.min(3, maxSearches + 1) }],
+            }) as Parameters<typeof client.chat.completions.create>[0] & { stream?: false },
+            { signal: callSignal() },
+          );
+          report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
+          const message = response.choices[0]?.message;
+          if (!message?.content) throw new Error("Empty AI response");
+          const annotations =
+            (message as { annotations?: Array<{ type: string; url_citation?: { url: string; title?: string } }> })
+              .annotations ?? [];
+          const sources = annotations
+            .filter((a) => a.type === "url_citation" && a.url_citation?.url)
+            .map((a) => ({ url: a.url_citation!.url, title: a.url_citation!.title ?? null }));
+          return { json: normalizeJsonResponse(message.content), sources };
+        }
+
+        if (provider === "openai") {
+          // Web search is a Responses API tool; Chat Completions has no equivalent.
+          const client = await openaiClient(grant);
+          const response = await client.responses.create(
+            {
+              model,
+              instructions: system,
+              input: input.user,
+              // "low" context: fewer result tokens fed to the model, and the cheaper search
+              // tier — enough to read a profile snippet, which is all a lookup needs.
+              tools: [{ type: "web_search", search_context_size: "low" }],
+              max_output_tokens: maxOutputTokens,
+            },
+            { signal: callSignal() },
+          );
+          report({
+            inputTokens: response.usage?.input_tokens ?? null,
+            outputTokens: response.usage?.output_tokens ?? null,
+            cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
+          });
+          const content = response.output_text;
+          if (!content) throw new Error("Empty AI response");
+          const sources: WebSource[] = [];
+          for (const item of response.output) {
+            if (item.type !== "message") continue;
+            for (const part of item.content) {
+              if (part.type !== "output_text") continue;
+              for (const a of part.annotations) {
+                if (a.type === "url_citation") sources.push({ url: a.url, title: a.title || null });
+              }
+            }
+          }
+          return { json: normalizeJsonResponse(content), sources };
+        }
+
+        const client = await anthropicClient(grant);
+        const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
+        const totals = { input: 0, output: 0, cached: 0 };
+        let response: Anthropic.Message | null = null;
+        // A long search can end the turn with `pause_turn`; sending the partial turn back
+        // lets it continue where it stopped rather than starting the research over.
+        for (let attempt = 0; attempt <= MAX_WEB_SEARCH_RESUMES; attempt++) {
+          response = await client.messages.create({
+            model,
+            max_tokens: maxOutputTokens,
+            ...(anthropicAcceptsTemperature(model) ? { temperature: 0.1 } : {}),
+            system,
+            messages,
+            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: maxSearches }],
+          }, { signal: callSignal() });
+          const t = tokensFromAnthropic(response);
+          totals.input += t.inputTokens ?? 0;
+          totals.output += t.outputTokens ?? 0;
+          totals.cached += t.cachedInputTokens ?? 0;
+          report({ inputTokens: totals.input, outputTokens: totals.output, cachedInputTokens: totals.cached });
+          if (response.stop_reason !== "pause_turn") break;
+          messages.push({ role: "assistant", content: response.content });
+        }
+        if (!response || response.stop_reason === "refusal") throw new Error("Empty AI response");
+
+        // Citations split the answer into several text blocks; the JSON may span them.
+        const text = response.content
+          .map((b) => (b.type === "text" ? b.text : ""))
+          .join("");
+        if (!text.trim()) throw new Error("Empty AI response");
+        const sources: WebSource[] = [];
+        for (const block of response.content) {
+          if (block.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
+          for (const r of block.content) sources.push({ url: r.url, title: r.title || null });
+        }
+        return { json: normalizeJsonResponse(text), sources };
+      } catch (err) {
+        if (err instanceof Error && err.message === "Empty AI response") throw err;
+        if (err instanceof Error && err.message.startsWith("Failed to parse AI JSON")) {
+          throw new Error(AI_INCOMPLETE_MESSAGE);
+        }
+        throw new Error(aiProviderErrorMessage(err, aiProviderLabel(provider)));
+      }
+    },
+    { cancelSignal: input.signal },
+  ));
+}

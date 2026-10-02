@@ -75,11 +75,22 @@ CREATE TABLE IF NOT EXISTS user_settings (
   comped_note text,
   comped_at timestamptz,
   comped_by text,
+  subscription_period_start timestamptz,
+  founding_eligible boolean NOT NULL DEFAULT false,
+  founding_redeemed_at timestamptz,
+  founding_window_ends_at timestamptz,
+  founding_subscription_id text,
+  ai_key_preference text,
+  max_nudge_seen_at timestamptz,
+  credit_email_enabled integer NOT NULL DEFAULT 1,
+  credit_notice_period_start timestamptz,
+  credit_notice_level integer NOT NULL DEFAULT 0,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
+  work_history_auto_enabled integer NOT NULL DEFAULT 1,
   timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
@@ -90,7 +101,18 @@ CREATE TABLE IF NOT EXISTS user_settings (
   inbound_log_token text,
   inbound_log_token_created_at timestamptz,
   inbound_log_last_received_at timestamptz,
-  stealth_cleared_at timestamptz
+  stealth_cleared_at timestamptz,
+  radar_next_at timestamptz,
+  radar_lease_until timestamptz,
+  radar_last_run_at timestamptz,
+  radar_paused integer NOT NULL DEFAULT 0,
+  radar_model jsonb,
+  radar_autopilot jsonb NOT NULL DEFAULT '{}',
+  radar_capture_linkedin_activity integer NOT NULL DEFAULT 0,
+  radar_digest_enabled integer NOT NULL DEFAULT 1,
+  radar_digest_tz text,
+  radar_digest_last_week text,
+  radar_digest_unsub_token_hash text
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
@@ -120,6 +142,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   linkedin_url text,
   x_handle text,
   website text,
+  bluesky_handle text,
+  mastodon_acct text,
   profile_image_url text,
   profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
@@ -140,6 +164,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   ai_summary text,
   notes text,
   embedding_stale_at timestamptz,
+  work_history_due_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -384,6 +409,110 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
   status text NOT NULL DEFAULT 'pending',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS recommendations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  score integer NOT NULL,
+  bucket text NOT NULL,
+  reasons jsonb NOT NULL DEFAULT '[]',
+  evidence jsonb NOT NULL DEFAULT '[]',
+  status text NOT NULL DEFAULT 'pending',
+  snoozed_until timestamptz,
+  expires_at timestamptz NOT NULL,
+  run_id uuid,
+  inputs_hash text NOT NULL,
+  ai_note jsonb,
+  base_score integer,
+  ai_delta integer,
+  ai_angle text,
+  draft jsonb,
+  autopilot jsonb,
+  first_seen_at timestamptz,
+  last_seen_at timestamptz,
+  seen_count integer NOT NULL DEFAULT 0,
+  acted_at timestamptz,
+  outcome_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS recommendations_live_v2_uidx ON recommendations(user_id, contact_id, kind) WHERE status IN ('pending', 'snoozed', 'auto_applied');
+CREATE INDEX IF NOT EXISTS recommendations_user_status_score_idx ON recommendations(user_id, status, score DESC);
+CREATE TABLE IF NOT EXISTS radar_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  trigger text NOT NULL,
+  status text NOT NULL DEFAULT 'running',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  duration_ms integer,
+  stats jsonb NOT NULL DEFAULT '{}',
+  error text
+);
+CREATE INDEX IF NOT EXISTS radar_runs_user_started_idx ON radar_runs(user_id, started_at DESC);
+CREATE TABLE IF NOT EXISTS recommendation_feedback (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  recommendation_id uuid,
+  kind text,
+  action text NOT NULL,
+  reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recommendation_feedback_user_contact_idx ON recommendation_feedback(user_id, contact_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS contact_signals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  occurred_at timestamptz NOT NULL,
+  source text NOT NULL,
+  external_item_id uuid,
+  payload jsonb NOT NULL DEFAULT '{}',
+  dedupe_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_signals_dedupe_uidx ON contact_signals(user_id, dedupe_hash);
+CREATE INDEX IF NOT EXISTS contact_signals_user_occurred_idx ON contact_signals(user_id, occurred_at DESC);
+CREATE TABLE IF NOT EXISTS external_sources (
+  id text PRIMARY KEY,
+  label text NOT NULL,
+  url text NOT NULL,
+  kind text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  etag text,
+  last_modified text,
+  last_fetched_at timestamptz,
+  last_status text,
+  last_error text,
+  consecutive_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS external_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_id text NOT NULL REFERENCES external_sources(id) ON DELETE CASCADE,
+  external_id text NOT NULL,
+  title text NOT NULL,
+  summary text,
+  url text,
+  published_at timestamptz NOT NULL,
+  first_seen_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_items_source_external_uidx ON external_items(source_id, external_id);
+CREATE INDEX IF NOT EXISTS external_items_published_idx ON external_items(published_at);
+CREATE TABLE IF NOT EXISTS external_item_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id uuid NOT NULL REFERENCES external_items(id) ON DELETE CASCADE,
+  company_key text NOT NULL,
+  company_name text NOT NULL,
+  published_at timestamptz NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_item_companies_item_key_uidx ON external_item_companies(item_id, company_key);
+CREATE INDEX IF NOT EXISTS external_item_companies_key_published_idx ON external_item_companies(company_key, published_at DESC);
 CREATE TABLE IF NOT EXISTS contact_embeddings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -488,6 +617,21 @@ CREATE TABLE IF NOT EXISTS contact_experiences (
   sort_index integer NOT NULL DEFAULT 0,
   source text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_career_moves (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  from_org text,
+  from_title text,
+  to_org text,
+  to_title text,
+  started_year integer,
+  started_month integer,
+  source text NOT NULL,
+  dedupe_key text NOT NULL,
+  detected_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS calendar_subscriptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1132,6 +1276,7 @@ CREATE TABLE IF NOT EXISTS waitlist_poll_votes (
   option_id text NOT NULL,
   voter_key text NOT NULL,
   signup_id uuid,
+  stars jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1193,11 +1338,58 @@ CREATE TABLE IF NOT EXISTS gate_events (
   user_id text NOT NULL,
   feature text NOT NULL,
   plan text NOT NULL,
+  unlock_plan text,
   context jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS gate_events_feature_created_idx ON gate_events(feature, created_at);
 CREATE INDEX IF NOT EXISTS gate_events_user_created_idx ON gate_events(user_id, created_at);
+CREATE TABLE IF NOT EXISTS credit_grants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text,
+  kind text NOT NULL,
+  grant_key text NOT NULL,
+  plan text,
+  micros_granted integer NOT NULL,
+  micros_remaining integer NOT NULL,
+  period_start timestamptz,
+  period_end timestamptz,
+  amount_cents integer,
+  stripe_ref text,
+  status text NOT NULL DEFAULT 'active',
+  revoked_at timestamptz,
+  revoked_reason text,
+  micros_revoked integer,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS credit_grants_key_uidx ON credit_grants(grant_key);
+CREATE INDEX IF NOT EXISTS credit_grants_user_idx ON credit_grants(user_id, kind, status);
+CREATE INDEX IF NOT EXISTS credit_grants_stripe_ref_idx ON credit_grants(stripe_ref);
+CREATE TABLE IF NOT EXISTS credit_accounts (
+  user_id text PRIMARY KEY,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS credit_holds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  micros integer NOT NULL,
+  operation text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS credit_holds_user_idx ON credit_holds(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS credit_holds_expires_idx ON credit_holds(expires_at);
+CREATE TABLE IF NOT EXISTS plan_meter_usage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  meter text NOT NULL,
+  period_key text NOT NULL,
+  used integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS plan_meter_usage_uidx ON plan_meter_usage(user_id, meter, period_key);
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
 CREATE TABLE IF NOT EXISTS app_surface_flags (
   surface_key text PRIMARY KEY,
@@ -1228,6 +1420,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   stealth_enabled boolean,
   stealth_since timestamptz,
   waitlist_demo_enabled boolean,
+  managed_ai_paused boolean,
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT site_settings_single_row CHECK (id = 1)
@@ -2177,7 +2370,82 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // 131: scanned every local and remote ref and every worktree's working src/db/index.ts on
 // Sep 29 2026 — every ref is at 129, but the orbit-pricing-plans worktree claims 130 and
 // the linkedin-work-history worktree claims 131, so 132 is the next free integer.
-export const SCHEMA_VERSION = 132;
+//
+// 133 = contact_career_moves (the job-movement log — not "contact_job_changes", which open
+// PR #187 already created with another shape on the shared preview database),
+// contacts.work_history_due_at (the
+// staggered re-check schedule) and user_settings.work_history_auto_enabled. This branch
+// first claimed 131, but main moved to 132 meanwhile; a database already stamped 132 would
+// treat 131 as current and never add these, so it takes a new number. Scanned every local
+// and remote ref and every worktree's working src/db/index.ts on Sep 29 2026: 132 is the
+// highest claimed anywhere, so 133 is the next free integer.
+//
+// Radar P0 (recommendations, radar_runs, recommendation_feedback, and
+// user_settings.radar_next_at + radar_lease_until + radar_last_run_at + radar_paused) was
+// stamped 133 on its own branch, and the Radar flagship 135 on top of it (contact_signals,
+// external_sources + external_items + external_item_companies for global news,
+// recommendations.base_score / ai_delta / ai_angle / draft / first_seen_at / last_seen_at /
+// seen_count / acted_at / outcome_at and the v2 live index that covers auto_applied,
+// contacts.bluesky_handle + mastodon_acct, and user_settings radar_model / radar_autopilot /
+// radar_capture_linkedin_activity / radar_digest_* / radar_apollo_cursor). Main took 133 for
+// the work-history log above while that branch was open, and claude/waitlist-pass-news
+// claims 134.
+//
+// 136 = merging main at 133 into the Radar branch at 135, plus recommendations.autopilot
+// (what autopilot scheduled, so its Undo reverses exactly that). A database stamped 135 by
+// the branch's preview never ran main's 133, and one stamped 133 by main never ran Radar's,
+// so the merge takes its own number and every database re-runs the full list once. Scanned
+// every remote ref on Sep 29 2026: 135 is the highest claimed anywhere, so 136 is the next
+// free integer.
+//
+// 130 = pricing v2 as first claimed (never on main; main skipped 130 and 131 for it): credit_grants, credit_accounts, credit_holds and plan_meter_usage (managed-AI
+// credits and the monthly Apollo enrichment meter); user_settings.subscription_period_start,
+// founding_eligible/_redeemed_at/_window_ends_at/_subscription_id, ai_key_preference and
+// max_nudge_seen_at; gate_events.unlock_plan; site_settings.managed_ai_paused. Scanned every
+// local and remote ref and all 48 worktrees' working src/db/index.ts on Sep 29 2026: 129 is
+// the highest claimed anywhere, so 130 is the next free integer.
+//
+// 137 = merging main at 133 into pricing v2 (130). Both sides' DDL and alters are kept; only the
+// version is new, so a database stamped 130 from this branch's previews still re-sweeps for
+// main's 132/133 columns, and main's databases pick up the pricing tables. NOT 134–136:
+// scanned every local and remote ref and every worktree's working src/db/index.ts on Sep 29
+// 2026 — waitlist-pass-news claims 134 and inspiring-fermi-npcgb7 claims 136, so 137 is the
+// next free integer.
+//
+// 138 = merging main at 136 (Radar) into pricing v2 at 137. Both sides' DDL and alters are kept;
+// only the version is new, so a database stamped 137 by this branch's previews still runs
+// Radar's DDL, and main's databases stamped 136 pick up the pricing tables. Scanned every
+// local and remote ref and every worktree's working src/db/index.ts on Sep 29 2026: 137 (this
+// branch) is the highest claimed anywhere, so 138 is the next free integer.
+//
+// 139 = user_settings.credit_email_enabled, credit_notice_period_start and credit_notice_level:
+// the emails at 80% and 100% of an account's monthly AI credits, sent at most once per level
+// per allowance cycle. Scanned every local and remote ref and every worktree's working
+// src/db/index.ts on Sep 29 2026: 138 (this branch) is the highest claimed anywhere, so 139 is
+// the next free integer.
+//
+// 141 = waitlist_poll_votes.stars, the feature poll's star budgets (3 stars, +1 per friend who
+// joined through your link, capped at +10). Originally stamped 134 on
+// claude/waitlist-pass-news; main had moved to 136 by the time it shipped, and a database
+// already at 136 would never run a 134, so it takes its own number. Scanned every local and
+// remote ref on Sep 30 2026: 140 (claude/orbit-direct-email-cc0746) is the highest claimed
+// anywhere, so 141 is the next free integer.
+//
+// 142 = merging main at 141 (the waitlist poll's stars) into pricing v2 at 139. Both sides' DDL
+// and alters are kept; only the version is new, so a database stamped 139 by this branch's
+// previews still runs the 141 DDL, and main's databases stamped 141 pick up the credit emails'
+// columns. Scanned every local and remote ref and every worktree's working src/db/index.ts on
+// Sep 30 2026: 141 is the highest claimed anywhere (140 is claude/orbit-direct-email-cc0746),
+// so 142 is the next free integer.
+//
+// 143 = drops user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo re-check
+// that was never built (job moves come from contact_career_moves). #371 took it out of the
+// code first, so the deployment still serving while this migration runs never selects it:
+// the same two steps as wispr_api_key_encrypted (#245, then v89). This PR first claimed 141,
+// but claude/waitlist-ship took 141 and pricing v2 142 on main meanwhile; a database already
+// at 142 would never run a 141, so it takes its own number. Scanned every remote ref on Sep 30
+// 2026: 142 (main) is the highest claimed anywhere, so 143 is the next free integer.
+export const SCHEMA_VERSION = 143;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2509,6 +2777,11 @@ export const SCALE_DDL: string[] = [
   // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
+  // The job-movement log. The unique key makes re-detecting the same move a no-op.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_career_moves_dedupe_uidx
+     ON contact_career_moves(user_id, contact_id, dedupe_key)`,
+  `CREATE INDEX IF NOT EXISTS contact_career_moves_contact_idx
+     ON contact_career_moves(user_id, contact_id, detected_at)`,
 
   // --- Duplicate prevention --------------------------------------------------------
   //
@@ -2584,6 +2857,13 @@ export const SCALE_DDL: string[] = [
   // could only use the user_id prefix of the (user_id, posting_id, contact_id) key.
   `CREATE INDEX IF NOT EXISTS job_posting_matches_contact_idx
      ON job_posting_matches(contact_id)`,
+  // v133: Radar's contact children. Recommendations are rewritten nightly and feedback
+  // is kept for suppression, so both see contact deletes and merges.
+  `CREATE INDEX IF NOT EXISTS recommendations_contact_idx ON recommendations(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS recommendation_feedback_contact_idx
+     ON recommendation_feedback(contact_id)`,
+  // v135: Radar's outside-world signals, same reasoning: contact deletes and merges.
+  `CREATE INDEX IF NOT EXISTS contact_signals_contact_idx ON contact_signals(contact_id)`,
   // Merge relies on this cascade on purpose, and dismissed pairs are kept forever.
   `CREATE INDEX IF NOT EXISTS duplicate_suggestions_contact_a_idx
      ON duplicate_suggestions(contact_a_id)`,
@@ -3194,6 +3474,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // unconstrained — which matches the writer, since `upsertContactEmbedding` skips its
   // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
+  await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
 
   try {
     await client.exec(
@@ -3277,6 +3559,35 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // block above — the DDL template only helps a database that does not have these tables yet.
   await ensureColumn(client, "meeting_sessions", "off_deepgram_ms", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "speech_tag_id", "text");
+
+  // v133: Radar's per-account schedule. Same reasoning as every block above.
+  await ensureColumn(client, "user_settings", "radar_next_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "radar_lease_until", "timestamptz");
+  await ensureColumn(client, "user_settings", "radar_last_run_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "radar_paused", "integer NOT NULL DEFAULT 0");
+
+  // v135: the Radar flagship. Recommendations and contacts gain columns on databases the
+  // v133 template already built, and the account gains its model, autopilot and digest state.
+  await ensureColumn(client, "user_settings", "radar_model", "jsonb");
+  await ensureColumn(client, "user_settings", "radar_autopilot", "jsonb NOT NULL DEFAULT '{}'");
+  await ensureColumn(client, "user_settings", "radar_capture_linkedin_activity", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "radar_digest_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "radar_digest_tz", "text");
+  await ensureColumn(client, "user_settings", "radar_digest_last_week", "text");
+  await ensureColumn(client, "user_settings", "radar_digest_unsub_token_hash", "text");
+  await ensureColumn(client, "contacts", "bluesky_handle", "text");
+  await ensureColumn(client, "contacts", "mastodon_acct", "text");
+  await ensureColumn(client, "recommendations", "base_score", "integer");
+  await ensureColumn(client, "recommendations", "ai_delta", "integer");
+  await ensureColumn(client, "recommendations", "ai_angle", "text");
+  await ensureColumn(client, "recommendations", "draft", "jsonb");
+  await ensureColumn(client, "recommendations", "first_seen_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "last_seen_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "seen_count", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "recommendations", "acted_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "outcome_at", "timestamptz");
+  // v136: what autopilot scheduled for a card.
+  await ensureColumn(client, "recommendations", "autopilot", "jsonb");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -3637,6 +3948,28 @@ const alters = [
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS pass_check_count integer NOT NULL DEFAULT 0`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS pass_last_checked_at timestamptz`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS signup_event_label text`,
+  // v130: pricing v2 — founding pricing, the AI key preference, the Max nudge, the billing
+  // period start the credit allowance resets on, the plan a refused gate would unlock, and
+  // the admin console's managed-AI switch. The credit and meter tables are new, so the DDL
+  // template alone creates them.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_start timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_eligible boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_redeemed_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_window_ends_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_subscription_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_key_preference text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
+  `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
+  // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
+  // which cycle and level were last sent (claimed in one UPDATE before each send).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_notice_period_start timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_notice_level integer NOT NULL DEFAULT 0`,
+  // v130 backfill: accounts created through a beta invitation BEFORE pricing v2 carry the comp
+  // note the invitation wrote. They are founding-eligible (their comp itself is untouched).
+  // Idempotent, and never un-sets a flag.
+  `UPDATE user_settings SET founding_eligible = true WHERE comped_note = 'Invited by an admin' AND founding_eligible = false`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
@@ -3957,9 +4290,50 @@ const alters = [
   // Schema v109: `site_settings.waitlist_demo_enabled`. Null (never set) reads as on, so no
   // backfill: the demo stays up until an admin takes it down from the waitlist admin page.
   `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS waitlist_demo_enabled boolean`,
+  // Schema v134: the feature poll's star budgets. Null on older votes, which read as the whole
+  // base budget on their `option_id` — no backfill needed.
+  `ALTER TABLE waitlist_poll_votes ADD COLUMN IF NOT EXISTS stars jsonb`,
   // Schema v117: learned brand colors for companies and schools outside the curated table.
   `CREATE TABLE IF NOT EXISTS org_brand_colors (name_key text NOT NULL, kind text NOT NULL, name text NOT NULL, hex text, domain text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,
+  // Schema v133: the staggered work-history re-check schedule and its per-account switch.
+  // NULL due = never checked = due now; the sweep orders NULLs first, closest people first.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_due_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS contacts_work_history_due_idx ON contacts(user_id, work_history_due_at) WHERE linkedin_url IS NOT NULL`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS work_history_auto_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v133: Radar's nightly schedule, lease and pause flag for each account.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_next_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_lease_until timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_last_run_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_paused integer NOT NULL DEFAULT 0`,
+  // Schema v135: the Radar flagship. A database the v133 template built has `recommendations`
+  // without these columns and the v1 live index, whose predicate leaves out `auto_applied`.
+  // The v1 index is dropped here, before the template's indexes run, so the v2 one replaces it.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_model jsonb`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_autopilot jsonb NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_capture_linkedin_activity integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_tz text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_last_week text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_unsub_token_hash text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bluesky_handle text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS draft jsonb`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS first_seen_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS last_seen_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS seen_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS acted_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
+  `DROP INDEX IF EXISTS recommendations_live_uidx`,
+  // Schema v136: what autopilot scheduled for a card, so its Undo reverses exactly that.
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,
+  // Schema v143: user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo
+  // re-check that was never built. #371 took it out of the code first, so the deployment
+  // still serving while this runs never selects it (the wispr_api_key_encrypted precedent, v89).
+  `ALTER TABLE user_settings DROP COLUMN IF EXISTS radar_apollo_cursor`,
 ];
 
 /**
@@ -4448,6 +4822,38 @@ export async function runAtomicWrite(
     for (const statement of build(tx as unknown as AtomicWriter)) {
       await (statement as unknown as Promise<unknown>);
     }
+  });
+}
+
+/**
+ * `runAtomicWrite`, returning each statement's result in order — for a group whose LAST
+ * statement is a conditional write the caller needs to read back (the credit hold: lock the
+ * account row, then insert a hold only if the balance covers it, RETURNING the new id).
+ *
+ * Postgres runs each statement of a transaction under READ COMMITTED with a fresh snapshot,
+ * so a statement placed after a row lock sees every write committed by whoever held that
+ * lock before it. That is what makes lock-then-conditional-insert atomic per account on both
+ * drivers without an interactive transaction (which neon-http cannot hold open).
+ */
+export async function runAtomicBatch(
+  db: Db,
+  build: (writer: AtomicWriter) => AtomicStatement[]
+): Promise<unknown[]> {
+  const batchable = db as unknown as {
+    batch?: (statements: AtomicStatement[]) => Promise<unknown[]>;
+  };
+  if (typeof batchable.batch === "function") {
+    const statements = build(db as unknown as AtomicWriter);
+    if (!statements.length) return [];
+    return batchable.batch(statements);
+  }
+  const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
+  return local.transaction(async (tx) => {
+    const results: unknown[] = [];
+    for (const statement of build(tx as unknown as AtomicWriter)) {
+      results.push(await (statement as unknown as Promise<unknown>));
+    }
+    return results;
   });
 }
 

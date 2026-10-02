@@ -3,7 +3,7 @@ import { loadNotificationPanel } from "@/lib/notification-panel";
 import type { AccountHealthContext } from "@/lib/account-health";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { isAdminUser } from "@/lib/admin";
-import { isViewingAsUser } from "@/lib/surface-visibility";
+import { isSurfaceLive, isViewingAsUser } from "@/lib/surface-visibility";
 import type { Plan } from "@/lib/plan-limits";
 
 /**
@@ -50,7 +50,9 @@ export async function loadAppPulse(
   const settings = loadedSettings ?? (await ensureUserSettings(userId));
   const entitlements = entitlementsFromSettings(userId, settings);
   const [rawPanel, canOpenAdmin] = await Promise.all([
-    loadNotificationPanel(userId, now, { withAlerts: true, settings, entitlements }),
+    isSurfaceLive(userId, "page.radar").then((radar) =>
+      loadNotificationPanel(userId, now, { withAlerts: true, settings, entitlements, radar })
+    ),
     isAdminUser(userId) ? isViewingAsUser(userId).then((v) => !v) : Promise.resolve(false),
   ]);
   const panel = { ...rawPanel, canOpenAdmin };

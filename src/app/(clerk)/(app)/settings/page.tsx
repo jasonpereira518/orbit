@@ -11,6 +11,7 @@ import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
+import { RadarDigestSetting } from "@/components/settings/radar-digest-setting";
 import { PlanSettings } from "@/components/settings/plan-settings";
 import { ProfileSettings } from "@/components/settings/profile-settings";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -28,6 +29,10 @@ import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { speechAllowance } from "@/lib/speech-quota";
 import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { cookies } from "next/headers";
+import { after } from "next/server";
+import { captureRadarTimeZone } from "@/lib/radar/digest";
+import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
 
 /**
  * Anchor for a card that stands alone. Ids and grouping live in `sections.ts`.
@@ -118,6 +123,13 @@ export default async function SettingsPage() {
 
   const { hidden } = visibility;
   const shows = (id: SettingsSectionId) => !hidden.has(surfaceKeyForSettingsId(id));
+  // Radar's Monday email is offered only to someone who can open Radar, and its zone is
+  // captured the same way the page does it.
+  const radarLive = !hidden.has("page.radar") && !visibility.comingSoon.has("page.radar");
+  if (radarLive) {
+    const tz = (await cookies()).get(TZ_COOKIE)?.value;
+    after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));
+  }
 
   // Section pages follow their own settings surface; account pages follow /imports, so
   // hiding it can't be undone by reaching it through Settings. The Google page's Gmail
@@ -178,6 +190,9 @@ export default async function SettingsPage() {
               <NotificationSettings
                 initialAccountEnabled={initialSettings.desktopNotificationsEnabled}
               />
+            ) : null}
+            {shows("settings-notifications") && radarLive ? (
+              <RadarDigestSetting initialEnabled={initialSettings.radarDigestEnabled} />
             ) : null}
           </SettingsSection>
         ) : null}

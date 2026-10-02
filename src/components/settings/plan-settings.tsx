@@ -16,17 +16,23 @@ const SOURCE_NOTE: Record<PlanSource, string | null> = {
 };
 
 /**
- * The same tier identities the pricing page paints — Orbit Pro in the colour the
- * product itself runs on, Orbit Lifetime in the gold the marketing site reserves
- * for offers, Free deliberately recessed — restated for app chrome.
+ * The same plan identities the pricing page paints — Free deliberately recessed, Pro blue,
+ * Max gold, Lifetime silver — restated for app chrome through the plan tokens.
  *
- * The pricing page can use the flat `--brand-pro` and `#f2c14e` because it only ever
- * sits on a dark starfield. This card sits on `--card` in either theme, which splits
- * the gold in two: as a *surface* it can be the real brand gold, because the text
- * riding on it is near-black; as *text* on a white card it cannot, since `#f2c14e`
- * is 1.8:1 there. So the badge carries the bright metal and the ticks carry a
- * deeper amber that still clears 4.5:1.
+ * The pricing page uses the fixed "night" values because it only ever sits on a dark
+ * starfield. This card sits on `--card` in either theme, so it splits each metal in two: as
+ * a *surface* (the badge's sheen) it can be the bright metal, because the text on it is
+ * near-black; as *text* (the ticks) it uses the theme-aware `--tier-*`, which clears 4.5:1.
  */
+const PAID = {
+  ring: "border-tier-border",
+  wash: "bg-tier-surface",
+  badge: "bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink shadow-sm",
+  ink: "text-tier-accent",
+  meter: "bg-tier-accent",
+  glint: true,
+};
+
 const TIER_ACCENT: Record<
   Plan,
   {
@@ -52,33 +58,13 @@ const TIER_ACCENT: Record<
     meter: "bg-muted-foreground/70",
     glint: false,
   },
-  orbit: {
-    // A dedicated blue rather than `--primary`: primary is the app's everyday
-    // chrome color (links, buttons, focus rings) in both themes — a badge in it
-    // didn't read as a distinct tier, just as more of the same UI. `--brand-pro`
-    // matches the ring in orbit-logo.tsx and the pricing page's Orbit Pro card,
-    // so "blue" means the same tier everywhere. `ink` uses the theme-aware
-    // `--tier-pro` instead, since the flat blue is only 2.7:1 on a light card.
-    ring: "border-brand-pro/40 dark:border-brand-pro/45",
-    wash: "bg-brand-pro/15 dark:bg-brand-pro/12",
-    // Same vertical-ramp technique as Lifetime's gold: a light edge and a
-    // shaded one for the glint to travel between.
-    badge: "bg-gradient-to-b from-[#8ec4f5] to-[#5b9de6] text-[#0f2e4d] shadow-sm",
-    ink: "text-tier-pro",
-    meter: "bg-brand-pro",
-    glint: true,
-  },
-  lifetime: {
-    ring: "border-[#e0a52e]/60 dark:border-[#f2c14e]/40",
-    wash: "bg-[#f2c14e]/25 dark:bg-[#f2c14e]/15",
-    // A vertical ramp rather than one flat fill: gold reads as metal only when
-    // it has a light edge and a shaded one for the glint to travel between.
-    badge:
-      "bg-gradient-to-b from-[#f7d15f] to-[#e0a52e] text-[#3d2c00] shadow-sm",
-    ink: "text-[#a06a00] dark:text-[#f2c14e]",
-    meter: "bg-[#e0a52e] dark:bg-[#f2c14e]",
-    glint: true,
-  },
+  // Pro, Max and Lifetime share one shape; the `data-plan` on the card picks the colors
+  // (Pro blue, Max gold, Lifetime silver — see the plan tokens in globals.css). The badge is
+  // a vertical metallic ramp rather than a flat fill: a light edge and a shaded one for the
+  // glint to travel between.
+  orbit: PAID,
+  max: PAID,
+  lifetime: PAID,
 };
 
 export function PlanSettings({
@@ -104,6 +90,7 @@ export function PlanSettings({
 
   return (
     <section
+      data-plan={entitlements.plan}
       className={cn(
         "relative overflow-hidden rounded-2xl border bg-card p-6",
         accent.ring
@@ -214,14 +201,6 @@ export function PlanSettings({
             ))}
           </ul>
         </div>
-
-        {!entitlements.canUseHostedEnrichment && entitlements.plan !== "free" && (
-          <p className="rounded-xl border border-border/70 bg-muted/40 p-3 text-sm text-muted-foreground">
-            Contact enrichment runs on your own Apollo key. Add it in the
-            Outreach section below. Email and SMS sending is included on your
-            plan.
-          </p>
-        )}
 
         {entitlements.source === "subscription" && (
           <div className="border-t border-border/60 pt-4">

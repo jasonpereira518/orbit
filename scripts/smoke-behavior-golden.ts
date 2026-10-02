@@ -34,7 +34,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts } from "../src/db/schema";
+import { contacts, userSettings } from "../src/db/schema";
 import { generateApiKey } from "../src/lib/api/keys";
 import { seedDemoWorkspace } from "../src/lib/demo-data/seed";
 import { POST as MCP_POST } from "../src/app/api/mcp/route";
@@ -46,6 +46,7 @@ import {
 } from "../src/app/api/extension/contacts/route";
 import { POST as EXT_INTERACTIONS } from "../src/app/api/extension/interactions/route";
 import { POST as EXT_FOLLOW_UPS } from "../src/app/api/extension/follow-ups/route";
+import { POST as EXT_SIGNALS } from "../src/app/api/extension/signals/route";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
@@ -160,30 +161,18 @@ function normalizeString(s: string): string {
 }
 
 /**
- * A search vector indexes those written days too, as a bare day-of-month lexeme ('25':32), and
- * the month beside it as a word ('jul':31). A vector cannot say which number was a day, so every
- * one- and two-digit lexeme is dropped ('3' in "3-4x" goes with them), and so is a month name
- * sitting right before one of them — the month a seeded "N days ago" lands in moves with the
- * calendar, where "may" in a sentence stays. The vector still compares on its words.
+ * A search vector indexes those written days too, as a bare day-of-month lexeme ('25':32)
+ * and as the month's abbreviation ('jul':31). A vector cannot say which number was a day, so
+ * every one- and two-digit lexeme is dropped ('3' in "3-4x" goes with them), and so is every
+ * month abbreviation: the seeded "met" date sits a fixed number of days before the run, so
+ * the month rolls over (jul -> aug) on whichever day the suite first runs past a month
+ * boundary. "may" goes too, as the word as well as the month. The vector still compares on
+ * its other words.
  */
-const MONTH_LEXEMES = new Set(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]);
-
 function normalizeTsv(s: string): string {
-  const text = normalizeString(s);
-  const positionsOf = (list: string) => list.split(",").map((p) => Number.parseInt(p, 10));
-  const lexemes = [...text.matchAll(/'([^']*)':([0-9A-D,]+)/g)];
-  const dayPositions = new Set<number>();
-  for (const [, word, list] of lexemes) {
-    if (/^\d{1,2}$/.test(word)) for (const p of positionsOf(list)) dayPositions.add(p);
-  }
-  return text
-    .replace(/'([^']*)':([0-9A-D,]+) ?/g, (whole, word: string, list: string) => {
-      if (/^\d{1,2}$/.test(word)) return "";
-      if (!MONTH_LEXEMES.has(word)) return whole;
-      const kept = list.split(",").filter((p) => !dayPositions.has(Number.parseInt(p, 10) + 1));
-      if (kept.length === 0) return "";
-      return `'${word}':${kept.join(",")} `;
-    })
+  return normalizeString(s)
+    .replace(/'\d{1,2}':[0-9A-D,]+ ?/g, "")
+    .replace(/'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)':[0-9A-D,]+ ?/g, "")
     .trim();
 }
 
@@ -442,6 +431,32 @@ run(async () => {
       ext(EXT_INTERACTIONS, "POST", "/api/extension/interactions", { contactId: sarah.id, rawNotes: " " })],
     ["ext follow-up", () =>
       ext(EXT_FOLLOW_UPS, "POST", "/api/extension/follow-ups", { contactId: sarah.id, inDays: 5 })],
+    // Saving a LinkedIn post to Radar: refused until the person turns it on in Radar's
+    // settings, then saved once, and a second save of the same post is a duplicate.
+    ["ext save post to radar, capture off (route)", () =>
+      ext(EXT_SIGNALS, "POST", "/api/extension/signals", {
+        contactId: sarah.id,
+        excerpt: "Golden: we just shipped the thing we talked about.",
+        url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      })],
+    ["ext save post to radar (route)", async () => {
+      await (await getDb())
+        .update(userSettings)
+        .set({ radarCaptureLinkedinActivity: 1 })
+        .where(eq(userSettings.userId, USER));
+      return ext(EXT_SIGNALS, "POST", "/api/extension/signals", {
+        contactId: sarah.id,
+        excerpt: "Golden: we just shipped the thing we talked about.",
+        url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      });
+    }],
+    ["ext save post to radar again (route)", () =>
+      ext(EXT_SIGNALS, "POST", "/api/extension/signals", {
+        contactId: sarah.id,
+        excerpt: "Golden: we just shipped the thing we talked about.",
+        url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      })],
+    ["ext me, post saving on", () => ext(EXT_ME, "GET", "/api/extension/me")],
     ["mcp log_interaction", () => tool("log_interaction", { contactId: sarah.id, notes: "Golden MCP note", externalId: "golden-1" })],
     ["mcp add_note", () => tool("add_note", { contactId: sarah.id, note: "Golden add_note", externalId: "golden-2" })],
     ["mcp add_note (repeat)", () => tool("add_note", { contactId: sarah.id, note: "Golden add_note", externalId: "golden-2" })],

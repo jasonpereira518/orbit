@@ -218,6 +218,25 @@ function postAuthor(warnings: string[]) {
   return identity;
 }
 
+/**
+ * The post's own words, without the author header, reactions or comments around them: what
+ * "Save post to Radar" quotes. Only the update already open on its own page; never the feed.
+ */
+function postCommentary(root: Element | null, warnings: string[]): string | undefined {
+  return (
+    attempt(warnings, "post-body", () => {
+      const scope = root ?? document;
+      const el =
+        scope.querySelector(".update-components-text") ??
+        scope.querySelector(".feed-shared-inline-show-more-text") ??
+        scope.querySelector(".feed-shared-text");
+      if (!el) return null;
+      const body = cleanText(el, POST_BLOB_CHARS).blob.trim();
+      return body || null;
+    }) ?? undefined
+  );
+}
+
 function listCandidates(warnings: string[]) {
   return (
     attempt(warnings, "list-candidates", () => {
@@ -263,6 +282,7 @@ export const linkedinAdapter: SiteAdapter = {
     let candidates: PageContext["candidates"];
     let blobRoot: Element | null = document.querySelector("main");
     let blobLimit = PROFILE_BLOB_CHARS;
+    let postBody: string | undefined;
 
     if (kind === "person") {
       identity = profileIdentity(url, warnings);
@@ -279,6 +299,7 @@ export const linkedinAdapter: SiteAdapter = {
         document.querySelector("article") ??
         blobRoot;
       blobLimit = POST_BLOB_CHARS;
+      postBody = postCommentary(blobRoot, warnings);
     } else if (kind === "list") {
       candidates = listCandidates(warnings);
       blobRoot = null;
@@ -314,7 +335,7 @@ export const linkedinAdapter: SiteAdapter = {
       capturedAt: new Date().toISOString(),
       identity,
       candidates,
-      text: { ...text, fromSelection: Boolean(selection) },
+      text: { ...text, fromSelection: Boolean(selection), ...(postBody ? { postBody } : {}) },
       warnings,
     };
   },

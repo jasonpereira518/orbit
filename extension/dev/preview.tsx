@@ -18,6 +18,7 @@ import type {
   ContactSnapshot,
   ConversationStarter,
   MatchCandidate,
+  MeResponse,
   PageContext,
 } from "@contract";
 
@@ -168,6 +169,38 @@ const candidates: MatchCandidate[] = [
     confidence: 0.6,
   },
 ];
+
+/** One of the contact's own posts, open on its own page. */
+const postBody =
+  "We just moved all of Stripe's invoicing onto the new billing stack. Six months, zero downtime, and one very long migration RFC.";
+function postPage(): PageContext {
+  const base = page();
+  return {
+    ...base,
+    kind: "post",
+    sourceUrl: "https://www.linkedin.com/feed/update/urn:li:activity:7300000000000000000/",
+    text: {
+      blob: `Amara Osei\nVP Engineering at Stripe\n${postBody}\n128 reactions`,
+      truncated: false,
+      charCount: postBody.length + 50,
+      fromSelection: false,
+      postBody,
+    },
+  };
+}
+
+/** Signed in, with "Save LinkedIn posts from the extension" on in Radar's settings. */
+const meCaptureOn: MeResponse = {
+  contractVersion: 1,
+  user: { name: null, email: null, imageUrl: null },
+  capabilities: {
+    hasAiKey: true,
+    hasApolloKey: false,
+    aiProvider: "gemini",
+    radarCaptureLinkedinActivity: true,
+  },
+  stats: { contactCount: 412, dueFollowUpCount: 3 },
+};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const api: any = new Proxy(
@@ -337,6 +370,22 @@ function States() {
           contact={sparse}
           page={page()}
           state={panelState({ starters: [starters[1]] })}
+          api={api}
+          onChanged={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Known contact — on their post" note="Save post to Radar, with capture on">
+        <PanelHeader />
+        <IdentityZone page={postPage()} />
+        <VerdictZone>
+          <OrbitGlyph tier="outer" size={16} />
+          <span style={{ flex: 1 }}>Outer orbit · never spoken</span>
+        </VerdictZone>
+        <KnownContactView
+          contact={sparse}
+          page={postPage()}
+          state={panelState({ page: postPage(), me: meCaptureOn, starters: [starters[1]] })}
           api={api}
           onChanged={() => {}}
         />

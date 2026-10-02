@@ -8,17 +8,13 @@
  * classifies as "same".
  */
 
-import type { Plan } from "@/lib/plan-limits";
+import { PLAN_RANK, PLANS, type Plan } from "@/lib/plans/plan-config";
 import { LAST_SEEN_PLAN_KEY } from "@/lib/celebration/choreography";
 
-export const PLAN_RANK: Record<Plan, number> = {
-  free: 0,
-  orbit: 1,
-  lifetime: 2,
-};
+export { PLAN_RANK };
 
 function isPlan(value: string | null): value is Plan {
-  return value === "free" || value === "orbit" || value === "lifetime";
+  return (PLANS as readonly string[]).includes(value ?? "");
 }
 
 /** Null on first visit, garbage, or storage-hostile browsers (Safari private

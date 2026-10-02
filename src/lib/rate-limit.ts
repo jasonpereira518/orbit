@@ -27,8 +27,10 @@ const BUCKET_LABELS: Record<string, string> = {
   meetingChunk: "meeting transcription",
   avatarResolve: "photo lookup",
   feedback: "feedback",
+  radarRefresh: "Radar refresh",
   interestJoin: "sign-up",
   interestProgress: "progress check",
+  pollResults: "poll results",
   interestName: "sign-up",
   apiRead: "API read",
   apiWrite: "API write",
@@ -50,6 +52,9 @@ const BUCKET_LABELS: Record<string, string> = {
   "avatar.resolve": "photo lookup",
   "lifetime-confirm": "checkout check",
   "poll.vote": "vote",
+  "poll.results": "results check",
+  "work-history": "work-history lookup",
+  "work-history-background": "background work-history check",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -136,6 +141,19 @@ export const RATE_LIMITS = {
   apolloSearch: { limit: 20, windowSec: 86_400 },
   /** Person matches (one Apollo credit each) per user per day on the hosted key. */
   apolloEnrich: { limit: 50, windowSec: 86_400 },
+  /**
+   * Web-search work-history lookups. They run on the person's own AI key, but each one is
+   * several paid searches the person never clicked for — a pasted list or a refresh fans
+   * out — so a day has a ceiling that no ordinary use of LinkedIn pulls comes near.
+   */
+  workHistoryResearch: { limit: 60, windowSec: 86_400 },
+  /**
+   * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
+   * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
+   * up the lookups a person clicks for; every sweep search also counts against that one,
+   * so the two together still stop at its 60.
+   */
+  workHistoryBackground: { limit: 20, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**
@@ -144,6 +162,9 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  // Each refresh re-scores the whole network and may write up to five AI lines on the
+  // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
+  radarRefresh: { limit: 3, windowSec: 600 },
   /**
    * `joinInterestList`: ten submits per ten minutes per IP. Replaces the action's old
    * per-instance Map, which never held across instances. Loose on purpose — several friends
@@ -163,6 +184,12 @@ export const RATE_LIMITS = {
    * for several people behind one NAT, and stops a script sweeping share tokens.
    */
   interestProgress: { limit: 120, windowSec: 300 },
+  /**
+   * `/api/waitlist-poll/results`: the poll's live tallies, read about every 30 seconds while
+   * the tab is visible (~10 calls per five minutes for one visitor). The answer is the
+   * instance's 30 s memo, so the limit only stops a script hammering the route.
+   */
+  pollResults: { limit: 60, windowSec: 300 },
   /**
    * `saveInterestListName`, the join's second step. A person makes one, maybe a couple of
    * corrections' worth; the limit exists to stop a script walking guessed tokens.

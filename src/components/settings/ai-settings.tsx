@@ -6,7 +6,9 @@ import {
   clearApiKey,
   getSettings,
   saveAiSettings,
+  saveWorkHistoryAutoEnabled,
 } from "@/actions/settings";
+import { cn } from "@/lib/utils";
 import {
   AI_PROVIDERS,
   SELECTABLE_AI_PROVIDERS,
@@ -24,12 +26,10 @@ import { Disclosure } from "@/components/settings/disclosure";
 import { ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import {
-  AI_NOTICE_COPY,
-  allowancePercentUsed,
-  formatAllowanceReset,
-} from "@/lib/ai-access-copy";
-import { MANAGED_AI_ENABLED, managedModel } from "@/lib/managed-ai-policy";
+import { AI_NOTICE_COPY } from "@/lib/ai-access-copy";
+import { managedModel } from "@/lib/managed-ai-policy";
+import { setAiKeyPreference } from "@/actions/credits";
+import { CreditsCard } from "@/components/credits/credits-card";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -72,13 +72,12 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const providerMeta = AI_PROVIDERS.find((p) => p.id === provider)!;
   const activeProviderStatus = settings.providers.find((p) => p.id === provider);
   const { ai } = settings;
-  // Managed AI is off, and this is a dev server running on the keys in `.env.local`. The
-  // same machinery as Lifetime's included AI, but it is the developer's own key, so it says
-  // so rather than promising something no deployment does.
-  const onLocalDevKeys = !MANAGED_AI_ENABLED && ai.eligibility === "demo" && ai.managedConfigured;
-  // Lifetime, or a demo account that actually has a (local) managed key to run on.
-  const onLifetime =
-    ai.eligibility === "lifetime" || (ai.eligibility === "demo" && ai.managedConfigured);
+  // A dev server running on the keys in `.env.local`: the included-AI machinery, but the
+  // developer's own key, so it says so rather than promising what no deployment does.
+  const onLocalDevKeys = ai.eligibility === "demo" && ai.managedConfigured;
+  // Pro and Max: AI included on Orbit's keys (unless paused).
+  const onIncluded = ai.eligibility === "plan" && ai.managedConfigured && !ai.managedPaused;
+  const hasAnyPersonalKey = settings.providers.some((p) => p.hasPersonalKey);
   // What Orbit's key would run for the provider on screen, when it is the one paying.
   const managedRuns = activeProviderStatus?.managedAvailable
     ? managedModel(provider, model)
@@ -140,8 +139,31 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   return (
     <SettingsSection
       title="AI provider"
-      description="Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
+      description={
+        onIncluded
+          ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits — or bring your own key, which never uses credits."
+          : ai.plan === "lifetime"
+            ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. On Orbit Lifetime, AI runs on your own key — pick a provider and paste it. Keys are encrypted at rest and only used for your account."
+            : "Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
+      }
     >
+      <CreditsCard />
+
+      {onIncluded && hasAnyPersonalKey && (
+        <KeyPreference
+          value={ai.preference}
+          onChange={async (next) => {
+            const res = await setAiKeyPreference(next);
+            if (!res.ok) {
+              toast.error(TOAST_COPY.saveFailed);
+              return;
+            }
+            setSettings(await getSettings());
+            toast.success(next === "included" ? "Using Orbit’s included AI first" : "Using your own key first");
+          }}
+        />
+      )}
+
       <ul className="grid gap-3 sm:grid-cols-2">
         {SELECTABLE_AI_PROVIDERS.map((p) => (
           <ProviderCard
@@ -175,13 +197,60 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         </p>
       ) : null}
 
+      {/* The background half of work history. LinkedIn pulls and the profile's own button
+          search regardless; this only governs the unattended re-checks, because they spend
+          this account's key without anyone clicking. */}
+      <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 p-3">
+        <div className="space-y-0.5">
+          <p id="work-history-auto-label" className="text-sm font-medium text-ink">
+            Keep work history current
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Re-checks contacts&rsquo; jobs with a web search on your AI key — closest people
+            monthly, everyone else less often, at most 20 lookups a day — and notes when
+            someone changes jobs.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={settings.workHistoryAutoEnabled}
+          aria-labelledby="work-history-auto-label"
+          disabled={pending}
+          onClick={() => {
+            const next = !settings.workHistoryAutoEnabled;
+            setSettings({ ...settings, workHistoryAutoEnabled: next });
+            start(async () => {
+              try {
+                await saveWorkHistoryAutoEnabled(next);
+              } catch (err) {
+                setSettings({ ...settings, workHistoryAutoEnabled: !next });
+                toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+              }
+            });
+          }}
+          className={cn(
+            "tap-target relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
+            settings.workHistoryAutoEnabled ? "bg-primary" : "bg-muted-foreground/30"
+          )}
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform duration-fast ease-house",
+              settings.workHistoryAutoEnabled ? "translate-x-[1.125rem]" : "translate-x-0.5"
+            )}
+          />
+        </button>
+      </div>
+
       <Disclosure label="Advanced">
         <p className="text-sm text-muted-foreground">
           {onLocalDevKeys
             ? "This dev server runs AI on the keys in your .env.local — nothing to set up. Save a key above and it is used instead, which is also how you see what a deployed account sees. Keys are encrypted at rest and only used for your account."
-            : onLifetime
-              ? "Orbit Lifetime includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key: whenever one is saved, Orbit uses yours instead. Keys are encrypted at rest and only used for your account."
-              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Orbit Lifetime includes AI, so no key is needed there." : ""}`}
+            : onIncluded
+              ? "Your plan includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key and choose which runs first; calls on your own key never use credits. Keys are encrypted at rest and only used for your account."
+              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.plan === "free" && ai.managedConfigured ? " Orbit Pro and Orbit Max include AI, so no key is needed there." : ""}`}
         </p>
 
         {/* No live region below: this sits inside a collapsed panel, and hidden content is
@@ -193,8 +262,10 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
               {activeProviderStatus.hasPersonalKey
                 ? onLocalDevKeys
                   ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to fall back to .env.local`
-                  : onLifetime
-                    ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to switch to Orbit’s included AI`
+                  : onIncluded
+                    ? ai.source === "managed"
+                      ? `Your ${providerMeta.label} key is saved; Orbit’s included AI runs first, as you chose`
+                      : `Your ${providerMeta.label} key is saved and runs first — it never uses credits`
                     : `Your ${providerMeta.label} key is saved`
                 : provider === ai.selectedProvider && ai.reason
                   ? AI_NOTICE_COPY[ai.reason].title("use AI")
@@ -202,17 +273,10 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                     ? onLocalDevKeys
                       ? `Using your .env.local ${providerMeta.label} key — ${modelLabel(provider, managedRuns)}`
                       : `Using Orbit’s included AI — ${modelLabel(provider, managedRuns)} on Orbit’s key`
-                    : onLifetime && ai.source === "managed"
+                    : onIncluded && ai.source === "managed"
                       ? `No ${providerMeta.label} key — Orbit’s included AI runs on ${modelLabel(ai.provider, ai.model)} instead`
                       : "No key yet — paste one above to turn on AI features"}
             </p>
-            {onLifetime && ai.allowance && (
-              <p>
-                Included AI this month: {allowancePercentUsed(ai.allowance)}% used · resets{" "}
-                {formatAllowanceReset(ai.allowance.resetsAt)}
-                {activeProviderStatus.hasPersonalKey ? " · not in use while your key is saved" : ""}
-              </p>
-            )}
             {managedRuns && !activeProviderStatus.hasPersonalKey && managedRuns !== model && (
               <p>
                 On Orbit’s key, AI runs on {modelLabel(provider, managedRuns)}; the model you
@@ -317,5 +381,51 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         </div>
       </Disclosure>
     </SettingsSection>
+  );
+}
+
+/**
+ * Which key runs first when a Pro or Max account has both. Included AI spends credits; the
+ * account's own key never does. Only offered when there is a real choice to make.
+ */
+function KeyPreference({
+  value,
+  onChange,
+}: {
+  value: "included" | "own" | null;
+  onChange: (next: "included" | "own") => Promise<void>;
+}) {
+  const [pending, start] = useTransition();
+  // Unset means the pre-v2 rule: a saved key wins.
+  const current = value ?? "own";
+  const options = [
+    { id: "included" as const, label: "Orbit’s included AI", hint: "Uses your credits" },
+    { id: "own" as const, label: "My own key", hint: "Never uses credits" },
+  ];
+  return (
+    <fieldset className="space-y-2 rounded-xl border border-border/70 p-4" disabled={pending}>
+      <legend className="px-1 text-sm font-medium text-ink">Run AI on</legend>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {options.map((o) => (
+          <label
+            key={o.id}
+            className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/70 p-3 text-sm has-[:checked]:border-primary"
+          >
+            <input
+              type="radio"
+              name="ai-key-preference"
+              value={o.id}
+              checked={current === o.id}
+              onChange={() => start(() => onChange(o.id))}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block text-ink">{o.label}</span>
+              <span className="block text-xs text-muted-foreground">{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }

@@ -12,20 +12,15 @@ import type { Surface } from "@/lib/surfaces";
 import { cn } from "@/lib/utils";
 
 /**
- * One switch per surface.
+ * One switch per surface (dashboard cards, widgets, settings sections).
  *
  * Optimistic on purpose, with a rollback: the toggle is the only feedback the operator
  * gets, and a switch that sits still for a round trip reads as a dead control. The
  * `router.refresh()` afterwards is what actually re-renders the admin page and the app
- * shell against the new flag — the local state only carries the gap.
+ * shell against the new flag — the local state only carries the gap. Pages have their own
+ * three-state list (`PageStatusList`); everything here is simply shown or not.
  */
-function SurfaceRow({
-  surface,
-  hidden,
-}: {
-  surface: Surface;
-  hidden: boolean;
-}) {
+function SurfaceRow({ surface, hidden }: { surface: Surface; hidden: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [optimistic, setOptimistic] = useState<boolean | null>(null);
@@ -50,60 +45,65 @@ function SurfaceRow({
   }
 
   return (
-    <li className="flex items-start gap-4 py-2.5">
-      <div className="min-w-0 flex-1">
-        <p
-          className={cn(
-            "flex items-center gap-2 text-sm",
-            isHidden && !locked && "text-muted-foreground"
+    <li>
+      <label
+        className={cn(
+          "flex items-center gap-4 py-2.5",
+          locked ? "cursor-default" : "cursor-pointer"
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <p className={cn("text-sm", isHidden && !locked && "text-muted-foreground")}>
+            {surface.label}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {locked ? surface.reason : surface.description}
+          </p>
+          {error && (
+            <p role="alert" className="mt-1 text-xs text-destructive">
+              {error}
+            </p>
           )}
-        >
-          {surface.label}
-          {surface.href && (
-            <code className="rounded bg-muted/60 px-1 text-[0.6875rem] text-muted-foreground">
-              {surface.href}
-            </code>
-          )}
-        </p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {locked ? surface.reason : surface.description}
-        </p>
-        {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
-      </div>
+        </div>
 
-      {locked ? (
-        <span className="flex shrink-0 items-center gap-1 pt-0.5 text-xs text-muted-foreground">
-          <Lock className="size-3" aria-hidden />
-          Always on
-        </span>
-      ) : (
-        <button
-          type="button"
-          role="switch"
-          aria-checked={!isHidden}
-          aria-label={`${isHidden ? "Show" : "Hide"} ${surface.label}`}
-          disabled={pending}
-          onClick={toggle}
-          className={cn(
-            "flex w-24 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors duration-fast disabled:opacity-60",
-            isHidden
-              ? "border-destructive/40 bg-destructive/10 text-destructive"
-              : "border-border/70 text-muted-foreground hover:text-foreground"
-          )}
-        >
-          {isHidden ? (
-            <>
-              <EyeOff className="size-3" aria-hidden />
-              Hidden
-            </>
-          ) : (
-            <>
-              <Eye className="size-3" aria-hidden />
-              Visible
-            </>
-          )}
-        </button>
-      )}
+        {locked ? (
+          <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            <Lock className="size-3" aria-hidden />
+            Always on
+          </span>
+        ) : (
+          <span className="flex shrink-0 items-center gap-2">
+            <span
+              className={cn(
+                "w-14 text-right text-xs",
+                isHidden ? "text-destructive" : "text-muted-foreground"
+              )}
+            >
+              {isHidden ? "Hidden" : "Visible"}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!isHidden}
+              aria-label={`${isHidden ? "Show" : "Hide"} ${surface.label}`}
+              disabled={pending}
+              onClick={toggle}
+              className={cn(
+                "relative h-5 w-9 rounded-full transition-colors duration-fast disabled:opacity-60",
+                isHidden ? "bg-muted-foreground/30" : "bg-primary"
+              )}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "absolute left-0.5 top-0.5 size-4 rounded-full bg-background shadow transition-transform duration-fast",
+                  !isHidden && "translate-x-4"
+                )}
+              />
+            </button>
+          </span>
+        )}
+      </label>
     </li>
   );
 }
@@ -119,13 +119,49 @@ export function SurfaceToggles({
   return (
     <ul className="divide-y divide-border/50">
       {surfaces.map((surface) => (
-        <SurfaceRow
-          key={surface.key}
-          surface={surface}
-          hidden={hiddenSet.has(surface.key)}
-        />
+        <SurfaceRow key={surface.key} surface={surface} hidden={hiddenSet.has(surface.key)} />
       ))}
     </ul>
+  );
+}
+
+/** Puts back everything currently hidden, one write per surface. Reversible, so no confirm. */
+export function UnhideAllButton({ hiddenKeys }: { hiddenKeys: string[] }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  if (hiddenKeys.length === 0) return null;
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            setError(null);
+            try {
+              for (const key of hiddenKeys) {
+                await setSurfaceHiddenAction({ surfaceKey: key, hidden: false });
+              }
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Could not save that.");
+            }
+            router.refresh();
+          })
+        }
+        className="inline-flex items-center gap-1.5 rounded-md border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-foreground disabled:opacity-60"
+      >
+        <EyeOff className="size-3" aria-hidden />
+        {pending ? "Unhiding…" : `Unhide all ${hiddenKeys.length}`}
+      </button>
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -167,8 +203,8 @@ export function ViewAsUserButton({ active }: { active: boolean }) {
 }
 
 /**
- * Opts the operator's own session past a coming-soon page (`comingSoon` in
- * `src/lib/surfaces.ts`), which is closed to admins by default so an unreleased feature
+ * Opts the operator's own session past a coming-soon page (marked from the Pages list
+ * below), which is closed to admins by default so an unreleased feature
  * cannot ship early just because whoever is building it is an admin.
  *
  * No redirect either direction — unlike `ViewAsUserButton`, turning this on or off does not

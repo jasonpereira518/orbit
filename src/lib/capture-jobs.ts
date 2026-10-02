@@ -10,6 +10,7 @@
  */
 import { and, arrayOverlaps, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
+import { combineCaptureResults } from "@/lib/capture/combine-results";
 import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
@@ -130,6 +131,10 @@ export async function findActiveCaptureJob(userId: string, now = new Date()): Pr
   const row = await db.query.captureJobs.findFirst({
     where: and(
       eq(captureJobs.userId, userId),
+      // One file of a multi-file upload is never resumed on its own: the upload is reviewed
+      // together, once every file is read (`mergeCaptureBatchRows`). Until then it is
+      // reachable through the queue panel, which `findActiveCaptureJobs` still feeds.
+      isNull(captureJobs.batchGroupId),
       or(
         inArray(captureJobs.status, [...ACTIVE_CAPTURE_JOB_STATUSES]),
         and(eq(captureJobs.status, "failed"), gt(captureJobs.updatedAt, new Date(now.getTime() - FAILED_VISIBLE_MS)))
@@ -169,6 +174,90 @@ export async function findActiveCaptureJobs(
     orderBy: [desc(captureJobs.updatedAt)],
     limit,
   });
+}
+
+/** Still being read: while any file of an upload is here, the upload is not ready to review. */
+const BATCH_BUSY: CaptureJobStatus[] = ["ingesting", "transcribed", "queued", "extracting"];
+
+/**
+ * Fold a multi-file upload's ready jobs into one job, reviewed as a single deck.
+ *
+ * Nothing happens while any file is still being read — the upload is reviewed together, so
+ * it waits for the slowest file. Files that failed stay in the queue panel with their error;
+ * they are not held up by, and do not hold up, the rest.
+ *
+ * The ready rows are CLAIMED first (`ready` → `merged`, returning), which is what makes two
+ * callers safe: a second tab, or a second poll, finds nothing left to claim and gets null.
+ * If writing the combined row then fails, the claim is undone so the files are not stranded.
+ *
+ * One ready file needs no fold: it just leaves the batch and becomes an ordinary capture.
+ */
+export async function mergeCaptureBatchRows(
+  userId: string,
+  batchGroupId: string
+): Promise<CaptureJobRow | null> {
+  const db = await getDb();
+  const inBatch = and(eq(captureJobs.userId, userId), eq(captureJobs.batchGroupId, batchGroupId));
+  const busy = await db
+    .select({ id: captureJobs.id })
+    .from(captureJobs)
+    .where(and(inBatch, inArray(captureJobs.status, BATCH_BUSY)))
+    .limit(1);
+  if (busy.length) return null;
+
+  const claimed = await db
+    .update(captureJobs)
+    .set({ status: "merged", updatedAt: new Date() })
+    .where(and(inBatch, eq(captureJobs.status, "ready")))
+    .returning();
+  const parts = claimed
+    .filter((r) => r.result && r.sourceText)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const unusable = claimed.filter((r) => !parts.includes(r));
+  if (unusable.length) {
+    // A ready row always has both; if one somehow does not, it goes back rather than vanish.
+    await db.update(captureJobs).set({ status: "ready" }).where(inArray(captureJobs.id, unusable.map((r) => r.id)));
+  }
+  if (!parts.length) return null;
+
+  if (parts.length === 1) {
+    const [only] = await db
+      .update(captureJobs)
+      .set({ status: "ready", batchGroupId: null, updatedAt: new Date() })
+      .where(eq(captureJobs.id, parts[0]!.id))
+      .returning();
+    return only ?? null;
+  }
+
+  try {
+    const combined = combineCaptureResults(
+      parts.map((r) => ({ label: r.sourceLabel, sourceText: r.sourceText!, sourceHash: r.sourceHash ?? "", result: r.result! }))
+    );
+    const union = <T,>(lists: T[][]) => [...new Set(lists.flat())];
+    const [row] = await db
+      .insert(captureJobs)
+      .values({
+        userId,
+        sourceKind: "messy",
+        status: "ready",
+        entryPoint: parts[0]!.entryPoint,
+        sourceLabel: `${parts.length} notes`,
+        result: combined.result,
+        sourceText: combined.sourceText,
+        sourceHash: combined.sourceHash,
+        sources: union(parts.map((r) => r.sources)),
+        photoIds: union(parts.map((r) => r.photoIds)),
+        sourceFileHashes: union(parts.map((r) => r.sourceFileHashes)),
+      })
+      .returning();
+    return row ?? null;
+  } catch (err) {
+    await db
+      .update(captureJobs)
+      .set({ status: "ready" })
+      .where(inArray(captureJobs.id, parts.map((r) => r.id)));
+    throw err;
+  }
 }
 
 /**
@@ -785,7 +874,7 @@ export async function resumeStalledCaptureJobs(options: {
   const cutoff = new Date(now.getTime() - CAPTURE_JOB_RETENTION_DAYS * 86_400_000);
   const swept = await db
     .delete(captureJobs)
-    .where(and(inArray(captureJobs.status, ["saved", "failed", "discarded"]), lt(captureJobs.updatedAt, cutoff)))
+    .where(and(inArray(captureJobs.status, ["saved", "failed", "discarded", "merged"]), lt(captureJobs.updatedAt, cutoff)))
     .returning();
   result.swept = swept.length;
   return result;

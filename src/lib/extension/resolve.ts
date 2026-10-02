@@ -28,6 +28,7 @@ import {
   type DuplicateMatch,
 } from "@/lib/duplicates";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
+import { recentMoveAsFieldChanges } from "@/lib/job-changes";
 import type {
   ContactFieldSuggestion,
   ContactSnapshot,
@@ -526,12 +527,17 @@ export async function buildStarterContext(
     if (bundle) {
       // The snapshot already read this contact's row; reading it again for three of its
       // columns was a second round trip for the same values.
+      const pageChanges = diffPageAgainstContact(probe, bundle.snapshot);
       return {
         ...bundle.starterContext,
         mode: "warm",
         page,
         networkOverlap: { companies: [], schools: [] },
-        changes: diffPageAgainstContact(probe, bundle.snapshot),
+        // The page agreeing with Orbit can mean a move the work-history check already
+        // recorded — still worth a congratulations.
+        changes: pageChanges.length
+          ? pageChanges
+          : await recentMoveAsFieldChanges(userId, contactId).catch(() => []),
       };
     }
   }
