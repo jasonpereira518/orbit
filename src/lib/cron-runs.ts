@@ -18,6 +18,7 @@ import { reportError } from "@/lib/report-error";
 export type CronJobName =
   | "connectors.outbox"
   | "credits.notices"
+  | "email.drain"
   | "imports.process-stalled"
   | "jobs.feed-sweep"
   | "ops.sweep"

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useId, useState } from "react";
 import { toast } from "@/lib/toast";
 
 import { startGmailOAuth } from "@/actions/gmail";
+import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { getChatSendContext, sendChatDraftViaGmail, type ChatSendContext } from "@/actions/chat-send";
 import { useChatThreadId } from "@/components/chat/chat-thread-context";
 import { Button } from "@/components/ui/button";
@@ -23,9 +24,10 @@ import { TOAST_COPY } from "@/lib/toast-copy";
  * on the button press. The address shown is the contact record's; nothing here lets the person
  * (or the model) type a different recipient, and the server re-checks that it is unchanged.
  *
- * Every state that is not "ready" says what to do next instead of failing after the click: a
- * plan without Gmail send gets Copy and a mail link, a missing permission gets the connect
- * button, a contact with no usable address is told so.
+ * Every state that is not "ready" says what to do next instead of failing after the click: no
+ * Gmail (or no send permission) gets the connect button plus Copy and a mail link, a contact
+ * with no usable address is told so. Sending is on every plan. A sent draft goes out after a
+ * 10-second undo window (`showUndoSendToast`).
  */
 export function GmailSendDialog({
   open,
@@ -35,6 +37,7 @@ export function GmailSendDialog({
   name,
   body,
   onSent,
+  onUndone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -45,6 +48,8 @@ export function GmailSendDialog({
   body: string;
   /** Called with the send time; `ambiguous` when Gmail may or may not have accepted it. */
   onSent: (sentAtIso: string, ambiguous: boolean) => void;
+  /** Called when the person presses Undo in time and nothing went out. */
+  onUndone?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   return (
@@ -60,6 +65,7 @@ export function GmailSendDialog({
           setBusy={setBusy}
           onClose={() => onOpenChange(false)}
           onSent={onSent}
+          onUndone={onUndone}
         />
       </DialogContent>
     </Dialog>
@@ -75,6 +81,7 @@ function SendPanel({
   setBusy,
   onClose,
   onSent,
+  onUndone,
 }: {
   messageId: string;
   contactId: string;
@@ -84,6 +91,7 @@ function SendPanel({
   setBusy: (busy: boolean) => void;
   onClose: () => void;
   onSent: (sentAtIso: string, ambiguous: boolean) => void;
+  onUndone?: () => void;
 }) {
   const id = useId();
   const threadId = useChatThreadId();
@@ -150,17 +158,9 @@ function SendPanel({
         shownTo: ctx.to,
       });
       if (res.ok) {
-        toast.success(`Sent to ${name}`);
-        onSent(res.sentAt, false);
+        onSent(res.sendAt, false);
         onClose();
-        return;
-      }
-      if (res.reason === "ambiguous") {
-        // Stay honest and stay out of the way: it may have gone, so the card must not offer
-        // to send it again, but nothing should claim it did.
-        toast.message(res.message);
-        onSent(new Date().toISOString(), true);
-        onClose();
+        showUndoSendToast({ sendId: res.sendId, recipientLabel: name, onUndone });
         return;
       }
       if (res.reason === "already_sent") {
@@ -203,7 +203,7 @@ function SendPanel({
         </p>
       ) : (
         <div className="flex flex-col gap-3 text-sm">
-          {ctx.planAllows && ctx.identity.connected && ctx.identity.sendingAs && (
+          {ctx.identity.connected && ctx.identity.sendingAs && (
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
               <dt className="text-muted-foreground">From</dt>
               <dd className="min-w-0 break-words font-medium">
@@ -213,7 +213,7 @@ function SendPanel({
               <dd className="min-w-0 break-words font-medium">{ctx.to ?? "—"}</dd>
             </dl>
           )}
-          {!(ctx.planAllows && ctx.identity.connected && ctx.identity.sendingAs) && ctx.to && (
+          {!(ctx.identity.connected && ctx.identity.sendingAs) && ctx.to && (
             <p>
               <span className="text-muted-foreground">To </span>
               <span className="font-medium">{ctx.to}</span>
@@ -242,7 +242,7 @@ function SendPanel({
 
           <Blocker ctx={ctx} name={name} contactId={contactId} onConnect={connect} busy={busy} />
 
-          {ctx.planAllows && ctx.identity.connected && ctx.identity.sendingAs && ctx.identity.canSend && !ctx.recipientProblem && !ctx.alreadySent && (
+          {ctx.identity.connected && ctx.identity.sendingAs && ctx.identity.canSend && !ctx.recipientProblem && !ctx.alreadySent && (
             <p className="text-xs text-muted-foreground">
               Replies land in this inbox, and the email appears in your Sent folder.
             </p>
@@ -261,7 +261,7 @@ function SendPanel({
         <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
           Cancel
         </Button>
-        {ctx && ctx !== "unavailable" && !ctx.planAllows ? (
+        {ctx && ctx !== "unavailable" && !ctx.identity.canSend ? (
           <>
             <Button type="button" variant="outline" onClick={copy}>
               {copied ? <Check className="size-4" /> : <Copy className="size-4" />} Copy
@@ -309,13 +309,6 @@ function Blocker({
   onConnect: () => void;
   busy: boolean;
 }) {
-  if (!ctx.planAllows) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Sending from Gmail is part of Orbit Pro and Max. You can copy this draft or open it in your mail app instead.
-      </p>
-    );
-  }
   if (ctx.alreadySent) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">

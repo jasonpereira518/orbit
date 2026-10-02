@@ -20,6 +20,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { FollowUpDraftComposer } from "@/components/follow-up/follow-up-draft-composer";
+import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -116,8 +117,14 @@ export function FollowUpDraftSheet({
     if (!draft.trim()) return;
     startSend(async () => {
       try {
-        await sendContactFollowUpEmail(contactId, draft);
-        finishAndClose(`Email sent to ${contactName}`);
+        const res = await sendContactFollowUpEmail(contactId, draft);
+        if (!res.ok) {
+          toast.error(res.message);
+          return;
+        }
+        showUndoSendToast({ sendId: res.sendId, recipientLabel: contactName, onUndone: () => router.refresh() });
+        onOpenChange(false);
+        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "That email didn’t send — try again?"));
       }

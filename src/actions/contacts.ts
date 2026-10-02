@@ -15,7 +15,7 @@ import {
   noteBatches,
   reminders,
 } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
+import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { countsAsTouch } from "@/lib/interaction-provenance";
 import {
   type ContactPickerOption,
@@ -83,10 +83,10 @@ import {
   nameAliases,
   type RelatedContact,
 } from "@/lib/related-contacts";
-import {
-  getOutreachSendConfig,
-  sendOutreachMessage,
-} from "@/lib/outreach-send";
+import { UNDO_DELAY_MS } from "@/lib/email/config";
+import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
+import { scheduleDispatch } from "@/lib/email/schedule";
+import { getSendCapability, type SendBlockReason } from "@/lib/email/sender";
 
 export type {
   ContactInput,
@@ -1390,21 +1390,23 @@ export async function draftContactFollowUp(
 
 export type ContactFollowUpSendOptions = {
   canSendEmail: boolean;
+  /** Why email can't be sent from Orbit right now, or null when it can. */
+  sendBlock: SendBlockReason | "cap_reached" | null;
   hasEmail: boolean;
   hasLinkedIn: boolean;
   email: string | null;
   linkedinUrl: string | null;
 };
 
-/** Whether this contact can receive an automated email follow-up. */
+/** Whether this contact can be emailed from the user's own mailbox right now. */
 export async function getContactFollowUpSendOptions(
   contactId: string
 ): Promise<ContactFollowUpSendOptions> {
   const userId = await requireUserId();
   const db = await getDb();
-  // The send config needs nothing from the contact, so both reads start together. The
-  // not-found check still comes first; a config failure only surfaces after it, as before.
-  const configRead = settle(getOutreachSendConfig(userId));
+  // The capability needs nothing from the contact, so both reads start together. The
+  // not-found check still comes first; a capability failure only surfaces after it.
+  const capabilityRead = settle(getSendCapability(userId));
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: {
@@ -1414,7 +1416,7 @@ export async function getContactFollowUpSendOptions(
   });
   if (!contact) throw new Error("Contact not found");
 
-  const config = unwrap(await configRead);
+  const capability = unwrap(await capabilityRead);
   const email = contact.email?.trim() || null;
   const linkedinUrl = contact.linkedinUrl?.trim() || null;
 
@@ -1423,16 +1425,24 @@ export async function getContactFollowUpSendOptions(
     hasLinkedIn: Boolean(linkedinUrl),
     email,
     linkedinUrl,
-    canSendEmail: Boolean(email && config.resendApiKey),
+    canSendEmail: Boolean(email && capability.ok),
+    sendBlock: capability.ok ? null : capability.reason,
   };
 }
 
-/** Send a follow-up email via Resend and log it as an interaction. */
+export type FollowUpSendResult =
+  | { ok: true; sendId: string; sendAt: string; to: string }
+  | { ok: false; reason: EnqueueRefusal | "no_email"; message: string };
+
+/**
+ * Queue a follow-up email from the user's own mailbox. It goes out after the undo window,
+ * and the follow-up clears only once it has (see `origin-hooks/follow-up.ts`).
+ */
 export async function sendContactFollowUpEmail(
   contactId: string,
   body: string,
   subject?: string
-) {
+): Promise<FollowUpSendResult> {
   const userId = await requireUserId();
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
@@ -1445,32 +1455,25 @@ export async function sendContactFollowUpEmail(
     },
   });
   if (!contact) throw new Error("Contact not found");
-  if (!contact.email?.trim()) throw new Error("Contact has no email address.");
-
-  const trimmed = body.trim();
-  if (!trimmed) throw new Error("Message body is empty.");
+  if (!contact.email?.trim()) {
+    return { ok: false, reason: "no_email", message: "Add an email address for this contact first." };
+  }
 
   const name = contact.preferredName || contact.fullName;
-  await sendOutreachMessage({
-    userId,
-    channel: "email",
-    toEmail: contact.email.trim(),
+  const profile = await getCurrentUserProfile().catch(() => null);
+  const queued = await enqueueEmail(userId, {
+    to: [contact.email.trim()],
     subject: subject?.trim() || `Following up · ${name}`,
-    body: trimmed,
+    bodyText: body,
+    fromName: profile?.name?.trim() || null,
+    origin: "follow_up",
+    originRef: contactId,
+    contactIds: [contactId],
+    delayMs: UNDO_DELAY_MS,
   });
-
-  await logInteraction({
-    contactId,
-    interactionType: "email",
-    source: "follow_up",
-    rawNotes: trimmed,
-    aiSummary: "Sent follow-up email from contact profile",
-  });
-
-  const { clearContactFollowUp } = await import("@/actions/reminders");
-  await clearContactFollowUp(contactId);
-
-  return { ok: true as const };
+  if (!queued.ok) return queued;
+  scheduleDispatch(queued.id, queued.sendAt);
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
 }
 
 /**
