@@ -119,16 +119,23 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
       )}
     >
       <div className="min-h-0 overflow-hidden">
-        <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2.5">
+        <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-card px-2.5 py-2.5 sm:gap-3 sm:px-3">
           <ContactAvatar contactId={rec.contactId} fullName={rec.contactName} profileImageUrl={rec.avatarUrl} size="sm" />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <IntentLink href={`/contacts/${rec.contactId}`} className="truncate text-sm font-medium text-primary hover:underline">
                 {rec.contactName}
               </IntentLink>
-              <span className="shrink-0 text-[11px] text-muted-foreground">{KIND_LABELS[rec.kind]}</span>
+              <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">{KIND_LABELS[rec.kind]}</span>
             </div>
-            {line && <p className="truncate text-xs text-muted-foreground">{line}</p>}
+            {/* On a phone the kind moves down here, so the name gets the row's width. */}
+            <p className={cn("truncate text-xs text-muted-foreground", !line && "sm:hidden")}>
+              <span className="sm:hidden">
+                {KIND_LABELS[rec.kind]}
+                {line ? " · " : ""}
+              </span>
+              {line}
+            </p>
           </div>
           <Button
             type="button"

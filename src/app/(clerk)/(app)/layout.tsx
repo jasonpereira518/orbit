@@ -152,12 +152,15 @@ export default async function AppLayout({
           color the shell and the page ask for is registered by then. */}
       <LearnedBrandColors brands={brandColors.learned} />
       <AppShell
+      userId={userId}
       clerkOn={clerkOn}
       demoMode={demoMode}
       theme={theme}
       plan={plan}
       hidden={[...visibility.hidden]}
       hiddenForUsers={[...visibility.hiddenForUsers]}
+      comingSoon={[...visibility.comingSoonMarked]}
+      navOrder={visibility.navOrder}
       viewingAsUser={visibility.viewingAsUser}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
