@@ -93,6 +93,8 @@ const reps = Number(flag("--reps") ?? 3);
 const label = flag("--label") ?? "run";
 const out = flag("--out");
 const traceDir = flag("--trace-dir");
+/** `--inject css|js`: a style rule or script run on every page before it loads, to switch a layer off and price it. Diagnosis only. */
+const inject = flag("--inject");
 /**
  * `--suite frame`: the frame-budget suite (see FRAME SUITE below) instead of the open/zoom/pan one.
  * `--uncapped`: lift headless Chrome's 60Hz vsync cap. Diagnostic only: rAF then spins far faster
@@ -452,7 +454,13 @@ async function runOnce(n, traced_, { label, base }) {
       downloadThroughput: -1,
       uploadThroughput: -1,
     });
-    await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: PRELUDE });
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source:
+        PRELUDE +
+        (inject
+          ? `\n;document.addEventListener("DOMContentLoaded",()=>{const s=document.createElement("style");s.textContent=${JSON.stringify(inject)};document.head.append(s);});`
+          : ""),
+    });
 
     // ---- OPEN ----
     await cdp.goto(`${base}?n=${n}&data=fetch`);

@@ -19,6 +19,17 @@ import { cn } from "@/lib/utils";
 const GALAXY_BACKDROP_MAX_BACKING_PX = 2048;
 
 /**
+ * Below this zoom the backdrop's image is a layer of its own that keeps its raster scale.
+ * Without that, zooming out re-rasters a layer as large as the whole galaxy at every step, and
+ * near the end of the gesture the compositor thread stalls for 30–150 ms (measured at 2,500 and
+ * 10,000 contacts: min fps 29.9 → 6.7; with the layer promoted, 59.5). It is gated to the
+ * zoomed-out views because a promoted layer under the stars makes the stars painted over it
+ * overlap-promote too (the cost PR #301 removed with its own images); up here the sky is
+ * summary dots and a few hundred nodes, and at 0.18–0.34 it measured +2 layers.
+ */
+const GALAXY_BACKDROP_OWN_LAYER_BELOW_ZOOM = 0.3;
+
+/**
  * The galaxy behind the whole sky — warm bulge, cool disk haze, dark lanes and dust along the
  * chains of related clusters — as one more worker-drawn image, beneath everything else.
  *
@@ -76,7 +87,12 @@ function GalaxyBackdropNodeComponent({ data }: NodeProps & { data: GalaxyBackdro
           "constellation-galaxy-backdrop pointer-events-none select-none",
           imageShown ? "block" : "hidden"
         )}
-        style={{ width: data.width, height: data.height, maxWidth: "none" }}
+        style={{
+          width: data.width,
+          height: data.height,
+          maxWidth: "none",
+          willChange: zoom < GALAXY_BACKDROP_OWN_LAYER_BELOW_ZOOM ? "transform" : undefined,
+        }}
       />
     </>
   );
