@@ -166,7 +166,8 @@ function normalizeString(s: string): string {
  * every one- and two-digit lexeme is dropped ('3' in "3-4x" goes with them), and so is every
  * month abbreviation: the seeded "met" date sits a fixed number of days before the run, so
  * the month rolls over (jul -> aug) on whichever day the suite first runs past a month
- * boundary. The vector still compares on its other words.
+ * boundary. "may" goes too, as the word as well as the month. The vector still compares on
+ * its other words.
  */
 function normalizeTsv(s: string): string {
   return normalizeString(s)
