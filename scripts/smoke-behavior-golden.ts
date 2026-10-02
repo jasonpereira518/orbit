@@ -161,12 +161,18 @@ function normalizeString(s: string): string {
 }
 
 /**
- * A search vector indexes those written days too, as a bare day-of-month lexeme ('25':32).
- * A vector cannot say which number was a day, so every one- and two-digit lexeme is
- * dropped ('3' in "3-4x" goes with them); the vector still compares on its words.
+ * A search vector indexes those written days too, as a bare day-of-month lexeme ('25':32)
+ * and as the month's abbreviation ('jul':31). A vector cannot say which number was a day, so
+ * every one- and two-digit lexeme is dropped ('3' in "3-4x" goes with them), and so is every
+ * month abbreviation: the seeded "met" date sits a fixed number of days before the run, so
+ * the month rolls over (jul -> aug) on whichever day the suite first runs past a month
+ * boundary. The vector still compares on its other words.
  */
 function normalizeTsv(s: string): string {
-  return normalizeString(s).replace(/'\d{1,2}':[0-9A-D,]+ ?/g, "").trim();
+  return normalizeString(s)
+    .replace(/'\d{1,2}':[0-9A-D,]+ ?/g, "")
+    .replace(/'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)':[0-9A-D,]+ ?/g, "")
+    .trim();
 }
 
 function normalize(value: unknown): unknown {
