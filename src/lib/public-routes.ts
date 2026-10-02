@@ -34,12 +34,21 @@ export const PUBLIC_ROUTES = [
   // Clicked from an email, by someone who has never signed in. Authenticated by the
   // opaque token in the query string instead, same pattern as the calendar feed above.
   "/api/interest-list/unsubscribe",
+  // Radar's Monday email's off switch, clicked from a mail client (and called directly by
+  // Gmail's and Yahoo's unsubscribe buttons). Authenticated by the signed token in the query.
+  "/api/radar/digest/unsubscribe",
+  // The credit emails' off switch (80% and 100% of the monthly AI credits): same shape as
+  // Radar's, authenticated by the signed token in the query.
+  "/api/credits/email/unsubscribe",
   // The boarding-pass link preview. Fetched by X, LinkedIn and iMessage, which carry no
   // session; authenticated by nothing, because it reveals only a number and a planet.
   "/api/interest-list/ticket-image",
   // The referral tracker's poll. The share token in the query is the credential, exactly as
   // on the pass page; the answer is that pass's own referral count and place.
   "/api/interest-list/progress",
+  // The feature poll's live tallies: star totals per option and a voter count, nothing about
+  // any one voter.
+  "/api/waitlist-poll/results",
   // Not actually public: these authenticate via requireExtensionUserId, which reads the
   // Clerk state clerkMiddleware populates. They are exempted from auth.protect() only so
   // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302
@@ -58,11 +67,20 @@ export const PUBLIC_ROUTES = [
   // `fetch` from other functions, which carry no Clerk session; same CRON_SECRET gate.
   "/api/avatars/encode",
   "/api/embeddings/backfill",
+  "/api/work-history/research",
+  "/api/work-history/sweep",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
+  // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same
+  // reasons.
+  "/api/radar/run",
+  "/api/radar/feeds/sweep",
+  "/api/radar/digest",
+  // The credit emails, on the ten-minute schedule — same CRON_SECRET gate.
+  "/api/credits/notices",
   "/api/webhooks/outbound/drain",
   "/api/connectors/outbox/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key

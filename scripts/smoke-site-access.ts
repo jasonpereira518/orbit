@@ -22,7 +22,7 @@ import {
   setStealth,
   stealthAdmits,
 } from "../src/lib/site-access";
-import { grantSiteInvitePlan } from "../src/lib/site-invites";
+import { recordSiteInvite } from "../src/lib/site-invites";
 import { setCompedPlan } from "../src/lib/user-settings";
 import { run } from "./smoke/_env";
 
@@ -111,20 +111,19 @@ run(async () => {
       !(await isHeldByStealth("smoke-site-access-unknown-2", { createdAt: new Date(), stealthClearedAt: null }))
     );
 
-    console.log("\nAn invitation is full access…");
+    console.log("\nAn invitation makes the account founding-eligible (pricing v2)…");
     const marker = { siteInvite: { by: ADMIN, at: new Date().toISOString() } };
-    const compOf = async (userId: string) =>
-      (await db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) }))?.compedPlan ?? null;
-    check("no marker, no comp", !(await grantSiteInvitePlan(INVITED_USER, { other: true })));
-    check("…and the account stays free", (await compOf(INVITED_USER)) === null);
-    check("the marker comps the account", await grantSiteInvitePlan(INVITED_USER, marker));
-    check("…to Orbit", (await compOf(INVITED_USER)) === "orbit");
-    const invited = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, INVITED_USER) });
-    check("…crediting the inviting admin", invited?.compedBy === ADMIN, invited?.compedBy ?? "null");
-    check("granting again is a no-op", !(await grantSiteInvitePlan(INVITED_USER, marker)));
+    const rowOf = async (userId: string) => db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) });
+    check("no marker, nothing recorded", !(await recordSiteInvite(INVITED_USER, { other: true })));
+    check("…and the account is not eligible", (await rowOf(INVITED_USER))?.foundingEligible !== true);
+    check("the marker makes it founding-eligible", await recordSiteInvite(INVITED_USER, marker));
+    const invited = await rowOf(INVITED_USER);
+    check("…stored on the account", invited?.foundingEligible === true);
+    check("…and invites no longer comp Pro", invited?.compedPlan === null, invited?.compedPlan ?? "null");
+    check("recording again is a no-op", !(await recordSiteInvite(INVITED_USER, marker)));
     await setCompedPlan(LIFETIME_USER, "lifetime", { note: "smoke" });
-    check("an existing comp is left alone", !(await grantSiteInvitePlan(LIFETIME_USER, marker)));
-    check("…so Lifetime is never downgraded", (await compOf(LIFETIME_USER)) === "lifetime");
+    check("an account with an existing comp can still be eligible", await recordSiteInvite(LIFETIME_USER, marker));
+    check("…and its comp is left exactly as it was", (await rowOf(LIFETIME_USER))?.compedPlan === "lifetime");
   } finally {
     await db.delete(userSettings).where(eq(userSettings.userId, INVITED_USER));
     await db.delete(userSettings).where(eq(userSettings.userId, LIFETIME_USER));

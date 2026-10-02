@@ -71,6 +71,10 @@ is what the budget needs. `--uncapped` lifts the cap, for diagnosis only (it inf
 Run long benchmarks under `caffeinate -dimsu`: headless Chrome on macOS paces rAF from the
 display, so when the display sleeps an in-page rAF loop never finishes.
 
+`--inject '<css>'` (interactions script) adds a style rule to every page before it loads, to switch a layer off or
+try a property and price it: `--inject '.react-flow__node[data-id="galaxy-backdrop"]{display:none!important}'`. A
+`--trace-dir` trace separates main-thread from compositor-thread stalls (look at which thread owns the long `RunTask`).
+
 `--ablate` strips one visual layer at a time (`nolabels`, `nonebula`, `nodust`, `noanim`,
 `notwinkle`, `novpwill`, …) to price it. It is a diagnostic, not a
 measurement of the product: it answers "which part of the sky costs the frames".

@@ -53,6 +53,13 @@ console.log("\nPetals");
   check("7 members are too few for petals", company([...many(4, "Software Engineer", 0), ...many(3, "Product Designer", 4)]).form === "figure");
   check("one function is not petals", company(many(10, "Software Engineer")).form === "figure");
   check("leaders plus one function are not petals", company([...many(3, "CEO", 0), ...many(8, "Software Engineer", 3)]).form === "figure");
+
+  const oneNamed = company([...many(5, "Software Engineer", 0), ...many(3, "Chef", 5)]);
+  check("one named function plus 'Other' is not petals", oneNamed.form === "figure" && oneNamed.parts.length === 1);
+  const twoNamedPlusOther = company([...many(4, "Software Engineer", 0), ...many(4, "Product Designer", 4), ...many(3, "Chef", 8)]);
+  check("two named functions plus 'Other' are still petals", twoNamedPlusOther.form === "petal" && twoNamedPlusOther.parts.some((p) => p.key === "petal:other"));
+  const foldOnly = company([...many(5, "Software Engineer", 0), { id: "m05", title: "Data Scientist" }, { id: "m06", title: "Account Executive" }, ...many(1, "Chef", 7)]);
+  check("a company split only by folded loners is not petals", foldOnly.form === "figure");
 }
 
 console.log("\nFolding lone members");

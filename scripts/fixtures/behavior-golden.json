@@ -5175,8 +5175,11 @@
     "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
     "xHandle": null,
     "website": null,
+    "blueskyHandle": null,
+    "mastodonAcct": null,
     "profileImageUrl": null,
     "profileImageCheckedAt": null,
+    "workHistoryDueAt": null,
     "relationshipScore": 4,
     "statedCloseness": 4,
     "priorityLevel": 2,
@@ -5407,9 +5410,13 @@
       "hasPersonalKey": false,
       "managedConfigured": false,
       "canTranscribe": false,
-      "allowance": null
+      "preference": null,
+      "managedPaused": false,
+      "credits": null
     },
     "hasApolloKey": false,
+    "workHistoryAutoEnabled": true,
+    "radarDigestEnabled": true,
     "hasApiKey": false,
     "providers": [
       {
@@ -6735,11 +6742,17 @@
         "capabilities": {
           "hasAiKey": false,
           "hasApolloKey": false,
-          "aiProvider": "gemini"
+          "aiProvider": "gemini",
+          "radarCaptureLinkedinActivity": false
         },
         "stats": {
           "contactCount": 25,
           "dueFollowUpCount": 6
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
         }
       }
     }
@@ -6949,8 +6962,11 @@
       "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
       "xHandle": null,
       "website": null,
+      "blueskyHandle": null,
+      "mastodonAcct": null,
       "profileImageUrl": null,
       "profileImageCheckedAt": null,
+      "workHistoryDueAt": null,
       "relationshipScore": 4,
       "statedCloseness": 4,
       "priorityLevel": 2,
@@ -7428,6 +7444,65 @@
         "contactId": "<contacts:Sarah Chen>",
         "nextFollowUpAt": "<ts>",
         "reminderId": "<reminders:Follow up with Sarah Chen>"
+      }
+    }
+  },
+  "ext save post to radar, capture off (route)": {
+    "status": 400,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "message": "Saving LinkedIn activity is off. Turn it on in Radar’s settings first."
+      }
+    }
+  },
+  "ext save post to radar (route)": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "saved": true,
+        "duplicate": false
+      }
+    }
+  },
+  "ext save post to radar again (route)": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "saved": true,
+        "duplicate": true
+      }
+    }
+  },
+  "ext me, post saving on": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "contractVersion": 1,
+        "user": {
+          "name": "Demo User",
+          "email": "demo@orbit.local",
+          "imageUrl": null
+        },
+        "capabilities": {
+          "hasAiKey": false,
+          "hasApolloKey": false,
+          "aiProvider": "gemini",
+          "radarCaptureLinkedinActivity": true
+        },
+        "stats": {
+          "contactCount": 26,
+          "dueFollowUpCount": 5
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
+        }
       }
     }
   },
@@ -10982,7 +11057,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.526255,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11014,6 +11091,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11051,7 +11129,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.454951,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11083,6 +11163,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11118,7 +11199,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.324546,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11150,6 +11233,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11181,14 +11265,16 @@
       "ai_summary": "Ben Carter is Computer Science Student at UNC Chapel Hill. How you met: Hackathon judging at UNC. Built a genuinely good retrieval demo at HackNC in a weekend. Graduating in May and looking for an internship. Worth staying close to.",
       "company_id": "<companies:UNC Chapel Hill>",
       "first_name": "Ben",
-      "search_tsv": "'a':38,46,61,69 'an':54,77 'and':51,74 'at':17C,26,35,43,66 'ben':1A,20 'built':37,60 'carter':2A,21 'chapel':4B,7B,12C,28 'close':58,81 'computer':9B,23 'demo':42,65 'for':53,76 'genuinely':39,62 'good':40,63 'graduating':48,71 'hackathon':15C,33 'hacknc':19C,44,67 'hill':5B,8B,13C,29 'how':30 'in':45,49,68,72 'internship':55,78 'is':22 'judging':16C,34 'looking':52,75 'may':50,73 'met':32 'nc':14C 'retrieval':41,64 'science':10B,24 'staying':57,80 'student':11B,25 'to':59,82 'unc':3B,6B,18C,27,36 'weekend':47,70 'worth':56,79 'you':31",
+      "search_tsv": "'a':38,46,61,69 'an':54,77 'and':51,74 'at':17C,26,35,43,66 'ben':1A,20 'built':37,60 'carter':2A,21 'chapel':4B,7B,12C,28 'close':58,81 'computer':9B,23 'demo':42,65 'for':53,76 'genuinely':39,62 'good':40,63 'graduating':48,71 'hackathon':15C,33 'hacknc':19C,44,67 'hill':5B,8B,13C,29 'how':30 'in':45,49,68,72 'internship':55,78 'is':22 'judging':16C,34 'looking':52,75 'met':32 'nc':14C 'retrieval':41,64 'science':10B,24 'staying':57,80 'student':11B,25 'to':59,82 'unc':3B,6B,18C,27,36 'weekend':47,70 'worth':56,79 'you':31",
       "met_context": "HackNC",
       "orbit_score": 2,
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.49756,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11220,6 +11306,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11255,7 +11342,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.27669,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11287,6 +11376,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11322,7 +11412,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.418147,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11354,6 +11446,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11391,7 +11484,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.40021,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11423,6 +11518,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11461,7 +11557,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.771154,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11493,6 +11591,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11531,7 +11630,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.409512,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11563,6 +11664,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11598,7 +11700,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.255,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11630,6 +11734,7 @@
         "knownWeightShare": 0.15
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11665,7 +11770,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.51086,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11697,6 +11804,7 @@
         "knownWeightShare": 0.7
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11735,7 +11843,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.442721,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11767,6 +11877,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11802,7 +11913,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.37256,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11836,6 +11949,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11875,7 +11989,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.532241,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11907,6 +12023,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11942,7 +12059,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.354222,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11974,6 +12093,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12012,7 +12132,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.586005,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12044,6 +12166,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12082,7 +12205,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.602105,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12117,6 +12242,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12155,7 +12281,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.552619,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12187,6 +12315,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12225,7 +12354,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.74794,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12257,6 +12388,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12292,7 +12424,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.28665,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12324,6 +12458,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12362,7 +12497,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.679665,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12397,6 +12534,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12432,7 +12570,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.350052,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12464,6 +12604,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12496,14 +12637,16 @@
       "ai_summary": "Sarah Chen is Partnerships Lead at OpenAI. How you met: <day> · AWS Summit — hallway track after the inference keynote. Runs partnerships for the Codex team. Spent most of our conversation on the cost of inference at scale and why most startups over-provision GPUs. Offered to look at Orbit's retrieval setup if I send her a write-up. Prefers email over LinkedIn. Recent conversations covered: Golden: caught up about the launch.; Thirty minutes on what a Codex integration would need. She wants a one-page architecture and a short demo video before…; Introduced me to David Kim on her team for the evaluation-infrastructure conversation..",
       "company_id": "<companies:OpenAI>",
       "first_name": "Sarah",
-      "search_tsv": "'..':133 '2026':20C,33 'a':80,101,108,114,172 'about':94 'after':14C,38 'and':60,113,152 'architecture':112 'at':26,58,71,150,163 'aws':10C,18C,34 'before':118 'ca':9C 'caught':92 'chen':2A,22 'codex':46,102,138 'conversation':52,132,144 'conversations':89 'cost':55,147 'covered':90 'david':122 'demo':116 'email':85,177 'evaluation':130 'evaluation-infrastructure':129 'for':44,127,136 'francisco':8C 'golden':4B,91 'gpus':67,159 'hallway':12C,36 'her':79,125,171 'how':28 'i':77,169 'if':76,168 'inference':16C,40,57,149 'infrastructure':131 'integration':103 'introduced':119 'is':23 'jul':31 'keynote':17C,41 'kim':123 'launch':96 'lead':25 'linkedin':87,179 'look':70,162 'me':120 'met':30 'minutes':98 'most':49,62,141,154 'need':105 'of':50,56,142,148 'offered':68,160 'on':53,99,124,145 'one':110 'one-page':109 'openai':3B,27 'orbit':72,164 'our':51,143 'over':65,86,157,178 'over-provision':64,156 'page':111 'partnerships':24,43,135 'prefers':84,176 'provision':66,158 'recent':88 'retrieval':74,166 'runs':42,134 's':73,165 'san':7C 'sarah':1A,21 'sarah.chen@example.com':6C 'scale':59,151 'send':78,170 'setup':75,167 'she':106 'short':115 'spent':48,140 'startups':63,155 'summit':11C,19C,35 'team':47,126,139 'the':15C,39,45,54,95,128,137,146 'thirty':97 'title':5B 'to':69,121,161 'track':13C,37 'up':83,93,175 'video':117 'wants':107 'what':100 'why':61,153 'would':104 'write':82,174 'write-up':81,173 'you':29",
+      "search_tsv": "'..':133 '2026':20C,33 'a':80,101,108,114,172 'about':94 'after':14C,38 'and':60,113,152 'architecture':112 'at':26,58,71,150,163 'aws':10C,18C,34 'before':118 'ca':9C 'caught':92 'chen':2A,22 'codex':46,102,138 'conversation':52,132,144 'conversations':89 'cost':55,147 'covered':90 'david':122 'demo':116 'email':85,177 'evaluation':130 'evaluation-infrastructure':129 'for':44,127,136 'francisco':8C 'golden':4B,91 'gpus':67,159 'hallway':12C,36 'her':79,125,171 'how':28 'i':77,169 'if':76,168 'inference':16C,40,57,149 'infrastructure':131 'integration':103 'introduced':119 'is':23 'keynote':17C,41 'kim':123 'launch':96 'lead':25 'linkedin':87,179 'look':70,162 'me':120 'met':30 'minutes':98 'most':49,62,141,154 'need':105 'of':50,56,142,148 'offered':68,160 'on':53,99,124,145 'one':110 'one-page':109 'openai':3B,27 'orbit':72,164 'our':51,143 'over':65,86,157,178 'over-provision':64,156 'page':111 'partnerships':24,43,135 'prefers':84,176 'provision':66,158 'recent':88 'retrieval':74,166 'runs':42,134 's':73,165 'san':7C 'sarah':1A,21 'sarah.chen@example.com':6C 'scale':59,151 'send':78,170 'setup':75,167 'she':106 'short':115 'spent':48,140 'startups':63,155 'summit':11C,19C,35 'team':47,126,139 'the':15C,39,45,54,95,128,137,146 'thirty':97 'title':5B 'to':69,121,161 'track':13C,37 'up':83,93,175 'video':117 'wants':107 'what':100 'why':61,153 'would':104 'write':82,174 'write-up':81,173 'you':29",
       "met_context": "AWS Summit 2026",
       "orbit_score": 5,
       "cadence_days": null,
       "linkedin_url": "https://www.linkedin.com/in/sarah-chen-demo",
       "closeness_raw": 0.914428,
       "linkedin_slug": "sarah-chen-demo",
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12538,6 +12681,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12575,7 +12719,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.562079,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12609,6 +12755,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12646,7 +12793,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.542824,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12680,6 +12829,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12718,7 +12868,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.569512,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12753,6 +12905,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12788,7 +12941,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.548583,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12823,6 +12978,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null

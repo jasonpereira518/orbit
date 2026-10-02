@@ -35,6 +35,8 @@ const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
   "smoke-connectivity": "pure",
+  "smoke-waitlist-pass-news": "pure",
+  "smoke-waitlist-demo-fidelity": "pure",
   "smoke-offline-queue": "pure",
   "smoke-chat-thread-prefetch": "pure",
   "smoke-render-stamp-pages": "pure",
@@ -125,6 +127,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-event-discovery": "pure",
   "smoke-event-gmail-scan": "pure",
   "smoke-event-relevance": "pure",
+  "smoke-radar-score": "pure",
   "smoke-event-parse": "pure",
   "smoke-event-resync": "pure",
   "smoke-event-theme": "pure",
@@ -163,8 +166,11 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-gmail-batch": "pure",
   "smoke-gmail-send-mime": "pure",
   "smoke-graph-canvas": "pure",
+  "smoke-galaxy-dust": "pure",
+  "smoke-sky-bitmap-draw": "pure",
   "smoke-hash-stream": "pure",
   "smoke-sky-layout": "pure",
+  "smoke-preview-sky": "pure",
   "smoke-graph-family-seating": "pure",
   "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",
@@ -193,7 +199,6 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
   "smoke-landing-cards": "pure",
-  "smoke-lifetime-pricing": "pure",
   "smoke-linkedin-paste": "pure",
   "smoke-locked-participant": "pure",
   "smoke-log-hygiene": "pure",
@@ -319,6 +324,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-constellation-pin": "pglite",
   "smoke-constellation-signals": "pglite",
   "smoke-contact-profile": "pglite",
+  "smoke-work-history-research": "pglite",
+  "smoke-work-history-sweep": "pglite",
+  "smoke-job-changes": "pglite",
   "smoke-contact-search-rank": "pglite",
   "smoke-contacts-search-paging": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
@@ -387,6 +395,10 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-job-company-match": "pure",
   "smoke-job-feed-fetch": "pure",
   "smoke-job-feed-sweep": "pglite",
+  "smoke-radar-run": "pglite",
+  "smoke-radar-metrics": "pglite",
+  "smoke-radar-feeds": "pglite",
+  "smoke-radar-digest": "pglite",
   "smoke-contact-job-matches": "pglite",
   "smoke-opportunity-extract": "pure",
   "smoke-opportunity-taxonomy": "pure",
@@ -407,6 +419,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
   "smoke-plan-card-copy": "pure",
+  "smoke-plan-downgrade": "pure",
   "smoke-plan-upgrade-claim": "pglite",
   "smoke-presence": "pglite",
   "smoke-follow-up-actions": "pglite",
@@ -443,6 +456,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-speech-quota": "pglite",
   "smoke-stripe-unattributed": "pglite",
   "smoke-stripe-webhook": "pglite",
+  "smoke-pricing-v2-billing": "pglite",
+  "smoke-credits": "pglite",
+  "smoke-plan-enforcement": "pglite",
+  "smoke-admin-lifetime": "pglite",
+  "smoke-admin-credits": "pglite",
+  "smoke-credit-notices": "pglite",
+  "smoke-tier-contrast": "pure",
   "smoke-billing-portal": "pglite",
   "smoke-subscription-management": "pglite",
   "smoke-checkout-confirm": "pglite",
@@ -463,6 +483,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
+  "smoke-stripe-testclock": "manual", // Stripe sandbox + test clocks; several minutes
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {

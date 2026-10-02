@@ -4,15 +4,10 @@ import type { AiAccessDenial } from "@/lib/managed-ai-policy";
  * What a person reads when the AI gate says no. Client-safe (no imports beyond a type), so
  * `errors.ts` can list these in `OWN_WORDS` and the notices can render the same words.
  *
- * Two constraints shape the wording:
- *
- *  - `key_required`, `managed_limit` and `managed_unavailable` all end in the same remedy —
- *    add your own key — so they keep the words "API key". That is load-bearing: seven call
- *    sites test `isMissingAiApiKeyError` (`/api key/i`) to flip their UI into the "add a key"
- *    state, and those three states should flip it.
- *  - `upgrade_pending` must NOT say "API key". A key is not what that person is missing, and
- *    flipping their capture page into "add a key" moments after they paid would be the
- *    exact confusing error this state exists to prevent.
+ * One constraint shapes the wording: all three refusals keep the words "API key". Seven call
+ * sites test `isMissingAiApiKeyError` (`/api key/i`) to flip their UI into the notice state,
+ * and every refusal should flip it — `aiDenialFromMessage` then tells the notice WHICH one,
+ * by exact match, so out-of-credits shows packs and Max rather than "add a key".
  *
  * `key_required` is the long-standing `MISSING_AI_API_KEY_MESSAGE`, reproduced here so a
  * gate refusal and the pre-gate code paths read identically.
@@ -20,11 +15,9 @@ import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 export const AI_ACCESS_COPY: Record<AiAccessDenial, string> = {
   key_required: "Add your AI API key in Settings to use this",
   managed_limit:
-    "You’ve used this month’s included AI on Orbit Lifetime — add your own API key in Settings to keep going",
+    "You’ve used your AI credits — add a $5 pack or move to Max in Settings, or use your own API key",
   managed_unavailable:
     "Orbit’s AI isn’t available right now — add your own API key in Settings to keep going",
-  upgrade_pending:
-    "Your Lifetime payment is still clearing — Orbit’s AI switches on the moment it does",
 };
 
 /** Orbit's own key was refused or throttled by the provider. The user can do nothing about it. */
@@ -51,43 +44,40 @@ export function aiDenialFromMessage(message: string | null | undefined): AiAcces
   return /api key/i.test(message) ? "key_required" : null;
 }
 
-/** The notices' wording, per refusal. `verb` completes "…to {verb}". */
+/**
+ * The notices' wording, per refusal. `verb` completes "…to {verb}". `offer` is the way out
+ * besides a key: `upgrade` ("Pro and Max include AI", Free accounts only) or `credits`
+ * ("Buy a pack ($5)", plus "Upgrade to Max" on Pro). Nothing is ever charged automatically.
+ */
 export const AI_NOTICE_COPY: Record<
   AiAccessDenial,
-  { title: (verb: string) => string; body: string; offerLifetime: boolean; linkToKeys: boolean }
+  { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | null; linkToKeys: boolean }
 > = {
   key_required: {
     title: (verb) => `Add an AI API key to ${verb}`,
-    body: "Orbit runs AI on your own Gemini, OpenAI, or Anthropic key, at cost and never marked up.",
-    offerLifetime: true,
+    body: "On the Free Plan, AI runs on your own Gemini, OpenAI, or Anthropic key.",
+    offer: "upgrade",
     linkToKeys: true,
   },
   managed_limit: {
-    title: () => "You’ve used this month’s included AI",
-    body: "Orbit Lifetime’s AI allowance resets on the 1st. To keep going now, add your own Gemini, OpenAI, or Anthropic key — Orbit uses yours whenever one is saved.",
-    offerLifetime: false,
+    title: () => "You’ve used your AI credits",
+    body: "AI is paused until your allowance resets — nothing is charged automatically. To keep going now, add a pack of 250 credits.",
+    offer: "credits",
     linkToKeys: true,
   },
   managed_unavailable: {
     title: () => "Orbit’s AI isn’t available right now",
-    body: "Your Lifetime AI comes back on its own. To keep going now, add your own Gemini, OpenAI, or Anthropic key.",
-    offerLifetime: false,
+    body: "Included AI comes back on its own. To keep going now, add your own Gemini, OpenAI, or Anthropic key.",
+    offer: null,
     linkToKeys: true,
-  },
-  upgrade_pending: {
-    title: () => "Your Lifetime upgrade is almost done",
-    body: "Your payment is still clearing. Orbit’s AI switches on the moment it does — there’s nothing to add.",
-    offerLifetime: false,
-    linkToKeys: false,
   },
 };
 
 /** The one-line version, for hints under a field. */
 export const AI_HINT_COPY: Record<AiAccessDenial, string> = {
   key_required: "Add an AI API key in Settings for summaries and action items",
-  managed_limit: "This month’s included AI is used — add your own API key in Settings for summaries",
+  managed_limit: "Your AI credits are used — add a pack or your own API key in Settings for summaries",
   managed_unavailable: "Orbit’s AI is unavailable right now — add your own API key in Settings for summaries",
-  upgrade_pending: "Summaries switch on the moment your Lifetime payment clears",
 };
 
 /** "October 1" — fixed locale and UTC, so server and client render the same string. */
@@ -99,14 +89,9 @@ export function formatAllowanceReset(resetsAt: string): string {
   });
 }
 
-/** Share of the month's allowance used, 0-100, by whichever of cost and calls is further along. */
-export function allowancePercentUsed(allowance: {
-  spentMicros: number;
-  limitMicros: number;
-  calls: number;
-  callLimit: number;
-}): number {
-  const byCost = allowance.limitMicros > 0 ? allowance.spentMicros / allowance.limitMicros : 1;
-  const byCalls = allowance.callLimit > 0 ? allowance.calls / allowance.callLimit : 1;
-  return Math.min(100, Math.round(Math.max(byCost, byCalls) * 100));
+/** Share of this cycle's allowance used, 0-100. */
+export function allowancePercentUsed(allowance: { granted: number; remaining: number }): number {
+  if (allowance.granted <= 0) return 100;
+  const used = allowance.granted - Math.max(0, allowance.remaining);
+  return Math.min(100, Math.max(0, Math.round((used / allowance.granted) * 100)));
 }

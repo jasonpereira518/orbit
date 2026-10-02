@@ -1030,11 +1030,12 @@ export async function listNotificationPanel() {
   // panel's entitlements and alerts would otherwise each read it again.
   const { userId, settings } = await requireAuthenticatedUser();
   const { isAdminUser } = await import("@/lib/admin");
-  const { isViewingAsUser } = await import("@/lib/surface-visibility");
+  const { isSurfaceLive, isViewingAsUser } = await import("@/lib/surface-visibility");
 
   const panel = await loadNotificationPanel(userId, new Date(), {
     withAlerts: true,
     settings,
+    radar: await isSurfaceLive(userId, "page.radar"),
   });
 
   return {

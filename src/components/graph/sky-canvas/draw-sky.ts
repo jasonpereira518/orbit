@@ -16,15 +16,27 @@ import {
   starEmphasis,
   type SkyFocusState,
 } from "@/lib/graph/sky-emphasis";
-import { starVisual, zoomRelief } from "@/lib/graph/star-style";
+import { CORE_TINT } from "@/lib/constellation-parts";
+import { PETAL_LABEL_MIN_ZOOM, starVisual, zoomRelief } from "@/lib/graph/star-style";
+import { withAlpha } from "@/lib/school-color";
 import {
   visibleWorldRect,
   worldToScreen,
   type Camera,
 } from "@/lib/graph/sky-camera";
 import { queryRect } from "@/lib/graph/hit-test";
-import { nebulaSprite, starSprite, sunSprite } from "./sky-sprites";
-import type { SkyIndex, StarEntry } from "./sky-index";
+// A part's wash is lighter than the cluster's, and the ring's sprite reaches RING_OUTER x the
+// ring's own radius: the desktop's numbers, shared.
+import { PART_WASH_ALPHA, RING_OUTER } from "@/lib/graph/sky-bitmap-draw";
+import {
+  bakedGalaxyBitmap,
+  nebulaSprite,
+  ringSprite,
+  scheduleGalaxyBake,
+  starSprite,
+  sunSprite,
+} from "./sky-sprites";
+import type { ClusterLabelEntry, PetalLabelEntry, SkyIndex, StarEntry } from "./sky-index";
 
 /**
  * At most this many names per frame.
@@ -44,6 +56,17 @@ export const SUBTITLE_MIN_ZOOM = 0.7;
 /** Matches the DOM label box, `max-w-[104px]`. */
 export const LABEL_MAX_WIDTH = 104;
 
+/** At most this many core and petal names per frame, nearest the middle of the view first. */
+export const PETAL_LABEL_CAP = 40;
+const PETAL_FILL = "rgba(255,255,255,0.55)";
+const CORE_FILL = withAlpha(CORE_TINT, 0.7);
+const SUBTITLE_FILL = "rgba(255,255,255,0.55)";
+/** A cluster name is one line this tall (13px type); its subtitle another. */
+const NAME_LINE = 16;
+const SUBTITLE_LINE = 12;
+/** A core or petal caption is one line this tall (10px type). */
+const PETAL_LINE = 12;
+
 export type SkyFrame = {
   index: SkyIndex;
   camera: Camera;
@@ -58,6 +81,11 @@ export type SkyFrame = {
   /** True when the sun is the current selection. */
   sunSelected: boolean;
   background: HTMLCanvasElement | null;
+  /**
+   * Called once when a galaxy backdrop this frame asked for has been baked, outside the frame, so
+   * the chart can draw once more to show it. The chart's coalescing redraw request.
+   */
+  onBackdropBaked?: () => void;
 };
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -114,6 +142,45 @@ function drawLabelText(
   ctx.fillText(text, x, y);
 }
 
+/** Whether a world-space box reaches the visible rectangle at all. */
+export function worldBoxVisible(
+  box: { minX: number; minY: number; width: number; height: number },
+  world: { minX: number; minY: number; maxX: number; maxY: number }
+) {
+  return !(
+    box.minX + box.width < world.minX ||
+    box.minX > world.maxX ||
+    box.minY + box.height < world.minY ||
+    box.minY > world.maxY
+  );
+}
+
+/**
+ * The core and petal names to draw this frame: those whose top-centre is in view, nearest the
+ * middle of the view first, at most `cap`. When the sky holds more names than the budget, the
+ * ones kept are the ones being looked at.
+ */
+export function pickPetalLabels(
+  labels: ClusterLabelEntry[],
+  world: { minX: number; minY: number; maxX: number; maxY: number },
+  cap: number
+): Array<{ label: ClusterLabelEntry; petal: PetalLabelEntry }> {
+  const cx = (world.minX + world.maxX) / 2;
+  const cy = (world.minY + world.maxY) / 2;
+  const inView: Array<{ label: ClusterLabelEntry; petal: PetalLabelEntry; d: number }> = [];
+  for (const label of labels) {
+    if (!label.petals) continue;
+    for (const petal of label.petals) {
+      if (petal.x < world.minX || petal.x > world.maxX || petal.y < world.minY || petal.y > world.maxY) {
+        continue;
+      }
+      inView.push({ label, petal, d: Math.hypot(petal.x - cx, petal.y - cy) });
+    }
+  }
+  inView.sort((a, b) => a.d - b.d);
+  return inView.slice(0, cap);
+}
+
 export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
   const { index, camera, width, height, focus } = frame;
 
@@ -126,8 +193,21 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
 
   const world = visibleWorldRect(camera, width, height);
 
-  // 4. Nebulae. One blit each, no blur anywhere.
+  // 3. The galaxy behind everything: one bitmap, baked once per layout, one blit per frame. Never
+  // baked inside a frame: until the idle bake has run the sky simply has no backdrop yet.
+  if (index.galaxy) {
+    const galaxy = bakedGalaxyBitmap(index.galaxy);
+    if (galaxy === undefined) scheduleGalaxyBake(index.galaxy, frame.onBackdropBaked);
+    else if (galaxy && worldBoxVisible(galaxy, world)) {
+      const p = worldToScreen({ x: galaxy.minX, y: galaxy.minY }, camera);
+      ctx.drawImage(galaxy.canvas, p.x, p.y, galaxy.width * camera.k, galaxy.height * camera.k);
+    }
+  }
+
+  // 4. Nebulae, by form. One blit each (a petal company adds one per part), no blur anywhere.
+  // A role cluster spans companies and a binary is two or three stars: neither has a cloud.
   for (const n of index.nebulae) {
+    if (n.form === "open" || n.form === "binary") continue;
     if (
       n.x + n.radius < world.minX ||
       n.x - n.radius > world.maxX ||
@@ -136,24 +216,55 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
     ) {
       continue;
     }
-    const sprite = nebulaSprite(n.color, n.company);
-    if (!sprite) continue;
     const alpha = clusterEmphasis(
       n.company,
       frame.focusCompany,
       frame.companyFilter,
       focus.searchDimActive
     );
+
+    if (n.form === "ring") {
+      const sprite = ringSprite(n.color);
+      if (!sprite) continue;
+      const part = n.parts?.[0];
+      const outer = (part?.radius ?? n.radius * 0.5) * RING_OUTER;
+      const p = worldToScreen({ x: part?.x ?? n.x, y: part?.y ?? n.y }, camera);
+      const size = outer * 2 * camera.k;
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(sprite.canvas, p.x - size / 2, p.y - size / 2, size, size);
+      continue;
+    }
+
+    const sprite = nebulaSprite(n.color, n.company);
+    if (!sprite) continue;
     const p = worldToScreen({ x: n.x, y: n.y }, camera);
     // The DOM box is `radius * 4` across; keep the same footprint.
     const size = n.radius * 4 * camera.k;
     ctx.globalAlpha = alpha;
     ctx.drawImage(sprite.canvas, p.x - size / 2, p.y - size / 2, size, size);
+
+    if (n.form === "petal") {
+      // Lighter pools within the one cloud; the leadership core's is warm white.
+      for (const part of n.parts ?? []) {
+        const partSprite = nebulaSprite(
+          part.role === "core" ? CORE_TINT : n.color,
+          `${n.company}#${part.key}`
+        );
+        if (!partSprite) continue;
+        const pp = worldToScreen({ x: part.x, y: part.y }, camera);
+        const partSize = part.radius * 0.9 * 4 * camera.k;
+        ctx.globalAlpha = alpha * PART_WASH_ALPHA;
+        ctx.drawImage(partSprite.canvas, pp.x - partSize / 2, pp.y - partSize / 2, partSize, partSize);
+      }
+    }
   }
   ctx.globalAlpha = 1;
 
   // 5. Figure edges, bucketed by appearance so the whole sky is a handful of paths.
-  const buckets = new Map<string, { stroke: string; alpha: number; wide: number; segs: number[] }>();
+  const buckets = new Map<
+    string,
+    { stroke: string; alpha: number; wide: number; dash?: [number, number]; segs: number[] }
+  >();
   // Once per frame, not a copy of the focus state per edge.
   const edgeFocus = { ...focus, focusCluster: frame.focusCluster };
   for (const e of index.edges) {
@@ -171,10 +282,10 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
 
     const alpha = Math.round(opacity * 20) / 20;
     const wide = Math.min(2, Math.max(0.5, strokeWidth * camera.k));
-    const key = `${e.stroke}|${alpha}|${wide.toFixed(2)}`;
+    const key = `${e.stroke}|${alpha}|${wide.toFixed(2)}|${e.dash ? e.dash.join(",") : ""}`;
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { stroke: e.stroke, alpha, wide, segs: [] };
+      bucket = { stroke: e.stroke, alpha, wide, dash: e.dash, segs: [] };
       buckets.set(key, bucket);
     }
     const a = worldToScreen({ x: e.ax, y: e.ay }, camera);
@@ -185,12 +296,17 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
     ctx.globalAlpha = bucket.alpha;
     ctx.strokeStyle = bucket.stroke;
     ctx.lineWidth = bucket.wide;
+    // Dash lengths are constant screen px: the dots stay the same size whatever the zoom. Not
+    // quite the desktop's look — its `stroke-dasharray: 2 5` is in layout units under React
+    // Flow's transform, so there the dots grow and shrink with the zoom.
+    if (bucket.dash) ctx.setLineDash(bucket.dash);
     ctx.beginPath();
     for (let i = 0; i < bucket.segs.length; i += 4) {
       ctx.moveTo(bucket.segs[i], bucket.segs[i + 1]);
       ctx.lineTo(bucket.segs[i + 2], bucket.segs[i + 3]);
     }
     ctx.stroke();
+    if (bucket.dash) ctx.setLineDash([]);
   }
   ctx.globalAlpha = 1;
 
@@ -270,6 +386,8 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
 
   // 8–9. Text. One font per bucket, and a hard budget.
   const placed: Rect[] = [];
+  // Clusters whose name lost the collision pass: their detail (the part names) waits with it.
+  const lostName = new Set<string>();
 
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
@@ -298,12 +416,30 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
         continue;
       }
       const anchor = worldToScreen({ x: label.x, y: label.y }, camera);
-      // The anchor is the name's bottom edge, above the cluster's top star; text draws from its top.
-      const p = { x: anchor.x, y: anchor.y - 16 };
+      // The anchor is the stack's bottom edge, above the cluster's top star; text draws from its
+      // top. A subtitle is the stack's bottom line, so the name rides above it.
+      const subLine = label.subtitle ? SUBTITLE_LINE : 0;
+      const p = { x: anchor.x, y: anchor.y - NAME_LINE - subLine };
       const fitted = fitText(ctx, label.label, LABEL_MAX_WIDTH);
+      // The subtitle is set smaller but may be the longer line: the box is as wide as the wider.
+      let subtitle: { text: string; width: number } | null = null;
+      if (label.subtitle) {
+        ctx.font = "500 11px system-ui, sans-serif";
+        subtitle = fitText(ctx, label.subtitle, LABEL_MAX_WIDTH * 1.5);
+        ctx.font = "600 13px system-ui, sans-serif";
+      }
+      const wide = Math.max(fitted.width, subtitle?.width ?? 0);
       // Wide gaps between cluster names, as on desktop: a few well-spaced names, not a wall.
-      const rect = { x: p.x - fitted.width / 2 - 20, y: p.y - 8, w: fitted.width + 40, h: 32 };
-      if (label.label !== frame.focusCompany && placed.some((r) => overlaps(rect, r))) continue;
+      const rect = {
+        x: p.x - wide / 2 - 20,
+        y: p.y - 8,
+        w: wide + 40,
+        h: 32 + subLine,
+      };
+      if (label.label !== frame.focusCompany && placed.some((r) => overlaps(rect, r))) {
+        lostName.add(label.id);
+        continue;
+      }
       placed.push(rect);
       ctx.globalAlpha = clusterEmphasis(
         label.label,
@@ -313,8 +449,46 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
       );
       ctx.fillStyle = label.color;
       drawLabelText(ctx, fitted.text, p.x, p.y);
+      if (subtitle) {
+        ctx.font = "500 11px system-ui, sans-serif";
+        ctx.fillStyle = SUBTITLE_FILL;
+        drawLabelText(ctx, subtitle.text, p.x, p.y + NAME_LINE);
+        ctx.font = "600 13px system-ui, sans-serif";
+      }
     }
     ctx.globalAlpha = 1;
+  }
+
+  // A split company's core and petal names, under their parts. Small capitals, tracked wide: a
+  // caption, not a second title. At most PETAL_LABEL_CAP a frame, the ones nearest the middle.
+  if (camera.k >= PETAL_LABEL_MIN_ZOOM) {
+    const picked = pickPetalLabels(
+      index.clusterLabels.filter((l) => !lostName.has(l.id)),
+      world,
+      PETAL_LABEL_CAP
+    );
+    if (picked.length) {
+      ctx.font = "600 10px system-ui, sans-serif";
+      // Not everywhere supported; where it is not, the names are simply set tighter.
+      if ("letterSpacing" in ctx) (ctx as { letterSpacing: string }).letterSpacing = "1.4px";
+      for (const { label, petal } of picked) {
+        const p = worldToScreen({ x: petal.x, y: petal.y }, camera);
+        ctx.globalAlpha = clusterEmphasis(
+          label.label,
+          frame.focusCompany,
+          frame.companyFilter,
+          focus.searchDimActive
+        );
+        ctx.fillStyle = petal.role === "core" ? CORE_FILL : PETAL_FILL;
+        const text = petal.label.toUpperCase();
+        drawLabelText(ctx, text, p.x, p.y);
+        // Drawn whatever else is on the sky, so star names placed after must clear it.
+        const w = fitText(ctx, text, Infinity).width;
+        placed.push({ x: p.x - w / 2, y: p.y, w, h: PETAL_LINE });
+      }
+      if ("letterSpacing" in ctx) (ctx as { letterSpacing: string }).letterSpacing = "0px";
+      ctx.globalAlpha = 1;
+    }
   }
 
   if (index.sun) {

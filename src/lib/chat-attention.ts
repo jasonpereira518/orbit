@@ -1,6 +1,8 @@
 import { and, desc, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiSuggestions, contacts } from "@/db/schema";
+import { CONTEXT_CODES as RADAR_CONTEXT_CODES } from "@/lib/radar/score";
+import { listPendingRecommendations } from "@/lib/radar/store";
 
 /**
  * The "who needs attention" half of chat grounding.
@@ -99,13 +101,15 @@ function daysBetween(from: Date | string | null, now: number) {
 
 export async function getAttentionBrief(
   userId: string,
-  interactedIds?: Set<string>
+  interactedIds?: Set<string>,
+  /** Lead with Radar's list. Only for a viewer who can open Radar (`isSurfaceLive`). */
+  opts: { radar?: boolean } = {}
 ): Promise<AttentionBrief> {
   const db = await getDb();
   const now = new Date();
   const nowMs = now.getTime();
 
-  const [overdueRows, suggestionRows] = await Promise.all([
+  const [overdueRows, suggestionRows, radarRows] = await Promise.all([
     db.query.contacts.findMany({
       where: and(
         eq(contacts.userId, userId),
@@ -132,6 +136,9 @@ export async function getAttentionBrief(
       orderBy: [desc(aiSuggestions.confidenceScore)],
       limit: SUGGESTION_CAP,
     }),
+    // Radar's live list, already joined to its contacts. Empty for anyone Radar has never
+    // run for, so their brief is exactly what it was.
+    opts.radar ? listPendingRecommendations(userId, SUGGESTION_CAP).catch(() => []) : [],
   ]);
 
   const suggestionContactIds = suggestionRows
@@ -158,6 +165,7 @@ export async function getAttentionBrief(
   // A contact already listed as overdue does not need a second entry as a suggestion —
   // the dashboard applies the same de-duplication.
   const overdueIds = new Set(overdueRows.map((c) => c.id));
+  const radarContactIds = new Set(radarRows.map((r) => r.contactId));
 
   return {
     overdue: overdueRows.map((c) => ({
@@ -170,19 +178,36 @@ export async function getAttentionBrief(
       // Without this the model would report an import stamp as a conversation.
       hasLoggedInteraction: interactedIds ? interactedIds.has(c.id) : false,
     })),
-    suggestions: suggestionRows.flatMap((s) => {
-      const contactId = s.relatedContactIds?.[0];
-      const contact = contactId ? byId.get(contactId) : null;
-      if (!contact || overdueIds.has(contact.id)) return [];
-      return [
-        {
-          id: contact.id,
-          name: contact.preferredName || contact.fullName,
-          title: contact.title,
-          company: contact.company,
-          reason: (s.description || s.title || "").trim(),
-        },
-      ];
-    }),
+    // Radar first: it is the same list the /radar page and the dashboard show, with its
+    // own reasons. The legacy queue fills in for anyone Radar does not cover.
+    suggestions: [
+      ...radarRows
+        .filter((r) => !overdueIds.has(r.contactId))
+        .map((r) => ({
+          id: r.contactId,
+          name: r.contactName,
+          title: r.title,
+          company: r.company,
+          reason: r.reasons
+            .filter((reason) => reason.points > 0 && !RADAR_CONTEXT_CODES.has(reason.code))
+            .slice(0, 2)
+            .map((reason) => reason.label)
+            .join("; "),
+        })),
+      ...suggestionRows.flatMap((s) => {
+        const contactId = s.relatedContactIds?.[0];
+        const contact = contactId ? byId.get(contactId) : null;
+        if (!contact || overdueIds.has(contact.id) || radarContactIds.has(contact.id)) return [];
+        return [
+          {
+            id: contact.id,
+            name: contact.preferredName || contact.fullName,
+            title: contact.title,
+            company: contact.company,
+            reason: (s.description || s.title || "").trim(),
+          },
+        ];
+      }),
+    ].slice(0, SUGGESTION_CAP),
   };
 }

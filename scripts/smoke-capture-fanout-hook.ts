@@ -134,6 +134,11 @@ async function main() {
     const stub = stubUploader((label) => ({ ok: true, jobId: `job-${label}` }));
     const h = await mount(stub.uploader);
     await h.start(["a", "b", "c", "d"]);
+    // Stop only once both slots are really uploading: pressed before the pump has run, Stop
+    // starts nothing at all, which is the next case, not this one.
+    const inFlightBy = Date.now() + 1_000;
+    while (stub.calls.size < 2 && Date.now() < inFlightBy) await h.wait(1);
+    check("two uploads are in flight before Stop", stub.calls.size === 2, String(stub.calls.size));
     h.hook().cancelPending();
     check("nothing is discarded before the ids exist", h.discarded.length === 0, JSON.stringify(h.discarded));
     await h.wait(200);
@@ -147,6 +152,31 @@ async function main() {
     check("nothing new started after Stop", stub.calls.size === 2, String(stub.calls.size));
     check("running is false", !h.hook().running);
     check("onSettled did not fire for a cancelled run", h.settled.length === 0, String(h.settled.length));
+    await h.unmount();
+  }
+
+  // The race this used to lose: Stop pressed after `start` has rendered but before the pump's
+  // effect has run. That effect still saw `running` true and started two uploads, which then
+  // landed as `queued` with their jobs kept. Whichever of Stop and the pump comes first here,
+  // nothing may land and every job that was made must be discarded.
+  console.log("\nStop right after start leaves nothing behind, whoever gets there first");
+  {
+    const stub = stubUploader((label) => ({ ok: true, jobId: `job-${label}` }));
+    const h = await mount(stub.uploader);
+    await h.start(["a", "b", "c", "d"]);
+    h.hook().cancelPending();
+    await h.wait(200);
+    const statuses = h.hook().entries.map((e) => `${e.label}=${e.status}`).join(" ");
+    check("every note reads as skipped", statuses === "a=skipped b=skipped c=skipped d=skipped", statuses);
+    const made = [...stub.calls.keys()].map((label) => `job-${label}`).sort();
+    check(
+      "every job that was made is discarded",
+      JSON.stringify([...h.discarded].sort()) === JSON.stringify(made),
+      `made ${JSON.stringify(made)}, discarded ${JSON.stringify(h.discarded)}`
+    );
+    check("at most the first two ever started", stub.calls.size <= 2, String(stub.calls.size));
+    check("running is false", !h.hook().running);
+    check("onSettled did not fire", h.settled.length === 0, String(h.settled.length));
     await h.unmount();
   }
 

@@ -25,7 +25,10 @@
     {
       "name": "orbit-bench-prod",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["scripts/bench/serve-static-bench.mjs", "3417"],
+      "runtimeArgs": [
+        "scripts/bench/serve-static-bench.mjs",
+        "3417"
+      ],
       "port": 3417
     },
     {
@@ -33,6 +36,15 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         ".claude/preview-demo.sh"
+      ],
+      "port": 3001,
+      "autoPort": true
+    },
+    {
+      "name": "orbit-demo-stripe",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        ".claude/preview-demo-stripe.sh"
       ],
       "port": 3001,
       "autoPort": true

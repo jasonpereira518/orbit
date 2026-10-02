@@ -22,6 +22,8 @@ import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { MorningBriefing } from "@/components/radar/morning-briefing";
+import type { RadarBriefing } from "@/lib/radar/page-data";
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
@@ -188,11 +190,54 @@ export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
   );
 }
 
+/**
+ * Radar's morning briefing, the dashboard's hero for viewers who can open Radar. Renders
+ * nothing until their first run: that account keeps the legacy suggestions card below.
+ */
+export async function MorningBriefingSection({ briefing }: { briefing: Promise<RadarBriefing> }) {
+  const b = await briefing.catch(() => null);
+  if (!b?.hasRun) return null;
+  return (
+    <div className="reveal-mount min-w-0" style={revealDelay(0)}>
+      <MorningBriefing
+        total={b.total}
+        today={b.today}
+        drafts={b.drafts}
+        changes={b.changes}
+        paused={b.paused}
+        items={b.top.map((r) => ({
+          id: r.id,
+          contactId: r.contactId,
+          kind: r.kind,
+          reasons: r.reasons,
+          evidence: r.evidence,
+          aiNote: r.aiNote,
+          aiAngle: r.aiAngle,
+          draft: r.draft,
+          contactName: r.contactName,
+          title: r.title,
+          company: r.company,
+          tier: r.tier,
+          avatarUrl: r.avatarUrl,
+        }))}
+      />
+    </div>
+  );
+}
+
 export async function SuggestedOutreachSection({
   bundle,
+  radar,
 }: {
   bundle: DashboardBundle;
+  /**
+   * Started by the page only for viewers who can see Radar. Once Radar has run for them, the
+   * morning briefing above replaces this card; until then, and for everyone else, it stays.
+   */
+  radar?: Promise<RadarBriefing> | null;
 }) {
+  const briefing = radar ? await radar.catch(() => null) : null;
+  if (briefing?.hasRun) return null;
   const { data } = await bundle;
   return (
     <div

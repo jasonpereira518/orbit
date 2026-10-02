@@ -354,7 +354,10 @@ async function main() {
   const ent = await getEntitlements(USER);
   check("entitlements resolve to lifetime", ent.plan === "lifetime", ent.plan);
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
-  check("hosted enrichment still gated on lifetime", ent.canUseHostedEnrichment === false);
+  // Pricing v2: Lifetime is Max without managed AI — hosted enrichment (capped monthly) yes,
+  // Orbit's AI keys no.
+  check("hosted enrichment unlocked on lifetime", ent.canUseHostedEnrichment === true);
+  check("no managed AI on lifetime", ent.canUseHostedAi === false);
   check("contacts uncapped", ent.contactLimit === null);
 
   const db = await getDb();
@@ -389,7 +392,9 @@ async function main() {
       client_reference_id: PRO_USER,
       customer: "cus_smoke_pro",
       mode: "subscription",
-      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
+      // A legacy ($5/month) Pro checkout: every session of that era carried its billing
+      // period, which is how the decision tells it from a pricing v2 one.
+      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE, orbit_billing_period: "monthly" },
     }),
     id: "evt_smoke_pro_checkout",
   };

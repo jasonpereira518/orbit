@@ -27,6 +27,7 @@ import {
 } from "@/lib/api/auth";
 import { deferTelemetry } from "@/lib/api/http";
 import type { Entitlements } from "@/lib/entitlements";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { buildOrbitMcpServer } from "@/lib/mcp/server";
 import { resourceMetadataUrl, verifyOAuthCaller } from "@/lib/mcp/oauth";
@@ -176,7 +177,7 @@ export async function handleMcpRequest(
     await consumeBucket(
       "mcp",
       caller.userId,
-      entitlements.plan === "free" ? RATE_LIMITS.mcpFree : RATE_LIMITS.mcp,
+      RATE_LIMITS[PLAN_CONFIG[entitlements.plan].mcpRateTier],
       Math.max(1, toolCalls)
     );
   } catch (err) {

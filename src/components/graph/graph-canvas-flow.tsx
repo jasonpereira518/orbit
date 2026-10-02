@@ -27,6 +27,7 @@ import {
   type ProOptions,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { GalaxyBackdropNode } from "@/components/graph/galaxy-backdrop-node";
 import {
   ClusterLabelNode,
   ContactNode,
@@ -35,7 +36,9 @@ import {
   StarDustNode,
   SunNode,
   CLUSTER_NAME_PIN_MIN_ZOOM,
+  clusterNameScale,
   clusterNameSize,
+  petalNameFontPx,
   type NebulaWashCluster,
   type NebulaWashData,
   type StarDustData,
@@ -59,6 +62,7 @@ import {
   computeSunExtents,
   zoomToFitSunCentered,
 } from "@/lib/graph/sky-camera";
+import { galaxyBackdropData } from "@/lib/graph/galaxy-dust";
 import { NEBULA_BOX_RADII } from "@/lib/graph/nebula-lobes";
 import { contactMatchesLocal } from "@/lib/graph/search-match";
 import {
@@ -72,7 +76,14 @@ import {
   selectionForContact,
   selectionForUser,
 } from "@/lib/graph/sky-selection";
-import { starSubtitle, starVisual, zoomRelief } from "@/lib/graph/star-style";
+import {
+  PETAL_LABEL_MIN_ZOOM,
+  petalNodeGeometry,
+  showPetalLabels,
+  petalNameBoxes,
+  starLabelWinners,
+  starVisual,
+} from "@/lib/graph/star-style";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { markOpenStage } from "@/lib/graph/open-marks";
 import { markFirstPaintThenInteractive } from "@/lib/graph/open-marks-paint";
@@ -202,6 +213,7 @@ const nodeTypes = {
   clusterLabel: ClusterLabelNode,
   nebulaWash: NebulaWashNode,
   starDust: StarDustNode,
+  galaxyBackdrop: GalaxyBackdropNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -315,6 +327,7 @@ const ENTRANCE_CLEAR_MS = 700;
 
 const STAR_DUST_ID = "star-dust";
 const NEBULA_WASH_ID = "nebula-wash";
+const GALAXY_BACKDROP_ID = "galaxy-backdrop";
 
 /** Below this zoom, cluster names keep much wider gaps between them (see `clusterNameWinners`). */
 const CLUSTER_NAME_SPARSE_BELOW_ZOOM = 0.2;
@@ -339,15 +352,6 @@ const CLUSTER_NAME_HOME_SLACK = 1.12;
  * of the group, and well short of the wash's own box, which is four radii across.
  */
 const CLUSTER_HOVER_REACH = 1.15;
-
-/** A label's box in layout px, as graph-nodes.tsx draws it: `max-w-[104px]`, `mt-2`, 11px + 9px lines. */
-const LABEL_MAX_W = 104;
-const LABEL_GAP = 8;
-const LABEL_NAME_H = 14;
-const LABEL_SUBTITLE_H = 12;
-/** Rough glyph advances for the two label lines, to size a box without measuring DOM text. */
-const LABEL_NAME_CHAR_W = 6.1;
-const LABEL_SUBTITLE_CHAR_W = 4.9;
 
 /**
  * Which cluster names are shown, so none overlap.
@@ -398,7 +402,12 @@ function clusterNameWinners(
     )
     .map((n) => {
       const d = n.data as ClusterLabelData;
-      const { width, height } = clusterNameSize(d.label, withCount && Boolean(d.count), zoom);
+      const { width, height } = clusterNameSize(
+        d.label,
+        withCount && Boolean(d.count),
+        zoom,
+        d.subtitle
+      );
       // Air between neighbours, and slack for zooms between two steps. Far out, where a whole
       // sky of clusters competes for the space, much more of it: a legend of a few well-spaced
       // names reads, a wall of them does not.
@@ -469,85 +478,6 @@ function zoomStep(zoom: number) {
   return Math.pow(2, Math.round(Math.log2(Math.max(zoom, 0.01)) * 4) / 4);
 }
 
-/**
- * Which stars get a name, so no two names overlap.
- *
- * Labels are drawn in layout px and hang under their star, so two names that collide collide at
- * every zoom — a dense cluster (a big employer, say) became an unreadable smear of overlapping
- * names and titles. This places them greedily in priority order — search hits, then orbit score —
- * and a name that would overlap one already placed is left off. Hover or select any star to read
- * its name regardless (those are pinned, and not part of this pass).
- *
- * A uniform grid keeps it linear: each box is tested only against boxes in the cells it touches.
- */
-function labelWinners(
-  contacts: Iterable<LayoutNodes[number]>,
-  zoom: number,
-  isHit: (id: string) => boolean
-): Set<string> {
-  type Box = { x0: number; y0: number; x1: number; y1: number };
-  const candidates: Array<{ id: string; box: Box; hit: boolean; score: number }> = [];
-  let cellW = LABEL_MAX_W;
-  for (const n of contacts) {
-    const d = n.data as GraphNodeData;
-    const { disc } = starVisual(d, false);
-    const r = zoomRelief(disc, zoom);
-    const subtitle = starSubtitle(d);
-    const w =
-      Math.min(
-        LABEL_MAX_W,
-        Math.max(
-          (d.label?.length ?? 0) * LABEL_NAME_CHAR_W,
-          (subtitle?.length ?? 0) * LABEL_SUBTITLE_CHAR_W
-        )
-      ) * r;
-    const h = (LABEL_NAME_H + (subtitle ? LABEL_SUBTITLE_H : 0)) * r;
-    const top = n.position.y + (disc / 2 + LABEL_GAP) * r;
-    cellW = Math.max(cellW, w);
-    candidates.push({
-      id: n.id,
-      box: { x0: n.position.x - w / 2, x1: n.position.x + w / 2, y0: top, y1: top + h },
-      hit: isHit(n.id),
-      score: d.score ?? 0,
-    });
-  }
-  candidates.sort(
-    (a, b) =>
-      Number(b.hit) - Number(a.hit) || b.score - a.score || (a.id < b.id ? -1 : 1)
-  );
-
-  const cellH = (LABEL_NAME_H + LABEL_SUBTITLE_H) * 2;
-  const grid = new Map<string, Box[]>();
-  const winners = new Set<string>();
-  for (const c of candidates) {
-    const gx0 = Math.floor(c.box.x0 / cellW);
-    const gx1 = Math.floor(c.box.x1 / cellW);
-    const gy0 = Math.floor(c.box.y0 / cellH);
-    const gy1 = Math.floor(c.box.y1 / cellH);
-    let clear = true;
-    for (let gx = gx0; clear && gx <= gx1; gx++) {
-      for (let gy = gy0; clear && gy <= gy1; gy++) {
-        for (const o of grid.get(`${gx},${gy}`) ?? []) {
-          if (c.box.x0 < o.x1 && c.box.x1 > o.x0 && c.box.y0 < o.y1 && c.box.y1 > o.y0) {
-            clear = false;
-            break;
-          }
-        }
-      }
-    }
-    if (!clear) continue;
-    winners.add(c.id);
-    for (let gx = gx0; gx <= gx1; gx++) {
-      for (let gy = gy0; gy <= gy1; gy++) {
-        const key = `${gx},${gy}`;
-        const cell = grid.get(key);
-        if (cell) cell.push(c.box);
-        else grid.set(key, [c.box]);
-      }
-    }
-  }
-  return winners;
-}
 const NO_IDS: ReadonlySet<string> = new Set();
 
 /**
@@ -1209,6 +1139,8 @@ function GraphCanvasInner({
   const labelZoom = useStore((s) => zoomStep(s.transform[2]));
   // Cluster names can pin in view from here in (see ClusterLabelNode in graph-nodes.tsx).
   const labelPinnable = useStore((s) => s.transform[2] >= CLUSTER_NAME_PIN_MIN_ZOOM);
+  // Only the crossing matters to the node pass, not each step of the zoom beyond it.
+  const petalZoomReached = labelZoom >= PETAL_LABEL_MIN_ZOOM;
 
 
   /**
@@ -1360,12 +1292,30 @@ function GraphCanvasInner({
     } else if (wanted) {
       candidates = [...target].flatMap((id) => contactById.get(id) ?? []);
     }
-    return labelWinners(
+    // Core and petal names are drawn whatever this pass decides, so they are placed first (after
+    // the search hits) and a star whose name would land on one goes unnamed. All of them, not
+    // only those whose cluster name won a place: that set follows the pointer, and this must not.
+    const petals =
+      petalZoomReached && !summary
+        ? petalNameBoxes(clusterLabelNodes, petalNameFontPx(clusterNameScale(labelZoom)))
+        : [];
+    return starLabelWinners(
       candidates,
       labelZoom,
-      (id) => searchDimActive && searchHitIds.has(id)
+      (id) => searchDimActive && searchHitIds.has(id),
+      petals
     );
-  }, [contactById, labelZoom, searchDimActive, searchHitIds, summary, wanted, target]);
+  }, [
+    contactById,
+    labelZoom,
+    searchDimActive,
+    searchHitIds,
+    summary,
+    wanted,
+    target,
+    petalZoomReached,
+    clusterLabelNodes,
+  ]);
 
   /**
    * Every contact, as the dots the summary view draws in place of stars. Built only while the
@@ -1488,10 +1438,19 @@ function GraphCanvasInner({
         y: n.position.y,
         radius: d.radius,
         opacity: clusterEmphasis(d.company, washFocusCompany, company, searchDimActive),
+        form: d.form,
+        parts: d.parts,
       });
       // The same box the wash used to have its own element for: four radii across, so the
       // cloud dissolves well before the canvas ends and no cluster is clipped at the edge.
-      const reach = (d.radius * NEBULA_BOX_RADII) / 2;
+      // A petal's pools and a school's ring can lie farther out than the cluster's own radius,
+      // so the radius is the farthest edge of any part from the centre (and never less than the
+      // cluster's own, which keeps a cluster without parts exactly as it was).
+      let extent = d.radius;
+      for (const part of d.parts ?? []) {
+        extent = Math.max(extent, Math.hypot(part.x - n.position.x, part.y - n.position.y) + part.radius);
+      }
+      const reach = (extent * NEBULA_BOX_RADII) / 2;
       minX = Math.min(minX, n.position.x - reach);
       minY = Math.min(minY, n.position.y - reach);
       maxX = Math.max(maxX, n.position.x + reach);
@@ -1534,6 +1493,38 @@ function GraphCanvasInner({
   }, [nebulaWash]);
 
   /**
+   * The galaxy behind the whole sky, as one worker-drawn image beneath the dust. Its payload
+   * depends on the layout's galaxy alone, so a hover, a search or a pan leaves it (and its
+   * bitmap) untouched. Carries its own `measured` box for the reason the dust node does, and is
+   * deliberately NOT part of the camera's extents: `computeSunExtents` only counts the node
+   * types it names, and this type is not one of them.
+   */
+  const skyGalaxy = sky.layout.galaxy;
+  const galaxyBackdrop = useMemo(() => galaxyBackdropData(skyGalaxy), [skyGalaxy]);
+  const galaxyBackdropNode = useMemo(
+    (): Node => ({
+      id: GALAXY_BACKDROP_ID,
+      type: "galaxyBackdrop",
+      // nodeOrigin is [0.5, 0.5], so the position is the canvas's centre.
+      position: {
+        x: galaxyBackdrop.minX + galaxyBackdrop.width / 2,
+        y: galaxyBackdrop.minY + galaxyBackdrop.height / 2,
+      },
+      width: galaxyBackdrop.width,
+      height: galaxyBackdrop.height,
+      measured: { width: galaxyBackdrop.width, height: galaxyBackdrop.height },
+      data: galaxyBackdrop,
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      // Beneath the star dust (-1), the washes (0) and every star.
+      zIndex: -2,
+      style: { pointerEvents: "none" },
+    }),
+    [galaxyBackdrop]
+  );
+
+  /**
    * Where each node sits in `orbitNodes`, so the pass below can visit only the stars that can
    * be drawn and still hand React Flow its nodes in the sky's order (which is their stacking
    * order in the DOM).
@@ -1549,7 +1540,7 @@ function GraphCanvasInner({
   }, [orbitNodes]);
 
   const nodes = useMemo(() => {
-    const out: Node[] = [];
+    const out: Node[] = [galaxyBackdropNode];
     if (starDustNode) out.push(starDustNode);
     if (nebulaWashNode) out.push(nebulaWashNode);
 
@@ -1612,14 +1603,28 @@ function GraphCanvasInner({
         const nameHidden = !clusterNamesShown.has(n.id);
         // The name under the pointer sits above the rest, since it is the one being read.
         const nameRaised = label.label === hoveredCluster;
+        // Core and petal names are the name's detail: they go wherever the name goes.
+        // (The zoom enters as its crossing alone, so the pass is not redone at every zoom step.)
+        const showPetals =
+          Boolean(label.petalLabels?.length) &&
+          showPetalLabels({
+            zoomReached: petalZoomReached,
+            summary,
+            nameShown: !nameHidden,
+          });
+        // A petal cluster's node spans its box, so it is culled with the cluster, not the name.
+        const petalGeometry = petalNodeGeometry({ showPetals, box: label.box, anchor: label.anchor });
         out.push(
           withEmphasis(
             n,
-            `${opacity}|${summary}|${pinnable}|${nameHidden}|${nameRaised}`,
+            `${opacity}|${summary}|${pinnable}|${nameHidden}|${nameRaised}|${showPetals}`,
             () =>
               ({
                 ...n,
-                ...measuredOf(measured, n.id),
+                // A petal node's box is known, and differs from the name's last measurement.
+                ...(petalGeometry && !pinnable
+                  ? { measured: { width: petalGeometry.width, height: petalGeometry.height } }
+                  : measuredOf(measured, n.id)),
                 hidden: nameHidden,
                 ...(nameRaised ? { zIndex: 60 } : null),
                 // Placed by the name's anchor: the cluster-sized box around it when the name
@@ -1634,8 +1639,14 @@ function GraphCanvasInner({
                         label.anchor.y / label.box.height,
                       ] as [number, number],
                     }
-                  : { origin: [0.5, 1] as [number, number] }),
-                data: { ...label, summary, pinnable },
+                  : petalGeometry
+                    ? {
+                        width: petalGeometry.width,
+                        height: petalGeometry.height,
+                        origin: [petalGeometry.originX, petalGeometry.originY] as [number, number],
+                      }
+                    : { origin: [0.5, 1] as [number, number] }),
+                data: { ...label, summary, pinnable, showPetals },
                 ariaLabel: summary
                   ? `${label.label}, ${label.count ?? 0} ${
                       label.count === 1 ? "person" : "people"
@@ -1645,7 +1656,7 @@ function GraphCanvasInner({
                 style: {
                   opacity,
                   transition: "opacity 200ms ease",
-                  ...(pinnable ? { pointerEvents: "none" as const } : null),
+                  ...(pinnable || petalGeometry ? { pointerEvents: "none" as const } : null),
                 },
               }) as Node
           )
@@ -1708,6 +1719,7 @@ function GraphCanvasInner({
     return out;
   }, [
     orbitNodes,
+    galaxyBackdropNode,
     starDustNode,
     nebulaWashNode,
     summary,
@@ -1721,6 +1733,7 @@ function GraphCanvasInner({
     sky.entering,
     labelled,
     labelPinnable,
+    petalZoomReached,
     highlightedCluster,
     clusterNamesShown,
     hoveredCluster,
@@ -1989,6 +2002,7 @@ function GraphCanvasInner({
     (_, node) => {
       if (node.id === STAR_DUST_ID) return;
       if (node.id === NEBULA_WASH_ID) return;
+      if (node.id === GALAXY_BACKDROP_ID) return;
 
       if (node.type === "clusterLabel") {
         if (compact) return;

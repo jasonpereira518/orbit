@@ -5,15 +5,18 @@ import {
   orderConstellationMembers,
   clampScore,
   placementScore,
-  type ClusterFit,
-  type FitPart,
 } from "@/lib/constellation-fit";
 import { isCometContact } from "@/lib/comet";
-import { scaleForStarCount, type ConstellationShape } from "@/lib/constellation-shapes";
-import type { ClusterForm, PartRole } from "@/lib/constellation-parts";
-import { arrangeParts, ringLayout } from "@/lib/graph/cluster-anatomy";
-import { type BuiltCluster, type ClusterKind } from "@/lib/constellation-clusters";
-import { companyFamilyRoot } from "@/lib/company-family";
+import { CORE_TINT, type ClusterForm, type PartRole } from "@/lib/constellation-parts";
+import {
+  buildClusterGeometry,
+  ClearanceGrid,
+  LABEL_CLEAR_X,
+  LABEL_CLEAR_Y,
+  LABEL_WIDTH,
+} from "@/lib/graph/cluster-geometry";
+import { type BuiltCluster, type ClusterKind, type ClusterRef } from "@/lib/constellation-clusters";
+import { canonicalCompanyClusterName, companyFamilyRoot } from "@/lib/company-family";
 import { buildClusterAffinity } from "@/lib/constellation-affinity";
 import { placeClusterDisks } from "@/lib/graph/disk-placement";
 import { buildGalaxyStructure, type GalaxyStructure } from "@/lib/graph/galaxy-structure";
@@ -23,7 +26,6 @@ import {
   mixWithWhite,
   withAlpha,
 } from "@/lib/school-color";
-import { hashUnit } from "@/lib/hash";
 import { hashUnitStream } from "@/lib/hash-stream";
 
 export { orderConstellationMembers };
@@ -106,13 +108,19 @@ export type GraphNodeData = {
   clusterKind?: ClusterKind;
   /** Whether this star traces the constellation figure or scatters around it. */
   figureRole?: "figure" | "scatter";
-  /** Brand color of the star's cluster (undefined for Deep Space singletons). */
+  /**
+   * The star's tint. Its cluster's brand colour, except a split company's core (`CORE_TINT`) and a
+   * role cluster's stars, which wear their own company's colour (silver if they have none).
+   * Undefined for Deep Space singletons.
+   */
   clusterColor?: string;
   /** Which part of its cluster the star belongs to (see `constellation-parts.ts`). */
   partKey?: string;
   partRole?: PartRole;
   /** In a split company: whether the title puts them in the leadership core's league. */
   leader?: boolean;
+  /** Whether a figure line starts or ends on this star (rings and scatter stars anchor none). */
+  anchorsLines?: boolean;
   orbitAngle?: number;
   orbitRadius?: number;
   spotlight?: boolean;
@@ -150,7 +158,15 @@ export type ClusterLabelData = {
   anchor?: { x: number; y: number };
   /** How the cluster is drawn — see `constellation-parts.ts`. */
   form?: ClusterForm;
-  /** A split company's core and petal names, anchored like `anchor`. */
+  /** Role clusters only: "across N companies" — who the cluster's people work for. */
+  subtitle?: string;
+  /**
+   * A split company's core and petal names. `anchor` is the top-centre of the name's text, in px
+   * from the box's top-left, below the part's lowest star and that star's own name — clear of the
+   * cluster name, which sits above the topmost star. The box is grown to contain the label.
+   * A renderer turns it into an absolute layout position by taking the box's origin from the
+   * label node: `x = node.position.x - data.anchor.x + anchor.x`, likewise for `y`.
+   */
   petalLabels?: Array<{
     key: string;
     label: string;
@@ -160,6 +176,11 @@ export type ClusterLabelData = {
   }>;
   /** Zoomed in far enough to pin the name in view. Set per render by the chart. */
   pinnable?: boolean;
+  /**
+   * Draw `petalLabels` now: the camera is close enough to read them, the sky is not summarised
+   * and this cluster's name is shown. Set per render by the chart (`showPetalLabels`).
+   */
+  showPetals?: boolean;
 };
 
 export type NebulaData = {
@@ -169,6 +190,14 @@ export type NebulaData = {
   radius: number;
   clusterKind?: ClusterKind;
   clusterId?: string;
+  /** How the cluster is drawn — see `constellation-parts.ts`. */
+  form: ClusterForm;
+  /**
+   * The disks the renderers draw behind the stars, in absolute layout coordinates. A petal
+   * company has one per part (`radius` is the part's footprint); a ring school has one `main`
+   * entry whose `x, y` is the ring's centre and `radius` its outer ring. Otherwise undefined.
+   */
+  parts?: Array<{ key: string; role: PartRole; x: number; y: number; radius: number }>;
 };
 
 export type LayoutNode = {
@@ -204,6 +233,8 @@ export type LayoutEdge = {
       | "sharedInterests";
     label?: string;
     brandColor?: string;
+    /** Dash pattern, in px, for a line drawn dotted (role clusters). */
+    dash?: [number, number];
   };
   style?: Record<string, string | number>;
 };
@@ -240,167 +271,25 @@ const CLUSTER_LABEL_GAP = 22;
 const CLUSTER_LABEL_HEAD = 48;
 /** Margin around the stars on the other three sides of the box. */
 const CLUSTER_LABEL_PAD = 24;
+/**
+ * Layout px between a petal's lowest star and the top of its name. A star's own name and
+ * subtitle hang under it (LABEL_HEIGHT of room, renderers draw the name then a subtitle), so the
+ * gap is the clearance two stars need vertically: the petal's name starts below that stack.
+ */
+const PETAL_LABEL_GAP = LABEL_CLEAR_Y;
+/** A petal name is one text line this tall; the node's box is grown to contain it. */
+const PETAL_LABEL_HEIGHT = 16;
 
 function toPosition(x: number, y: number): PolarPosition {
   return { x, y, angle: Math.atan2(y, x), radius: Math.hypot(x, y) };
 }
 
-/**
- * Every star carries an always-visible name + role label (see
- * graph-nodes.tsx), so spacing is driven by label size rather than star
- * size: LABEL_WIDTH horizontally, LABEL_HEIGHT vertically.
- */
-const LABEL_WIDTH = 104;
-const LABEL_HEIGHT = 30;
-
 /** Clear sky between the sun and the nearest cluster. */
 const SUN_CLEAR = 180;
 /** Minimum clearance between two cluster footprints. */
 const CLUSTER_GAP = LABEL_WIDTH;
-/** Scatter field starts this far beyond the figure's extent. */
-const SCATTER_CLEAR = 54;
-/** Initial width of a cluster's scatter field annulus. */
-const SCATTER_FIELD_WIDTH = 110;
-/** Headroom beyond the outermost scatter star inside the footprint. */
-const FOOT_MARGIN = 34;
-/** Clear space between two parts of one company (its core and petals), edge to edge. */
-const PART_GAP = 64;
 /** Gap between the galaxy's edge and the start of the halo. */
 const BACKGROUND_GAP = 90;
-/** Minimum distance between any two figure stars after scaling. */
-const FIGURE_STAR_MIN = LABEL_WIDTH;
-/** How far a tight template may be upscaled to clear FIGURE_STAR_MIN. */
-const FIGURE_MAX_UPSCALE = 2.4;
-
-/**
- * Two stars may not sit inside each other's label boxes: they need either
- * horizontal room for a label, or enough vertical room that a label clears
- * the star below it.
- */
-const LABEL_CLEAR_X = LABEL_WIDTH + 8;
-const LABEL_CLEAR_Y = LABEL_HEIGHT + 14;
-
-function labelClear(
-  a: { x: number; y: number },
-  b: { x: number; y: number }
-) {
-  return (
-    Math.abs(a.x - b.x) >= LABEL_CLEAR_X || Math.abs(a.y - b.y) >= LABEL_CLEAR_Y
-  );
-}
-
-const GRID_OFFSET = 2 ** 20;
-const GRID_STRIDE = 2 ** 21;
-
-/**
- * The placed stars, bucketed so a clearance test looks at neighbours rather than everyone.
- *
- * Cells are exactly one label-clearance box wide and tall. Two stars conflict only when they
- * are closer than LABEL_CLEAR_X horizontally AND LABEL_CLEAR_Y vertically, so any conflict
- * sits in the candidate's cell or one of its eight neighbours — the answer is the same as
- * testing every placed star with `labelClear`, which is what this replaced. That linear scan
- * ran for every candidate of every star, and all of a network's unclustered contacts share
- * one field, so it grew with the square of the network.
- */
-class ClearanceGrid {
-  private cells = new Map<number, Array<{ x: number; y: number }>>();
-
-  /**
-   * One number per cell rather than a `"cx,cy"` string: the test below looks up nine cells per
-   * candidate, and building and hashing those strings was most of the layout's time at 10,000
-   * contacts. Exact for |cx|, |cy| < 2^20 cells — over a hundred million world px either way.
-   */
-  private static key(cx: number, cy: number) {
-    return (cx + GRID_OFFSET) * GRID_STRIDE + (cy + GRID_OFFSET);
-  }
-
-  add(p: { x: number; y: number }) {
-    const k = ClearanceGrid.key(
-      Math.floor(p.x / LABEL_CLEAR_X),
-      Math.floor(p.y / LABEL_CLEAR_Y)
-    );
-    const cell = this.cells.get(k);
-    if (cell) cell.push(p);
-    else this.cells.set(k, [p]);
-  }
-
-  /** True when `labelClear(candidate, p)` holds for every star added so far. */
-  clear(candidate: { x: number; y: number }) {
-    const cx = Math.floor(candidate.x / LABEL_CLEAR_X);
-    const cy = Math.floor(candidate.y / LABEL_CLEAR_Y);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const cell = this.cells.get(ClearanceGrid.key(cx + dx, cy + dy));
-        if (!cell) continue;
-        for (const p of cell) {
-          if (!labelClear(candidate, p)) return false;
-        }
-      }
-    }
-    return true;
-  }
-}
-
-/**
- * Scatter members organically through an annulus — no rings, no lattice.
- * Seeded rejection sampling: each member tries hash-driven spots until one
- * clears every already-placed star's label box; when an annulus fills up it
- * widens and the sampling continues. Deterministic and guaranteed to leave
- * breathing room between nodes.
- */
-function scatterField(
-  ids: string[],
-  seedPrefix: string,
-  inner: number,
-  initialWidth: number,
-  avoid: Array<{ x: number; y: number }>
-): { placed: Array<{ id: string; x: number; y: number }>; outer: number } {
-  const placed: Array<{ id: string; x: number; y: number }> = [];
-  const occupied = new ClearanceGrid();
-  for (const p of avoid) occupied.add(p);
-  let outer = inner + initialWidth;
-
-  for (const id of ids) {
-    let spot: { x: number; y: number } | null = null;
-    let attempt = 0;
-    let rounds = 0;
-    // The same values as hashUnit(seedPrefix + ":" + id, salt), hashing the string once per star.
-    const hash = hashUnitStream(`${seedPrefix}:${id}`);
-    while (!spot && rounds < 200) {
-      for (let tries = 0; tries < 24 && !spot; tries++, attempt++) {
-        const u = hash(attempt * 2 + 1);
-        const v = hash(attempt * 2 + 2);
-        const angle = u * Math.PI * 2;
-        // sqrt() → uniform density over the annulus
-        const radius = Math.sqrt(
-          inner * inner + v * (outer * outer - inner * inner)
-        );
-        const candidate = {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius,
-        };
-        if (occupied.clear(candidate)) {
-          spot = candidate;
-        }
-      }
-      if (!spot) {
-        outer += 40;
-        rounds += 1;
-      }
-    }
-    // Practically unreachable — the annulus grows until a spot clears.
-    if (!spot) {
-      outer += LABEL_CLEAR_X;
-      spot = { x: outer, y: 0 };
-    }
-    placed.push({ id, ...spot });
-    occupied.add(spot);
-  }
-
-  const maxR = placed.reduce((m, p) => Math.max(m, Math.hypot(p.x, p.y)), inner);
-  return { placed, outer: Math.max(outer, maxR) };
-}
-
 /** The halo's width scale never exceeds this fraction of the disk's radius, nor drops below the floor. */
 const HALO_SCALE_FRACTION = 0.2;
 const HALO_MIN_SCALE = 160;
@@ -458,189 +347,6 @@ function haloField(
     occupied.add(spot);
   }
   return placed;
-}
-
-/** One part's local geometry: its figure stars plus a scatter field. */
-export type PartGeometry = {
-  part: FitPart;
-  /** Where the part's own origin sits in the cluster's local space. */
-  center: { x: number; y: number };
-  /** Cluster-local, already offset by `center` (index ↔ part.figureMemberIds). */
-  figureLocal: Array<{ x: number; y: number }>;
-  scatterLocal: Array<{ id: string; x: number; y: number }>;
-  /** The part's own footprint radius about `center`. */
-  foot: number;
-};
-
-/** One cluster's local geometry: its parts and the disk that holds them all. */
-export type ClusterGeometry = {
-  cluster: BuiltCluster;
-  fit: ClusterFit;
-  parts: PartGeometry[];
-  /** Footprint radius: everything the cluster draws stays inside this disk. */
-  foot: number;
-};
-
-type LocalPart = Omit<PartGeometry, "part" | "center">;
-
-/**
- * A figure and its scatter, in the part's own space. The asterism renders at its natural scale
- * with a mild seeded tilt — never warped — and is scaled up only if a template packs two stars
- * closer than FIGURE_STAR_MIN (or, with `clearNames`, than their name boxes need). Overflow
- * members scatter through an annulus fully outside the figure's extent, which guarantees
- * clearance from every figure star and line by construction.
- */
-function figureGeometry(
-  shape: ConstellationShape,
-  figureMemberIds: string[],
-  scatterIds: string[],
-  seed: string,
-  clearNames = false
-): LocalPart {
-  const count = figureMemberIds.length;
-  const baseScale = scaleForStarCount(count);
-  let scale = baseScale;
-  const rotation = (hashUnit(seed, 11) - 0.5) * Math.PI * 0.5;
-  const cos = Math.cos(rotation);
-  const sin = Math.sin(rotation);
-
-  const stars = shape.stars.slice(0, count);
-  if (count > 1) {
-    let minDist = Infinity;
-    for (let i = 0; i < stars.length; i++) {
-      for (let j = i + 1; j < stars.length; j++) {
-        minDist = Math.min(minDist, Math.hypot(stars[i].x - stars[j].x, stars[i].y - stars[j].y));
-      }
-    }
-    if (minDist > 0 && minDist * scale < FIGURE_STAR_MIN) {
-      // Open the figure up until its tightest pair clears a label, but never
-      // so far that one cluster swallows the sky.
-      scale = Math.min(FIGURE_STAR_MIN / minDist, baseScale * FIGURE_MAX_UPSCALE);
-    }
-  }
-
-  if (clearNames && count > 1) {
-    // FIGURE_STAR_MIN is a circle, but a name is a LABEL_WIDTH x LABEL_HEIGHT box: a pair 106px
-    // apart along a tilted diagonal can still have overlapping names. Open the figure just far
-    // enough that no two name boxes touch. Only petal-company parts ask for this: every other
-    // cluster keeps the scale it has always had, so a plain constellation never moves. This
-    // deliberately ignores FIGURE_MAX_UPSCALE: the bump is measured at no more than ~4.1% and the
-    // templates are fixed, so it cannot run away. Do not cap it, or a clash could come back.
-    let need = 0;
-    for (let i = 0; i < stars.length; i++) {
-      for (let j = i + 1; j < stars.length; j++) {
-        const dx = Math.abs((stars[i].x - stars[j].x) * cos - (stars[i].y - stars[j].y) * sin);
-        const dy = Math.abs((stars[i].x - stars[j].x) * sin + (stars[i].y - stars[j].y) * cos);
-        if (dx < 1e-9 && dy < 1e-9) continue;
-        need = Math.max(
-          need,
-          Math.min(dx > 1e-9 ? LABEL_WIDTH / dx : Infinity, dy > 1e-9 ? LABEL_HEIGHT / dy : Infinity)
-        );
-      }
-    }
-    if (need * (1 + 1e-6) > scale) scale = need * (1 + 1e-6);
-  }
-
-  const figureLocal = stars.map((s) => ({
-    x: (s.x * cos - s.y * sin) * scale,
-    y: (s.x * sin + s.y * cos) * scale,
-  }));
-  const figureExtent = figureLocal.reduce((m, p) => Math.max(m, Math.hypot(p.x, p.y)), scale * 0.3);
-
-  const { placed: scatterLocal, outer } = scatterField(
-    scatterIds,
-    seed,
-    figureExtent + SCATTER_CLEAR,
-    SCATTER_FIELD_WIDTH,
-    figureLocal
-  );
-  const outermost = scatterLocal.length > 0 ? outer : figureExtent;
-  return { figureLocal, scatterLocal, foot: outermost + FOOT_MARGIN };
-}
-
-/** A school: members on rings, the overflow scattered outside them. */
-function ringGeometry(figureMemberIds: string[], scatterIds: string[], seed: string): LocalPart {
-  const { positions, radius } = ringLayout(figureMemberIds.length, seed);
-  const { placed: scatterLocal, outer } = scatterField(
-    scatterIds,
-    seed,
-    radius + SCATTER_CLEAR,
-    SCATTER_FIELD_WIDTH,
-    positions
-  );
-  const outermost = scatterLocal.length > 0 ? outer : radius;
-  return { figureLocal: positions, scatterLocal, foot: outermost + FOOT_MARGIN };
-}
-
-/**
- * Build a cluster's local geometry, part by part.
- *
- * A cluster that is not split is one part built exactly as it always was (same seed, so the
- * same tilt and scatter). A petal company builds each part — the leadership core and every
- * function petal — the same way under its own seed, then `arrangeParts` seats the core at the
- * origin and the petals round it on disjoint footprints.
- */
-export function buildClusterGeometry(
-  fit: ClusterFit,
-  /**
-   * People seated in this cluster's field without being members of it: loners from the same
-   * company family (see `familySatellites`). Placed after the members, so further out — in the
-   * largest petal, for a company that is split.
-   */
-  satelliteIds: string[] = []
-): ClusterGeometry {
-  const { cluster, form, parts } = fit;
-  const roomiest = parts.reduce(
-    (best, p, i) =>
-      p.role !== "core" && p.figureMemberIds.length + p.scatterMemberIds.length >
-        best.size
-        ? { i, size: p.figureMemberIds.length + p.scatterMemberIds.length }
-        : best,
-    { i: 0, size: -1 }
-  ).i;
-
-  const built = parts.map((part, i) => {
-    const seed = form === "petal" ? `${cluster.id}#${part.key}` : cluster.id;
-    const scatterIds = [...part.scatterMemberIds, ...(i === roomiest ? satelliteIds : [])];
-    return form === "ring"
-      ? ringGeometry(part.figureMemberIds, scatterIds, seed)
-      : figureGeometry(part.shape, part.figureMemberIds, scatterIds, seed, form === "petal");
-  });
-
-  if (form !== "petal") {
-    return {
-      cluster,
-      fit,
-      parts: [{ part: parts[0], center: { x: 0, y: 0 }, ...built[0] }],
-      foot: built[0].foot,
-    };
-  }
-
-  const coreIndex = parts.findIndex((p) => p.role === "core");
-  const arranged = arrangeParts(
-    coreIndex >= 0 ? { key: parts[coreIndex].key, foot: built[coreIndex].foot } : null,
-    parts
-      .map((p, i) => ({ key: p.key, foot: built[i].foot, role: p.role }))
-      .filter((p) => p.role === "petal")
-      .map(({ key, foot }) => ({ key, foot })),
-    PART_GAP,
-    cluster.id
-  );
-  return {
-    cluster,
-    fit,
-    foot: arranged.foot,
-    parts: parts.map((part, i) => {
-      const center = arranged.centers.get(part.key)!;
-      return {
-        part,
-        center,
-        foot: built[i].foot,
-        figureLocal: built[i].figureLocal.map((p) => ({ x: center.x + p.x, y: center.y + p.y })),
-        scatterLocal: built[i].scatterLocal.map((p) => ({ id: p.id, x: center.x + p.x, y: center.y + p.y })),
-      };
-    }),
-  };
 }
 
 /**
@@ -793,10 +499,27 @@ export function* buildHybridGraphLayoutSteps(
   });
 
   yield;
+  // A role cluster says how many companies its people are spread over. Only role clusters ask,
+  // so the contacts are indexed the first time one does.
+  let contactById: Map<string, GraphContactInput> | null = null;
+  const roleSubtitle = (ids: string[]) => {
+    contactById ??= new Map(contacts.map((c) => [c.id, c]));
+    const companies = new Set<string>();
+    for (const id of ids) {
+      // The app's canonical names, so "AWS" and "Amazon Web Services" count once, as they cluster.
+      const raw = (contactById.get(id)?.company ?? "").trim();
+      const company = (canonicalCompanyClusterName(raw) || raw).toLowerCase();
+      if (company) companies.add(company);
+    }
+    // Members with no company at all leave nothing to count: say nothing rather than guess.
+    const n = companies.size;
+    return n === 0 ? undefined : `across ${n} ${n === 1 ? "company" : "companies"}`;
+  };
   const clusterNodes: LayoutNode[] = [];
   const clusterColorById = new Map<string, string>();
   for (const geom of geoms) {
     const cluster = geom.cluster;
+    const center = centers.get(cluster.id)!;
     const color = brandOf(cluster.name, cluster.kind);
     clusterColorById.set(cluster.id, color);
 
@@ -825,6 +548,19 @@ export function* buildHybridGraphLayoutSteps(
         radius: nebulaRadius,
         clusterKind: cluster.kind,
         clusterId: cluster.id,
+        form: geom.fit.form,
+        parts:
+          geom.fit.form === "petal"
+            ? geom.parts.map((g) => ({
+                key: g.part.key,
+                role: g.part.role,
+                x: center.x + g.center.x,
+                y: center.y + g.center.y,
+                radius: g.foot,
+              }))
+            : geom.fit.form === "ring" && geom.parts[0].ringRadius !== undefined
+              ? [{ key: "main", role: "main" as const, x: center.x + geom.parts[0].center.x, y: center.y + geom.parts[0].center.y, radius: geom.parts[0].ringRadius }]
+              : undefined,
       },
       position: { x: cx, y: cy },
       draggable: false,
@@ -849,7 +585,6 @@ export function* buildHybridGraphLayoutSteps(
     const boxLeft = left - CLUSTER_LABEL_PAD;
     const boxTop = top - CLUSTER_LABEL_GAP - CLUSTER_LABEL_HEAD;
     const boxWidth = right + CLUSTER_LABEL_PAD - boxLeft;
-    const boxHeight = bottom + CLUSTER_LABEL_PAD - boxTop;
     const petalLabels =
       geom.fit.form === "petal"
         ? geom.parts
@@ -858,13 +593,13 @@ export function* buildHybridGraphLayoutSteps(
               // A plain loop: a spread of a big part's coordinates can exceed V8's argument limit.
               let pLeft = Infinity;
               let pRight = -Infinity;
-              let pTop = Infinity;
+              let pBottom = -Infinity;
               for (const id of [...g.part.figureMemberIds, ...g.part.scatterMemberIds]) {
                 const p = positions.get(id);
                 if (!p) continue;
                 pLeft = Math.min(pLeft, p.x);
                 pRight = Math.max(pRight, p.x);
-                pTop = Math.min(pTop, p.y);
+                pBottom = Math.max(pBottom, p.y);
               }
               return {
                 key: g.part.key,
@@ -873,11 +608,15 @@ export function* buildHybridGraphLayoutSteps(
                 count: g.part.figureMemberIds.length + g.part.scatterMemberIds.length,
                 anchor: {
                   x: (pLeft + pRight) / 2 - boxLeft,
-                  y: pTop - CLUSTER_LABEL_GAP - boxTop,
+                  y: pBottom + PETAL_LABEL_GAP - boxTop,
                 },
               };
             })
         : undefined;
+    // The box holds the stars and, for a petal company, each petal's name below its part.
+    let boxHeight = bottom + CLUSTER_LABEL_PAD - boxTop;
+    for (const l of petalLabels ?? []) boxHeight = Math.max(boxHeight, l.anchor.y + PETAL_LABEL_HEIGHT);
+    const subtitle = cluster.kind === "role" ? roleSubtitle(cluster.contactIds) : undefined;
     clusterNodes.push({
       id: `cluster-${cluster.id}`,
       type: "clusterLabel",
@@ -891,6 +630,7 @@ export function* buildHybridGraphLayoutSteps(
         box: { width: boxWidth, height: boxHeight },
         anchor: { x: (left + right) / 2 - boxLeft, y: CLUSTER_LABEL_HEAD },
         form: geom.fit.form,
+        subtitle,
         petalLabels,
       },
       // The name's anchor. The chart sets the node's origin so its box lands around it.
@@ -900,6 +640,20 @@ export function* buildHybridGraphLayoutSteps(
       zIndex: 7,
     });
   }
+
+  // A star wears its cluster's colour. The exceptions: a split company's leadership core is warm
+  // white, and a role cluster spans companies, so each of its stars wears its own company's
+  // colour (the cluster's silver when it has none).
+  const starColor = (
+    cluster: ClusterRef | undefined,
+    role: PartRole | undefined,
+    company: string | null
+  ) => {
+    if (!cluster) return undefined;
+    if (role === "core") return CORE_TINT;
+    const own = cluster.kind === "role" ? (company ?? "").trim() : "";
+    return own ? brandOf(own, "company") : clusterColorById.get(cluster.id);
+  };
 
   const nodes: LayoutNode[] = [
     {
@@ -961,12 +715,13 @@ export function* buildHybridGraphLayoutSteps(
           figureRole: figureIds.has(c.id)
             ? ("figure" as const)
             : ("scatter" as const),
-          clusterColor: cluster ? clusterColorById.get(cluster.id) : undefined,
+          clusterColor: starColor(cluster, partOf.get(c.id)?.role, c.company),
           partKey: partOf.get(c.id)?.key,
           partRole: partOf.get(c.id)?.role,
           // Leaders always go to the core and everyone else to a petal (planCompany), so the part
           // says it; a 'main' cluster has no leadership to speak of.
           leader: partOf.get(c.id) && partOf.get(c.id)!.role !== "main" ? partOf.get(c.id)!.role === "core" : undefined,
+          anchorsLines: false,
           orbitAngle: pos.angle,
           orbitRadius: pos.radius,
         },
@@ -996,23 +751,40 @@ export function* buildHybridGraphLayoutSteps(
     };
     const layoutEdge = peerEdgeToLayoutEdge(peer);
     const brand = brandOf(fitEdge.clusterName, reason);
+    // Leaders' lines are warm white; a role cluster's are dotted and faint, since its people are
+    // only alike in what they do; everything else is tinted with the cluster's brand.
+    const dotted = fitEdge.clusterKind === "role";
+    const style: Record<string, string | number> =
+      fitEdge.partRole === "core"
+        ? { ...layoutEdge.style, stroke: withAlpha(CORE_TINT, 0.85) }
+        : dotted
+          ? { ...layoutEdge.style, stroke: "rgba(255,255,255,0.9)", opacity: 0.35, strokeDasharray: "2 5" }
+          : { ...layoutEdge.style, stroke: withAlpha(mixWithWhite(brand, 0.55), 0.8) };
     edges.push({
       ...layoutEdge,
       type: "labeled",
       label: undefined,
-      style: {
-        ...layoutEdge.style,
-        stroke: withAlpha(mixWithWhite(brand, 0.55), 0.8),
-      },
+      style,
       data: layoutEdge.data
         ? {
             kind: layoutEdge.data.kind,
             company: layoutEdge.data.company,
             reason: layoutEdge.data.reason,
             brandColor: brand,
+            ...(dotted ? { dash: [2, 5] as [number, number] } : {}),
           }
         : undefined,
     });
+  }
+
+  // Which stars a line touches is only known now the lines are drawn.
+  const lineEnds = new Set<string>();
+  for (const e of edges) {
+    lineEnds.add(e.source);
+    lineEnds.add(e.target);
+  }
+  for (const node of nodes) {
+    if (node.type === "contact") (node.data as GraphNodeData).anchorsLines = lineEnds.has(node.id);
   }
 
   return { nodes, edges, galaxy };

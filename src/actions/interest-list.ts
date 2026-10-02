@@ -3,12 +3,8 @@
 import { clientIpFrom } from "@/lib/client-ip";
 import { cookies, headers } from "next/headers";
 import { ATTRIBUTION_COOKIE, parseAttribution } from "@/lib/attribution-parse";
-import type {
-  InterestListInput,
-  InterestListResult,
-  InterestNameInput,
-  InterestNameResult,
-} from "@/lib/interest-list";
+import type { InterestListResult, InterestNameResult } from "@/lib/interest-list";
+import type { InterestListInput, InterestNameInput } from "@/lib/interest-list-schema";
 import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
 import { joinInterestListCore, saveInterestListNameCore } from "@/lib/interest-list-join";
 import { recordPassCheck } from "@/lib/interest-list-ticket";

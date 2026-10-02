@@ -37,7 +37,9 @@ import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { isSurfaceLive } from "@/lib/surface-visibility";
 import { getCareerLines, getContactProfile } from "@/lib/contact-profile";
+import { getRecentMoveLines } from "@/lib/job-changes";
 import {
   formatExperienceDates,
   sanitizeProfileLine,
@@ -622,9 +624,11 @@ export async function prepareChatContext(
       route.attention
         ? (() => {
             steps.start("attention", "Checking who is overdue");
-            return getClosenessCohort(userId)
-              .catch(() => null)
-              .then((cohort) => getAttentionBrief(userId, cohort?.interactedIds))
+            return Promise.all([
+              getClosenessCohort(userId).catch(() => null),
+              isSurfaceLive(userId, "page.radar").catch(() => false),
+            ])
+              .then(([cohort, radar]) => getAttentionBrief(userId, cohort?.interactedIds, { radar }))
               .catch(() => null)
               .then((brief) => {
                 const overdueRefs = brief
@@ -767,9 +771,10 @@ export async function prepareChatContext(
   if (retrievedIds.length) {
     steps.start("read", `Reading notes on ${plural(retrievedIds.length, "person", "people")}`);
   }
-  const [snippets, careerLines, focusMsgs, focusProfileData] = await Promise.all([
+  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData] = await Promise.all([
     loadRecentInteractions(userId, retrievedIds),
     getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
+    getRecentMoveLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     focusContactId
       ? db.query.interactions.findMany({
           where: and(eq(interactions.userId, userId), eq(interactions.contactId, focusContactId)),
@@ -838,6 +843,12 @@ export async function prepareChatContext(
   // Sized by rank under a total char budget — a later, cheaper contact must not be
   // appended out of rank order once the budget runs dry, so this can be a strict prefix
   // of `retrieved`.
+  // A recent job move rides on the career line — one short line per person, the same slot
+  // and the same budget, so "who just changed jobs?" is answerable without a new field.
+  for (const [id, moves] of moveLines) {
+    const career = careerLines.get(id);
+    careerLines.set(id, career ? `${career} · recent moves: ${moves}` : `Recent moves: ${moves}`);
+  }
   const modelContacts = budgetContactsContext(retrieved, snippets, careerLines, q);
 
   // Roster and attention contacts are as legitimate a recommendation as retrieved ones —

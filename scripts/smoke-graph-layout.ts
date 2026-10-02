@@ -18,10 +18,13 @@ import {
   type ClusterLabelData,
 } from "../src/lib/graph-layout";
 import { figureStarCount } from "../src/lib/constellation-shapes";
+import { CORE_TINT } from "../src/lib/constellation-parts";
 import { RING_CAPACITY, RING_MIN_RADIUS } from "../src/lib/graph/cluster-anatomy";
 import { buildClusterAffinity } from "../src/lib/constellation-affinity";
 import { buildSyntheticGraphPayload } from "../src/lib/graph/synthetic-network";
 import { buildPeerEdges } from "../src/lib/network-metrics";
+import { clusterNameScale, petalNameFontPx } from "../src/components/graph/graph-nodes";
+import { petalNameBoxes, starLabelBox, starLabelWinners, type LabelBox } from "../src/lib/graph/star-style";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) {
@@ -39,6 +42,39 @@ const SUN_MIN_DIST = 150;
 /** Always-on label box under each star (see graph-nodes.tsx). */
 const LABEL_WIDTH = 104;
 const LABEL_HEIGHT = 30;
+/** A petal name is one text line this tall (the layout's PETAL_LABEL_HEIGHT). */
+const PETAL_LABEL_HEIGHT = 16;
+
+/**
+ * Every petal name that lands on one of its own cluster's star names. A star's name and subtitle
+ * hang under it (x ± 52, y + 8 … y + 34); a petal name is x ± 50 wide and PETAL_LABEL_HEIGHT tall
+ * from its anchor, which the label node turns into an absolute position.
+ */
+function petalNameOverlaps(l: ReturnType<typeof buildHybridGraphLayout>) {
+  const starsOf = new Map<string, Array<{ x: number; y: number }>>();
+  for (const n of l.nodes) {
+    if (n.type !== "contact") continue;
+    const id = (n.data as GraphNodeData).clusterId;
+    if (!id) continue;
+    (starsOf.get(id) ?? starsOf.set(id, []).get(id)!).push(n.position);
+  }
+  let labels = 0;
+  let overlaps = 0;
+  for (const n of l.nodes) {
+    if (n.type !== "clusterLabel") continue;
+    const d = n.data as ClusterLabelData;
+    for (const pl of d.petalLabels ?? []) {
+      labels++;
+      const ax = n.position.x - d.anchor!.x + pl.anchor.x;
+      const ay = n.position.y - d.anchor!.y + pl.anchor.y;
+      const hit = (starsOf.get(d.clusterId!) ?? []).some(
+        (p) => ax - 50 < p.x + 52 && ax + 50 > p.x - 52 && ay < p.y + 34 && ay + PETAL_LABEL_HEIGHT > p.y + 8
+      );
+      if (hit) overlaps++;
+    }
+  }
+  return { labels, overlaps };
+}
 
 function contact(
   id: string,
@@ -115,6 +151,9 @@ const fixture: GraphContactInput[] = [
   // One-off companies, same function → a cross-company role constellation.
   contact("r1", { company: "Acme Robotics", title: "Backend Engineer", orbitScore: 3 }),
   contact("r2", { company: "Nimbus Labs", title: "Software Engineer", orbitScore: 4 }),
+  // Two product managers with no company at all → a role cluster with nothing to count.
+  contact("pm1", { title: "Product Manager", orbitScore: 3 }),
+  contact("pm2", { title: "Product Manager", orbitScore: 2 }),
   // Deep space.
   ...Array.from({ length: 7 }, (_, i) =>
     contact(`d${i}`, { orbitScore: 1 + (i % 5) })
@@ -395,9 +434,9 @@ console.log("\nCluster anatomy");
   check("its label node says so", label("Northwind").form === "petal");
   const petalLabels = label("Northwind").petalLabels ?? [];
   check("…with a label for the core and each petal", petalLabels.map((l) => l.label).join() === "Leadership,Engineering,Design,Sales & BD");
-  check("…each anchored inside the node's box", petalLabels.every((l) => {
+  check("…each fitting inside the node's box", petalLabels.every((l) => {
     const box = label("Northwind").box!;
-    return l.anchor.x >= 0 && l.anchor.x <= box.width && l.anchor.y >= 0 && l.anchor.y <= box.height;
+    return l.anchor.x >= 0 && l.anchor.x <= box.width && l.anchor.y >= 0 && l.anchor.y + PETAL_LABEL_HEIGHT <= box.height;
   }));
   check("a plain figure has no petal labels", label("Google").petalLabels === undefined && label("Google").form === "figure");
 
@@ -473,6 +512,124 @@ console.log("\nCluster anatomy");
       `…and sits nearer the roomiest petal (${roomiest.key}, ${dTo(roomiest).toFixed(0)}px) than the core (${dTo(core).toFixed(0)}px)`,
       dTo(roomiest) < dTo(core)
     );
+  }
+
+  // What the renderers draw: forms, part disks, per-star tints, line styles, petal names.
+  {
+    const nebula = (name: string) =>
+      layout.nodes.find((n) => n.type === "nebula" && (n.data as NebulaData).company === name)!.data as NebulaData;
+    check(
+      "nebulae carry their cluster's form",
+      nebula("Northwind").form === "petal" && nebula("Chapel Hill").form === "ring" && nebula("Google").form === "figure"
+    );
+    const nwParts = nebula("Northwind").parts!;
+    check(
+      "a petal nebula lists its parts, absolute and inside the sky",
+      nwParts.map((p) => p.key).join() === "core,petal:engineering,petal:design,petal:sales" &&
+        nwParts.every((p) => p.radius > 0 && Number.isFinite(p.x) && Number.isFinite(p.y))
+    );
+    check(
+      "…and every part disk contains its stars",
+      nw.parts.every((p, i) =>
+        [...p.figureMemberIds, ...p.scatterMemberIds].every(
+          (id) => Math.hypot(posById.get(id)!.x - nwParts[i].x, posById.get(id)!.y - nwParts[i].y) <= nwParts[i].radius + 1e-6
+        )
+      )
+    );
+    const chN = nebula("Chapel Hill");
+    check(
+      "a ring nebula has one part: the ring's centre and outer radius",
+      chN.parts!.length === 1 &&
+        chN.parts![0].key === "main" &&
+        chN.parts![0].radius >= RING_MIN_RADIUS &&
+        ch.cluster.contactIds.every(
+          (id) => Math.hypot(posById.get(id)!.x - chN.parts![0].x, posById.get(id)!.y - chN.parts![0].y) <= chN.parts![0].radius + 1e-6
+        )
+    );
+    check("figures and binaries have no parts", nebula("Google").parts === undefined);
+
+    check("core stars are warm white", star("nw-l0").clusterColor === CORE_TINT);
+    check(
+      "petal stars keep the company's colour",
+      star("nw-e0").clusterColor !== CORE_TINT && star("nw-e0").clusterColor === star("nw-d0").clusterColor
+    );
+    check(
+      "figure stars anchor lines; ring stars do not",
+      star("g0").anchorsLines === true && ch.cluster.contactIds.every((id) => star(id).anchorsLines === false)
+    );
+    const dashed = layout.edges.filter((e) => e.data?.dash);
+    check(
+      "role clusters draw dotted, faint lines",
+      dashed.length > 0 &&
+        dashed.every((e) => e.style?.strokeDasharray === "2 5" && Number(e.style?.opacity) === 0.35 && e.data?.reason === "role") &&
+        layout.edges.filter((e) => e.data?.reason === "role").every((e) => e.data?.dash)
+    );
+    const coreIds = new Set(nw.parts.find((p) => p.role === "core")!.figureMemberIds);
+    const coreEdges = layout.edges.filter((e) => coreIds.has(e.source) && coreIds.has(e.target));
+    check("core lines are warm white", coreEdges.length > 0 && coreEdges.every((e) => /255,\s*233,\s*194/.test(String(e.style?.stroke))));
+
+    // A petal's name sits below its lowest star (so it can never collide with the cluster name,
+    // which sits above the topmost star), and the whole label fits inside the node's box. The
+    // box's origin comes from the label node itself, the way a renderer finds it.
+    const nwNode = layout.nodes.find((n) => n.type === "clusterLabel" && (n.data as ClusterLabelData).label === "Northwind")!;
+    const box = label("Northwind").box!;
+    const boxTop = nwNode.position.y - label("Northwind").anchor!.y;
+    const petalOk = nw.parts
+      .filter((p) => p.role !== "main")
+      .every((p) => {
+        const l = petalLabels.find((x) => x.key === p.key)!;
+        const bottom = Math.max(...[...p.figureMemberIds, ...p.scatterMemberIds].map((id) => posById.get(id)!.y));
+        return l.anchor.y + boxTop > bottom && l.anchor.y + PETAL_LABEL_HEIGHT <= box.height;
+      });
+    check("petal names sit below their part, inside the box", petalOk);
+    const nwClash = petalNameOverlaps(layout);
+    check(`no petal name lands on a star's name (Northwind fixture: ${nwClash.overlaps}/${nwClash.labels})`, nwClash.labels >= 4 && nwClash.overlaps === 0);
+    {
+      const big = buildHybridGraphLayout(buildSyntheticGraphPayload(2500, { seed: 1 }).contacts, "Tester");
+      const clash = petalNameOverlaps(big);
+      check(`…nor in a 2500-contact network (${clash.overlaps}/${clash.labels} overlap)`, clash.labels > 20 && clash.overlaps === 0);
+
+      // Pulled back to 0.5 the star names grow (zoomRelief) and the petal names grow faster
+      // (clusterNameScale), so the two meet. The petal names are registered with the star-name
+      // pass first and win: a star whose name would land on one goes unnamed.
+      const zoom = 0.5;
+      const contacts = big.nodes.filter((n) => n.type === "contact");
+      const petals = petalNameBoxes(
+        big.nodes.filter((n) => n.type === "clusterLabel"),
+        petalNameFontPx(clusterNameScale(zoom))
+      );
+      const hits = (boxes: LabelBox[], ids: Set<string>) =>
+        contacts.filter((n) => ids.has(n.id)).filter((n) => {
+          const b = starLabelBox(n, zoom);
+          return boxes.some((o) => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+        }).length;
+      const unregistered = hits(petals, starLabelWinners(contacts, zoom, () => false));
+      const registered = hits(petals, starLabelWinners(contacts, zoom, () => false, petals));
+      check(
+        `at zoom 0.5 no star name wins a place on a petal name (${registered} with them registered, ${unregistered} without)`,
+        petals.length > 20 && unregistered > 0 && registered === 0
+      );
+      const someHit = contacts.find((n) => {
+        const b = starLabelBox(n, zoom);
+        return petals.some((o) => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+      })!;
+      check(
+        "…but a search hit still beats a petal name",
+        starLabelWinners(contacts, zoom, (id) => id === someHit.id, petals).has(someHit.id)
+      );
+    }
+
+    // A role cluster: each star wears its own company's colour; the label says how many companies.
+    const rolePair = ["r1", "r2"].map((id) => star(id));
+    check("role cluster stars wear their own company's colour", rolePair[0].clusterKind === "role" && rolePair[0].clusterColor !== rolePair[1].clusterColor);
+    check("the role cluster's label counts its companies", label("Engineers").subtitle === "across 2 companies");
+    const pm = layout.nodes.filter((n) => n.id === "pm1" || n.id === "pm2").map((n) => n.data as GraphNodeData);
+    check(
+      "a role cluster whose people have no company carries no subtitle",
+      pm.length === 2 && pm[0].clusterKind === "role" && pm[0].clusterId === pm[1].clusterId &&
+        label(pm[0].clusterName!).subtitle === undefined
+    );
+    check("only role clusters carry a subtitle", label("Google").subtitle === undefined && label("Northwind").subtitle === undefined);
   }
 }
 
@@ -566,6 +723,46 @@ console.log("\nNear = related (a realistic network)");
       l.galaxy.filaments.map((f) => `${f.from}>${f.to}`),
     ]);
   check("nor does the galaxy's shape", shape(big) === shape(flipped));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nNo label clashes within a cluster");
+
+{
+  // The figure scale rule is a circle test (FIGURE_STAR_MIN); names are LABEL_WIDTH x LABEL_HEIGHT
+  // boxes, so a tilted pair could clear the circle and still have overlapping names.
+  const network = buildSyntheticGraphPayload(2500, { seed: 1 }).contacts;
+  const big = buildHybridGraphLayout(network, "Tester");
+  const bigFit = buildConstellationFit(network);
+  const byCluster = new Map<string, Array<{ id: string; x: number; y: number }>>();
+  for (const n of big.nodes) {
+    if (n.type !== "contact") continue;
+    const ref = bigFit.byContactId.get(n.id);
+    if (!ref) continue;
+    let list = byCluster.get(ref.id);
+    if (!list) byCluster.set(ref.id, (list = []));
+    list.push({ id: n.id, x: n.position.x, y: n.position.y });
+  }
+  let clashes = 0;
+  let first = "";
+  for (const stars of byCluster.values()) {
+    for (let i = 0; i < stars.length; i++) {
+      for (let j = i + 1; j < stars.length; j++) {
+        const dx = stars[i].x - stars[j].x;
+        const dy = stars[i].y - stars[j].y;
+        if (!(Math.abs(dx) >= LABEL_WIDTH || Math.abs(dy) >= LABEL_HEIGHT)) {
+          clashes += 1;
+          if (!first) first = `${stars[i].id}↔${stars[j].id}`;
+        }
+      }
+    }
+  }
+  console.log(`  label clashes within clusters: ${clashes} (${byCluster.size} clusters)`);
+  check(
+    "no two stars in one cluster have overlapping name boxes",
+    clashes === 0,
+    `${clashes} clashes, first ${first}`
+  );
 }
 
 // ---------------------------------------------------------------------------

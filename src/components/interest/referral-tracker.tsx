@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useInView } from "motion/react";
 import { Lock } from "lucide-react";
 import { PlanetArt } from "@/components/interest/planet-art";
+import { TIER_ART } from "@/components/interest/tier-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import {
   REFERRAL_TIERS,
@@ -14,12 +15,16 @@ import {
   type ReferralTierId,
 } from "@/lib/interest-list";
 import { publishProgress, usePassProgress } from "@/lib/interest-progress-store";
+import { usePendingInvites } from "@/lib/pass-invites";
+import { pulseStarfield } from "@/lib/starfield-events";
 import { EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
 
 /** How often an open pass asks whether a friend has joined. */
 const POLL_MS = 20_000;
+/** While the tab is hidden: slow enough to cost nothing, quick enough for the title badge. */
+const HIDDEN_POLL_MS = 60_000;
 /** Ticks closer together than this are one tick: a tab coming forward fires several events. */
 const MIN_GAP_MS = 3_000;
 /** Stagger between circles that fill together. Matches the pass's old moon drop. */
@@ -34,24 +39,25 @@ const MILESTONES = new Set(REFERRAL_TIERS.filter((t) => t.at > 0).map((t) => t.a
 /** Bright yellow fill — brighter than the landing gold accent alone. */
 const FILLED_GLOW =
   "bg-[#ffe566] shadow-[0_0_28px_rgba(255,229,102,0.95),0_0_10px_rgba(242,193,78,0.7)]";
+/** A filled circle that knows whose it is: the friend's planet on a dark disc, gold-ringed. */
+const FRIEND_DISC =
+  "flex items-center justify-center bg-[#0b1120] ring-1 ring-[#ffe566]/70 shadow-[0_0_16px_rgba(255,229,102,0.5)]";
 const EMPTY_RING =
   "border border-[#f2c14e]/55 shadow-[0_0_10px_rgba(242,193,78,0.22),inset_0_0_6px_rgba(242,193,78,0.14)]";
 
-/**
- * One planet per tier, escalating: a small dull Mercury for the waitlist itself, up through
- * Earth, Jupiter and ringed Saturn, to the sun for founding member. Same art the pass and the
- * landing hero use (`PlanetArt`, `public/landing/planets/`) — this is not a signup's planet,
- * so it never touches `WelcomePlanet`'s join-order meaning. Box sizes stay fixed so the row
- * aligns; the art itself grows tier over tier.
- */
-const TIER_ART: Record<ReferralTierId, { planet: WelcomePlanet | "sun"; size: number }> = {
-  joined: { planet: "mercury", size: 20 },
-  "move-up": { planet: "earth", size: 26 },
-  "priority-beta": { planet: "jupiter", size: 34 },
-  "early-access": { planet: "saturn", size: 44 },
-  founding: { planet: "sun", size: 48 },
-};
-const PLANET_BOX = 52;
+/** Every tier's art sits in a box this tall; the sun alone spills past it. */
+const PLANET_BOX = 64;
+/** One empty list for every render: `usePassProgress` needs a stable server snapshot. */
+const NO_PLANETS: readonly WelcomePlanet[] = [];
+
+/** A friend's planet sized to its circle: drawn at the desktop size, scaled down on phones. */
+function FriendPlanet({ planet }: { planet: WelcomePlanet }) {
+  return (
+    <span className="flex scale-[0.625] items-center justify-center sm:scale-100">
+      <PlanetArt planet={planet} size={30} />
+    </span>
+  );
+}
 
 function TierPlanet({
   tierId,
@@ -70,68 +76,69 @@ function TierPlanet({
   floatIndex: number;
 }) {
   const art = TIER_ART[tierId];
-  const glow = unlocked
-    ? art.planet === "sun"
-      ? "drop-shadow(0 0 16px rgba(242,193,78,0.75))"
-      : "drop-shadow(0 0 10px rgba(242,193,78,0.45))"
-    : "none";
+  const sun = art.planet === "sun";
+  // The sun is the prize, so it is never greyed out like the other locked tiers: a warm,
+  // slightly muted glow until it is won, full blaze after.
+  const glow = sun
+    ? unlocked
+      ? "drop-shadow(0 0 26px rgba(242,193,78,0.95))"
+      : "drop-shadow(0 0 16px rgba(242,193,78,0.55))"
+    : unlocked
+      ? "drop-shadow(0 0 10px rgba(242,193,78,0.45))"
+      : "none";
+  const opacity = unlocked ? 1 : sun ? 0.92 : isNext ? 0.75 : 0.32;
+  const tone = unlocked ? "none" : sun ? "saturate(0.8)" : isNext ? "grayscale(0.35)" : "grayscale(1)";
 
   return (
     <motion.span
       aria-hidden="true"
-      className="relative inline-flex shrink-0 items-center justify-center transition-[opacity,filter] duration-700"
+      // Block-level on purpose: as inline-flex its baseline followed the art, so the sun (taller
+      // than the box) pushed the founding card's text below every other card's.
+      className="relative flex shrink-0 items-center justify-center transition-[opacity,filter] duration-700"
       style={{
-        width: PLANET_BOX,
+        width: Math.max(PLANET_BOX, art.size),
         height: PLANET_BOX,
-        opacity: unlocked ? 1 : isNext ? 0.75 : 0.32,
-        filter: unlocked ? "none" : isNext ? "grayscale(0.35)" : "grayscale(1)",
+        opacity,
+        filter: tone,
       }}
-      animate={
-        flashing
-          ? { y: 0, scale: [1, 1.08, 1] }
-          : float
-            ? { y: [0, -3, 0], scale: 1 }
-            : { y: 0, scale: 1 }
-      }
+      animate={flashing ? { scale: [1, 1.08, 1] } : { scale: 1 }}
       transition={
         flashing
           ? { duration: 0.55, ease: EASE_HOUSE, times: [0, 0.45, 1] }
-          : float
-            ? {
-                y: {
-                  duration: 5.2,
-                  ease: "easeInOut",
-                  repeat: Infinity,
-                  delay: floatIndex * 0.45,
-                },
-                scale: { duration: 0.4, ease: EASE_HOUSE },
-              }
-            : { duration: 0.4, ease: EASE_HOUSE }
+          : { duration: 0.4, ease: EASE_HOUSE }
       }
     >
-      {art.planet === "sun" ? (
-        <picture>
-          <source type="image/avif" srcSet="/landing/planets/sun.avif" />
-          <source type="image/webp" srcSet="/landing/planets/sun.webp" />
-          <img
-            src="/landing/planets/sun.png"
-            alt=""
-            width={art.size}
-            height={art.size}
-            draggable={false}
-            style={{
-              width: art.size,
-              height: art.size,
-              objectFit: "contain",
-              filter: glow,
-            }}
-          />
-        </picture>
-      ) : (
-        <span style={{ filter: glow }}>
-          <PlanetArt planet={art.planet} size={art.size} />
-        </span>
-      )}
+      {/* The bob is a CSS animation on its own box, not a motion loop: a `repeat: Infinity`
+          motion value ran on the main thread every frame of the page's life, offscreen
+          included, and restyled the planet each time. A CSS transform runs on the compositor. */}
+      <span
+        className={cn("inline-flex items-center justify-center", float && "tracker-planet-bob")}
+        style={float ? { animationDelay: `${floatIndex * 0.45}s` } : undefined}
+      >
+        {art.planet === "sun" ? (
+          <picture>
+            <source type="image/avif" srcSet="/landing/planets/sun.avif" />
+            <source type="image/webp" srcSet="/landing/planets/sun.webp" />
+            <img
+              src="/landing/planets/sun.png"
+              alt=""
+              width={art.size}
+              height={art.size}
+              draggable={false}
+              style={{
+                width: art.size,
+                height: art.size,
+                objectFit: "contain",
+                filter: glow,
+              }}
+            />
+          </picture>
+        ) : (
+          <span style={{ filter: glow }}>
+            <PlanetArt planet={art.planet} size={art.size} />
+          </span>
+        )}
+      </span>
     </motion.span>
   );
 }
@@ -159,23 +166,29 @@ export function ReferralTracker({
   token,
   referrals: initialReferrals,
   position: initialPosition,
+  friendPlanets: initialPlanets = NO_PLANETS,
   joinHref,
 }: {
   /** The visitor's pass token, or null before they have joined. */
   token: string | null;
   referrals: number;
   position: number | null;
+  /** Friends' planets in join order, from the server render; the poll keeps them current. */
+  friendPlanets?: readonly WelcomePlanet[];
   /** Where "join" points: the hero's form, on this page. */
   joinHref: string;
 }) {
   const serverProgress = useMemo(
-    () => ({ token, referrals: initialReferrals, position: initialPosition }),
-    [token, initialReferrals, initialPosition]
+    () => ({ token, referrals: initialReferrals, position: initialPosition, friendPlanets: initialPlanets }),
+    [token, initialReferrals, initialPosition, initialPlanets]
   );
   const progress = usePassProgress(serverProgress);
   const activeToken = progress.token;
   const referrals = Math.min(Math.max(progress.referrals, 0), TRACKER_SLOTS);
   const position = progress.position;
+  const planets = progress.friendPlanets ?? [];
+  /** Completed shares still waiting on a friend: drawn as "invited" circles after the filled. */
+  const invited = Math.min(usePendingInvites(activeToken), TRACKER_SLOTS - referrals);
 
   const rowRef = useRef<HTMLDivElement>(null);
   const inView = useInView(rowRef, { once: true, amount: 0.6 });
@@ -212,6 +225,7 @@ export function ReferralTracker({
     const before = previousReferrals.current;
     previousReferrals.current = referrals;
     if (before === null || referrals <= before) return;
+    burstFromCircle(rowRef.current, referrals - 1);
     const crossed = REFERRAL_TIERS.filter((t) => t.at > before && t.at <= referrals);
     const top = crossed[crossed.length - 1];
     if (!top) return;
@@ -220,7 +234,8 @@ export function ReferralTracker({
     return () => window.clearTimeout(clear);
   }, [referrals]);
 
-  // The poll. Ticks while the tab is hidden do nothing; coming back fetches at once.
+  // The poll. While the tab is hidden it slows to one read a minute (enough for the pass's
+  // tab-title badge); coming back fetches at once.
   useEffect(() => {
     if (!activeToken) return;
     let stopped = false;
@@ -228,8 +243,9 @@ export function ReferralTracker({
     let lastAt = 0;
 
     const tick = async () => {
-      if (stopped || document.visibilityState !== "visible") return;
-      if (Date.now() - lastAt < MIN_GAP_MS) return;
+      if (stopped) return;
+      const gap = document.visibilityState === "visible" ? MIN_GAP_MS : HIDDEN_POLL_MS;
+      if (Date.now() - lastAt < gap) return;
       lastAt = Date.now();
       controller?.abort();
       controller = new AbortController();
@@ -243,9 +259,19 @@ export function ReferralTracker({
           return;
         }
         if (!res.ok) return;
-        const data = (await res.json()) as { ok?: boolean; referrals?: number; position?: number };
+        const data = (await res.json()) as {
+          ok?: boolean;
+          referrals?: number;
+          position?: number;
+          friendPlanets?: WelcomePlanet[];
+        };
         if (data.ok && typeof data.referrals === "number" && typeof data.position === "number") {
-          publishProgress({ token: activeToken, referrals: data.referrals, position: data.position });
+          publishProgress({
+            token: activeToken,
+            referrals: data.referrals,
+            position: data.position,
+            friendPlanets: Array.isArray(data.friendPlanets) ? data.friendPlanets : [],
+          });
         }
       } catch {
         // Offline or aborted: the next tick tries again.
@@ -271,7 +297,7 @@ export function ReferralTracker({
       <div
         ref={rowRef}
         role="img"
-        aria-label={`${referrals} of ${TRACKER_SLOTS} friends joined`}
+        aria-label={`${referrals} of ${TRACKER_SLOTS} friends joined${invited > 0 ? `, ${invited} invited` : ""}`}
         className="flex justify-center gap-2 pb-7 sm:gap-3"
       >
         {Array.from({ length: TRACKER_SLOTS }, (_, i) => {
@@ -295,7 +321,7 @@ export function ReferralTracker({
                   {/* Vessel stays visible so the gold reads as filling the ring, not popping in. */}
                   <span className={cn("absolute inset-0 rounded-full", EMPTY_RING)} />
                   <motion.span
-                    className={cn("absolute inset-0 rounded-full", FILLED_GLOW)}
+                    className={cn("absolute inset-0 rounded-full", planets[i] ? FRIEND_DISC : FILLED_GLOW)}
                     initial={{ transform: "scale(0.55)", opacity: 0 }}
                     animate={
                       inView
@@ -308,7 +334,9 @@ export function ReferralTracker({
                       times: [0, 0.62, 1],
                       delay: fillDelay,
                     }}
-                  />
+                  >
+                    {planets[i] ? <FriendPlanet planet={planets[i]} /> : null}
+                  </motion.span>
                   <motion.span
                     className="absolute inset-0 rounded-full border-2 border-[#ffe566]"
                     initial={{ transform: "scale(1)", opacity: 0 }}
@@ -320,8 +348,26 @@ export function ReferralTracker({
                     transition={{ duration: 0.65, ease: EASE_HOUSE, delay: fillDelay + 0.2 }}
                   />
                 </>
+              ) : !filled && i < referrals + invited ? (
+                // Invited: a share went out for this circle. It draws in when it appears,
+                // and the fill above takes over when the friend joins.
+                <motion.span
+                  className="absolute inset-0 flex items-center justify-center rounded-full border-2 border-dashed border-[#f2c14e] bg-[#f2c14e]/[0.08] shadow-[0_0_12px_rgba(242,193,78,0.3)]"
+                  initial={motionOk ? { opacity: 0, scale: 0.6 } : false}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.4, ease: EASE_HOUSE }}
+                >
+                  <span className="size-1.5 rounded-full bg-[#f2c14e] shadow-[0_0_6px_rgba(242,193,78,0.9)]" />
+                </motion.span>
               ) : (
-                <span className={cn("absolute inset-0 rounded-full", filled ? FILLED_GLOW : EMPTY_RING)} />
+                <span
+                  className={cn(
+                    "absolute inset-0 rounded-full",
+                    filled ? (planets[i] ? FRIEND_DISC : FILLED_GLOW) : EMPTY_RING
+                  )}
+                >
+                  {filled && planets[i] ? <FriendPlanet planet={planets[i]} /> : null}
+                </span>
               )}
               {milestone ? (
                 <span className="absolute -bottom-6 text-[11px] tabular-nums text-[#9aada8]">{i + 1}</span>
@@ -355,6 +401,12 @@ export function ReferralTracker({
           <p aria-live="polite" className="mt-3 text-sm text-[#9aada8]">
             {referralLine(referrals)}
           </p>
+          {invited > 0 ? (
+            <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-[#f2c14e]/90">
+              <span aria-hidden="true" className="size-1.5 rounded-full bg-[#f2c14e]" />
+              {invited === 1 ? "1 invite out" : `${invited} invites out`} — each friend who joins fills one.
+            </p>
+          ) : null}
         </div>
       ) : (
         <p aria-live="polite" className="mt-2 text-center text-base text-[#e8f3f1]">
@@ -384,11 +436,16 @@ export function ReferralTracker({
                 "relative rounded-2xl border px-4 py-3.5 transition-[color,background-color,border-color,box-shadow,transform] duration-700",
                 isFlash
                   ? "border-[#f2c14e] bg-[#f2c14e]/22 shadow-[0_0_28px_rgba(242,193,78,0.35),inset_0_0_20px_rgba(242,193,78,0.08)]"
+                  : unlocked && t.id === "founding"
+                    ? "border-[#f2c14e] bg-[radial-gradient(ellipse_at_30%_20%,rgba(255,229,102,0.28),rgba(242,193,78,0.1)_60%)] shadow-[0_0_36px_rgba(242,193,78,0.45)]"
                   : unlocked
                     ? "border-[#f2c14e]/50 bg-[#f2c14e]/[0.12] motion-safe:hover:-translate-y-0.5 motion-safe:hover:border-[#f2c14e]/70 motion-safe:hover:duration-(--transition-duration-fast)"
                     : isNext
                       ? "border-[#f2c14e]/75 bg-[#f2c14e]/[0.04] shadow-[0_0_20px_rgba(242,193,78,0.18)] motion-safe:hover:-translate-y-0.5 motion-safe:hover:border-[#f2c14e] motion-safe:hover:duration-(--transition-duration-fast)"
-                      : "border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.02] opacity-75"
+                      : t.id === "founding"
+                        ? // The prize stays lit while locked: a warm card the eye lands on last.
+                          "border-[#f2c14e]/40 bg-[radial-gradient(ellipse_at_30%_20%,rgba(242,193,78,0.16),rgba(242,193,78,0.03)_65%)] shadow-[0_0_24px_rgba(242,193,78,0.14)]"
+                        : "border-[#e8f3f1]/10 bg-[#e8f3f1]/[0.02] opacity-75"
               )}
             >
               {!unlocked ? (
@@ -397,20 +454,20 @@ export function ReferralTracker({
                   className="pointer-events-none absolute bottom-3 right-3 size-3.5 text-[#9aada8]"
                 />
               ) : null}
-              <div className="flex items-center justify-between gap-2">
-                <TierPlanet
-                  tierId={t.id}
-                  unlocked={unlocked}
-                  isNext={isNext}
-                  float={motionOk && (unlocked || isNext)}
-                  flashing={isFlash && motionOk}
-                  floatIndex={i}
-                />
-                <p className="text-[11px] uppercase tracking-[0.14em] text-[#9aada8]">
-                  {t.at === 0 ? "Start" : `${t.at} ${t.at === 1 ? "friend" : "friends"}`}
-                </p>
-              </div>
-              <p className="mt-2.5 text-sm font-medium text-[#e8f3f1]">{t.label}</p>
+              {/* Planet, then the count on its own line: side by side, the letter-spaced
+                  count ran out of room at five columns and clipped against the card edge. */}
+              <TierPlanet
+                tierId={t.id}
+                unlocked={unlocked}
+                isNext={isNext}
+                float={motionOk && (unlocked || isNext)}
+                flashing={isFlash && motionOk}
+                floatIndex={i}
+              />
+              <p className="mt-2 whitespace-nowrap text-[11px] uppercase tracking-[0.14em] text-[#9aada8]">
+                {t.at === 0 ? "Start" : `${t.at} ${t.at === 1 ? "friend" : "friends"}`}
+              </p>
+              <p className="mt-1.5 text-sm font-medium text-[#e8f3f1]">{t.label}</p>
               <p className="mt-1 text-xs leading-relaxed text-[#9aada8]">{t.blurb}</p>
               {unlocked ? (
                 <p className="mt-3 text-xs text-[#f2c14e]">Unlocked</p>
@@ -435,4 +492,20 @@ export function ReferralTracker({
       </ol>
     </div>
   );
+}
+
+/**
+ * A starfield burst from the circle a new friend just filled, when the tracker is what is on
+ * screen. The pass bursts from its own planet when IT is on screen, so this stays quiet then:
+ * one burst per join.
+ */
+function burstFromCircle(row: HTMLElement | null, index: number) {
+  if (!row || document.visibilityState !== "visible") return;
+  const onScreen = (r: DOMRect) => r.bottom > 0 && r.top < window.innerHeight;
+  const planet = document.querySelector("[data-pass-planet]");
+  if (planet && onScreen(planet.getBoundingClientRect())) return;
+  const circle = row.children[index];
+  if (!circle) return;
+  const r = circle.getBoundingClientRect();
+  if (onScreen(r)) pulseStarfield(r.left + r.width / 2, r.top + r.height / 2);
 }

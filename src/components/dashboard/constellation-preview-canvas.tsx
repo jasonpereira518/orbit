@@ -291,10 +291,12 @@ export function ConstellationPreviewCanvas({
   const layout = useMemo(() => expandPreviewSky(sky), [sky]);
   const index = useMemo(() => buildSkyIndex(layout), [layout]);
   // What `drawSky` paints itself: the washes come from `bakeWashes` under it, and the lines are
-  // softened (see LINE_OPACITY).
+  // softened (see LINE_OPACITY). The card has its own backdrop (the starfield and `paintGlow`),
+  // so the phone's galaxy bitmap is left out rather than baked for a card this small.
   const drawn = useMemo<SkyIndex>(
     () => ({
       ...index,
+      galaxy: undefined,
       nebulae: [],
       edges: index.edges.map((e) => ({ ...e, opacity: e.opacity * LINE_OPACITY })),
     }),

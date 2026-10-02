@@ -80,7 +80,7 @@ export async function deleteOwnAccount(
     } catch (err) {
       console.error("[account-deletion] cancelling the subscription threw", err);
       throw new UserFacingError(
-        "Couldn’t cancel your Orbit Pro subscription, so nothing was deleted — try again, or contact us"
+        "Couldn’t cancel your Orbit subscription, so nothing was deleted — try again, or contact us"
       );
     }
   }

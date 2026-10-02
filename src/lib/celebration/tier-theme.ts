@@ -9,20 +9,24 @@
  *
  * Two rules this file exists to enforce:
  *
- * 1. `ink` is DARK on both tiers and is used at FULL OPACITY. Body copy on a
+ * 1. `ink` is DARK on all three tiers and is used at FULL OPACITY. Body copy on a
  *    saturated field is exactly where `text-white/70` designs rot — the
  *    resulting ratio silently depends on the field behind it. `inkSoft` and
  *    `inkFaint` are measured values, never opacities of `ink`.
- * 2. The emblem must separate from its own field. Lifetime does it by hue
- *    (warm gold on orange is a value step); Pro does it by BOTH value and
- *    saturation — a desaturated blue-steel coin on a vivid blue field. A
- *    saturated blue coin would dissolve into the ground.
+ * 2. The emblem must separate from its own field. Max does it by hue (warm
+ *    gold on orange is a value step); Pro does it by BOTH value and saturation
+ *    — a desaturated blue-steel coin on a vivid blue field; Lifetime by value
+ *    alone — near-white highlights and gunmetal shadows on a mid silver field,
+ *    since silver on silver has no hue or saturation to spend.
+ *
+ * Pricing v2 colors: Pro blue, Max the app's gold, Lifetime silver (a Lifetime
+ * grant is admin-assigned, and gets the silver version).
  */
 
-import { PLAN_LABELS, type Plan } from "@/lib/plan-limits";
+import { PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
 import { planCopy } from "@/lib/plan-copy";
 
-export type PaidPlan = Extract<Plan, "orbit" | "lifetime">;
+export type PaidPlan = Extract<Plan, "orbit" | "max" | "lifetime">;
 
 /** The flat colour field. There is no black anywhere in the celebration. */
 export type FlatField = {
@@ -57,23 +61,21 @@ export type FacetRamp = {
 
 export type TierTheme = {
   plan: PaidPlan;
+  /** The motion signature of this plan's activation. */
+  signature: "orbit" | "flare" | "seal";
   /** "Orbit Pro" / "Orbit Lifetime" — the lockup uppercases it. */
   name: string;
   /** Fixed brand hex, kept for anything that needs the tier's own colour. */
   accent: string;
   field: FlatField;
   emblem: FacetRamp;
-  /** Body copy on the field. Dark, full opacity, AA on both tiers. */
+  /** Body copy on the field. Dark, full opacity, AA on all three tiers. */
   ink: string;
   inkRgb: string;
   /** Secondary copy (the welcome line). Measured, not derived. */
   inkSoft: string;
   /** The skip hint only. Quieter, and honestly decorative-adjacent. */
   inkFaint: string;
-  /** The perk-row slab. Must be the emblem's lightest facet, NOT a shade of
-   * the field — a chip one step off its own ground is invisible, which is
-   * exactly how the first pass failed. */
-  chip: string;
   /** The dismiss button, inverted into a dark slab against the bright field. */
   onField: string;
   onFieldInk: string;
@@ -92,6 +94,7 @@ export const MAX_PERKS = 6;
 const THEMES: Record<PaidPlan, TierTheme> = {
   orbit: {
     plan: "orbit",
+    signature: "orbit",
     name: PLAN_LABELS.orbit,
     accent: "#599de7",
     field: {
@@ -117,7 +120,6 @@ const THEMES: Record<PaidPlan, TierTheme> = {
     inkRgb: "4, 22, 46",
     inkSoft: "#0B2A52",
     inkFaint: "#16406F",
-    chip: "#DCE9F7", // ink on it: 14.9:1
     onField: "#0C1526",
     onFieldInk: "#FFFFFF",
     sparkRgb: "255, 255, 255",
@@ -126,9 +128,10 @@ const THEMES: Record<PaidPlan, TierTheme> = {
     welcome: "Welcome to Orbit Pro. The whole sky is yours.",
     perks: planCopy("orbit").features.slice(0, MAX_PERKS),
   },
-  lifetime: {
-    plan: "lifetime",
-    name: PLAN_LABELS.lifetime,
+  max: {
+    plan: "max",
+    signature: "flare",
+    name: PLAN_LABELS.max,
     accent: "#f2c14e",
     field: {
       hot: "#FFCE63",
@@ -151,11 +154,46 @@ const THEMES: Record<PaidPlan, TierTheme> = {
     inkRgb: "59, 28, 2",
     inkSoft: "#5A3208",
     inkFaint: "#7A4A10",
-    chip: "#FFE9AE", // ink on it: 12.6:1
     onField: "#3B1C02",
     onFieldInk: "#FFFFFF",
     sparkRgb: "255, 255, 255",
     coreRgb: "255, 250, 236",
+    kicker: "A brighter star is igniting",
+    welcome: "Welcome to Orbit Max. Everything Orbit does, at full strength.",
+    perks: planCopy("max").features.slice(0, MAX_PERKS),
+  },
+  lifetime: {
+    plan: "lifetime",
+    signature: "seal",
+    name: PLAN_LABELS.lifetime,
+    accent: "#c9d1db",
+    field: {
+      hot: "#E9EDF2",
+      mid: "#C3CBD5",
+      edge: "#98A3B1",
+      vignette: "#5E6875",
+      midRgb: "195, 203, 213",
+      vignetteRgb: "94, 104, 117",
+    },
+    // Silver on silver: the coin separates by VALUE — near-white highlights and gunmetal
+    // shadows around a mid silver — because there is no hue or saturation to spend.
+    emblem: {
+      highlight: "#FFFFFF",
+      light: "#E4E8ED",
+      base: "#A7B0BC",
+      shadow: "#6B7582",
+      deep: "#3C444F",
+      contour: "#1C2129",
+      ringLit: "#FFFFFF",
+    },
+    ink: "#1C2129", // 9.9:1 on field.mid
+    inkRgb: "28, 33, 41",
+    inkSoft: "#2D343D",
+    inkFaint: "#434C57", // 5.3:1 on field.mid
+    onField: "#1C2129",
+    onFieldInk: "#FFFFFF",
+    sparkRgb: "255, 255, 255",
+    coreRgb: "250, 251, 253",
     kicker: "This one is yours to keep",
     welcome: "Welcome to Orbit Lifetime. Yours for as long as Orbit exists.",
     perks: planCopy("lifetime").features.slice(0, MAX_PERKS),
@@ -167,5 +205,5 @@ export function tierTheme(plan: PaidPlan): TierTheme {
 }
 
 export function isPaidPlan(plan: Plan): plan is PaidPlan {
-  return plan === "orbit" || plan === "lifetime";
+  return plan === "orbit" || plan === "max" || plan === "lifetime";
 }

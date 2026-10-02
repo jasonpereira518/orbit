@@ -31,7 +31,7 @@ import {
   type Interaction,
 } from "@/db/schema";
 import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
-import { recordGateHit } from "@/lib/gate-events";
+import { recordGateHit, recordGateHitThrottled } from "@/lib/gate-events";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -42,6 +42,7 @@ import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import { claimIdentities, syncIdentitiesForContact } from "@/lib/contact-identity";
 import { identityKeysFor } from "@/lib/duplicates";
+import { normalizeBlueskyHandle, normalizeMastodonAcct } from "@/lib/social-handles";
 import {
   rebuildContactEmbedding,
   rebuildContactEmbeddingsBatch,
@@ -91,6 +92,9 @@ export type ContactInput = {
   linkedinUrl?: string;
   xHandle?: string;
   website?: string;
+  /** Public Bluesky handle / Mastodon account, for Radar's post signals. Normalized here. */
+  blueskyHandle?: string | null;
+  mastodonAcct?: string | null;
   profileImageUrl?: string | null;
   relationshipScore?: number;
   /**
@@ -336,6 +340,8 @@ function contactInsertValues(
     linkedinUrl: input.linkedinUrl,
     xHandle: input.xHandle,
     website: input.website,
+    blueskyHandle: normalizeBlueskyHandle(input.blueskyHandle),
+    mastodonAcct: normalizeMastodonAcct(input.mastodonAcct),
     profileImageUrl: input.profileImageUrl ?? null,
     relationshipScore: input.relationshipScore ?? 2,
     // Deliberately NOT `input.statedCloseness ?? input.relationshipScore` —
@@ -593,9 +599,20 @@ export async function createContactsBulkForUser(
     options?.headroom !== undefined
       ? options.headroom
       : await contactHeadroomForUser(userId);
-  if (headroom !== null && headroom < 1) return [];
   const admitted =
-    headroom === null ? inputs : inputs.slice(0, headroom);
+    headroom === null ? inputs : inputs.slice(0, Math.max(0, headroom));
+  if (admitted.length < inputs.length) {
+    // The cap truncated an import. Throttled: a large import runs as many batches, and
+    // each one would otherwise record the same wall.
+    const { plan } = await getEntitlements(userId);
+    await recordGateHitThrottled({
+      userId,
+      feature: "contacts",
+      plan,
+      context: { bulk: true, refused: inputs.length - admitted.length },
+    });
+  }
+  if (admitted.length === 0) return [];
 
   const db = await getDb();
   const now = new Date();
@@ -845,6 +862,9 @@ export async function updateContactForUser(
         : {}),
       ...(input.xHandle !== undefined ? { xHandle: input.xHandle } : {}),
       ...(input.website !== undefined ? { website: input.website } : {}),
+      // Normalized, and cleared by an empty or unrecognizable value rather than stored raw.
+      ...(input.blueskyHandle !== undefined ? { blueskyHandle: normalizeBlueskyHandle(input.blueskyHandle) } : {}),
+      ...(input.mastodonAcct !== undefined ? { mastodonAcct: normalizeMastodonAcct(input.mastodonAcct) } : {}),
       ...(input.profileImageUrl !== undefined
         ? { profileImageUrl: input.profileImageUrl }
         : {}),

@@ -18,8 +18,21 @@ const PILL =
  * LinkedIn opens in a new tab; the text is prewritten (`SHARE_TEXT`) and the URL is the
  * `?ref=` link, so whoever follows it lands on the invited state and the referral counts.
  * `pageUrl` is the waitlist page on its own domain (`getWaitlistPageUrl`).
+ *
+ * `onShared` fires only when the native share sheet reports a COMPLETED share — the one
+ * signal the page gets that the link actually went somewhere. Copying never fires it.
  */
-export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pageUrl: string; play: boolean }) {
+export function ShareRow({
+  ticket,
+  pageUrl,
+  play,
+  onShared,
+}: {
+  ticket: InterestTicket;
+  pageUrl: string;
+  play: boolean;
+  onShared?: () => void;
+}) {
   const reduced = usePrefersReducedMotion();
   const url = buildShareUrl(pageUrl, ticket);
   const text = SHARE_TEXT;
@@ -66,7 +79,9 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
       await navigator.share({ title: SHARE_TITLE, text, url });
     } catch {
       // Dismissed. Nothing to do.
+      return;
     }
+    onShared?.();
   }
 
   // Messages has no web share intent, so this copies the intro and the link together, ready

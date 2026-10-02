@@ -54,6 +54,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/onboarding",
   "/onboarding/wizard",
   "/settings",
+  "/settings/plan-activation-preview",
   // Product
   "/dashboard",
   "/capture",
@@ -76,6 +77,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/recruiters/compose",
   "/recruiters/[id]",
   "/reminders",
+  "/radar",
 ] as const;
 
 export { isTrackedPath } from "@/lib/analytics-redact";

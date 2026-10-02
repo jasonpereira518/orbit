@@ -23,7 +23,6 @@ import {
 } from "../src/lib/contact-profile";
 import { hybridSearchContacts } from "../src/lib/hybrid-search";
 import { buildContactEmbeddingContent } from "../src/lib/search";
-import { apolloEmploymentToExperiences } from "../src/lib/apollo";
 
 const USER = "smoke-contact-profile-user";
 
@@ -483,44 +482,6 @@ async function main() {
     truncatedForEmbedding.includes("Near Limit Headline"),
     `content length ${nearLimitContent.length}`
   );
-
-  // --- apollo employment history -------------------------------------------------
-  const converted = apolloEmploymentToExperiences({
-    employment_history: [
-      { organization_name: "Ramp", title: "Engineer", start_date: "2023-04-01",
-        end_date: null, current: true },
-      { organization_name: "Stripe", title: "Engineer", start_date: "2019-01-01",
-        end_date: "2023-03-01", current: false },
-      { organization_name: "MIT", degree: "BS", major: "EECS", kind: "education",
-        start_date: "2015-09-01", end_date: "2019-06-01", current: false },
-      { organization_name: "Stanford", degree: "PhD", major: "CS", kind: "education",
-        start_date: "2023-09-01", end_date: null, current: true },
-      { organization_name: "  ", title: "Ghost", current: false },
-    ],
-  });
-
-  check("employment rows become roles", converted.filter((e) => e.kind === "role").length === 2);
-  check(
-    "degree rows become education, not roles",
-    converted.find((e) => e.organization === "MIT")?.kind === "education"
-  );
-  check(
-    "education carries its field of study",
-    converted.find((e) => e.organization === "MIT")?.fieldOfStudy === "EECS"
-  );
-  check(
-    "dates are split into parts",
-    converted.find((e) => e.organization === "Stripe")?.startYear === 2019 &&
-      converted.find((e) => e.organization === "Stripe")?.startMonth === 1 &&
-      converted.find((e) => e.organization === "Stripe")?.endYear === 2023
-  );
-  check("the current flag survives", converted.find((e) => e.organization === "Ramp")?.isCurrent === true);
-  check(
-    "an in-progress degree is never a current role",
-    converted.find((e) => e.organization === "Stanford")?.kind === "education" &&
-      converted.find((e) => e.organization === "Stanford")?.isCurrent === false
-  );
-  check("nameless rows are dropped", converted.every((e) => e.organization.trim().length > 0));
 
   // --- an all-whitespace organization must not wipe a stored career ----------------
   //

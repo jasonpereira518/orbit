@@ -12,6 +12,12 @@
  * Nobody's id, name, role or contact details are in it, and the card draws no names at all. The
  * only words are the cluster names, and they are there as seeds: each cluster's wash takes its
  * shape from its name, so the card's clouds match the tab's.
+ *
+ * What the card deliberately does NOT carry from the tab's galaxy anatomy: the galaxy backdrop,
+ * a split company's part pools, a school's rings and every petal name. Ring and petal clusters
+ * keep one ordinary wash. Role ("Engineers") and pair clusters are drawn without a cloud in the
+ * tab, so their washes are skipped here at build time (the wire format never needs the form);
+ * a role cluster's lines stay dotted via the style's `dash`.
  */
 import {
   buildHybridGraphLayout,
@@ -122,6 +128,7 @@ export function buildPreviewSky(contacts: GraphContactInput[], userName: string)
       );
     } else if (n.type === "nebula") {
       const d = n.data as NebulaData;
+      if (d.form === "open" || d.form === "binary") continue;
       washes.push(x, y, round(d.radius), colors.of(muted(d.color)), names.of(d.company));
     }
   }
@@ -142,6 +149,8 @@ export function buildPreviewSky(contacts: GraphContactInput[], userName: string)
         muted(String(e.style?.stroke ?? "rgba(255,255,255,0.35)")),
         Number(e.style?.opacity ?? 0.5),
         Number(e.style?.strokeWidth ?? 1),
+        // The dot length of a dotted role line (its gap is derived), 0 for a solid one.
+        e.data?.dash ? e.data.dash[0] : 0,
       ])
     );
   }

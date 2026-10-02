@@ -17,8 +17,13 @@ import { INTERNAL_FETCH_TIMEOUT_MS, internalAuthHeaders, internalFetch, isIntern
 import { GET as processStalled } from "../src/app/api/imports/process-stalled/route";
 import { POST as continueImport } from "../src/app/api/imports/[id]/continue/route";
 import { POST as embeddingBackfill } from "../src/app/api/embeddings/backfill/route";
+import { POST as workHistoryResearch } from "../src/app/api/work-history/research/route";
+import { POST as workHistorySweep } from "../src/app/api/work-history/sweep/route";
 import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-events/backfill/route";
 import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
+import { POST as radarRun } from "../src/app/api/radar/run/route";
+import { POST as radarFeeds } from "../src/app/api/radar/feeds/sweep/route";
+import { POST as radarDigest } from "../src/app/api/radar/digest/route";
 
 const SECRET = "smoke-internal-auth-secret";
 
@@ -122,10 +127,20 @@ async function main() {
   check("imports/[id]/continue → 401", cont.status === 401, `got ${cont.status}`);
   const emb = await embeddingBackfill(req());
   check("embeddings/backfill → 401", emb.status === 401, `got ${emb.status}`);
+  const wh = await workHistoryResearch(req());
+  check("work-history/research → 401", wh.status === 401, `got ${wh.status}`);
+  const whs = await workHistorySweep(req());
+  check("work-history/sweep → 401", whs.status === 401, `got ${whs.status}`);
   const tl = await timelineBackfill(req());
   check("linkedin/timeline-events/backfill → 401", tl.status === 401, `got ${tl.status}`);
   const cap = await runCaptureJob(req(), { params: Promise.resolve({ id: "smoke-capture" }) });
   check("capture/jobs/[id]/run → 401", cap.status === 401, `got ${cap.status}`);
+  const radar = await radarRun(req());
+  check("radar/run → 401", radar.status === 401, `got ${radar.status}`);
+  const feeds = await radarFeeds(req());
+  check("radar/feeds/sweep → 401", feeds.status === 401, `got ${feeds.status}`);
+  const digest = await radarDigest(req());
+  check("radar/digest → 401", digest.status === 401, `got ${digest.status}`);
 
   console.log("\nRoutes reject a wrong bearer when a secret is configured...");
   env({ CRON_SECRET: SECRET, VERCEL: "1", NODE_ENV: "production" });
@@ -135,9 +150,12 @@ async function main() {
     embeddingBackfill(req("Bearer nope")),
     timelineBackfill(req("Bearer nope")),
     runCaptureJob(req("Bearer nope"), { params: Promise.resolve({ id: "smoke-capture" }) }),
+    radarRun(req("Bearer nope")),
+    radarFeeds(req("Bearer nope")),
+    radarDigest(req("Bearer nope")),
   ]);
   check(
-    "all five → 401",
+    "all eight → 401",
     wrong.every((r) => r.status === 401),
     wrong.map((r) => r.status).join(",")
   );

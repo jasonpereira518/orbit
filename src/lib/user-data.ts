@@ -15,6 +15,10 @@ import {
   apiKeys,
   appleConnections,
   billingEvents,
+  creditAccounts,
+  creditGrants,
+  creditHolds,
+  planMeterUsage,
   calendarSources,
   calendarSubscriptions,
   captureHandoffs,
@@ -32,6 +36,7 @@ import {
   contactEmbeddings,
   memoryChunks,
   contactExperiences,
+  contactCareerMoves,
   contactIdentities,
   contactMerges,
   contactProfiles,
@@ -65,6 +70,10 @@ import {
   outreachCampaigns,
   pageViews,
   planUpgradeEvents,
+  radarRuns,
+  contactSignals,
+  recommendationFeedback,
+  recommendations,
   recruiterMessages,
   recruiters,
   recruiterScanState,
@@ -116,7 +125,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * the same bug class `scripts/smoke-purge.ts` exists to catch.
  *
  * Every table carrying a `user_id` must be handled by some step here, either by an explicit
- * delete or by a cascade from one. The nine covered by cascade, so deliberately absent:
+ * delete or by a cascade from one. The ten covered by cascade, so deliberately absent:
  *   - `chat_messages`        -> cascades from `chat_threads`
  *   - `import_job_rows`      -> cascades from `imports`
  *   - `action_items`         -> cascades from `contacts` and `interactions`
@@ -125,6 +134,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *   - `contact_profiles`     -> cascades from `contacts` (verified by `scripts/smoke-purge.ts`,
  *                               not assumed — see that script's header)
  *   - `contact_experiences`  -> cascades from `contacts` (same)
+ *   - `contact_career_moves`  -> cascades from `contacts` (same)
  *   - `contact_opportunities`-> cascades from `contacts`. Its `source_interaction_id` is
  *                               `on delete set null`, so the interaction FK is NOT what
  *                               covers it — the contact one is.
@@ -132,6 +142,11 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *                               global and never deleted with an account). The match is the
  *                               only per-user row in the job-feed trio; the feed itself and
  *                               its postings are global and carry no `user_id`.
+ * `recommendations`, `recommendation_feedback` and `contact_signals` also cascade from
+ * `contacts`, but are deleted explicitly by `insights`, which can run without deleting
+ * contacts. `radar_runs` has no parent and is always deleted explicitly. Radar's news tables
+ * (`external_sources`, `external_items`, `external_item_companies`) are global, like the
+ * job feed's, carry no `user_id`, and are never deleted with an account.
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly. `suggested_reminders` looks like it would cascade
@@ -215,8 +230,8 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
-    counts: [aiSuggestions, contactEmbeddings, memoryChunks, closenessCohorts],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
+    counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
       // holding this person's prompts, and deleting our row would only lose the handle to
@@ -233,6 +248,26 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // in the product — leaving these behind after a deletion would leave the notes behind.
       await db.delete(memoryChunks).where(eq(memoryChunks.userId, userId));
       await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
+      // Radar's list, what the person did with it, and its run history. The first two also
+      // cascade from contacts, but an insights-only delete keeps the contacts. `radar_runs`
+      // has no parent at all. The schedule columns are cleared so the next visit rebuilds
+      // from scratch; the pause flag is a preference and survives (see below).
+      await db.delete(recommendations).where(eq(recommendations.userId, userId));
+      await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
+      await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
+      // What Radar learned from the outside world about these contacts (headlines, posts).
+      // Also cascades from contacts; deleted here for the same reason.
+      await db.delete(contactSignals).where(eq(contactSignals.userId, userId));
+      // The learned model is derived from the data just deleted.
+      await db
+        .update(userSettings)
+        .set({
+          radarLastRunAt: null,
+          radarNextAt: null,
+          radarLeaseUntil: null,
+          radarModel: null,
+        })
+        .where(eq(userSettings.userId, userId));
     },
   },
   notes: {
@@ -573,6 +608,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(contactBriefs, "contact_id"),
       own(contactProfiles),
       own(contactExperiences),
+      own(contactCareerMoves),
       joined("contact_tags", (userId, limit, offset) => sql`SELECT ct.* FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.user_id = ${userId} ORDER BY ct.id LIMIT ${limit} OFFSET ${offset}`),
     ],
     // The `implies` list in `DATA_CATEGORY_META` is what stops this step from quietly
@@ -713,6 +749,23 @@ const PRESERVED_SETTINGS_COLUMNS = {
   subscriptionStatus: true,
   subscriptionPeriodEnd: true,
   subscriptionEventAt: true,
+  // Both were missing before pricing v2, so a partial delete reset an annual subscriber to
+  // "never recorded", which reads as the monthly price.
+  subscriptionMonthlyCents: true,
+  subscriptionInterval: true,
+  subscriptionPeriodStart: true,
+  // Founding pricing is a promise made to the account, not to its contents.
+  foundingEligible: true,
+  foundingRedeemedAt: true,
+  foundingWindowEndsAt: true,
+  foundingSubscriptionId: true,
+  aiKeyPreference: true,
+  maxNudgeSeenAt: true,
+  // Credit emails: the person's choice, and what was already sent this cycle (so deleting
+  // data mid-cycle never re-sends a notice).
+  creditEmailEnabled: true,
+  creditNoticePeriodStart: true,
+  creditNoticeLevel: true,
   compedNote: true,
   compedAt: true,
   compedBy: true,
@@ -726,6 +779,17 @@ const PRESERVED_SETTINGS_COLUMNS = {
   termsAcceptedAt: true,
   termsVersion: true,
   timelineBackfillEnabled: true,
+  // A person who paused Radar did not ask for it back by deleting their data. The same goes
+  // for autopilot, extension capture and the digest: preferences, not content. The digest's
+  // week claim and unsubscribe hash survive too, so a delete neither re-sends this week's
+  // email nor breaks the unsubscribe link in the last one.
+  radarPaused: true,
+  radarAutopilot: true,
+  radarCaptureLinkedinActivity: true,
+  radarDigestEnabled: true,
+  radarDigestTz: true,
+  radarDigestLastWeek: true,
+  radarDigestUnsubTokenHash: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
@@ -764,6 +828,26 @@ const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
   if (key === "billing") {
     await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
+    // Credit grants are money for the same reason billing rows are: a pack is cash received
+    // and its unused credits are a liability, so the rows are anonymised, never deleted. The
+    // account is gone, so whatever it had not spent is closed out as revoked — which is what
+    // takes it off the outstanding-liability figure.
+    await db
+      .update(creditGrants)
+      .set({
+        userId: null,
+        status: "revoked",
+        revokedAt: sql`coalesce(${creditGrants.revokedAt}, now())`,
+        revokedReason: sql`coalesce(${creditGrants.revokedReason}, 'account_deleted')`,
+        microsRevoked: sql`coalesce(${creditGrants.microsRevoked}, 0) + ${creditGrants.microsRemaining}`,
+        microsRemaining: 0,
+        updatedAt: new Date(),
+      })
+      .where(eq(creditGrants.userId, userId));
+    // A lock row, in-flight holds and monthly counters: operational, keyed on the person.
+    await db.delete(creditHolds).where(eq(creditHolds.userId, userId));
+    await db.delete(creditAccounts).where(eq(creditAccounts.userId, userId));
+    await db.delete(planMeterUsage).where(eq(planMeterUsage.userId, userId));
     return;
   }
   if (key === "preferences") {

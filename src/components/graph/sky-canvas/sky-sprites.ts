@@ -12,6 +12,9 @@
  * Every cache is bounded by the sky's own vocabulary (score tiers × cluster colours ×
  * emphasis states), so none of them needs eviction.
  */
+import { galaxyBackdropData } from "@/lib/graph/galaxy-dust";
+import type { GalaxyStructure } from "@/lib/graph/galaxy-structure";
+import { RING_STOPS, drawGalaxyBackdrop } from "@/lib/graph/sky-bitmap-draw";
 import { withAlpha } from "@/lib/school-color";
 import { CONSTELLATION_STAR_PX } from "@/lib/graph/starfield-scale";
 
@@ -223,6 +226,182 @@ export function nebulaSprite(color: string, seed: string): Sprite | null {
   return sprite;
 }
 
+/**
+ * A school's ring: a soft annulus that peaks on the outer ring, the desktop `drawRing`'s own stops
+ * (`RING_STOPS`). The sprite's edge is the ring's OUTER radius (`RING_OUTER` x its own), so a caller
+ * draws it `outer * 2 * k` across, centred on the ring.
+ */
+const ringCache = new Map<string, Sprite>();
+
+export function ringSprite(color: string): Sprite | null {
+  const cached = ringCache.get(color);
+  if (cached) return cached;
+  const made = makeCanvas(NEBULA_SPRITE_PX);
+  if (!made) return null;
+  const { canvas, ctx } = made;
+  const c = NEBULA_SPRITE_PX / 2;
+
+  const fill = ctx.createRadialGradient(c, c, 0, c, c, c);
+  for (const [at, alpha] of RING_STOPS) fill.addColorStop(at, withAlpha(color, alpha));
+  ctx.fillStyle = fill;
+  ctx.fillRect(0, 0, NEBULA_SPRITE_PX, NEBULA_SPRITE_PX);
+
+  const sprite: Sprite = { canvas, scale: 1 };
+  ringCache.set(color, sprite);
+  return sprite;
+}
+
+// ---------------------------------------------------------------------------
+// The galaxy backdrop
+// ---------------------------------------------------------------------------
+
+/** The baked backdrop and the world box its pixels cover. */
+export type GalaxyBitmap = {
+  canvas: HTMLCanvasElement;
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+};
+
+/** Side of the baked backdrop. 1024^2 is 4MB of pixels: one bitmap, once per galaxy. */
+export const GALAXY_BITMAP_PX = 1024;
+
+// Keyed by the GalaxyStructure object itself: a layout change builds a new one and so re-bakes,
+// an unchanged layout hands back the same object and never does. A WeakMap, so a superseded
+// layout's bitmap goes with it. A `null` entry is a bake that failed (no 2D context): remembered,
+// so a frame does not try again, and allocate another 1024^2 canvas, sixty times a second.
+//
+// Not cleared by `clearSpriteCaches`: the backdrop's colours are its own, not the theme's, so a
+// theme flip has nothing to re-bake. `releaseGalaxyBitmaps` drops it when the chart unmounts.
+let galaxyCache = new WeakMap<GalaxyStructure, Map<number, GalaxyBitmap | null>>();
+/**
+ * The last bitmap baked, held strongly so unmounting can zero its 4MB backing store at once.
+ * Only the last: an older one belongs to a superseded layout and goes with it at GC, and holding
+ * every one here would keep them all alive for the life of the chart.
+ */
+let liveGalaxyCanvas: HTMLCanvasElement | null = null;
+/** Bakes scheduled and not yet run, so a galaxy is queued once, and unmounting can cancel them. */
+let pendingBakes = new WeakSet<GalaxyStructure>();
+const pendingCancels = new Set<() => void>();
+
+/**
+ * The galaxy behind the sky, as one bitmap drawn by the SAME `drawGalaxyBackdrop` the desktop
+ * worker runs. Covers `galaxyBackdropData(galaxy)`'s box at `size / box.width` backing px per
+ * world unit; a frame blits it with a single `drawImage`.
+ *
+ * Bakes synchronously. A frame never calls this: it reads `bakedGalaxyBitmap` and, when that has
+ * nothing yet, `scheduleGalaxyBake` runs this outside the frame.
+ */
+export function galaxyBackdropBitmap(
+  galaxy: GalaxyStructure,
+  size = GALAXY_BITMAP_PX
+): GalaxyBitmap | null {
+  const known = bakedGalaxyBitmap(galaxy, size);
+  if (known !== undefined) return known;
+
+  let bySize = galaxyCache.get(galaxy);
+  if (!bySize) {
+    bySize = new Map();
+    galaxyCache.set(galaxy, bySize);
+  }
+  const made = makeCanvas(size);
+  if (!made) {
+    bySize.set(size, null);
+    return null;
+  }
+  const { canvas, ctx } = made;
+  const data = galaxyBackdropData(galaxy);
+  const scale = size / data.width;
+  ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
+  drawGalaxyBackdrop(ctx, data, scale);
+  ctx.globalAlpha = 1;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  const bitmap: GalaxyBitmap = {
+    canvas,
+    minX: data.minX,
+    minY: data.minY,
+    width: data.width,
+    height: data.height,
+  };
+  bySize.set(size, bitmap);
+  liveGalaxyCanvas = canvas;
+  return bitmap;
+}
+
+/** What is cached for this galaxy: its bitmap, `null` if its bake failed, `undefined` if not baked. */
+export function bakedGalaxyBitmap(
+  galaxy: GalaxyStructure,
+  size = GALAXY_BITMAP_PX
+): GalaxyBitmap | null | undefined {
+  return galaxyCache.get(galaxy)?.get(size);
+}
+
+/**
+ * Bake the galaxy outside the frame: in an idle callback where there is one, else a timeout queued
+ * after the next animation frame (Safari has no `requestIdleCallback`), then call `onBaked` so the chart draws once more.
+ * At 10,000 contacts the bake is tens of ms of path filling; inside the first frame it held back
+ * the chart's first paint, out here it only delays the backdrop. At most one per galaxy is queued
+ * however many frames ask, and none once it is baked or has failed.
+ */
+export function scheduleGalaxyBake(
+  galaxy: GalaxyStructure,
+  onBaked?: () => void,
+  size = GALAXY_BITMAP_PX
+) {
+  if (bakedGalaxyBitmap(galaxy, size) !== undefined || pendingBakes.has(galaxy)) return;
+  pendingBakes.add(galaxy);
+  const queue = pendingBakes;
+  const run = () => {
+    pendingCancels.delete(cancel);
+    // Unmounted since this was queued: `releaseGalaxyBitmaps` swapped the set out.
+    if (queue !== pendingBakes) return;
+    pendingBakes.delete(galaxy);
+    if (galaxyBackdropBitmap(galaxy, size)) onBaked?.();
+  };
+  let cancel: () => void;
+  if (typeof requestIdleCallback === "function") {
+    // The timeout keeps a continuous pan (no idle time at all) from starving the bake forever.
+    const handle = requestIdleCallback(run, { timeout: 500 });
+    cancel = () => {
+      if (typeof cancelIdleCallback === "function") cancelIdleCallback(handle);
+    };
+  } else {
+    // A bare zero-delay timeout still lands before the first paint; wait for the next frame first.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frame =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame(() => {
+            timer = setTimeout(run, 0);
+          })
+        : undefined;
+    if (frame === undefined) timer = setTimeout(run, 0);
+    cancel = () => {
+      if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }
+  pendingCancels.add(cancel);
+}
+
+/**
+ * Hand the galaxy's memory back when the chart unmounts: cancel any pending bake, zero the live
+ * bitmap's backing store (iOS caps the canvas total and only reclaims it at GC) and forget every
+ * bake, so nothing can blit the zeroed canvas. The next mount bakes afresh.
+ */
+export function releaseGalaxyBitmaps() {
+  for (const cancel of pendingCancels) cancel();
+  pendingCancels.clear();
+  pendingBakes = new WeakSet();
+  galaxyCache = new WeakMap();
+  if (liveGalaxyCanvas) {
+    liveGalaxyCanvas.width = 0;
+    liveGalaxyCanvas.height = 0;
+    liveGalaxyCanvas = null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Background: milky way + the fixed starfield
 // ---------------------------------------------------------------------------
@@ -284,9 +463,13 @@ export function bakeBackground(
   return canvas;
 }
 
-/** Drop every cached bitmap. Called when the document's fonts or theme change. */
+/**
+ * Drop every cached bitmap that carries the theme's colours. Called when the document's theme
+ * changes, and on unmount. The galaxy backdrop is not one of them: see `releaseGalaxyBitmaps`.
+ */
 export function clearSpriteCaches() {
   starCache.clear();
   nebulaCache.clear();
+  ringCache.clear();
   sunCache = null;
 }
