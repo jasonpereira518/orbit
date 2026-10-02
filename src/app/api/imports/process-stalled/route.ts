@@ -30,6 +30,8 @@ import {
 import { backfillEmbeddingVectors, neonClient } from "@/db";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
+import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
+import { usersWithPendingRelationshipWork } from "@/lib/relationship-engine/pending";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 
 export const maxDuration = 300;
@@ -190,6 +192,8 @@ export async function GET(request: Request) {
     embeddingBackfillsKicked: 0,
     /** Users handed to the self-continuing LinkedIn timeline-event backfill route. */
     timelineBackfillsKicked: 0,
+    /** Users handed to the relationship engine runner (the cron backstop). */
+    relationshipKicks: 0,
     /** Deletion runs picked up, finished, still failing, and given up after 5 attempts. */
     purgesFound: 0,
     purgesFinished: 0,
@@ -387,6 +391,18 @@ export async function GET(request: Request) {
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.timeline-kicks" });
+    }
+
+    try {
+      // Backstop only — import finalize and the batch applier kick the runner directly. This
+      // catches lost kicks, expired leases, and runs parked in waiting_key whose key came back.
+      for (const pendingUser of await usersWithPendingRelationshipWork(TIMELINE_BACKFILL_USERS)) {
+        await kickRelationshipRun(pendingUser);
+        stats.relationshipKicks += 1;
+      }
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.relationship-kicks" });
     }
 
     if (stats.resumeFailed > 0) status = "partial";

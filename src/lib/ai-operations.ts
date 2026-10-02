@@ -110,6 +110,7 @@ export const AI_OPERATIONS = {
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
   "recruiter.draft": { label: "Recruiter drafts", tier: "user" },
+  // No producer since the relationship engine (2026-09-30); kept for usage history.
   "import.enrich": { label: "LinkedIn import summaries", tier: "fast", thinking: "minimal", background: true },
   // Jev (the decision model). Own ids, never an LLM operation's: `ai_result_cache` keys on
   // the operation and not the model, so a shared id would replay one engine's answer as the
@@ -139,6 +140,12 @@ export const AI_OPERATIONS = {
   "mentions.resolve.llm": { label: "Capture: linking mentions", tier: "fast", thinking: "minimal" },
   "import.linkedin.timeline": {
     label: "LinkedIn timeline events",
+    tier: "fast",
+    thinking: "minimal",
+    background: true,
+  },
+  "relationship.digest": {
+    label: "Relationship analysis (conversations)",
     tier: "fast",
     thinking: "minimal",
     background: true,

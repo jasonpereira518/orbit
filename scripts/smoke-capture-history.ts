@@ -38,7 +38,7 @@ import {
   purgeCapturePhotosForUser,
   storeCapturePhotos,
 } from "../src/lib/capture-photos";
-import { listCaptureHistoryFor } from "../src/lib/capture-history";
+import { isCaptureBatchFor, listCaptureHistoryFor } from "../src/lib/capture-history";
 import { deleteNoteBatchForUser, saveNoteBatch } from "../src/lib/note-batch-save";
 import {
   captureExcerpt,
@@ -202,6 +202,12 @@ async function main() {
     sql`UPDATE note_batches SET created_at = created_at + interval '456 microseconds' WHERE user_id = ${USER} AND source_hash LIKE 'h-%' AND created_at = ${sameInstant.toISOString()}::timestamptz AND source_hash IN ('h-0','h-1','h-2','h-3','h-4')`
   );
 
+  // A relationship-engine run batch is not a capture: never listed, never opened as one.
+  const [runBatch] = await db
+    .insert(noteBatches)
+    .values({ userId: USER, sourceHash: "relationship:smoke", sourceText: "Relationship analysis", entryPoint: "relationship", anchorDate: sameInstant, result: emptyNoteBatchResult() })
+    .returning();
+
   const seen: string[] = [];
   let cursor: string | null = null;
   let pages = 0;
@@ -225,6 +231,10 @@ async function main() {
   check("a pre-label capture with no photo reads as typed notes", firstPage.items.find((i) => i.id === otherBatch.id)!.kinds.join() === "text");
   check("a junk cursor falls back to the first page", (await listCaptureHistoryFor(USER, { cursor: "'; drop table x;--|nope", limit: 50 })).items.length === total);
   check("another user's history is empty", (await listCaptureHistoryFor(OTHER)).items.length === 0);
+  check("a relationship run batch is not in the history", !firstPage.items.some((i) => i.id === runBatch!.id) && !seen.includes(runBatch!.id));
+  check("  and is not a capture batch", !(await isCaptureBatchFor(USER, runBatch!.id)));
+  check("a real capture is a capture batch", await isCaptureBatchFor(USER, otherBatch.id));
+  check("  but not someone else's", !(await isCaptureBatchFor(OTHER, otherBatch.id)));
 
   console.log("\nDiscard and prune");
   const [abandoned, fresh] = await storeCapturePhotos(USER, [

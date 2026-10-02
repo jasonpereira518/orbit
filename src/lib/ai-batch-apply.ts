@@ -6,7 +6,6 @@ import {
   type AiBatchJobRow,
   type BatchOutcome,
 } from "@/lib/ai-batch";
-import { applyEnrichmentOutcome, type EnrichBatchPayload } from "@/lib/message-enrichment";
 import { applyTimelineOutcomes, type TimelineBatchPayload } from "@/lib/linkedin-timeline-backfill";
 import {
   applyRecruiterScanOutcome,
@@ -16,6 +15,7 @@ import {
   touchImport,
   type RecruiterBatchPayload,
 } from "@/lib/gmail-scan-processor";
+import { applyRelationshipBatch, releaseRelationshipBatch } from "@/lib/relationship-engine/runner";
 import { reportError } from "@/lib/report-error";
 
 /**
@@ -46,26 +46,9 @@ type Applier = {
 };
 
 const APPLIERS: Partial<Record<AiOperationId, Applier>> = {
-  "import.enrich": {
-    apply: async (job, outcomes) => {
-      const payload = job.payload as unknown as EnrichBatchPayload;
-      const contactByCustomId = new Map(payload.items?.map((i) => [i.customId, i.contactId]) ?? []);
-      for (const outcome of outcomes) {
-        const contactId = contactByCustomId.get(outcome.customId);
-        if (!contactId || !outcome.text) continue;
-        try {
-          await applyEnrichmentOutcome(job.userId, contactId, outcome.text);
-        } catch (err) {
-          // One contact's answer failing to land must not cost the rest of the batch.
-          reportError(err, {
-            where: "job.ai-batch.apply.import-enrich",
-            userId: job.userId,
-            level: "warning",
-            extra: { contactId },
-          });
-        }
-      }
-    },
+  "relationship.digest": {
+    apply: (job, outcomes) => applyRelationshipBatch(job, outcomes),
+    release: (job) => releaseRelationshipBatch(job),
   },
 
   "import.linkedin.timeline": {

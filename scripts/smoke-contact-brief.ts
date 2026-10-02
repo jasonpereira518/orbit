@@ -14,7 +14,7 @@ delete process.env.ANTHROPIC_API_KEY;
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contactBriefs, contacts, interactions, userSettings } from "../src/db/schema";
+import { contactBriefs, contacts, interactions, relationshipDigests, userSettings } from "../src/db/schema";
 import { buildRecentDiscussions, clampStanding, generateAndStoreContactBrief, getContactBrief, isBriefStale } from "../src/lib/contact-brief";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { encrypt } from "../src/lib/crypto";
@@ -67,6 +67,7 @@ function check(label: string, condition: boolean, detail?: string) {
 // A stand-in for Gemini, so the model path runs with no network: counts generateContent
 // calls and answers with a well-formed brief. Embedding calls get a vector.
 let modelCalls = 0;
+let lastPrompt = "";
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -75,6 +76,10 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   if (/generativelanguage/.test(url)) {
     modelCalls += 1;
+    try {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      lastPrompt = JSON.stringify(body.contents ?? []).replace(/\\n/g, "\n");
+    } catch { lastPrompt = ""; }
     const brief = { summary: "You met Priya at the summit.", standing: "Nothing is open.", next_step: null };
     return Response.json({
       candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(brief) }] }, finishReason: "STOP" }],
@@ -118,6 +123,27 @@ async function modelPath() {
 
   await generateAndStoreContactBrief(user, c.id, { force: true });
   check("an explicit regenerate always asks", modelCalls === 3, String(modelCalls));
+
+  // The digest replaces raw chat messages in the prompt; meetings stay.
+  console.log("\nWith a digest: the brief reads it instead of the raw messages");
+  const [d] = await db.insert(contacts).values({ userId: user, fullName: "Dana Whitfield", company: "Acme" }).returning();
+  await db.insert(interactions).values([
+    ...Array.from({ length: 30 }, (_, i) => ({
+      userId: user, contactId: d.id, interactionType: "linkedin_message", interactionDate: new Date(2026, 8, 20 - (i % 15), 12, i), rawNotes: `chatline ${i}`,
+    })),
+    { userId: user, contactId: d.id, interactionType: "meeting", interactionDate: new Date(2026, 7, 1, 12), aiSummary: "Coffee at the office." },
+  ]);
+  await db.insert(relationshipDigests).values({
+    contactId: d.id, userId: user, whatTheyDo: "Founder at Acme", summary: "Met at SaaStr; discussing a seed round.",
+    openThreads: [{ key: "k1", text: "Send the deck", owedBy: "me", sinceIso: "2026-09-01", interactionId: "00000000-0000-0000-0000-000000000000", excerpt: "x" }],
+  });
+  await generateAndStoreContactBrief(user, d.id, { force: true });
+  check("the prompt carries the digest", lastPrompt.includes("Conversation digest:") && lastPrompt.includes("Founder at Acme"));
+  check("  and its open thread", lastPrompt.includes("Send the deck"));
+  check("  raw messages are replaced", !lastPrompt.includes("· linkedin_message]") && !lastPrompt.includes("chatline"));
+  check("  a meeting is kept", lastPrompt.includes("· meeting]"));
+  const stored = await getContactBrief(user, d.id);
+  check("  stored recent discussions still include a chat line", stored!.recentDiscussions.some((r) => r.line.startsWith("chatline")));
 
   await db.delete(contacts).where(eq(contacts.userId, user));
   await db.delete(userSettings).where(eq(userSettings.userId, user));

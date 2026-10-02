@@ -153,6 +153,7 @@ console.log("\nDerived lists");
         "recruiter.gate",
         "recruiter.prefilter",
         "recruiter.scan",
+        "relationship.digest",
         "search.embed.batch",
       ].join(","),
     [...BACKGROUND_AI_OPERATIONS].join(",")

@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { contactBriefs, contactOpportunities, contacts, interactions, reminders } from "@/db/schema";
+import { contactBriefs, contactOpportunities, contacts, interactions, relationshipDigests, reminders } from "@/db/schema";
 import { completeJson, getAiConfig } from "@/lib/ai";
 import { gateSkips, gateText } from "@/lib/decisions/gates";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
@@ -262,21 +262,41 @@ export async function generateAndStoreContactBrief(
   });
   if (!contact) return null;
 
+  // The conversation digest stands in for the raw message threads it already covers.
+  const digest = await db.query.relationshipDigests.findFirst({
+    where: and(eq(relationshipDigests.contactId, contactId), eq(relationshipDigests.userId, userId)),
+  });
+  const hasDigest = Boolean(digest?.summary || digest?.whatTheyDo);
+
+  const recentColumns = {
+    id: true,
+    interactionDate: true,
+    interactionType: true,
+    aiSummary: true,
+    rawNotes: true,
+  } as const;
+  // Unfiltered: drives the stored recent discussions and the basis interaction, as before.
   const recent = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.contactId, contactId)
-    ),
-    columns: {
-      id: true,
-      interactionDate: true,
-      interactionType: true,
-      aiSummary: true,
-      rawNotes: true,
-    },
+    where: and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)),
+    columns: recentColumns,
     orderBy: [desc(interactions.interactionDate)],
     limit: 20,
   });
+  // The prompt's transcript only: with a digest, raw chat messages are left out. Excluded in
+  // SQL, not after the limit, so dozens of messages cannot push a meeting out of the newest
+  // 20. coalesce keeps NULL-source rows (NOT over NULL would drop them).
+  const promptInteractions = hasDigest
+    ? await db.query.interactions.findMany({
+        where: and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, contactId),
+          sql`NOT (${interactions.interactionType} = 'linkedin_message' OR (${interactions.interactionType} = 'message' AND coalesce(${interactions.source}, '') IN ('whatsapp', 'imessage')))`
+        ),
+        columns: recentColumns,
+        orderBy: [desc(interactions.interactionDate)],
+        limit: 20,
+      })
+    : recent;
 
   // What the brief could never see before: the things this relationship actually owes.
   // Loaded in parallel and each guarded, because a brief that fails because one side query
@@ -336,7 +356,7 @@ export async function generateAndStoreContactBrief(
     ...openItems.slice(0, OPEN_ITEM_LIMIT).map((i) => `- ${i.text}`),
   ];
 
-  const interactionSnippets = recent
+  const interactionSnippets = promptInteractions
     .map((i) => {
       const text = (i.aiSummary || i.rawNotes || "").trim();
       if (!text) return null;
@@ -352,6 +372,7 @@ export async function generateAndStoreContactBrief(
     Boolean(contact.metContext) ||
     Boolean(contact.notes?.trim()) ||
     Boolean(contact.title || contact.company || career) ||
+    hasDigest ||
     interactionSnippets.length > 0;
 
   if (!hasSignal && !options?.force) {
@@ -398,6 +419,18 @@ export async function generateAndStoreContactBrief(
     `Profile:\n${profileBlock}`,
     opportunityLines.length ? `Open opportunities:\n${opportunityLines.join("\n")}` : null,
     commitmentLines.length ? `Open commitments:\n${commitmentLines.join("\n")}` : null,
+    hasDigest
+      ? [
+          "Conversation digest:",
+          digest!.whatTheyDo ? `What they do: ${digest!.whatTheyDo}` : null,
+          digest!.workingOn ? `Working on: ${digest!.workingOn}` : null,
+          digest!.summary ? `Summary: ${digest!.summary}` : null,
+          digest!.topics.length ? `Topics: ${digest!.topics.map((t) => t.label).join(", ")}` : null,
+          digest!.openThreads.length ? `Open threads: ${digest!.openThreads.map((t) => t.text).join("; ")}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : null,
     `Interactions (newest first):\n${transcript}`,
   ]
     .filter(Boolean)

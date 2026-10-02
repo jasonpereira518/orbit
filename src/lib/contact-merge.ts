@@ -415,6 +415,18 @@ export async function mergeContacts(
       )
     );
 
+    // relationship_digests: the loser's row cascades with the loser. The winner's watermark
+    // describes only the winner's old thread, so it is cleared: the next pass re-reads the
+    // merged history from the start. Not archived: unmerge leaves both contacts pending,
+    // which re-derives exactly this.
+    statements.push(
+      tx.execute(sql`
+        UPDATE relationship_digests
+           SET watermark_at = NULL, watermark_interaction_id = NULL, attempts = 0
+         WHERE user_id = ${userId} AND contact_id = ${winnerId}::uuid
+      `)
+    );
+
     // contact_profiles is unique on (user_id, contact_id) and only one may survive. Move
     // the loser's only if the winner has none; otherwise the winner's stands.
     statements.push(
