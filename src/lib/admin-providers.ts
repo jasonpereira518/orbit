@@ -2,6 +2,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { count, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { adminProviderSnapshots, userSettings } from "@/db/schema";
+import { probeDeepgramKey } from "@/lib/deepgram";
 import { getStripe, LIFETIME_METADATA_KEY, LIFETIME_METADATA_VALUE } from "@/lib/stripe";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
@@ -510,20 +511,13 @@ async function checkBlob(): Promise<ProviderStatus> {
 
 async function checkDeepgram(): Promise<ProviderStatus> {
   const feed = await statuspageCheck("deepgram", "https://status.deepgram.com/api/v2/status.json")();
-  const key = process.env.DEEPGRAM_API_KEY?.trim();
-  if (!key) {
-    return { ...feed, detail: `${feed.detail} Add DEEPGRAM_API_KEY to check the key too.` };
+  // The key probe lives in deepgram.ts, the only file allowed to read that key.
+  const key = await probeDeepgramKey();
+  if (key === "unconfigured") {
+    return { ...feed, detail: `${feed.detail} Add the Deepgram key to check it too.` };
   }
-  // Listing projects is free (nothing is transcribed), and 401 is the one answer that
-  // means our key is dead. A scoped key may be refused the listing with 403 — reachable
-  // and authenticated, just not allowed to list — so that is not a failure.
-  const { status } = await fetchRaw("https://api.deepgram.com/v1/projects", {
-    headers: { Authorization: `Token ${key}` },
-  });
-  if (status === 401) {
-    return row("deepgram", "unavailable", "Deepgram rejected Orbit's API key; voice notes will fail.", {
-      httpStatus: status,
-    });
+  if (key === "rejected") {
+    return row("deepgram", "unavailable", "Deepgram rejected Orbit's API key; voice notes will fail.");
   }
   return feed;
 }
