@@ -34,8 +34,9 @@ export default async function NoteBatchPage({
           {fromMeeting ? "What your meeting produced" : "What your notes produced"}
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Everything below was created from this {fromMeeting ? "meeting" : "paste"}. Dismiss
-          anything that is wrong, or undo the whole batch.
+          Here is everything Orbit made from this {fromMeeting ? "meeting" : "capture"}: the
+          people, the things to do, and the reminders. Dismiss anything that looks wrong, or
+          undo the whole batch.
         </p>
       </div>
       <CaptureSourceCard

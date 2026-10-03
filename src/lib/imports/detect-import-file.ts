@@ -87,6 +87,11 @@ export type DetectionResult = {
   skipped: Detected[];
   /** The drop hit a cap and there was more on disk. */
   truncated: boolean;
+  /**
+   * Every recognised file that fit, including the ones `staged` set aside for a bigger file of
+   * the same kind. What a folder review lists so the person can choose among them.
+   */
+  candidates: Detected[];
 };
 
 /**
@@ -310,6 +315,13 @@ async function classifyFile(entry: DroppedFile): Promise<Detected> {
  */
 const LINKEDIN_EXPORT_MEMBER = /^(connections|messages)\.csv$/i;
 
+/** CSVs a folder needs before it is treated as a LinkedIn archive. The real ones have ~25. */
+const LINKEDIN_EXPORT_MIN_CSVS = 6;
+
+/** Members that exist in a LinkedIn archive and nowhere else a person would keep files. */
+const LINKEDIN_ARCHIVE_ONLY =
+  /^(invitations|profile|positions|education|skills|ad_targeting|rich_media|registration|endorsement_\w+|receipts|logins|shares|reactions|company follows)\.csv$/i;
+
 function isLinkedInExportMember(name: string): boolean {
   return LINKEDIN_EXPORT_MEMBER.test(baseName(name));
 }
@@ -430,9 +442,30 @@ export async function detectImportFiles(
   // Scoped to the folder the member sits in, and never to loose files. Someone who drops a
   // Connections.csv and a calendar together has hand-picked both, and throwing the calendar
   // away because a LinkedIn file was in the same gesture would be its own bug.
+  //
+  // "A folder with Connections.csv in it" is not enough to call it an export: a Downloads folder
+  // holding that file beside a contacts file and a calendar is a hand-assembled pick, and
+  // dismissing everything else in it as noise left the person with one file and no explanation.
+  // So the folder has to look like an archive: LinkedIn in its name, a member only an archive
+  // has (Invitations, Profile, Ad_Targeting…), or the couple dozen CSVs a real one carries.
+  const csvCountByFolder = new Map<string, number>();
+  const archiveMarkerFolders = new Set<string>();
+  for (const f of files) {
+    if (f.path === "") continue;
+    if (extensionOf(f.file.name) === ".csv") {
+      csvCountByFolder.set(f.path, (csvCountByFolder.get(f.path) ?? 0) + 1);
+    }
+    if (LINKEDIN_ARCHIVE_ONLY.test(baseName(f.file.name))) archiveMarkerFolders.add(f.path);
+  }
+  const looksLikeExportFolder = (path: string) =>
+    /linkedin/i.test(path) ||
+    archiveMarkerFolders.has(path) ||
+    (csvCountByFolder.get(path) ?? 0) >= LINKEDIN_EXPORT_MIN_CSVS;
   const linkedInFolders = new Set(
     files
-      .filter((f) => f.path !== "" && isLinkedInExportMember(f.file.name))
+      .filter(
+        (f) => f.path !== "" && isLinkedInExportMember(f.file.name) && looksLikeExportFolder(f.path),
+      )
       .map((f) => f.path),
   );
 
@@ -487,5 +520,5 @@ export async function detectImportFiles(
     }
   }
 
-  return { staged, ignored, skipped, truncated };
+  return { staged, ignored, skipped, truncated, candidates: usable };
 }

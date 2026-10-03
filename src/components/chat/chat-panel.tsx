@@ -45,6 +45,7 @@ import {
 } from "@/actions/chat";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
+import { readRailOpen, writeRailOpen } from "@/lib/chat-rail-pref";
 import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
@@ -221,20 +222,6 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** Whether the history rail is open is a per-browser preference, kept across visits. */
-const RAIL_OPEN_KEY = "orbit:chat-rail-open";
-
-function readRailOpen(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    // Open unless it was explicitly closed: a first visit, or storage that cannot be read,
-    // gets the rail — the default that shows the feature exists.
-    return window.localStorage.getItem(RAIL_OPEN_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
 function formatSentAt(iso: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -329,11 +316,7 @@ export function ChatPanel({
   const toggleRail = useCallback(() => {
     setRailOpen((open) => {
       const next = !open;
-      try {
-        window.localStorage.setItem(RAIL_OPEN_KEY, next ? "1" : "0");
-      } catch {
-        // Private mode or blocked storage: the toggle still works, it just is not remembered.
-      }
+      writeRailOpen(next);
       return next;
     });
   }, []);
@@ -1561,7 +1544,7 @@ export function ChatPanel({
                   {messages.length === 0 && !busy && (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
-                        Ask your network
+                        Ask your <span className="gold-shimmer-text">network</span>
                       </p>
                       <p className="max-w-md text-sm text-muted-foreground">
                         Who can help, who to follow up with, or who knows what —

@@ -6,7 +6,6 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
   MorningBriefingSection,
-  OutreachPerformanceSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
   StatsSection,
@@ -56,7 +55,7 @@ export default async function DashboardPage() {
 
   // Each row is guarded as well as each card: a `grid` whose children are all hidden still
   // renders, and its `gap` would leave an unexplained band of empty page behind.
-  const showSuggestedRow = show("dashboard.suggested-outreach") || outreachSummary;
+  const showSuggestedRow = show("dashboard.suggested-outreach");
 
   return (
     <div className="space-y-8">
@@ -100,28 +99,21 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Flex, not a 2-column grid: the outreach card removes itself when the account has
-          never sent anything (see OutreachPerformanceSection), and a grid would leave its
-          empty column behind, stranding Suggested outreach at half width next to a hole.
-          A Suspense boundary renders no DOM node, so with flex the survivor just fills. */}
+      {/* Full width. The reply rate that used to be a second card here now sits beside the
+          heading, so this row holds the one card. */}
       {showSuggestedRow && (
         // `empty:hidden`: for a Radar viewer the suggestions card steps aside for the
-        // briefing, and with no outreach card either the row would be an empty band.
+        // briefing, and the row would otherwise be an empty band.
         <div className="flex flex-col items-stretch gap-6 empty:hidden lg:flex-row">
-          {show("dashboard.suggested-outreach") && (
-            <Suspense
-              fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
-            >
-              <SuggestedOutreachSection bundle={bundle} radar={radarBriefing} />
-            </Suspense>
-          )}
-          {outreachSummary && (
-            <Suspense
-              fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
-            >
-              <OutreachPerformanceSection summary={outreachSummary} />
-            </Suspense>
-          )}
+          <Suspense
+            fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
+          >
+            <SuggestedOutreachSection
+              bundle={bundle}
+              radar={radarBriefing}
+              outreach={outreachSummary}
+            />
+          </Suspense>
         </div>
       )}
 
