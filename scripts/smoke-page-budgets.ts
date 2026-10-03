@@ -369,6 +369,10 @@ async function main() {
   // sibling of `items`, never an item, so it adds a statement but no rows to the scaling
   // bound below.
   check("panel issues ≤ 9 statements", panelCount <= 9, `got ${panelCount}`);
+  startQueryCount();
+  await loadNotificationPanel(USER, new Date(), { withAlerts: false, radar: true, relationship: true });
+  const withRun = stopQueryCount();
+  check("panel with the analysis row issues ≤ 10 statements", withRun <= 10, `got ${withRun}`);
   check(
     "panel contacts scan filters on next_follow_up_at",
     panelScans.some((s) => /where[\s\S]*"next_follow_up_at"/i.test(s)),

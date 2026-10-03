@@ -7,12 +7,13 @@ import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, relationshipDigests, relationshipRuns, reminders, type RelationshipRunRow, type RelationshipRunStatus } from "@/db/schema";
 import { pendingRelationshipContactCount } from "@/lib/relationship-engine/pending";
-import type { RunSummary } from "@/lib/relationship-engine/summary-copy";
+import { runSummaryCopy, type RunSummary } from "@/lib/relationship-engine/summary-copy";
 
 export * from "@/lib/relationship-engine/summary-copy";
 
 const ACTIVE: RelationshipRunStatus[] = ["queued", "running", "waiting_key"];
 const PARKED_ATTEMPTS = 3;
+const NOTICE_DAYS = 3;
 
 async function build(userId: string, run: RelationshipRunRow, now: Date): Promise<RunSummary> {
   const db = await getDb();
@@ -86,4 +87,21 @@ export async function loadImportRunSummary(userId: string, importId: string, now
     orderBy: desc(relationshipRuns.createdAt),
   });
   return run ? build(userId, run, now) : null;
+}
+
+/** The bell's one-line summary of the latest run. One statement: counters come off the row. */
+export async function latestRunNotice(userId: string, now: Date = new Date()) {
+  const db = await getDb();
+  const run = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.userId, userId), orderBy: desc(relationshipRuns.createdAt) });
+  if (!run || run.status === "undone") return undefined;
+  const active = ACTIVE.includes(run.status);
+  if (!active && (!run.finishedAt || now.getTime() - run.finishedAt.getTime() > NOTICE_DAYS * 86_400_000)) return undefined;
+  const { headline } = runSummaryCopy({
+    id: run.id, importId: run.importId, status: run.status,
+    processed: run.processed, skipped: run.skipped, failed: run.failed,
+    remindersCreated: run.remindersCreated, openThreadsAdded: run.openThreadsAdded, factsAdded: run.factsAdded,
+    remaining: 0, reminders: [], flags: [], truncatedPeople: 0, parkedPeople: [],
+    createdAt: run.createdAt.toISOString(), finishedAt: run.finishedAt?.toISOString() ?? null, undoable: false,
+  });
+  return { runId: run.id, headline, status: run.status };
 }

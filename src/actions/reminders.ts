@@ -1036,6 +1036,7 @@ export async function listNotificationPanel() {
     withAlerts: true,
     settings,
     radar: await isSurfaceLive(userId, "page.radar"),
+    relationship: true,
   });
 
   return {

@@ -7,6 +7,7 @@ import {
   hasErrorAlert,
   type AccountHealthContext,
 } from "@/lib/account-health";
+import { latestRunNotice } from "@/lib/relationship-engine/summary";
 import type { AccountAlert } from "@/lib/account-alerts";
 
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
@@ -34,7 +35,7 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean; radar?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
+  opts: { withAlerts: boolean; radar?: boolean; relationship?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
   const context: AccountHealthContext | undefined = opts.settings
@@ -53,6 +54,7 @@ export async function loadNotificationPanel(
     alerts,
     captureRows,
     radarRows,
+    relationshipNotice,
   ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
@@ -123,6 +125,9 @@ export async function loadNotificationPanel(
            WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
         `)
       : null,
+    // The latest relationship analysis, one row read. Opt-in: only the open panel asks, so
+    // the periodic poll never pays the statement.
+    opts.relationship ? latestRunNotice(userId, now) : Promise.resolve(undefined),
   ]);
   const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
@@ -265,6 +270,12 @@ export async function loadNotificationPanel(
       radarCount > 0
         ? { count: radarCount, drafts: Number(radarRow?.drafts ?? 0), names: radarRow?.names ?? [] }
         : undefined,
+    /**
+     * The latest relationship analysis in one line. A sibling of `items` like Radar, so a
+     * finished analysis never becomes a due item, an OS notification or a badge count.
+     * Opt-in so the desktop poll never pays the statement.
+     */
+    relationship: relationshipNotice,
     /**
      * Account health, as a SIBLING of `items` and never an entry in it. That placement is
      * the structural guarantee that alerts can never become OS desktop notifications:

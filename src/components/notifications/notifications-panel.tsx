@@ -19,6 +19,7 @@ import {
   NotebookPen,
   Radar,
   Shield,
+  Sparkles,
   UserRound,
   X,
   XCircle,
@@ -145,6 +146,7 @@ export function NotificationsPanelButton({
   // Radar's list as one line, never an item: a suggestion is not something due, so it
   // neither counts toward the badge nor lives under "Due now".
   const radar = data?.radar ?? null;
+  const relationship = data?.relationship ?? null;
   // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
   // alert-only account should still see the scroll area say there is nothing due rather
   // than render an empty region with no explanation.
@@ -152,6 +154,7 @@ export function NotificationsPanelButton({
     dueItems.length > 0 ||
     captureItems.length > 0 ||
     radar !== null ||
+    relationship !== null ||
     jobs.length > 0 ||
     kept.length > 0;
 
@@ -357,6 +360,12 @@ export function NotificationsPanelButton({
                 <Section title="Radar" count={radar ? 1 : 0}>
                   {radar && (
                     <RadarRow count={radar.count} drafts={radar.drafts} names={radar.names} onNavigate={() => setOpen(false)} />
+                  )}
+                </Section>
+
+                <Section title="Relationships" count={relationship ? 1 : 0}>
+                  {relationship && (
+                    <RelationshipRow headline={relationship.headline} status={relationship.status} onNavigate={() => setOpen(false)} />
                   )}
                 </Section>
 
@@ -651,6 +660,34 @@ function RadarRow({
           {shown.join(", ")}
           {rest > 0 ? ` and ${rest} more` : ""}
         </span>
+      </Link>
+    </div>
+  );
+}
+
+/** One line for the latest relationship analysis, linking to its card on /imports. */
+function RelationshipRow({
+  headline,
+  status,
+  onNavigate,
+}: {
+  headline: string;
+  status: string;
+  onNavigate: () => void;
+}) {
+  const text =
+    status === "waiting_key"
+      ? "Add an AI key to finish analyzing your conversations"
+      : status === "queued" || status === "running"
+        ? "Analyzing your conversations"
+        : headline;
+  return (
+    <div className={cn(ROW, "bg-popover")}>
+      <IconDisc>
+        <Sparkles className="h-4 w-4 text-muted-foreground" />
+      </IconDisc>
+      <Link href="/imports#relationship-analysis" onClick={onNavigate} className="min-w-0 flex-1 hover:underline">
+        <span className="block truncate text-sm font-medium text-ink">{text}</span>
       </Link>
     </div>
   );

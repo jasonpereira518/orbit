@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders } from "../src/db/schema";
-import { loadImportRunSummary, loadLatestRunSummary, loadRunSummary, runSummaryCopy, type RunSummary } from "../src/lib/relationship-engine/summary";
+import { latestRunNotice, loadImportRunSummary, loadLatestRunSummary, loadRunSummary, runSummaryCopy, type RunSummary } from "../src/lib/relationship-engine/summary";
 import { dismissOpenThread, dismissRunFlag, promoteOpenThread, promoteRunFlag } from "../src/lib/relationship-engine/promote";
 import { ensureRunNoteBatch, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
 
@@ -95,11 +95,16 @@ async function main() {
   check("thread: another user cannot dismiss", (await dismissOpenThread("someone-else", maya.id, "t2")) === false);
   check("flag: dismiss unknown key is false", (await dismissRunFlag(USER, run.id, "nope")) === false);
 
+  const notice = await latestRunNotice(USER, NOW);
+  check("notice: finished run shows", notice?.runId === run.id && notice.headline.startsWith("Analyzed 184 people"), JSON.stringify(notice));
+  check("notice: gone after 3 days", (await latestRunNotice(USER, new Date(NOW.getTime() + 4 * 86_400_000))) === undefined);
+
   // Undo all reaches the promoted reminders.
   await undoRelationshipRun(USER, run.id);
   const pending = await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.status, "pending")) });
   check("undo: promoted reminders dismissed", pending.length === 0, String(pending.length));
   check("summary: not undoable once undone", (await loadRunSummary(USER, run.id, NOW))!.undoable === false);
+  check("notice: undone run hidden", (await latestRunNotice(USER, NOW)) === undefined);
 
   await reset();
   console.log("relationship summary OK");
