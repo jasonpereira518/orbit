@@ -7,6 +7,8 @@
 import { hashUnit } from "../src/lib/hash";
 import type { AffinityEdge } from "../src/lib/constellation-affinity";
 import {
+  circularize,
+  MAX_CIRCULARIZE_STRETCH,
   placeClusterDisks,
   type DiskInput,
   type DiskOptions,
@@ -175,6 +177,48 @@ console.log("\nEdge cases");
   check("a single disk sits just outside the sun's clear zone", Math.abs(Math.hypot(c.x, c.y) - (OPTS.sunClear + 200)) < 30);
   const stray = run([{ id: "a", foot: 100, size: 2 }], [{ a: "a", b: "ghost", weight: 1, kind: "family" }]).placement;
   check("an edge to an unknown cluster is ignored", stray.centers.size === 1);
+}
+
+// ---- circularize: a strip becomes round, and nothing that was clear is brought together -------
+{
+  const ids = Array.from({ length: 12 }, (_, i) => `c${i}`);
+  const foot = ids.map(() => 100);
+  // A tall strip: x narrow, y long.
+  const xs = ids.map((_, i) => (i % 2 === 0 ? 220 : -220));
+  const ys = ids.map((_, i) => (i - 5.5) * 110);
+  const ox = [...xs];
+  const oy = [...ys];
+  circularize(xs, ys, foot, ids);
+  const spread = (a: number[], b: number[]) => {
+    let sxx = 0, syy = 0, sxy = 0;
+    for (let i = 0; i < a.length; i++) { sxx += a[i] * a[i]; syy += b[i] * b[i]; sxy += a[i] * b[i]; }
+    const m = (sxx + syy) / 2, d = Math.hypot((sxx - syy) / 2, sxy);
+    return Math.sqrt((m + d) / (m - d));
+  };
+  const before = spread(ox, oy);
+  const after = spread(xs, ys);
+  check("a strip comes out round (axis ratio near 1)", before > 1.5 && after < 1.1, `${before.toFixed(2)} → ${after.toFixed(2)}`);
+  let closer = 0;
+  for (let i = 0; i < ids.length; i++)
+    for (let j = i + 1; j < ids.length; j++)
+      if (Math.hypot(xs[i] - xs[j], ys[i] - ys[j]) < Math.hypot(ox[i] - ox[j], oy[i] - oy[j]) - 1e-9) closer++;
+  check("no pair of disks ends up closer (so nothing overlaps that did not)", closer === 0);
+  check("nothing moves toward the sun", ids.every((_, i) => Math.hypot(xs[i], ys[i]) >= Math.hypot(ox[i], oy[i]) - 1e-9));
+  // Order independence.
+  const perm = ids.map((_, i) => (i * 5) % ids.length);
+  const px = perm.map((k) => ox[k]), py = perm.map((k) => oy[k]);
+  circularize(px, py, perm.map((k) => foot[k]), perm.map((k) => ids[k]));
+  check("the result does not depend on the order the disks are listed in", perm.every((k, i) => Math.abs(px[i] - xs[k]) < 1e-6 && Math.abs(py[i] - ys[k]) < 1e-6));
+  // The stretch is capped, and a round galaxy is left alone.
+  const sx = ids.map((_, i) => (i % 2 ? 10 : -10)), sy = ids.map((_, i) => (i - 5.5) * 500);
+  const sBefore = spread(sx, sy);
+  circularize(sx, sy, foot, ids);
+  const sAfter = spread(sx, sy);
+  check("a very thin strip is stretched by the cap and no more", sAfter > 1.5 && Math.abs(sBefore / sAfter - MAX_CIRCULARIZE_STRETCH) < 0.05, `${sBefore.toFixed(2)} → ${sAfter.toFixed(2)}`);
+  const rx = ids.map((_, i) => Math.cos((i / 12) * Math.PI * 2) * 500), ry = ids.map((_, i) => Math.sin((i / 12) * Math.PI * 2) * 500);
+  const rx0 = [...rx], ry0 = [...ry];
+  circularize(rx, ry, foot, ids);
+  check("a round ring is left exactly as it was", rx.every((x, i) => x === rx0[i]) && ry.every((y, i) => y === ry0[i]));
 }
 
 console.log("\ndisk-placement: all checks passed");

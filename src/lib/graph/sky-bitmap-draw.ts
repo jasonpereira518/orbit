@@ -194,8 +194,8 @@ export const SMALL_DOT_PX = 1.5;
 const SQRT_PI = Math.sqrt(Math.PI);
 
 /**
- * The galaxy behind everything: a cool disk haze, a warm bulge, dark lanes across the strongest
- * relatedness chains, and dust along all of them. Every gradient fades to its OWN colour at zero
+ * The galaxy behind everything: a cool disk haze, a warm bulge, and dust along the strongest
+ * relatedness chains. Every gradient fades to its OWN colour at zero
  * alpha (never `transparent`, which is black), as the washes do.
  */
 export function drawGalaxyBackdrop(ctx: Ctx, data: GalaxyBackdropData, scale: number) {
@@ -219,15 +219,8 @@ export function drawGalaxyBackdrop(ctx: Ctx, data: GalaxyBackdropData, scale: nu
   ctx.arc(0, 0, bulgeR, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  for (const lane of data.dust.lanes) {
-    ctx.strokeStyle = `rgba(3,5,10,${lane.alpha.toFixed(3)})`;
-    ctx.lineWidth = lane.width;
-    ctx.beginPath();
-    lane.path.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
-    ctx.stroke();
-  }
+  // The dark lanes the data still carries are not drawn: over a dark sky they read as black
+  // bars cutting through the clusters, not as dust.
 
   // Dust in six alpha bands, filled in chunks of `DUST_CHUNK` dots: thousands of dots, in
   // small fills. At least three quarters of a BACKING pixel, so a dim dot never vanishes; taken

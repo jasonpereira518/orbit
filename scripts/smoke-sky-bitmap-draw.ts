@@ -78,7 +78,7 @@ check("the backing store respects the cap", size.width <= 2048 && size.height <=
 const g = recorder();
 drawSkyBitmap(g.ctx, gjob);
 check("it paints the disk haze and the bulge (two gradients)", g.count("createRadialGradient") === 2, String(g.count("createRadialGradient")));
-check("it strokes the dark lanes", g.count("stroke") === galaxy.dust.lanes.length);
+check("it draws no dark lanes (black bars over the sky)", g.count("stroke") === 0);
 // Two fills for the disk and the bulge, then each alpha band in chunks of DUST_CHUNK dots.
 const bandCounts = [0, 0, 0, 0, 0, 0];
 for (const a of galaxy.dust.alpha) bandCounts[Math.min(5, Math.floor(a / 0.04))] += 1;
