@@ -11,7 +11,7 @@
  * unavailable → inline, the existing applier contract.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, relationshipDigests, relationshipRuns, userSettings, type RelationshipRunRow } from "@/db/schema";
 import { BATCH_STALE_HOURS, MAX_BATCH_REQUESTS, submitAiBatch, type AiBatchJobRow, type BatchOutcome } from "@/lib/ai-batch";
@@ -77,16 +77,28 @@ export function isKeyLevelAiError(err: unknown): boolean {
   return kind === "auth" || kind === "quota" || kind === "rate_limit";
 }
 
-export async function kickRelationshipRun(userId: string): Promise<void> {
+/** A key-paused run is not retried by the backstop for this long; saving a key resumes it at once. */
+export const KEY_RETRY_MS = 24 * 3_600_000;
+
+export async function kickRelationshipRun(userId: string, importId: string | null = null): Promise<void> {
   try {
     await internalFetch("/api/relationships/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify({ userId, importId }),
     });
   } catch (err) {
     reportError(err, { where: "job.relationships.kick", userId, level: "warning" });
   }
+}
+
+/** A new key (or the switch turned back on) may fix what paused the run: drop the retry lease. */
+export async function resumeKeyPausedRun(userId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(relationshipRuns)
+    .set({ leaseUntil: null })
+    .where(and(eq(relationshipRuns.userId, userId), eq(relationshipRuns.status, "waiting_key"), isNull(relationshipRuns.claimToken)));
 }
 
 async function claimRun(userId: string, importId: string | null, now: Date): Promise<{ run: RelationshipRunRow; token: string } | null> {
@@ -102,6 +114,9 @@ async function claimRun(userId: string, importId: string | null, now: Date): Pro
     });
     if (!run) return null;
   }
+  if (importId && !run.importId) {
+    await db.update(relationshipRuns).set({ importId }).where(and(eq(relationshipRuns.id, run.id), isNull(relationshipRuns.importId)));
+  }
   const token = randomUUID();
   const [claimed] = await db
     .update(relationshipRuns)
@@ -115,8 +130,8 @@ async function releaseRun(runId: string, token: string, patch: Partial<Relations
   const db = await getDb();
   await db
     .update(relationshipRuns)
-    .set({ ...patch, claimToken: null, leaseUntil: null })
-    .where(and(eq(relationshipRuns.id, runId), eq(relationshipRuns.claimToken, token)));
+    .set({ claimToken: null, leaseUntil: null, ...patch })
+    .where(and(eq(relationshipRuns.id, runId), eq(relationshipRuns.claimToken, token), ne(relationshipRuns.status, "undone")));
 }
 
 async function remindersLeft(runId: string): Promise<number> {
@@ -201,7 +216,12 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
       return false;
     } catch (err) {
       if (isKeyLevelAiError(err)) {
-        await releaseRun(run.id, token, { status: "waiting_key", inlineUsed, lastError: String((err as Error)?.message ?? err).slice(0, 500) });
+        await releaseRun(run.id, token, {
+          status: "waiting_key",
+          inlineUsed,
+          leaseUntil: new Date(now.getTime() + KEY_RETRY_MS),
+          lastError: String((err as Error)?.message ?? err).slice(0, 500),
+        });
         return true;
       }
       await recordDigestFailure(userId, contactId, err);

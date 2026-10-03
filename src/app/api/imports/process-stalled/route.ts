@@ -32,7 +32,7 @@ import { backfillEmbeddingVectors, neonClient } from "@/db";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
-import { usersWithPendingRelationshipWork } from "@/lib/relationship-engine/pending";
+import { usersWithIdleActiveRuns, usersWithPendingRelationshipWork } from "@/lib/relationship-engine/pending";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 
 export const maxDuration = 300;
@@ -411,6 +411,11 @@ export async function GET(request: Request) {
       // catches lost kicks, expired leases, and runs parked in waiting_key whose key came back.
       for (const pendingUser of await usersWithPendingRelationshipWork(TIMELINE_BACKFILL_USERS)) {
         await kickRelationshipRun(pendingUser);
+        stats.relationshipKicks += 1;
+      }
+      // Runs with nothing left to read and nobody working them: one more pass closes them.
+      for (const idleUser of await usersWithIdleActiveRuns(TIMELINE_BACKFILL_USERS)) {
+        await kickRelationshipRun(idleUser);
         stats.relationshipKicks += 1;
       }
     } catch (err) {

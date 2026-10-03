@@ -79,9 +79,9 @@ export function chatAdapter(source: "whatsapp" | "imessage"): ImportAdapter<Chat
           direction: s.direction,
         }));
     },
-    async finalize(userId, contactIds) {
+    async finalize(userId, contactIds, importId) {
       if (contactIds.length === 0) return;
-      await kickRelationshipRun(userId);
+      await kickRelationshipRun(userId, importId);
     },
   };
 }

@@ -10,14 +10,15 @@ import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-rel-runner";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-rel-runner";
 
-import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { desc, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   actionItems, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
 import { AiAccessError } from "../src/lib/ai-access";
-import { INLINE_PER_RUN, runRelationshipPass, applyRelationshipBatch, type RelationshipBatchPayload } from "../src/lib/relationship-engine/runner";
-import { claimPendingContacts, pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
+import { INLINE_PER_RUN, KEY_RETRY_MS, resumeKeyPausedRun, runRelationshipPass, applyRelationshipBatch, type RelationshipBatchPayload } from "../src/lib/relationship-engine/runner";
+import { claimPendingContacts, pendingRelationshipContactCount, usersWithIdleActiveRuns, usersWithPendingRelationshipWork } from "../src/lib/relationship-engine/pending";
 import type { RelationshipDigestAnswer } from "../src/lib/relationship-engine/extract";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -79,7 +80,8 @@ async function main() {
   const d0 = await db.query.relationshipDigests.findMany({ where: eq(relationshipDigests.userId, USER) });
   check("key error burns no attempts", d0.every((d) => d.attempts === 0));
 
-  // Recovers: both processed inline, run done.
+  // Recovers (a saved key drops the retry lease): both processed inline, run done.
+  await resumeKeyPausedRun(USER);
   res = await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null });
   check("inline processes both", res.processed === 2 && res.remaining === 0, JSON.stringify(res));
   check("run done", res.status === "done");
@@ -212,6 +214,38 @@ async function main() {
   ]);
   const rows = await db.query.relationshipRuns.findMany({ where: eq(relationshipRuns.userId, USER) });
   check("concurrent passes → one run row", rows.length === 1, `${rows.length} rows, ${JSON.stringify(pair)}`);
+
+  // P3: a new run remembers the import that started it.
+  const NOW = new Date();
+  await reset();
+  await seedContacts(1, REAL);
+  const imp = randomUUID();
+  await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null, importId: imp, now: NOW });
+  let runRow = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.userId, USER), orderBy: desc(relationshipRuns.createdAt) });
+  check("run: import id recorded", runRow?.importId === imp, String(runRow?.importId));
+
+  // P3: a key-paused run holds a retry lease; the backstop skips it; resume clears it.
+  await reset();
+  await seedContacts(1, REAL);
+  const keyless = await runRelationshipPass(USER, { extract: async () => { throw new AiAccessError("key_required"); }, submit: async () => null, now: NOW });
+  check("key pause: status", keyless.status === "waiting_key", keyless.status);
+  runRow = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.userId, USER) });
+  check("key pause: retry lease ~24h", !!runRow?.leaseUntil && runRow.leaseUntil.getTime() >= NOW.getTime() + KEY_RETRY_MS - 1_000, String(runRow?.leaseUntil));
+  check("key pause: backstop skips it", !(await usersWithPendingRelationshipWork(100, NOW)).includes(USER));
+  const busy = await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null, now: NOW });
+  check("key pause: a pass inside the lease is busy", busy.status === "busy", busy.status);
+  await resumeKeyPausedRun(USER);
+  const resumed = await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null, now: NOW });
+  check("key pause: resume lets the next pass run", resumed.status === "done" && resumed.processed === 1, JSON.stringify(resumed));
+
+  // P3: an active run with nothing pending is found by the idle sweep and finishes on the next pass.
+  await reset();
+  const [idle] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
+  check("idle: listed", (await usersWithIdleActiveRuns(100, NOW)).includes(USER));
+  const idlePass = await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null, now: NOW });
+  const idleAfter = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, idle.id) });
+  check("idle: finished", idlePass.status === "done" && idleAfter?.status === "done", `${idlePass.status} ${idleAfter?.status}`);
+  check("idle: no longer listed", !(await usersWithIdleActiveRuns(100, NOW)).includes(USER));
 
   await reset();
   console.log("\nsmoke-relationship-runner: all checks passed");

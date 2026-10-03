@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { requireUserId, UnauthorizedError } from "@/lib/auth";
@@ -6,6 +6,7 @@ import { checkAiKey, keyCheckOutcome } from "@/lib/ai-key-check";
 import { encrypt } from "@/lib/crypto";
 import { DEFAULT_MODELS } from "@/lib/ai-providers";
 import { applyAiKeyChange } from "@/lib/ai-settings-write";
+import { kickRelationshipRun, resumeKeyPausedRun } from "@/lib/relationship-engine/runner";
 import { OPENROUTER_STATE_COOKIE, decodeState } from "@/lib/openrouter-oauth";
 
 /** Where the connect flow lands when there is no `returnTo` to trust. */
@@ -90,6 +91,12 @@ export async function GET(request: Request) {
     provider: "openrouter",
     model: DEFAULT_MODELS.openrouter,
     encryptedKey: encrypt(key),
+  });
+
+  // A run parked in waiting_key resumes as soon as AI can run again.
+  after(async () => {
+    await resumeKeyPausedRun(sessionUserId);
+    await kickRelationshipRun(sessionUserId);
   });
 
   // 8. Done. Match saveAiSettings's own revalidation — the 302 makes the landing page

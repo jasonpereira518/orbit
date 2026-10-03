@@ -166,8 +166,11 @@ export type ImportAdapter<P> = {
    * the payload. Deliberately NOT called per chunk: an adapter that used it for something
    * chunk-sized would reintroduce the per-chunk provider-call cost Phase 2 removed from the
    * embedding path.
+   *
+   * `importId` is the import job that touched `contactIds`, so work the hook kicks (the
+   * relationship engine) can remember which import started it.
    */
-  finalize?(userId: string, contactIds: string[]): Promise<void>;
+  finalize?(userId: string, contactIds: string[], importId: string): Promise<void>;
   /**
    * JSON paths into the payload whose values together name ONE person across this job's rows
    * (chat: `conversationKey` + `participant.key` — a long chat is split into several rows).
@@ -1232,7 +1235,7 @@ export async function runImportJob(importId: string): Promise<void> {
     // LinkedIn messages adapter's AI enrichment pass. Runs over every contact this job
     // touched across every chunk, once, not per chunk; non-fatal like the two calls above.
     if (adapter.finalize) {
-      await adapter.finalize(importRow.userId, [...allTouchedContactIds]).catch(
+      await adapter.finalize(importRow.userId, [...allTouchedContactIds], importRow.id).catch(
         reportAndContinue({ where: "job.import.finalize.adapter", userId: importRow.userId, extra: { importId: importRow.id } }, null)
       );
     }

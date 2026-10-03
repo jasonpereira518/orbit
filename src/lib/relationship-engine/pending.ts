@@ -88,16 +88,48 @@ export async function claimPendingContacts(
   return rowsOf<{ id: string }>(result).map((r) => r.id);
 }
 
-/** Users with pending work and the engine switched on — the cron backstop's input. */
+/**
+ * Users with pending work and the engine switched on — the cron backstop's input. A user
+ * whose active run holds a live lease (running now, or key-paused with its retry lease) is
+ * skipped, and the order rotates hourly so the same users cannot hold every slot.
+ */
 export async function usersWithPendingRelationshipWork(limit: number, now: Date = new Date()): Promise<string[]> {
   const db = await getDb();
+  const hour = now.toISOString().slice(0, 13);
   const result = await db.execute(sql`
-    SELECT DISTINCT c.user_id ${pendingFrom(now)}
+    SELECT c.user_id ${pendingFrom(now)}
       AND EXISTS (
         SELECT 1 FROM user_settings us
          WHERE us.user_id = c.user_id AND us.relationship_engine_enabled = 1
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM relationship_runs r
+         WHERE r.user_id = c.user_id
+           AND r.status IN ('queued', 'running', 'waiting_key')
+           AND r.lease_until > ${now.toISOString()}::timestamptz
+      )
+    GROUP BY c.user_id
+    ORDER BY md5(c.user_id || ${hour})
     LIMIT ${limit}
+  `);
+  return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);
+}
+
+/** Active runs nobody is working on and with nothing left to read: one more pass closes them. */
+export async function usersWithIdleActiveRuns(limit: number, now: Date = new Date()): Promise<string[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT r.user_id FROM relationship_runs r
+     WHERE r.status IN ('queued', 'running')
+       AND (r.lease_until IS NULL OR r.lease_until < ${now.toISOString()}::timestamptz)
+       AND NOT EXISTS (SELECT 1 ${pendingFrom(now)} AND c.user_id = r.user_id)
+       AND NOT EXISTS (
+         SELECT 1 FROM relationship_digests d
+          WHERE d.user_id = r.user_id AND d.run_id = r.id
+            AND d.batch_pending_until > ${now.toISOString()}::timestamptz
+       )
+     ORDER BY r.created_at
+     LIMIT ${limit}
   `);
   return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);
 }

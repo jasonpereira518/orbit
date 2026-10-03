@@ -159,9 +159,9 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
    * this invocation. The touched contacts are already pending by construction (they have
    * messages past their watermark), so the kick needs no ids.
    */
-  async finalize(userId, contactIds) {
+  async finalize(userId, contactIds, importId) {
     if (contactIds.length === 0) return;
-    await kickRelationshipRun(userId);
+    await kickRelationshipRun(userId, importId);
     await kickLinkedInTimelineBackfill(userId);
   },
 };

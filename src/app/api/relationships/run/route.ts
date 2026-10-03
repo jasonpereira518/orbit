@@ -9,13 +9,15 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   // Internal kick target — not user-facing. Fail-closed shared secret; see internal-auth.ts.
   if (!isInternalRequest(request)) return new NextResponse(null, { status: 401 });
-  const body = (await request.json().catch(() => null)) as { userId?: string } | null;
+  const body = (await request.json().catch(() => null)) as { userId?: string; importId?: string | null } | null;
   const userId = body?.userId;
   if (!userId) return NextResponse.json({ error: "userId required" }, { status: 400 });
 
   after(async () => {
     try {
-      const { processed, skipped, submitted, remaining, status } = await runRelationshipPass(userId);
+      const { processed, skipped, submitted, remaining, status } = await runRelationshipPass(userId, {
+        importId: typeof body?.importId === "string" ? body.importId : null,
+      });
       // Gated on progress so a contact that never advances costs one invocation, not a kick storm.
       if (status === "running" && remaining > 0 && processed + skipped + submitted > 0) {
         await kickRelationshipRun(userId);
