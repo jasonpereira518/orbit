@@ -29,6 +29,9 @@ export function chatAdapter(source: "whatsapp" | "imessage"): ImportAdapter<Chat
     // A long chat is staged as several rows per participant (to-rows' size bounds); they are
     // one person, settled once.
     samePersonPaths: [["conversationKey"], ["participant", "key"]],
+    // Each row can carry ~1 MB of transcripts (to-rows' MAX_ROW_JSON_CHARS); 20 keeps one
+    // claim's response far under the Neon HTTP cap.
+    chunkSize: 20,
     resolvedContactId(p) {
       return p.resolvedContactId ?? null;
     },

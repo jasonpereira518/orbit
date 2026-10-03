@@ -4,7 +4,7 @@
  * Run: npx tsx scripts/smoke-chat-sessions.ts
  */
 import "./smoke/_env";
-import { conversationKey, groupHeader, sessionExternalId, splitSessions } from "../src/lib/conversations/sessions";
+import { conversationKey, groupHeader, pickChats, sessionExternalId, splitSessions } from "../src/lib/conversations/sessions";
 import { clampCodePoints } from "../src/lib/conversations/clamp";
 import { needsSelfPick } from "../src/lib/conversations/owner";
 import { attributionLine, conversationToRows } from "../src/lib/conversations/to-rows";
@@ -181,5 +181,24 @@ check("pick: a lone sender who is not the title → ask", needsSelfPick(wa("Maya
 check("pick: a lone sender who is the title → no ask", !needsSelfPick(wa("Maya", ["maya "]), { ownerKeys: [] }));
 check("pick: iMessage never asks", !needsSelfPick({ ...wa("Maya", ["Maya", "Jason"]), source: "imessage" }, { ownerKeys: [] }));
 check("pick: no preview yet → no ask", !needsSelfPick(wa("Maya", ["Maya", "Jason"]), undefined));
+
+// Card dedupe: two different groups that share a title are two cards; the same group picked
+// twice (one export's members within the other's) is one card, the fuller export.
+{
+  const grp = (title: string, members: string[], n: number) =>
+    conv(Array.from({ length: n }, (_, i) => [i, members[i % members.length], `m${i}`] as [number, string, string]), {
+      isGroup: true,
+      title,
+      participants: members.map((m) => p(m)),
+    });
+  const picked = pickChats([
+    { fileName: "a.txt", conversation: grp("Family", ["Ana", "Ben", "Cy"], 3) },
+    { fileName: "b.txt", conversation: grp("Family", ["Dee", "Eli", "Fay"], 3) },
+    { fileName: "c.txt", conversation: grp("Family", ["Ana", "Ben", "Cy", "Gus"], 8) },
+  ]);
+  check("pick chats: same-titled different groups both kept", picked.length === 2, JSON.stringify(picked.map((x) => x.fileName)));
+  check("pick chats: keys differ", new Set(picked.map((x) => x.key)).size === 2);
+  check("pick chats: the fuller export of the same group wins", picked.some((x) => x.fileName === "c.txt") && !picked.some((x) => x.fileName === "a.txt"));
+}
 
 console.log("\nsmoke-chat-sessions: all checks passed");

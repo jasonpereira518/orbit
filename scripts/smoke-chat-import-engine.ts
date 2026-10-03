@@ -259,8 +259,14 @@ async function main() {
   check("big chat: 1,250 interactions written", ints.length === 1_250 && ints.every((i) => i.contactId === cs[0].id), String(ints.length));
   check("big chat: interactionsLogged counts them all", job?.stats?.interactionsLogged === 1_250, String(job?.stats?.interactionsLogged));
   check("big chat: every row done", (await status(id)).every((s) => s === "done"));
+  check(
+    "big chat: counted as one person added, none 'already in your orbit'",
+    job?.contactsCreated === 1 && job?.contactsUpdated === 0,
+    `${job?.contactsCreated} created, ${job?.contactsUpdated} updated`
+  );
 
-  // 9. Across engine chunks (250 rows each): row 251 of the same participant still lands on them.
+  // 9. Across engine chunks (the chat adapter claims 20 rows a chunk): later rows of the same
+  // participant still land on them.
   await reset();
   const longRows = Array.from({ length: 300 }, (_, r) =>
     row({
@@ -297,6 +303,49 @@ async function main() {
   ints = await interactionsOf();
   check("resume: no second contact for the same participant", cs.length === 1 && cs[0].id === earlier.id, JSON.stringify(cs.map((c) => c.id)));
   check("resume: the remaining row's sessions land on them", ints.length === 2 && ints.every((i) => i.contactId === earlier.id), String(ints.length));
+
+  // 12. A pinned participant split across rows: the interaction window widens across ALL of
+  // them (one merge per contact, not one arbitrary row's), and they count as one person.
+  await reset();
+  const [pia] = await db.insert(contacts).values({ userId: USER, fullName: "Pia Pin" }).returning();
+  const at = (iso: string) => ({ startAt: iso, endAt: new Date(new Date(iso).getTime() + 600_000).toISOString(), messageCount: 2, direction: "in" as const, transcript: `[x Pia] ${iso}` });
+  id = await seedJob(
+    ["2024-03-01T10:00:00.000Z", "2024-09-01T10:00:00.000Z", "2024-01-01T10:00:00.000Z"].map((iso) =>
+      row({
+        conversationKey: "pin-split",
+        participant: { key: "Pia", displayName: "Pia Pin", phoneE164: null, email: null },
+        resolvedContactId: pia.id,
+        sessions: [at(iso)],
+      })
+    )
+  );
+  await runJob(id);
+  const [piaAfter] = (await contactsOf()).filter((c) => c.id === pia.id);
+  check(
+    "split pin: last_interaction_at is the latest row's",
+    piaAfter.lastInteractionAt?.toISOString() === "2024-09-01T10:10:00.000Z",
+    piaAfter.lastInteractionAt?.toISOString()
+  );
+  check(
+    "split pin: first_interaction_at is the earliest row's",
+    piaAfter.firstInteractionAt?.toISOString() === "2024-01-01T10:00:00.000Z",
+    piaAfter.firstInteractionAt?.toISOString()
+  );
+  const pinJob = await db.query.imports.findFirst({ where: eq(imports.id, id) });
+  check("split pin: one person already in your orbit", pinJob?.contactsUpdated === 1, String(pinJob?.contactsUpdated));
+
+  // 13. The pin wins over the same-person map: a later pinned row is not folded into the
+  // contact an earlier unpinned row created.
+  await reset();
+  const [chosen] = await db.insert(contacts).values({ userId: USER, fullName: "Quinn Chosen" }).returning();
+  id = await seedJob([
+    row({ conversationKey: "pin-wins", participant: { key: "Q", displayName: "Quinn New", phoneE164: null, email: null }, sessions: [at("2024-02-01T10:00:00.000Z")] }),
+    row({ conversationKey: "pin-wins", participant: { key: "Q", displayName: "Quinn New", phoneE164: null, email: null }, resolvedContactId: chosen.id, sessions: [at("2024-04-01T10:00:00.000Z")] }),
+  ]);
+  await runJob(id);
+  ints = await interactionsOf();
+  const pinnedInts = ints.filter((i) => i.contactId === chosen.id);
+  check("pin wins: the pinned row's session lands on the pinned contact", pinnedInts.length === 1, JSON.stringify(ints.map((i) => i.contactId)));
 
   // 11. finalize completed above without throwing (kick is best-effort).
   check("finalize did not break the job", true);

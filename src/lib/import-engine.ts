@@ -79,7 +79,12 @@ const TIME_BUDGET_MS = 4.5 * 60 * 1000;
  * claim left them: `processing`, and reclaimable by the widened `IN ('pending', 'processing')`
  * claim on the next attempt.
  */
-export const MAX_ROW_FAILURES_PER_CHUNK = Math.floor(CHUNK_SIZE * 0.1);
+export const MAX_ROW_FAILURES_PER_CHUNK = rowFailureBudget(CHUNK_SIZE);
+
+/** 10% of a chunk of `size` rows, never zero; see `MAX_ROW_FAILURES_PER_CHUNK`. */
+export function rowFailureBudget(size: number): number {
+  return Math.max(1, Math.floor(size * 0.1));
+}
 
 /** The incoming shape `findDuplicateCandidatesIndexed` already accepts. */
 export type DuplicateProbe = {
@@ -172,9 +177,24 @@ export type ImportAdapter<P> = {
    * invocation of the same job count too. Segments are plain identifiers (letters, digits, _).
    */
   samePersonPaths?: readonly (readonly string[])[];
+  /**
+   * Rows claimed per chunk, when this adapter's rows are much bigger than a contact's (chat:
+   * up to ~1 MB of transcripts each). The claim returns every payload in one response, and
+   * 250 such rows would pass the Neon HTTP response cap on every retry. Default `CHUNK_SIZE`.
+   */
+  chunkSize?: number;
 };
 
 const PATH_SEGMENT_RE = /^[A-Za-z0-9_]+$/;
+
+/**
+ * `.returning(fields)` as the runtime builder has it. The union-typed `Db` keeps only the bare
+ * overload after `.onConflictDoUpdate()`, and the interactions upsert must not return every
+ * column (chat transcripts).
+ */
+type IdReturning = {
+  returning(fields: { id: typeof interactions.id }): Promise<{ id: string }[]>;
+};
 
 /** The person key `samePersonPaths` names for one payload; null when any part is missing. */
 function samePersonKeyOf(
@@ -440,6 +460,8 @@ export async function runImportJob(importId: string): Promise<void> {
     // See `ImportAdapter.matchConfidence`'s doc comment for why this floor is not always
     // `DUPLICATE_MERGE_CONFIDENCE`.
     const matchConfidence = adapter.matchConfidence ?? DUPLICATE_MERGE_CONFIDENCE;
+    const chunkSize = adapter.chunkSize ?? CHUNK_SIZE;
+    const maxRowFailures = rowFailureBudget(chunkSize);
 
     const userId = importRow.userId;
 
@@ -571,7 +593,7 @@ export async function runImportJob(importId: string): Promise<void> {
             SELECT id FROM import_job_rows
             WHERE import_id = ${importId} AND status IN ('pending', 'processing')
             ORDER BY row_index
-            LIMIT ${CHUNK_SIZE}
+            LIMIT ${chunkSize}
           )
           RETURNING id, row_index, payload, status, contact_id
         `);
@@ -622,7 +644,13 @@ export async function runImportJob(importId: string): Promise<void> {
           /** A name-tier match this import declined to fold; queued for review after insert. */
           lookalike?: { contactId: string; reason: string; confidence: number };
         }[] = [];
-        const toUpdate: { row: PendingRow; contactId: string; input: Partial<ContactInput> }[] = [];
+        const toUpdate: {
+          row: PendingRow;
+          contactId: string;
+          input: Partial<ContactInput>;
+          /** A later row of a person an earlier row settled; merged, not counted again. */
+          follower?: boolean;
+        }[] = [];
         const toSkip: PendingRow[] = [];
 
         // Folds that rest on a NAME are checked by the decision model first, one batch per
@@ -670,23 +698,37 @@ export async function runImportJob(importId: string): Promise<void> {
           // dozen field reads inside the adapter.
           const payload = row.payload as ImportJobRowPayload;
           const personKey = personKeyOf(payload);
+          // A row whose person an earlier row already settled (or is creating) adds history,
+          // not a person: it is merged but never counted as "already in your orbit".
+          const settled = personKey ? samePerson.get(personKey) : undefined;
+          const seenPerson = Boolean(settled) || (personKey ? creatingKeys.has(personKey) : false);
+          // The pin wins over the same-person map: it is the person's explicit choice.
+          const pinned = pinnedSubject(payload);
+          if (pinned) {
+            if (personKey && !settled) samePerson.set(personKey, pinned.id);
+            toUpdate.push({
+              row,
+              contactId: pinned.id,
+              input: adapter.toMerge(payload, pinned),
+              follower: seenPerson,
+            });
+            continue;
+          }
           if (personKey) {
-            const settled = samePerson.get(personKey);
             const subject = settled ? (contactById.get(settled) ?? createdById.get(settled)) : undefined;
             if (subject) {
-              toUpdate.push({ row, contactId: subject.id, input: adapter.toMerge(payload, subject) });
+              toUpdate.push({
+                row,
+                contactId: subject.id,
+                input: adapter.toMerge(payload, subject),
+                follower: true,
+              });
               continue;
             }
             if (creatingKeys.has(personKey)) {
               followers.push({ row, key: personKey });
               continue;
             }
-          }
-          const pinned = pinnedSubject(payload);
-          if (pinned) {
-            if (personKey) samePerson.set(personKey, pinned.id);
-            toUpdate.push({ row, contactId: pinned.id, input: adapter.toMerge(payload, pinned) });
-            continue;
           }
           const probe = adapter.identity(payload);
           if (!probe) {
@@ -768,7 +810,7 @@ export async function runImportJob(importId: string): Promise<void> {
         // `MAX_ROW_FAILURES_PER_CHUNK` for the reasoning.
         let chunkRowFailures = 0;
         const onBadRow = async (item: { row: PendingRow }, err: unknown) => {
-          if (chunkRowFailures >= MAX_ROW_FAILURES_PER_CHUNK) {
+          if (chunkRowFailures >= maxRowFailures) {
             // Marking this row would be the budget's (MAX_ROW_FAILURES_PER_CHUNK + 1)th failure
             // this chunk. That many failures in one chunk looks like a systemic fault, not
             // scattered bad data — escape narrowing entirely rather than keep marking rows
@@ -864,6 +906,7 @@ export async function runImportJob(importId: string): Promise<void> {
                 row: f.row,
                 contactId: subject.id,
                 input: adapter.toMerge(f.row.payload as ImportJobRowPayload, subject),
+                follower: true,
               });
             } else if (leaderFate.get(f.key) === "blocked") {
               planBlockedRows.push(f.row);
@@ -891,8 +934,9 @@ export async function runImportJob(importId: string): Promise<void> {
                 provenanceByRowId.set(item.row.id, { created: false });
                 touchedContactIds.push(item.contactId);
               }
-              contactsUpdated += batch.length;
-              duplicatesFound += batch.length;
+              const people = batch.filter((item) => !item.follower).length;
+              contactsUpdated += people;
+              duplicatesFound += people;
             },
             onBadRow
           );
@@ -933,12 +977,11 @@ export async function runImportJob(importId: string): Promise<void> {
         // Postgres requires the ON CONFLICT clause to match a partial unique index's
         // predicate exactly, or it won't recognize the index as a valid arbiter.
         //
-        // `.returning()` feeds `interactionsLoggedTotal` below (see its own comment) — every
-        // row DO UPDATE touches is returned, whether it inserted or updated, so the count
-        // reflects "interactions this run wrote," not "brand-new rows only." (Called bare, not
-        // `.returning({ id })` — passing an explicit field selector here defeats Drizzle's
-        // overload resolution after `.onConflictDoUpdate()` in this TS version; bare is
-        // functionally identical for a count, just returns every column instead of one.)
+        // `.returning({ id })` feeds `interactionsLoggedTotal` below (see its own comment) —
+        // every row DO UPDATE touches is returned, whether it inserted or updated, so the count
+        // reflects "interactions this run wrote," not "brand-new rows only." Ids only: a bare
+        // `.returning()` would send every chat transcript back over the wire. The union-typed
+        // `Db` hides the field-selector overload (see `IdReturning`); the builder accepts it.
         if (adapter.interactions) {
           const interactionRows: InteractionInsert[] = [];
           for (const row of pendingRows) {
@@ -975,7 +1018,7 @@ export async function runImportJob(importId: string): Promise<void> {
             // and the driver's request size. Deduped above across the whole chunk, so no two
             // statements can touch the same conflict target either.
             for (let i = 0; i < dedupedInteractionRows.length; i += INTERACTION_INSERT_ROWS) {
-              const loggedInteractions = await db
+              const upsert = db
                 .insert(interactions)
                 .values(dedupedInteractionRows.slice(i, i + INTERACTION_INSERT_ROWS))
                 .onConflictDoUpdate({
@@ -992,8 +1035,10 @@ export async function runImportJob(importId: string): Promise<void> {
                     // established would undo the backfill it just did.
                     direction: sql`coalesce(excluded.direction, ${interactions.direction})`,
                   },
-                })
-                .returning();
+                });
+              const loggedInteractions = await (upsert as unknown as IdReturning).returning({
+                id: interactions.id,
+              });
               interactionsLoggedTotal += loggedInteractions.length;
             }
           }

@@ -24,7 +24,7 @@ import { BusyHint, ImportFilePicker } from "@/components/imports/import-utils";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { parseIMessageExport } from "@/lib/conversations/imessage";
 import { readChatFiles } from "@/lib/conversations/read-files";
-import { conversationKey } from "@/lib/conversations/sessions";
+import { pickChats } from "@/lib/conversations/sessions";
 import { conversationToRows, type ChatConversationRow, type ParticipantDecision } from "@/lib/conversations/to-rows";
 import type { ChatSource, Conversation } from "@/lib/conversations/types";
 import { parseWhatsAppExport } from "@/lib/conversations/whatsapp";
@@ -219,24 +219,19 @@ export function ChatMessagesImport() {
         const read = await readChatFiles(files);
         const dayFirst = localeDayFirst();
         const skipped = [...read.ignored];
-        const byKey = new Map<string, Loaded>();
+        const parsed: Array<{ fileName: string; conversation: Conversation }> = [];
         for (const f of read.files) {
           const conversation = parse(f.fileName, f.text, f.source, dayFirst);
           if (conversation.messages.length === 0) {
             skipped.push(f.fileName);
             continue;
           }
-          // Before the preview, the parser's own owner marks are all there is: this key only
-          // pairs the card with its preview (and spots one chat picked twice). The staged
-          // rows' key is recomputed once the owner is known.
-          const key = conversationKey(conversation, null);
-          // The same chat picked twice: keep the fuller export.
-          const prior = byKey.get(key);
-          if (!prior || prior.conversation.messages.length < conversation.messages.length) {
-            byKey.set(key, { key, fileName: f.fileName, conversation });
-          }
+          parsed.push({ fileName: f.fileName, conversation });
         }
-        const next = [...byKey.values()];
+        // Before the preview, the parser's own owner marks are all there is: this key only
+        // pairs the card with its preview (and spots one chat picked twice). The staged
+        // rows' key is recomputed once the owner is known.
+        const next: Loaded[] = pickChats(parsed);
         setIgnored(skipped);
         if (next.length === 0) {
           setLoaded([]);

@@ -17,6 +17,14 @@ const DROP_BODY_RE =
   /^[\u200e\u200f]?(?:<Media omitted>|<attached: .*>|(?:image|video|audio|sticker|GIF|document|Contact card) omitted|This message was deleted|You deleted this message|Missed (?:voice|video) call|null)$/i;
 const MARKS_RE = /^[\u200e\u200f]+/;
 const SELF_LABELS = new Set(["you", "me"]);
+/**
+ * System notices only a group has. Checked on notice lines (no "Name: "), except the ones
+ * whose own text can carry a colon ("changed the subject to \"Re: x\""), which are spotted
+ * before the sender split by their verb coming before the first colon.
+ */
+const GROUP_NOTICE_RE =
+  /^[^:]{1,80}?\s(?:created group|added|removed|left|joined using this group[\u0027\u2019]s invite link|changed this group[\u0027\u2019]s|changed the group)\b/i;
+const GROUP_COLON_NOTICE_RE = /^[^:]{1,80}?\s(?:created group|changed the subject|changed the group description)\b/i;
 
 type Raw = { d1: number; d2: number; y: number; h: number; mi: number; s: number; ampm: string | null; rest: string };
 
@@ -24,6 +32,10 @@ function titleFromFileName(fileName: string): string | null {
   const base = fileName.replace(/^.*[\\/]/, "").replace(/\.(txt|zip)$/i, "");
   const m = base.match(/^WhatsApp Chat (?:with|-)\s*(.+)$/i);
   return m ? m[1].trim() : null;
+}
+
+function normTitle(v: string): string {
+  return v.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 export function parseWhatsAppExport(
@@ -59,9 +71,19 @@ export function parseWhatsAppExport(
 
   const messages: ChatMessage[] = [];
   const counts = new Map<string, number>();
+  let groupNotice = false;
   for (const r of raws) {
+    const rest = r.rest.replace(MARKS_RE, "");
+    if (GROUP_COLON_NOTICE_RE.test(rest)) {
+      groupNotice = true;
+      continue;
+    }
     const sm = r.rest.match(SENDER_RE);
-    if (!sm) continue; // system notice ("X added Y", encryption banner)
+    if (!sm) {
+      // System notice ("X added Y", encryption banner).
+      if (GROUP_NOTICE_RE.test(rest)) groupNotice = true;
+      continue;
+    }
     const sender = sm[1].replace(MARKS_RE, "").trim();
     const body = sm[2].replace(MARKS_RE, "").trim();
     if (!body || DROP_BODY_RE.test(body)) continue;
@@ -94,7 +116,14 @@ export function parseWhatsAppExport(
     fileName,
     title: fileTitle ?? (others.length === 1 ? others[0].displayName : fileName.replace(/\.(txt|zip)$/i, "")),
     titleFromFile: fileTitle != null,
-    isGroup: participants.length > 2,
+    // Two speakers can still be a group (the owner stayed silent): a group notice says so, and
+    // so does a file title naming neither speaker, since a 1:1 is titled after the other one.
+    isGroup:
+      participants.length > 2 ||
+      groupNotice ||
+      (fileTitle != null &&
+        participants.length === 2 &&
+        !participants.some((p) => normTitle(p.displayName) === normTitle(fileTitle))),
     participants,
     messages,
     dateOrderGuessed,

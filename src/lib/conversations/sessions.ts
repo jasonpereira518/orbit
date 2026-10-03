@@ -45,6 +45,36 @@ export function conversationKey(c: ConversationKeyInput, selfKey: string | null)
     : fnv1a64(`${c.source}\u001fdm-members\u001f${all}`);
 }
 
+/**
+ * The chats picked in one upload, one card each, keyed for pairing a card with its preview.
+ * The same chat picked twice keeps the fuller export. Two groups that share a title share a
+ * `conversationKey`, so for groups "the same chat" also needs one member set to hold the
+ * other (a re-export may gain members); otherwise the second group gets its own card key.
+ */
+export function pickChats<T extends { conversation: Conversation }>(
+  items: readonly T[]
+): Array<T & { key: string }> {
+  const byKey = new Map<string, T & { key: string }>();
+  const holds = (a: Conversation, b: Conversation) => {
+    const keys = new Set(a.participants.map((p) => p.key));
+    return b.participants.every((p) => keys.has(p.key));
+  };
+  for (const item of items) {
+    const c = item.conversation;
+    const base = conversationKey(c, null);
+    let key = base;
+    let prior = byKey.get(key);
+    for (let n = 2; prior && c.isGroup && !holds(prior.conversation, c) && !holds(c, prior.conversation); n++) {
+      key = `${base}#${n}`;
+      prior = byKey.get(key);
+    }
+    if (!prior || prior.conversation.messages.length < c.messages.length) {
+      byKey.set(key, { ...item, key });
+    }
+  }
+  return [...byKey.values()];
+}
+
 export function sessionExternalId(source: ChatSource, key: string, startAtIso: string, contactId: string): string {
   return `chat:${source}:${key}:${Math.floor(new Date(startAtIso).getTime() / 1000)}:${contactId}`;
 }

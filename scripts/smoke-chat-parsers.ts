@@ -128,6 +128,32 @@ const legacy = parseIMessageExport("Mar 06, 2024  9:00:00 AM\n+14155550134\nLove
 check("imessage: inline tapback dropped", legacy.messages.length === 0);
 
 // macOS 14+ puts U+202F before AM/PM.
+// Two speakers, owner silent: still a group.
+const twoTitled = parseWhatsAppExport(
+  "13/03/2024, 10:00 - Ana: Welcome\n13/03/2024, 10:01 - Ben: hey",
+  "WhatsApp Chat with Book Club.txt",
+);
+check("group: two speakers, title names neither", twoTitled.isGroup === true);
+const twoNoticed = parseWhatsAppExport(
+  "13/03/2024, 09:59 - Ana created group \"Book Club\"\n13/03/2024, 10:00 - Ana: Welcome\n13/03/2024, 10:01 - Ben: hey",
+  "_chat.txt",
+);
+check("group: two speakers, created-group notice", twoNoticed.isGroup === true);
+const subject = parseWhatsAppExport(
+  "13/03/2024, 09:59 - Ana changed the subject to \"Re: dinner\"\n13/03/2024, 10:00 - Ana: Welcome\n13/03/2024, 10:01 - Ben: hey",
+  "_chat.txt",
+);
+check(
+  "group: subject notice with a colon is no sender",
+  subject.isGroup === true && subject.participants.length === 2,
+  JSON.stringify(subject.participants.map((p) => p.key)),
+);
+const dmLeft = parseWhatsAppExport(
+  "13/03/2024, 10:00 - Maya Chen: I left the keys\n13/03/2024, 10:01 - Jason Pereira: thanks",
+  "WhatsApp Chat with Maya Chen.txt",
+);
+check("1:1: a message saying 'left' is not a group notice", dmLeft.isGroup === false);
+
 const nnbsp = parseIMessageExport("Jan 02, 2025  10:00:00\u202fPM\nAna\nhi\n", "Ana.txt");
 check("imessage: narrow nbsp before PM", new Date(nnbsp.messages[0]?.at).getHours() === 22);
 
