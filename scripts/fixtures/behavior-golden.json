@@ -1437,6 +1437,42 @@
           "substantive": true
         },
         {
+          "id": "<contacts:Nina Petrova>",
+          "fullName": "Nina Petrova",
+          "preferredName": null,
+          "company": "Lumen Health",
+          "school": null,
+          "title": "Co-founder & CEO",
+          "relationshipScore": 5,
+          "closeness": 0.788331,
+          "closenessTier": "inner",
+          "orbitScore": 4,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": "<ts>",
+          "tags": [
+            "Founder",
+            "Mentor"
+          ],
+          "aiSummary": "Nina Petrova is Co-founder & CEO at Lumen Health. How you met: Y Combinator alumni Slack. Second-time founder, sold her last company. The person I call when something is going badly. Has strong views on hiring the first five engineers.",
+          "keyFacts": [
+            "Second-time founder",
+            "Sold her last company in 2024"
+          ],
+          "howMet": "Y Combinator alumni Slack",
+          "metContext": null,
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [],
+          "email": null,
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
+        },
+        {
           "id": "<contacts:James Okafor>",
           "fullName": "James Okafor",
           "preferredName": null,
@@ -1686,6 +1722,41 @@
           "substantive": true
         },
         {
+          "id": "<contacts:Maya Thompson>",
+          "fullName": "Maya Thompson",
+          "preferredName": null,
+          "company": "Innovate Carolina",
+          "school": "UNC Chapel Hill",
+          "title": "Program Director",
+          "relationshipScore": 3,
+          "closeness": 0.581142,
+          "closenessTier": "mid",
+          "orbitScore": 3,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": "<ts>",
+          "tags": [
+            "UNC"
+          ],
+          "aiSummary": "Maya Thompson is Program Director at Innovate Carolina. How you met: Runs the venture program I applied to. Gatekeeper in the best sense — knows every founder and funder in the Triangle. Asked me to present at the fall showcase.",
+          "keyFacts": [
+            "Runs the Innovate Carolina venture program",
+            "Invited me to the fall showcase"
+          ],
+          "howMet": "Runs the venture program I applied to",
+          "metContext": null,
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [],
+          "email": "maya.thompson@example.com",
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
+        },
+        {
           "id": "<contacts:Fatima Nasser>",
           "fullName": "Fatima Nasser",
           "preferredName": null,
@@ -1740,6 +1811,38 @@
             "Introduced by Sarah Chen"
           ],
           "howMet": "Sarah introduced us over email",
+          "metContext": null,
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [],
+          "email": null,
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
+        },
+        {
+          "id": "<contacts:Daniel Osei>",
+          "fullName": "Daniel Osei",
+          "preferredName": null,
+          "company": "Northlight Robotics",
+          "school": null,
+          "title": "Founder & CTO",
+          "relationshipScore": 3,
+          "closeness": 0.397389,
+          "closenessTier": "outer",
+          "orbitScore": 2,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": null,
+          "tags": [
+            "Founder"
+          ],
+          "aiSummary": "Daniel Osei is Founder & CTO at Northlight Robotics. How you met: Both spoke at the same founders panel. Hardware founder, so most of our advice does not transfer — but he is the best person I know on hiring under uncertainty.",
+          "keyFacts": [],
+          "howMet": "Both spoke at the same founders panel",
           "metContext": null,
           "dateMet": "<ts>",
           "notes": null,
@@ -1961,6 +2064,38 @@
           "profileImageUrl": null,
           "dormant": false,
           "substantive": true
+        },
+        {
+          "id": "<contacts:Leo Fernandez>",
+          "fullName": "Leo Fernandez",
+          "preferredName": null,
+          "company": "Tidepool Analytics",
+          "school": null,
+          "title": "Founder",
+          "relationshipScore": 2,
+          "closeness": 0.307944,
+          "closenessTier": "outer",
+          "orbitScore": 1,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": null,
+          "tags": [
+            "Founder"
+          ],
+          "aiSummary": "Leo Fernandez is Founder at Tidepool Analytics. How you met: Cold outreach that turned into a real conversation. Building analytics for hardware teams. We trade notes on early sales. Slow to reply but always replies.",
+          "keyFacts": [],
+          "howMet": "Cold outreach that turned into a real conversation",
+          "metContext": null,
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [],
+          "email": null,
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
         }
       ],
       "companies": [
@@ -1996,6 +2131,19 @@
         "Warm intro"
       ],
       "clusters": [
+        {
+          "id": "role:founders",
+          "name": "Founders & Execs",
+          "company": "Founders & Execs",
+          "kind": "role",
+          "count": 4,
+          "contactIds": [
+            "<contacts:Nina Petrova>",
+            "<contacts:Maya Thompson>",
+            "<contacts:Daniel Osei>",
+            "<contacts:Leo Fernandez>"
+          ]
+        },
         {
           "id": "company:google",
           "name": "Google",
@@ -2106,46 +2254,6 @@
           "contactIds": [
             "<contacts:Marcus Webb>"
           ]
-        },
-        {
-          "id": "company:lumen health",
-          "name": "Lumen Health",
-          "company": "Lumen Health",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Nina Petrova>"
-          ]
-        },
-        {
-          "id": "company:northlight robotics",
-          "name": "Northlight Robotics",
-          "company": "Northlight Robotics",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Daniel Osei>"
-          ]
-        },
-        {
-          "id": "company:tidepool analytics",
-          "name": "Tidepool Analytics",
-          "company": "Tidepool Analytics",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Leo Fernandez>"
-          ]
-        },
-        {
-          "id": "school:unc chapel hill",
-          "name": "UNC Chapel Hill",
-          "company": "UNC Chapel Hill",
-          "kind": "school",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Maya Thompson>"
-          ]
         }
       ],
       "userId": "demo-user",
@@ -2166,7 +2274,7 @@
           "active": true,
           "enabled": true,
           "scope": "engaged",
-          "shown": 19,
+          "shown": 23,
           "engaged": 25,
           "available": 25
         },
@@ -3088,6 +3196,19 @@
     ],
     "clusters": [
       {
+        "id": "role:founders",
+        "name": "Founders & Execs",
+        "company": "Founders & Execs",
+        "kind": "role",
+        "count": 4,
+        "contactIds": [
+          "<contacts:Maya Thompson>",
+          "<contacts:Nina Petrova>",
+          "<contacts:Leo Fernandez>",
+          "<contacts:Daniel Osei>"
+        ]
+      },
+      {
         "id": "company:google",
         "name": "Google",
         "company": "Google",
@@ -3196,46 +3317,6 @@
         "count": 1,
         "contactIds": [
           "<contacts:Marcus Webb>"
-        ]
-      },
-      {
-        "id": "company:lumen health",
-        "name": "Lumen Health",
-        "company": "Lumen Health",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Nina Petrova>"
-        ]
-      },
-      {
-        "id": "company:northlight robotics",
-        "name": "Northlight Robotics",
-        "company": "Northlight Robotics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Daniel Osei>"
-        ]
-      },
-      {
-        "id": "company:tidepool analytics",
-        "name": "Tidepool Analytics",
-        "company": "Tidepool Analytics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Leo Fernandez>"
-        ]
-      },
-      {
-        "id": "school:unc chapel hill",
-        "name": "UNC Chapel Hill",
-        "company": "UNC Chapel Hill",
-        "kind": "school",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Maya Thompson>"
         ]
       }
     ],
@@ -8815,6 +8896,36 @@
           "substantive": true
         },
         {
+          "id": "<contacts:Golden Newperson>",
+          "fullName": "Golden Newperson",
+          "preferredName": null,
+          "company": "Acme",
+          "school": null,
+          "title": "Engineer",
+          "relationshipScore": 2,
+          "closeness": 0.502662,
+          "closenessTier": "mid",
+          "orbitScore": 2,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": "<ts>",
+          "tags": [],
+          "aiSummary": "Golden Newperson is Engineer at Acme. Recent conversations covered: Golden: met at the extension test..",
+          "keyFacts": [],
+          "howMet": null,
+          "metContext": null,
+          "dateMet": null,
+          "notes": null,
+          "sharedInterests": [],
+          "email": null,
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
+        },
+        {
           "id": "<contacts:Tom Bennett>",
           "fullName": "Tom Bennett",
           "preferredName": null,
@@ -8941,6 +9052,42 @@
           "aiSummary": "Rachel Adeyemi is Director of Talent at Figma. How you met: Panel at a design systems meetup. Spoke on the panel about hiring designers who can code. Said she is always happy to refer people even when Figma is not hiring.",
           "keyFacts": [],
           "howMet": "Panel at a design systems meetup",
+          "metContext": null,
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [],
+          "email": null,
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
+        },
+        {
+          "id": "<contacts:Nina Petrova>",
+          "fullName": "Nina Petrova",
+          "preferredName": null,
+          "company": "Lumen Health",
+          "school": null,
+          "title": "Co-founder & CEO",
+          "relationshipScore": 5,
+          "closeness": 0.788331,
+          "closenessTier": "inner",
+          "orbitScore": 4,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": "<ts>",
+          "tags": [
+            "Founder",
+            "Mentor"
+          ],
+          "aiSummary": "Nina Petrova is Co-founder & CEO at Lumen Health. How you met: Y Combinator alumni Slack. Second-time founder, sold her last company. The person I call when something is going badly. Has strong views on hiring the first five engineers.",
+          "keyFacts": [
+            "Second-time founder",
+            "Sold her last company in 2024"
+          ],
+          "howMet": "Y Combinator alumni Slack",
           "metContext": null,
           "dateMet": "<ts>",
           "notes": null,
@@ -9132,6 +9279,44 @@
           "substantive": true
         },
         {
+          "id": "<contacts:Marcus Webb>",
+          "fullName": "Marcus Webb",
+          "preferredName": null,
+          "company": "Linear",
+          "school": null,
+          "title": "Engineering Lead",
+          "relationshipScore": 3,
+          "closeness": 0.659983,
+          "closenessTier": "inner",
+          "orbitScore": 4,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": null,
+          "tags": [
+            "Engineering"
+          ],
+          "aiSummary": "Marcus Webb is Engineering Lead at Linear. How you met: Introduced by Sarah Chen. Owes me a look at their onboarding flow.",
+          "keyFacts": [
+            "Introduced by Sarah Chen",
+            "Hiring two senior engineers this quarter"
+          ],
+          "howMet": "Introduced by Sarah Chen",
+          "metContext": "Coffee near their office",
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [
+            "developer tooling",
+            "hiring"
+          ],
+          "email": null,
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
+        },
+        {
           "id": "<contacts:Andre Silva>",
           "fullName": "Andre Silva",
           "preferredName": null,
@@ -9203,6 +9388,41 @@
           "substantive": true
         },
         {
+          "id": "<contacts:Maya Thompson>",
+          "fullName": "Maya Thompson",
+          "preferredName": null,
+          "company": "Innovate Carolina",
+          "school": "UNC Chapel Hill",
+          "title": "Program Director",
+          "relationshipScore": 3,
+          "closeness": 0.581142,
+          "closenessTier": "mid",
+          "orbitScore": 3,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": "<ts>",
+          "tags": [
+            "UNC"
+          ],
+          "aiSummary": "Maya Thompson is Program Director at Innovate Carolina. How you met: Runs the venture program I applied to. Gatekeeper in the best sense — knows every founder and funder in the Triangle. Asked me to present at the fall showcase.",
+          "keyFacts": [
+            "Runs the Innovate Carolina venture program",
+            "Invited me to the fall showcase"
+          ],
+          "howMet": "Runs the venture program I applied to",
+          "metContext": null,
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [],
+          "email": "maya.thompson@example.com",
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
+        },
+        {
           "id": "<contacts:Fatima Nasser>",
           "fullName": "Fatima Nasser",
           "preferredName": null,
@@ -9257,6 +9477,38 @@
             "Introduced by Sarah Chen"
           ],
           "howMet": "Sarah introduced us over email",
+          "metContext": null,
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [],
+          "email": null,
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
+        },
+        {
+          "id": "<contacts:Daniel Osei>",
+          "fullName": "Daniel Osei",
+          "preferredName": null,
+          "company": "Northlight Robotics",
+          "school": null,
+          "title": "Founder & CTO",
+          "relationshipScore": 3,
+          "closeness": 0.397389,
+          "closenessTier": "outer",
+          "orbitScore": 2,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": null,
+          "tags": [
+            "Founder"
+          ],
+          "aiSummary": "Daniel Osei is Founder & CTO at Northlight Robotics. How you met: Both spoke at the same founders panel. Hardware founder, so most of our advice does not transfer — but he is the best person I know on hiring under uncertainty.",
+          "keyFacts": [],
+          "howMet": "Both spoke at the same founders panel",
           "metContext": null,
           "dateMet": "<ts>",
           "notes": null,
@@ -9438,6 +9690,38 @@
           "profileImageUrl": null,
           "dormant": false,
           "substantive": true
+        },
+        {
+          "id": "<contacts:Leo Fernandez>",
+          "fullName": "Leo Fernandez",
+          "preferredName": null,
+          "company": "Tidepool Analytics",
+          "school": null,
+          "title": "Founder",
+          "relationshipScore": 2,
+          "closeness": 0.307944,
+          "closenessTier": "outer",
+          "orbitScore": 1,
+          "lastInteractionAt": "<ts>",
+          "hasLoggedInteraction": true,
+          "nextFollowUpAt": null,
+          "tags": [
+            "Founder"
+          ],
+          "aiSummary": "Leo Fernandez is Founder at Tidepool Analytics. How you met: Cold outreach that turned into a real conversation. Building analytics for hardware teams. We trade notes on early sales. Slow to reply but always replies.",
+          "keyFacts": [],
+          "howMet": "Cold outreach that turned into a real conversation",
+          "metContext": null,
+          "dateMet": "<ts>",
+          "notes": null,
+          "sharedInterests": [],
+          "email": null,
+          "phone": null,
+          "linkedinUrl": null,
+          "website": null,
+          "profileImageUrl": null,
+          "dormant": false,
+          "substantive": true
         }
       ],
       "companies": [
@@ -9474,6 +9758,19 @@
         "Warm intro"
       ],
       "clusters": [
+        {
+          "id": "role:founders",
+          "name": "Founders & Execs",
+          "company": "Founders & Execs",
+          "kind": "role",
+          "count": 4,
+          "contactIds": [
+            "<contacts:Nina Petrova>",
+            "<contacts:Maya Thompson>",
+            "<contacts:Daniel Osei>",
+            "<contacts:Leo Fernandez>"
+          ]
+        },
         {
           "id": "company:google",
           "name": "Google",
@@ -9566,13 +9863,14 @@
           ]
         },
         {
-          "id": "company:acme",
-          "name": "Acme",
-          "company": "Acme",
-          "kind": "company",
-          "count": 1,
+          "id": "role:engineering",
+          "name": "Engineers",
+          "company": "Engineers",
+          "kind": "role",
+          "count": 2,
           "contactIds": [
-            "<contacts:Golden Newperson>"
+            "<contacts:Golden Newperson>",
+            "<contacts:Marcus Webb>"
           ]
         },
         {
@@ -9583,56 +9881,6 @@
           "count": 1,
           "contactIds": [
             "<contacts:Grace Whitfield>"
-          ]
-        },
-        {
-          "id": "company:linear",
-          "name": "Linear",
-          "company": "Linear",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Marcus Webb>"
-          ]
-        },
-        {
-          "id": "company:lumen health",
-          "name": "Lumen Health",
-          "company": "Lumen Health",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Nina Petrova>"
-          ]
-        },
-        {
-          "id": "company:northlight robotics",
-          "name": "Northlight Robotics",
-          "company": "Northlight Robotics",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Daniel Osei>"
-          ]
-        },
-        {
-          "id": "company:tidepool analytics",
-          "name": "Tidepool Analytics",
-          "company": "Tidepool Analytics",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Leo Fernandez>"
-          ]
-        },
-        {
-          "id": "school:unc chapel hill",
-          "name": "UNC Chapel Hill",
-          "company": "UNC Chapel Hill",
-          "kind": "school",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Maya Thompson>"
           ]
         }
       ],
@@ -9654,7 +9902,7 @@
           "active": true,
           "enabled": true,
           "scope": "engaged",
-          "shown": 19,
+          "shown": 25,
           "engaged": 26,
           "available": 27
         },
@@ -10607,6 +10855,19 @@
     ],
     "clusters": [
       {
+        "id": "role:founders",
+        "name": "Founders & Execs",
+        "company": "Founders & Execs",
+        "kind": "role",
+        "count": 4,
+        "contactIds": [
+          "<contacts:Maya Thompson>",
+          "<contacts:Nina Petrova>",
+          "<contacts:Leo Fernandez>",
+          "<contacts:Daniel Osei>"
+        ]
+      },
+      {
         "id": "company:google",
         "name": "Google",
         "company": "Google",
@@ -10698,12 +10959,13 @@
         ]
       },
       {
-        "id": "company:acme",
-        "name": "Acme",
-        "company": "Acme",
-        "kind": "company",
-        "count": 1,
+        "id": "role:engineering",
+        "name": "Engineers",
+        "company": "Engineers",
+        "kind": "role",
+        "count": 2,
         "contactIds": [
+          "<contacts:Marcus Webb>",
           "<contacts:Golden Newperson>"
         ]
       },
@@ -10715,56 +10977,6 @@
         "count": 1,
         "contactIds": [
           "<contacts:Grace Whitfield>"
-        ]
-      },
-      {
-        "id": "company:linear",
-        "name": "Linear",
-        "company": "Linear",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Marcus Webb>"
-        ]
-      },
-      {
-        "id": "company:lumen health",
-        "name": "Lumen Health",
-        "company": "Lumen Health",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Nina Petrova>"
-        ]
-      },
-      {
-        "id": "company:northlight robotics",
-        "name": "Northlight Robotics",
-        "company": "Northlight Robotics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Daniel Osei>"
-        ]
-      },
-      {
-        "id": "company:tidepool analytics",
-        "name": "Tidepool Analytics",
-        "company": "Tidepool Analytics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Leo Fernandez>"
-        ]
-      },
-      {
-        "id": "school:unc chapel hill",
-        "name": "UNC Chapel Hill",
-        "company": "UNC Chapel Hill",
-        "kind": "school",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Maya Thompson>"
         ]
       }
     ],

@@ -833,6 +833,8 @@ export async function getDashboardData(
         id: true,
         company: true,
         school: true,
+        // Read by the constellation's role tier (role-function.ts), so the preview groups like /graph.
+        title: true,
         relationshipScore: true,
         statedCloseness: true,
         priorityLevel: true,
@@ -957,8 +959,8 @@ export async function getDashboardData(
     ? lightContacts.filter((c) => eligibleIds.has(c.id))
     : lightContacts;
   // The preview draws constellations only — no lone stars. Keep a contact only when at
-  // least one other shown contact shares its company/school cluster; singletons and Deep
-  // Space are individual connections, which belong on /graph.
+  // least one other shown contact shares its named (company, role or school) cluster;
+  // singletons and Deep Space are individual connections, which belong on /graph.
   const shownPerCluster = new Map<string, number>();
   for (const c of engagedContacts) {
     const ref = clusterByContactId.get(c.id);
@@ -1098,8 +1100,8 @@ export async function getDashboardData(
   const userName = (await options?.userName) || "You";
 
   // Clusters still see the whole network — a cluster's count is "how many people at Acme",
-  // which a capped sample cannot answer — but they only ever needed three columns, and the
-  // light scan has them.
+  // which a capped sample cannot answer — but they only ever needed four columns (company,
+  // school, title, id), and the light scan has them.
   const clusters = toNamedGraphClusters(builtClusters);
 
   // companies, schools and tags come from `getDashboardVocabularies`, not from a pass over

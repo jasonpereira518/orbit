@@ -69,7 +69,7 @@ export type ClusterFit = {
 export type ConstellationFitResult = {
   clusters: BuiltCluster[];
   byContactId: Map<string, ClusterRef>;
-  /** Keyed by cluster id; only wedge-eligible clusters (company/school, ≥2 members). */
+  /** Keyed by cluster id; only wedge-eligible clusters (company/role/school, ≥2 members). */
   fits: Map<string, ClusterFit>;
 };
 

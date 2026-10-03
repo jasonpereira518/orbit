@@ -27,7 +27,7 @@ export type GraphCluster = {
   company: string;
   id: string;
   name: string;
-  kind: "company" | "school" | "other";
+  kind: "company" | "role" | "school" | "other";
   count: number;
   contactIds: string[];
 };

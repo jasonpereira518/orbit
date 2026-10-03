@@ -81,6 +81,9 @@ const fixture: GraphContactInput[] = [
   contact("s3", { school: "MIT", orbitScore: 1 }),
   // Singleton company → background rim, not a wedge.
   contact("solo", { company: "Tiny Startup", orbitScore: 3 }),
+  // One-off companies, same function → a cross-company role constellation.
+  contact("r1", { company: "Acme Robotics", title: "Backend Engineer", orbitScore: 3 }),
+  contact("r2", { company: "Nimbus Labs", title: "Software Engineer", orbitScore: 4 }),
   // Deep space.
   ...Array.from({ length: 7 }, (_, i) =>
     contact(`d${i}`, { orbitScore: 1 + (i % 5) })
@@ -104,10 +107,20 @@ console.log("\nFit assignment");
   );
 
   check(
-    "only company/school clusters with ≥2 members get figures",
+    "only named clusters with ≥2 members get figures",
     [...fit.fits.values()].every(
       ({ cluster }) => cluster.kind !== "other" && cluster.count >= 2
     ) && ![...fit.fits.values()].some((f) => f.cluster.name === "Tiny Startup")
+  );
+  check(
+    "one-off engineers trace a role constellation",
+    [...fit.fits.values()].some(
+      (f) => f.cluster.kind === "role" && f.cluster.name === "Engineers" && f.cluster.count === 2
+    )
+  );
+  check(
+    "role figure lines are tagged as role edges",
+    layout.edges.some((e) => e.data?.reason === "role")
   );
 
   // Figure members are the top of the placement order, aligned to shape stars.

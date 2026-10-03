@@ -41,6 +41,7 @@ import { useSkyRenderer } from "@/components/graph/use-sky-renderer";
 import {
   buildContactHaystackIndex,
   findClusterMatch,
+  isExactClusterShortcut,
   matchGraphContacts,
 } from "@/lib/graph/search-match";
 import {
@@ -536,10 +537,8 @@ export function NetworkGraph({
     ) => {
       const personIds = new Set<string>([...localMatch.ids, ...extraIds]);
       const clusterByName = findClusterMatch(data.clusters, q);
-      const qNorm = q.toLowerCase();
       const isExactClusterName =
-        Boolean(clusterByName) &&
-        clusterByName!.name.toLowerCase() === qNorm;
+        Boolean(clusterByName) && isExactClusterShortcut(clusterByName!, q);
 
       // Searching a cluster name → highlight everyone in it
       if (isExactClusterName && clusterByName) {
