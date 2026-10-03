@@ -216,9 +216,10 @@ jobs:
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/work-history/sweep"
 
-      # Email insights: new career-relevant Gmail threads (metadata only, no body, no model)
-      # for opted-in accounts. Its own line for the same reason as the work-history sweep;
-      # 300s to match the route, which stops starting accounts at 240s.
+      # Email insights: new career-relevant Gmail threads for opted-in accounts, then events
+      # extracted from the hiring ones with each account's own AI key. Its own line for the same
+      # reason as the work-history sweep; 300s to match the route, which stops starting
+      # accounts at 100s (ingest) and work at 240s (extraction).
       - name: Run the email-insights sweep (every 15 minutes)
         if: github.event.schedule == '5,20,35,50 * * * *' && steps.health.outcome == 'success'
         run: |

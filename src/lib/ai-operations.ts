@@ -109,6 +109,10 @@ export const AI_OPERATIONS = {
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
+  // Reads the newest messages of a hiring thread and returns events, people and asks. The fast
+  // tier like the recruiter scan it descends from: nobody waits on it, it runs unattended on
+  // the person's own key, and the guarantee is the TypeScript validator, not model size.
+  "email.understand": { label: "Email insights: reading hiring threads", tier: "fast", thinking: "minimal", background: true },
   "recruiter.draft": { label: "Recruiter drafts", tier: "user" },
   "import.enrich": { label: "LinkedIn import summaries", tier: "fast", thinking: "minimal", background: true },
   // Jev (the decision model). Own ids, never an LLM operation's: `ai_result_cache` keys on

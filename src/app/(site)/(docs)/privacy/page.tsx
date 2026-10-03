@@ -253,13 +253,22 @@ export default function PrivacyPage() {
             <p>
               If you turn on Email insights in Settings, Orbit checks your Gmail every fifteen
               minutes for new threads that look like a job application or a recruiter
-              conversation, excluding newsletters and mailing lists. For each thread it reads
-              only the sender, the subject, who is on it, and the short preview Gmail supplies —
-              never the body. It keeps the thread id, the subject, the participants, a note of
-              where an application stands (applied, interviewing, offer, or rejected) and that
-              one preview line as evidence. It stores no message bodies and does not send this
-              mail to an AI provider. Turning it off stops the checking; disconnecting Gmail, or
-              deleting your insights in Settings, removes what it recorded.
+              conversation, excluding newsletters and mailing lists. It first reads only the
+              sender, the subject, who is on the thread and the short preview Gmail supplies.
+            </p>
+            <p>
+              For a thread that looks like a hiring conversation, Orbit then reads the text of
+              its most recent messages — up to four, each cut to 4,000 characters — and sends it,
+              with the sender names and addresses, to the AI provider that runs your
+              account&rsquo;s AI features. The model notes the company, the role, where things
+              stand, any dates, the people named and what is being asked of you. Orbit keeps
+              those notes, the thread id, the subject, the participants and one short quote
+              (under 200 characters) copied from the mail as evidence. It stores no message
+              bodies, and it does not use this mail to train models or for advertising.
+            </p>
+            <p>
+              Turning it off stops the checking; disconnecting Gmail, or deleting your insights
+              in Settings, removes what it recorded.
             </p>
           </DocCallout>
         </DocSection>

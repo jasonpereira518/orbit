@@ -138,8 +138,10 @@ Monday email. Every switch, smallest first:
 ## Email insights: switches
 
 Email insights (`src/lib/email-intel/`) checks opted-in accounts' Gmail every fifteen minutes
-for new job and hiring-process threads and records where each application stands. It reads
-sender, subject, participants and Gmail's short preview only: no body, no model. Every switch,
+for new job and hiring-process threads. Ingest reads sender, subject, participants and Gmail's
+short preview. For a thread that looks like a hiring conversation, extraction then sends the
+latest messages (up to four, 4,000 characters each) to the account's AI provider and keeps
+only the derived notes and one short quote: no message bodies are stored. Every switch,
 smallest first:
 
 - **One account:** `UPDATE user_settings SET email_intel_enabled = 0 WHERE user_id = '<id>';`
@@ -155,6 +157,19 @@ smallest first:
   "Available on Orbit Pro and Orbit Max" on other plans, and asks for Gmail's mail scope only
   when someone presses it. To pull it from view, hide `page.radar` in `/admin/product` (which
   also stands Radar down) or remove the `EmailIntelSetting` mount in the settings page.
+- **Model spend:** each extraction is one fast-tier call on the person's own key, capped at
+  `RATE_LIMITS.emailIntelExtractDaily` (40 per account per UTC day). A person whose key is
+  refused, out of credit, or whose model is gone has their waiting threads parked for six hours
+  with nothing counted against them.
+- **Where threads are:** `SELECT status, count(*) FROM email_threads GROUP BY 1;` —
+  `pending_ai` is waiting, `claimed` is being read (a claim older than ten minutes is taken
+  back on the next run), `failed` gave up after three counted attempts.
+- **Retry a failed thread:** `UPDATE email_threads SET status = 'pending_ai', stall_resumes = 0,
+  claimed_at = NULL, claim_token = NULL WHERE id = '<id>';`
+- **What the last run did:** `/admin/health` → the `email-intel.sweep` run's stats. `ingest_*`
+  is listing and triage; `extract_*` is model work (`keyProblems`, `budgetStops` and `released`
+  are ordinary; `failed` and `errors` are worth a look; `rejected_*` counts events the
+  validator dropped and is the way to tell an over-strict floor from a quiet mailbox).
 
 ## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
 

@@ -4,10 +4,11 @@
  * rule event is keyed on (thread, kind) so a stage that moves updates one row in place.
  * neon-http has no transactions, so each statement stands alone and is safe to repeat.
  */
+import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { emailEvents, emailThreads, userSettings } from "@/db/schema";
-import { statusFor, type ThreadResult } from "./types";
+import { statusFor, type ExtractedEvent, type ThreadResult } from "./types";
 
 export async function upsertThreadResult(userId: string, result: ThreadResult): Promise<{ changed: boolean }> {
   const db = await getDb();
@@ -107,4 +108,174 @@ export async function deleteEmailIntelData(userId: string): Promise<void> {
     .update(userSettings)
     .set({ emailIntelEnabled: 0, emailIntelCursorAt: null, emailIntelNextAt: null, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
+}
+
+/** A claim older than this belongs to a runner that died; the next run takes the thread back. */
+export const CLAIM_LEASE_MS = 10 * 60_000;
+/** Counted attempts (a dead runner, an unreadable thread, a model answer that was not JSON). */
+export const MAX_STALL_RESUMES = 3;
+
+export type ClaimedThread = {
+  id: string;
+  threadId: string;
+  subject: string;
+  participants: string[];
+  claimToken: string;
+};
+
+/**
+ * Claims whose runner died. Back to waiting with one more stall counted; the third stall is
+ * a failure, so a thread that keeps killing its runner cannot loop forever.
+ */
+export async function recoverStalledClaims(now: Date): Promise<number> {
+  const db = await getDb();
+  const stale = new Date(now.getTime() - CLAIM_LEASE_MS);
+  return rowsOf<{ id: string }>(
+    await db.execute(sql`
+      UPDATE email_threads
+         SET status = CASE WHEN stall_resumes + 1 >= ${MAX_STALL_RESUMES}::int THEN 'failed' ELSE 'pending_ai' END,
+             stall_resumes = stall_resumes + 1,
+             claim_token = NULL,
+             claimed_at = NULL,
+             updated_at = ${now}
+       WHERE status = 'claimed' AND claimed_at <= ${stale}
+      RETURNING id
+    `)
+  ).length;
+}
+
+/** Opted-in accounts with a claimable thread, the one waiting longest first. */
+export async function accountsWithPendingThreads(now: Date, limit: number): Promise<string[]> {
+  const db = await getDb();
+  return rowsOf<{ user_id: string }>(
+    await db.execute(sql`
+      SELECT t.user_id
+        FROM email_threads t
+        JOIN user_settings s ON s.user_id = t.user_id
+       WHERE s.email_intel_enabled = 1
+         AND t.status = 'pending_ai'
+         AND (t.claimed_at IS NULL OR t.claimed_at <= ${now})
+       GROUP BY t.user_id
+       ORDER BY min(t.processed_at), t.user_id
+       LIMIT ${limit}
+    `)
+  ).map((r) => r.user_id);
+}
+
+/**
+ * One UPDATE ... RETURNING claims the account's newest waiting threads (neon-http has no
+ * transactions). On a `pending_ai` row `claimed_at` is a "not before" time, so a parked thread
+ * is skipped until it passes.
+ */
+export async function claimPendingThreads(userId: string, limit: number, now: Date): Promise<ClaimedThread[]> {
+  if (limit <= 0) return [];
+  const db = await getDb();
+  const token = randomUUID();
+  const rows = rowsOf<{ id: string; thread_id: string; subject: string; participants: unknown }>(
+    await db.execute(sql`
+      UPDATE email_threads
+         SET status = 'claimed', claim_token = ${token}::uuid, claimed_at = ${now}, updated_at = ${now}
+       WHERE user_id = ${userId}
+         AND id IN (
+           SELECT id FROM email_threads
+            WHERE user_id = ${userId}
+              AND status = 'pending_ai'
+              AND (claimed_at IS NULL OR claimed_at <= ${now})
+            ORDER BY processed_at DESC
+            LIMIT ${limit}
+         )
+      RETURNING id, thread_id, subject, participants
+    `)
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    threadId: r.thread_id,
+    subject: r.subject,
+    participants: Array.isArray(r.participants) ? (r.participants as string[]) : [],
+    claimToken: token,
+  }));
+}
+
+/**
+ * Writes the extraction only while the claim is still held. A newer message resets the thread
+ * (`upsertThreadResult` clears the token), so an extraction of the older mail is dropped, not
+ * stored against the newer one.
+ */
+export async function settleExtraction(
+  userId: string,
+  claim: ClaimedThread,
+  events: ExtractedEvent[]
+): Promise<boolean> {
+  const db = await getDb();
+  const held = await db
+    .select({ id: emailThreads.id })
+    .from(emailThreads)
+    .where(
+      and(
+        eq(emailThreads.id, claim.id),
+        eq(emailThreads.userId, userId),
+        eq(emailThreads.claimToken, claim.claimToken),
+        eq(emailThreads.status, "claimed")
+      )
+    );
+  if (held.length === 0) return false;
+
+  await db.delete(emailEvents).where(and(eq(emailEvents.threadRowId, claim.id), eq(emailEvents.source, "ai")));
+  if (events.length > 0) {
+    await db.insert(emailEvents).values(
+      events.map((e) => ({
+        userId,
+        threadRowId: claim.id,
+        source: "ai" as const,
+        kind: e.kind,
+        company: e.company,
+        role: e.role,
+        stage: e.stage,
+        occurredAt: e.occurredAt,
+        dueAt: e.dueAt,
+        summary: e.summary,
+        evidenceQuote: e.evidenceQuote,
+        confidence: e.confidence,
+        people: e.people,
+        asks: e.asks,
+      }))
+    );
+  }
+  const done = await db
+    .update(emailThreads)
+    .set({ status: "done", claimToken: null, claimedAt: null, updatedAt: new Date() })
+    .where(and(eq(emailThreads.id, claim.id), eq(emailThreads.claimToken, claim.claimToken)))
+    .returning();
+  return done.length > 0;
+}
+
+/**
+ * Hands a claim back. `countStall` is for problems with the thread itself (unreadable, a bad
+ * answer); a problem with the person's key or allowance is not the thread's fault and is not
+ * counted. `notBefore` parks the thread until then.
+ */
+export async function releaseThread(
+  claim: ClaimedThread,
+  opts: { notBefore: Date | null; countStall: boolean }
+): Promise<void> {
+  const db = await getDb();
+  const inc = opts.countStall ? 1 : 0;
+  await db.execute(sql`
+    UPDATE email_threads
+       SET status = CASE WHEN ${inc}::int = 1 AND stall_resumes + 1 >= ${MAX_STALL_RESUMES}::int THEN 'failed' ELSE 'pending_ai' END,
+           stall_resumes = stall_resumes + ${inc}::int,
+           claim_token = NULL,
+           claimed_at = ${opts.notBefore},
+           updated_at = now()
+     WHERE id = ${claim.id}::uuid AND claim_token = ${claim.claimToken}::uuid
+  `);
+}
+
+/** Parks every waiting thread of an account, so a run does not find it again until `until`. */
+export async function deferPending(userId: string, until: Date): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`
+    UPDATE email_threads SET claimed_at = ${until}
+     WHERE user_id = ${userId} AND status = 'pending_ai'
+  `);
 }
