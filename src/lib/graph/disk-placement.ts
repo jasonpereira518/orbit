@@ -380,10 +380,58 @@ export function* placeClusterDisks(
   };
   yield* visit(settle);
 
+  circularize(xs, ys, foot, order.map((o) => o.id));
+
   let diskRadius = 0;
   for (let i = 0; i < n; i++) {
     centers.set(order[i].id, { x: xs[i], y: ys[i] });
     diskRadius = Math.max(diskRadius, Math.hypot(xs[i], ys[i]) + foot[i]);
   }
   return { centers, diskRadius };
+}
+
+/** The most the short axis is stretched: past this the galaxy is a strip, and it stays one. */
+export const MAX_CIRCULARIZE_STRETCH = 2.4;
+
+/**
+ * Makes the placed galaxy round. Affinity chains grow the disk along whatever axis they happen
+ * to run, so a network comes out as a tall oval or a strip. This measures the spread of the
+ * disks about the sun (weighted by area), and stretches ONLY the short principal axis until the
+ * two spreads match. A stretch along one axis never brings two points closer, so every disk
+ * stays clear of every other and of the sun; relatives lose a little tangency across that
+ * axis and nothing else. In place; deterministic (sums in id order, the axis' sign cancels).
+ */
+export function circularize(
+  xs: Float64Array | number[],
+  ys: Float64Array | number[],
+  foot: Float64Array | number[],
+  ids: string[]
+) {
+  const n = xs.length;
+  if (n < 3) return;
+  const idx = Array.from({ length: n }, (_, i) => i).sort((a, b) => (ids[a] < ids[b] ? -1 : ids[a] > ids[b] ? 1 : 0));
+  let sxx = 0;
+  let syy = 0;
+  let sxy = 0;
+  for (const i of idx) {
+    const w = foot[i] * foot[i];
+    sxx += w * xs[i] * xs[i];
+    syy += w * ys[i] * ys[i];
+    sxy += w * xs[i] * ys[i];
+  }
+  const mean = (sxx + syy) / 2;
+  const diff = Math.hypot((sxx - syy) / 2, sxy);
+  const major = mean + diff;
+  const minor = mean - diff;
+  if (minor <= 1e-9 || major / minor < 1.02 * 1.02) return;
+  const stretch = Math.min(MAX_CIRCULARIZE_STRETCH, Math.sqrt(major / minor));
+  // Unit vector of the minor axis.
+  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy); // major axis angle
+  const ex = -Math.sin(theta);
+  const ey = Math.cos(theta);
+  for (let i = 0; i < n; i++) {
+    const along = xs[i] * ex + ys[i] * ey;
+    xs[i] += (stretch - 1) * along * ex;
+    ys[i] += (stretch - 1) * along * ey;
+  }
 }
