@@ -100,6 +100,8 @@ export async function getSettings() {
      * this account's AI key. On unless switched off; see the column in schema.ts.
      */
     workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
+    /** Whether the relationship engine analyzes imported messages. On unless switched off. */
+    relationshipEngineEnabled: (settings?.relationshipEngineEnabled ?? 1) !== 0,
     /** Radar's Monday email. On unless switched off (Settings, or its one-click link). */
     radarDigestEnabled: (settings?.radarDigestEnabled ?? 1) !== 0,
     /**
@@ -195,6 +197,30 @@ export async function saveWorkHistoryAutoEnabled(enabled: boolean) {
       target: userSettings.userId,
       set: { workHistoryAutoEnabled: value, updatedAt: new Date() },
     });
+}
+
+/** The "Relationship analysis" switch on the AI settings page. */
+export async function saveRelationshipEngineEnabled(enabled: boolean) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const value = enabled ? 1 : 0;
+  await db
+    .insert(userSettings)
+    .values({ userId, relationshipEngineEnabled: value })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { relationshipEngineEnabled: value, updatedAt: new Date() },
+    });
+  if (enabled) {
+    try {
+      after(async () => {
+        await resumeKeyPausedRun(userId);
+        await kickRelationshipRun(userId);
+      });
+    } catch {
+      // Outside a request (scripts) there is nothing to kick; the hourly backstop picks it up.
+    }
+  }
 }
 
 export async function saveAiSettings(input: {
