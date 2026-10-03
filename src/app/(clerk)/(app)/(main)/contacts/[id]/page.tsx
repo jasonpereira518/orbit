@@ -5,6 +5,7 @@ import {
   getContactFollowUpSendOptions,
   listRelatedContacts,
 } from "@/actions/contacts";
+import { loadDigestView } from "@/lib/relationship-engine/digest-view";
 import { ContactBriefCard } from "@/components/contacts/contact-brief-card";
 import { ContactExperienceSection } from "@/components/contacts/contact-experience-section";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
@@ -92,6 +93,9 @@ export default async function ContactDetailPage({
   const nextStepsPromise = userIdPromise
     .then((u) => listOpenActionItems(u, id))
     .catch(() => []);
+  const digestPromise = userIdPromise
+    .then((u) => loadDigestView(u, id))
+    .catch(() => null);
   // `.catch` is mandatory, not defensive: this promise is started before the first `await`,
   // and an eagerly-started rejection races `notFound()` into the error boundary. See the
   // comment at the top of this file.
@@ -238,7 +242,7 @@ export default async function ContactDetailPage({
 
   // Awaited once here rather than inline: both the brief card's next-steps list and the
   // timeline's per-interaction "N open" chips read the same rows.
-  const nextSteps = await nextStepsPromise;
+  const [nextSteps, digest] = await Promise.all([nextStepsPromise, digestPromise]);
 
   const formInitial = {
     fullName: contact.fullName,
@@ -352,6 +356,7 @@ export default async function ContactDetailPage({
             interactionDate: new Date(item.interactionDate).toISOString(),
           }))}
           stale={briefStale}
+          digest={digest}
         />
       </div>
 

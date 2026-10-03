@@ -8,11 +8,13 @@ import { toast } from "@/lib/toast";
 import { regenerateContactSummary } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DigestSection } from "@/components/contacts/contact-digest";
 import { ContactNextSteps, type OpenActionItem } from "@/components/contacts/contact-next-steps";
 import { flashSection } from "@/components/layout/section-flash";
 import { requestInteractionReveal } from "@/components/contacts/reveal-interaction";
 import type { RecentDiscussion } from "@/lib/contact-brief";
 import { friendlyError } from "@/lib/errors";
+import type { DigestView } from "@/lib/relationship-engine/digest-copy";
 
 /**
  * Scrolls the timeline to the interaction a "recent discussion" line came from and glows it.
@@ -32,8 +34,8 @@ function revealInteraction(interactionId: string) {
   flashSection(`interaction-${interactionId}`);
 }
 
-export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussions, nextSteps, stale }: {
-  contactId: string; standing: string | null; nextStep: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean;
+export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussions, nextSteps, stale, digest }: {
+  contactId: string; standing: string | null; nextStep: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean; digest?: DigestView | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -53,6 +55,7 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
       </CardHeader>
       <CardContent className="grid gap-5 pt-4 lg:grid-cols-[1.2fr_1fr]">
         <div className="space-y-4">
+          {digest ? <DigestSection digest={digest} /> : null}
           <p className="text-sm leading-relaxed text-ink">
             {standing ?? "Log an interaction below and the brief will write itself from your notes."}
           </p>

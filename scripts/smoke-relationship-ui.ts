@@ -7,6 +7,8 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RunSummaryView } from "../src/components/imports/relationship-run-summary";
 import type { RunSummary } from "../src/lib/relationship-engine/summary-copy";
+import { DigestSection } from "../src/components/contacts/contact-digest";
+import { digestSourceLine, topicLine, type DigestView } from "../src/lib/relationship-engine/digest-copy";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -35,6 +37,24 @@ check("run: no undo while running", !running.includes("Undo all"));
 
 const shared = textOf(renderToStaticMarkup(React.createElement(RunSummaryView, { summary: base, busyKey: null, shared: true })));
 check("run: shared run says so", shared.includes("Analyzed together with an earlier upload"));
+
+const digest: DigestView = {
+  whatTheyDo: "Runs growth at Ramp, hiring PMs", workingOn: "A self-serve onboarding revamp",
+  summary: "You met at a fintech dinner and have traded hiring notes since.",
+  topics: [{ label: "Hiring", lastDiscussedAt: "2026-09-30" }, { label: "Onboarding", lastDiscussedAt: "2026-08-12" }],
+  openThreads: [], messageCount: 214, sources: ["whatsapp"], updatedAt: "2026-09-30T15:00:00.000Z", historyTruncatedBefore: null,
+};
+check("digest: source line, one source", digestSourceLine(digest) === "From 214 WhatsApp messages · updated Sep 30", String(digestSourceLine(digest)));
+check("digest: source line, two sources", digestSourceLine({ ...digest, sources: ["linkedin", "imessage"] }) === "From 214 messages on LinkedIn and iMessage · updated Sep 30", String(digestSourceLine({ ...digest, sources: ["linkedin", "imessage"] })));
+check("digest: source line, one message", digestSourceLine({ ...digest, messageCount: 1, sources: ["linkedin"] }) === "From 1 LinkedIn message · updated Sep 30");
+check("digest: no source line without messages", digestSourceLine({ ...digest, messageCount: 0 }) === null);
+check("digest: topic line", topicLine(digest.topics[0]) === "Hiring · last discussed Sep 30", topicLine(digest.topics[0]));
+const dg = textOf(renderToStaticMarkup(React.createElement(DigestSection, { digest })));
+check("digest: what they do", dg.includes("Runs growth at Ramp, hiring PMs"));
+check("digest: working on", dg.includes("A self-serve onboarding revamp"));
+check("digest: summary", dg.includes("You met at a fintech dinner"));
+check("digest: topic chips", dg.includes("Hiring") && dg.includes("Onboarding"));
+check("digest: source line rendered", dg.includes("From 214 WhatsApp messages"));
 
 console.log("\nsmoke-relationship-ui: all checks passed");
 process.exit(0);

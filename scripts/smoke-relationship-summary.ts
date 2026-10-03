@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders } from "../src/db/schema";
 import { latestRunNotice, loadImportRunSummary, loadLatestRunSummary, loadRunSummary, runSummaryCopy, type RunSummary } from "../src/lib/relationship-engine/summary";
+import { loadDigestView } from "../src/lib/relationship-engine/digest-view";
 import { dismissOpenThread, dismissRunFlag, promoteOpenThread, promoteRunFlag } from "../src/lib/relationship-engine/promote";
 import { ensureRunNoteBatch, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
 
@@ -48,6 +49,9 @@ async function main() {
     contactId: maya.id, userId: USER, runId: run.id, historyTruncatedBefore: new Date("2023-01-01"),
     openThreads: [{ key: "t1", text: "Intro to Priya", owedBy: "me", sinceIso: "2026-05-01", interactionId: msg.id, excerpt: "can you intro me to Priya?" }],
   });
+  const view = await loadDigestView(USER, maya.id);
+  check("digest view: threads carry canRemind", view?.openThreads[0]?.canRemind === true, JSON.stringify(view?.openThreads));
+  check("digest view: other user sees nothing", (await loadDigestView("someone-else", maya.id)) === null);
 
   // Read model
   const s = (await loadRunSummary(USER, run.id, NOW))!;
