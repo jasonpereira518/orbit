@@ -58,6 +58,7 @@ import {
   type ImportFailureCode,
 } from "@/lib/import-errors";
 import { ImportUndoButton } from "@/components/imports/import-finish-card";
+import { RelationshipRunCard } from "@/components/imports/relationship-run-summary";
 import { importSourceLabel } from "@/lib/imports/import-sources";
 import { summarizeImport, type ImportChip } from "@/lib/imports/import-summary";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
@@ -427,6 +428,17 @@ export function ImportDetailBody({
               {IMPORT_COPY.undoWindowClosed}
             </p>
           )
+        ) : null}
+
+        {detail.relationshipRun ? (
+          <div>
+            <h3 className="mb-1.5 text-sm font-medium">Relationship analysis</h3>
+            <RelationshipRunCard
+              initial={detail.relationshipRun}
+              shared={detail.relationshipRunShared}
+              compact
+            />
+          </div>
         ) : null}
 
         {counts.done + counts.skipped + counts.failed + counts.pending > 0 ? (

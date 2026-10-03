@@ -29,6 +29,9 @@ import { ImportDropzone } from "@/components/imports/import-dropzone";
 import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import { ImportQueueCard } from "@/components/imports/import-queue-card";
 import { DriveImportCard } from "@/components/imports/drive-import-card";
+import { RelationshipRunCard } from "@/components/imports/relationship-run-summary";
+import { getLatestRelationshipRun } from "@/actions/relationships";
+import type { RunSummary } from "@/lib/relationship-engine/summary-copy";
 import { ImportSourceRow } from "@/components/imports/import-source-row";
 import { CalendarConnectionsCard } from "@/components/imports/calendar-connections-card";
 import { ImportProgress } from "@/components/imports/import-utils";
@@ -410,6 +413,25 @@ export function ImportHub({
     noDismissedFinishesYet,
   );
   const historyRef = useRef<ImportHistoryHandle>(null);
+  // Only a run worth showing is kept: still active, or finished within the week, and not undone.
+  const [latestRun, setLatestRun] = useState<RunSummary | null>(null);
+  useEffect(() => {
+    getLatestRelationshipRun()
+      .then((run) => {
+        if (!run || run.status === "undone") return;
+        const active = ["queued", "running", "waiting_key"].includes(run.status);
+        if (active || Date.now() - Date.parse(run.finishedAt ?? run.createdAt) < 7 * 86_400_000) {
+          setLatestRun(run);
+        }
+      })
+      .catch(() => {});
+  }, []);
+  const showRun = latestRun !== null;
+  useEffect(() => {
+    if (showRun && window.location.hash === "#relationship-analysis") {
+      document.getElementById("relationship-analysis")?.scrollIntoView({ block: "start" });
+    }
+  }, [showRun]);
   const router = useRouter();
 
   /**
@@ -796,6 +818,8 @@ export function ImportHub({
           </ImportSourceRow>
         </ul>
       </section>
+
+      {showRun ? <RelationshipRunCard initial={latestRun} /> : null}
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">

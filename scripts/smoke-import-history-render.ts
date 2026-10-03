@@ -263,6 +263,17 @@ const driveSheet = sheet({
 });
 check("a Drive import's sheet offers no undo", !driveSheet.includes("Undo this import"));
 
+const runSheet = sheet({
+  ...detailFor({}),
+  relationshipRun: {
+    id: "r1", importId: "i1", status: "done", processed: 25, skipped: 0, failed: 0,
+    remindersCreated: 2, openThreadsAdded: 3, factsAdded: 4, remaining: 0,
+    reminders: [], flags: [], truncatedPeople: 0, parkedPeople: [],
+    createdAt: "2026-10-03T10:00:00.000Z", finishedAt: "2026-10-03T10:20:00.000Z", undoable: true,
+  },
+});
+check("a sheet with a relationship run shows its analysis", runSheet.includes("Relationship analysis") && runSheet.includes("Undo all"));
+
 console.log("Every import type still renders");
 const TYPES = [
   "linkedin_connections",

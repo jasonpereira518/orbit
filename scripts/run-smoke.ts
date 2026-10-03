@@ -375,6 +375,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-relationship-extract": "pure",
   "smoke-relationship-validate": "pure",
   "smoke-relationship-rules": "pure",
+  "smoke-relationship-ui": "pure",
   "smoke-relationship-apply": "pglite",
   "smoke-relationship-runner": "pglite",
   "smoke-relationship-summary": "pglite",
