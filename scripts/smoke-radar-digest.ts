@@ -43,7 +43,7 @@ import {
   unsubscribeRadarDigest,
   type DigestMessage,
 } from "../src/lib/radar/digest";
-import { COMING_SOON_KEYS } from "../src/lib/surfaces";
+import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const PREFIX = "smoke-radar-digest-";
@@ -326,7 +326,7 @@ async function main() {
       })
     );
     const body = (await res.json()) as { standDown?: boolean; notConfigured?: boolean };
-    if (COMING_SOON_KEYS.has("page.radar")) {
+    if (DEFAULT_COMING_SOON_KEYS.has("page.radar")) {
       check("while Radar is coming soon, the route sends nobody anything", res.status === 200 && body.standDown === true, JSON.stringify(body));
     } else {
       // Released: the gate lets the run through, and with no Resend key (smoke/_env removes

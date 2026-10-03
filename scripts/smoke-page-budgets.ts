@@ -46,6 +46,8 @@ import { traced } from "../src/lib/perf-trace";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { scaleContactRows } from "./lib/scale-fixture";
 import { loadKnowledgeBase } from "../src/lib/knowledge-base";
+import { loadKnowledgePeople } from "../src/lib/knowledge-people";
+import { KNOWLEDGE_PEOPLE_LIMIT } from "../src/lib/knowledge-people-types";
 import { radarRuns, userSettings } from "../src/db/schema";
 import { claimRadarLease, runRadarForUser } from "../src/lib/radar/run";
 import { loadRadarBriefing, loadRadarPage } from "../src/lib/radar/page-data";
@@ -689,6 +691,37 @@ async function main() {
     `${(knowledgeBytes / renderedContacts).toFixed(0)} bytes a contact`
   );
 
+  // ---- Knowledge people index --------------------------------------------------------
+  console.log("\nKnowledge people index (loadKnowledgePeople)…");
+  startQueryCount();
+  const people = await loadKnowledgePeople(USER);
+  const peopleCount = stopQueryCount();
+  const peopleStatements = capturedQueries();
+  const peopleScans = contactScans(peopleStatements);
+  console.log(`  statements: ${peopleCount}`);
+  check("people index issues ≤ 4 statements", peopleCount <= 4, `got ${peopleCount}`);
+  check(
+    "every people-index contacts scan is bounded by LIMIT",
+    peopleScans.length >= 1 && peopleScans.every((s) => /\blimit\b/i.test(s)),
+    peopleScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 200)
+  );
+  check(
+    "people index never pulls notes as a bare column",
+    peopleScans.every((s) => !selectsBare(s, "notes")),
+    peopleScans.find((s) => selectsBare(s, "notes"))?.slice(0, 200)
+  );
+  check("people index returns at most its limit", people.rows.length <= KNOWLEDGE_PEOPLE_LIMIT, `${people.rows.length}`);
+  check("people index still counts every contact", people.total === N + SPECIAL_ROWS, `${people.total}`);
+  const peopleBytes = JSON.stringify(people).length;
+  console.log(`  ${(peopleBytes / 1024).toFixed(0)} KB, ${(peopleBytes / Math.max(1, people.rows.length)).toFixed(0)} bytes a person`);
+  // A row is a name, a role, a one-line gist and a few flags. An avatar or a whole summary
+  // per row blows through this.
+  check(
+    "people index moves under 700 bytes per person",
+    peopleBytes / Math.max(1, people.rows.length) < 700,
+    `${(peopleBytes / Math.max(1, people.rows.length)).toFixed(0)} bytes a person`
+  );
+
   // ---- Payload scaling ---------------------------------------------------------------
   //
   // Everything above runs at ONE account size, so it can prove a payload is narrow but not
@@ -702,6 +735,7 @@ async function main() {
   const smallGraph = await loadGraphData(SCALE_USER, { profile: Promise.resolve(null), scope: "all" });
   const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false, radar: true });
   const smallKnowledge = await loadKnowledgeBase(SCALE_USER);
+  const smallPeople = await loadKnowledgePeople(SCALE_USER);
   check(
     "knowledge payload does not grow with the account",
     JSON.stringify(knowledge).length / Math.max(1, JSON.stringify(smallKnowledge).length) < 1.5,
@@ -739,6 +773,9 @@ async function main() {
     // Bounded in SQL: four limited queries (80 + 100 + 30 + 25) feed `items`. This is the
     // shape the other two should end up in.
     { name: "notifications panel", small: smallPanel.items.length, large: panel.items.length, bound: 235 },
+    // One LIMITed read of the most recently touched people; the account's size only moves the
+    // `total` counter beside it.
+    { name: "knowledge people", small: smallPeople.rows.length, large: people.rows.length, bound: KNOWLEDGE_PEOPLE_LIMIT, flat: true },
   ];
   const sizeRatio = (N + SPECIAL_ROWS) / (SCALE_N + SPECIAL_ROWS);
 

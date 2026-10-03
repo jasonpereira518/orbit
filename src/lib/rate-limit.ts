@@ -28,6 +28,7 @@ const BUCKET_LABELS: Record<string, string> = {
   avatarResolve: "photo lookup",
   feedback: "feedback",
   radarRefresh: "Radar refresh",
+  knowledgeRefresh: "refresh",
   interestJoin: "sign-up",
   interestProgress: "progress check",
   pollResults: "poll results",
@@ -171,6 +172,13 @@ export const RATE_LIMITS = {
   // Each refresh re-scores the whole network and may write up to five AI lines on the
   // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
   radarRefresh: { limit: 3, windowSec: 600 },
+  /**
+   * `/api/knowledge/refresh`: rebuilding one person's brief on the Knowledge page — a model
+   * call on the account's own key, made when a dossier opens on a stale brief or a goal was
+   * added since it was judged. Sized for clicking through a list of people after adding a
+   * goal, and no more: past it the dossier simply shows what is on file.
+   */
+  knowledgeRefresh: { limit: 30, windowSec: 300 },
   /**
    * `joinInterestList`: ten submits per ten minutes per IP. Replaces the action's old
    * per-instance Map, which never held across instances. Loose on purpose — several friends

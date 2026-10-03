@@ -1552,6 +1552,17 @@ export const contactBriefs = pgTable("contact_briefs", {
    * must be replaced as soon as a model can run.
    */
   inputHash: text("input_hash"),
+  /**
+   * How this person bears on the user's active goals, as the model judged it. `judged` is the
+   * ids of the goals it was shown, so a goal added since is detectable as "this fit is out of
+   * date" (`goalFitOutOfDate` in lib/contact-brief.ts) without guessing from timestamps; a
+   * goal deleted since needs no regeneration, readers simply drop items whose goal is gone.
+   * `items` holds only goals that genuinely fit, each with a one-sentence reason. Null means
+   * never judged: a brief written before goals existed, or by the deterministic no-model
+   * fallback. Deliberately NOT the same as an empty `items`, which says "looked, and nothing
+   * here maps to your goals".
+   */
+  goalFit: jsonb("goal_fit").$type<{ judged: string[]; items: { goalId: string; why: string }[] } | null>(),
 });
 
 /** One entry on a LinkedIn profile: a job, or a school. */
