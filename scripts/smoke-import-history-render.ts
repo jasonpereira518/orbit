@@ -237,6 +237,8 @@ const detailFor = (stats: ImportHistoryItem["stats"]): ImportDetail => ({
   problems: [],
   moreProblems: 0,
   people: { added: 19, existing: 6 },
+  relationshipRun: null,
+  relationshipRunShared: false,
 });
 const sheet = (detail: ImportDetail) =>
   renderToStaticMarkup(

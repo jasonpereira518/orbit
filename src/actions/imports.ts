@@ -18,6 +18,8 @@ import {
   type FinishSummary,
 } from "@/lib/imports/import-finish";
 import { importIdsFrom, isImportId } from "@/lib/imports/import-ids";
+import { loadImportRunSummary, loadLatestRunSummary, type RunSummary } from "@/lib/relationship-engine/summary";
+import { IMESSAGE_CHAT_IMPORT_TYPE, WHATSAPP_CHAT_IMPORT_TYPE } from "@/lib/import-adapters/chat";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
 import {
   performUndo,
@@ -352,7 +354,18 @@ export type ImportDetail = {
   moreProblems: number;
   /** How many distinct people this import added, and how many it matched to someone already here. */
   people: { added: number; existing: number };
+  /** The relationship analysis this import started, or the shared one that covered it. */
+  relationshipRun: RunSummary | null;
+  /** True when the run is the user's latest rather than one started by this import. */
+  relationshipRunShared: boolean;
 };
+
+/** Imports that feed the relationship engine with message history. */
+const MESSAGE_IMPORT_TYPES: string[] = [
+  LINKEDIN_MESSAGES_IMPORT_TYPE,
+  WHATSAPP_CHAT_IMPORT_TYPE,
+  IMESSAGE_CHAT_IMPORT_TYPE,
+];
 
 /** Problem rows shown before it stops being a list and starts being a dump. */
 const IMPORT_PROBLEM_SAMPLE = 25;
@@ -443,6 +456,13 @@ export async function getImportDetail(
   const totalProblems = counts.failed + counts.skipped;
   const people = await countImportPeople(userId, importId, row.createdAt);
 
+  const isMessageImport = MESSAGE_IMPORT_TYPES.includes(row.importType);
+  const ownRun = isMessageImport ? await loadImportRunSummary(userId, importId) : null;
+  const latestRun = isMessageImport && !ownRun ? await loadLatestRunSummary(userId) : null;
+  // A latest run that started AFTER this import is unrelated to it: show nothing.
+  const relationshipRunShared = !!latestRun && new Date(latestRun.createdAt) <= new Date(row.createdAt);
+  const shownRun = ownRun ?? (relationshipRunShared ? latestRun : null);
+
   return {
     item: {
       id: row.id,
@@ -480,6 +500,8 @@ export async function getImportDetail(
     problems,
     moreProblems: Math.max(0, totalProblems - problems.length),
     people,
+    relationshipRun: shownRun,
+    relationshipRunShared,
   };
 }
 
