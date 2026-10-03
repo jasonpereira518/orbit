@@ -50,8 +50,9 @@ export async function loadAppPulse(
   const settings = loadedSettings ?? (await ensureUserSettings(userId));
   const entitlements = entitlementsFromSettings(userId, settings);
   const [rawPanel, canOpenAdmin] = await Promise.all([
+    // relationship: the bell row for the latest analysis; one more statement, a sibling of items (never due/badge/OS).
     isSurfaceLive(userId, "page.radar").then((radar) =>
-      loadNotificationPanel(userId, now, { withAlerts: true, settings, entitlements, radar })
+      loadNotificationPanel(userId, now, { withAlerts: true, settings, entitlements, radar, relationship: true })
     ),
     isAdminUser(userId) ? isViewingAsUser(userId).then((v) => !v) : Promise.resolve(false),
   ]);
