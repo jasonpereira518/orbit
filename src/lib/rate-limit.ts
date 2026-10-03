@@ -56,6 +56,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "poll.results": "results check",
   "work-history": "work-history lookup",
   "work-history-background": "background work-history check",
+  "email-intel-daily": "email-insights",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -155,6 +156,11 @@ export const RATE_LIMITS = {
    * so the two together still stop at its 60.
    */
   workHistoryBackground: { limit: 20, windowSec: 86_400 },
+  /**
+   * Gmail threads the email-insights sweep may fetch per account per UTC day (metadata only).
+   * Keyed per UTC day by the sweep, like `workHistoryBackground`.
+   */
+  emailIntelDaily: { limit: 300, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**

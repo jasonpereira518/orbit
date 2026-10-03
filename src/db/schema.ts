@@ -34,6 +34,12 @@ import type {
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
 import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
+import type {
+  EmailEventKind,
+  EmailEventPerson,
+  EmailThreadStatus,
+  ThreadDecision,
+} from "@/lib/email-intel/types";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -458,6 +464,15 @@ export const userSettings = pgTable("user_settings", {
    * 0/1, not boolean, per this table's convention (see `timelineBackfillEnabled`).
    */
   workHistoryAutoEnabled: integer("work_history_auto_enabled").default(1).notNull(),
+  /**
+   * Email insights (docs/superpowers/specs/2026-09-30-email-intelligence-design.md). Opt-in,
+   * so it defaults to 0 and is deliberately NOT in `PRESERVED_SETTINGS_COLUMNS`: consent must
+   * not survive a data wipe. The cursor is the watermark (start of the last complete sweep);
+   * next_at is both the schedule and the lease, the same pattern as `work_history_due_at`.
+   */
+  emailIntelEnabled: integer("email_intel_enabled").default(0).notNull(),
+  emailIntelCursorAt: timestamp("email_intel_cursor_at", { withTimezone: true }),
+  emailIntelNextAt: timestamp("email_intel_next_at", { withTimezone: true }),
   /**
    * One-shot marker: has this row already been force-flipped to
    * `timeline_backfill_enabled = 1` by the v108 migration? Exists only so that migration's
@@ -5732,3 +5747,64 @@ export const dataPurgeRuns = pgTable(
 
 export type StripeProcessedEventRow = typeof stripeProcessedEvents.$inferSelect;
 export type DataPurgeRunRow = typeof dataPurgeRuns.$inferSelect;
+
+/** One row per Gmail thread the email-insights sweep has judged. Metadata only, never a body. */
+export const emailThreads = pgTable(
+  "email_threads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"gmail">().default("gmail").notNull(),
+    threadId: text("thread_id").notNull(),
+    lastMessageId: text("last_message_id").notNull(),
+    subject: text("subject").default("").notNull(),
+    participants: jsonb("participants").$type<string[]>().default([]).notNull(),
+    lastDirection: text("last_direction").$type<"in" | "out">().default("in").notNull(),
+    decision: text("decision").$type<ThreadDecision>().notNull(),
+    triageScore: integer("triage_score").default(0).notNull(),
+    status: text("status").$type<EmailThreadStatus>().notNull(),
+    /** The P2 extractor's claim lifecycle (same shape as capture_jobs). Unused until then. */
+    claimToken: uuid("claim_token"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    stallResumes: integer("stall_resumes").default(0).notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_threads_thread_uidx").on(t.userId, t.provider, t.threadId),
+    index("email_threads_pending_idx").on(t.userId, t.status).where(sql`status = 'pending_ai'`),
+  ]
+);
+
+/** What an email meant: a hiring-stage change now, jobs/news/events once the extractor lands. */
+export const emailEvents = pgTable(
+  "email_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    threadRowId: uuid("thread_row_id")
+      .notNull()
+      .references(() => emailThreads.id, { onDelete: "cascade" }),
+    source: text("source").$type<"rule" | "ai">().default("rule").notNull(),
+    kind: text("kind").$type<EmailEventKind>().notNull(),
+    company: text("company"),
+    role: text("role"),
+    stage: text("stage"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    summary: text("summary").notNull(),
+    evidenceQuote: text("evidence_quote").default("").notNull(),
+    confidence: real("confidence").default(0).notNull(),
+    people: jsonb("people").$type<EmailEventPerson[]>().default([]).notNull(),
+    asks: jsonb("asks").$type<string[]>().default([]).notNull(),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // One rule-derived event per kind per thread; AI events (P2) replace by source instead.
+    uniqueIndex("email_events_rule_uidx").on(t.threadRowId, t.kind).where(sql`source = 'rule'`),
+    index("email_events_user_idx").on(t.userId, t.occurredAt),
+  ]
+);

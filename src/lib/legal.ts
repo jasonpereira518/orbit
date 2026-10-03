@@ -9,8 +9,8 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  * `scripts/smoke-legal-pages.ts` holds a lock over the two page sources and fails when they
  * move and these two do not, so the rule above is enforced rather than merely written down.
  */
-export const TERMS_VERSION = "2026-09-29";
-export const LEGAL_LAST_UPDATED = "September 29, 2026";
+export const TERMS_VERSION = "2026-09-30";
+export const LEGAL_LAST_UPDATED = "September 30, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -81,8 +81,8 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your own AI key. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Message bodies are never stored.",
-    askedWhen: "Connect Gmail on Recruiters, or turn on Confirmation emails on Events",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your own AI key. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads to note where each application stands. Message bodies are never stored.",
+    askedWhen: "Connect Gmail on Recruiters, turn on Confirmation emails on Events, or turn on Email insights in Settings",
   },
   {
     scope: GOOGLE_SCOPES.gmailSend,

@@ -23,7 +23,7 @@ export const GOOGLE_SCOPES = {
 
 export type GoogleScope = (typeof GOOGLE_SCOPES)[keyof typeof GOOGLE_SCOPES];
 
-export const GOOGLE_PURPOSES = ["contacts", "recruiter_scan", "send", "calendar", "event_mail", "drive"] as const;
+export const GOOGLE_PURPOSES = ["contacts", "recruiter_scan", "send", "calendar", "event_mail", "drive", "email_intel"] as const;
 export type GooglePurpose = (typeof GOOGLE_PURPOSES)[number];
 
 const IDENTITY_SCOPES: readonly GoogleScope[] = [GOOGLE_SCOPES.openid, GOOGLE_SCOPES.email];
@@ -35,6 +35,7 @@ const PURPOSE_SCOPE: Record<GooglePurpose, GoogleScope> = {
   calendar: GOOGLE_SCOPES.calendar,
   event_mail: GOOGLE_SCOPES.gmailRead,
   drive: GOOGLE_SCOPES.drive,
+  email_intel: GOOGLE_SCOPES.gmailRead,
 };
 
 export function isGooglePurpose(value: unknown): value is GooglePurpose {

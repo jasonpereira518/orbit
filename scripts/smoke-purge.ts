@@ -161,6 +161,30 @@ async function seed() {
     contactCount: 1,
   });
 
+  // Email insights: a thread and the event read from it. Derived from the user's mail, so
+  // both must leave with an insights delete.
+  const [emailThread] = await db
+    .insert(schema.emailThreads)
+    .values({
+      userId: USER,
+      threadId: "smoke-purge-thread",
+      lastMessageId: "smoke-purge-message",
+      subject: "Thank you for applying",
+      participants: ["no-reply@example.com"],
+      decision: "ats_rule",
+      status: "done",
+    })
+    .returning();
+  await db.insert(schema.emailEvents).values({
+    userId: USER,
+    threadRowId: emailThread.id,
+    kind: "process_update",
+    stage: "applied",
+    occurredAt: now,
+    summary: "Applied",
+    evidenceQuote: "We have received your application.",
+  });
+
   const [interaction] = await db
     .insert(schema.interactions)
     .values({

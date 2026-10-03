@@ -56,6 +56,8 @@ export type OpsSnapshot = {
     /** Radar's Monday email (`/api/radar/digest`), hourly at :13 through Sunday and Monday UTC. */
     radarDigest: { lastStartedAt: Date | null; lastState: CronRunState | null };
     workHistory: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** The email-insights sweep (`/api/email-intel/sweep`), every fifteen minutes. */
+    emailIntel: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
   processStalledRecent: CronRunState[];
@@ -212,6 +214,13 @@ const RADAR_DIGEST_SILENT_MS = 6 * 24 * 60 * 60 * 1000;
  * runs, not GitHub's ordinary lag. `warning`: a job move noticed a day late costs nothing.
  */
 const WORK_HISTORY_SILENT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * The email-insights sweep runs every fifteen minutes; two hours of silence is eight missed
+ * runs, not GitHub's ordinary lag. `warning`: a stage change noticed late costs nothing.
+ * Never having run is NOT an alert — the feature is opt-in and may not be enabled anywhere.
+ */
+const EMAIL_INTEL_SILENT_MS = 2 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -496,6 +505,27 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Work-history sweep ${workHistory.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${workHistory.lastStartedAt?.toISOString() ?? "unknown"} ended ${workHistory.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // And the email-insights sweep. Unlike the others, never having run is not an alert (the
+  // feature is opt-in), and `partial` is its ordinary shape: out of time or out of daily budget.
+  const emailIntel = s.cron.emailIntel;
+  if (emailIntel.lastStartedAt && now.getTime() - emailIntel.lastStartedAt.getTime() > EMAIL_INTEL_SILENT_MS) {
+    out.push({
+      id: "emailintel.schedule_missed",
+      severity: "warning",
+      title: "Email-insights sweep has stopped running",
+      detail: `Last started ${emailIntel.lastStartedAt.toISOString()}; new application updates are not being noticed.`,
+      href: "/admin/health",
+    });
+  } else if (emailIntel.lastState === "failed" || emailIntel.lastState === "stale") {
+    out.push({
+      id: "emailintel.run_failed",
+      severity: "warning",
+      title: `Email-insights sweep ${emailIntel.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${emailIntel.lastStartedAt?.toISOString() ?? "unknown"} ended ${emailIntel.lastState}.`,
       href: "/admin/health",
     });
   }

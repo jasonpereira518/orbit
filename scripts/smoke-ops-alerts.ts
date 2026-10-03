@@ -41,6 +41,7 @@ const HEALTHY: OpsSnapshot = {
     radarFeeds: { lastStartedAt: hoursAgo(1), lastState: "ok" },
     radarDigest: { lastStartedAt: hoursAgo(30), lastState: "ok" },
     workHistory: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    emailIntel: { lastStartedAt: hoursAgo(0.2), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
@@ -241,6 +242,21 @@ function main() {
     !find(workHistory({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "workhistory.run_failed"));
   check("  healthy → silent",
     !find(HEALTHY, "workhistory.schedule_missed") && !find(HEALTHY, "workhistory.run_failed"));
+
+  const emailIntel = (over: OpsSnapshot["cron"]["emailIntel"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, emailIntel: over },
+  });
+  check("an email-insights sweep silent for 3h → emailintel.schedule_missed",
+    Boolean(find(emailIntel({ lastStartedAt: hoursAgo(3), lastState: "ok" }), "emailintel.schedule_missed")));
+  check("  never having run is not an alert (the feature is opt-in)",
+    !find(emailIntel({ lastStartedAt: null, lastState: null }), "emailintel.schedule_missed"));
+  check("  a failed run → emailintel.run_failed",
+    Boolean(find(emailIntel({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "emailintel.run_failed")));
+  check("  a partial run (out of time or daily budget) is not an alert",
+    !find(emailIntel({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "emailintel.run_failed"));
+  check("  healthy → silent",
+    !find(HEALTHY, "emailintel.schedule_missed") && !find(HEALTHY, "emailintel.run_failed"));
 
   check("three invalid Clerk deliveries in a row → critical",
     find({ ...HEALTHY, webhooks: { ...HEALTHY.webhooks, clerk: ["invalid", "invalid", "invalid"] } }, "webhook.invalid_streak:clerk")?.severity === "critical");
