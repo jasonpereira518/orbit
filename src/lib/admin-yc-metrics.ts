@@ -1,6 +1,7 @@
 import { and, count, desc, eq, gte, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { currentMrrCents, mrrMovement } from "@/lib/billing-events";
+import { managedAiCostMicros } from "@/lib/credits/admin-credits";
 import { monthlyCostSeries } from "@/lib/money-costs";
 import {
   acquisitionSpend,
@@ -12,7 +13,7 @@ import {
   startupExpenses,
   userSettings,
 } from "@/db/schema";
-import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { requireAdminUserId } from "@/lib/admin";
 import {
   computeCac,
@@ -30,10 +31,13 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Cash, burn, and how long one divided by the other lasts.
  *
- * Burn has two components and they are reported separately, never pre-merged:
+ * Burn has three components and they are reported separately, never pre-merged:
  *
  *  - **Ad-hoc expenses**, summed over a trailing 30-day window.
  *  - **Infrastructure**, taken from the most recent month with a bill actually entered.
+ *  - **Included AI** (Pro and Max), the real model cost on Orbit's keys over the trailing
+ *    30 days, from `usage_events`. It arrives as provider bills later, but waiting for them
+ *    would overstate runway by exactly the months managed AI has been running.
  *
  * Mixing a rolling window with a calendar month needs justifying, and the justification is
  * that they are different kinds of number. Expenses are a *flow* — things that happened to
@@ -47,7 +51,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
  */
 export async function loadRunwayMetrics(now = new Date()) {
   const db = await getDb();
-  const [latestSnapshot, expenseRows, costMonths] = await Promise.all([
+  const [latestSnapshot, expenseRows, costMonths, managedMicros] = await Promise.all([
     db.query.cashSnapshots.findFirst({
       orderBy: [desc(cashSnapshots.asOf)],
     }),
@@ -56,6 +60,7 @@ export async function loadRunwayMetrics(now = new Date()) {
       orderBy: [desc(startupExpenses.incurredAt)],
     }),
     monthlyCostSeries(3),
+    managedAiCostMicros(30, now),
   ]);
 
   // Newest month that actually has a bill recorded. An empty result means nobody has ever
@@ -65,13 +70,15 @@ export async function loadRunwayMetrics(now = new Date()) {
 
   const cashBalanceUsd = latestSnapshot?.balanceUsd ?? 0;
   const expenseBurnUsd = computeMonthlyBurn(expenseRows, now);
-  const monthlyBurnUsd = expenseBurnUsd + infraMonthlyUsd;
+  const managedAiMonthlyUsd = managedMicros / 1_000_000;
+  const monthlyBurnUsd = expenseBurnUsd + infraMonthlyUsd + managedAiMonthlyUsd;
 
   return {
     cashBalanceUsd,
     monthlyBurnUsd,
     expenseBurnUsd,
     infraMonthlyUsd,
+    managedAiMonthlyUsd,
     infraEntered: !!latestInfra,
     infraMonth: latestInfra?.month ?? null,
     runwayMonths: computeRunway(cashBalanceUsd, monthlyBurnUsd),
@@ -186,7 +193,8 @@ export async function loadUnitEconomics(now = new Date()) {
   const estimatedMonthlyChurnPct = settings?.estimatedMonthlyChurnPct ?? null;
 
   const cac = computeCac(spend30dUsd, newSubscribers30d);
-  const ltv = computeLtv(MONTHLY_AMOUNT, estimatedMonthlyChurnPct);
+  // Pro's list price as the per-subscriber figure: the conservative one of the two tiers.
+  const ltv = computeLtv((PLAN_CONFIG.orbit.monthlyPriceCents ?? 0) / 100, estimatedMonthlyChurnPct);
 
   return {
     cac,

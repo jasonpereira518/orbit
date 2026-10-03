@@ -465,4 +465,15 @@ export type MeResponse = {
     contactCount: number;
     dueFollowUpCount: number;
   };
+  /**
+   * The account's plan (pricing v2), so the extension can gate its depth on Pro, Max and
+   * Lifetime when it ships. Optional and additive: builds that predate it ignore it, so the
+   * contract version does not move.
+   */
+  plan?: {
+    id: "free" | "orbit" | "max" | "lifetime";
+    label: string;
+    /** Any plan beyond Free — what "Pro depth" means for the extension. */
+    paid: boolean;
+  };
 };

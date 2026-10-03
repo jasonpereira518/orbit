@@ -1,7 +1,8 @@
 import { ArrowUpRight, Infinity as InfinityIcon, Rocket, Sparkles } from "lucide-react";
 import { DeepSpace } from "@/components/dashboard/deep-space";
 import { WarpLink } from "@/components/warp/warp-link";
-import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/plan-limits";
+import { planCopy } from "@/lib/plan-copy";
+import { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
 
 /**
  * A porthole onto the destination.
@@ -13,41 +14,40 @@ import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/plan-limits";
  * becomes a non-sequitur.
  *
  * Paid plans get the same sky, restated as a certificate rather than an offer: no
- * pitch, no button that asks for money, just the tier's own colour — gold for Lifetime,
- * the product blue for Pro — so holding the plan reads as having arrived somewhere.
+ * pitch, no button that asks for money, just the tier's own colour — Pro blue, Max gold,
+ * Lifetime silver — so holding the plan reads as having arrived somewhere.
  */
 const PAID_TIER = {
-  lifetime: {
-    name: "Orbit Lifetime",
-    line: "Yours for good. Unlimited contacts, for as long as Orbit exists.",
-    Icon: InfinityIcon,
-    rgb: "242,193,78",
-    edge: "border-[#f2c14e]/40 hover:border-[#f2c14e]/60 hover:shadow-[0_0_48px_-12px_rgba(242,193,78,0.45)]",
-    badge: "bg-gradient-to-b from-[#f7d15f] to-[#e0a52e] text-[#3d2c00]",
-    ink: "text-[#f2c14e]",
-    limb: "rgba(242,193,78,0.30), rgba(242,193,78,0.08) 55%",
-    focus: "focus-visible:outline-[#f2c14e]",
-  },
   orbit: {
-    name: "Orbit Pro",
-    line: "Unlimited contacts, enrichment and outreach are all switched on.",
     Icon: Sparkles,
+    /** Star and glow colour as `r,g,b` — fixed values, since the sky is the same in both themes. */
     rgb: "142,196,245",
-    edge: "border-[#5b9de6]/40 hover:border-[#8ec4f5]/60 hover:shadow-[0_0_48px_-12px_rgba(91,157,230,0.5)]",
-    badge: "bg-gradient-to-b from-[#8ec4f5] to-[#5b9de6] text-[#0f2e4d]",
-    ink: "text-[#8ec4f5]",
     limb: "rgba(91,157,230,0.32), rgba(91,157,230,0.08) 55%",
-    focus: "focus-visible:outline-[#8ec4f5]",
+    shadow: "hover:shadow-[0_0_48px_-12px_rgba(91,157,230,0.5)]",
+  },
+  max: {
+    Icon: Sparkles,
+    rgb: "242,193,78",
+    limb: "rgba(242,193,78,0.30), rgba(242,193,78,0.08) 55%",
+    shadow: "hover:shadow-[0_0_48px_-12px_rgba(242,193,78,0.45)]",
+  },
+  lifetime: {
+    Icon: InfinityIcon,
+    rgb: "197,204,214",
+    limb: "rgba(197,204,214,0.26), rgba(197,204,214,0.07) 55%",
+    shadow: "hover:shadow-[0_0_48px_-12px_rgba(197,204,214,0.4)]",
   },
 } as const;
 
 export function PlanLaunchCard({ plan }: { plan: Plan }) {
   if (plan !== "free") {
-    const tier = PAID_TIER[plan === "lifetime" ? "lifetime" : "orbit"];
+    const tier = PAID_TIER[plan];
+    const name = PLAN_LABELS[plan];
     return (
       <WarpLink
         href="/pricing"
-        className={`group relative block overflow-hidden rounded-2xl border bg-[#03050c] p-6 text-[#e8f3f1] transition-[border-color,box-shadow] duration-fast ease-house focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 md:p-7 ${tier.edge} ${tier.focus}`}
+        data-plan={plan}
+        className={`group relative block overflow-hidden rounded-2xl border border-tier-border bg-[#03050c] p-6 text-[#e8f3f1] transition-[border-color,box-shadow] duration-fast ease-house hover:border-tier-accent/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tier-accent md:p-7 ${tier.shadow}`}
       >
         <DeepSpace accent={tier.rgb} />
         <span
@@ -60,19 +60,19 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
         <div className="relative flex flex-wrap items-center justify-between gap-5">
           <div className="min-w-0 max-w-md space-y-2">
             <span
-              className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-sm ${tier.badge}`}
+              className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-sm bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink`}
             >
               <span
                 aria-hidden="true"
                 className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
               />
               <tier.Icon className="relative size-3" aria-hidden="true" />
-              <span className="relative">{tier.name}</span>
+              <span className="relative">{name}</span>
             </span>
             <h2 className="font-[family-name:var(--font-display)] text-2xl leading-tight tracking-tight text-[#e8f3f1]">
-              You&apos;re on <span className={tier.ink}>{tier.name}</span>.
+              You&apos;re on <span className="text-tier-accent">{name}</span>.
             </h2>
-            <p className="text-sm leading-relaxed text-[#9aada8]">{tier.line}</p>
+            <p className="text-sm leading-relaxed text-[#9aada8]">{planCopy(plan).tagline}</p>
           </div>
           <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-[#e8f3f1] transition-transform duration-fast ease-house group-hover:-translate-y-0.5">
             See all plans
@@ -104,7 +104,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
 
       <div className="relative flex flex-wrap items-center justify-between gap-5">
         <div className="min-w-0 max-w-md space-y-2">
-          <span className="inline-flex items-center gap-2 rounded-full border border-[#f2c14e]/30 bg-[#f2c14e]/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-[#f2c14e]">
+          <span className="inline-flex items-center gap-2 rounded-full border border-night-free/30 bg-night-free/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-night-free">
             <Rocket className="size-3" aria-hidden="true" />
             Free plan
           </span>
@@ -112,8 +112,8 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
             Your first {FREE_CONTACT_LIMIT} contacts are on us.
           </h2>
           <p className="text-sm leading-relaxed text-[#9aada8]">
-            Past that, five dollars a month keeps every contact, follow-up, and
-            warm intro in one place — or pay once and keep it for good.
+            Past that, Orbit Pro keeps every contact, follow-up, and warm intro
+            in one place — with AI included.
           </p>
         </div>
 

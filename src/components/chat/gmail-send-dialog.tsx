@@ -312,7 +312,7 @@ function Blocker({
   if (!ctx.planAllows) {
     return (
       <p className="text-sm text-muted-foreground">
-        Sending from Gmail is a Pro feature. You can copy this draft or open it in your mail app instead.
+        Sending from Gmail is part of Orbit Pro and Max. You can copy this draft or open it in your mail app instead.
       </p>
     );
   }

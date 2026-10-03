@@ -151,7 +151,7 @@ export function ExtensionPromo({
                 out after installing it would be the wrong order. */}
             {!canUseExtension && (
               <span className="text-xs text-muted-foreground">
-                Needs Orbit Pro or Lifetime —{" "}
+                Needs Orbit Pro or Max —{" "}
                 <WarpLink
                   href="/pricing"
                   className="font-medium text-import-connections underline underline-offset-2 hover:opacity-80"

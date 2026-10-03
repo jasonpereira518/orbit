@@ -83,12 +83,12 @@ export type AdminBilling = {
   plan: Plan;
   source: PlanSource;
   entitlements: Entitlements;
-  compedPlan: "orbit" | "lifetime" | null;
+  compedPlan: "orbit" | "max" | "lifetime" | null;
   compedNote: string | null;
   compedAt: Date | null;
   compedBy: string | null;
   lifetimePurchasedAt: Date | null;
-  subscriptionPlan: "orbit" | null;
+  subscriptionPlan: "orbit" | "max" | null;
   subscriptionStatus: "active" | "past_due" | "canceled" | null;
   subscriptionPeriodEnd: Date | null;
   stripeCustomerId: string | null;
@@ -469,13 +469,6 @@ export async function getAdminUserDetail(
   ]);
 
   const { plan, source } = resolvePlan(settings);
-  // Mirrors the union in `getEntitlements`: a Lifetime holder who also subscribes keeps
-  // hosted enrichment while that subscription is live.
-  const hostedEnrichment =
-    plan === "orbit" ||
-    (settings.subscriptionPlan === "orbit" &&
-      (settings.subscriptionStatus === "active" ||
-        (settings.subscriptionPeriodEnd?.getTime() ?? 0) > Date.now()));
 
   const provider = settings.aiProvider ?? "gemini";
   const keys = {
@@ -634,7 +627,7 @@ export async function getAdminUserDetail(
     billing: {
       plan,
       source,
-      entitlements: entitlementsForPlan(plan, source, { hostedEnrichment }),
+      entitlements: entitlementsForPlan(plan, source),
       compedPlan: settings.compedPlan ?? null,
       compedNote: settings.compedNote,
       compedAt: settings.compedAt,

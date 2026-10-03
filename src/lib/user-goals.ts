@@ -27,3 +27,22 @@ export async function listActiveGoalTextsForUser(
   });
   return rows.map((r) => r.text);
 }
+
+/**
+ * Active goals WITH their ids, newest first. The brief's goal-fit judgement has to name a
+ * goal it is talking about, and a text is not a stable name: the same sentence can be
+ * deleted and re-added (`restoreGoal`). Everything that only steers a prompt should keep
+ * using `listActiveGoalTextsForUser`; this is for the callers that store a reference.
+ */
+export async function listActiveGoalsForUser(
+  userId: string,
+  options: { limit?: number } = {}
+) {
+  const db = await getDb();
+  return db.query.userGoals.findMany({
+    where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
+    columns: { id: true, text: true },
+    orderBy: [desc(userGoals.createdAt)],
+    ...(options.limit ? { limit: options.limit } : {}),
+  });
+}

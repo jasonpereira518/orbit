@@ -11,19 +11,14 @@
  * the one place it always has.
  */
 
-export type Plan = "free" | "orbit" | "lifetime";
-
-/**
- * Where a user's plan came from. Purely informational for UI ("Comped", "Orbit Lifetime"),
- * but also the tiebreaker documented in `resolvePlan`.
- *
- * Lives here rather than in `entitlements.ts` for the same reason `Plan` does: pure
- * modules that need it (`account-alerts.ts`) must not reach a server-only module to get a
- * four-member union. `entitlements.ts` re-exports it, so server code is unaffected.
- */
-export type PlanSource = "comp" | "lifetime" | "subscription" | "free";
-
-export const FREE_CONTACT_LIMIT = 500;
+// Plan identity now lives in the single plan table. Re-exported here so the many existing
+// importers keep working; new code should import from `@/lib/plans/plan-config`.
+export {
+  FREE_CONTACT_LIMIT,
+  PLAN_LABELS,
+  type Plan,
+  type PlanSource,
+} from "@/lib/plans/plan-config";
 
 /**
  * Orbit Lifetime is an introductory price, NOT a limited number of seats.
@@ -44,9 +39,3 @@ export const FREE_CONTACT_LIMIT = 500;
 export const LIFETIME_INTRO_PRICE = 25;
 export const LIFETIME_STANDARD_PRICE = 75;
 export const LIFETIME_INTRO_SEATS = 100;
-
-export const PLAN_LABELS: Record<Plan, string> = {
-  free: "Free Plan",
-  orbit: "Orbit Pro",
-  lifetime: "Orbit Lifetime",
-};

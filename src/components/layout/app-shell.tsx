@@ -19,6 +19,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
+import { PlanDowngradeWatcher } from "@/components/celebration/plan-downgrade-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
@@ -46,15 +47,19 @@ const FloatingAskBar = dynamic(
 
 export function AppShell({
   children,
+  userId,
   clerkOn,
   demoMode,
   theme,
   plan,
   hidden,
   hiddenForUsers,
+  comingSoon,
+  navOrder,
   viewingAsUser,
 }: {
   children: React.ReactNode;
+  userId: string;
   clerkOn: boolean;
   demoMode: boolean;
   theme: ThemePreference | null;
@@ -63,6 +68,10 @@ export function AppShell({
   hidden: string[];
   /** Surface keys hidden from ordinary users, for the operator's "Hidden" tags. */
   hiddenForUsers: string[];
+  /** Page keys marked coming soon, for the nav's "Soon" tags. */
+  comingSoon: string[];
+  /** Operator-chosen sidebar order, as surface keys. */
+  navOrder: string[];
   viewingAsUser: boolean;
   /** True when an admin has opted into seeing real pages behind a coming-soon screen. */
 }) {
@@ -70,6 +79,7 @@ export function AppShell({
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
   // once here rather than in each consumer on every render.
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
+  const comingSoonSet = useMemo(() => new Set(comingSoon), [comingSoon]);
   const hiddenForUsersSet = useMemo(
     () => new Set(hiddenForUsers),
     [hiddenForUsers]
@@ -83,7 +93,10 @@ export function AppShell({
   // The reminders page is a three-pane workspace whose panes scroll on their own, so it
   // fills the viewport like /chat and /graph rather than scrolling as a document.
   const isReminders = pathname === "/reminders";
-  const isViewportLocked = isChat || isConstellation || isReminders;
+  // Knowledge is a list beside a dossier, each scrolling inside its own pane under a header
+  // that holds still, so it is locked to the viewport as well.
+  const isKnowledge = pathname === "/knowledge";
+  const isViewportLocked = isChat || isConstellation || isReminders || isKnowledge;
   const smallSky = useSmallSky();
   // The ask bar is not a link to /chat — it calls `askNetwork` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
@@ -96,6 +109,7 @@ export function AppShell({
     // A floating bar over a viewport-locked queue would sit on its last rows and on the
     // detail pane. ⌘K still asks from there (the palette falls back to /chat).
     !isReminders &&
+    !isKnowledge &&
     !hiddenSet.has("page.chat");
   // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
   // the page has no bar, and nowhere on /chat itself (its composer is already right there)
@@ -149,6 +163,7 @@ export function AppShell({
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
+          <PlanDowngradeWatcher key={userId} userId={userId} plan={plan} />
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
@@ -164,6 +179,8 @@ export function AppShell({
               plan={plan}
               hidden={hiddenSet}
               hiddenForUsers={hiddenForUsersSet}
+              comingSoon={comingSoonSet}
+              navOrder={navOrder}
             />
           </div>
           <main
@@ -265,6 +282,8 @@ export function AppShell({
               clerkOn={clerkOn}
               demoMode={demoMode}
               hidden={hiddenSet}
+              comingSoon={comingSoonSet}
+              navOrder={navOrder}
             />
           </main>
         </div>

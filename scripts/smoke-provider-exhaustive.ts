@@ -170,11 +170,11 @@ const OPENROUTER_ROUTED_AWAY =
   "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
-  "src/lib/ai-access.ts:687": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts:633": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
-  "src/lib/ai-access.ts:295": "isOpenAiShaped's own body: `provider === \"openai\" || " +
+  "src/lib/ai-access.ts:322": "isOpenAiShaped's own body: `provider === \"openai\" || " +
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
@@ -229,21 +229,21 @@ const ALLOWLIST: Record<string, string> = {
     "arm follows it, so the four arms are exhaustive over AiProvider.",
   "src/lib/ai.ts:2747": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
     "above (plugin-based search, not the Responses API), so it never reaches this one.",
-  "src/lib/errors.ts:36": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
+  "src/lib/errors.ts:37": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
-  "src/lib/errors.ts:38": "same function as line 36 — see that entry.",
-  "src/lib/managed-ai-policy.ts:309": "the \"anthropic\" half of `selected === \"anthropic\" " +
+  "src/lib/errors.ts:39": "same function as line 37 — see that entry.",
+  "src/lib/managed-ai-policy.ts:264": "the \"anthropic\" half of `selected === \"anthropic\" " +
     "|| selected === \"openrouter\"` (this commit's fix) — the openrouter half is the " +
     "literal on the same line, which this checker does not flag; both fall to the plain " +
     "EMBEDDING_ORDER, per the comment above EMBEDDING_ORDER.",
-  "src/lib/managed-ai-policy.ts:318": "managedOrder only ever chooses between \"openai\" and " +
+  "src/lib/managed-ai-policy.ts:273": "managedOrder only ever chooses between \"openai\" and " +
     "\"gemini\": Orbit holds no managed OpenRouter key (facts.managed.openrouter is " +
     "hardcoded false and MANAGED_PROVIDER_ORDER excludes it), so no selected provider — " +
     "openrouter included — ever needs a third slot here.",
-  "src/lib/admin-user-detail.ts:577": "the \"openai\" arm of the four-way ternary that now " +
+  "src/lib/admin-user-detail.ts:570": "the \"openai\" arm of the four-way ternary that now " +
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
-  "src/lib/admin-user-detail.ts:579": "the \"anthropic\" arm of the same ternary — see line 577.",
+  "src/lib/admin-user-detail.ts:572": "the \"anthropic\" arm of the same ternary — see line 570.",
   "src/actions/settings.ts:115": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
@@ -269,7 +269,7 @@ const ALLOWLIST: Record<string, string> = {
   "src/actions/settings.ts:247": "same ternary as line 243 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:274": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx:289": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +

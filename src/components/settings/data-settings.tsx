@@ -86,7 +86,7 @@ export function DataSettings() {
 
       <SettingsRow
         title="Delete account"
-        description="Erase everything and remove your sign-in. Cancels an active Orbit Pro subscription."
+        description="Erase everything and remove your sign-in. Cancels an active Orbit subscription."
       >
         <DeleteAccountDialog
           trigger={

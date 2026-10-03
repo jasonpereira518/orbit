@@ -155,8 +155,8 @@ export function CelebrationCanvas({
       }
     }
 
-    function spawnConfetti(x: number, y: number) {
-      for (let i = 0; i < CONFETTI_COUNT; i++) {
+    function spawnConfetti(x: number, y: number, count = CONFETTI_COUNT) {
+      for (let i = 0; i < count; i++) {
         const a = Math.random() * Math.PI * 2;
         const s = 620 * (0.3 + Math.random() * 0.7);
         const maxLife = 1.6 + Math.random();
@@ -331,8 +331,27 @@ export function CelebrationCanvas({
         ignited = true;
         shards = [];
         if (t - IGNITE < LATCH_FRESH_MS) {
-          spawnSparks(EJECTA_COUNT, cx, cy, 1000);
-          spawnConfetti(cx, cy);
+          // Each plan has its own payoff: Pro's original burst, Max's wider
+          // flare, and Lifetime's restrained seal (drawn below).
+          const sparkCount =
+            theme.signature === "flare"
+              ? EJECTA_COUNT + 64
+              : theme.signature === "seal"
+                ? 48
+                : EJECTA_COUNT;
+          spawnSparks(
+            sparkCount,
+            cx,
+            cy,
+            theme.signature === "flare" ? 1150 : 1000,
+          );
+          if (theme.signature !== "seal") {
+            spawnConfetti(
+              cx,
+              cy,
+              theme.signature === "flare" ? CONFETTI_COUNT + 18 : CONFETTI_COUNT,
+            );
+          }
         }
       }
       if (!glinted && t >= SWEEP_DONE) {
@@ -438,9 +457,15 @@ export function CelebrationCanvas({
           ctx.restore();
         }
       } else {
-        // Two hard white rings. Source-over, not additive — an additive halo
-        // is a light effect, and this is a graphic one.
-        for (const delay of [0, 130]) {
+        // Max radiates farther; Lifetime spends its energy on a ring that
+        // closes and stays. Pro keeps the original two-beat orbit.
+        const waveDelays =
+          theme.signature === "flare"
+            ? [0, 110, 220]
+            : theme.signature === "seal"
+              ? [0]
+              : [0, 130];
+        for (const delay of waveDelays) {
           const wt = (t - IGNITE - delay) / 700;
           if (wt <= 0 || wt >= 1) continue;
           const eased = easeHouse(wt);
@@ -450,6 +475,25 @@ export function CelebrationCanvas({
           ctx.lineWidth = 10 * (1 - eased) + 1;
           ctx.beginPath();
           ctx.arc(cx, cy, eased * maxR() * 1.1, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        if (theme.signature === "seal") {
+          const progress = Math.max(
+            0,
+            Math.min(1, (t - IGNITE) / (FINALE - IGNITE)),
+          );
+          ctx.save();
+          ctx.strokeStyle = theme.emblem.contour;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(
+            cx,
+            cy,
+            emblemR * 1.24,
+            -Math.PI / 2,
+            -Math.PI / 2 + easeHouse(progress) * Math.PI * 2,
+          );
           ctx.stroke();
           ctx.restore();
         }

@@ -111,13 +111,13 @@ export type ManagedAiOpsFacts = {
   /** At least one managed key is set and `ORBIT_MANAGED_AI` is not "off". */
   configured: boolean;
   switchedOff: boolean;
-  /** Accounts that resolve to Lifetime (purchase or comp). */
-  lifetimeAccounts: number;
+  /** Accounts on a plan with included AI (Pro and Max, purchased or comped). */
+  includedAccounts: number;
   spentLast24hMicros: number;
   spentLast30dMicros: number;
-  /** Every Lifetime dollar ever booked (`billing_events.kind = 'lifetime'`), gross. */
-  lifetimeCashCents: number;
-  /** Accounts that have used their whole allowance this month. */
+  /** Subscription payments and credit packs booked in the last 30 days, gross. */
+  revenueLast30dCents: number;
+  /** Included-AI accounts with nothing spendable left: allowance used and no pack credits. */
   accountsAtCap: number;
   /** Providers whose managed key was refused or throttled in the last hour. */
   failingProviders: string[];
@@ -721,19 +721,19 @@ function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
       id: `ai.managed_failing:${provider}`,
       severity: "critical",
       title: `Orbit's managed ${provider} key is being refused`,
-      detail: `The provider rejected or throttled Orbit's own ${provider} key in the last hour — every Lifetime account without a key of its own has lost AI. Check the key and its quota.`,
+      detail: `The provider rejected or throttled Orbit's own ${provider} key in the last hour — every Pro and Max account on included AI has lost it. Check the key and its quota.`,
       href: "/admin/health",
     });
   }
 
-  if (m.lifetimeAccounts > 0 && !m.configured) {
+  if (m.includedAccounts > 0 && !m.configured) {
     out.push({
       id: "ai.managed_unconfigured",
       severity: "warning",
       title: m.switchedOff ? "Managed AI is switched off" : "No managed AI key is configured",
       detail: m.switchedOff
-        ? `ORBIT_MANAGED_AI=off, so ${m.lifetimeAccounts} Lifetime account(s) can only use AI with a key of their own.`
-        : `${m.lifetimeAccounts} Lifetime account(s) were promised AI on Orbit's keys, but no ORBIT_MANAGED_*_API_KEY is set.`,
+        ? `ORBIT_MANAGED_AI=off, so ${m.includedAccounts} Pro and Max account(s) can only use AI with a key of their own.`
+        : `${m.includedAccounts} Pro and Max account(s) pay for included AI, but no ORBIT_MANAGED_*_API_KEY is set.`,
     });
   }
 
@@ -748,17 +748,17 @@ function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
   }
 
   if (m.spentLast30dMicros >= MANAGED_AI_ALERTS.runwayMinSpendMicros) {
-    const annualMicros = (m.spentLast30dMicros * 365) / 30;
-    const years = (m.lifetimeCashCents * 10_000) / annualMicros;
-    if (years < MANAGED_AI_ALERTS.runwayYears) {
+    const revenueMicros = m.revenueLast30dCents * 10_000;
+    const share = revenueMicros > 0 ? m.spentLast30dMicros / revenueMicros : Infinity;
+    if (share > MANAGED_AI_ALERTS.maxCostShare) {
       out.push({
         id: "ai.managed_runway",
         severity: "warning",
-        title: "Managed AI is outpacing Lifetime revenue",
+        title: "Managed AI is outpacing revenue",
         detail:
-          m.lifetimeCashCents > 0
-            ? `At the last 30 days' pace (${usd(m.spentLast30dMicros)}), managed AI costs ${usd(annualMicros)} a year — every Lifetime dollar booked so far covers ${years.toFixed(1)} year(s) of it. Revisit the cap or the price.`
-            : `${usd(m.spentLast30dMicros)} of managed AI in the last 30 days with no Lifetime revenue booked behind it (comps or demo accounts).`,
+          m.revenueLast30dCents > 0
+            ? `Managed AI cost ${usd(m.spentLast30dMicros)} in the last 30 days — ${Math.round(share * 100)}% of the ${usd(revenueMicros)} of subscription and pack revenue booked in the same window (alarm above ${Math.round(MANAGED_AI_ALERTS.maxCostShare * 100)}%). Revisit the allowances or the prices.`
+            : `${usd(m.spentLast30dMicros)} of managed AI in the last 30 days with no revenue booked behind it (comps only).`,
         href: "/admin/billing/costs",
       });
     }
@@ -768,8 +768,8 @@ function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
     out.push({
       id: "ai.managed_cap_hit",
       severity: "info",
-      title: "Lifetime accounts are hitting the AI cap",
-      detail: `${m.accountsAtCap} account(s) have used this month's whole managed-AI allowance and are back to bring-your-own-key until the 1st. A rising count says the cap is too tight for real use.`,
+      title: "Accounts are running out of AI credits",
+      detail: `${m.accountsAtCap} Pro or Max account(s) have used their whole allowance and hold no pack credits, so their included AI is paused until renewal. A rising count says the allowances are too tight for real use.`,
       href: "/admin/billing/costs",
     });
   }

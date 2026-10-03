@@ -14,7 +14,7 @@ import {
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
-import { isHrefComingSoon, isHrefHidden, surfaceKeyForHref } from "@/lib/surfaces";
+import { isHrefComingSoon, isHrefHidden, orderNavItems, surfaceKeyForHref } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
@@ -29,9 +29,12 @@ function SidebarNavLink({
   item,
   pathname,
   hiddenFromUsers = false,
+  soon,
 }: {
   item: AppNavItem;
   pathname: string;
+  /** Pages currently marked coming soon (operator-controlled). */
+  soon: ReadonlySet<string>;
   /**
    * Visible to this viewer but hidden from everyone else — only ever true for an operator,
    * who is exempt. Marked rather than dropped: the person who can undo a forgotten toggle
@@ -43,7 +46,7 @@ function SidebarNavLink({
   const Icon = item.icon;
   // Shown to operators too, who still reach the real page: the tag is how they know what
   // everyone else gets. "Hidden" outranks it, because a hidden page is not even announced.
-  const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href);
+  const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href, soon);
   // Hover or focus upgrades a link to a full prefetch, so the click that follows lands
   // without a skeleton (see `@/lib/intent-prefetch`). Not for the page already open. The
   // daily routes (`prefetchFull`) are NOT prefetched in full ahead of that here, unlike the
@@ -113,6 +116,8 @@ export function AppSidebar({
   plan,
   hidden,
   hiddenForUsers,
+  comingSoon,
+  navOrder,
 }: {
   pathname: string;
   clerkOn: boolean;
@@ -122,9 +127,19 @@ export function AppSidebar({
   hidden: ReadonlySet<string>;
   /** Surfaces hidden from ordinary users, whether or not this viewer is exempt. */
   hiddenForUsers: ReadonlySet<string>;
+  /** Pages marked coming soon, whether or not this viewer is previewing them. */
+  comingSoon: ReadonlySet<string>;
+  /** Operator-chosen order, as surface keys. */
+  navOrder: readonly string[];
 }) {
-  const core = APP_NAV_CORE.filter((item) => !isHrefHidden(item.href, hidden));
-  const extras = APP_NAV_EXTRAS.filter((item) => !isHrefHidden(item.href, hidden));
+  // One ordered list, then split: a page marked coming soon always drops below the divider,
+  // whatever group the code declared it in, and keeps its place in the operator's order
+  // within that group.
+  const ordered = orderNavItems([...APP_NAV_CORE, ...APP_NAV_EXTRAS], navOrder).filter(
+    (item) => !isHrefHidden(item.href, hidden)
+  );
+  const core = ordered.filter((item) => !isHrefComingSoon(item.href, comingSoon));
+  const extras = ordered.filter((item) => isHrefComingSoon(item.href, comingSoon));
   const captureHidden = hidden.has("page.capture");
   const mod = useModKeyLabel();
   const shortcut = mod === "⌘" ? "⌘K" : "Ctrl K";
@@ -207,6 +222,7 @@ export function AppSidebar({
       <nav className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
         {core.map((item) => (
           <SidebarNavLink
+            soon={comingSoon}
             key={item.href}
             item={item}
             pathname={pathname}
@@ -227,6 +243,7 @@ export function AppSidebar({
 
         {extras.map((item) => (
           <SidebarNavLink
+            soon={comingSoon}
             key={item.href}
             item={item}
             pathname={pathname}
@@ -239,6 +256,7 @@ export function AppSidebar({
             above when a short viewport leaves no slack for `mt-auto` to eat. */}
         <div className="mt-auto py-2">
           <SidebarNavLink
+            soon={comingSoon}
             item={APP_NAV_SETTINGS}
             pathname={pathname}
           />
