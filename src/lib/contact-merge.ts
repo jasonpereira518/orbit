@@ -417,12 +417,15 @@ export async function mergeContacts(
 
     // relationship_digests: the loser's row cascades with the loser. The winner's watermark
     // describes only the winner's old thread, so it is cleared: the next pass re-reads the
-    // merged history from the start. Not archived: unmerge leaves both contacts pending,
+    // merged history from the start. That full re-read recounts messages and sources, and a
+    // batch answer for the pre-merge window must not land on the merged contact. Not archived: unmerge leaves both contacts pending,
     // which re-derives exactly this.
     statements.push(
       tx.execute(sql`
         UPDATE relationship_digests
-           SET watermark_at = NULL, watermark_interaction_id = NULL, attempts = 0
+           SET watermark_at = NULL, watermark_interaction_id = NULL, attempts = 0,
+               message_count = 0, sources = '[]'::jsonb,
+               history_truncated_before = NULL, batch_job_id = NULL, batch_pending_until = NULL
          WHERE user_id = ${userId} AND contact_id = ${winnerId}::uuid
       `)
     );

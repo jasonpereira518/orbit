@@ -1699,7 +1699,7 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
         log(`  ${ok ? "ok  " : "MISS"} relationship/${c.id} (trivial)`);
         continue;
       }
-      const prompt = buildDigestPrompt({ contactName: c.contactName, window, previous: null });
+      const prompt = buildDigestPrompt({ contactName: c.contactName, ownerName: null, window, previous: null });
       const answer = await timed(latenciesMs, () => extractRelationshipDigest(userId, prompt));
       // An excerpt that is not verbatim in any message is an invented item.
       const excerpts = [

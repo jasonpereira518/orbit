@@ -155,6 +155,7 @@ Rules:
 
 export function buildDigestPrompt(input: {
   contactName: string;
+  ownerName: string | null;
   window: MessageWindow;
   previous: PreviousDigest | null;
 }): { system: string; user: string } {
@@ -173,9 +174,14 @@ export function buildDigestPrompt(input: {
     ? ["OPEN ITEMS (key: text):", ...prev.openItems.map((o) => `${o.key}: ${o.text}`)]
     : ["OPEN ITEMS: (none)"];
   const previousBlock = fenceUntrusted("PREVIOUS", [`Contact: ${input.contactName}`, ...previousLines, "", ...openLines].join("\n"));
+  // Outside the fences: it is the account owner's own saved name, not message text.
+  const ownerLine = input.ownerName
+    ? `The user ("Me") is ${input.ownerName.replace(/\s+/g, " ").trim().slice(0, 120)}; lines from that name are the user too.`
+    : null;
   return {
     system: SYSTEM,
     user: [
+      ...(ownerLine ? [ownerLine] : []),
       `CONTACT, PREVIOUS UNDERSTANDING AND OPEN ITEMS:`,
       previousBlock,
       `NEW MESSAGES (oldest first):`,

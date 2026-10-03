@@ -11,7 +11,7 @@
  */
 // Bare `.returning()` throughout: a partial selector breaks on this repo's neon-http/PGlite split.
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
@@ -54,6 +54,16 @@ export type ApplyResult = {
   openThreadsAdded: number;
 };
 
+export const MAX_RUN_FLAGS = 50;
+
+/** Undo is for a finished run: a live pass would keep writing into a fresh batch after it. */
+export class RunStillActiveError extends Error {
+  constructor() {
+    super("Analysis is still running — undo it once it finishes");
+    this.name = "RunStillActiveError";
+  }
+}
+
 export async function ensureRunNoteBatch(userId: string, runId: string): Promise<string> {
   const db = await getDb();
   const run = await db.query.relationshipRuns.findFirst({
@@ -90,8 +100,21 @@ export async function ensureRunNoteBatch(userId: string, runId: string): Promise
         })
         .returning()
     )[0].id;
-  await db.update(relationshipRuns).set({ noteBatchId: batchId }).where(eq(relationshipRuns.id, runId));
-  return batchId;
+  const [won] = await db
+    .update(relationshipRuns)
+    .set({ noteBatchId: batchId })
+    .where(and(
+      eq(relationshipRuns.id, runId),
+      run?.noteBatchId ? eq(relationshipRuns.noteBatchId, run.noteBatchId) : isNull(relationshipRuns.noteBatchId),
+    ))
+    .returning();
+  if (won) return batchId;
+  // Another caller replaced the batch first: use theirs, and retire ours if this call created it.
+  const winner = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, runId), columns: { noteBatchId: true } });
+  if (!existing && winner?.noteBatchId && winner.noteBatchId !== batchId) {
+    await db.delete(noteBatches).where(and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId)));
+  }
+  return winner?.noteBatchId ?? batchId;
 }
 
 export async function loadPreviousDigest(
@@ -371,7 +394,14 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
       factsAdded: sql`${relationshipRuns.factsAdded} + ${result.factsAdded}`,
       openThreadsAdded: sql`${relationshipRuns.openThreadsAdded} + ${result.openThreadsAdded}`,
       flags: plan.flags.length
-        ? sql`${relationshipRuns.flags} || ${JSON.stringify(plan.flags)}::jsonb`
+        ? sql`(
+            SELECT coalesce(jsonb_agg(f ORDER BY ord), '[]'::jsonb) FROM (
+              SELECT DISTINCT ON (f->>'key') f, ord
+                FROM jsonb_array_elements(${relationshipRuns.flags} || ${JSON.stringify(plan.flags)}::jsonb) WITH ORDINALITY AS t(f, ord)
+               ORDER BY f->>'key', ord
+            ) kept
+            WHERE ord <= ${MAX_RUN_FLAGS}
+          )`
         : relationshipRuns.flags,
     })
     .where(eq(relationshipRuns.id, runId));
@@ -426,6 +456,7 @@ export async function undoRelationshipRun(
   const db = await getDb();
   const run = await db.query.relationshipRuns.findFirst({ where: and(eq(relationshipRuns.id, runId), eq(relationshipRuns.userId, userId)) });
   if (!run) throw new Error("Run not found");
+  if (run.status === "queued" || run.status === "running" || run.status === "waiting_key") throw new RunStillActiveError();
   if (run.status === "undone" || !run.noteBatchId) {
     await db.update(relationshipRuns).set({ status: "undone" }).where(eq(relationshipRuns.id, runId));
     return { remindersDismissed: 0, actionItemsRemoved: 0 };

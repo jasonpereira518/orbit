@@ -44,11 +44,21 @@ async function main() {
   }
   check("nothing pending before merge", (await pendingRelationshipContactCount(USER)) === 0);
 
+  await db.update(relationshipDigests).set({
+    messageCount: 40, sources: ["linkedin"], historyTruncatedBefore: new Date("2024-01-01"),
+    batchPendingUntil: new Date(Date.now() + 3_600_000), batchJobId: crypto.randomUUID(),
+  }).where(eq(relationshipDigests.contactId, b.id));
+
   await mergeContacts(USER, b.id, a.id);
 
   const left = await db.query.relationshipDigests.findMany({ where: eq(relationshipDigests.userId, USER) });
   check("loser digest gone", !left.some((d) => d.contactId === a.id));
   check("winner watermark cleared", left.find((d) => d.contactId === b.id)?.watermarkAt == null);
+  const winnerDigest = left.find((d) => d.contactId === b.id);
+  check("merge: winner message count reset", winnerDigest?.messageCount === 0, String(winnerDigest?.messageCount));
+  check("merge: winner sources reset", Array.isArray(winnerDigest?.sources) && winnerDigest!.sources.length === 0);
+  check("merge: winner batch markers cleared", winnerDigest?.batchPendingUntil === null && winnerDigest?.batchJobId === null);
+  check("merge: winner truncation cleared", winnerDigest?.historyTruncatedBefore === null);
   check("winner pending again", (await pendingRelationshipContactCount(USER)) === 1);
 
   await reset();

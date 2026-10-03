@@ -171,13 +171,28 @@ export async function processDigestAnswer(
   await applyDigestPlan({ userId, runId, contactId, window, validated, plan, now });
 }
 
-async function promptFor(userId: string, contactId: string, window: MessageWindow) {
+/** The account owner's name for the prompt: saved first + last name, else the first saved chat self name. */
+export async function loadOwnerName(userId: string): Promise<string | null> {
+  const db = await getDb();
+  const s = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { firstName: true, lastName: true, chatSelfNames: true },
+  });
+  return ownerNameOf(s);
+}
+
+function ownerNameOf(s: { firstName: string | null; lastName: string | null; chatSelfNames: string[] | null } | undefined): string | null {
+  const full = [s?.firstName, s?.lastName].map((v) => v?.trim()).filter(Boolean).join(" ");
+  return full || s?.chatSelfNames?.[0]?.trim() || null;
+}
+
+async function promptFor(userId: string, contactId: string, window: MessageWindow, ownerName: string | null) {
   const db = await getDb();
   const [{ previous }, contact] = await Promise.all([
     loadPreviousDigest(userId, contactId),
     db.query.contacts.findFirst({ where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)), columns: { fullName: true } }),
   ]);
-  return buildDigestPrompt({ contactName: contact?.fullName ?? "Contact", window, previous });
+  return buildDigestPrompt({ contactName: contact?.fullName ?? "Contact", ownerName, window, previous });
 }
 
 export async function runRelationshipPass(userId: string, opts: RunnerOptions = {}): Promise<PassResult> {
@@ -191,11 +206,13 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
 
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
-    columns: { relationshipEngineEnabled: true },
+    columns: { relationshipEngineEnabled: true, firstName: true, lastName: true, chatSelfNames: true },
   });
   if ((settings?.relationshipEngineEnabled ?? 1) !== 1) {
     return { ...result, status: "disabled", remaining: await pendingRelationshipContactCount(userId, now) };
   }
+
+  const ownerName = ownerNameOf(settings);
 
   const claim = await claimRun(userId, opts.importId ?? null, now);
   if (!claim) return { ...result, status: "busy", remaining: await pendingRelationshipContactCount(userId, now) };
@@ -296,7 +313,7 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
           result.skipped += 1;
           continue;
         }
-        const prompt = await promptFor(userId, contactId, window);
+        const prompt = await promptFor(userId, contactId, window, ownerName);
         if (inlineUsed < INLINE_PER_RUN || batchUnavailable) {
           if (await attemptInline(contactId, window, prompt)) return await keyPaused();
           continue;

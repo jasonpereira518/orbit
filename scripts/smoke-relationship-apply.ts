@@ -15,7 +15,7 @@ import { getDb } from "../src/db";
 import {
   actionItems, contactCareerMoves, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
-import { applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, RunStillActiveError, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
 import { undoNoteBatchForUser } from "../src/lib/note-batch-save";
 import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
 import { planDigestWrites } from "../src/lib/relationship-engine/rules";
@@ -177,6 +177,9 @@ async function main() {
   const rBare = await applyDigestPlan({ userId: USER, runId: run.id, contactId: c.id, window, validated: { ...validated, facts: [] }, plan: bare });
   check("reminder-less item created", rBare.actionItemsCreated === 1 && rBare.remindersCreated === 0, JSON.stringify(rBare));
 
+  // Undo is for a finished run (new contract): finish it first.
+  await db.update(relationshipRuns).set({ status: "done" }).where(eq(relationshipRuns.id, run.id));
+
   // Undo: pending reminders dismissed, open action items removed, run undone.
   const undo = await undoRelationshipRun(USER, run.id);
   check("undo dismisses pending reminders", undo.remindersDismissed === 1, JSON.stringify(undo));
@@ -210,6 +213,31 @@ async function main() {
   await db.delete(noteBatches).where(eq(noteBatches.id, b2));
   const b3 = await ensureRunNoteBatch(USER, run2.id);
   check("deleted batch → fresh batch", b3 !== b2 && Boolean(await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, b3) })));
+
+  // P3: Undo refuses a live run.
+  await db.update(relationshipRuns).set({ status: "done" }).where(eq(relationshipRuns.id, run2.id));
+  const [live] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
+  let refused = false;
+  try { await undoRelationshipRun(USER, live.id); } catch (e) { refused = e instanceof RunStillActiveError; }
+  check("undo: refuses a running run", refused);
+  check("undo: run untouched", (await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, live.id) }))?.status === "running");
+  await db.update(relationshipRuns).set({ status: "done" }).where(eq(relationshipRuns.id, live.id));
+
+  // P3: two concurrent creators settle on ONE batch, and the run points at it.
+  const [rb] = await db.insert(relationshipRuns).values({ userId: USER, status: "done" }).returning();
+  const [cb1, cb2] = await Promise.all([ensureRunNoteBatch(USER, rb.id), ensureRunNoteBatch(USER, rb.id)]);
+  const pointed = (await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, rb.id) }))?.noteBatchId;
+  check("note batch: both callers get the run's batch", cb1 === pointed && cb2 === pointed, `${cb1} ${cb2} ${pointed}`);
+
+  // P3: the same flag key through two different windows lands once.
+  const [flagRun] = await db.insert(relationshipRuns).values({ userId: USER, status: "done" }).returning();
+  const flagPlan = { ...plan, actionItems: [], facts: [], closeActionItemIds: [], remindersPlanned: 0, flags: [
+    { key: "k1", contactId: c.id, title: "Send the deck", dueDateIso: "2026-09-25", sourceExcerpt: "I'll send the deck Friday", interactionId: msgs[1].id },
+  ] };
+  await applyDigestPlan({ userId: USER, runId: flagRun.id, contactId: c.id, window: { ...window, last: { ...window.last, interactionId: msgs[0].id } }, validated: { ...validated, facts: [] }, plan: flagPlan });
+  await applyDigestPlan({ userId: USER, runId: flagRun.id, contactId: c.id, window, validated: { ...validated, facts: [] }, plan: flagPlan });
+  const flagRow = (await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, flagRun.id) }))!;
+  check("flags: one per key", flagRow.flags.filter((f) => f.key === "k1").length === 1, JSON.stringify(flagRow.flags));
 
   await reset();
   console.log("\nsmoke-relationship-apply: all checks passed");
