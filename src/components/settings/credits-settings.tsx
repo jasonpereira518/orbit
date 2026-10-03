@@ -1,4 +1,4 @@
-import { SettingsRow } from "@/components/settings/settings-section";
+import { Disclosure } from "@/components/settings/disclosure";
 
 /**
  * Third-party artwork Orbit ships, credited as its licences ask. A new asset from Flaticon (or
@@ -23,17 +23,26 @@ import { SettingsRow } from "@/components/settings/settings-section";
 const CREDITS = [
   {
     subject: "Constellation icon",
-    author: { name: "Magnific", href: "https://www.flaticon.com/authors/magnific" },
+    author: {
+      name: "Magnific",
+      href: "https://www.flaticon.com/authors/magnific",
+    },
     detail: null,
   },
   {
     subject: "Planet icons",
-    author: { name: "graphicmall", href: "https://www.flaticon.com/authors/graphicmall" },
+    author: {
+      name: "graphicmall",
+      href: "https://www.flaticon.com/authors/graphicmall",
+    },
     detail: "Planets solar system icon pack",
   },
   {
     subject: "Sun icons",
-    author: { name: "Magnific", href: "https://www.flaticon.com/authors/magnific" },
+    author: {
+      name: "Magnific",
+      href: "https://www.flaticon.com/authors/magnific",
+    },
     detail: null,
   },
 ] as const;
@@ -42,36 +51,40 @@ const LINK = "underline underline-offset-2 hover:text-foreground";
 
 export function CreditsSettings() {
   return (
-    <SettingsRow id="settings-credits" title="Credits">
-      <ul className="space-y-2 text-sm text-muted-foreground">
-        {CREDITS.map((credit) => (
-          <li key={credit.subject}>
-            <p>
-              {credit.subject} created by{" "}
-              <a
-                href={credit.author.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={LINK}
-              >
-                {credit.author.name}
-              </a>{" "}
-              -{" "}
-              <a
-                href="https://www.flaticon.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={LINK}
-              >
-                Flaticon
-              </a>
-            </p>
-            {credit.detail ? (
-              <p className="text-xs text-muted-foreground/80">{credit.detail}</p>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </SettingsRow>
+    <div id="settings-credits" className="scroll-mt-8">
+      <Disclosure label="Credits">
+        <ul className="space-y-2 text-sm text-muted-foreground">
+          {CREDITS.map((credit) => (
+            <li key={credit.subject}>
+              <p>
+                {credit.subject} created by{" "}
+                <a
+                  href={credit.author.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={LINK}
+                >
+                  {credit.author.name}
+                </a>{" "}
+                -{" "}
+                <a
+                  href="https://www.flaticon.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={LINK}
+                >
+                  Flaticon
+                </a>
+              </p>
+              {credit.detail ? (
+                <p className="text-xs text-muted-foreground/80">
+                  {credit.detail}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </Disclosure>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * Single source of truth for the settings page's structure: five groups, the sections in
+ * Single source of truth for the settings page's structure: six groups, the sections in
  * each, and which of those live in the Integrations dialog rather than on the page.
  *
  * `page.tsx` renders the groups and cards from these lists, `SettingsSectionNav` renders the
@@ -13,6 +13,7 @@
  */
 export const SETTINGS_GROUPS = [
   { id: "settings-group-account", key: "account", label: "Account" },
+  { id: "settings-group-goals", key: "goals", label: "Goals and targets" },
   { id: "settings-group-preferences", key: "preferences", label: "Preferences" },
   { id: "settings-group-integrations", key: "integrations", label: "Integrations" },
   { id: "settings-group-resources", key: "resources", label: "Resources" },
@@ -35,8 +36,8 @@ export const SETTINGS_SECTIONS = [
   { id: "settings-plan", label: "Pricing Plan", group: "account" },
   { id: "settings-appearance", label: "Appearance", group: "preferences" },
   { id: "settings-notifications", label: "Notifications", group: "preferences" },
-  { id: "settings-goals", label: "Goals", group: "preferences" },
-  { id: "settings-targets", label: "Targets", group: "preferences" },
+  { id: "settings-goals", label: "Goals", group: "goals" },
+  { id: "settings-targets", label: "Targets", group: "goals" },
   { id: "settings-ai", label: "AI provider", group: "integrations" },
   { id: "settings-outreach", label: "Outreach", group: "integrations" },
   { id: "settings-calendar", label: "Reminders in calendar", group: "integrations" },

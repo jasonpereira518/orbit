@@ -181,6 +181,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ics-feed": "pure",
   "smoke-icon-button-names": "pure",
   "smoke-import-detect": "pure",
+  "smoke-import-rank": "pure",
   "smoke-import-errors": "pure",
   "smoke-import-history-render": "pure",
   "smoke-import-sources": "pure",
