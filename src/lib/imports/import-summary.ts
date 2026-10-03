@@ -11,7 +11,7 @@
  * runs with `createsContacts: false` by design, so the number that matters is the meetings it
  * logged, not the people it did not invent.
  */
-import { createsContacts } from "@/lib/imports/import-sources";
+import { createsContacts, isChatImport } from "@/lib/imports/import-sources";
 
 export type ImportChipTone = "neutral" | "good" | "warn" | "offer";
 
@@ -76,8 +76,16 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
     );
   }
 
-  // Calendar's real output, and the one every calendar row used to be missing.
-  add(stats.interactionsLogged, (n) => `${n} meetings logged`, "good");
+  // Calendar's real output, and the one every calendar row used to be missing. A chat import
+  // logs conversation sessions, which are not meetings.
+  add(
+    stats.interactionsLogged,
+    (n) =>
+      isChatImport(item.importType)
+        ? `${n} chat session${n === 1 ? "" : "s"}`
+        : `${n} meetings logged`,
+    "good",
+  );
   add(
     stats.remindersCreated,
     (n) => `${n} reminder${n === 1 ? "" : "s"}`,

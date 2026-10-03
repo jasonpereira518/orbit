@@ -121,8 +121,8 @@ export default async function AdminProductPage() {
           },
           {
             id: "dashboard",
-            label: "Dashboard & widgets",
-            flagged: hiddenIn(["dashboard", "widget"]),
+            label: "Dashboard, widgets & features",
+            flagged: hiddenIn(["dashboard", "widget", "feature"]),
             content: (
               <div className="space-y-6">
                 <AdminPanel title="Dashboard cards">
@@ -130,6 +130,9 @@ export default async function AdminProductPage() {
                 </AdminPanel>
                 <AdminPanel title="Widgets">
                   <SurfaceToggles surfaces={surfacesOfKind("widget")} hidden={hiddenKeys} />
+                </AdminPanel>
+                <AdminPanel title="Features">
+                  <SurfaceToggles surfaces={surfacesOfKind("feature")} hidden={hiddenKeys} />
                 </AdminPanel>
               </div>
             ),

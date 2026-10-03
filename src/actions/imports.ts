@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
@@ -993,7 +993,9 @@ export async function listImports(
   const userId = await requireUserId();
   const db = await getDb();
   const rows = await db.query.imports.findMany({
-    where: eq(imports.userId, userId),
+    // A `staging` chat import is an upload still in flight (or abandoned, and swept in a
+    // day): nothing has been imported yet, so it is not history.
+    where: and(eq(imports.userId, userId), ne(imports.status, "staging")),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
     limit: options.limit ?? IMPORT_HISTORY_PAGE,
     offset: options.offset,

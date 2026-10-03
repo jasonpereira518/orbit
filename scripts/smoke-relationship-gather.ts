@@ -26,6 +26,8 @@ function msg(i: number, text: string, dayOffset = i): WindowMessage {
 check("speaker: out → Me", speakerFor("out", "Maya Chen") === "Me");
 check("speaker: in → first name", speakerFor("in", "Maya Chen") === "Maya");
 check("speaker: null → ?", speakerFor(null, "Maya Chen") === "?");
+check("speaker: chat session → Chat", speakerFor("out", "Maya Chen", "message") === "Chat" && speakerFor(null, "Maya Chen", "message") === "Chat");
+check("speaker: linkedin_message unchanged", speakerFor("in", "Maya Chen", "linkedin_message") === "Maya");
 check("line format", formatMessageLine(msg(0, "hi  there\nsecond line")) === "[2026-01-01 Maya] hi there second line");
 
 check("empty rows → null", buildWindow("c1", [], ["linkedin"]) === null);
@@ -46,6 +48,12 @@ const keptChars = big.slice(keptFrom).reduce((n, m) => n + formatMessageLine(m).
 check("big: kept backlog fits MAX_CHUNKS", keptChars <= MAX_CHUNKS * WINDOW_CHARS, String(keptChars));
 check("big: truncatedBefore = first kept message", w.truncatedBefore!.getTime() === big[keptFrom].at.getTime());
 check("big: window starts at oldest kept", w.messages[0].interactionId === big[keptFrom].interactionId);
+
+// Both cuts apply (row limit hit upstream AND char budget): first KEPT message's date, not rows[0].
+const both = buildWindow("c1", big, ["linkedin"], true)!;
+check("both cuts: truncatedBefore = first kept message", both.truncatedBefore!.getTime() === both.messages[0].at.getTime() && both.messages[0].interactionId !== big[0].interactionId);
+const limitOnly = buildWindow("c1", [msg(0, "one"), msg(1, "two")], ["linkedin"], true)!;
+check("row limit only: truncatedBefore = first kept message", limitOnly.truncatedBefore!.getTime() === limitOnly.messages[0].at.getTime());
 
 // A single message longer than a window is clipped, never dropped (the watermark must move).
 const huge = buildWindow("c1", [msg(0, "y".repeat(50_000))], ["linkedin"])!;

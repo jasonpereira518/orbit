@@ -9,6 +9,8 @@
 export const IMPORT_SOURCE_LABEL: Record<string, string> = {
   linkedin_connections: "LinkedIn connections",
   linkedin_messages: "LinkedIn messages",
+  whatsapp_chat: "WhatsApp chats",
+  imessage_chat: "iMessage chats",
   contacts_file: "Contacts file",
   google_contacts: "Google Contacts",
   outlook_contacts: "Outlook Contacts",
@@ -34,4 +36,9 @@ export function createsContacts(
   importType: string | null | undefined,
 ): boolean {
   return importType !== "calendar_ics" && importType !== "calendar_csv";
+}
+
+/** Chat imports log one interaction per conversation session, not per meeting. */
+export function isChatImport(importType: string | null | undefined): boolean {
+  return importType === "whatsapp_chat" || importType === "imessage_chat";
 }

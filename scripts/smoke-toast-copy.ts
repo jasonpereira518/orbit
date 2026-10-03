@@ -203,6 +203,8 @@ const FINISH_SUMMARIES: FinishSummary[] = [
   { importIds: ["i2"], added: 1, existing: 0, meetingsLogged: 0, sources: ["Contacts.vcf"] },
   { importIds: ["i3"], added: 0, existing: 25, meetingsLogged: 0, sources: ["Connections.csv"] },
   { importIds: ["i4"], added: 0, existing: 0, meetingsLogged: 38, sources: ["work.ics"] },
+  // A chat import: conversation sessions, never meetings.
+  { importIds: ["i4c"], added: 0, existing: 2, meetingsLogged: 0, chatSessionsLogged: 14, sources: ["WhatsApp Chat with Maya.zip"] },
   {
     importIds: ["i5"],
     added: 12,
