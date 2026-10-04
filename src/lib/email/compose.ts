@@ -7,7 +7,7 @@ import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactSearchCondition } from "@/lib/contact-search-rank";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { ENQUEUE_COPY, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
-import { getSendCapability, type SendCapability } from "@/lib/email/sender";
+import { getSendCapability, type MailboxId, type SendCapability } from "@/lib/email/sender";
 import { loadEmailSettings } from "@/lib/email/settings";
 import { appendSignature } from "@/lib/email/signature";
 
@@ -139,6 +139,8 @@ export type ComposeInput = {
   body: string;
   contactId: string | null;
   fromName: string | null;
+  /** Send from this mailbox (the From picker). Omitted = the user's default. */
+  provider?: MailboxId;
 };
 
 export type ComposeResult =
@@ -166,6 +168,7 @@ export async function sendComposed(userId: string, input: ComposeInput): Promise
     fromName: input.fromName,
     origin: "compose",
     originRef: input.contactId,
+    provider: input.provider,
     delayMs: UNDO_DELAY_MS,
   });
   if (!queued.ok) return queued;

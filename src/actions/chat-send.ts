@@ -22,12 +22,12 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, contacts, emailSends, interactions } from "@/db/schema";
-import { getGmailSendIdentity } from "@/actions/gmail";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { ENQUEUE_COPY, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
+import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 import {
   DEFAULT_SEND_SUBJECT,
   checkContent,
@@ -54,9 +54,9 @@ export type ChatSendResult =
   | { ok: false; reason: ChatSendReason; message: string };
 
 const COPY: Record<ChatSendReason, string> = {
-  not_connected: "Connect Gmail to send from your own address.",
-  needs_reconnect: "Gmail needs to be reconnected before it can send.",
-  missing_scope: "Orbit doesn’t have Google’s permission to send as you yet.",
+  not_connected: "Connect your email to send from your own address.",
+  needs_reconnect: "Your email needs to be reconnected before it can send.",
+  missing_scope: "Orbit doesn’t have permission to send from your email yet.",
   no_email: "There’s no email address on this contact yet.",
   invalid_recipient: "The email address on this contact doesn’t look like a single valid address, so nothing was sent.",
   placeholder: "That’s a placeholder address, so there’s no real inbox to send to.",
@@ -112,7 +112,17 @@ async function loadTarget(userId: string, messageId: string, contactId: string) 
 }
 
 export type ChatSendContext = {
-  identity: { connected: boolean; canSend: boolean; sendingAs: string | null; displayName: string | null };
+  /**
+   * The mailbox this send would leave from (Gmail or Outlook — whichever `resolveSender`
+   * picks), or why nothing can send right now and which mailbox to fix.
+   */
+  identity: {
+    canSend: boolean;
+    sendingAs: string | null;
+    displayName: string | null;
+    block: { reason: SendBlockReason | "cap_reached"; provider: MailboxId | null } | null;
+    outlookAvailable: boolean;
+  };
   contactName: string;
   /** The address the message will go to, or null when there is none worth showing. */
   to: string | null;
@@ -130,7 +140,10 @@ export async function getChatSendContext(messageId: string, contactId: string): 
   const db = await getDb();
   const key = chatSendExternalId(messageId, contactId);
 
-  const identity = await getGmailSendIdentity();
+  const [capability, profile] = await Promise.all([
+    getSendCapability(userId),
+    getCurrentUserProfile().catch(() => null),
+  ]);
   const check = checkRecipient(contact.email);
   const [logged, pending] = await Promise.all([
     db.query.interactions.findFirst({
@@ -151,10 +164,11 @@ export async function getChatSendContext(messageId: string, contactId: string): 
 
   return {
     identity: {
-      connected: identity.connected,
-      canSend: identity.canSend,
-      sendingAs: identity.sendingAs,
-      displayName: identity.displayName,
+      canSend: capability.ok,
+      sendingAs: capability.ok ? capability.fromEmail : null,
+      displayName: profile?.name?.trim() || null,
+      block: capability.ok ? null : { reason: capability.reason, provider: capability.provider },
+      outlookAvailable: capability.outlookAvailable,
     },
     contactName: contact.preferredName || contact.fullName,
     to: check.ok ? check.email : (contact.email?.trim() || null),

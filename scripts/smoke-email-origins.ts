@@ -5,6 +5,7 @@
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
+import { readFileSync } from "node:fs";
 
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -137,6 +138,8 @@ async function recruiterSection() {
       idempotencyKey: `recruiter:${ok.id}`,
     });
     const sentRow = await load(ok.id);
+    const outboxRow = await db.query.emailSends.findFirst({ where: eq(schema.emailSends.originRef, ok.id) });
+    check("recruiter replies go out from Gmail", outboxRow?.provider === "gmail");
     check("a sent recruiter email marks its draft sent", outcome === "sent" && sentRow.status === "sent" && sentRow.gmailMessageId === "pm");
 
     fail = "permanent";
@@ -149,6 +152,10 @@ async function recruiterSection() {
       failedRow.errorMessage ?? ""
     );
     fail = null;
+    check(
+      "the recruiter send action pins Gmail",
+      readFileSync("src/actions/recruiter-messages.ts", "utf8").includes('provider: "gmail"')
+    );
   } finally {
     await db.delete(schema.recruiters).where(eq(schema.recruiters.id, rec!.id));
   }

@@ -46,7 +46,7 @@ export const gmailProvider: MailProvider = {
     return { email: conn.emailAddress.trim().toLowerCase() };
   },
 
-  async send(userId, msg, opts = {}) {
+  async send(userId, msg, opts) {
     const accessToken = await token(userId);
     const raw = toBase64Url(withBccHeader(buildMime(msg), msg.bcc));
     let res: Response;
@@ -67,7 +67,7 @@ export const gmailProvider: MailProvider = {
     return { providerMessageId: data.id, providerThreadId: data.threadId ?? null };
   },
 
-  async findSent(userId, rfcMessageId) {
+  async findSent(userId, { rfcMessageId }) {
     const conn = await connection(userId);
     if (!conn || conn.status !== "active" || !hasScope(conn.scopes, GOOGLE_SCOPES.gmailRead)) return "unknown";
     let accessToken: string;

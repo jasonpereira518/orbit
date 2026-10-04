@@ -28,7 +28,12 @@ function SendHint({
     return (
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-xs text-muted-foreground">{hint}</p>
-        <ConnectMailboxButton reason={block} returnTo={pathname || "/contacts"} />
+        <ConnectMailboxButton
+          reason={block}
+          provider={sendOptions?.sendBlockProvider ?? null}
+          outlookAvailable={sendOptions?.outlookAvailable ?? false}
+          returnTo={pathname || "/contacts"}
+        />
       </div>
     );
   }
@@ -76,7 +81,7 @@ export function FollowUpDraftComposer({
       : sendOptions.hasEmail && sendOptions.sendBlock === "cap_reached"
         ? "You’ve reached today’s email limit — copy and mark sent."
         : sendOptions.hasEmail && sendOptions.sendBlock
-          ? "Connect Gmail to send this from your own address — or copy and mark sent."
+          ? "Connect your email to send this from your own address — or copy and mark sent."
           : sendOptions.hasLinkedIn
             ? "LinkedIn can’t be sent automatically — copy, open their profile, then mark sent."
             : sendOptions.hasEmail

@@ -31,6 +31,7 @@ import {
   hasCalendarScope,
   hasContactsScope,
   hasMailScope,
+  hasSendScope,
 } from "@/lib/outlook";
 import {
   isMicrosoftPurpose,
@@ -55,6 +56,8 @@ export type OutlookConnectionStatus = {
   hasCalendarScope: boolean;
   /** False until the person allows mail access for the recruiter scan. */
   hasMailScope: boolean;
+  /** False until the person allows Orbit to send as them (Mail.Send). */
+  canSend: boolean;
   /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
   syncPaused: boolean;
   /** Null when there is no connection row. See `deriveConnectionHealth`. */
@@ -81,6 +84,7 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
       hasContactsScope: false,
       hasCalendarScope: false,
       hasMailScope: false,
+      canSend: false,
       syncPaused: false,
       status: null,
       syncError: null,
@@ -102,6 +106,7 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
     hasContactsScope: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
     hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
     hasMailScope: Boolean(conn && conn.status === "active" && hasMailScope(conn.scopes)),
+    canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
     syncPaused: Boolean(conn && conn.syncStatus === "paused"),
     status: conn
       ? deriveConnectionHealth({
