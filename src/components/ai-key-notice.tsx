@@ -26,7 +26,7 @@ export function AiKeyNotice({
   reason,
   compact = false,
 }: {
-  feature: "capture" | "chat" | "setup" | "meeting";
+  feature: "capture" | "chat" | "setup" | "meeting" | "knowledge";
   reason?: AiAccessDenial | null;
   compact?: boolean;
 }) {
@@ -38,7 +38,9 @@ export function AiKeyNotice({
         ? "extract people from notes"
         : feature === "meeting"
           ? "summarize meetings"
-          : "read your notes and answer questions";
+          : feature === "knowledge"
+            ? "summarize people and see how they fit your goals"
+            : "read your notes and answer questions";
   const { plan, includedAiAvailable } = useViewerPlan();
   const copy = AI_NOTICE_COPY[reason ?? "key_required"];
   // "Pro and Max include AI" only to a Free account, and only where it can actually run.

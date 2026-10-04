@@ -40,8 +40,11 @@ export type Surface = {
    * Pages and features: not released yet. On a page, ordinary users get the coming-soon screen
    * in place of the route (and every route under it) and the nav item carries a "Soon" tag. A
    * feature has no screen of its own, so it is simply hidden: every entry point disappears and
-   * its server actions refuse. Set in code, not by an operator toggle — releasing it is
-   * deleting this line.
+   * its server actions refuse.
+   *
+   * This is the DEFAULT. An operator can mark any releasable page coming soon, or release one
+   * of these, from /admin/product; that override is stored as a flag row and wins over this
+   * line in both directions (see `effectiveComingSoonKeys`).
    */
   comingSoon?: true;
 };
@@ -57,8 +60,10 @@ const PAGES: Surface[] = [
     reason: "Onboarding and the app shell both redirect here.",
   },
   {
-    // Ships dark: the page, the nightly pass's spend and the dashboard preview all key off
-    // this flag. An admin previews it from /admin/product; releasing is deleting the line.
+    // Ships dark again: released in #380, put back the same day. The page, the nightly
+    // pass's spend, the Monday email and the dashboard briefing all follow the effective
+    // coming-soon set. An admin previews it from /admin/product, where a `live:page.radar`
+    // override releases it without a deploy; releasing in code is deleting the line below.
     key: "page.radar",
     kind: "page",
     label: "Radar",
@@ -300,11 +305,66 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
   return key !== null && hidden.has(key);
 }
 
-/** Settings anchor id → surface key, for filtering the settings page and its rail. */
-/** Page and feature surfaces that are announced but not released. */
-export const COMING_SOON_KEYS: ReadonlySet<string> = new Set(
+/** Page and feature surfaces that ship as announced-but-not-released, before any operator override. */
+export const DEFAULT_COMING_SOON_KEYS: ReadonlySet<string> = new Set(
   SURFACES.filter((s) => s.comingSoon).map((s) => s.key)
 );
+
+/**
+ * Operator overrides of the default, stored as extra rows in `app_surface_flags` so no
+ * schema change is needed: `soon:<key>` marks a page coming soon, `live:<key>` releases one
+ * the code ships as coming soon. Absent both, the code default stands.
+ */
+export const SOON_FLAG_PREFIX = "soon:";
+export const LIVE_FLAG_PREFIX = "live:";
+
+/** Whether a page can be marked coming soon at all — never the escape-hatch pages. */
+export function canMarkComingSoon(key: string): boolean {
+  const surface = BY_KEY.get(key);
+  return surface?.kind === "page" && surface.alwaysVisible !== true;
+}
+
+/** The default set with the operator's override rows applied. Pure; the server reads the rows. */
+export function effectiveComingSoonKeys(flagRows: Iterable<string>): Set<string> {
+  const keys = new Set(DEFAULT_COMING_SOON_KEYS);
+  const rows = [...flagRows];
+  for (const row of rows) {
+    if (row.startsWith(SOON_FLAG_PREFIX)) {
+      const key = row.slice(SOON_FLAG_PREFIX.length);
+      if (canMarkComingSoon(key)) keys.add(key);
+    }
+  }
+  for (const row of rows) {
+    if (row.startsWith(LIVE_FLAG_PREFIX)) keys.delete(row.slice(LIVE_FLAG_PREFIX.length));
+  }
+  return keys;
+}
+
+/**
+ * The operator's sidebar order, stored as ONE more row in `app_surface_flags`:
+ * `order:page.a,page.b,...`. Like the coming-soon overrides, this avoids a schema change.
+ */
+export const ORDER_FLAG_PREFIX = "order:";
+
+/**
+ * `items` sorted by the operator's order (surface keys). Items the order does not mention —
+ * a nav entry added after the operator last saved — keep their default relative order after
+ * the listed ones. Stable, so an empty order returns the code's own order.
+ */
+export function orderNavItems<T extends { href: string }>(
+  items: readonly T[],
+  order: readonly string[]
+): T[] {
+  const rank = (item: T) => {
+    const key = surfaceKeyForHref(item.href);
+    const i = key === null ? -1 : order.indexOf(key);
+    return i === -1 ? order.length : i;
+  };
+  return items
+    .map((item, index) => ({ item, index, rank: rank(item) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((x) => x.item);
+}
 
 /**
  * Surfaces elsewhere in the app that only make sense once a coming-soon page is released.
@@ -316,9 +376,13 @@ export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>>
   [COMPOSE_SURFACE_KEY]: ["settings.email"],
 };
 
-export function isHrefComingSoon(href: string): boolean {
+/** True when `href` is a page in `soon` (the effective set; defaults to the code defaults). */
+export function isHrefComingSoon(
+  href: string,
+  soon: ReadonlySet<string> = DEFAULT_COMING_SOON_KEYS
+): boolean {
   const key = surfaceKeyForHref(href);
-  return key !== null && COMING_SOON_KEYS.has(key);
+  return key !== null && soon.has(key);
 }
 
 export function surfaceKeyForSettingsId(settingsId: string): string {
