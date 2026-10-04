@@ -4,7 +4,7 @@
 import { format } from "date-fns";
 import type { RelationshipOpenThread, RelationshipTopic } from "@/db/schema";
 
-/** canRemind = the digest has a run (a reminder can join that run's batch and be undone with it). */
+/** canRemind = the digest has a run that is not undone (a reminder joins that run's batch and is undone with it). */
 export type DigestThread = RelationshipOpenThread & { canRemind: boolean };
 export type DigestView = {
   whatTheyDo: string | null;
@@ -41,4 +41,13 @@ export function digestSourceLine(d: Pick<DigestView, "messageCount" | "sources" 
 
 export function topicLine(t: RelationshipTopic): string {
   return `${t.label} · last discussed ${day(t.lastDiscussedAt)}`;
+}
+
+/**
+ * The brief's standing line. With none, the empty-brief prompt shows only when no digest is
+ * rendered either: under a populated digest it would contradict what is on screen.
+ */
+export function briefStandingLine(standing: string | null, digest: DigestView | null | undefined): string | null {
+  if (standing) return standing;
+  return digest ? null : "Log an interaction below and the brief will write itself from your notes.";
 }

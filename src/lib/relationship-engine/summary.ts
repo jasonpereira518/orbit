@@ -1,9 +1,10 @@
 /**
  * What one relationship run did, for the import sheet, the /imports card and the bell.
  * User-scoped on every read: the run, its batch's reminders with names, flag names,
- * truncated and parked counts, and the pending count while the run is active.
+ * truncated and parked counts, and while the run is active the people still to read: pending
+ * contacts plus this run's contacts out in a batch (the pending count leaves those out).
  */
-import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, relationshipDigests, relationshipRuns, reminders, type RelationshipRunRow, type RelationshipRunStatus } from "@/db/schema";
 import { pendingRelationshipContactCount } from "@/lib/relationship-engine/pending";
@@ -18,7 +19,8 @@ const NOTICE_DAYS = 3;
 async function build(userId: string, run: RelationshipRunRow, now: Date): Promise<RunSummary> {
   const db = await getDb();
   const flagContactIds = [...new Set(run.flags.map((f) => f.contactId))];
-  const [reminderRows, flagNames, truncated, parked, remaining] = await Promise.all([
+  const active = ACTIVE.includes(run.status);
+  const [reminderRows, flagNames, truncated, parked, pending, inFlight] = await Promise.all([
     run.noteBatchId
       ? db
           .select({ id: reminders.id, title: reminders.title, dueDate: reminders.dueDate, contactId: reminders.contactId, contactName: contacts.fullName, status: reminders.status })
@@ -41,8 +43,15 @@ async function build(userId: string, run: RelationshipRunRow, now: Date): Promis
       .innerJoin(contacts, eq(contacts.id, relationshipDigests.contactId))
       .where(and(eq(relationshipDigests.userId, userId), gte(relationshipDigests.attempts, PARKED_ATTEMPTS), gte(relationshipDigests.updatedAt, run.createdAt)))
       .limit(5),
-    ACTIVE.includes(run.status) ? pendingRelationshipContactCount(userId, now) : Promise.resolve(0),
+    active ? pendingRelationshipContactCount(userId, now) : Promise.resolve(0),
+    active
+      ? db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(relationshipDigests)
+          .where(and(eq(relationshipDigests.userId, userId), eq(relationshipDigests.runId, run.id), gt(relationshipDigests.batchPendingUntil, now)))
+      : Promise.resolve([{ n: 0 }]),
   ]);
+  const remaining = pending + Number(inFlight[0]?.n ?? 0);
   const nameOf = new Map(flagNames.map((c) => [c.id, c.name]));
   return {
     id: run.id,

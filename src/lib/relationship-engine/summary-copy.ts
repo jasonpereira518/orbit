@@ -15,7 +15,7 @@ export type RunSummary = {
   remindersCreated: number;
   openThreadsAdded: number;
   factsAdded: number;
-  /** Pending contacts; 0 unless the run is active. */
+  /** Pending contacts plus this run's contacts out in a batch; 0 unless the run is active. */
   remaining: number;
   /** The run batch's reminders, latest due first, max 20. */
   reminders: RunSummaryReminder[];
@@ -30,6 +30,16 @@ export type RunSummary = {
   undoable: boolean;
 };
 export type RunSummaryCopy = { headline: string; progress: string | null; notes: string[] };
+
+/**
+ * Whether another import's run is the one this import's people went into: it had started by
+ * the time this import was made and had not yet finished. A run that started later, or one
+ * that was already over (this import touched no one, or the engine was off), is unrelated.
+ */
+export function runCoversImport(run: Pick<RunSummary, "createdAt" | "finishedAt">, importCreatedAt: Date | string): boolean {
+  const at = new Date(importCreatedAt).getTime();
+  return new Date(run.createdAt).getTime() <= at && (run.finishedAt == null || new Date(run.finishedAt).getTime() >= at);
+}
 
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

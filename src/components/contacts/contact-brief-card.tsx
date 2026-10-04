@@ -15,7 +15,7 @@ import { flashSection } from "@/components/layout/section-flash";
 import { requestInteractionReveal } from "@/components/contacts/reveal-interaction";
 import type { RecentDiscussion } from "@/lib/contact-brief";
 import { friendlyError } from "@/lib/errors";
-import type { DigestView } from "@/lib/relationship-engine/digest-copy";
+import { briefStandingLine, type DigestView } from "@/lib/relationship-engine/digest-copy";
 
 /**
  * Scrolls the timeline to the interaction a "recent discussion" line came from and glows it.
@@ -40,6 +40,7 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const standingLine = briefStandingLine(standing, digest);
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader className="border-b border-border/50">
@@ -57,9 +58,7 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
       <CardContent className="grid gap-5 pt-4 lg:grid-cols-[1.2fr_1fr]">
         <div className="space-y-4">
           {digest ? <DigestSection digest={digest} /> : null}
-          <p className="text-sm leading-relaxed text-ink">
-            {standing ?? "Log an interaction below and the brief will write itself from your notes."}
-          </p>
+          {standingLine ? <p className="text-sm leading-relaxed text-ink">{standingLine}</p> : null}
           {/* The one thing to do next, written with this contact's open commitments and
               opportunities in front of the model. Null when nothing is open — which is a real
               answer, and better than a generic nudge. */}

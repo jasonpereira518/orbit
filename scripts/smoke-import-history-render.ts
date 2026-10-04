@@ -24,6 +24,7 @@ import {
 } from "../src/components/imports/import-history";
 import { Sheet } from "../src/components/ui/sheet";
 import type { ImportDetail, ImportHistoryItem } from "../src/actions/imports";
+import { runCoversImport } from "../src/lib/relationship-engine/summary-copy";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -273,6 +274,14 @@ const runSheet = sheet({
   },
 });
 check("a sheet with a relationship run shows its analysis", runSheet.includes("Relationship analysis") && runSheet.includes("Undo all"));
+
+// Final I4: another import's run is shown on this sheet only when it was still going when
+// this import was made (its people folded into it), never a run that had already finished.
+const IMPORT_AT = "2026-10-03T10:05:00.000Z";
+check("a run still active at the import covers it", runCoversImport({ createdAt: "2026-10-03T10:00:00.000Z", finishedAt: null }, IMPORT_AT));
+check("a run that finished after the import covers it", runCoversImport({ createdAt: "2026-10-03T10:00:00.000Z", finishedAt: "2026-10-03T10:20:00.000Z" }, IMPORT_AT));
+check("a run finished before the import does not", !runCoversImport({ createdAt: "2026-09-20T10:00:00.000Z", finishedAt: "2026-09-20T10:20:00.000Z" }, IMPORT_AT));
+check("a run started after the import does not", !runCoversImport({ createdAt: "2026-10-03T11:00:00.000Z", finishedAt: null }, IMPORT_AT));
 
 console.log("Every import type still renders");
 const TYPES = [

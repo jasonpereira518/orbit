@@ -18,7 +18,7 @@ import {
   type FinishSummary,
 } from "@/lib/imports/import-finish";
 import { importIdsFrom, isImportId } from "@/lib/imports/import-ids";
-import { loadImportRunSummary, loadLatestRunSummary, type RunSummary } from "@/lib/relationship-engine/summary";
+import { loadImportRunSummary, loadLatestRunSummary, runCoversImport, type RunSummary } from "@/lib/relationship-engine/summary";
 import { IMESSAGE_CHAT_IMPORT_TYPE, WHATSAPP_CHAT_IMPORT_TYPE } from "@/lib/import-adapters/chat";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
 import {
@@ -459,8 +459,7 @@ export async function getImportDetail(
   const isMessageImport = MESSAGE_IMPORT_TYPES.includes(row.importType);
   const ownRun = isMessageImport ? await loadImportRunSummary(userId, importId) : null;
   const latestRun = isMessageImport && !ownRun ? await loadLatestRunSummary(userId) : null;
-  // A latest run that started AFTER this import is unrelated to it: show nothing.
-  const relationshipRunShared = !!latestRun && new Date(latestRun.createdAt) <= new Date(row.createdAt);
+  const relationshipRunShared = !!latestRun && runCoversImport(latestRun, row.createdAt);
   const shownRun = ownRun ?? (relationshipRunShared ? latestRun : null);
 
   return {

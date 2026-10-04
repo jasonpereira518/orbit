@@ -11,7 +11,7 @@ import { DigestSection } from "../src/components/contacts/contact-digest";
 import { owedLabel } from "../src/components/contacts/contact-next-steps";
 import { OpenThreadsList } from "../src/components/contacts/contact-open-threads";
 import { chatSourceIcon, chatSourceLabel, IMessageIcon, WhatsAppIcon } from "../src/components/icons/chat-source-icons";
-import { digestSourceLine, topicLine, type DigestView } from "../src/lib/relationship-engine/digest-copy";
+import { briefStandingLine, digestSourceLine, topicLine, type DigestView } from "../src/lib/relationship-engine/digest-copy";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -60,6 +60,10 @@ check("digest: working on", dg.includes("A self-serve onboarding revamp"));
 check("digest: summary", dg.includes("You met at a fintech dinner"));
 check("digest: topic chips", dg.includes("Hiring") && dg.includes("Onboarding"));
 check("digest: source line rendered", dg.includes("From 214 WhatsApp messages"));
+// Final minor: the empty-brief prompt never sits under a digest that already says plenty.
+check("brief: standing line wins", briefStandingLine("Close friend, last spoke in May", digest) === "Close friend, last spoke in May");
+check("brief: empty prompt without a digest", briefStandingLine(null, null) === "Log an interaction below and the brief will write itself from your notes.");
+check("brief: no empty prompt under a digest", briefStandingLine(null, digest) === null, String(briefStandingLine(null, digest)));
 
 check("owed: me", owedLabel("me") === "You owe");
 check("owed: them", owedLabel("them") === "They owe");

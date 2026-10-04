@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireUserId } from "@/lib/auth";
 import { RunStillActiveError, undoRelationshipRun } from "@/lib/relationship-engine/apply";
-import { dismissOpenThread, dismissRunFlag, promoteOpenThread, promoteRunFlag } from "@/lib/relationship-engine/promote";
+import { dismissOpenThread, dismissRunFlag, promoteOpenThread, promoteRunFlag, type PromoteOutcome } from "@/lib/relationship-engine/promote";
 import { loadLatestRunSummary, type RunSummary } from "@/lib/relationship-engine/summary";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
 
@@ -12,6 +12,11 @@ type Refusal = { error: string };
 /** Typed, so `"error" in res` narrows on the client — see `refusal` in actions/imports.ts. */
 function refusal(message: string): Refusal {
   return { error: message };
+}
+
+function promoteReply(made: PromoteOutcome, alreadyMade: string): { ok: true } | Refusal {
+  if (!made) return refusal("That reminder is no longer available");
+  return "alreadyMade" in made ? refusal(alreadyMade) : { ok: true };
 }
 
 export async function getLatestRelationshipRun(): Promise<RunSummary | null> {
@@ -37,7 +42,7 @@ export async function remindRunFlag(runId: string, key: string): Promise<{ ok: t
   const userId = await requireUserId();
   const made = await promoteRunFlag(userId, runId, key);
   revalidateReminderPaths();
-  return made ? { ok: true } : refusal("That reminder was already made");
+  return promoteReply(made, "That reminder was already made");
 }
 
 export async function dismissRunFlagAction(runId: string, key: string): Promise<{ ok: true } | Refusal> {
@@ -51,7 +56,7 @@ export async function remindOpenThread(contactId: string, key: string): Promise<
   const made = await promoteOpenThread(userId, contactId, key);
   revalidateReminderPaths();
   revalidatePath(`/contacts/${contactId}`);
-  return made ? { ok: true } : refusal("That thread already has a reminder");
+  return promoteReply(made, "That thread already has a reminder");
 }
 
 export async function dismissOpenThreadAction(contactId: string, key: string): Promise<{ ok: true } | Refusal> {

@@ -11,6 +11,7 @@ import { latestRunNotice, loadImportRunSummary, loadLatestRunSummary, loadRunSum
 import { loadDigestView } from "../src/lib/relationship-engine/digest-view";
 import { dismissOpenThread, dismissRunFlag, promoteOpenThread, promoteRunFlag } from "../src/lib/relationship-engine/promote";
 import { ensureRunNoteBatch, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
 
 const USER = "smoke-relationship-summary";
 const NOW = new Date("2026-10-03T12:00:00Z");
@@ -74,23 +75,34 @@ async function main() {
   check("copy: no progress when done", copy.progress === null);
 
   // Flag → reminder, in the run's batch, idempotent; the flag leaves the run.
-  const promoted = await promoteRunFlag(USER, run.id, "k1", NOW);
-  check("flag: reminder made", !!promoted);
-  const rem = await db.query.reminders.findFirst({ where: eq(reminders.id, promoted!.reminderId) });
+  const promotedOut = await promoteRunFlag(USER, run.id, "k1", NOW);
+  check("flag: reminder made", !!promotedOut && "reminderId" in promotedOut);
+  const promoted = promotedOut as { reminderId: string };
+  const rem = await db.query.reminders.findFirst({ where: eq(reminders.id, promoted.reminderId) });
   const batchId = (await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, run.id) }))!.noteBatchId;
   check("flag: reminder in the run batch", rem?.noteBatchId === batchId && rem?.contactId === maya.id && rem?.title === "Check Maya sent the deck", JSON.stringify(rem));
   check("flag: due tomorrow", rem?.dueDate?.toISOString().slice(0, 10) === "2026-10-04");
   check("flag: removed from the run", (await loadRunSummary(USER, run.id, NOW))!.flags.length === 0);
-  check("flag: second promote is a no-op", (await promoteRunFlag(USER, run.id, "k1", NOW)) === null);
-  check("flag: listed among the run's reminders", (await loadRunSummary(USER, run.id, NOW))!.reminders.some((r) => r.id === promoted!.reminderId));
+  check("flag: second promote is a no-op (flag gone → unavailable)", (await promoteRunFlag(USER, run.id, "k1", NOW)) === null);
+  check("flag: listed among the run's reminders", (await loadRunSummary(USER, run.id, NOW))!.reminders.some((r) => r.id === promoted.reminderId));
+  // Final minor: a flag whose reminder exists (a double click that raced) reads "already made", not "unavailable".
+  await db.update(relationshipRuns).set({ flags: run.flags }).where(eq(relationshipRuns.id, run.id));
+  const again = await promoteRunFlag(USER, run.id, "k1", NOW);
+  check("flag: existing reminder → already made", !!again && "alreadyMade" in again && again.alreadyMade === true, JSON.stringify(again));
+  check("flag: unknown key → unavailable", (await promoteRunFlag(USER, run.id, "nope", NOW)) === null);
 
   // Thread → reminder; dismiss removes without a reminder.
-  const t = await promoteOpenThread(USER, maya.id, "t1", NOW);
-  check("thread: reminder made", !!t);
-  const tRem = await db.query.reminders.findFirst({ where: eq(reminders.id, t!.reminderId) });
+  const tOut = await promoteOpenThread(USER, maya.id, "t1", NOW);
+  check("thread: reminder made", !!tOut && "reminderId" in tOut);
+  const t = tOut as { reminderId: string };
+  const tRem = await db.query.reminders.findFirst({ where: eq(reminders.id, t.reminderId) });
   check("thread: implied, in the run batch", tRem?.origin === "implied" && tRem?.noteBatchId === batchId, JSON.stringify(tRem));
   const d = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, maya.id) });
   check("thread: removed from the digest", d?.openThreads.length === 0);
+  const t1 = { key: "t1", text: "Intro to Priya", owedBy: "me" as const, sinceIso: "2026-05-01", interactionId: msg.id, excerpt: "can you intro me to Priya?" };
+  await db.update(relationshipDigests).set({ openThreads: [t1] }).where(eq(relationshipDigests.contactId, maya.id));
+  const tAgain = await promoteOpenThread(USER, maya.id, "t1", NOW);
+  check("thread: existing reminder → already made", !!tAgain && "alreadyMade" in tAgain && tAgain.alreadyMade === true, JSON.stringify(tAgain));
   await db.update(relationshipDigests)
     .set({ openThreads: [{ key: "t2", text: "Coffee in October", owedBy: null, sinceIso: "2026-04-01", interactionId: msg.id, excerpt: "coffee sometime?" }] })
     .where(eq(relationshipDigests.contactId, maya.id));
@@ -109,6 +121,34 @@ async function main() {
   check("undo: promoted reminders dismissed", pending.length === 0, String(pending.length));
   check("summary: not undoable once undone", (await loadRunSummary(USER, run.id, NOW))!.undoable === false);
   check("notice: undone run hidden", (await latestRunNotice(USER, NOW)) === undefined);
+
+  // Final I2: an undone run's threads can be dismissed but not promoted — a reminder there
+  // would sit in a batch Undo all can no longer reach.
+  await db.update(relationshipDigests)
+    .set({ openThreads: [{ key: "t3", text: "Send the hiring doc", owedBy: "me", sinceIso: "2026-09-01", interactionId: msg.id, excerpt: "I'll send the hiring doc" }] })
+    .where(eq(relationshipDigests.contactId, maya.id));
+  const undoneView = await loadDigestView(USER, maya.id);
+  check("undone: thread still listed", undoneView?.openThreads.length === 1);
+  check("undone: no Remind me", undoneView?.openThreads[0]?.canRemind === false, JSON.stringify(undoneView?.openThreads));
+  const batchesBefore = (await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).length;
+  const runBatchBefore = (await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, run.id) }))!.noteBatchId;
+  check("undone: promote refused", (await promoteOpenThread(USER, maya.id, "t3", NOW)) === null);
+  check("undone: no new note batch", (await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).length === batchesBefore);
+  check("undone: run keeps its dead batch", (await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, run.id) }))!.noteBatchId === runBatchBefore);
+  check("undone: no pending reminder written", (await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.status, "pending")) })).length === 0);
+  check("undone: thread can still be dismissed", (await dismissOpenThread(USER, maya.id, "t3")) === true);
+
+  // Final I5: while a run is active, people out in this run's batch count toward the total.
+  const [live] = await db.insert(relationshipRuns).values({ userId: USER, status: "running", processed: 25, inlineUsed: 25 }).returning();
+  const [ben] = await db.insert(contacts).values({ userId: USER, fullName: "Ben Ito" }).returning();
+  await db.insert(interactions).values({ userId: USER, contactId: ben.id, interactionType: "linkedin_message", interactionDate: new Date("2026-09-25T10:00:00Z"), rawNotes: "Let's talk pricing next week" });
+  await db.insert(relationshipDigests).values({ contactId: ben.id, userId: USER, runId: live.id, batchJobId: crypto.randomUUID(), batchPendingUntil: new Date(NOW.getTime() + 3_600_000) });
+  const pendingNow = await pendingRelationshipContactCount(USER, NOW);
+  const liveSummary = (await loadRunSummary(USER, live.id, NOW))!;
+  check("in flight: counted in remaining", liveSummary.remaining === pendingNow + 1, `remaining ${liveSummary.remaining}, pending ${pendingNow}`);
+  check("in flight: progress total", runSummaryCopy(liveSummary).progress === `Analyzing 25 of ${25 + pendingNow + 1} — the rest within a few hours`, String(runSummaryCopy(liveSummary).progress));
+  await db.update(relationshipRuns).set({ status: "done", finishedAt: NOW }).where(eq(relationshipRuns.id, live.id));
+  check("in flight: nothing remaining once done", (await loadRunSummary(USER, live.id, NOW))!.remaining === 0);
 
   await reset();
   console.log("relationship summary OK");

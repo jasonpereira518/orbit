@@ -125,8 +125,8 @@ export async function loadNotificationPanel(
            WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
         `)
       : null,
-    // The latest relationship analysis, one row read. Opt-in: only the open panel asks, so
-    // the periodic poll never pays the statement.
+    // The latest relationship analysis, one row read. Opt-in: the panel loaders ask, so the
+    // 90s app pulse pays this one statement per tab; the desktop poll never asks or pays it.
     opts.relationship ? latestRunNotice(userId, now) : Promise.resolve(undefined),
   ]);
   const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
@@ -273,7 +273,7 @@ export async function loadNotificationPanel(
     /**
      * The latest relationship analysis in one line. A sibling of `items` like Radar, so a
      * finished analysis never becomes a due item, an OS notification or a badge count.
-     * Opt-in so the desktop poll never pays the statement.
+     * Opt-in: the app pulse pays its one statement; the desktop poll never does.
      */
     relationship: relationshipNotice,
     /**

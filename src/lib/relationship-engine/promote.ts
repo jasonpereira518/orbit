@@ -10,6 +10,13 @@ import { ensureRunNoteBatch } from "@/lib/relationship-engine/apply";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { buildSuggestionItemHash, isoDay } from "@/lib/suggested-reminder-utils";
 
+/**
+ * A one-click promotion: the new reminder, `alreadyMade` when its keyed reminder already
+ * exists (a double click that raced), or null when there is nothing to promote any more
+ * (flag or thread gone, run undone, contact not yours).
+ */
+export type PromoteOutcome = { reminderId: string } | { alreadyMade: true } | null;
+
 /** Decision: one-click reminders are due tomorrow, 09:00 UTC. */
 function tomorrow(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 9));
@@ -29,7 +36,7 @@ async function insertReminder(
   userId: string,
   runId: string,
   input: { contactId: string; title: string; dueDate: Date; excerpt: string | null; interactionId: string | null; hashSeed: string; origin: "explicit" | "implied" }
-): Promise<{ reminderId: string } | null> {
+): Promise<Exclude<PromoteOutcome, null>> {
   const db = await getDb();
   const batchId = await ensureRunNoteBatch(userId, runId);
   const listId = await getInboxListId(userId);
@@ -55,7 +62,7 @@ async function insertReminder(
     })
     .onConflictDoNothing({ target: [reminders.userId, reminders.itemHash] })
     .returning();
-  if (!row) return null;
+  if (!row) return { alreadyMade: true };
   await appendReminderToBatch(batchId, { id: row.id, contactId: row.contactId, title: row.title, dueDate: input.dueDate, sourceExcerpt: row.sourceExcerpt });
   return { reminderId: row.id };
 }
@@ -72,7 +79,7 @@ async function removeFlag(userId: string, runId: string, key: string): Promise<b
   return rowsOf(result).length > 0;
 }
 
-export async function promoteRunFlag(userId: string, runId: string, key: string, now: Date = new Date()) {
+export async function promoteRunFlag(userId: string, runId: string, key: string, now: Date = new Date()): Promise<PromoteOutcome> {
   const db = await getDb();
   const run = await db.query.relationshipRuns.findFirst({ where: and(eq(relationshipRuns.id, runId), eq(relationshipRuns.userId, userId)) });
   const flag = run?.flags.find((f) => f.key === key);
@@ -103,13 +110,19 @@ async function removeThread(userId: string, contactId: string, key: string): Pro
   return rowsOf(result).length > 0;
 }
 
-export async function promoteOpenThread(userId: string, contactId: string, key: string, now: Date = new Date()) {
+export async function promoteOpenThread(userId: string, contactId: string, key: string, now: Date = new Date()): Promise<PromoteOutcome> {
   const db = await getDb();
   const digest = await db.query.relationshipDigests.findFirst({ where: and(eq(relationshipDigests.contactId, contactId), eq(relationshipDigests.userId, userId)) });
   const thread = digest?.openThreads.find((t) => t.key === key);
-  // A digest with no run (written before runs existed) has no batch to undo through: the
-  // profile hides Remind me for it (`canRemind`).
+  // A digest with no run (written before runs existed) has no batch to undo through, and an
+  // undone run's batch is one Undo all can no longer reach: the profile hides Remind me for
+  // both (`canRemind`), and the thread can still be dismissed.
   if (!digest || !thread || !digest.runId) return null;
+  const run = await db.query.relationshipRuns.findFirst({
+    where: and(eq(relationshipRuns.id, digest.runId), eq(relationshipRuns.userId, userId)),
+    columns: { status: true },
+  });
+  if (!run || run.status === "undone") return null;
   const made = await insertReminder(userId, digest.runId, {
     contactId, title: thread.text, dueDate: tomorrow(now), excerpt: thread.excerpt,
     interactionId: thread.interactionId, hashSeed: `relationship-thread:${contactId}:${key}`, origin: "implied",
