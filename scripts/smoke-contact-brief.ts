@@ -14,8 +14,8 @@ delete process.env.ANTHROPIC_API_KEY;
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contactBriefs, contacts, interactions, userSettings } from "../src/db/schema";
-import { buildRecentDiscussions, clampStanding, generateAndStoreContactBrief, getContactBrief, isBriefStale } from "../src/lib/contact-brief";
+import { contactBriefs, contacts, interactions, userGoals, userSettings } from "../src/db/schema";
+import { buildRecentDiscussions, clampStanding, generateAndStoreContactBrief, getContactBrief, goalFitOutOfDate, isBriefStale, sanitizeGoalFit } from "../src/lib/contact-brief";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { encrypt } from "../src/lib/crypto";
 
@@ -63,10 +63,31 @@ function check(label: string, condition: boolean, detail?: string) {
 {
   check("overlong standing is truncated, not rejected", clampStanding("x".repeat(700)).length === 600);
 }
+{
+  const goals = [{ id: "g1" }, { id: "g2" }];
+  const items = sanitizeGoalFit(
+    [
+      { goal_id: "g1", why: "  Runs infra   at Stripe.  " },
+      { goal_id: "g1", why: "A duplicate of the same goal." },
+      { goal_id: "not-shown", why: "A goal that was never in the prompt." },
+      { goal_id: "g2", why: "   " },
+    ],
+    goals
+  );
+  check("goal fit keeps only shown goals, once, with a reason", items.length === 1 && items[0].goalId === "g1");
+  check("  and collapses whitespace in the reason", items[0].why === "Runs infra at Stripe.");
+  check("a missing goal_fit is an empty list, not a crash", sanitizeGoalFit(null, goals).length === 0);
+  check("no goals → a fit is never out of date", !goalFitOutOfDate([], null));
+  check("a brief never judged against goals is out of date", goalFitOutOfDate(goals, null));
+  check("a fit that saw every goal is current", !goalFitOutOfDate(goals, { judged: ["g1", "g2"], items: [] }));
+  check("a goal added since makes it out of date", goalFitOutOfDate([...goals, { id: "g3" }], { judged: ["g1", "g2"], items: [] }));
+  check("a goal deleted since does not", !goalFitOutOfDate([{ id: "g1" }], { judged: ["g1", "g2"], items: [] }));
+}
 
 // A stand-in for Gemini, so the model path runs with no network: counts generateContent
 // calls and answers with a well-formed brief. Embedding calls get a vector.
 let modelCalls = 0;
+let lastBody = "";
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -75,7 +96,18 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   if (/generativelanguage/.test(url)) {
     modelCalls += 1;
-    const brief = { summary: "You met Priya at the summit.", standing: "Nothing is open.", next_step: null };
+    lastBody = typeof init?.body === "string" ? init.body : "";
+    const brief: Record<string, unknown> = { summary: "You met Priya at the summit.", standing: "Nothing is open.", next_step: null };
+    // Answer the way a sloppy model would when goals are in the prompt: one real goal, the
+    // same goal twice, and one id that was never offered.
+    const shown = [...lastBody.matchAll(/- ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) — /g)].map((m) => m[1]);
+    if (shown.length) {
+      brief.goal_fit = [
+        { goal_id: shown[0], why: "Runs infra at Larkspur, where you want an intro." },
+        { goal_id: shown[0], why: "Same goal again." },
+        { goal_id: "00000000-0000-0000-0000-000000000000", why: "A goal that does not exist." },
+      ];
+    }
     return Response.json({
       candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(brief) }] }, finishReason: "STOP" }],
       usageMetadata: { promptTokenCount: 800, candidatesTokenCount: 60 },
@@ -124,6 +156,58 @@ async function modelPath() {
 }
 
 // --- DB, no AI key ---
+async function goalFitPath() {
+  const db = await getDb();
+  const user = `${USER}-goals`;
+  await db.delete(contacts).where(eq(contacts.userId, user));
+  await db.delete(userGoals).where(eq(userGoals.userId, user));
+  await db.delete(userSettings).where(eq(userSettings.userId, user));
+  await db.insert(userSettings).values({
+    userId: user, aiProvider: "gemini", aiModel: "gemini-3.5-flash", geminiApiKeyEncrypted: encrypt("smoke-brief-fake-key"),
+  });
+  const [c] = await db.insert(contacts).values({ userId: user, fullName: "Priya Raman", company: "Larkspur", title: "Infra lead" }).returning();
+  await db.insert(interactions).values({
+    userId: user, contactId: c.id, interactionType: "meeting_note", interactionDate: new Date(2026, 8, 1, 12), aiSummary: "Met at the summit.",
+  });
+
+  console.log("\nGoal fit: judged against the user's goals, and only when they have any");
+  const before = modelCalls;
+  await generateAndStoreContactBrief(user, c.id);
+  const plain = await getContactBrief(user, c.id);
+  check("no goals → the prompt does not ask for goal_fit", modelCalls === before + 1 && !lastBody.includes("goal_fit"));
+  check("  and nothing was judged, so goalFit is null", plain!.goalFit === null);
+
+  const [gA, gB] = await db
+    .insert(userGoals)
+    .values([
+      { userId: user, text: "Get an intro to a Stripe infra lead", createdAt: new Date(2026, 8, 20) },
+      { userId: user, text: "Find a seed investor", createdAt: new Date(2026, 8, 21) },
+    ])
+    .returning();
+  await generateAndStoreContactBrief(user, c.id);
+  check("adding goals → the brief is asked again (its inputs changed)", modelCalls === before + 2, String(modelCalls - before));
+  check("  and the prompt now asks for goal_fit", lastBody.includes("goal_fit"));
+  const fit = (await getContactBrief(user, c.id))!.goalFit;
+  check("the fit records every goal it looked at", fit?.judged.length === 2 && fit.judged.includes(gA.id) && fit.judged.includes(gB.id));
+  check("  and keeps only the one real, unrepeated goal", fit?.items.length === 1 && fit.items[0].why.startsWith("Runs infra"));
+
+  await generateAndStoreContactBrief(user, c.id);
+  check("the same goals and inputs → no model call", modelCalls === before + 2, String(modelCalls - before));
+
+  const [gC] = await db.insert(userGoals).values({ userId: user, text: "Hire a founding designer", createdAt: new Date(2026, 8, 22) }).returning();
+  check("a goal added after the fit → it reads as out of date",
+    goalFitOutOfDate([gA, gB, gC], (await getContactBrief(user, c.id))!.goalFit));
+  await generateAndStoreContactBrief(user, c.id);
+  check("  and the next brief is re-judged even though nothing else changed", modelCalls === before + 3, String(modelCalls - before));
+  const refit = (await getContactBrief(user, c.id))!.goalFit;
+  check("  after which every goal, the new one included, has been judged", refit?.judged.includes(gC.id) === true);
+  check("  and it is current again", !goalFitOutOfDate([gA, gB, gC], refit));
+
+  await db.delete(contacts).where(eq(contacts.userId, user));
+  await db.delete(userGoals).where(eq(userGoals.userId, user));
+  await db.delete(userSettings).where(eq(userSettings.userId, user));
+}
+
 async function main() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
@@ -153,6 +237,7 @@ async function main() {
 
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await modelPath();
+  await goalFitPath();
   console.log("\nsmoke-contact-brief: all checks passed");
   process.exit(0);
 }

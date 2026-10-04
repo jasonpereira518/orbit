@@ -222,7 +222,7 @@ export async function stageDrop(result: DetectionResult): Promise<void> {
     payloads,
     people,
     ignored: [...result.ignored, ...result.skipped].map((d) => ({
-      name: d.path ? (d.path.split("/").pop() ?? d.file.name) : d.file.name,
+      name: d.displayName,
       reason: d.reason,
     })),
     truncated: result.truncated,
