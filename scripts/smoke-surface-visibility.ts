@@ -279,8 +279,10 @@ async function main() {
       );
       check(
         "chat imports are closed for an admin without the preview cookie",
+        // A coming-soon feature has no screen of its own, so it lands in `hidden` (as compose does).
         !(await isSurfaceLive(ADMIN, CHAT_IMPORTS_SURFACE_KEY)) &&
-          forAdmin.comingSoon.has(CHAT_IMPORTS_SURFACE_KEY)
+          forAdmin.hidden.has(CHAT_IMPORTS_SURFACE_KEY) &&
+          forUser.hidden.has(CHAT_IMPORTS_SURFACE_KEY)
       );
       check(
         "coming-soon never leaks into what the admin console reports as hidden",
