@@ -421,3 +421,16 @@ Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p3-outlook
 6. **Chat's send dialog shows the resolved mailbox,** not Gmail's identity.
 7. **Outlook sending ships dark** behind `feature.outlook-send` until the privacy page discloses `Mail.Send` — that edit forces a `TERMS_VERSION` bump (re-consent), so it is Jason's call (fold into pricing v2's legal update, #370).
 8. **Copy becomes mailbox-neutral** ("Connect your email", "Allow Orbit to send from your email").
+
+## Planning amendments (P4 plan)
+
+Decided while writing `docs/superpowers/plans/2026-09-30-direct-email-p4-schedule-attachments.md`:
+
+1. **Scheduling = a future `send_at`; the drain delivers it** (~10 min granularity; the UI says "around"). No new queue. `after()` is used only for undo-window delays.
+2. **The browser computes the instant** ("8:00 tomorrow" in the browser's zone) and sends ISO; the server only bounds it (1 minute – 30 days).
+3. **Outlook attachments ≤ 3 MB total.** With `Mail.Send` only (P3), attachments must ride inline in `sendMail`; larger needs a draft + upload session = `Mail.ReadWrite`, ruled out. Gmail allows 20 MB (sent through the media upload endpoint).
+4. **Direct client upload to Blob under `email-attachments/<userId>/…`, server-verified at send** — the token route only issues tokens for the user's prefix; enqueue re-checks the prefix and reads real size/type with `head()`.
+5. **Private blobs** (`access: "private"`). The SDK lets the uploading client — not the token route — choose access, so the server always reads with `access: "private"`; a public upload would simply fail to load at send. Whether this store accepts private blobs is verified on a preview (no local token).
+6. **Attachments aren't kept in the local compose draft;** uploads not sent within 2 days are swept.
+7. **Retry and Edit carry attachments;** blobs are deleted 7 days after the final send settles.
+8. **Gmail sends with attachments use** `POST /upload/gmail/v1/users/me/messages/send?uploadType=multipart`; plain sends keep the JSON `raw` endpoint.

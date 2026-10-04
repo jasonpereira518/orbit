@@ -20,6 +20,8 @@ import {
   searchRecipients,
   sendComposed,
 } from "../src/lib/email/compose";
+import { attachmentPrefixFor } from "../src/lib/email/attachment-paths";
+import { setAttachmentBlobClientForTests } from "../src/lib/email/attachments";
 import { dispatchEmailSend } from "../src/lib/email/outbox";
 import { setProviderOverride } from "../src/lib/email/providers";
 import type { MailProvider, OutboundMessage } from "../src/lib/email/providers/types";
@@ -187,7 +189,42 @@ async function main() {
     check("another user cannot dismiss it", !(await dismissFailedSend(OTHER, retried.sendId)));
     check("but its owner can", await dismissFailedSend(USER, retried.sendId));
     check("dismissed rows leave the list", !(await listContactPendingSends(USER, maya!.id)).some((p) => p.id === retried.sendId));
+
+    console.log("attachments and scheduling");
+    setAttachmentBlobClientForTests({
+      async head(p) { return { pathname: p, url: p, size: 4, contentType: "application/pdf" }; },
+      async get() { return { bytes: new Uint8Array([37, 80, 68, 70]) }; },
+      async del() {},
+      async list() { return { blobs: [], hasMore: false }; },
+    });
+    await resetBucket();
+    const file = { pathname: `${attachmentPrefixFor(USER)}a-x1.pdf`, filename: "a.pdf" };
+    const withFile = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Deck", body: "Attached", contactId: maya!.id, fromName: null, attachments: [file] });
+    check("a send with a file queues", withFile.ok && !withFile.scheduled, JSON.stringify(withFile));
+    if (!withFile.ok) throw new Error("stop");
+    const [fileRow] = await db.select().from(schema.emailSends).where(eq(schema.emailSends.id, withFile.sendId));
+    check("the row keeps the file", fileRow?.attachments?.[0]?.filename === "a.pdf", JSON.stringify(fileRow?.attachments));
+    const theirs = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Deck", body: "Attached", contactId: null, fromName: null, attachments: [{ pathname: `${attachmentPrefixFor(OTHER)}b.pdf`, filename: "b.pdf" }] });
+    check("someone else's upload is refused", !theirs.ok, JSON.stringify(theirs));
+
+    await resetBucket();
+    const later = new Date(Date.now() + 2 * 3_600_000);
+    const scheduled = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Later", body: "Hi", contactId: maya!.id, fromName: null, scheduledFor: later.toISOString() });
+    check("scheduledFor two hours out is scheduled", scheduled.ok && scheduled.scheduled && Math.abs(new Date(scheduled.sendAt).getTime() - later.getTime()) < 1000, JSON.stringify(scheduled));
+    const tooSoon = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Later", body: "Hi", contactId: null, fromName: null, scheduledFor: new Date(Date.now() - 60_000).toISOString() });
+    check("a time in the past is refused", !tooSoon.ok, JSON.stringify(tooSoon));
+    const listed = await listContactPendingSends(USER, maya!.id);
+    check("the pending list shows the schedule", listed.some((p) => scheduled.ok && p.id === scheduled.sendId && p.scheduledFor !== null));
+    check("and the file", listed.some((p) => p.id === withFile.sendId && p.attachments[0]?.filename === "a.pdf"));
+
+    await db.execute(sql`UPDATE email_sends SET status = 'failed', failure_kind = 'permanent' WHERE id = ${withFile.sendId}::uuid`);
+    await resetBucket();
+    const again = await retryFailedSend(USER, withFile.sendId, null);
+    if (!again.ok) throw new Error(`retry refused: ${JSON.stringify(again)}`);
+    const [copy] = await db.select().from(schema.emailSends).where(eq(schema.emailSends.id, again.sendId));
+    check("retry copies the files", copy?.attachments?.[0]?.blobKey === file.pathname);
   } finally {
+    setAttachmentBlobClientForTests(null);
     setProviderOverride("gmail", null);
     setProviderOverride("outlook", null);
     setOutlookSendOverride(null);

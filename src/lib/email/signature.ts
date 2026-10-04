@@ -20,3 +20,10 @@ export function appendSignature(body: string, signature: string | null): string 
   if (body.endsWith(`${DELIMITER}${signature}`)) return body;
   return `${body}${DELIMITER}${signature}`;
 }
+
+/** The reverse, for a sent body reopened in the composer (which shows the signature itself). */
+export function stripSignature(body: string, signature: string | null): string {
+  if (!signature) return body;
+  const tail = `${DELIMITER}${signature}`;
+  return body.endsWith(tail) ? body.slice(0, -tail.length) : body;
+}

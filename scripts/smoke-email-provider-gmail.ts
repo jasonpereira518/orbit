@@ -90,6 +90,24 @@ async function main() {
     const raw = Buffer.from(JSON.parse(calls[0]!.body).raw, "base64url").toString("utf8");
     check("Bcc travels in the raw header for Gmail", /^Bcc: b@x\.org$/m.test(raw.split("\r\n\r\n")[0]!));
 
+    console.log("attachments");
+    mode = "ok";
+    calls.length = 0;
+    await gmailProvider.send(
+      USER,
+      { ...MSG, attachments: [{ filename: "a.pdf", contentType: "application/pdf", bytes: new Uint8Array([37, 80, 68, 70]) }] },
+      { sendId: "row-1", threadId: "t-9" }
+    );
+    const up = calls[0];
+    check("with files, Gmail's upload endpoint is used", Boolean(up?.url.includes("/upload/gmail/v1/users/me/messages/send?uploadType=multipart")), up?.url);
+    check("the message goes as message/rfc822", Boolean(up?.body.includes("Content-Type: message/rfc822")));
+    check("the thread rides in the JSON part", Boolean(up?.body.includes('"threadId":"t-9"')));
+    check("Bcc is in the uploaded message", /^Bcc: b@x\.org$/m.test(up?.body ?? ""));
+    check("the file is inside", Boolean(up?.body.includes("JVBERg==")));
+    calls.length = 0;
+    await gmailProvider.send(USER, MSG, { sendId: "row-2" });
+    check("without files, the JSON endpoint is kept", Boolean(calls[0]?.url.endsWith("/gmail/v1/users/me/messages/send")));
+
     check("500 → transient", (await kind("500")) === "transient");
     check("429 → transient", (await kind("429")) === "transient");
     check("400 → permanent", (await kind("400")) === "permanent");

@@ -62,6 +62,8 @@ export type MimeInput = {
   messageId: string;
   inReplyTo?: string | null;
   references?: string | null;
+  /** Files, loaded from Blob at send (direct-email P4). */
+  attachments?: { filename: string; contentType: string; bytes: Uint8Array }[];
 };
 
 /** `<uuid@orbit.mail>` — globally unique, and searchable via Gmail's `rfc822msgid:`. */
@@ -90,18 +92,58 @@ export function buildMime(input: MimeInput, boundary = `orbit-${randomUUID()}`):
   if (input.inReplyTo) headers.push(`In-Reply-To: ${sanitizeHeader(input.inReplyTo)}`);
   if (input.references) headers.push(`References: ${sanitizeHeader(input.references)}`);
 
-  if (!input.bodyHtml) {
-    headers.push('Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit");
-    return `${headers.join("\r\n")}\r\n\r\n${input.bodyText}`;
+  // The readable body: plain text, or text + HTML as multipart/alternative.
+  const bodyHeaders = input.bodyHtml
+    ? [`Content-Type: multipart/alternative; boundary="${boundary}"`]
+    : ['Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit"];
+  const bodyContent = input.bodyHtml
+    ? (() => {
+        const part = (type: string, content: string) =>
+          [`--${boundary}`, `Content-Type: ${type}; charset="UTF-8"`, "Content-Transfer-Encoding: 8bit", "", content].join(
+            "\r\n"
+          );
+        return [part("text/plain", input.bodyText), part("text/html", input.bodyHtml!), `--${boundary}--`, ""].join("\r\n");
+      })()
+    : input.bodyText;
+
+  if (!input.attachments?.length) {
+    headers.push(...bodyHeaders);
+    return `${headers.join("\r\n")}\r\n\r\n${bodyContent}`;
   }
-  headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
-  const part = (type: string, content: string) =>
-    [`--${boundary}`, `Content-Type: ${type}; charset="UTF-8"`, "Content-Transfer-Encoding: 8bit", "", content].join(
-      "\r\n"
-    );
-  return [headers.join("\r\n"), "", part("text/plain", input.bodyText), part("text/html", input.bodyHtml), `--${boundary}--`, ""].join(
-    "\r\n"
-  );
+
+  // With files: multipart/mixed, the body first, then one base64 part per file.
+  const mixed = `${boundary}-mixed`;
+  headers.push(`Content-Type: multipart/mixed; boundary="${mixed}"`);
+  const parts = [
+    `--${mixed}\r\n${bodyHeaders.join("\r\n")}\r\n\r\n${bodyContent}`,
+    ...input.attachments.map((a) => {
+      const name = headerSafeName(a.filename);
+      return [
+        `--${mixed}`,
+        `Content-Type: ${sanitizeHeader(a.contentType) || "application/octet-stream"}; name="${name.ascii}"`,
+        `Content-Disposition: attachment; ${name.disposition}`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        base64Lines(a.bytes),
+      ].join("\r\n");
+    }),
+  ];
+  return `${headers.join("\r\n")}\r\n\r\n${parts.join("\r\n")}\r\n--${mixed}--\r\n`;
+}
+
+function base64Lines(bytes: Uint8Array): string {
+  return (Buffer.from(bytes).toString("base64").match(/.{1,76}/g) ?? []).join("\r\n");
+}
+
+/**
+ * A filename for the part headers: CR/LF and quotes can't escape the header; a non-ASCII name
+ * uses RFC 2231 in the disposition (with an ASCII fallback in `name=`).
+ */
+function headerSafeName(filename: string): { ascii: string; disposition: string } {
+  const clean = sanitizeHeader(filename).replace(/["\\]/g, "_");
+  if (isAscii(clean)) return { ascii: clean, disposition: `filename="${clean}"` };
+  const ascii = Array.from(clean).map((ch) => (ch.codePointAt(0)! > 127 ? "_" : ch)).join("");
+  return { ascii, disposition: `filename*=UTF-8''${encodeURIComponent(clean)}` };
 }
 
 /**

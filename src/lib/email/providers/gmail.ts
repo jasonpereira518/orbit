@@ -37,6 +37,43 @@ function classify(status: number, body: string): MailProviderError {
  * Sends as the user through the Gmail API: the message comes from their real address,
  * lands in their Sent folder, and threads under an existing conversation when given one.
  */
+/** A plain message: the JSON endpoint with the message as base64url `raw`. */
+function jsonRequest(mime: string, threadId?: string | null) {
+  const raw = toBase64Url(mime);
+  return {
+    url: `${API}/messages/send`,
+    contentType: "application/json",
+    body: JSON.stringify(threadId ? { raw, threadId } : { raw }),
+    timeoutMs: 20_000,
+  };
+}
+
+/**
+ * A message with files (direct-email P4): Gmail's media upload endpoint, which takes the RFC 822
+ * message as-is (up to 35 MB) instead of a base64url string inside JSON. `multipart/related`
+ * carries the `threadId` metadata beside it.
+ */
+function uploadRequest(mime: string, threadId?: string | null) {
+  const boundary = `orbit-upload-${crypto.randomUUID()}`;
+  const meta = JSON.stringify(threadId ? { threadId } : {});
+  return {
+    url: "https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=multipart",
+    contentType: `multipart/related; boundary=${boundary}`,
+    body: [
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",
+      meta,
+      `--${boundary}`,
+      "Content-Type: message/rfc822",
+      "",
+      mime,
+      `--${boundary}--`,
+    ].join("\r\n"),
+    timeoutMs: 60_000,
+  };
+}
+
 export const gmailProvider: MailProvider = {
   id: "gmail",
 
@@ -48,14 +85,15 @@ export const gmailProvider: MailProvider = {
 
   async send(userId, msg, opts) {
     const accessToken = await token(userId);
-    const raw = toBase64Url(withBccHeader(buildMime(msg), msg.bcc));
+    const mime = withBccHeader(buildMime(msg), msg.bcc);
+    const request = msg.attachments?.length ? uploadRequest(mime, opts.threadId) : jsonRequest(mime, opts.threadId);
     let res: Response;
     try {
-      res = await fetch(`${API}/messages/send`, {
+      res = await fetch(request.url, {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify(opts.threadId ? { raw, threadId: opts.threadId } : { raw }),
-        signal: AbortSignal.timeout(20_000),
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": request.contentType },
+        body: request.body,
+        signal: AbortSignal.timeout(request.timeoutMs),
       });
     } catch (err) {
       // The request may have reached Gmail. The outbox checks Sent before any retry.

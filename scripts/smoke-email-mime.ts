@@ -84,4 +84,25 @@ check("the injected text survives only as inert inline content", injectedHead.so
 check("header block has exactly the expected lines", injectedHead.length === 7, String(injectedHead.length));
 check("From precedes To", plain.indexOf("From:") < plain.indexOf("To:"));
 
+// --- attachments (P4) ------------------------------------------------------------------
+const pdf = new Uint8Array([37, 80, 68, 70]); // "%PDF"
+const withFiles = buildMime(
+  { ...base, bodyHtml: "<p>Hi</p>", attachments: [{ filename: "résumé.pdf", contentType: "application/pdf", bytes: pdf }] },
+  "B"
+);
+check("attachments make multipart/mixed", /^Content-Type: multipart\/mixed; boundary="B-mixed"$/m.test(withFiles));
+check("the alternative part nests inside", withFiles.includes('Content-Type: multipart/alternative; boundary="B"'));
+check("the attachment is base64", withFiles.includes("Content-Transfer-Encoding: base64") && withFiles.includes("JVBERg=="));
+check("non-ascii filenames use RFC 2231", /filename\*=UTF-8''r%C3%A9sum%C3%A9\.pdf/.test(withFiles));
+check("the mixed boundary closes", withFiles.trimEnd().endsWith("--B-mixed--"));
+check("headers still end before the first part", withFiles.split("\r\n\r\n")[0]!.includes("Content-Type: multipart/mixed"));
+const plainWithFile = buildMime(
+  { ...base, attachments: [{ filename: "a.txt", contentType: "text/plain", bytes: new TextEncoder().encode("x") }] },
+  "C"
+);
+check("a plain body is the first part of mixed", plainWithFile.indexOf('text/plain; charset="UTF-8"') < plainWithFile.indexOf('filename="a.txt"'));
+const quoteName = buildMime({ ...base, attachments: [{ filename: 'a"b\r\nc.txt', contentType: "text/plain", bytes: new Uint8Array([1]) }] }, "D");
+check("a filename cannot break out of its header", !/^c\.txt/m.test(quoteName) && !quoteName.includes('a"b'));
+check("no attachments, output unchanged", buildMime(base, "E") === buildMime({ ...base, attachments: [] }, "E"));
+
 console.log("\nAll MIME checks passed.");
