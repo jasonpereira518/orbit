@@ -2769,7 +2769,18 @@ export type ProviderSyncCursor = {
    * each capability overwriting the jsonb with its own single key — which is the erasure the
    * Gmail-scan comment above describes, and the reason that cursor had to live elsewhere.
    */
-  contacts?: { syncToken?: string | null; pageToken?: string | null } | null;
+  contacts?: {
+    syncToken?: string | null;
+    pageToken?: string | null;
+    /** Microsoft only: when the read in progress began, so its watermark survives resumed runs. */
+    readStartedAt?: string | null;
+    /**
+     * People the plan's contact cap held back. Kept here, on the cursor that already exists,
+     * so surfacing "N more waiting" needs no new column and no schema version. A sync that
+     * finds room again (`headroom` above zero) re-reads the whole book and resets this.
+     */
+    blockedByPlan?: number | null;
+  } | null;
   /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
   luma?: EventProviderSyncCursor | null;
   eventbrite?: EventProviderSyncCursor | null;

@@ -14,9 +14,9 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts } from "../src/db/schema";
+import { closenessCohorts, contacts, contactTags, tags } from "../src/db/schema";
 import { openIngestContext, finalizeIngest } from "../src/lib/ingest/events";
-import { ingestPeople } from "../src/lib/ingest/people";
+import { completenessScore, ingestPeople } from "../src/lib/ingest/people";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -148,6 +148,94 @@ run(async () => {
     "the original note survived untouched — merge does not write notes at all",
     marieAgain?.notes === "Met at a conference in Paris.",
     JSON.stringify(marieAgain?.notes)
+  );
+
+  console.log("\neighth pass: `tagNames` tags people this run CREATES, and only those");
+  console.log("A synced address book must land on the default sky the way a one-time import does:");
+  console.log("the batch adapters tag their people, and a tag is an intent signal.");
+  const tagged = await openIngestContext(USER, {
+    source: "smoke",
+    createsContacts: true,
+    tagNames: ["google-contacts"],
+  });
+  const eighth = await ingestPeople(tagged, [
+    { fullName: "Katherine Johnson", email: "katherine@example.com" },
+    // Already exists (created untagged in the first pass) — a merge must not tag it.
+    { fullName: "Grace Hopper", email: "grace@example.com", title: "Rear Admiral" },
+  ]);
+  check("one created, one matched", eighth.created === 1 && eighth.matched === 1, JSON.stringify(eighth));
+
+  const tagNamesFor = async (email: string) => {
+    const [contact] = await db.select().from(contacts).where(eq(contacts.email, email));
+    if (!contact) return null;
+    const rows = await db
+      .select({ name: tags.name })
+      .from(contactTags)
+      .innerJoin(tags, eq(tags.id, contactTags.tagId))
+      .where(eq(contactTags.contactId, contact.id));
+    return rows.map((r) => r.name);
+  };
+  const katherineTags = await tagNamesFor("katherine@example.com");
+  check(
+    "the newly created person carries the source tag",
+    JSON.stringify(katherineTags) === JSON.stringify(["google-contacts"]),
+    JSON.stringify(katherineTags)
+  );
+  const graceTags = await tagNamesFor("grace@example.com");
+  check(
+    "the matched (pre-existing) person was not tagged",
+    Array.isArray(graceTags) && graceTags.length === 0,
+    JSON.stringify(graceTags)
+  );
+
+  console.log("\nninth pass: `recalibrate` scores the network now, the default leaves it dirty");
+  console.log("Only the run that finishes a first full read asks for it; a delta run relies on the");
+  console.log("debounce so a sync storm cannot become a recalibration storm.");
+  const cohortRow = async () =>
+    (await db.select().from(closenessCohorts).where(eq(closenessCohorts.userId, USER)))[0];
+  await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, USER));
+  const debounced = await openIngestContext(USER, { source: "smoke", createsContacts: true });
+  await ingestPeople(debounced, [{ fullName: "Dorothy Vaughan", email: "dorothy@example.com" }]);
+  await finalizeIngest(debounced);
+  const afterDefault = await cohortRow();
+  check(
+    "by default the cohort is only marked dirty",
+    !!afterDefault?.dirtyAt && afterDefault.contactCount === 0,
+    JSON.stringify({ dirtyAt: afterDefault?.dirtyAt, n: afterDefault?.contactCount })
+  );
+
+  const total = (await db.select().from(contacts).where(eq(contacts.userId, USER))).length;
+  await finalizeIngest(debounced, { recalibrate: true });
+  const afterRecalibrate = await cohortRow();
+  check(
+    "with `recalibrate` it is computed over the whole network and no longer dirty",
+    afterRecalibrate?.dirtyAt === null && afterRecalibrate?.contactCount === total,
+    JSON.stringify({ dirtyAt: afterRecalibrate?.dirtyAt, n: afterRecalibrate?.contactCount, total })
+  );
+
+  console.log("\ntenth pass: when the cap bites, the best-described people are the ones kept");
+  const rankedCtx = await openIngestContext(USER, { source: "smoke", createsContacts: true });
+  rankedCtx.headroom = 2;
+  const tenth = await ingestPeople(rankedCtx, [
+    // Listed FIRST, but a bare name is the weakest thing in an address book.
+    { fullName: "Bare Name" },
+    { fullName: "Some Email", email: "someemail@example.com" },
+    { fullName: "Full Record", email: "full@example.com", phone: "+1 555 0100", company: "Acme", title: "CTO" },
+    // The same person twice while capped: must count as ONE blocked person, not two.
+    { fullName: "Bare Name" },
+  ]);
+  check("two created, one blocked (the repeat folded rather than counting twice)", tenth.created === 2 && tenth.blockedByPlan === 1, JSON.stringify(tenth));
+  const keptNames = (
+    await db.select().from(contacts).where(eq(contacts.userId, USER))
+  ).map((c) => c.fullName);
+  check("the full record was kept", keptNames.includes("Full Record"), JSON.stringify(keptNames));
+  check("the email-only record was kept", keptNames.includes("Some Email"));
+  check("the bare name, though listed first, was the one held back", !keptNames.includes("Bare Name"));
+  check(
+    "any contact detail outranks a bare name, and a way to reach someone outranks a workplace alone",
+    completenessScore({ fullName: "A", email: "a@b.c" }) > completenessScore({ fullName: "A" }) &&
+      completenessScore({ fullName: "A", linkedinUrl: "https://linkedin.com/in/a" }) >
+        completenessScore({ fullName: "A", company: "X" })
   );
 
   await finalizeIngest(ctx);

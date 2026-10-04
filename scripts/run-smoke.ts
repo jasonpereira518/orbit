@@ -361,6 +361,11 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-undo": "pglite",
   "smoke-ingest-events": "pglite",
   "smoke-ingest-people": "pglite",
+  "smoke-sync-kick": "pure",
+  "smoke-microsoft-contacts": "pure",
+  "smoke-sync-contact-cap": "pure",
+  "smoke-integration-suggestions": "pure",
+  "smoke-sync-progress": "pglite", // the module imports @/db for its query half
   "smoke-import-resumption-auth": "pglite",
   "smoke-instrumentation": "pglite",
   "smoke-instrumentation-streams": "pglite",
