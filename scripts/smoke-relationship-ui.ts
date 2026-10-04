@@ -48,6 +48,8 @@ check("digest: source line, one source", digestSourceLine(digest) === "From 214 
 check("digest: source line, two sources", digestSourceLine({ ...digest, sources: ["linkedin", "imessage"] }) === "From 214 messages on LinkedIn and iMessage · updated Sep 30", String(digestSourceLine({ ...digest, sources: ["linkedin", "imessage"] })));
 check("digest: source line, one message", digestSourceLine({ ...digest, messageCount: 1, sources: ["linkedin"] }) === "From 1 LinkedIn message · updated Sep 30");
 check("digest: no source line without messages", digestSourceLine({ ...digest, messageCount: 0 }) === null);
+check("digest: late-UTC timestamp keeps its UTC day", digestSourceLine({ ...digest, updatedAt: "2026-09-30T23:30:00.000Z" })?.endsWith("updated Sep 30") === true);
+check("digest: early-UTC timestamp keeps its UTC day", digestSourceLine({ ...digest, updatedAt: "2026-10-01T00:30:00.000Z" })?.endsWith("updated Oct 1") === true);
 check("digest: topic line", topicLine(digest.topics[0]) === "Hiring · last discussed Sep 30", topicLine(digest.topics[0]));
 const dg = textOf(renderToStaticMarkup(React.createElement(DigestSection, { digest })));
 check("digest: what they do", dg.includes("Runs growth at Ramp, hiring PMs"));

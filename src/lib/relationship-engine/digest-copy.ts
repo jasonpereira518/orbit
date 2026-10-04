@@ -20,8 +20,11 @@ export type DigestView = {
 
 const SOURCE_LABEL: Record<string, string> = { linkedin: "LinkedIn", whatsapp: "WhatsApp", imessage: "iMessage" };
 
-// Date-only values parse at local noon so the zone can't shift the day.
-const day = (iso: string) => format(new Date(iso.length === 10 ? `${iso}T12:00:00` : iso), "MMM d");
+// Date-only values parse at local noon so the zone can't shift the day. Full timestamps format in
+// UTC so the server render (UTC) and the browser agree on the day (no hydration mismatch).
+const utcDay = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
+const day = (iso: string) =>
+  iso.length === 10 ? format(new Date(`${iso}T12:00:00`), "MMM d") : utcDay.format(new Date(iso));
 
 export function digestSourceLine(d: Pick<DigestView, "messageCount" | "sources" | "updatedAt">): string | null {
   if (!d.messageCount) return null;
