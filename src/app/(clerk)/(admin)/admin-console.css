@@ -29,3 +29,40 @@
   --toast-chip-strength: 12%;
   color-scheme: light;
 }
+
+/**
+ * YC mode: the whole console goes YC orange, so it is obvious at a glance which console
+ * you are in.
+ *
+ * Lives here, not only in globals.css, on purpose: `.admin-console` above re-asserts the
+ * teal ladder on the same element as `.yc-theme`, and at equal specificity the later
+ * rule wins — which silently cancelled the earlier `.yc-theme` retint. The compound
+ * selector is strictly more specific, so it wins regardless of stylesheet order.
+ * Always light (the console never goes dark), so no `.dark` counterpart is needed.
+ */
+.admin-console.yc-theme {
+  --background: #fff9f3;
+  --card: #ffffff;
+  --secondary: #fff0e2;
+  --muted: #fdf1e6;
+  --muted-foreground: #7a6656;
+  --border: #f3e2d2;
+  --input: #f3e2d2;
+  --primary: #f26625;
+  --primary-foreground: #fff3e9;
+  --accent: #ffeede;
+  --accent-foreground: #c74a0e;
+  --ring: #f26625;
+  --ink: #2b1a0e;
+  --foreground: #241a12;
+  --admin-nav-hover: rgb(255 178 127 / 0.45);
+  --chart-1: #f26625;
+  --chart-2: #ff8a4c;
+  --chart-3: #ffb27f;
+  --chart-4: #c74a0e;
+  --chart-5: #7a6656;
+  background-image:
+    radial-gradient(ellipse 70% 40% at 100% -10%, rgb(242 102 37 / 0.08), transparent),
+    radial-gradient(ellipse 50% 30% at 0% 100%, rgb(255 178 127 / 0.12), transparent);
+  background-attachment: fixed;
+}

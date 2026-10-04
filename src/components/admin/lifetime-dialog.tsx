@@ -18,7 +18,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { friendlyError } from "@/lib/errors";
 import { PLAN_LABELS } from "@/lib/plans/plan-config";
 import { toast } from "@/lib/toast";
@@ -31,7 +30,8 @@ function day(seconds: number | null) {
 /**
  * Grant or revoke Orbit Lifetime — admin-assigned only (pricing v2). Both are confirmed
  * against a PREVIEW read when the dialog opens, so the admin sees exactly what will happen to
- * this account before anything changes, and both are written to the audit log.
+ * this account before anything changes, and both are written to the audit log. There is no
+ * "why" field: the server records a default reason, which is the audit row's honest fallback.
  */
 export function LifetimeButton({ targetUserId, hasLifetime }: { targetUserId: string; hasLifetime: boolean }) {
   const [open, setOpen] = useState(false);
@@ -46,7 +46,7 @@ export function LifetimeButton({ targetUserId, hasLifetime }: { targetUserId: st
   );
 }
 
-function LifetimeDialog({
+export function LifetimeDialog({
   targetUserId,
   mode,
   onClose,
@@ -58,7 +58,6 @@ function LifetimeDialog({
   const router = useRouter();
   const [preview, setPreview] = useState<LifetimePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [reason, setReason] = useState("");
   const [includePurchase, setIncludePurchase] = useState(false);
   const [pending, start] = useTransition();
 
@@ -103,14 +102,14 @@ function LifetimeDialog({
     start(async () => {
       try {
         if (mode === "grant") {
-          const res = await grantLifetimeAction({ targetUserId, reason });
+          const res = await grantLifetimeAction({ targetUserId, reason: "" });
           toast.success(
             res.subscription === "error"
               ? "Lifetime granted — but the subscription couldn’t be set to end; do it in Stripe"
               : "Lifetime granted"
           );
         } else {
-          const res = await revokeLifetimeAction({ targetUserId, reason, includePurchase });
+          const res = await revokeLifetimeAction({ targetUserId, reason: "", includePurchase });
           toast.success(`Lifetime revoked — now on ${PLAN_LABELS[res.plan]}`);
         }
         onClose();
@@ -148,21 +147,6 @@ function LifetimeDialog({
             <span>Also revoke the Lifetime they paid for. This does not refund them.</span>
           </label>
         )}
-
-        <div>
-          <label htmlFor="lifetime-reason" className="text-xs uppercase tracking-wide text-muted-foreground">
-            Why?
-          </label>
-          <Textarea
-            id="lifetime-reason"
-            rows={2}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder={mode === "grant" ? "Granted from the admin console" : "Revoked from the admin console"}
-            className="mt-1 text-sm"
-          />
-          <p className="mt-1 text-xs text-muted-foreground">Recorded on the account and in the audit log.</p>
-        </div>
 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>

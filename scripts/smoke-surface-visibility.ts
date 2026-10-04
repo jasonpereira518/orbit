@@ -12,21 +12,27 @@
  */
 import "./smoke/_env";
 
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
 import {
   isSurfaceHiddenError,
   requireVisibleSurface,
   resolveSurfaceVisibility,
+  getNavOrder,
+  navSurfaceKeys,
+  setNavOrder,
+  setSurfaceComingSoon,
   setSurfaceHidden,
 } from "../src/lib/surface-visibility";
 import {
   COMING_SOON_COMPANIONS,
-  COMING_SOON_KEYS,
   COMPOSE_SURFACE_KEY,
+  DEFAULT_COMING_SOON_KEYS,
   FEEDBACK_SURFACE_KEY,
   SURFACES,
+  effectiveComingSoonKeys,
+  orderNavItems,
   getSurface,
   surfaceForPathname,
   surfaceKeyForHref,
@@ -64,7 +70,7 @@ function registryChecks() {
   const features = surfacesOfKind("feature");
   check("compose is registered as a feature surface", features.some((s) => s.key === COMPOSE_SURFACE_KEY));
   check("a feature surface declares no href", features.every((s) => s.href === undefined));
-  check("compose ships coming-soon", COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+  check("compose ships coming-soon", DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
 
   const widgets = surfacesOfKind("widget");
   check("the feedback widget is registered as a hideable surface", widgets.length === 1);
@@ -224,16 +230,16 @@ async function main() {
       const forUser = await resolveSurfaceVisibility(USER);
       check(
         "an operator gets the coming-soon screen for unreleased pages by default",
-        COMING_SOON_KEYS.size > 0 &&
+        DEFAULT_COMING_SOON_KEYS.size > 0 &&
           !forAdmin.previewingUnreleased &&
-          [...COMING_SOON_KEYS]
+          [...DEFAULT_COMING_SOON_KEYS]
             .filter((k) => getSurface(k)?.kind === "page")
             .every((k) => forAdmin.comingSoon.has(k))
       );
       check(
         "an ordinary user gets the coming-soon screen for every marked page",
-        COMING_SOON_KEYS.size > 0 &&
-          [...COMING_SOON_KEYS]
+        DEFAULT_COMING_SOON_KEYS.size > 0 &&
+          [...DEFAULT_COMING_SOON_KEYS]
             .filter((k) => getSurface(k)?.kind === "page")
             .every((k) => forUser.comingSoon.has(k))
       );
@@ -251,7 +257,7 @@ async function main() {
       check(
         "every coming-soon companion is a real surface hung off a coming-soon page",
         companions.every((k) => getSurface(k) !== undefined) &&
-          Object.keys(COMING_SOON_COMPANIONS).every((k) => COMING_SOON_KEYS.has(k))
+          Object.keys(COMING_SOON_COMPANIONS).every((k) => DEFAULT_COMING_SOON_KEYS.has(k))
       );
       check(
         "coming-soon never leaks into what the admin console reports as hidden",
@@ -293,6 +299,73 @@ async function main() {
       unknownRejected = true;
     }
     check("an unknown surface key is rejected", unknownRejected);
+
+    console.log("\ncoming-soon overrides");
+    check(
+      "override rows apply on top of the code defaults, live winning",
+      (() => {
+        const eff = effectiveComingSoonKeys(["soon:page.knowledge", "live:page.events", "soon:page.settings"]);
+        return eff.has("page.knowledge") && !eff.has("page.events") && !eff.has("page.settings") && eff.has("page.outreach");
+      })()
+    );
+    const SOON_TARGET = "page.knowledge";
+    const RELEASE_TARGET = [...DEFAULT_COMING_SOON_KEYS][0]!;
+    try {
+      await setSurfaceComingSoon(ADMIN, SOON_TARGET, true);
+      await setSurfaceComingSoon(ADMIN, RELEASE_TARGET, false);
+      const v = await resolveSurfaceVisibility(USER);
+      check("marking a page coming soon closes it for users", v.comingSoon.has(SOON_TARGET) && v.comingSoonMarked.has(SOON_TARGET));
+      check("releasing a default-soon page opens it for users", !v.comingSoon.has(RELEASE_TARGET));
+      check("coming-soon overrides never count as hidden surfaces", !(await resolveSurfaceVisibility(USER)).hiddenForUsers.has(`soon:${SOON_TARGET}`));
+      await setSurfaceComingSoon(ADMIN, SOON_TARGET, false);
+      await setSurfaceComingSoon(ADMIN, RELEASE_TARGET, true);
+      const rows = await hiddenKeysFresh();
+      check(
+        "returning to the default deletes the override rows",
+        ![`soon:${SOON_TARGET}`, `live:${SOON_TARGET}`, `soon:${RELEASE_TARGET}`, `live:${RELEASE_TARGET}`].some((k) => rows.has(k))
+      );
+    } finally {
+      await db
+        .delete(appSurfaceFlags)
+        .where(eq(appSurfaceFlags.surfaceKey, `soon:${SOON_TARGET}`));
+      await db
+        .delete(appSurfaceFlags)
+        .where(eq(appSurfaceFlags.surfaceKey, `live:${RELEASE_TARGET}`));
+    }
+    let settingsRejected = false;
+    try {
+      await setSurfaceComingSoon(ADMIN, "page.settings", true);
+    } catch {
+      settingsRejected = true;
+    }
+    check("an escape-hatch page cannot be marked coming soon", settingsRejected);
+
+    console.log("\nsidebar order");
+    const navItems = [{ href: "/contacts" }, { href: "/capture" }, { href: "/chat" }, { href: "/x" }];
+    check(
+      "an order sorts listed pages first and leaves the rest in default order",
+      orderNavItems(navItems, ["page.chat", "page.contacts"]).map((i) => i.href).join() ===
+        "/chat,/contacts,/capture,/x"
+    );
+    check("an empty order is the code's order", orderNavItems(navItems, []).map((i) => i.href).join() === "/contacts,/capture,/chat,/x");
+    try {
+      const keys = navSurfaceKeys();
+      const reversed = [...keys].reverse();
+      await setNavOrder(ADMIN, reversed);
+      check("a saved order reads back", (await getNavOrder()).join() === reversed.join());
+      check("the order row never counts as a hidden surface", [...(await resolveSurfaceVisibility(USER)).hiddenForUsers].every((k) => !k.startsWith("order:")));
+      let badRejected = false;
+      try {
+        await setNavOrder(ADMIN, ["page.dashboard-not-real"]);
+      } catch {
+        badRejected = true;
+      }
+      check("an order naming a non-sidebar page is rejected", badRejected);
+      await setNavOrder(ADMIN, []);
+      check("clearing the order restores the default", (await getNavOrder()).length === 0);
+    } finally {
+      await db.delete(appSurfaceFlags).where(like(appSurfaceFlags.surfaceKey, "order:%"));
+    }
 
     console.log("\naudit");
     const entries = await db

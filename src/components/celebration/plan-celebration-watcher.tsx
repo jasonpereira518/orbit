@@ -13,7 +13,6 @@ import { useAppPulse } from "@/lib/app-pulse-store";
 import { toast } from "@/lib/toast";
 import type { Plan } from "@/lib/plan-limits";
 import {
-  PLAN_RANK,
   readLastSeenPlan,
   upgradeKind,
   writeLastSeenPlan,
@@ -98,6 +97,8 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   const start = useCallback((next: PaidPlan, startAt: "accrete" | "ignite") => {
     keyRef.current += 1;
     pendingRef.current = null;
+    document.documentElement.setAttribute("data-plan-upgrade-active", "");
+    activeRef.current = { plan: next, startAt, key: keyRef.current };
     setActive({ plan: next, startAt, key: keyRef.current });
   }, []);
 
@@ -106,6 +107,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     if (!pending || activeRef.current) return;
     if (document.visibilityState !== "visible") return;
     if (document.documentElement.hasAttribute("data-warp")) return;
+    if (document.documentElement.hasAttribute("data-plan-downgrade")) return;
     start(pending, "accrete");
   }, [start]);
 
@@ -113,10 +115,10 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     (next: Plan) => {
       const running = activeRef.current;
       if (running) {
-        // Mid-play upgrade (orbit -> lifetime inside the same seven seconds):
+        // Mid-play plan change (orbit -> lifetime inside the same seven seconds):
         // record it, then restart at the ignition — the anticipation was
         // already spent.
-        if (isPaidPlan(next) && PLAN_RANK[next] > PLAN_RANK[running.plan]) {
+        if (isPaidPlan(next) && next !== running.plan) {
           writeLastSeenPlan(next);
           start(next, "ignite");
         }
@@ -124,14 +126,15 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
       }
       switch (upgradeKind(readLastSeenPlan(), next)) {
         case "first-visit":
-        case "downgrade":
-          // Silent: seeds a fresh device, re-arms after account switches and
-          // comp revocations.
+          // Silent: seeds a fresh device.
           writeLastSeenPlan(next);
           return;
         case "same":
           return;
-        case "upgrade": {
+        case "upgrade":
+        case "downgrade": {
+          // Any move onto a paid plan plays; a move to free has no tier to show, so it
+          // only re-arms the key.
           if (!isPaidPlan(next)) {
             writeLastSeenPlan(next);
             return;
@@ -172,7 +175,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     const observer = new MutationObserver(() => tryStartPending());
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-warp"],
+      attributeFilter: ["data-warp", "data-plan-downgrade"],
     });
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
@@ -325,12 +328,18 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   }, [router]);
 
   const onDone = useCallback(() => {
+    document.documentElement.removeAttribute("data-plan-upgrade-active");
+    activeRef.current = null;
     setActive(null);
     // A handoff already refreshed; this covers the plain-fade exits (reduced
     // motion, or no app logo laid out to fly to). `refresh` de-dupes an
     // in-flight request, so the double call is free.
     router.refresh();
   }, [router]);
+
+  useEffect(() => () => {
+    document.documentElement.removeAttribute("data-plan-upgrade-active");
+  }, []);
 
   if (!active) return null;
   return createPortal(

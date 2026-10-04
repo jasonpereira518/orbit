@@ -37,6 +37,25 @@ export function deepgramConfigured(): boolean {
   return Boolean(apiKey());
 }
 
+/**
+ * Whether Deepgram accepts Orbit's key, for the admin provider panel. Lives here because
+ * this is the only file allowed to read the key or dial the host (see `smoke-ai-access.ts`).
+ *
+ * Listing projects is free — nothing is transcribed — and 401 is the one answer that means
+ * the key is dead. A key scoped away from the listing gets 403: reachable and authenticated,
+ * just not allowed to list, so that is still "accepted". Throws on a network failure or
+ * timeout so the caller can fall back to its last snapshot instead of reporting a guess.
+ */
+export async function probeDeepgramKey(): Promise<"unconfigured" | "accepted" | "rejected"> {
+  const key = apiKey();
+  if (!key) return "unconfigured";
+  const res = await fetch(PROJECTS_URL, {
+    headers: { Authorization: `Token ${key}` },
+    signal: AbortSignal.timeout(3_500),
+  });
+  return res.status === 401 ? "rejected" : "accepted";
+}
+
 /** The kill switch: `ORBIT_DEEPGRAM=off` reverts every surface to the Whisper/Gemini chain. */
 export function deepgramEnabled(): boolean {
   if (process.env.ORBIT_DEEPGRAM?.trim().toLowerCase() === "off") return false;

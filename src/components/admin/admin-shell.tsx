@@ -72,14 +72,24 @@ export function AdminShell({
         ycMode && "yc-theme"
       )}
     >
-      <header className="sticky top-0 z-30 border-b border-border/70 border-t-2 border-t-accent bg-background/95 backdrop-blur">
+      <header
+        className={cn(
+          "sticky top-0 z-30 border-b border-border/70 border-t-2 border-t-accent bg-background/95 backdrop-blur",
+          ycMode && "border-t-4 border-t-primary"
+        )}
+      >
         <div className="mx-auto flex w-full max-w-[1400px] items-center gap-3 overflow-x-auto px-4 py-2 md:gap-6 md:px-6">
           <Link href="/admin" className="flex shrink-0 items-center gap-2">
             <span className="font-[family-name:var(--font-display)] text-base text-ink">
               Orbit
             </span>
-            <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-widest text-accent-foreground">
-              Admin
+            <span
+              className={cn(
+                "rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-widest text-accent-foreground",
+                ycMode && "border-primary bg-primary text-primary-foreground"
+              )}
+            >
+              {ycMode ? "YC Admin" : "Admin"}
             </span>
           </Link>
 
