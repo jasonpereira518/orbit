@@ -17,7 +17,7 @@ import {
   actionItems, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
 import { AiAccessError } from "../src/lib/ai-access";
-import { INLINE_PER_RUN, KEY_RETRY_MS, resumeKeyPausedRun, runRelationshipPass, applyRelationshipBatch, type RelationshipBatchPayload } from "../src/lib/relationship-engine/runner";
+import { INLINE_PER_RUN, KEY_RETRY_MS, RATE_LIMIT_RETRY_MS, resumeKeyPausedRun, runRelationshipPass, applyRelationshipBatch, type RelationshipBatchPayload } from "../src/lib/relationship-engine/runner";
 import { claimPendingContacts, pendingRelationshipContactCount, usersWithIdleActiveRuns, usersWithPendingRelationshipWork } from "../src/lib/relationship-engine/pending";
 import type { RelationshipDigestAnswer } from "../src/lib/relationship-engine/extract";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -246,6 +246,49 @@ async function main() {
   const idleAfter = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, idle.id) });
   check("idle: finished", idlePass.status === "done" && idleAfter?.status === "done", `${idlePass.status} ${idleAfter?.status}`);
   check("idle: no longer listed", !(await usersWithIdleActiveRuns(100, NOW)).includes(USER));
+
+  // Final I1: the switch off closes the unclaimed active run (Undo and the bell stop waiting),
+  // and the idle sweep never lists a switched-off user.
+  await reset();
+  const [stranded] = await db.insert(relationshipRuns).values({ userId: USER, status: "running", processed: 25 }).returning();
+  await db.update(userSettings).set({ relationshipEngineEnabled: 0 }).where(eq(userSettings.userId, USER));
+  check("off: idle sweep skips a switched-off user", !(await usersWithIdleActiveRuns(100, NOW)).includes(USER));
+  const offPass = await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null, now: NOW });
+  const strandedAfter = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, stranded.id) });
+  check("off: pass reports disabled", offPass.status === "disabled", offPass.status);
+  check("off: unclaimed active run closed", strandedAfter?.status === "done" && !!strandedAfter.finishedAt, JSON.stringify(strandedAfter));
+  await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, USER));
+  const [waiting] = await db.insert(relationshipRuns).values({ userId: USER, status: "waiting_key", leaseUntil: new Date(NOW.getTime() + KEY_RETRY_MS) }).returning();
+  await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null, now: NOW });
+  check("off: key-paused run closed", (await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, waiting.id) }))?.status === "done");
+  await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, USER));
+  const [working] = await db.insert(relationshipRuns).values({ userId: USER, status: "running", claimToken: randomUUID(), leaseUntil: new Date(NOW.getTime() + 60_000) }).returning();
+  await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async () => null, now: NOW });
+  check("off: a run another pass holds is left to that pass", (await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, working.id) }))?.status === "running");
+
+  // Final I3: a 429 is not a key problem. The run stays running behind a 15-minute lease,
+  // records the error, and spends no attempt; auth/quota still park as waiting_key.
+  await reset();
+  await seedContacts(1, REAL);
+  const throttled = await runRelationshipPass(USER, {
+    extract: async () => { throw new Error("429 Too Many Requests: rate limit exceeded"); },
+    submit: async () => null,
+    now: NOW,
+  });
+  const throttledRun = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.userId, USER) });
+  check("429: pass is running, not waiting_key", throttled.status === "running", JSON.stringify(throttled));
+  check("429: run stays running", throttledRun?.status === "running", String(throttledRun?.status));
+  check("429: 15-minute retry lease", RATE_LIMIT_RETRY_MS === 15 * 60_000 && throttledRun?.leaseUntil?.getTime() === NOW.getTime() + RATE_LIMIT_RETRY_MS, String(throttledRun?.leaseUntil));
+  check("429: lease released to no one", throttledRun?.claimToken === null);
+  check("429: error recorded", /429/.test(throttledRun?.lastError ?? ""), String(throttledRun?.lastError));
+  const throttledDigests = await db.query.relationshipDigests.findMany({ where: eq(relationshipDigests.userId, USER) });
+  check("429: no attempt spent", throttledDigests.every((d) => d.attempts === 0), JSON.stringify(throttledDigests.map((d) => d.attempts)));
+  check("429: backstop waits out the lease", !(await usersWithPendingRelationshipWork(100, NOW)).includes(USER));
+  check("429: backstop retries after it", (await usersWithPendingRelationshipWork(100, new Date(NOW.getTime() + RATE_LIMIT_RETRY_MS + 1_000))).includes(USER));
+  await reset();
+  await seedContacts(1, REAL);
+  const quota = await runRelationshipPass(USER, { extract: async () => { throw new Error("insufficient_quota: You exceeded your current quota"); }, submit: async () => null, now: NOW });
+  check("quota: still waiting_key", quota.status === "waiting_key", JSON.stringify(quota));
 
   await reset();
   console.log("\nsmoke-relationship-runner: all checks passed");

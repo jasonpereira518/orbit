@@ -12,7 +12,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
-import { kickRelationshipRun, resumeKeyPausedRun } from "@/lib/relationship-engine/runner";
+import { closeRunForDisabledEngine, kickRelationshipRun, resumeKeyPausedRun } from "@/lib/relationship-engine/runner";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
 import {
   DATA_CATEGORY_IDS,
@@ -211,6 +211,8 @@ export async function saveRelationshipEngineEnabled(enabled: boolean) {
       target: userSettings.userId,
       set: { relationshipEngineEnabled: value, updatedAt: new Date() },
     });
+  // Off: nothing would ever kick the run again, so close it now rather than strand it.
+  if (!enabled) await closeRunForDisabledEngine(userId);
   if (enabled) {
     try {
       after(async () => {

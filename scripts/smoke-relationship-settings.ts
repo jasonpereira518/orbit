@@ -1,6 +1,7 @@
 /**
  * Settings → AI "Relationship analysis" switch: getSettings reads it (default on), the save
- * action persists it, and turning it on outside a request does not throw.
+ * action persists it, turning it off closes the unclaimed active run (Final I1), and turning
+ * it on outside a request does not throw.
  * Drives the server action as demo mode's `demo-user`.
  *
  * Run: npx tsx scripts/smoke-relationship-settings.ts
@@ -16,7 +17,7 @@ process.env.VERCEL = "1"; // env provider keys must not count as "usable"
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { userSettings } from "../src/db/schema";
+import { relationshipRuns, userSettings } from "../src/db/schema";
 import { getSettings, saveRelationshipEngineEnabled } from "../src/actions/settings";
 
 const USER = "demo-user";
@@ -27,13 +28,18 @@ function check(label: string, condition: boolean, detail?: string) {
 
 run(async () => {
   const db = await getDb();
+  await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, USER));
   await db.update(userSettings).set({ relationshipEngineEnabled: 1 }).where(eq(userSettings.userId, USER));
+  const [active] = await db.insert(relationshipRuns).values({ userId: USER, status: "running", processed: 25 }).returning();
   check("default on", (await getSettings()).relationshipEngineEnabled === true);
   await saveRelationshipEngineEnabled(false);
   const off = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, USER) });
   check("saved off", off?.relationshipEngineEnabled === 0);
   check("read off", (await getSettings()).relationshipEngineEnabled === false);
+  const closed = await db.query.relationshipRuns.findFirst({ where: eq(relationshipRuns.id, active.id) });
+  check("off closes the active run", closed?.status === "done" && !!closed.finishedAt, JSON.stringify(closed));
   await saveRelationshipEngineEnabled(true);
   check("read on (and turning on does not throw outside a request)", (await getSettings()).relationshipEngineEnabled === true);
+  await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
 });

@@ -115,20 +115,29 @@ export async function usersWithPendingRelationshipWork(limit: number, now: Date 
   return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);
 }
 
-/** Active runs nobody is working on and with nothing left to read: one more pass closes them. */
+/**
+ * Active runs nobody is working on and with nothing left to read: one more pass closes them.
+ * Switched-off users are left out (turning the switch off closes their run), and the order
+ * rotates hourly like the pending sweep so no fixed set of users holds every slot.
+ */
 export async function usersWithIdleActiveRuns(limit: number, now: Date = new Date()): Promise<string[]> {
   const db = await getDb();
+  const hour = now.toISOString().slice(0, 13);
   const result = await db.execute(sql`
     SELECT r.user_id FROM relationship_runs r
      WHERE r.status IN ('queued', 'running')
        AND (r.lease_until IS NULL OR r.lease_until < ${now.toISOString()}::timestamptz)
+       AND EXISTS (
+         SELECT 1 FROM user_settings us
+          WHERE us.user_id = r.user_id AND us.relationship_engine_enabled = 1
+       )
        AND NOT EXISTS (SELECT 1 ${pendingFrom(now)} AND c.user_id = r.user_id)
        AND NOT EXISTS (
          SELECT 1 FROM relationship_digests d
           WHERE d.user_id = r.user_id AND d.run_id = r.id
             AND d.batch_pending_until > ${now.toISOString()}::timestamptz
        )
-     ORDER BY r.created_at
+     ORDER BY md5(r.user_id || ${hour})
      LIMIT ${limit}
   `);
   return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);

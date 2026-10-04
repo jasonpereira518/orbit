@@ -68,17 +68,27 @@ export type RelationshipBatchPayload = {
   items: Array<{ customId: string; contactId: string; lastAt: string; lastInteractionId: string }>;
 };
 
-/** The key or the account is the problem, not this contact: pause the run, burn no attempts. */
+/**
+ * The key or the account is the problem, not this contact: pause the run (waiting_key), burn
+ * no attempts. A rate limit is not one of these: the key works, it is only throttled.
+ */
 export function isKeyLevelAiError(err: unknown): boolean {
   if (isAiAccessError(err)) return true;
   const message = err instanceof Error ? err.message : String(err);
   if (isMissingAiApiKeyError(message)) return true;
   const kind = classifyAiError(err);
-  return kind === "auth" || kind === "quota" || kind === "rate_limit";
+  return kind === "auth" || kind === "quota";
+}
+
+/** A transient 429: back off briefly with the run still running, burn no attempts. */
+export function isRateLimitAiError(err: unknown): boolean {
+  return !isKeyLevelAiError(err) && classifyAiError(err) === "rate_limit";
 }
 
 /** A key-paused run is not retried by the backstop for this long; saving a key resumes it at once. */
 export const KEY_RETRY_MS = 24 * 3_600_000;
+/** A rate-limited run is not retried by the backstop for this long. */
+export const RATE_LIMIT_RETRY_MS = 15 * 60_000;
 
 export async function kickRelationshipRun(userId: string, importId: string | null = null): Promise<void> {
   try {
@@ -99,6 +109,25 @@ export async function resumeKeyPausedRun(userId: string): Promise<void> {
     .update(relationshipRuns)
     .set({ leaseUntil: null })
     .where(and(eq(relationshipRuns.userId, userId), eq(relationshipRuns.status, "waiting_key"), isNull(relationshipRuns.claimToken)));
+}
+
+/**
+ * Relationship analysis switched off: close the user's active run so Undo all and the bell
+ * stop waiting on it. A run another pass holds right now (live claim) is left to that pass;
+ * its next kick lands here. Re-enabling starts a fresh run.
+ */
+export async function closeRunForDisabledEngine(userId: string, now: Date = new Date()): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(relationshipRuns)
+    .set({ status: "done", finishedAt: now, claimToken: null, leaseUntil: null })
+    .where(
+      and(
+        eq(relationshipRuns.userId, userId),
+        inArray(relationshipRuns.status, ACTIVE),
+        or(isNull(relationshipRuns.claimToken), isNull(relationshipRuns.leaseUntil), lt(relationshipRuns.leaseUntil, now))
+      )
+    );
 }
 
 async function claimRun(userId: string, importId: string | null, now: Date): Promise<{ run: RelationshipRunRow; token: string } | null> {
@@ -209,6 +238,7 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
     columns: { relationshipEngineEnabled: true, firstName: true, lastName: true, chatSelfNames: true },
   });
   if ((settings?.relationshipEngineEnabled ?? 1) !== 1) {
+    await closeRunForDisabledEngine(userId, now);
     return { ...result, status: "disabled", remaining: await pendingRelationshipContactCount(userId, now) };
   }
 
@@ -223,7 +253,12 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
   let batchUnavailable = false;
   const overBudget = () => Date.now() - start >= budgetMs;
 
-  /** One inline attempt. Returns true when a key-level error paused the run (lease released). */
+  /**
+   * One inline attempt. Returns true when the pass must stop (lease released): a key-level
+   * error parks the run as waiting_key for KEY_RETRY_MS; a rate limit leaves it running
+   * behind a RATE_LIMIT_RETRY_MS lease. Neither spends the contact's attempts.
+   */
+  let stoppedBy: "key" | "rate_limit" | null = null;
   const attemptInline = async (contactId: string, window: MessageWindow, prompt: { system: string; user: string }): Promise<boolean> => {
     try {
       const answer = await extract(userId, prompt);
@@ -232,13 +267,15 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
       result.processed += 1;
       return false;
     } catch (err) {
+      const lastError = String((err as Error)?.message ?? err).slice(0, 500);
       if (isKeyLevelAiError(err)) {
-        await releaseRun(run.id, token, {
-          status: "waiting_key",
-          inlineUsed,
-          leaseUntil: new Date(now.getTime() + KEY_RETRY_MS),
-          lastError: String((err as Error)?.message ?? err).slice(0, 500),
-        });
+        await releaseRun(run.id, token, { status: "waiting_key", inlineUsed, leaseUntil: new Date(now.getTime() + KEY_RETRY_MS), lastError });
+        stoppedBy = "key";
+        return true;
+      }
+      if (isRateLimitAiError(err)) {
+        await releaseRun(run.id, token, { status: "running", inlineUsed, leaseUntil: new Date(now.getTime() + RATE_LIMIT_RETRY_MS), lastError });
+        stoppedBy = "rate_limit";
         return true;
       }
       await recordDigestFailure(userId, contactId, err);
@@ -288,9 +325,9 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
     return false;
   };
 
-  const keyPaused = async (): Promise<PassResult> => ({
+  const stopped = async (): Promise<PassResult> => ({
     ...result,
-    status: "waiting_key",
+    status: stoppedBy === "rate_limit" ? "running" : "waiting_key",
     remaining: await pendingRelationshipContactCount(userId, now),
   });
 
@@ -315,15 +352,15 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
         }
         const prompt = await promptFor(userId, contactId, window, ownerName);
         if (inlineUsed < INLINE_PER_RUN || batchUnavailable) {
-          if (await attemptInline(contactId, window, prompt)) return await keyPaused();
+          if (await attemptInline(contactId, window, prompt)) return await stopped();
           continue;
         }
         queue.push({ contactId, window, ...prompt });
         // Bounded memory: a full queue goes out now, then the loop carries on if budget remains.
-        if (queue.length >= MAX_BATCH_REQUESTS && (await flushQueue())) return await keyPaused();
+        if (queue.length >= MAX_BATCH_REQUESTS && (await flushQueue())) return await stopped();
       }
     }
-    if (await flushQueue()) return await keyPaused();
+    if (await flushQueue()) return await stopped();
 
     result.remaining = await pendingRelationshipContactCount(userId, now);
     const out = await db.query.relationshipDigests.findFirst({
