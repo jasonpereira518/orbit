@@ -142,6 +142,16 @@ export type IngestOptions = {
    */
   metContext?: string;
   howMet?: (event: NetworkEvent) => string | null;
+  /**
+   * Tags attached to contacts this run CREATES (never to matched ones).
+   *
+   * The batch import adapters tag everyone they create (`google-contacts`, `address-book`),
+   * and a tag is an intent signal in `constellationEligibility` — which is what puts an
+   * imported network on the default sky. A synced address book has to land the same way, or
+   * connecting Google would leave `/graph` empty while a one-time import of the same people
+   * would not.
+   */
+  tagNames?: string[];
 };
 
 export type IngestStats = {
@@ -624,10 +634,30 @@ export async function ingestEvents(
  * dirty rather than recalculated — `process-stalled` drains stale cohorts in batches, which
  * is the existing debounce and stops a sync storm from triggering a recalibration storm.
  */
-export async function finalizeIngest(ctx: IngestContext): Promise<void> {
+export async function finalizeIngest(
+  ctx: IngestContext,
+  options: {
+    /**
+     * Recompute the whole closeness distribution now instead of leaving it to the debounce.
+     *
+     * For the run that COMPLETES a source's first full read only. That is the "after a bulk
+     * import" case `recalibrateCloseness` exists for, and the one moment a person is watching:
+     * without it their new network shows default scores until the hourly drain catches up.
+     * Every later delta run stays on the debounce, which is what stops a sync storm from
+     * becoming a recalibration storm.
+     */
+    recalibrate?: boolean;
+  } = {}
+): Promise<void> {
   if (ctx.touchedContactIds.size === 0) return;
   const { markCohortDirty } = await import("@/lib/closeness-materialize");
   const { kickEmbeddingBackfill } = await import("@/lib/embedding-backfill");
   await markCohortDirty(ctx.userId).catch(reportAndContinue({ where: "job.ingest.cohort-dirty", userId: ctx.userId }, null));
+  if (options.recalibrate) {
+    const { recalibrateCloseness } = await import("@/lib/closeness-cohort");
+    await recalibrateCloseness(ctx.userId).catch(
+      reportAndContinue({ where: "job.ingest.recalibrate", userId: ctx.userId }, null)
+    );
+  }
   await kickEmbeddingBackfill(ctx.userId).catch(reportAndContinue({ where: "job.ingest.embedding-kick", userId: ctx.userId }, null));
 }

@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { kickSyncPass } from "@/lib/sync-kick";
 import { consumeOutlookOAuthState } from "@/actions/outlook";
 import {
   exchangeCodeForTokens,
@@ -97,6 +98,9 @@ export async function GET(request: Request) {
       redirectBase.searchParams.set("reason", "missing_scope");
       return NextResponse.redirect(redirectBase);
     }
+
+    // Armed means due now; see the Google callback for why the kick is worth firing.
+    if (connection?.nextSyncAt) after(() => kickSyncPass());
 
     redirectBase.searchParams.set("outlook", "connected");
     return NextResponse.redirect(redirectBase);

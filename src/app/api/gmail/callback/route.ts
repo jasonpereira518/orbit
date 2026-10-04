@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { kickSyncPass } from "@/lib/sync-kick";
 import { consumeGmailOAuthState } from "@/actions/gmail";
 import {
   exchangeCodeForTokens,
@@ -110,6 +111,11 @@ export async function GET(request: Request) {
       redirectBase.searchParams.set("reason", "missing_scope");
       return NextResponse.redirect(redirectBase);
     }
+
+    // An armed connection is due this instant; without the kick it waits for the next
+    // scheduled tick (up to ~30 minutes late), which for someone connecting during
+    // onboarding is a first look at an empty app.
+    if (connection?.nextSyncAt) after(() => kickSyncPass());
 
     redirectBase.searchParams.set("gmail", "connected");
     redirectBase.searchParams.set("google", "connected");

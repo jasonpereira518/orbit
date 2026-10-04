@@ -480,23 +480,140 @@ run(async () => {
     const lookalikeId = await seedMs("sched-ms-lookalike", "Calendars.ReadWrite");
 
     const fetchedFor: string[] = [];
+    const contactsFetchedFor: string[] = [];
     const { deps } = depsFor(new Map());
     deps.getMicrosoftAccessToken = async (userId: string) => `stub-token:${userId}`;
     deps.fetchMicrosoftPage = async ({ accessToken }) => {
       fetchedFor.push(String(accessToken).replace(/^stub-token:/, ""));
       return emptyPage();
     };
+    deps.fetchMicrosoftContactsPage = async ({ accessToken }) => {
+      contactsFetchedFor.push(String(accessToken).replace(/^stub-token:/, ""));
+      return { people: [], nextPageToken: null, nameless: 0 };
+    };
     const stats = await runSyncPass({ deps });
-    check("both calendar grants are synced, whatever their form", stats.synced === 2, JSON.stringify(stats));
+    // Two calendar grants plus the contacts-only one: a contacts-only connection is a working
+    // connection now that the address book syncs, so it is synced rather than disarmed.
+    check("both calendar grants are synced, whatever their form", stats.synced === 3, JSON.stringify(stats));
     check("a short-form Calendars.Read is fetched", fetchedFor.includes("sched-ms-short"), JSON.stringify(fetchedFor));
     check("a mixed-case full-URI grant is fetched", fetchedFor.includes("sched-ms-uri"), JSON.stringify(fetchedFor));
     check("a short-form grant is rescheduled, not disarmed", (await readMs(shortId)).next_sync_at !== null);
     check("its sync_error stays empty", (await readMs(shortId)).sync_error === null, String((await readMs(shortId)).sync_error));
     check("a mixed-case full-URI grant is rescheduled, not disarmed", (await readMs(uriId)).next_sync_at !== null);
-    check("a contacts-only connection is skipped", stats.skippedNoScope === 2, JSON.stringify(stats));
-    check("…and disarmed with a reason the user can act on", (await readMs(contactsId)).next_sync_at === null && /reconnect/i.test((await readMs(contactsId)).sync_error ?? ""));
+    check("only the look-alike scope is skipped for lacking BOTH capabilities", stats.skippedNoScope === 1, JSON.stringify(stats));
+    check("a contacts-only connection syncs its address book", contactsFetchedFor.includes("sched-ms-contacts"), JSON.stringify(contactsFetchedFor));
+    check("…without a calendar fetch, which its token would 403", !fetchedFor.includes("sched-ms-contacts"));
+    check("…and is rescheduled, not disarmed", (await readMs(contactsId)).next_sync_at !== null);
+    check("a calendar-only grant never asks for contacts", !contactsFetchedFor.includes("sched-ms-short") && !contactsFetchedFor.includes("sched-ms-uri"));
+    check("the look-alike is disarmed with a reason the user can act on", /reconnect/i.test((await readMs(lookalikeId)).sync_error ?? ""));
     check("a look-alike scope is not calendar access", (await readMs(lookalikeId)).next_sync_at === null && !fetchedFor.includes("sched-ms-lookalike"));
     await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-ms-%'`);
+  }
+
+  // --- Microsoft: the address book syncs beside the calendar ---------------------------------------
+  //
+  // Contacts is the newer phase and calendar the proven one, so the contract worth pinning is
+  // isolation: a contacts fault must not walk the connection up the backoff ladder and put
+  // meetings at risk. A dead grant is the one exception — it kills both, so it must propagate.
+  await clearAll();
+  {
+    const db = await getDb();
+    await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-msc-%'`);
+    await db.execute(sql`DELETE FROM contacts WHERE user_id LIKE 'sched-msc-%'`);
+    await db.execute(sql`UPDATE outlook_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-msc-%'`);
+    const BOTH = "openid Calendars.Read Contacts.Read";
+    const seedBoth = async (userId: string): Promise<string> => {
+      const inserted = await db.execute(sql`
+        INSERT INTO outlook_connections
+          (user_id, email_address, access_token_encrypted, status, scopes, next_sync_at, sync_failures)
+        VALUES (${userId}, ${userId + "@example.com"}, 'enc', 'active', ${BOTH}, ${new Date(Date.now() - 60_000)}, 0)
+        RETURNING id
+      `);
+      return rowsOf<{ id: string }>(inserted)[0].id;
+    };
+    const readConn = async (id: string) =>
+      rowsOf<{
+        next_sync_at: Date | string | null;
+        sync_error: string | null;
+        sync_failures: number;
+        sync_cursor: { contacts?: { syncToken?: string | null; pageToken?: string | null; readStartedAt?: string | null } | null } | null;
+      }>(await db.execute(sql`SELECT next_sync_at, sync_error, sync_failures, sync_cursor FROM outlook_connections WHERE id = ${id}`))[0];
+
+    const okId = await seedBoth("sched-msc-ok");
+    const { deps } = depsFor(new Map());
+    deps.getMicrosoftAccessToken = async (userId: string) => `stub-token:${userId}`;
+    deps.fetchMicrosoftPage = async () => emptyPage();
+    deps.fetchMicrosoftContactsPage = async () => ({
+      people: [{ fullName: "Ada Lovelace", email: "ada@example.com", company: "Analytical" }],
+      nextPageToken: null,
+      nameless: 0,
+    });
+    const stats = await runSyncPass({ deps });
+    check("a connection with both scopes is synced", stats.synced === 1, JSON.stringify(stats));
+    check("the address book's person was created", stats.contactsCreated === 1, JSON.stringify(stats));
+
+    const created = rowsOf<{ source: string | null; tag_names: string[] | null }>(
+      await db.execute(sql`
+        SELECT c.source, array_agg(t.name) AS tag_names
+          FROM contacts c
+          LEFT JOIN contact_tags ct ON ct.contact_id = c.id
+          LEFT JOIN tags t ON t.id = ct.tag_id
+         WHERE c.user_id = 'sched-msc-ok'
+         GROUP BY c.id
+      `)
+    )[0];
+    check("it is sourced from the Outlook address book", created?.source === "microsoft_contacts", String(created?.source));
+    check(
+      "and tagged like a one-shot Outlook import, so it reaches the default sky",
+      JSON.stringify(created?.tag_names) === JSON.stringify(["outlook-contacts"]),
+      JSON.stringify(created?.tag_names)
+    );
+    const okRow = await readConn(okId);
+    check(
+      "the watermark is saved under the connection's `contacts` cursor",
+      typeof okRow.sync_cursor?.contacts?.syncToken === "string" && okRow.sync_cursor?.contacts?.pageToken === null,
+      JSON.stringify(okRow.sync_cursor)
+    );
+    check("and the connection is rescheduled ahead", new Date(okRow.next_sync_at as string).getTime() > Date.now());
+
+    // A contacts fault is isolated from the calendar.
+    const faultId = await seedBoth("sched-msc-fault");
+    deps.fetchMicrosoftContactsPage = async () => {
+      throw new Error("Microsoft Contacts 500: boom");
+    };
+    const faultStats = await runSyncPass({ deps });
+    const faultRow = await readConn(faultId);
+    check("a contacts failure still counts as a synced connection", faultStats.synced === 1 && faultStats.failed === 0, JSON.stringify(faultStats));
+    check("it does not climb the backoff ladder", faultRow.sync_failures === 0 && faultRow.sync_error === null, JSON.stringify(faultRow));
+    check("and stays scheduled", faultRow.next_sync_at !== null);
+
+    // A first read that runs out of budget resumes rather than restarts, and keeps its start time.
+    const pagedId = await seedBoth("sched-msc-paged");
+    let calls = 0;
+    deps.fetchMicrosoftContactsPage = async () => {
+      calls++;
+      return {
+        people: [{ fullName: `Person ${calls}`, email: `p${calls}@example.com` }],
+        nextPageToken: calls < 3 ? `next-${calls}` : null,
+        nameless: 0,
+      };
+    };
+    await runSyncPass({ deps });
+    const pagedRow = await readConn(pagedId);
+    check("a multi-page book is read to the end within budget", calls >= 3, String(calls));
+    check("its watermark is adopted only once every page is read", typeof pagedRow.sync_cursor?.contacts?.syncToken === "string");
+
+    // A dead grant is the exception: it kills both phases, so it must fail the connection.
+    const reauthId = await seedBoth("sched-msc-reauth");
+    deps.fetchMicrosoftContactsPage = async () => {
+      throw new ReauthRequiredError("outlook");
+    };
+    const reauthStats = await runSyncPass({ deps });
+    check("a dead grant propagates and fails the connection", reauthStats.failed >= 1, JSON.stringify(reauthStats));
+    check("…and disarms it, since only the person can fix that", (await readConn(reauthId)).next_sync_at === null);
+
+    await db.execute(sql`DELETE FROM contacts WHERE user_id LIKE 'sched-msc-%'`);
+    await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-msc-%'`);
   }
 
   // --- An unarmed connection is never picked up ---------------------------------------------------
