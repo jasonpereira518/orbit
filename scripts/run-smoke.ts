@@ -296,6 +296,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-email-sender": "pglite",
   "smoke-email-attachments": "pglite",
   "smoke-schedule-presets": "pure",
+  "smoke-email-reply-targets": "pglite",
   "smoke-email-schedule": "pglite",
   "smoke-email-contacts": "pglite",
   "smoke-email-sends": "pglite",

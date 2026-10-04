@@ -19,6 +19,7 @@ import {
   setAttachmentBlobClientForTests,
   verifyAttachmentRefs,
 } from "../src/lib/email/attachments";
+import { maxAttachmentBytesFor } from "../src/lib/email/config";
 import { MailProviderError } from "../src/lib/email/providers/types";
 
 const USER = "user-a";
@@ -88,6 +89,11 @@ async function main() {
     { pathname: `${mine}1/resume.pdf`, filename: "resume.pdf" },
     { pathname: `${mine}2/deck.pdf`, filename: "deck.pdf" },
   ], "gmail")).ok);
+  check("Outlook replies allow 2 MB", maxAttachmentBytesFor("outlook", { reply: true }) === 2 * MB && maxAttachmentBytesFor("gmail", { reply: true }) === 20 * MB);
+  putFake(`${mine}5/two.pdf`, 2 * MB + 1);
+  const replyTooBig = await verifyAttachmentRefs(USER, [{ pathname: `${mine}5/two.pdf`, filename: "two.pdf" }], "outlook", { reply: true });
+  check("an Outlook reply over 2 MB is refused", !replyTooBig.ok && replyTooBig.reason === "too_large");
+  check("the same file is fine for a new Outlook email", (await verifyAttachmentRefs(USER, [{ pathname: `${mine}5/two.pdf`, filename: "two.pdf" }], "outlook")).ok);
   putFake(`${mine}4/huge.zip`, 21 * MB, "application/zip");
   check("21 MB is over Gmail's 20 MB", !(await verifyAttachmentRefs(USER, [{ pathname: `${mine}4/huge.zip`, filename: "huge.zip" }], "gmail")).ok);
   const eleven = Array.from({ length: 11 }, () => ({ pathname: `${mine}1/resume.pdf`, filename: "r.pdf" }));

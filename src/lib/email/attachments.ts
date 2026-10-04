@@ -86,7 +86,8 @@ const NOT_AVAILABLE = "One of those files isn’t available — attach it again"
 export async function verifyAttachmentRefs(
   userId: string,
   inputs: AttachmentInput[],
-  provider: EmailProviderId
+  provider: EmailProviderId,
+  opts: { reply?: boolean } = {}
 ): Promise<{ ok: true; refs: EmailAttachmentRef[] } | AttachmentFailure> {
   if (!inputs.length) return { ok: true, refs: [] };
   if (inputs.length > MAX_ATTACHMENTS) {
@@ -118,7 +119,7 @@ export async function verifyAttachmentRefs(
       size: meta.size,
     });
   }
-  const cap = maxAttachmentBytesFor(provider);
+  const cap = maxAttachmentBytesFor(provider, opts);
   if (total > cap) {
     const where = provider === "outlook" ? "Outlook" : "Gmail";
     return {

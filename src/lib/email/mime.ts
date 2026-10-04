@@ -62,6 +62,8 @@ export type MimeInput = {
   messageId: string;
   inReplyTo?: string | null;
   references?: string | null;
+  /** Extra `x-` headers (Outlook's duplicate-check id). Values are sanitized; other names are dropped. */
+  extraHeaders?: [string, string][];
   /** Files, loaded from Blob at send (direct-email P4). */
   attachments?: { filename: string; contentType: string; bytes: Uint8Array }[];
 };
@@ -91,6 +93,9 @@ export function buildMime(input: MimeInput, boundary = `orbit-${randomUUID()}`):
   ];
   if (input.inReplyTo) headers.push(`In-Reply-To: ${sanitizeHeader(input.inReplyTo)}`);
   if (input.references) headers.push(`References: ${sanitizeHeader(input.references)}`);
+  for (const [name, value] of input.extraHeaders ?? []) {
+    if (/^x-[a-z0-9-]+$/i.test(name)) headers.push(`${name}: ${sanitizeHeader(value)}`);
+  }
 
   // The readable body: plain text, or text + HTML as multipart/alternative.
   const bodyHeaders = input.bodyHtml

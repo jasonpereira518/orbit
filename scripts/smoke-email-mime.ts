@@ -39,6 +39,11 @@ check("closing boundary present", html.includes("--BOUNDARY--"));
 const inj = buildMime({ ...base, subject: "Hi\r\nBcc: evil@x.org" });
 check("subject CR/LF cannot start a header", !/^Bcc:/m.test(inj));
 
+const withX = buildMime({ ...base, extraHeaders: [["x-orbit-send-id", "<a@b>"], ["x-evil", "v\r\nBcc: x@y"], ["Bcc", "sneaky@x.org"]] });
+check("extra headers are written", /^x-orbit-send-id: <a@b>$/m.test(withX));
+check("extra header values are sanitized", !/^Bcc: x@y/m.test(withX));
+check("only x- names are accepted", !/sneaky@x\.org/.test(withX));
+
 const reply = buildMime({ ...base, inReplyTo: "<orig@x.org>", references: "<root@x.org> <orig@x.org>" });
 check("In-Reply-To set", /^In-Reply-To: <orig@x\.org>$/m.test(reply));
 check("References carries the chain", /^References: <root@x\.org> <orig@x\.org>$/m.test(reply));
