@@ -20,7 +20,7 @@ import { rateLimitBuckets } from "@/db/schema";
 /** What a bucket scope means to the person hitting it, for the error message. */
 const BUCKET_LABELS: Record<string, string> = {
   chat: "chat",
-  chatSend: "email send",
+  emailSend: "email send",
   capture: "capture",
   captureHandoff: "scan",
   captureParts: "capture",
@@ -88,12 +88,13 @@ export const RATE_LIMITS = {
   /** `askNetwork` / `/api/chat`: a full retrieval plus a model completion per call. */
   chat: { limit: 20, windowSec: 60 },
   /**
-   * A chat draft sent from the user's own Gmail. Outbound and irreversible, so tighter than
-   * anything else here and measured over ten minutes: the shape to bound is a loop or a
-   * hijacked session mailing people in bulk from a real address, not a person sending a few
-   * follow-ups. The daily cap (`CHAT_SEND_DAILY_CAP`) is counted from the claim rows.
+   * Any person-to-person email through the outbox (`src/lib/email/outbox.ts`) — Chat,
+   * follow-ups, approved assistant drafts, recruiter replies. Outbound and sent from the user's
+   * real address, so tighter than anything else here and measured over ten minutes: the shape
+   * to bound is a loop or a hijacked session mailing people in bulk, not a person sending a
+   * few follow-ups. The daily cap is separate and per plan (`EMAIL_SEND_DAILY_CAP`).
    */
-  chatSend: { limit: 10, windowSec: 600 },
+  emailSend: { limit: 10, windowSec: 600 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
   /**

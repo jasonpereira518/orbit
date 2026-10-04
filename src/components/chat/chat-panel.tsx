@@ -2272,6 +2272,7 @@ const RecommendationCard = memo(function RecommendationCard({
           name={rec.name}
           body={sendBody}
           onSent={(at, maybe) => setSent({ at, maybe })}
+          onUndone={() => setSent(null)}
         />
       )}
       {canRemind && (

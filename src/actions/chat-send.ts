@@ -11,37 +11,32 @@
  * `shownTo` is only compared, so a contact whose address changed after the card rendered is
  * refused rather than mailed at the new one unseen.
  *
- * A send is CLAIMED before it happens. There is no draft row to lock, so the claim is an
- * `interactions` row with a deterministic `external_id`; the unique index on
- * `(user_id, external_id)` makes the second of two clicks a no-op. If Gmail definitely refused,
- * the claim is released so a retry is allowed. If the outcome is ambiguous — the request may
- * have landed — the claim is KEPT and the person is told to check their Sent folder, because an
- * automatic retry could email the same person twice.
+ * The send goes through the email outbox (`src/lib/email/outbox.ts`) with a 10-second undo
+ * window. Its idempotency key is the same `chat-send:<message>:<contact>` key the interaction
+ * is logged under, so a second click is refused while the first is queued or sent, and the
+ * card's "already sent" lookup in `src/actions/chat.ts` keeps working unchanged. Ambiguous
+ * provider outcomes are the outbox's to handle: it checks Sent before any retry and never
+ * resends blind.
  */
 
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { chatMessages, contacts, gmailConnections, interactions } from "@/db/schema";
+import { chatMessages, contacts, emailSends, interactions } from "@/db/schema";
 import { getGmailSendIdentity } from "@/actions/gmail";
+import { getCurrentUserProfile } from "@/lib/auth";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { PaywallError, requireEntitlement } from "@/lib/entitlements";
-import { getValidAccessToken, hasSendScope } from "@/lib/gmail";
-import { sendGmailMessage } from "@/lib/gmail-send";
-import { settleWrittenInteraction } from "@/lib/contact-writes";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
-import { reportActionError } from "@/lib/action-failure";
+import { UNDO_DELAY_MS } from "@/lib/email/config";
+import { ENQUEUE_COPY, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
+import { scheduleDispatch } from "@/lib/email/schedule";
 import {
-  CHAT_SEND_DAILY_CAP,
   DEFAULT_SEND_SUBJECT,
   checkContent,
   checkRecipient,
   chatSendExternalId,
-  classifySendError,
   isUuid,
 } from "@/lib/chat-send";
 
 export type ChatSendReason =
-  | "plan"
   | "not_connected"
   | "needs_reconnect"
   | "missing_scope"
@@ -52,16 +47,13 @@ export type ChatSendReason =
   | "already_sent"
   | "invalid"
   | "rate_limited"
-  | "daily_limit"
-  | "failed"
-  | "ambiguous";
+  | "cap_reached";
 
 export type ChatSendResult =
-  | { ok: true; sentAt: string; to: string }
+  | { ok: true; sendId: string; sendAt: string; to: string }
   | { ok: false; reason: ChatSendReason; message: string };
 
 const COPY: Record<ChatSendReason, string> = {
-  plan: "Sending from Gmail is part of Orbit Pro and Max. You can copy the draft or open it in your mail app instead.",
   not_connected: "Connect Gmail to send from your own address.",
   needs_reconnect: "Gmail needs to be reconnected before it can send.",
   missing_scope: "Orbit doesn’t have Google’s permission to send as you yet.",
@@ -72,9 +64,21 @@ const COPY: Record<ChatSendReason, string> = {
   already_sent: "This message was already sent to them.",
   invalid: "That message can’t be sent as written.",
   rate_limited: "You’re sending quickly — wait a few minutes and try again.",
-  daily_limit: "You’ve reached today’s limit for sending from Chat. Try again tomorrow.",
-  failed: "Couldn’t send that — nothing was sent. Try again?",
-  ambiguous: "That may have been sent. Check your Sent folder before trying again.",
+  cap_reached: ENQUEUE_COPY.cap_reached,
+};
+
+const CHAT_REASON_FOR: Record<EnqueueRefusal, ChatSendReason> = {
+  not_connected: "not_connected",
+  no_send_scope: "missing_scope",
+  needs_reauth: "needs_reconnect",
+  cap_reached: "cap_reached",
+  rate_limited: "rate_limited",
+  duplicate: "already_sent",
+  no_recipient: "no_email",
+  too_many: "invalid_recipient",
+  invalid_recipient: "invalid_recipient",
+  placeholder: "placeholder",
+  empty_body: "invalid",
 };
 
 const fail = (reason: ChatSendReason): { ok: false; reason: ChatSendReason; message: string } => ({
@@ -108,8 +112,6 @@ async function loadTarget(userId: string, messageId: string, contactId: string) 
 }
 
 export type ChatSendContext = {
-  /** False on a plan without Gmail send: the dialog offers Copy and a mail link instead. */
-  planAllows: boolean;
   identity: { connected: boolean; canSend: boolean; sendingAs: string | null; displayName: string | null };
   contactName: string;
   /** The address the message will go to, or null when there is none worth showing. */
@@ -126,26 +128,28 @@ export async function getChatSendContext(messageId: string, contactId: string): 
   const contact = await loadTarget(userId, messageId, contactId);
   if (!contact) return null;
   const db = await getDb();
+  const key = chatSendExternalId(messageId, contactId);
 
-  let planAllows = true;
-  try {
-    await requireEntitlement(userId, "sync");
-  } catch (err) {
-    if (err instanceof PaywallError) planAllows = false;
-    else throw err;
-  }
-
-  const identity = planAllows
-    ? await getGmailSendIdentity()
-    : { connected: false, canSend: false, sendingAs: null, displayName: null };
+  const identity = await getGmailSendIdentity();
   const check = checkRecipient(contact.email);
-  const claimed = await db.query.interactions.findFirst({
-    where: and(eq(interactions.userId, userId), eq(interactions.externalId, chatSendExternalId(messageId, contactId))),
-    columns: { interactionDate: true },
-  });
+  const [logged, pending] = await Promise.all([
+    db.query.interactions.findFirst({
+      where: and(eq(interactions.userId, userId), eq(interactions.externalId, key)),
+      columns: { interactionDate: true },
+    }),
+    // A send still inside its undo window, or mid-flight, has no interaction yet.
+    db.query.emailSends.findFirst({
+      where: and(
+        eq(emailSends.userId, userId),
+        eq(emailSends.idempotencyKey, key),
+        inArray(emailSends.status, ["queued", "sending"])
+      ),
+      columns: { sendAt: true },
+    }),
+  ]);
+  const sentAt = logged?.interactionDate ?? pending?.sendAt ?? null;
 
   return {
-    planAllows,
     identity: {
       connected: identity.connected,
       canSend: identity.canSend,
@@ -156,7 +160,7 @@ export async function getChatSendContext(messageId: string, contactId: string): 
     to: check.ok ? check.email : (contact.email?.trim() || null),
     recipientProblem: check.ok ? null : check.reason,
     defaultSubject: DEFAULT_SEND_SUBJECT,
-    alreadySent: claimed ? { at: claimed.interactionDate.toISOString(), to: check.ok ? check.email : null } : null,
+    alreadySent: sentAt ? { at: sentAt.toISOString(), to: check.ok ? check.email : null } : null,
   };
 }
 
@@ -169,111 +173,27 @@ export async function sendChatDraftViaGmail(input: {
   shownTo: string;
 }): Promise<ChatSendResult> {
   const userId = await requireUserForSurface("page.chat");
-
-  try {
-    await requireEntitlement(userId, "sync");
-  } catch (err) {
-    if (err instanceof PaywallError) return fail("plan");
-    throw err;
-  }
-
-  const db = await getDb();
   const contact = await loadTarget(userId, input.messageId, input.contactId);
   if (!contact) return fail("invalid");
-
   const recipient = checkRecipient(contact.email);
   if (!recipient.ok) return fail(recipient.reason === "placeholder" ? "placeholder" : recipient.reason);
   if (recipient.email.toLowerCase() !== (input.shownTo ?? "").trim().toLowerCase()) return fail("changed_recipient");
-
   const content = checkContent({ subject: input.subject, body: input.body });
   if (!content.ok) return fail("invalid");
 
-  // Connection state up front, so a missing scope is a clear prompt and not a 403 after the fact.
-  const conn = await db.query.gmailConnections.findFirst({
-    where: eq(gmailConnections.userId, userId),
-    columns: { status: true, scopes: true },
+  const profile = await getCurrentUserProfile().catch(() => null);
+  const queued = await enqueueEmail(userId, {
+    to: [recipient.email],
+    subject: content.subject,
+    bodyText: content.body,
+    fromName: profile?.name?.trim() || null,
+    origin: "chat",
+    originRef: input.messageId,
+    idempotencyKey: chatSendExternalId(input.messageId, input.contactId),
+    contactIds: [input.contactId],
+    delayMs: UNDO_DELAY_MS,
   });
-  if (!conn) return fail("not_connected");
-  if (conn.status !== "active") return fail("needs_reconnect");
-  if (!hasSendScope(conn.scopes)) return fail("missing_scope");
-  const identity = await getGmailSendIdentity();
-  if (!identity.connected || !identity.canSend || !identity.sendingAs) return fail("not_connected");
-
-  try {
-    await consumeBucket("chatSend", userId, RATE_LIMITS.chatSend);
-  } catch (err) {
-    if (isRateLimitedError(err)) return fail("rate_limited");
-    throw err;
-  }
-
-  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const [{ n } = { n: 0 }] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(interactions)
-    .where(and(eq(interactions.userId, userId), eq(interactions.source, "chat_send"), gte(interactions.interactionDate, dayAgo)));
-  if (n >= CHAT_SEND_DAILY_CAP) return fail("daily_limit");
-
-  // A token that cannot be had is a definite failure: nothing has been requested yet.
-  try {
-    await getValidAccessToken(userId);
-  } catch (err) {
-    return fail(classifySendError(err) === "needs_reconnect" ? "needs_reconnect" : "not_connected");
-  }
-
-  // CLAIM. No row back means another click got here first (or it was already sent).
-  const externalId = chatSendExternalId(input.messageId, input.contactId);
-  const sentAt = new Date();
-  const [claim] = await db
-    .insert(interactions)
-    .values({
-      userId,
-      contactId: input.contactId,
-      interactionType: "email",
-      direction: "out",
-      source: "chat_send",
-      externalId,
-      interactionDate: sentAt,
-      sameDayOrder: 0,
-      rawNotes: content.body,
-      aiSummary: `Sent from Chat: ${content.subject}`,
-    })
-    .onConflictDoNothing()
-    .returning(); // bare: a field selector breaks over the Db union
-  if (!claim) return fail("already_sent");
-
-  try {
-    await sendGmailMessage(userId, {
-      to: recipient.email,
-      subject: content.subject,
-      body: content.body,
-      from: { name: identity.displayName, email: identity.sendingAs },
-    });
-  } catch (err) {
-    const kind = classifySendError(err);
-    if (kind === "ambiguous") {
-      // Kept on purpose. Deleting it would let a retry mail them a second time.
-      await reportActionError(err, "chat.send-gmail-ambiguous", { level: "warning" }).catch(() => null);
-      return fail("ambiguous");
-    }
-    // Gmail answered and said no (or the grant is dead): nothing went, so free the claim.
-    await db.delete(interactions).where(and(eq(interactions.id, claim.id), eq(interactions.userId, userId)));
-    if (kind === "needs_reconnect") return fail("missing_scope");
-    await reportActionError(err, "chat.send-gmail", { level: "warning" }).catch(() => null);
-    return fail("failed");
-  }
-
-  // Sent. Everything after this is best-effort: a failed rescore must never read as a failed send.
-  try {
-    await settleWrittenInteraction(userId, input.contactId, sentAt);
-  } catch (err) {
-    await reportActionError(err, "chat.send-settle", { level: "warning" }).catch(() => null);
-  }
-  try {
-    const { clearContactFollowUp } = await import("@/actions/reminders");
-    await clearContactFollowUp(input.contactId);
-  } catch (err) {
-    await reportActionError(err, "chat.send-clear-followup", { level: "warning" }).catch(() => null);
-  }
-
-  return { ok: true, sentAt: sentAt.toISOString(), to: recipient.email };
+  if (!queued.ok) return fail(CHAT_REASON_FOR[queued.reason]);
+  scheduleDispatch(queued.id, queued.sendAt);
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: recipient.email };
 }

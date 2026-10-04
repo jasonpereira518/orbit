@@ -1,8 +1,8 @@
 # The scheduler for everything Orbit runs on a clock — the only one.
 #
 # Vercel Hobby runs crons at most once a day, so this workflow drives everything that needs
-# to happen more often: the known-condition ops sweep and the webhook drain (every ten
-# minutes), the process-stalled job (hourly, so a lost import continuation stalls for an
+# to happen more often: the known-condition ops sweep, the webhook drain and the email
+# outbox drain (every ten minutes), the process-stalled job (hourly, so a lost import continuation stalls for an
 # hour, not a day), the connector sync (every fifteen minutes), the job-feed sweep
 # (hourly), the work-history sweep (hourly), Radar's news sweep (hourly), the Deepgram usage
 # reconciliation (daily) and Radar's nightly pass (daily). vercel.json schedules nothing;
@@ -196,6 +196,19 @@ jobs:
           curl -sS --fail-with-body --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/connectors/outbox/drain"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Person-to-person email. after() sends interactive mail once its undo window lapses;
+      # this catches the rest: retries, lapsed leases, and anything a recycled function
+      # dropped. Same ten-minute schedule and gate as the connector outbox above.
+      - name: Drain the email outbox
+        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 55 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/email/drain"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

@@ -703,6 +703,18 @@ async function seed() {
   });
   // A message an assistant drafted. It holds a body the user never sent, which is exactly
   // the kind of content a deletion has to take with it.
+  // A queued outbound email, body included.
+  await db.insert(schema.emailSends).values({
+    userId: USER,
+    provider: "gmail",
+    fromEmail: "me@example.org",
+    to: ["friend@example.org"],
+    subject: "Hi",
+    bodyText: "Unsent body",
+    origin: "compose",
+    sendAt: new Date(),
+    rfcMessageId: "<smoke-purge@orbit>",
+  });
   await db.insert(schema.agentSendRequests).values({
     userId: USER,
     toEmail: "someone@example.org",

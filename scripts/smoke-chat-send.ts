@@ -4,8 +4,9 @@
  * Outbound and irreversible, so the properties that matter are the ones that stop a wrong or
  * repeated send: the recipient comes only from the contact record (and only for a contact the
  * message recommended), a single address is enforced, a double click sends once, a definite
- * Gmail refusal frees the claim while an ambiguous outcome keeps it, and a reloaded thread shows
- * what was sent. Gmail is a stub; no real mail is ever sent.
+ * Gmail refusal frees the draft for another try while an ambiguous outcome never resends it,
+ * and a reloaded thread shows what was sent. Sends go through the email outbox with an undo
+ * window, so `flush()` stands in for the window lapsing. Gmail is a stub; no real mail is sent.
  *
  * Local PGlite. Run: npx tsx scripts/smoke-chat-send.ts
  */
@@ -15,18 +16,19 @@ import "./smoke/_env";
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
 (process.env as Record<string, string>).NODE_ENV = "development";
-import { and, eq, like } from "drizzle-orm";
-import { getDb } from "../src/db";
-import { chatMessages, chatThreads, contacts, gmailConnections, interactions, rateLimitBuckets } from "../src/db/schema";
+import { and, eq, like, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "../src/db";
+import { chatMessages, chatThreads, contacts, emailSends, gmailConnections, interactions, rateLimitBuckets } from "../src/db/schema";
+import "../src/lib/email/origin-registrations";
+import { dispatchEmailSend } from "../src/lib/email/outbox";
+import { getSendCapability } from "../src/lib/email/sender";
 import { encrypt } from "../src/lib/crypto";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
 import {
-  CHAT_SEND_DAILY_CAP,
   DEFAULT_SEND_SUBJECT,
   chatSendExternalId,
   checkContent,
   checkRecipient,
-  classifySendError,
   contactIdFromSendKey,
   isUuid,
 } from "../src/lib/chat-send";
@@ -46,7 +48,7 @@ function check(label: string, ok: boolean, detail?: string) {
 const USER = "demo-user";
 
 // ---- Gmail stub ----------------------------------------------------------------------------
-type Mode = "ok" | "http500" | "network" | "noid";
+type Mode = "ok" | "http400" | "http500" | "network" | "noid";
 let mode: Mode = "ok";
 const sends: Array<{ raw: string }> = [];
 const realFetch = globalThis.fetch;
@@ -55,6 +57,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (!url.includes("gmail.googleapis.com/gmail/v1/users/me/messages/send")) return realFetch(input, init);
   sends.push(JSON.parse(String(init?.body)) as { raw: string });
   if (mode === "network") throw new TypeError("fetch failed");
+  if (mode === "http400") return new Response("bad", { status: 400 });
   if (mode === "http500") return new Response("boom", { status: 500 });
   if (mode === "noid") return Response.json({});
   return Response.json({ id: `gm-${sends.length}`, threadId: "t-1" });
@@ -99,12 +102,6 @@ async function main() {
   check("another message's key does not match", contactIdFromSendKey(chatSendExternalId(M, C), "33333333-3333-4333-8333-333333333333") === null);
   check("a non-uuid tail is refused", contactIdFromSendKey(`chat-send:${M}:not-an-id`, M) === null);
   check("isUuid", isUuid(M) && !isUuid("abc") && !isUuid(undefined));
-  check("a Gmail 500 is a definite failure", classifySendError(new Error("Gmail send failed: boom")) === "definite");
-  check("the 403 refusal means reconnect", classifySendError(new Error("Gmail refused the send. Reconnect Gmail to grant permission to send mail.")) === "needs_reconnect");
-  check("a dead grant means reconnect", classifySendError(Object.assign(new Error("x"), { name: "ReauthRequiredError" })) === "needs_reconnect");
-  check("a timeout is ambiguous", classifySendError(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" })) === "ambiguous");
-  check("a dropped connection is ambiguous", classifySendError(new TypeError("fetch failed")) === "ambiguous");
-  check("a success with no id is ambiguous", classifySendError(new Error("Gmail send returned no message id")) === "ambiguous");
 
   console.log("return paths");
   check("a same-origin path passes", safeReturnPath("/chat?thread=abc") === "/chat?thread=abc");
@@ -136,8 +133,18 @@ async function main() {
     sends.length = 0;
     mode = "ok";
     await db.delete(interactions).where(and(eq(interactions.userId, USER), eq(interactions.source, "chat_send")));
-    await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "chatSend:%"));
+    await db.delete(emailSends).where(eq(emailSends.userId, USER));
+    await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "emailSend:%"));
   };
+  // The undo window lapsing: every queued send becomes due and is dispatched.
+  const flush = async () => {
+    await db.execute(sql`UPDATE email_sends SET send_at = now() - interval '1 second' WHERE user_id = ${USER} AND status = 'queued'`);
+    const due = rowsOf<{ id: string }>(await db.execute(sql`SELECT id FROM email_sends WHERE user_id = ${USER} AND status = 'queued'`));
+    const outcomes: string[] = [];
+    for (const { id } of due) outcomes.push(await dispatchEmailSend(id));
+    return outcomes;
+  };
+  const outbox = () => db.select().from(emailSends).where(eq(emailSends.userId, USER));
   const send = (over: Partial<Parameters<typeof sendChatDraftViaGmail>[0]> = {}) =>
     sendChatDraftViaGmail({ messageId: msg!.id, contactId: contact!.id, subject: "Hello", body: "Hi Ben, a quick call Thursday?", shownTo: "ben@acme-corp.io", ...over });
   const claims = () => db.select().from(interactions).where(and(eq(interactions.userId, USER), eq(interactions.source, "chat_send")));
@@ -145,13 +152,18 @@ async function main() {
   await reset();
   const ctxBefore = await getChatSendContext(msg!.id, contact!.id);
   check("the confirm dialog gets the contact's address, not one it was given", ctxBefore?.to === "ben@acme-corp.io" && ctxBefore.recipientProblem === null);
-  check("and knows the plan and the connected account", ctxBefore?.planAllows === true && ctxBefore.identity.sendingAs === "me@gmail-mail.io" && ctxBefore.identity.canSend === true, JSON.stringify(ctxBefore));
+  check("and knows the connected account", ctxBefore?.identity.sendingAs === "me@gmail-mail.io" && ctxBefore.identity.canSend === true, JSON.stringify(ctxBefore));
   check("a contact the message did not recommend gets no dialog", (await getChatSendContext(msg!.id, other!.id)) === null);
   check("a foreign message gets no dialog", (await getChatSendContext(foreignMsg!.id, contact!.id)) === null);
 
   console.log("a send");
   const ok = await send();
-  check("it sends", ok.ok === true, JSON.stringify(ok));
+  check("it is queued", ok.ok === true, JSON.stringify(ok));
+  check("nothing goes out during the undo window", sends.length === 0 && (await claims()).length === 0);
+  const pendingCtx = await getChatSendContext(msg!.id, contact!.id);
+  check("the dialog already treats a queued send as sent", Boolean(pendingCtx?.alreadySent));
+  const flushed = await flush();
+  check("it sends once the window lapses", flushed.join() === "sent", flushed.join());
   check("exactly one message went out", sends.length === 1);
   const mime = decodeRaw(sends[0]!.raw);
   check("to the contact's address, from the connected account", /^To: ben@acme-corp\.io$/m.test(mime) && /From: .*me@gmail-mail\.io/.test(mime), mime);
@@ -194,6 +206,7 @@ async function main() {
   console.log("a double click");
   await reset();
   const [a, b] = await Promise.all([send(), send()]);
+  await flush();
   check("exactly one of two simultaneous sends goes out", sends.length === 1, `${sends.length} sends`);
   check("the other is told it was already sent", [a, b].filter((r) => r.ok).length === 1 && [a, b].some((r) => !r.ok && r.reason === "already_sent"), JSON.stringify([a, b]));
 
@@ -205,7 +218,7 @@ async function main() {
   check("a non-uuid id is refused", (await send({ messageId: "x" })).ok === false);
   const wrongShown = await send({ shownTo: "someone@else.io" });
   check("an address that is not what was shown is refused", !wrongShown.ok && wrongShown.reason === "changed_recipient");
-  check("nothing went out for any of those", sends.length === 0 && (await claims()).length === 0);
+  check("nothing went out for any of those", sends.length === 0 && (await claims()).length === 0 && (await outbox()).length === 0);
 
   await db.update(contacts).set({ email: "a@b.com, c@d.com" }).where(eq(contacts.id, contact!.id));
   const two = await send({ shownTo: "a@b.com, c@d.com" });
@@ -220,33 +233,50 @@ async function main() {
 
   console.log("Gmail says no");
   await reset();
-  mode = "http500";
-  const failed = await send();
-  check("a Gmail error is reported as nothing sent", !failed.ok && failed.reason === "failed");
-  check("and the claim is released", (await claims()).length === 0);
+  mode = "http400";
+  await send();
+  const refused = await flush();
+  check("a Gmail refusal fails the send", refused.join() === "failed", refused.join());
+  check("and records nothing as sent", (await claims()).length === 0);
   mode = "ok";
   const retry = await send();
-  check("so a retry goes through", retry.ok === true && sends.length === 2);
+  await flush();
+  check("so a retry goes through", retry.ok === true && sends.length === 2 && (await claims()).length === 1, JSON.stringify(retry));
+  await reset();
+  mode = "http500";
+  await send();
+  check("a Gmail 5xx is retried later, not dropped", (await flush()).join() === "retry" && (await outbox())[0]?.status === "queued");
 
   console.log("Gmail may have said yes");
   await reset();
   mode = "network";
-  const maybe = await send();
-  check("a dropped connection is reported as possibly sent", !maybe.ok && maybe.reason === "ambiguous");
-  check("and the claim is KEPT", (await claims()).length === 1);
+  await send();
+  check("a dropped connection is held for a check, not failed", (await flush()).join() === "retry");
+  check("and marked as possibly sent", (await outbox())[0]?.failureKind === "ambiguous");
   mode = "ok";
   const blocked = await send();
-  check("so a retry cannot mail them twice", !blocked.ok && blocked.reason === "already_sent" && sends.length === 1);
+  check("so a second click cannot mail them twice", !blocked.ok && blocked.reason === "already_sent" && sends.length === 1);
+  // Gmail's rfc822msgid search finds nothing (the stub passes non-send URLs to the real fetch,
+  // so stub the search too): the retry must then give up rather than resend blind.
+  const searchFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes("/messages?q=")) return new Response("nope", { status: 500 });
+    return searchFetch(input, init);
+  }) as typeof fetch;
+  const second = await flush();
+  globalThis.fetch = searchFetch;
+  check("a retry that cannot check Sent gives up instead of resending", second.join() === "failed" && sends.length === 1, second.join());
   await reset();
   mode = "noid";
-  const noid = await send();
-  check("a success with no message id is ambiguous too", !noid.ok && noid.reason === "ambiguous" && (await claims()).length === 1);
+  await send();
+  check("a success with no message id is ambiguous too", (await flush()).join() === "retry" && (await outbox())[0]?.failureKind === "ambiguous");
 
   console.log("consent and limits");
   await reset();
   await db.update(gmailConnections).set({ scopes: GOOGLE_SCOPES.gmailRead }).where(eq(gmailConnections.userId, USER));
   const noScope = await send();
-  check("without the send permission, nothing is claimed or sent", !noScope.ok && noScope.reason === "missing_scope" && sends.length === 0 && (await claims()).length === 0);
+  check("without the send permission, nothing is queued or sent", !noScope.ok && noScope.reason === "missing_scope" && sends.length === 0 && (await outbox()).length === 0);
   await db.update(gmailConnections).set({ scopes: `${GOOGLE_SCOPES.gmailRead} ${GOOGLE_SCOPES.gmailSend}`, status: "needs_reauth" }).where(eq(gmailConnections.userId, USER));
   const stale = await send();
   check("a connection that needs reconnecting is reported as such", !stale.ok && stale.reason === "needs_reconnect" && sends.length === 0);
@@ -273,21 +303,22 @@ async function main() {
   for (const m of [m2, m3, m4, m5, m6, m7, m8, m9, m10, m11]) {
     results.push((await send({ messageId: m!.id })).ok);
   }
-  check("ten sends in the window all go", results.every(Boolean), JSON.stringify(results));
+  check("ten sends in the window are all queued", results.every(Boolean), JSON.stringify(results));
   const eleventh = await send({ messageId: msg!.id });
-  check("the eleventh is rate limited, and nothing goes", !eleventh.ok && eleventh.reason === "rate_limited" && sends.length === 10);
+  check("the eleventh is rate limited, and nothing more is queued", !eleventh.ok && eleventh.reason === "rate_limited" && (await outbox()).length === 10);
 
   await reset();
-  for (let i = 0; i < CHAT_SEND_DAILY_CAP; i++) {
-    await db.insert(interactions).values({ userId: USER, contactId: other!.id, interactionType: "email", direction: "out", source: "chat_send", externalId: `chat-send:${crypto.randomUUID()}:${other!.id}`, interactionDate: new Date(), sameDayOrder: 0, rawNotes: "x" });
-  }
+  // The cap is shared by every kind of 1:1 send, so filling it from another origin counts.
+  const { dailyCap } = await getSendCapability(USER);
+  await db.execute(sql`INSERT INTO email_sends (user_id, provider, from_email, to_emails, subject, body_text, origin, status, send_at, rfc_message_id)
+    SELECT ${USER}, 'gmail', 'me@gmail-mail.io', '["x@acme-corp.io"]'::jsonb, 's', 'b', 'follow_up', 'sent', now(), '<cap-' || g || '@orbit.mail>' FROM generate_series(1, ${dailyCap}::int) g`);
   const capped = await send();
-  check("the daily cap stops a send", !capped.ok && capped.reason === "daily_limit" && sends.length === 0);
+  check("the daily cap stops a send", !capped.ok && capped.reason === "cap_reached" && sends.length === 0, JSON.stringify(capped));
 
   console.log("the source");
   const src = await import("node:fs").then((fs) => fs.readFileSync("src/actions/chat-send.ts", "utf8"));
   check("the action takes no recipient argument", !/\bto\??:\s*string/.test(src.slice(src.indexOf("export async function sendChatDraftViaGmail"), src.indexOf("}): Promise<ChatSendResult>"))));
-  check("the claim comes before the send", src.indexOf(".onConflictDoNothing()") > -1 && src.indexOf(".onConflictDoNothing()") < src.indexOf("await sendGmailMessage("));
+  check("the send goes through the outbox, keyed per message and person", /enqueueEmail\(/.test(src) && /idempotencyKey: chatSendExternalId\(/.test(src) && !/sendGmailMessage/.test(src));
 
   if (failures) {
     console.error(`\n${failures} check(s) failed`);
