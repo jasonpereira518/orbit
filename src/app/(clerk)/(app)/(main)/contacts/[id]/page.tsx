@@ -415,6 +415,7 @@ export default async function ContactDetailPage({
             sameDayOrder: i.sameDayOrder,
             notesPreview: i.notesPreview,
             aiSummary: i.aiSummary,
+            source: i.source,
           }))}
           // Only past the first page: without it the timeline has the whole history and
           // derives its counts from the rows, as it always has.

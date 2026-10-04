@@ -458,6 +458,7 @@ async function checkInteractionHistory() {
             sameDayOrder: i.sameDayOrder,
             notesPreview: i.notesPreview,
             aiSummary: i.aiSummary,
+            source: i.source,
           }))
         )
     );

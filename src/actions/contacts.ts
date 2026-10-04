@@ -635,6 +635,7 @@ export async function listContactTimelineInteractions(contactId: string) {
     sameDayOrder: i.sameDayOrder,
     notesPreview: i.notesPreview,
     aiSummary: i.aiSummary,
+    source: i.source,
   }));
 }
 

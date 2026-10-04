@@ -54,6 +54,7 @@ import { EASE_HOUSE } from "@/lib/motion";
 import { timelineDayLabel, timelineGapLabel } from "@/lib/timeline-date";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
+import { chatSourceIcon, chatSourceLabel } from "@/components/icons/chat-source-icons";
 import { friendlyError } from "@/lib/errors";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
@@ -67,6 +68,8 @@ export type TimelineInteraction = {
   aiSummary: string | null;
   /** Set when a captured batch wrote this row. Null for a hand-logged interaction. */
   noteBatchId?: string | null;
+  /** Provenance; a `message` row from a chat import carries `whatsapp` or `imessage`. */
+  source?: string | null;
 };
 
 /** How many rows get a staggered entrance before the cascade is capped. */
@@ -818,7 +821,9 @@ export function ContactTimeline({
                             className="absolute left-[23px] top-2 bottom-2 w-px bg-gradient-to-b from-primary/30 via-primary/20 to-transparent"
                           />
                           {group.items.map((i) => {
-                            const Icon = interactionTypeIcon(i.interactionType);
+                            const Icon =
+                              (i.interactionType === "message" && chatSourceIcon(i.source)) ||
+                              interactionTypeIcon(i.interactionType);
                             const family = interactionFamilySpec(i.interactionType);
                             const openCount = openByInteraction.get(i.id) ?? 0;
                             const hasNotes = Boolean(i.notesPreview?.trim());
@@ -897,7 +902,8 @@ export function ContactTimeline({
                                       </time>
                                       <span aria-hidden>·</span>
                                       <span>
-                                        {interactionTypeLabel(i.interactionType)}
+                                        {(i.interactionType === "message" && chatSourceLabel(i.source)) ||
+                                          interactionTypeLabel(i.interactionType)}
                                       </span>
                                     </span>
                                     <span className="mt-1 line-clamp-2 block text-sm leading-relaxed text-ink">

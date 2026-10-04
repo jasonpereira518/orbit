@@ -10,6 +10,7 @@ import type { RunSummary } from "../src/lib/relationship-engine/summary-copy";
 import { DigestSection } from "../src/components/contacts/contact-digest";
 import { owedLabel } from "../src/components/contacts/contact-next-steps";
 import { OpenThreadsList } from "../src/components/contacts/contact-open-threads";
+import { chatSourceIcon, chatSourceLabel, IMessageIcon, WhatsAppIcon } from "../src/components/icons/chat-source-icons";
 import { digestSourceLine, topicLine, type DigestView } from "../src/lib/relationship-engine/digest-copy";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -73,6 +74,12 @@ check("threads: quote and date", th.includes("can you intro me to Priya?") && th
 check("threads: owed badge", th.includes("You owe"));
 check("threads: remind only where possible", (th.match(/Remind me/g) ?? []).length === 1, th);
 check("threads: dismiss on each", (th.match(/Dismiss/g) ?? []).length === 2);
+
+check("icon: whatsapp", chatSourceIcon("whatsapp") === WhatsAppIcon && chatSourceLabel("whatsapp") === "WhatsApp");
+check("icon: imessage", chatSourceIcon("imessage") === IMessageIcon && chatSourceLabel("imessage") === "iMessage");
+check("icon: others fall back", chatSourceIcon("linkedin") === null && chatSourceIcon(null) === null && chatSourceLabel(undefined) === null);
+const svg = renderToStaticMarkup(React.createElement(WhatsAppIcon, { className: "size-4" }));
+check("icon: decorative svg in currentColor", svg.startsWith("<svg") && svg.includes('aria-hidden="true"') && svg.includes("currentColor"), svg.slice(0, 120));
 
 console.log("\nsmoke-relationship-ui: all checks passed");
 process.exit(0);
