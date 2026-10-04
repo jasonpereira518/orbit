@@ -1,5 +1,6 @@
 "use client";
 
+import { ComposeButton } from "@/components/email/compose-button";
 import {
   useEffect,
   useRef,
@@ -195,6 +196,7 @@ function StickyMiniBar({
         <div className="hidden sm:block">
           <ContactChannelIcons {...channels} className="justify-end" />
         </div>
+        <ComposeButton contactId={contactId} />
         <ContactEditSheet
           contactId={contactId}
           name={displayName}
@@ -373,6 +375,7 @@ export function ContactProfileHero({
           aria-hidden={compact}
         >
           <ContactChannelIcons {...channels} />
+          <ComposeButton contactId={contactId} />
           <ContactEditSheet
             contactId={contactId}
             name={displayName}

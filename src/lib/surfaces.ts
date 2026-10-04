@@ -14,7 +14,7 @@ import { SETTINGS_SECTIONS } from "@/components/settings/sections";
  * surface goes dark, and unhiding restores it as it was.
  */
 
-export type SurfaceKind = "page" | "dashboard" | "settings" | "widget";
+export type SurfaceKind = "page" | "dashboard" | "settings" | "widget" | "feature";
 
 export type Surface = {
   /** Stable storage key. Never rename one — the flag rows are keyed on it. */
@@ -37,8 +37,10 @@ export type Surface = {
   alwaysVisible?: true;
   reason?: string;
   /**
-   * Pages only: not released yet. Ordinary users get the coming-soon screen in place of the
-   * route (and every route under it) and the nav item carries a "Soon" tag.
+   * Pages and features: not released yet. On a page, ordinary users get the coming-soon screen
+   * in place of the route (and every route under it) and the nav item carries a "Soon" tag. A
+   * feature has no screen of its own, so it is simply hidden: every entry point disappears and
+   * its server actions refuse.
    *
    * This is the DEFAULT. An operator can mark any releasable page coming soon, or release one
    * of these, from /admin/product; that override is stored as a flag row and wins over this
@@ -227,6 +229,21 @@ const WIDGETS: Surface[] = [
   },
 ];
 
+/**
+ * Capabilities that live inside other pages rather than being pages themselves. Hiding one
+ * removes every entry point to it and makes its server actions refuse (`requireUserForSurface`).
+ */
+export const COMPOSE_SURFACE_KEY = "feature.compose";
+const FEATURES: Surface[] = [
+  {
+    key: COMPOSE_SURFACE_KEY,
+    kind: "feature",
+    label: "Compose email",
+    description: "Write and send email to anyone from a contact's page or ⌘K, from your own mailbox.",
+    comingSoon: true,
+  },
+];
+
 const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   const reason = SETTINGS_LOCKED[section.id];
   return {
@@ -242,7 +259,7 @@ const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   };
 });
 
-export const SURFACES: Surface[] = [...PAGES, ...DASHBOARD_CARDS, ...WIDGETS, ...SETTINGS];
+export const SURFACES: Surface[] = [...PAGES, ...DASHBOARD_CARDS, ...WIDGETS, ...FEATURES, ...SETTINGS];
 
 const BY_KEY = new Map(SURFACES.map((s) => [s.key, s]));
 
@@ -279,9 +296,9 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
   return key !== null && hidden.has(key);
 }
 
-/** Page surfaces that ship as announced-but-not-released, before any operator override. */
+/** Page and feature surfaces that ship as announced-but-not-released, before any operator override. */
 export const DEFAULT_COMING_SOON_KEYS: ReadonlySet<string> = new Set(
-  PAGES.filter((s) => s.comingSoon).map((s) => s.key)
+  SURFACES.filter((s) => s.comingSoon).map((s) => s.key)
 );
 
 /**
@@ -347,6 +364,7 @@ export function orderNavItems<T extends { href: string }>(
  */
 export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
+  [COMPOSE_SURFACE_KEY]: ["settings.email"],
 };
 
 /** True when `href` is a page in `soon` (the effective set; defaults to the code defaults). */

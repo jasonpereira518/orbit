@@ -24,6 +24,7 @@ import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { ComposeHost } from "@/components/email/compose-host";
 import { HiddenSurfacesProvider } from "@/components/layout/hidden-surfaces";
 import { Button } from "@/components/ui/button";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
@@ -168,6 +169,7 @@ export function AppShell({
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
           <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
+          <ComposeHost userId={userId} hidden={hiddenSet} />
           <div
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"
             style={{ viewTransitionName: "app-sidebar" }}

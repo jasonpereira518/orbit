@@ -7,6 +7,7 @@
  * Run: npx tsx scripts/smoke-command-palette.ts
  */
 import {
+  emailVerbTerm,
   looksLikeNote,
   looksLikeQuestion,
   rankEntries,
@@ -81,5 +82,13 @@ for (const q of [
 for (const q of ["sarah", "new capture", "sarah stripe", "who do I know at Stripe?", "   "]) {
   check(`"${q}" does not`, !looksLikeNote(q));
 }
+
+// "email <name>": the one typed verb. People rows become "Email <name>" and open Compose.
+check("'email maya' is the email verb for maya", emailVerbTerm("email maya") === "maya");
+check("'Mail  Sam Ortiz' too, trimmed", emailVerbTerm("Mail  Sam Ortiz") === "Sam Ortiz");
+check("'e-mail ben' too", emailVerbTerm("e-mail ben") === "ben");
+check("'email' alone has no name yet", emailVerbTerm("email") === null && emailVerbTerm("email ") === null);
+check("'emailing notes' is not the verb", emailVerbTerm("emailing notes") === null);
+check("an ordinary search is not the verb", emailVerbTerm("maya") === null);
 
 console.log("\nsmoke-command-palette: all checks passed");
