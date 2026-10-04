@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Gift, Infinity as InfinityIcon, MoreHorizontal } from "lucide-react";
+import { Check, Gift, Infinity as InfinityIcon, MoreHorizontal, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,33 +29,29 @@ import { friendlyError } from "@/lib/errors";
 
 type Choice = "orbit" | "max" | "lifetime" | "none";
 
-/**
- * How a choice's warning reads, and what colour it wears:
- * - `cost`: it costs Orbit real money every month (amber).
- * - `permanent`: it costs money with no end date, or is hard to walk back (red).
- * - `caution`: it can strand the account, but only in some states (amber).
- */
-type Tone = "cost" | "permanent" | "caution";
-
 type ChoiceCopy = {
   value: Choice;
   title: string;
-  /** Scopes the plan accent (`data-plan`) so the row wears that tier's colour. */
+  /** The plan this card is dressed as; also scopes `data-plan` for its accent colours. */
   scope: Plan;
-  tag?: { label: string; tone: Tone };
-  lines: string[];
+  /** One line of voice, set under the name. */
+  tagline: string;
+  /** What it costs you, in the sentence rather than in a warning badge. */
+  description: ReactNode;
+  /** Short allowance chips along the bottom. */
+  chips: string[];
 };
 
-const hours = (seconds: number) => `${seconds / 3_600} hours`;
+const hours = (seconds: number) => `${seconds / 3_600} h`;
+const hoursLong = (seconds: number) => `${seconds / 3_600} hours`;
 /** Orbit's own cost of a plan's included AI, at one cent a credit — the figure the old copy quoted. */
-const aiCost = (credits: number) => `about $${credits / 100}`;
+const aiDollars = (credits: number) => `$${credits / 100}`;
 
 /**
- * Every number here is read from PLAN_CONFIG, the table the gates themselves read, so this
- * dialog cannot promise something the plan no longer grants. A comp is Pro, Max or Lifetime
- * (pricing v2); all three cost Orbit real money — included AI on Orbit's keys, transcription
- * hours and Apollo enrichments — so each row says how much, up front. Lifetime is confirmed
- * in `LifetimeDialog`, which previews what happens to a live subscription first.
+ * Every number is read from PLAN_CONFIG, the table the gates themselves read, so a card
+ * cannot promise something the plan no longer grants. All three comps cost Orbit real money,
+ * and the amount is part of each description. Lifetime is confirmed in `LifetimeDialog`,
+ * which previews what happens to a live subscription first.
  */
 function choicesFor(currentPlan: Plan, contactCount: number): ChoiceCopy[] {
   const { orbit, max, lifetime } = PLAN_CONFIG;
@@ -66,57 +62,158 @@ function choicesFor(currentPlan: Plan, contactCount: number): ChoiceCopy[] {
       value: "orbit",
       title: PLAN_LABELS.orbit,
       scope: "orbit",
-      tag: { label: `costs you ${aiCost(orbit.monthlyCredits ?? 0).replace("about ", "~")}/mo`, tone: "cost" },
-      lines: [
-        `Up to ${orbit.monthlyCredits} AI credits a month on Orbit's keys (${aiCost(orbit.monthlyCredits ?? 0)}).`,
-        `${hours(orbit.speech.meetingSeconds)} of meeting transcription and ${orbit.hostedEnrichmentsPerMonth} Apollo enrichments a month on Orbit's accounts.`,
-        "Unlimited contacts. No REST API.",
-      ],
+      tagline: "Everything switched on.",
+      description: (
+        <>
+          Costs you about <strong>{aiDollars(orbit.monthlyCredits ?? 0)} a month</strong> in AI
+          ({orbit.monthlyCredits} credits on Orbit&rsquo;s keys), plus{" "}
+          {hoursLong(orbit.speech.meetingSeconds)} of meeting transcription and{" "}
+          {orbit.hostedEnrichmentsPerMonth} Apollo enrichments on Orbit&rsquo;s accounts.
+        </>
+      ),
+      chips: ["Unlimited contacts", `${orbit.monthlyCredits} credits`, "No REST API"],
     },
     {
       value: "max",
       title: PLAN_LABELS.max,
       scope: "max",
-      tag: { label: `costs you ${aiCost(max.monthlyCredits ?? 0).replace("about ", "~")}/mo`, tone: "cost" },
-      lines: [
-        `Up to ${max.monthlyCredits} AI credits a month on Orbit's keys (${aiCost(max.monthlyCredits ?? 0)}).`,
-        `${hours(max.speech.meetingSeconds)} of transcription, ${max.hostedEnrichmentsPerMonth} enrichments a month, and the REST API.`,
-      ],
+      tagline: "The full instrument.",
+      description: (
+        <>
+          Costs you about <strong>{aiDollars(max.monthlyCredits ?? 0)} a month</strong> in AI
+          ({max.monthlyCredits} credits on Orbit&rsquo;s keys), plus{" "}
+          {hoursLong(max.speech.meetingSeconds)} of transcription and{" "}
+          {max.hostedEnrichmentsPerMonth} enrichments a month on Orbit&rsquo;s accounts.
+        </>
+      ),
+      chips: [`${max.monthlyCredits} credits`, `${hours(max.speech.meetingSeconds)} audio`, "REST API"],
     },
     {
       value: "lifetime",
       title: PLAN_LABELS.lifetime,
       scope: "lifetime",
-      tag: { label: "permanent, no expiry", tone: "permanent" },
-      lines: [
-        `Every Max feature for good, but AI runs only on their own key: no credits, no packs.`,
-        `Still ${hours(lifetime.speech.meetingSeconds)} of transcription and ${lifetime.hostedEnrichmentsPerMonth} enrichments a month on Orbit's accounts.`,
-        "A live subscription is set to end at its period end — no refund. You review that before anything changes.",
-      ],
+      tagline: "Yours for good.",
+      description: (
+        <>
+          Costs you <strong>$0 in AI</strong>, since it runs on their own key. But{" "}
+          {hoursLong(lifetime.speech.meetingSeconds)} of transcription and{" "}
+          {lifetime.hostedEnrichmentsPerMonth} enrichments a month stay on Orbit&rsquo;s accounts
+          with no end date. A live subscription is set to end at its period end, with no refund.
+        </>
+      ),
+      chips: ["Every Max feature", "No expiry", "Own AI key"],
     },
     {
       value: "none",
       title: currentPlan === "lifetime" ? "Remove Lifetime" : "Remove comp",
       scope: "free",
-      tag: overCap
-        ? { label: `over the ${FREE_CONTACT_LIMIT}-contact cap`, tone: "caution" }
-        : undefined,
-      lines: [
-        currentPlan === "lifetime"
-          ? "You review what happens to the account before anything changes."
-          : "Falls back to their real billing state.",
-        overCap
-          ? `They have ${contactCount} contacts. If they fall back to Free they keep them but cannot add more.`
-          : `If they land on Free they keep everything and can add up to ${FREE_CONTACT_LIMIT} contacts.`,
-      ],
+      tagline: "Back to real billing.",
+      description:
+        currentPlan === "lifetime" ? (
+          "You review what happens to the account before anything changes."
+        ) : overCap ? (
+          <>
+            Falls back to their real billing state. They have <strong>{contactCount} contacts</strong>,
+            over the {FREE_CONTACT_LIMIT} cap: on Free they keep them but cannot add more.
+          </>
+        ) : (
+          `Falls back to their real billing state. On Free they keep everything and can add up to ${FREE_CONTACT_LIMIT} contacts.`
+        ),
+      chips: [],
     },
   ];
 }
 
-const TAG_TONE: Record<Tone, string> = {
-  cost: "bg-warning/15 text-warning",
-  permanent: "bg-destructive/10 text-destructive",
-  caution: "bg-warning/15 text-warning",
+/**
+ * One card per plan, each dressed as that plan rather than as a variation of a list row:
+ * Pro is a blue orbit diagram, Max a struck gold plate, Lifetime a dark platinum card with
+ * an infinity watermark, and Remove a quiet dashed outline. `data-plan` supplies the colours;
+ * the artwork is inline SVG so nothing is fetched and it follows the tier tokens.
+ */
+function PlanArt({ plan }: { plan: Choice }) {
+  const common = { "aria-hidden": true, className: "pointer-events-none absolute inset-0 size-full" } as const;
+  if (plan === "orbit")
+    return (
+      <svg viewBox="0 0 200 120" preserveAspectRatio="xMaxYMin slice" {...common}>
+        <g fill="none" stroke="var(--tier-accent)" strokeOpacity="0.28">
+          <ellipse cx="170" cy="14" rx="80" ry="30" transform="rotate(-18 170 14)" />
+          <ellipse cx="170" cy="14" rx="56" ry="20" transform="rotate(-18 170 14)" />
+          <ellipse cx="170" cy="14" rx="32" ry="11" transform="rotate(-18 170 14)" />
+        </g>
+        <circle cx="118" cy="30" r="3.2" fill="var(--tier-accent)" fillOpacity="0.7" />
+        <circle cx="170" cy="14" r="5" fill="var(--tier-accent)" fillOpacity="0.35" />
+      </svg>
+    );
+  if (plan === "max")
+    return (
+      <svg viewBox="0 0 200 120" preserveAspectRatio="xMidYMid slice" {...common}>
+        <defs>
+          <linearGradient id="max-glint" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0" stopColor="#fff" stopOpacity="0" />
+            <stop offset="0.5" stopColor="#fff" stopOpacity="0.5" />
+            <stop offset="1" stopColor="#fff" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <g stroke="#3d2c00" strokeOpacity="0.14" fill="none">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <line key={i} x1={20 + i * 34} y1="-4" x2={-40 + i * 34} y2="124" />
+          ))}
+        </g>
+        <rect x="-30" y="0" width="50" height="120" fill="url(#max-glint)" transform="translate(110 0) skewX(-20)" />
+      </svg>
+    );
+  if (plan === "lifetime")
+    return (
+      <>
+        <svg viewBox="0 0 200 120" preserveAspectRatio="xMidYMid slice" {...common}>
+          <g fill="#fff">
+            <circle cx="22" cy="18" r="0.9" fillOpacity="0.7" />
+            <circle cx="64" cy="100" r="0.7" fillOpacity="0.5" />
+            <circle cx="150" cy="22" r="1" fillOpacity="0.6" />
+            <circle cx="182" cy="92" r="0.8" fillOpacity="0.5" />
+            <circle cx="104" cy="12" r="0.6" fillOpacity="0.4" />
+          </g>
+        </svg>
+        <InfinityIcon
+          aria-hidden
+          strokeWidth={1.25}
+          className="pointer-events-none absolute -right-3 -top-3 size-24 text-white/10"
+        />
+      </>
+    );
+  return null;
+}
+
+/** Surface, ink and selection ring per card. Pro/Max/Lifetime are fixed looks; Remove is neutral. */
+const CARD_LOOK: Record<Choice, { card: string; ink: string; sub: string; chip: string; check: string }> = {
+  orbit: {
+    card: "border-tier-border bg-gradient-to-br from-tier-surface via-transparent to-transparent",
+    ink: "text-tier-accent",
+    sub: "text-muted-foreground",
+    chip: "border border-tier-border text-tier-accent",
+    check: "bg-tier-accent text-background",
+  },
+  max: {
+    card: "border-transparent bg-gradient-to-br from-tier-sheen-from to-tier-sheen-to shadow-sm",
+    ink: "text-tier-sheen-ink",
+    sub: "text-tier-sheen-ink/80",
+    chip: "bg-tier-sheen-ink/10 text-tier-sheen-ink",
+    check: "bg-tier-sheen-ink text-tier-sheen-from",
+  },
+  lifetime: {
+    card: "border-transparent bg-gradient-to-br from-[#2b323c] to-[#46505d] shadow-sm",
+    ink: "text-white",
+    sub: "text-white/75",
+    chip: "bg-white/10 text-white/90",
+    check: "bg-white text-[#242b34]",
+  },
+  none: {
+    card: "border-dashed border-border bg-transparent",
+    ink: "text-foreground",
+    sub: "text-muted-foreground",
+    chip: "",
+    check: "bg-foreground text-background",
+  },
 };
 
 /** Used when the operator does not type one. Recorded verbatim, so it says what it is. */
@@ -266,7 +363,7 @@ function CompPlanDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Comp a plan</DialogTitle>
           <DialogDescription>
@@ -278,67 +375,74 @@ function CompPlanDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <fieldset className="space-y-2">
+        <fieldset className="grid gap-3 sm:grid-cols-2">
           <legend className="sr-only">Which plan to comp</legend>
-          {choices.map((option) => (
-            <label
-              key={option.value}
-              // `data-plan` hands the row its tier's accent, so Pro reads blue, Max gold and
-              // Lifetime slate — the same colours as the plan badge in the roster.
-              data-plan={option.scope}
-              className={cn(
-                "flex cursor-pointer gap-3 rounded-xl border p-3 transition-colors duration-fast",
-                choice === option.value
-                  ? option.value === "none"
-                    ? "border-border bg-muted/50"
-                    : "border-tier-border bg-tier-surface"
-                  : "border-border/70 hover:border-border"
-              )}
-            >
-              <input
-                type="radio"
-                name="comp-plan"
-                value={option.value}
-                checked={choice === option.value}
-                onChange={() => setChoice(option.value)}
-                className="mt-1 size-3.5 accent-[var(--tier-accent)]"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2">
+          {choices.map((option) => {
+            const look = CARD_LOOK[option.value];
+            const isSelected = choice === option.value;
+            return (
+              <label
+                key={option.value}
+                data-plan={option.scope}
+                className={cn(
+                  "group relative flex min-h-44 cursor-pointer flex-col overflow-hidden rounded-2xl border p-4",
+                  "transition-[transform,box-shadow] duration-fast hover:-translate-y-0.5",
+                  "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
+                  look.card,
+                  isSelected
+                    ? "ring-2 ring-tier-accent ring-offset-2 ring-offset-background"
+                    : option.value === "none"
+                      ? "hover:border-foreground/40"
+                      : "opacity-90 hover:opacity-100"
+                )}
+              >
+                <input
+                  type="radio"
+                  name="comp-plan"
+                  value={option.value}
+                  checked={isSelected}
+                  onChange={() => setChoice(option.value)}
+                  className="sr-only"
+                />
+                <PlanArt plan={option.value} />
+                <span
+                  aria-hidden
+                  className={cn(
+                    "absolute right-3 top-3 grid size-5 place-items-center rounded-full transition-[opacity,transform] duration-fast",
+                    look.check,
+                    isSelected ? "scale-100 opacity-100" : "scale-75 opacity-0"
+                  )}
+                >
+                  <Check className="size-3" strokeWidth={3} />
+                </span>
+
+                <span className="relative flex flex-1 flex-col">
                   <span
-                    className={cn(
-                      "text-sm font-medium",
-                      option.value !== "none" && "text-tier-accent"
-                    )}
+                    className={cn("flex items-center gap-1.5 font-heading text-lg leading-tight", look.ink)}
                   >
+                    {option.value === "none" && <Undo2 className="size-4" aria-hidden />}
                     {option.title}
                   </span>
-                  {option.tag && (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem]",
-                        TAG_TONE[option.tag.tone]
-                      )}
-                    >
-                      {option.tag.tone === "permanent" ? (
-                        <InfinityIcon className="size-3" aria-hidden />
-                      ) : (
-                        <AlertTriangle className="size-3" aria-hidden />
-                      )}
-                      {option.tag.label}
+                  <span className={cn("text-xs italic", look.sub)}>{option.tagline}</span>
+                  <span className={cn("mt-2 block text-xs leading-relaxed", look.sub, "[&_strong]:font-semibold", option.value === "max" ? "[&_strong]:text-tier-sheen-ink" : option.value === "lifetime" ? "[&_strong]:text-white" : "[&_strong]:text-foreground")}>
+                    {option.description}
+                  </span>
+                  {option.chips.length > 0 && (
+                    <span className="mt-auto flex flex-wrap gap-1 pt-3">
+                      {option.chips.map((chip) => (
+                        <span
+                          key={chip}
+                          className={cn("rounded-full px-2 py-0.5 text-[0.6875rem]", look.chip)}
+                        >
+                          {chip}
+                        </span>
+                      ))}
                     </span>
                   )}
                 </span>
-                <span className="mt-1 block space-y-0.5 text-xs text-muted-foreground">
-                  {option.lines.map((line) => (
-                    <span key={line} className="block">
-                      {line}
-                    </span>
-                  ))}
-                </span>
-              </span>
-            </label>
-          ))}
+              </label>
+            );
+          })}
         </fieldset>
 
         <p className="text-xs text-muted-foreground">
