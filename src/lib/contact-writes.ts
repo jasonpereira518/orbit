@@ -703,6 +703,40 @@ export async function createContactsBulkForUser(
 }
 
 /**
+ * One merge per contact. `UPDATE ... FROM (VALUES ...)` applies only ONE arbitrary tuple when
+ * a contact id repeats (a long chat is staged as several rows per person), so several merges
+ * for one contact are folded first: the interaction window widens across all of them, and
+ * every other field takes the first defined value, in order.
+ */
+export function foldMergesByContact(
+  merges: Array<{ contactId: string; input: Partial<ContactInput> }>
+): Array<{ contactId: string; input: Partial<ContactInput> }> {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const m of merges) {
+    const acc = byId.get(m.contactId);
+    if (!acc) {
+      byId.set(m.contactId, { ...m.input });
+      continue;
+    }
+    for (const [k, v] of Object.entries(m.input)) {
+      if (v === undefined || v === null) continue;
+      if (k === "firstInteractionAt" || k === "lastInteractionAt") {
+        const next = safeTimestamp(v as string | Date);
+        const cur = safeTimestamp(acc[k] as string | Date | null | undefined);
+        if (!next) continue;
+        if (!cur || (k === "firstInteractionAt" ? next < cur : next > cur)) acc[k] = next;
+      } else if (acc[k] === undefined || acc[k] === null) {
+        acc[k] = v;
+      }
+    }
+  }
+  return [...byId].map(([contactId, input]) => ({
+    contactId,
+    input: input as Partial<ContactInput>,
+  }));
+}
+
+/**
  * Apply a column patch to many existing contacts in one statement.
  *
  * The import merge path used to call `updateContactForUser` per row, which re-resolved the
@@ -757,6 +791,7 @@ export async function bulkMergeContactsForUser(
   companyResolve: CompanyResolver
 ) {
   if (merges.length === 0) return;
+  merges = foldMergesByContact(merges);
   const db = await getDb();
   const now = new Date();
 

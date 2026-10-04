@@ -20,12 +20,15 @@ export function ImportDropzone({
   busy = false,
   disabled = false,
   extraAction,
+  chatImports = false,
 }: {
   onFiles: (files: DroppedFile[]) => void;
   busy?: boolean;
   disabled?: boolean;
   /** A third button alongside "Choose files" / "Choose a folder" — currently just Drive. */
   extraAction?: ReactNode;
+  /** Also accept WhatsApp / iMessage `.txt` exports; they go to the Chat messages card. */
+  chatImports?: boolean;
 }) {
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -112,7 +115,11 @@ export function ImportDropzone({
         className="sr-only"
         tabIndex={-1}
         aria-hidden
-        accept=".csv,.zip,.ics,.ical,.vcf,.vcard,text/csv,text/calendar,application/zip"
+        accept={
+          chatImports
+            ? ".csv,.zip,.ics,.ical,.vcf,.vcard,.txt,text/csv,text/calendar,text/plain,application/zip"
+            : ".csv,.zip,.ics,.ical,.vcf,.vcard,text/csv,text/calendar,application/zip"
+        }
         onChange={(e) => {
           handle(e.target.files);
           e.target.value = "";

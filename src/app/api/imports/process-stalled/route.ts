@@ -10,6 +10,7 @@ import { resumeStrandedPurges } from "@/lib/user-data";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
+import { sweepAbandonedStaging } from "@/lib/chat-import-preview";
 import { sweepExpiredHandoffs } from "@/lib/scan-handoff";
 import { clerkClient } from "@clerk/nextjs/server";
 import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
@@ -184,6 +185,8 @@ export async function GET(request: Request) {
     meetingSessionsSwept: 0,
     /** Phone-scan grants past their expiry. */
     handoffsSwept: 0,
+    /** Chat uploads whose last chunk never arrived, deleted after 24 h in `staging`. */
+    chatStagingSwept: 0,
     creditHoldsSwept: 0,
     /** Background AI sent to a provider's Batch API: what came back this sweep. */
     aiBatchesApplied: 0,
@@ -270,6 +273,16 @@ export async function GET(request: Request) {
       // run instead of vanishing, and says why.
       status = "partial";
       reportError(err, { where: "job.process-stalled.housekeeping" });
+    }
+
+    try {
+      // A chat import is uploaded in chunks and sits in `staging` until the last one lands.
+      // One whose tab closed mid-upload is invisible everywhere (history, engine, this
+      // route's own resume sweep), so without this its rows would be kept forever.
+      stats.chatStagingSwept = await sweepAbandonedStaging();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.chat-staging" });
     }
 
     try {

@@ -13,6 +13,13 @@ import {
   type ImportJobStatus,
 } from "@/actions/imports";
 import { startDriveImport } from "@/actions/drive";
+import {
+  appendChatRows,
+  beginChatImport,
+  startChatImport,
+} from "@/actions/chat-imports";
+import type { ChatConversationRowPayload } from "@/db/schema";
+import { MAX_APPEND_ROWS } from "@/lib/conversations/types";
 import { UserFacingError, isUserFacingError } from "@/lib/errors";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { type ImportProgressState } from "@/components/imports/import-utils";
@@ -36,7 +43,8 @@ export type ImportJobKind =
   | "outlook_contacts"
   | "contacts_file"
   | "calendar"
-  | "drive_docs";
+  | "drive_docs"
+  | "chat";
 
 export type ImportJobSnapshot = {
   id: string;
@@ -80,7 +88,14 @@ export type ImportJobInput =
       fileName: string;
       createFollowUps: boolean;
     }
-  | { kind: "drive_docs"; files: PickedDriveFile[] };
+  | { kind: "drive_docs"; files: PickedDriveFile[] }
+  | {
+      kind: "chat";
+      source: "whatsapp" | "imessage";
+      fileName: string;
+      selfNames: string[];
+      rows: ChatConversationRowPayload[];
+    };
 
 type Listener = () => void;
 
@@ -100,7 +115,10 @@ function emit() {
  * "0 contacts imported" for the whole run would be actively misleading there.
  */
 function importedLabelFor(kind: ServerOwnedKind): string {
-  return kind === "calendar" ? "meetings logged" : "contacts imported";
+  if (kind === "calendar") return "meetings logged";
+  // Each staged chat row is one participant, linked or created, not necessarily a new contact.
+  if (kind === "chat") return "people";
+  return "contacts imported";
 }
 
 function importedFigure(
@@ -135,6 +153,8 @@ function importJobLabel(kind: ImportJobKind) {
       return "Importing calendar";
     case "drive_docs":
       return "Reading Google Drive files";
+    case "chat":
+      return "Importing chats";
   }
 }
 
@@ -308,7 +328,8 @@ type ServerOwnedKind =
   | "outlook_contacts"
   | "contacts_file"
   | "calendar"
-  | "drive_docs";
+  | "drive_docs"
+  | "chat";
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(
@@ -560,6 +581,46 @@ export type StartImportJobOptions = {
  * `input` — the uploaded file's full text (a LinkedIn export can be tens of MB) — which is
  * otherwise held by the thunk for as long as the job is polled.
  */
+async function stageAndStartChatImport(
+  job: Extract<ImportJobInput, { kind: "chat" }>,
+): Promise<{ importId: string; totalRows: number }> {
+  const begun = await beginChatImport({
+    source: job.source,
+    fileName: job.fileName,
+    selfNames: job.selfNames,
+  });
+  if ("error" in begun) throw new UserFacingError(begun.error);
+  // The server requires each chunk's startIndex to equal the rows already staged, so a chunk
+  // is never retried: any error here is fatal for the job. ~1.5 MB of JSON per call keeps
+  // every action well under the 4.5 MB function body limit.
+  let batch: ChatConversationRowPayload[] = [];
+  let bytes = 0;
+  let index = 0;
+  const flush = async () => {
+    if (!batch.length) return;
+    const res = await appendChatRows(begun.importId, index, batch);
+    if ("error" in res) throw new UserFacingError(res.error);
+    index += batch.length;
+    batch = [];
+    bytes = 0;
+  };
+  for (const row of job.rows) {
+    const size = JSON.stringify(row).length;
+    if (
+      batch.length &&
+      (bytes + size > 1_500_000 || batch.length >= MAX_APPEND_ROWS)
+    ) {
+      await flush();
+    }
+    batch.push(row);
+    bytes += size;
+  }
+  await flush();
+  const started = await startChatImport(begun.importId);
+  if ("error" in started) throw new UserFacingError(started.error);
+  return { importId: begun.importId, totalRows: started.totalRows };
+}
+
 function importStarter(
   input: ImportJobInput,
 ): () => Promise<{ importId: string; totalRows: number }> {
@@ -591,6 +652,8 @@ function importStarter(
           if (!r.ok) throw new UserFacingError(r.error);
           return r.value;
         });
+      case "chat":
+        return stageAndStartChatImport(job);
     }
   };
 }
@@ -619,15 +682,19 @@ export function startImportJob(
       ? "attendees"
       : input.kind === "drive_docs"
         ? "files"
-        : input.ids.length === 1
-          ? "person"
-          : "people";
+        : input.kind === "chat"
+          ? "people"
+          : input.ids.length === 1
+            ? "person"
+            : "people";
   const total =
     input.kind === "calendar"
       ? 1
       : input.kind === "drive_docs"
         ? input.files.length
-        : input.ids.length;
+        : input.kind === "chat"
+          ? input.rows.length
+          : input.ids.length;
 
   const kind = input.kind;
   const begin = importStarter(input);

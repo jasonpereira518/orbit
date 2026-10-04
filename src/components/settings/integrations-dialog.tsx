@@ -70,6 +70,8 @@ export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
       return "microsoft";
     case "contacts_file":
       return null;
+    case "chat":
+      return null;
     case "calendar":
       return null;
     case "drive_docs":

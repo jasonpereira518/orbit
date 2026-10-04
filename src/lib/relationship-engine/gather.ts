@@ -17,7 +17,13 @@ export const MAX_CHUNKS = 3;
 /** Rows read per contact per pass; far more than three windows of real messages. */
 const ROW_LIMIT = 2_000;
 
-export function speakerFor(direction: "in" | "out" | null, contactFullName: string): string {
+export function speakerFor(
+  direction: "in" | "out" | null,
+  contactFullName: string,
+  interactionType?: string
+): string {
+  // A chat session is one row holding a whole transcript with its own per-line speakers.
+  if (interactionType === "message") return "Chat";
   if (direction === "out") return "Me";
   if (direction === "in") return contactFullName.trim().split(/\s+/)[0] || "Them";
   return "?";
@@ -28,7 +34,13 @@ export function formatMessageLine(m: WindowMessage): string {
   return `[${day} ${m.speaker}] ${m.text.replace(/\s+/g, " ").trim()}`;
 }
 
-export function buildWindow(contactId: string, rows: WindowMessage[], sources: string[]): MessageWindow | null {
+export function buildWindow(
+  contactId: string,
+  rows: WindowMessage[],
+  sources: string[],
+  /** True when older unread rows exist beyond `rows` (the read was cut at the row limit). */
+  olderUnread = false
+): MessageWindow | null {
   if (rows.length === 0) return null;
   const lines = rows.map(formatMessageLine);
 
@@ -39,7 +51,9 @@ export function buildWindow(contactId: string, rows: WindowMessage[], sources: s
     total -= lines[start].length + 1;
     start += 1;
   }
-  const truncatedBefore = start > 0 ? rows[start].at : null;
+  // The first KEPT message's date: history before this date was not read (cut by the char
+  // budget here, or by the row limit upstream — either way rows[start] is the first kept row).
+  const truncatedBefore = start > 0 || olderUnread ? rows[start].at : null;
 
   // The window is the oldest kept rows up to WINDOW_CHARS; a single over-long message is clipped.
   const kept: WindowMessage[] = [];
@@ -75,13 +89,15 @@ export type WindowBound = { at: Date; interactionId: string };
  * `opts.until` caps a contact's rows at (interaction_date, id) <= the bound: the batch
  * applier re-reads exactly the window the model was sent, never a message that arrived
  * while the batch was out (that one must stay past the watermark, i.e. pending).
+ * `opts.rowLimit` caps rows read per contact; the NEWEST rows past the watermark are kept.
  */
 export async function loadMessageWindows(
   userId: string,
   contactIds: string[],
-  opts: { until?: Map<string, WindowBound> } = {}
+  opts: { until?: Map<string, WindowBound>; rowLimit?: number } = {}
 ): Promise<Map<string, MessageWindow>> {
   const windows = new Map<string, MessageWindow>();
+  const rowLimit = opts.rowLimit ?? ROW_LIMIT;
   const ids = [...new Set(contactIds)];
   if (!ids.length) return windows;
   const db = await getDb();
@@ -117,20 +133,24 @@ export async function loadMessageWindows(
              ? sql`AND (date_trunc('milliseconds', m.interaction_date), m.id) <= (${bound.at.toISOString()}::timestamptz, ${bound.interactionId}::uuid)`
              : sql``
          }
-       ORDER BY m.interaction_date ASC, m.id ASC
-       LIMIT ${ROW_LIMIT}
+       ORDER BY m.interaction_date DESC, m.id DESC
+       LIMIT ${rowLimit + 1}
     `);
-    const rows = rowsOf<Row>(result);
+    // One extra row says exactly whether older unread rows exist; drop it, then flip the
+    // newest rowLimit rows back to oldest-first for the window.
+    const fetched = rowsOf<Row>(result);
+    const olderUnread = fetched.length > rowLimit;
+    const rows = (olderUnread ? fetched.slice(0, rowLimit) : fetched).reverse();
 
     const messages: WindowMessage[] = rows.map((r) => ({
       interactionId: r.id,
       at: new Date(r.interaction_date),
       direction: r.direction ?? null,
-      speaker: speakerFor(r.direction ?? null, p.fullName),
+      speaker: speakerFor(r.direction ?? null, p.fullName, r.interaction_type),
       text: r.raw_notes ?? "",
     }));
     const sources = [...new Set(rows.map((r) => sourceLabel(r.interaction_type, r.source)))];
-    const window = buildWindow(p.id, messages, sources);
+    const window = buildWindow(p.id, messages, sources, olderUnread);
     if (window) windows.set(p.id, window);
   }
   return windows;

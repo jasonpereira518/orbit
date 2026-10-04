@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   HardDrive,
   Loader2,
+  MessageCircle,
   MessageSquare,
 } from "lucide-react";
 import {
@@ -45,6 +46,7 @@ import {
   useWindowFileDrop,
   useWindowFilePaste,
 } from "@/lib/use-window-file-drop";
+import { handOffChatFiles } from "@/lib/imports/chat-handoff";
 import { detectImportFiles, type DetectionResult } from "@/lib/imports/detect-import-file";
 import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
@@ -226,6 +228,13 @@ const LinkedInMessagesImport = dynamic(
     })),
   { loading: () => <PanelSkeleton /> },
 );
+const ChatMessagesImport = dynamic(
+  () =>
+    import("@/components/imports/chat-messages-import").then((m) => ({
+      default: m.ChatMessagesImport,
+    })),
+  { loading: () => <PanelSkeleton /> },
+);
 const CalendarImportSection = dynamic(
   () =>
     import("@/components/imports/calendar-import-section").then((m) => ({
@@ -237,6 +246,7 @@ const CalendarImportSection = dynamic(
 type RowId =
   | "import-panel-connections"
   | "import-panel-messages"
+  | "import-panel-chats"
   | "import-contacts-file"
   | "import-google-contacts"
   | "import-outlook-contacts"
@@ -254,6 +264,7 @@ const ROW_FOR_ANCHOR: Record<string, RowId | undefined> = {
   "import-google-contacts": "import-google-contacts",
   "import-outlook-contacts": "import-outlook-contacts",
   "import-panel-messages": "import-panel-messages",
+  "import-panel-chats": "import-panel-chats",
   "import-panel-calendar": "import-panel-calendar",
 };
 
@@ -279,6 +290,8 @@ function rowForImportJobKind(kind: ImportJobKind): RowId | null {
       return "import-calendar-file";
     case "drive_docs":
       return null;
+    case "chat":
+      return "import-panel-chats";
   }
 }
 
@@ -294,6 +307,7 @@ export function ImportHub({
   outlook,
   drive,
   latestFinish,
+  chatImports = false,
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
@@ -309,6 +323,8 @@ export function ImportHub({
   drive?: DriveImportInput;
   /** The most recent completed import, drawn as the done card when nothing is running. */
   latestFinish?: LatestFinishedImport | null;
+  /** `feature.chat-imports` is live for this viewer; the WhatsApp/iMessage row exists only then. */
+  chatImports?: boolean;
 }) {
   const job = useImportJob();
   const queue = useImportQueue();
@@ -409,32 +425,55 @@ export function ImportHub({
   /** Reading a pick's files to work out what they are. Folders can be thousands deep. */
   const [scanning, setScanning] = useState(false);
 
-  const handleFiles = useCallback(async (files: DroppedFile[]) => {
-    const capped = files.length > IMPORT_DROP_LIMITS.maxFiles;
-    const kept = capped ? files.slice(0, IMPORT_DROP_LIMITS.maxFiles) : files;
-    setScanning(true);
-    try {
-      const result = await detectImportFiles(kept, {
-        maxBytes: MAX_CONTACTS_FILE_BYTES,
-        truncated: capped,
-      });
-      // A folder with more than one file Orbit reads is a choice, not a guess: rank them and
-      // let the person confirm. Loose files were hand-picked, and one candidate has no choice
-      // to make, so both go straight to the review as before.
-      const fromFolder = kept.some((f) => f.path !== "");
-      if (fromFolder && result.candidates.length >= 2) {
-        setTriage(result);
-        return;
+  const handleFiles = useCallback(
+    async (files: DroppedFile[]) => {
+      const capped = files.length > IMPORT_DROP_LIMITS.maxFiles;
+      const kept = capped ? files.slice(0, IMPORT_DROP_LIMITS.maxFiles) : files;
+      setScanning(true);
+      try {
+        const result = await detectImportFiles(kept, {
+          maxBytes: MAX_CONTACTS_FILE_BYTES,
+          truncated: capped,
+          chatImports,
+        });
+        if (result.chatFiles.length) {
+          // Open the row first: the card mounts with it and picks the files up on mount.
+          setOpen("import-panel-chats");
+          handOffChatFiles(result.chatFiles);
+          requestAnimationFrame(() =>
+            document
+              .getElementById("import-panel-chats")
+              ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+          );
+        }
+        // A chat-only drop stages nothing; skipping avoids flashing an empty "done" queue.
+        if (
+          result.chatFiles.length &&
+          !result.staged.length &&
+          !result.ignored.length &&
+          !result.skipped.length
+        ) {
+          return;
+        }
+        // A folder with more than one file Orbit reads is a choice, not a guess: rank them and
+        // let the person confirm. Loose files were hand-picked, and one candidate has no choice
+        // to make, so both go straight to the review as before.
+        const fromFolder = kept.some((f) => f.path !== "");
+        if (fromFolder && result.candidates.length >= 2) {
+          setTriage(result);
+          return;
+        }
+        setTriage(null);
+        await stageDrop(result);
+        if (capped) {
+          toast.message(`That folder has ${files.length.toLocaleString()} files — checked the first ${IMPORT_DROP_LIMITS.maxFiles}`);
+        }
+      } finally {
+        setScanning(false);
       }
-      setTriage(null);
-      await stageDrop(result);
-      if (capped) {
-        toast.message(`That folder has ${files.length.toLocaleString()} files — checked the first ${IMPORT_DROP_LIMITS.maxFiles}`);
-      }
-    } finally {
-      setScanning(false);
-    }
-  }, []);
+    },
+    [chatImports, setOpen],
+  );
 
   /**
    * A LinkedIn profile link dragged in from another tab (or pasted onto the page) adds that
@@ -582,6 +621,7 @@ export function ImportHub({
 
       <ImportDropzone
         onFiles={(files) => void handleFiles(files)}
+        chatImports={chatImports}
         busy={reading || scanning}
         extraAction={
           driveConfigured ? (
@@ -687,6 +727,18 @@ export function ImportHub({
           >
             <LinkedInMessagesImport />
           </ImportSourceRow>
+
+          {chatImports ? (
+            <ImportSourceRow
+              {...row("import-panel-chats")}
+              icon={MessageCircle}
+              accent={MESSAGES_ACCENT}
+              title="Chat messages"
+              status="WhatsApp and iMessage exports, read on your device"
+            >
+              <ChatMessagesImport />
+            </ImportSourceRow>
+          ) : null}
 
           <ImportSourceRow
             {...row("import-contacts-file")}

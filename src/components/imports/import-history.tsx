@@ -17,7 +17,9 @@ import {
   FileSpreadsheet,
   FileText,
   Mail,
+  MessageCircle,
   MessageSquare,
+  MessageSquareText,
   Upload,
   type LucideIcon,
 } from "lucide-react";
@@ -77,6 +79,8 @@ const SOURCE_ICON: Record<string, { icon: LucideIcon; badge: string }> = {
   google_contacts: { icon: Contact, badge: CONNECTIONS_BADGE },
   outlook_contacts: { icon: Contact, badge: CONNECTIONS_BADGE },
   linkedin_messages: { icon: MessageSquare, badge: MESSAGES_BADGE },
+  whatsapp_chat: { icon: MessageCircle, badge: MESSAGES_BADGE },
+  imessage_chat: { icon: MessageSquareText, badge: MESSAGES_BADGE },
   gmail_recruiter_scan: { icon: Mail, badge: MESSAGES_BADGE },
   outlook_recruiter_scan: { icon: Mail, badge: MESSAGES_BADGE },
   calendar_ics: { icon: CalendarIcon, badge: CALENDAR_BADGE },

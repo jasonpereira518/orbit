@@ -236,6 +236,8 @@ const WIDGETS: Surface[] = [
 export const COMPOSE_SURFACE_KEY = "feature.compose";
 export const OUTLOOK_SEND_SURFACE_KEY = "feature.outlook-send";
 export const REPLY_INBOX_SURFACE_KEY = "feature.reply-inbox";
+/** The key the chat-imports feature (WhatsApp / iMessage exports) gates on. */
+export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
@@ -258,6 +260,14 @@ const FEATURES: Surface[] = [
     label: "Reply to inbox threads",
     description: "Compose can reply to the latest email with a contact found in your mailbox (Gmail read / Mail.Read).",
     // Until the privacy page discloses this use of the read scopes (direct-email P5).
+    comingSoon: true,
+  },
+  {
+    key: CHAT_IMPORTS_SURFACE_KEY,
+    kind: "feature",
+    label: "Chat imports (WhatsApp, iMessage)",
+    description:
+      "Upload WhatsApp and iMessage exports for relationship analysis. Hidden until the privacy policy discloses chat content.",
     comingSoon: true,
   },
 ];

@@ -250,6 +250,77 @@ async function main() {
     nothingInside.staged.length === 0 && nothingInside.ignored.length === 1
   );
 
+  console.log("Chat exports");
+  const WA_CHAT = [
+    "[13/03/2024, 09:15:02] Messages and calls are end-to-end encrypted. No one outside of this chat can read them.",
+    "[13/03/2024, 09:15:02] Maya Chen: Hey! Are you free next Tuesday?",
+    "[13/03/2024, 09:16:40] Jason Pereira: Yes, lunch at 1?",
+  ].join("\n");
+  const chatZip = new JSZip();
+  chatZip.file("_chat.txt", WA_CHAT);
+  chatZip.file("IMG-0001.jpg", "binary");
+  const chatZipFile = {
+    file: new File([await chatZip.generateAsync({ type: "arraybuffer" })], "WhatsApp Chat - Maya.zip"),
+    path: "",
+  };
+  const chatDrop = () => [
+    drop("WhatsApp Chat - Maya.txt", WA_CHAT),
+    chatZipFile,
+    drop("Connections.csv", CONNECTIONS_WITH_PREAMBLE),
+    drop("messages.csv", MESSAGES_CSV),
+  ];
+
+  const on = await detectImportFiles(chatDrop(), { chatImports: true });
+  check(
+    "chatImports: a WhatsApp .txt and a chat-only zip land in chatFiles",
+    on.chatFiles.map((f) => f.name).sort().join("|") === "WhatsApp Chat - Maya.txt|WhatsApp Chat - Maya.zip",
+    on.chatFiles.map((f) => f.name).join("|"),
+  );
+  check(
+    "chatImports: neither is a target or an error",
+    on.staged.map((d) => d.target).join(",") === "linkedin_connections,linkedin_messages" &&
+      on.ignored.length === 0 &&
+      on.skipped.length === 0,
+    `${on.staged.length} staged, ${on.ignored.length} ignored, ${on.skipped.length} skipped`,
+  );
+
+  const off = await detectImportFiles(chatDrop());
+  const offExplicit = await detectImportFiles(chatDrop(), { chatImports: false });
+  for (const [label, r] of [["default", off], ["false", offExplicit]] as const) {
+    check(`chatImports ${label}: chatFiles stays empty`, r.chatFiles.length === 0);
+    check(
+      `chatImports ${label}: the .txt is ignored and the zip reports what it always did`,
+      r.ignored.map((d) => `${d.displayName}=${d.reason}`).sort().join("|") ===
+        "WhatsApp Chat - Maya.txt=not something Orbit reads|WhatsApp Chat - Maya.zip=a ZIP with nothing Orbit reads inside",
+      r.ignored.map((d) => `${d.displayName}=${d.reason}`).join("|"),
+    );
+    check(
+      `chatImports ${label}: the CSVs still classify`,
+      r.staged.map((d) => d.target).join(",") === "linkedin_connections,linkedin_messages",
+    );
+  }
+
+  const notChat = await detectImportFiles(
+    [drop("readme.txt", "hello"), drop("messages.csv", MESSAGES_CSV)],
+    { chatImports: true },
+  );
+  check(
+    "chatImports: a .txt that is not a chat is ignored as before",
+    notChat.chatFiles.length === 0 && notChat.ignored.length === 1,
+  );
+
+  const mixedZip = new JSZip();
+  mixedZip.file("_chat.txt", WA_CHAT);
+  mixedZip.file("Connections.csv", CONNECTIONS_WITH_PREAMBLE);
+  const withCsv = await detectImportFiles(
+    [{ file: new File([await mixedZip.generateAsync({ type: "arraybuffer" })], "both.zip"), path: "" }],
+    { chatImports: true },
+  );
+  check(
+    "chatImports: a zip with a LinkedIn CSV stays a CSV import",
+    withCsv.chatFiles.length === 0 && withCsv.staged[0]?.target === "linkedin_connections",
+  );
+
   console.log("A whole LinkedIn export folder");
   // Named the way the archive actually unzips: everything under one folder.
   const folder = (name: string, body: string) =>

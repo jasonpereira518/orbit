@@ -34,6 +34,8 @@ export const metadata = { title: "Admin · Engagement" };
 const IMPORT_LABELS: Record<string, string> = {
   linkedin_connections: "LinkedIn connections",
   linkedin_messages: "LinkedIn messages",
+  whatsapp_chat: "WhatsApp chats",
+  imessage_chat: "iMessage chats",
   google_contacts: "Google contacts",
   outlook_contacts: "Outlook contacts",
   contacts_file: "Contacts file",

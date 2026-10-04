@@ -10,6 +10,8 @@ import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { ImportHub } from "@/components/imports/import-hub";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { CHAT_IMPORTS_SURFACE_KEY } from "@/lib/surfaces";
+import { isSurfaceLive } from "@/lib/surface-visibility";
 import type { ProviderCalendarInput } from "@/lib/imports/calendar-sources";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
@@ -25,14 +27,16 @@ export default async function ImportsPage() {
   // Both connection statuses are fetched here rather than in a mount effect inside the cards,
   // so the calendar section knows on first paint whether anything is syncing — and so the
   // contacts cards stop flashing "Not connected" before their own fetch resolves.
-  const [history, latestFinish, calendarSubscriptions, entitlements, gmail, outlook] =
+  const userId = await requireUserId();
+  const [history, latestFinish, calendarSubscriptions, entitlements, gmail, outlook, chatImports] =
     await Promise.all([
       listImports(),
       getLatestFinishedImport(),
       listCalendarSubscriptions(),
-      getEntitlements(await requireUserId()),
+      getEntitlements(userId),
       getGmailConnectionStatus().catch(() => null),
       getOutlookConnectionStatus().catch(() => null),
+      isSurfaceLive(userId, CHAT_IMPORTS_SURFACE_KEY),
     ]);
 
   const google: ProviderCalendarInput | null = gmail
@@ -88,6 +92,7 @@ export default async function ImportsPage() {
         canUseSync={entitlements.canUseSync}
         google={google}
         outlook={microsoft}
+        chatImports={chatImports}
         drive={{
           apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
           appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,

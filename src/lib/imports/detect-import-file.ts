@@ -29,6 +29,10 @@ import { looksLikeContactsCsv } from "@/lib/contacts-file";
 import { headerFields } from "@/lib/imports/csv-header";
 import { isIgnorableFile, type DroppedFile } from "@/lib/capture/file-drop";
 import { RUN_ORDER } from "@/lib/imports/import-constants";
+import {
+  detectChatSource,
+  pickChatMember,
+} from "@/lib/conversations/read-files";
 
 /**
  * Deliberately the same strings as `imports.import_type`.
@@ -87,6 +91,12 @@ export type DetectionResult = {
   skipped: Detected[];
   /** The drop hit a cap and there was more on disk. */
   truncated: boolean;
+  /**
+   * Chat exports (a WhatsApp/iMessage `.txt`, or a zip holding one) set aside for the Chat
+   * messages card. Always empty unless `chatImports` was on. They are neither targets nor
+   * ignored: the card reads, parses and previews them itself.
+   */
+  chatFiles: File[];
   /**
    * Every recognised file that fit, including the ones `staged` set aside for a bigger file of
    * the same kind. What a folder review lists so the person can choose among them.
@@ -266,6 +276,15 @@ async function readHead(file: File): Promise<string> {
     : text;
 }
 
+/** A `.txt` the chat card's own reader would accept; anything else stays "not something Orbit reads". */
+async function isChatText(file: File): Promise<boolean> {
+  try {
+    return detectChatSource(file.name, (await file.slice(0, 4096).text())) !== null;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Decide one file.
  *
@@ -348,7 +367,10 @@ const ZIP_MEMBERS: { pattern: RegExp; target: ImportTarget; reason: string }[] =
  * `Ad_Targeting.csv` and `Rich_Media.csv` — dozens of files that must cost nothing and appear
  * nowhere, so decompressing them to find that out would be the wrong trade.
  */
-async function expandZip(entry: DroppedFile): Promise<Detected[]> {
+async function expandZip(
+  entry: DroppedFile,
+  chatImports: boolean,
+): Promise<{ detected: Detected[]; chat: boolean }> {
   const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(await entry.file.arrayBuffer());
   const members = Object.values(zip.files).filter(
@@ -400,6 +422,20 @@ async function expandZip(entry: DroppedFile): Promise<Detected[]> {
     }
   }
 
+  // A zip whose chat member is a chat export (WhatsApp's "Export chat" share, media and all)
+  // belongs to the chat card. Classified by the same `detectChatSource` the card's reader
+  // uses, on the same member it would pick, so the two cannot disagree. Only the chosen
+  // `.txt` is decompressed.
+  if (!out.length && chatImports) {
+    const member = pickChatMember(members);
+    if (member) {
+      const head = (await member.async("string")).slice(0, 4096);
+      if (detectChatSource(entry.file.name, head)) {
+        return { detected: [], chat: true };
+      }
+    }
+  }
+
   if (!out.length) {
     out.push({
       file: entry.file,
@@ -411,7 +447,7 @@ async function expandZip(entry: DroppedFile): Promise<Detected[]> {
       displayName: entry.file.name,
     });
   }
-  return out;
+  return { detected: out, chat: false };
 }
 
 export type DetectOptions = {
@@ -419,6 +455,11 @@ export type DetectOptions = {
   maxBytes?: number;
   /** Set when the drop itself was capped, so the caller can say so. */
   truncated?: boolean;
+  /**
+   * Route chat exports to `chatFiles`. Off, a `.txt` is ignored and a chat zip reports as
+   * "nothing Orbit reads", exactly as before the Chat messages card existed.
+   */
+  chatImports?: boolean;
 };
 
 /**
@@ -432,7 +473,7 @@ export async function detectImportFiles(
   files: readonly DroppedFile[],
   options: DetectOptions = {},
 ): Promise<DetectionResult> {
-  const { maxBytes, truncated = false } = options;
+  const { maxBytes, truncated = false, chatImports = false } = options;
 
   // A LinkedIn export folder is ~30 CSVs and only two of them are people. Recognising one lets
   // every other member be dismissed WITHOUT being read: nothing else is staged, so nothing
@@ -470,10 +511,13 @@ export async function detectImportFiles(
   );
 
   const detected: Detected[] = [];
+  const chatFiles: File[] = [];
   for (const entry of files) {
     if (isIgnorableFile(baseName(entry.file.name))) continue;
     if (extensionOf(entry.file.name) === ".zip") {
-      detected.push(...(await expandZip(entry)));
+      const expanded = await expandZip(entry, chatImports);
+      if (expanded.chat) chatFiles.push(entry.file);
+      detected.push(...expanded.detected);
       continue;
     }
     if (linkedInFolders.has(entry.path) && !isLinkedInExportMember(entry.file.name)) {
@@ -487,6 +531,12 @@ export async function detectImportFiles(
         displayName: entry.file.name,
       });
       continue;
+    }
+    if (chatImports && extensionOf(entry.file.name) === ".txt") {
+      if (await isChatText(entry.file)) {
+        chatFiles.push(entry.file);
+        continue;
+      }
     }
     detected.push(await classifyFile(entry));
   }
@@ -520,5 +570,5 @@ export async function detectImportFiles(
     }
   }
 
-  return { staged, ignored, skipped, truncated, candidates: usable };
+  return { staged, ignored, skipped, truncated, chatFiles, candidates: usable };
 }

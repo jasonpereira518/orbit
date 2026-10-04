@@ -80,6 +80,47 @@
         { "at": "2026-09-25T10:00:00Z", "from": "me", "text": "Thanks, not looking right now." }
       ],
       "expect": { "facts": ["Globex"], "commitments": [], "reminders": 0, "openThreads": 0 }
+    },
+    {
+      "id": "whatsapp-1to1-dated",
+      "contactName": "Maya Chen",
+      "now": "2026-09-30T12:00:00Z",
+      "chat": true,
+      "messages": [
+        { "at": "2026-09-27T10:00:00Z", "from": "them", "text": "[2026-09-27 10:00 Maya] Can you send the term sheet by Friday?\n[2026-09-27 10:05 Me] Yes, Friday works" }
+      ],
+      "expect": { "facts": [], "commitments": [{ "phrase": "term sheet", "owedBy": "me", "dueIso": "2026-10-02" }], "reminders": 1, "openThreads": 0 }
+    },
+    {
+      "id": "whatsapp-group-attribution",
+      "contactName": "Ana Ruiz",
+      "now": "2026-09-30T12:00:00Z",
+      "chat": true,
+      "forbiddenFacts": ["Berlin"],
+      "messages": [
+        { "at": "2026-09-28T10:00:00Z", "from": "them", "text": "# Group chat \"Founders\" with Ana Ruiz, Ben Ode\n# This contact appears as \"Ana Ruiz\"\n[2026-09-28 10:00 Ana Ruiz] I'll introduce you to my investor next week\n[2026-09-28 10:02 Ben Ode] Big news, I'm moving to Berlin in the spring\n[2026-09-28 10:03 Me] Thanks Ana, that would be great" }
+      ],
+      "expect": { "facts": [], "commitments": [{ "phrase": "intro", "owedBy": "them", "dueIso": "2026-10-05" }], "reminders": 1, "openThreads": 0 }
+    },
+    {
+      "id": "imessage-old-plan",
+      "contactName": "Priya Nair",
+      "now": "2026-09-30T12:00:00Z",
+      "chat": true,
+      "messages": [
+        { "at": "2025-01-10T18:00:00Z", "from": "them", "text": "[2025-01-10 18:00 +14155550134] Dinner next Thursday?\n[2025-01-10 18:02 Me] Sounds great" }
+      ],
+      "expect": { "facts": [], "commitments": [], "reminders": 0, "openThreads": 1 }
+    },
+    {
+      "id": "whatsapp-pleasantries",
+      "contactName": "Sam Ortiz",
+      "now": "2026-09-30T12:00:00Z",
+      "chat": true,
+      "messages": [
+        { "at": "2026-09-27T10:00:00Z", "from": "them", "text": "[2026-09-27 10:00 Sam] Happy birthday!!\n[2026-09-27 10:01 Me] Thank you!!" }
+      ],
+      "expect": { "facts": [], "commitments": [], "reminders": 0, "openThreads": 0, "trivial": true }
     }
   ]
 }

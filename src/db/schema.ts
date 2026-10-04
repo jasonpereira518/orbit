@@ -465,6 +465,8 @@ export const userSettings = pgTable("user_settings", {
   workHistoryAutoEnabled: integer("work_history_auto_enabled").default(1).notNull(),
   /** 1 = analyze imported conversations with the relationship engine (on by default). */
   relationshipEngineEnabled: integer("relationship_engine_enabled").default(1).notNull(),
+  /** Sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me"). */
+  chatSelfNames: jsonb("chat_self_names").$type<string[]>().default([]).notNull(),
   /**
    * One-shot marker: has this row already been force-flipped to
    * `timeline_backfill_enabled = 1` by the v108 migration? Exists only so that migration's
@@ -2133,6 +2135,20 @@ export type CalendarEventRowPayload = {
   createFollowUps: boolean;
 };
 
+export type ChatConversationRowPayload = {
+  kind: "chat_conversation";
+  source: "whatsapp" | "imessage";
+  conversationKey: string;
+  isGroup: boolean;
+  title: string;
+  participant: { key: string; displayName: string; phoneE164: string | null; email: string | null };
+  /** Picked or auto-linked in the preview. Must name one of the user's contacts; re-verified by the engine. */
+  resolvedContactId?: string | null;
+  /** 1:1 → true. Group member → true only if the user ticked "add as contact". */
+  createIfUnmatched: boolean;
+  sessions: { startAt: string; endAt: string; messageCount: number; direction: "in" | "out" | null; transcript: string }[];
+};
+
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
@@ -2141,6 +2157,7 @@ export type ImportJobRowPayload =
   | OutlookContactRowPayload
   | ContactsFileRowPayload
   | LinkedInMessageThreadRowPayload
+  | ChatConversationRowPayload
   | CalendarEventRowPayload
   | DriveFileRowPayload;
 

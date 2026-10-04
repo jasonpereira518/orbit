@@ -34,6 +34,9 @@ type Tier = "pure" | "pglite" | "manual";
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
+  "smoke-chat-parsers": "pure",
+  "smoke-chat-sessions": "pure",
+  "smoke-chat-read-files": "pure",
   "smoke-connectivity": "pure",
   "smoke-waitlist-pass-news": "pure",
   "smoke-waitlist-demo-fidelity": "pure",
@@ -185,6 +188,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-icon-button-names": "pure",
+  "smoke-chat-handoff": "pure",
   "smoke-import-detect": "pure",
   "smoke-import-rank": "pure",
   "smoke-import-errors": "pure",
@@ -354,6 +358,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-health-token": "pglite",
   "smoke-health": "pglite",
   "smoke-hybrid-search": "pglite",
+  "smoke-chat-import-engine": "pglite",
+  "smoke-chat-import-actions": "pglite",
   "smoke-import-engine": "pglite",
   "smoke-import-row-staging": "pglite",
   "smoke-capture-upload-parts": "pglite",
