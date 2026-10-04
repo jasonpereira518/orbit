@@ -1,4 +1,12 @@
 /**
+ * The key caps in the intro line. Flat on purpose: one quiet fill, no border, no gradient and
+ * no shadow, so they read as part of the sentence rather than as raised keys. Theme tokens
+ * only, so dark mode follows without a second set.
+ */
+const KBD =
+  "mx-0.5 inline-flex items-center rounded-md bg-muted px-1.5 py-[3px] align-baseline font-sans text-[11px] font-medium leading-none text-ink/75";
+
+/**
  * Static dashboard header, rendered by BOTH page.tsx and loading.tsx so
  * client navigation shows identical pixels before and after data arrives.
  */
@@ -18,11 +26,11 @@ export function DashboardHeader() {
         <span className="hidden [@media(hover:hover)]:inline">
           {" "}
           Press{" "}
-          <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
+          <kbd className={KBD}>
             ⌘K
           </kbd>{" "}
           to jump anywhere, or{" "}
-          <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
+          <kbd className={KBD}>
             ⌘J
           </kbd>{" "}
           to ask your network.

@@ -5,7 +5,6 @@ import {
   resolvePlan,
   type BillingColumns,
 } from "@/lib/entitlements";
-import { PLAN_RANK } from "@/lib/plans/plan-config";
 
 export type PlanUpgradeEvent = {
   id: string;
@@ -15,12 +14,14 @@ export type PlanUpgradeEvent = {
 };
 
 /**
- * Queue a celebration only when effective access actually moves upward.
+ * Queue a plan-activation display whenever the resolved plan changes to a paid plan —
+ * upward (Pro -> Max) or downward (Lifetime -> Pro). Moving to free queues nothing: there
+ * is no tier to show.
  *
  * This intentionally compares resolved plans rather than individual billing columns: a
- * subscription webhook must not celebrate Pro over an existing Lifetime grant, and adding
- * a comp for the same plan is provenance—not an upgrade. Database uniqueness handles both
- * webhook retries and concurrent deliveries.
+ * subscription webhook must not celebrate Pro over an existing Lifetime grant (the
+ * resolved plan doesn't change), and adding a comp for the same plan is provenance—not a
+ * change. Database uniqueness handles both webhook retries and concurrent deliveries.
  */
 export async function queuePlanUpgradeTransition(input: {
   userId: string;
@@ -30,9 +31,7 @@ export async function queuePlanUpgradeTransition(input: {
 }) {
   const previous = resolvePlan(input.before);
   const next = resolvePlan(input.after);
-  if (next.plan === "free" || PLAN_RANK[next.plan] <= PLAN_RANK[previous.plan]) {
-    return null;
-  }
+  if (next.plan === "free" || next.plan === previous.plan) return null;
 
   const source = next.source;
   if (source === "free") return null;

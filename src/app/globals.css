@@ -1890,6 +1890,53 @@
   );
 }
 
+/* A word in bright yellow with a slow band of light crossing it: a saturated gold at rest and
+ * a pale lemon band on a light page, a brighter yellow with a cream band and a faint glow on a
+ * dark one. The gradient is the text colour, so reduced motion keeps the gold and
+ * only stops the band. */
+@keyframes gold-shimmer-text {
+  0% {
+    background-position: 120% 50%;
+  }
+  100% {
+    background-position: -20% 50%;
+  }
+}
+
+.gold-shimmer-text {
+  --gold-base: #f2ae00;
+  --gold-light: #fff08a;
+  background-image: linear-gradient(
+    105deg,
+    var(--gold-base) 0%,
+    var(--gold-base) 40%,
+    var(--gold-light) 49%,
+    var(--gold-light) 51%,
+    var(--gold-base) 60%,
+    var(--gold-base) 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: gold-shimmer-text 5s ease-in-out infinite;
+}
+
+.dark .gold-shimmer-text {
+  --gold-base: #ffd21f;
+  --gold-light: #fffbd6;
+  /* A faint glow so the brighter yellow lifts off the dark card instead of sitting on it. */
+  filter: drop-shadow(0 0 10px rgba(255, 200, 40, 0.3));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gold-shimmer-text {
+    animation: none;
+    background-position: 50% 50%;
+  }
+}
+
 .hero-solar-stage {
   transform-style: preserve-3d;
 }

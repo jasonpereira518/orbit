@@ -114,11 +114,11 @@ function unionMembers(file: string, typeName: string): string[] {
 }
 
 console.log("\ngroups");
-check("five groups", SETTINGS_GROUPS.length === 5);
+check("six groups", SETTINGS_GROUPS.length === 6);
 check(
-  "named Account, Preferences, Integrations, Resources, Data, in that order",
+  "named Account, Goals and targets, Preferences, Integrations, Resources, Data, in that order",
   SETTINGS_GROUPS.map((g) => g.label).join(",") ===
-    "Account,Preferences,Integrations,Resources,Data"
+    "Account,Goals and targets,Preferences,Integrations,Resources,Data"
 );
 const groupKeys = new Set<string>(SETTINGS_GROUPS.map((g) => g.key));
 for (const section of SETTINGS_SECTIONS) {
@@ -213,8 +213,8 @@ const FROZEN_SECTION_IDS = [
   "settings-plan",
   "settings-appearance",
   "settings-notifications",
-  "settings-goals",
   "settings-email",
+  "settings-goals",
   "settings-targets",
   "settings-ai",
   "settings-outreach",
