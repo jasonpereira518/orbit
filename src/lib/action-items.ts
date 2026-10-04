@@ -73,7 +73,7 @@ export async function syncActionItems(userId: string, interactionId: string, con
 export async function listOpenActionItems(userId: string, contactId: string) {
   const db = await getDb();
   return db
-    .select({ id: actionItems.id, text: actionItems.text, interactionId: actionItems.interactionId, interactionDate: interactions.interactionDate, reminderId: actionItems.reminderId })
+    .select({ id: actionItems.id, text: actionItems.text, interactionId: actionItems.interactionId, interactionDate: interactions.interactionDate, reminderId: actionItems.reminderId, owedBy: actionItems.owedBy })
     .from(actionItems)
     .innerJoin(interactions, eq(interactions.id, actionItems.interactionId))
     .where(and(eq(actionItems.userId, userId), eq(actionItems.contactId, contactId), eq(actionItems.status, "open")))

@@ -85,6 +85,8 @@ async function main() {
   check("sync: done row survives even though it left the list", rows.some((r) => r.status === "done"));
   const open = await listOpenActionItems(USER, c.id);
   check("open list excludes done", open.length === 2 && open.every((o) => o.text !== rows.find((r) => r.status === "done")!.text));
+  await db.update(actionItems).set({ owedBy: "them" }).where(eq(actionItems.id, open[0].id));
+  check("list: owedBy carried", (await listOpenActionItems(USER, c.id)).find((x) => x.id === open[0].id)?.owedBy === "them");
   check("status change is user-scoped", (await setActionItemStatusForUser("someone-else", rows[0].id, "open")) === null);
 
   await db.delete(contacts).where(eq(contacts.userId, USER));

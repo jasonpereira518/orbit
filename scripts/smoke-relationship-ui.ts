@@ -8,6 +8,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { RunSummaryView } from "../src/components/imports/relationship-run-summary";
 import type { RunSummary } from "../src/lib/relationship-engine/summary-copy";
 import { DigestSection } from "../src/components/contacts/contact-digest";
+import { owedLabel } from "../src/components/contacts/contact-next-steps";
+import { OpenThreadsList } from "../src/components/contacts/contact-open-threads";
 import { digestSourceLine, topicLine, type DigestView } from "../src/lib/relationship-engine/digest-copy";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -57,6 +59,20 @@ check("digest: working on", dg.includes("A self-serve onboarding revamp"));
 check("digest: summary", dg.includes("You met at a fintech dinner"));
 check("digest: topic chips", dg.includes("Hiring") && dg.includes("Onboarding"));
 check("digest: source line rendered", dg.includes("From 214 WhatsApp messages"));
+
+check("owed: me", owedLabel("me") === "You owe");
+check("owed: them", owedLabel("them") === "They owe");
+check("owed: none", owedLabel(null) === null);
+const threads = [
+  { key: "t1", text: "Intro to Priya", owedBy: "me" as const, sinceIso: "2026-05-01", interactionId: "x", excerpt: "can you intro me to Priya?", canRemind: true },
+  { key: "t2", text: "Coffee in October", owedBy: null, sinceIso: "2026-04-01", interactionId: "y", excerpt: "coffee sometime?", canRemind: false },
+];
+const th = textOf(renderToStaticMarkup(React.createElement(OpenThreadsList, { threads, busyKey: null, onRemind: () => {}, onDismiss: () => {} })));
+check("threads: count in the summary", th.includes("Open threads (2)"), th);
+check("threads: quote and date", th.includes("can you intro me to Priya?") && th.includes("May 1"));
+check("threads: owed badge", th.includes("You owe"));
+check("threads: remind only where possible", (th.match(/Remind me/g) ?? []).length === 1, th);
+check("threads: dismiss on each", (th.match(/Dismiss/g) ?? []).length === 2);
 
 console.log("\nsmoke-relationship-ui: all checks passed");
 process.exit(0);

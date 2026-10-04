@@ -15,7 +15,12 @@ export type OpenActionItem = {
   interactionId: string;
   interactionDate: string;
   reminderId: string | null;
+  owedBy: "me" | "them" | null;
 };
+
+export function owedLabel(owedBy: "me" | "them" | null): "You owe" | "They owe" | null {
+  return owedBy === "me" ? "You owe" : owedBy === "them" ? "They owe" : null;
+}
 
 export function ContactNextSteps({ items }: { items: OpenActionItem[] }) {
   const router = useRouter();
@@ -74,6 +79,11 @@ export function ContactNextSteps({ items }: { items: OpenActionItem[] }) {
               {item.reminderId ? (
                 <Badge variant="outline" className="text-[10px]">
                   reminder set
+                </Badge>
+              ) : null}
+              {owedLabel(item.owedBy) ? (
+                <Badge variant={item.owedBy === "me" ? "secondary" : "outline"} className="text-[10px]">
+                  {owedLabel(item.owedBy)}
                 </Badge>
               ) : null}
             </div>

@@ -8,6 +8,7 @@ import { toast } from "@/lib/toast";
 import { regenerateContactSummary } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ContactOpenThreads } from "@/components/contacts/contact-open-threads";
 import { DigestSection } from "@/components/contacts/contact-digest";
 import { ContactNextSteps, type OpenActionItem } from "@/components/contacts/contact-next-steps";
 import { flashSection } from "@/components/layout/section-flash";
@@ -94,6 +95,7 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
         <div>
           <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Open next steps</p>
           <ContactNextSteps items={nextSteps} />
+          {digest?.openThreads.length ? <ContactOpenThreads contactId={contactId} threads={digest.openThreads} /> : null}
         </div>
       </CardContent>
     </Card>
