@@ -37,8 +37,10 @@ export type Surface = {
   alwaysVisible?: true;
   reason?: string;
   /**
-   * Pages and features: not released yet. Ordinary users get the coming-soon screen in place of the
-   * route (and every route under it) and the nav item carries a "Soon" tag.
+   * Pages and features: not released yet. On a page, ordinary users get the coming-soon screen
+   * in place of the route (and every route under it) and the nav item carries a "Soon" tag. A
+   * feature has no screen of its own, so it is simply hidden: every entry point disappears and
+   * its server actions refuse.
    *
    * This is the DEFAULT. An operator can mark any releasable page coming soon, or release one
    * of these, from /admin/product; that override is stored as a flag row and wins over this
@@ -227,6 +229,49 @@ const WIDGETS: Surface[] = [
   },
 ];
 
+/**
+ * Capabilities that live inside other pages rather than being pages themselves. Hiding one
+ * removes every entry point to it and makes its server actions refuse (`requireUserForSurface`).
+ */
+export const COMPOSE_SURFACE_KEY = "feature.compose";
+export const OUTLOOK_SEND_SURFACE_KEY = "feature.outlook-send";
+export const REPLY_INBOX_SURFACE_KEY = "feature.reply-inbox";
+/** The key the chat-imports feature (WhatsApp / iMessage exports) gates on. */
+export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
+const FEATURES: Surface[] = [
+  {
+    key: COMPOSE_SURFACE_KEY,
+    kind: "feature",
+    label: "Compose email",
+    description: "Write and send email to anyone from a contact's page or ⌘K, from your own mailbox.",
+    comingSoon: true,
+  },
+  {
+    key: OUTLOOK_SEND_SURFACE_KEY,
+    kind: "feature",
+    label: "Send from Outlook",
+    description: "Send Orbit email from a connected Outlook or Microsoft 365 mailbox (Mail.Send).",
+    // Until the privacy page discloses Mail.Send (direct-email P3, Task 8).
+    comingSoon: true,
+  },
+  {
+    key: REPLY_INBOX_SURFACE_KEY,
+    kind: "feature",
+    label: "Reply to inbox threads",
+    description: "Compose can reply to the latest email with a contact found in your mailbox (Gmail read / Mail.Read).",
+    // Until the privacy page discloses this use of the read scopes (direct-email P5).
+    comingSoon: true,
+  },
+  {
+    key: CHAT_IMPORTS_SURFACE_KEY,
+    kind: "feature",
+    label: "Chat imports (WhatsApp, iMessage)",
+    description:
+      "Upload WhatsApp and iMessage exports for relationship analysis. Hidden until the privacy policy discloses chat content.",
+    comingSoon: true,
+  },
+];
+
 const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   const reason = SETTINGS_LOCKED[section.id];
   return {
@@ -242,32 +287,7 @@ const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   };
 });
 
-/** The key the chat-imports feature (WhatsApp / iMessage exports) gates on. */
-export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
-
-/**
- * Capabilities that are not a page, a card, a widget or a settings section: a feature that
- * several of those would otherwise each have to gate. Coming-soon works exactly as it does
- * for pages (closed for admins too until the preview cookie is set).
- */
-const FEATURES: Surface[] = [
-  {
-    key: CHAT_IMPORTS_SURFACE_KEY,
-    kind: "feature",
-    label: "Chat imports (WhatsApp, iMessage)",
-    description:
-      "Upload WhatsApp and iMessage exports for relationship analysis. Hidden until the privacy policy discloses chat content.",
-    comingSoon: true,
-  },
-];
-
-export const SURFACES: Surface[] = [
-  ...PAGES,
-  ...DASHBOARD_CARDS,
-  ...WIDGETS,
-  ...SETTINGS,
-  ...FEATURES,
-];
+export const SURFACES: Surface[] = [...PAGES, ...DASHBOARD_CARDS, ...WIDGETS, ...FEATURES, ...SETTINGS];
 
 const BY_KEY = new Map(SURFACES.map((s) => [s.key, s]));
 
@@ -306,7 +326,7 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
 
 /** Page and feature surfaces that ship as announced-but-not-released, before any operator override. */
 export const DEFAULT_COMING_SOON_KEYS: ReadonlySet<string> = new Set(
-  [...PAGES, ...FEATURES].filter((s) => s.comingSoon).map((s) => s.key)
+  SURFACES.filter((s) => s.comingSoon).map((s) => s.key)
 );
 
 /**
@@ -372,6 +392,7 @@ export function orderNavItems<T extends { href: string }>(
  */
 export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
+  [COMPOSE_SURFACE_KEY]: ["settings.email"],
 };
 
 /** True when `href` is a page in `soon` (the effective set; defaults to the code defaults). */

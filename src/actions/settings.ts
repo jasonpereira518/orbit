@@ -14,6 +14,9 @@ import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
+import { loadEmailSettings, saveDefaultSendProvider, saveEmailSignature } from "@/lib/email/settings";
+import { getSendCapability, type SendCapability } from "@/lib/email/sender";
+import { requireUserForSurface } from "@/lib/plan-guards";
 import {
   DATA_CATEGORY_IDS,
   deletionOutcome,
@@ -294,6 +297,26 @@ export async function saveWritingInstructions(text: string) {
   if (typeof text !== "string") throw new Error("Invalid writing instructions");
   const stored = await saveWritingInstructionsFor(userId, text);
   return { ok: true as const, text: stored };
+}
+
+/** The Email settings section: signature, and the mailbox Orbit sends from. */
+export async function getEmailSettings(): Promise<{ signature: string | null; capability: SendCapability }> {
+  const userId = await requireUserForSurface("settings.email");
+  const [{ signature }, capability] = await Promise.all([loadEmailSettings(userId), getSendCapability(userId)]);
+  return { signature, capability };
+}
+
+/** Which connected mailbox sends by default when more than one can. Null = automatic. */
+export async function saveDefaultSendProviderAction(provider: "gmail" | "outlook" | null): Promise<SendCapability> {
+  const userId = await requireUserForSurface("settings.email");
+  await saveDefaultSendProvider(userId, provider === "gmail" || provider === "outlook" ? provider : null);
+  return getSendCapability(userId);
+}
+
+export async function saveEmailSignatureAction(text: string): Promise<{ ok: true; signature: string | null }> {
+  const userId = await requireUserForSurface("settings.email");
+  if (typeof text !== "string") throw new Error("Invalid signature");
+  return { ok: true, signature: await saveEmailSignature(userId, text) };
 }
 
 /**

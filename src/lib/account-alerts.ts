@@ -83,6 +83,7 @@ export type HealthCode =
   | "calendar.sync_error"
   | "import.failed"
   | "import.stalled"
+  | "email.send_failed"
   | "plan.contact_cap_reached"
   | "plan.contact_cap_near"
   /** 80% of this cycle's AI allowance used (pricing v2). */
@@ -162,6 +163,13 @@ export type HealthInput = {
   importStalledRows: number | null;
   importStalledTotal: number | null;
 
+  /**
+   * Person-to-person emails (`email_sends`) that ended `failed`, windowed by the caller to
+   * `EMAIL_FAILED_ALERT_WINDOW_MS`. Mail that didn't go is the one outcome the person can't
+   * see from the screen they sent it from — they were told "Sending…" and moved on.
+   */
+  emailSendFailedCount: number;
+
   plan: Plan;
   planSource: PlanSource;
   subscriptionStatus: "active" | "past_due" | "canceled" | null;
@@ -193,7 +201,7 @@ export type HealthFinding = {
 };
 
 export type AccountAlertKind =
-  "ai_key" | "connection" | "calendar" | "import" | "billing" | "plan_limit";
+  "ai_key" | "connection" | "calendar" | "import" | "email" | "billing" | "plan_limit";
 
 export type AccountAlert = {
   /**
@@ -350,6 +358,14 @@ export function evaluateAccountHealth(
       },
     });
   }
+  // --- Email -----------------------------------------------------------------------------
+  if (input.emailSendFailedCount > 0) {
+    findings.push({
+      code: "email.send_failed",
+      severity: "error",
+      data: { count: input.emailSendFailedCount },
+    });
+  }
   if (input.importStalledCount > 0) {
     findings.push({
       code: "import.stalled",
@@ -461,6 +477,8 @@ export function evaluateAccountHealth(
 const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
   // Already happened. The import is over; the row is a receipt, not a blocker.
   "import.failed",
+  // Already happened, like a failed import: the email didn't go, and it won't go by staring.
+  "email.send_failed",
   // Retried automatically by the stalled-import cron.
   "import.stalled",
   // One input among several, and `lastSyncStatus` stays "error" until the next SUCCESS —
@@ -500,6 +518,7 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "calendar.sync_error": "calendar",
   "import.failed": "import",
   "import.stalled": "import",
+  "email.send_failed": "email",
   "plan.contact_cap_reached": "plan_limit",
   "plan.contact_cap_near": "plan_limit",
   "plan.credits_near": "plan_limit",
@@ -519,8 +538,9 @@ const KIND_RANK: Record<AccountAlertKind, number> = {
   connection: 1,
   billing: 2,
   plan_limit: 3,
-  import: 4,
-  calendar: 5,
+  email: 4,
+  import: 5,
+  calendar: 6,
 };
 
 /** Fully deterministic tiebreak, so two calls a second apart never reorder the list. */
@@ -539,6 +559,7 @@ const CODE_RANK: HealthCode[] = [
   "plan.credits_near",
   "plan.contact_cap_near",
   "plan.api_paused",
+  "email.send_failed",
   "import.failed",
   "import.stalled",
   "calendar.sync_error",
@@ -678,6 +699,18 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
             external: false,
           },
           surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "email.send_failed": {
+        const n = int(f.data.count) ?? 1;
+        alerts.push({
+          ...base,
+          title: n === 1 ? "An email didn't send" : `${n} emails didn't send`,
+          body: "Nothing went out. Open the contact to send it again, or reconnect Gmail if it asks you to.",
+          cta: { label: "Open contacts", href: "/contacts", external: false },
+          surfaceKey: "page.contacts",
         });
         break;
       }

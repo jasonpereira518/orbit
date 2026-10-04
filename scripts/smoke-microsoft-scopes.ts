@@ -43,7 +43,7 @@ const identity = [
   MICROSOFT_SCOPES.offlineAccess,
   MICROSOFT_SCOPES.userRead,
 ];
-const featureScopes: string[] = [MICROSOFT_SCOPES.contacts, MICROSOFT_SCOPES.calendar, MICROSOFT_SCOPES.mail];
+const featureScopes: string[] = [MICROSOFT_SCOPES.contacts, MICROSOFT_SCOPES.calendar, MICROSOFT_SCOPES.mail, MICROSOFT_SCOPES.mailSend];
 
 console.log("Scopes per purpose");
 for (const purpose of MICROSOFT_PURPOSES) {
@@ -56,7 +56,13 @@ check("calendar never asks to read mail or contacts", !microsoftScopesFor(["cale
 check("the recruiter scan asks for Mail.Read only", requiredScopeFor("recruiter_scan") === MICROSOFT_SCOPES.mail && !microsoftScopesFor(["recruiter_scan"]).includes(MICROSOFT_SCOPES.calendar));
 check("Graph scopes are requested as full URIs", requiredScopeFor("calendar") === "https://graph.microsoft.com/Calendars.Read" && MICROSOFT_SCOPES.userRead === "https://graph.microsoft.com/User.Read");
 check("a refresh token is still requested (offline_access)", microsoftScopesFor(["contacts"]).includes("offline_access"));
-check("no scope is a write scope", Object.values(MICROSOFT_SCOPES).every((s) => !/write|send|readwrite/i.test(s)));
+check(
+  "the only write scope is Mail.Send, and only the send purpose asks for it",
+  Object.values(MICROSOFT_SCOPES).filter((s) => /write|send/i.test(s)).join() === MICROSOFT_SCOPES.mailSend &&
+    MICROSOFT_PURPOSES.filter((p) => requiredScopeFor(p) === MICROSOFT_SCOPES.mailSend).join() === "send"
+);
+check("never Mail.ReadWrite", !Object.values(MICROSOFT_SCOPES).some((s) => /readwrite/i.test(s)));
+check("send asks for Mail.Send and nothing that reads", requiredScopeFor("send") === MICROSOFT_SCOPES.mailSend && !microsoftScopesFor(["send"]).includes(MICROSOFT_SCOPES.mail));
 
 console.log("Requests carry what was already enabled — and only that");
 const carried = microsoftScopesFor(["calendar"], "openid Contacts.Read User.Read AuditLog.Create");
@@ -69,8 +75,8 @@ check("the purpose's own scope is not duplicated by the stored grant", microsoft
 check("no stored grant adds nothing", microsoftScopesFor(["contacts"], null).length === identity.length + 1 && microsoftScopesFor(["contacts"], "").length === identity.length + 1);
 
 console.log("Purposes from untrusted input");
-check("a known purpose is accepted", isMicrosoftPurpose("calendar") && isMicrosoftPurpose("recruiter_scan") && isMicrosoftPurpose("contacts"));
-check("an unknown purpose is refused", !isMicrosoftPurpose("everything") && !isMicrosoftPurpose("send") && !isMicrosoftPurpose(undefined) && !isMicrosoftPurpose(""));
+check("a known purpose is accepted", isMicrosoftPurpose("calendar") && isMicrosoftPurpose("recruiter_scan") && isMicrosoftPurpose("contacts") && isMicrosoftPurpose("send"));
+check("an unknown purpose is refused", !isMicrosoftPurpose("everything") && !isMicrosoftPurpose("sendmail") && !isMicrosoftPurpose(undefined) && !isMicrosoftPurpose(""));
 
 console.log("Normalization: short name, full URI and any case are one scope");
 const forms = ["Calendars.Read", "https://graph.microsoft.com/Calendars.Read", "calendars.read", "CALENDARS.READ", "HTTPS://GRAPH.MICROSOFT.COM/calendars.read"];
@@ -107,11 +113,13 @@ check("mail purpose says mail", missingScopeMessage("recruiter_scan") === "Micro
 check("an unknown purpose falls back to the mail copy", missingScopeMessage(null) === missingScopeMessage("recruiter_scan"));
 check("contacts says contacts", missingScopeMessage("contacts") === "Microsoft didn’t grant contacts access — reconnect and allow it");
 check("calendar says calendar", missingScopeMessage("calendar") === "Microsoft didn’t grant calendar access — reconnect and allow it");
+check("send says sending", missingScopeMessage("send") === "Microsoft didn’t grant permission to send — reconnect and allow it");
 
 console.log("\nconnecting to several features at once");
 const connect = microsoftScopesFor(MICROSOFT_CONNECT_PURPOSES);
 check("one connect asks for contacts and calendar", connect.includes(MICROSOFT_SCOPES.contacts) && connect.includes(MICROSOFT_SCOPES.calendar));
 check("and never for mail", !connect.includes(MICROSOFT_SCOPES.mail));
+check("and never to send", !connect.includes(MICROSOFT_SCOPES.mailSend));
 check("identity scopes ride along once", connect.filter((s) => s === MICROSOFT_SCOPES.openid).length === 1);
 check("a repeated purpose asks once", microsoftScopesFor(["contacts", "contacts"]).filter((s) => s === MICROSOFT_SCOPES.contacts).length === 1);
 check("one purpose still works", microsoftScopesFor(["recruiter_scan"]).includes(MICROSOFT_SCOPES.mail));

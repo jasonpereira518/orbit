@@ -15,6 +15,8 @@ import { sweepExpiredHandoffs } from "@/lib/scan-handoff";
 import { clerkClient } from "@clerk/nextjs/server";
 import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
+import { hasBlobStorage } from "@/lib/contact-avatar";
+import { sweepEmailAttachments } from "@/lib/email/attachments";
 import {
   finishCronRun,
   startCronRun,
@@ -177,6 +179,8 @@ export async function GET(request: Request) {
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
+    /** Email attachment blobs deleted: settled sends past ATTACHMENT_RETENTION_MS, and uploads never sent. */
+    emailAttachmentsSwept: 0,
     /** Meetings nobody finished, past `ABANDONED_SESSION_TTL_DAYS`. */
     meetingSessionsSwept: 0,
     /** Phone-scan grants past their expiry. */
@@ -249,6 +253,12 @@ export async function GET(request: Request) {
       // history only lists saved captures — so keeping them would be holding pictures of
       // someone's notes for no one.
       stats.capturePhotosPruned = await pruneUnattachedCapturePhotos();
+      // Email attachments: kept a week after the send settles (for a retry), and uploads the
+      // composer never sent.
+      if (hasBlobStorage()) {
+        const swept = await sweepEmailAttachments();
+        stats.emailAttachmentsSwept = swept.settled + swept.orphans;
+      }
       // Abandoned meeting transcripts. The per-user sweep only runs when that user records
       // again; without this, one recording never finished is kept forever.
       stats.meetingSessionsSwept = await sweepAbandonedMeetingSessions();

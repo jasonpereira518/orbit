@@ -98,6 +98,7 @@ function main() {
   // the cron never runs and a long import cannot continue, and it only shows in production.
   const internalRoutes = [
     "/api/imports/process-stalled",
+    "/api/email/drain",
     "/api/imports/imp_abc123/continue",
     "/api/capture/jobs/job_abc123/run",
     "/api/avatars/encode",

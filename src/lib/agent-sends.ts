@@ -366,6 +366,23 @@ export async function finishAgentSend(
     .where(eq(agentSendRequests.id, id));
 }
 
+/**
+ * The send may have gone out (a timeout after the provider accepted it, and no way to check
+ * Sent). Never re-approvable — the person checks their Sent folder instead — so this uses the
+ * `failed` status reserved for exactly this case.
+ */
+export async function markAgentSendAmbiguous(id: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(agentSendRequests)
+    .set({
+      status: "failed",
+      errorMessage: "May have sent — check your Sent folder before sending it again.",
+      updatedAt: new Date(),
+    })
+    .where(eq(agentSendRequests.id, id));
+}
+
 /** Agent sends that went out today, for the shared daily cap. */
 export async function countAgentSendsToday(userId: string): Promise<number> {
   const db = await getDb();

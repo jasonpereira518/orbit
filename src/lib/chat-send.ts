@@ -13,9 +13,6 @@ export const SEND_SUBJECT_MAX = 200;
 export const SEND_BODY_MAX = DRAFT_MAX_CHARS;
 export const DEFAULT_SEND_SUBJECT = "Following up";
 
-/** How many chat sends one account may make in a day, counted from the claim rows. */
-export const CHAT_SEND_DAILY_CAP = 25;
-
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function isUuid(value: unknown): value is string {
   return typeof value === "string" && UUID.test(value);
@@ -89,28 +86,4 @@ export function contactIdFromSendKey(externalId: string, messageId: string): str
   if (!externalId.startsWith(prefix)) return null;
   const rest = externalId.slice(prefix.length);
   return isUuid(rest) ? rest : null;
-}
-
-export type SendFailureKind =
-  /** Definitely not sent: a release of the claim is safe and a retry is fine. */
-  | "definite"
-  /** Gmail may have accepted it. Never retry on our own; the person checks Sent. */
-  | "ambiguous"
-  | "needs_reconnect";
-
-/**
- * Sort a thrown send error into what may safely happen next.
- *
- * The distinction is whether Gmail could have accepted the message. An answer from Gmail that
- * is not a success (`Gmail send failed:`, the 403 refusal) means it did not. A dead grant is
- * caught before any request is made. Everything else — the 20-second abort that fires after
- * the request left, a dropped connection, a success response with no id — is ambiguous, and an
- * ambiguous send keeps its claim so that a retry cannot email the same person twice.
- */
-export function classifySendError(err: unknown): SendFailureKind {
-  if (err instanceof Error && err.name === "ReauthRequiredError") return "needs_reconnect";
-  const message = err instanceof Error ? err.message : String(err);
-  if (/^Gmail refused the send/i.test(message)) return "needs_reconnect";
-  if (/^Gmail send failed/i.test(message)) return "definite";
-  return "ambiguous";
 }

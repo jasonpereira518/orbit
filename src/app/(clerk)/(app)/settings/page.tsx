@@ -1,9 +1,10 @@
-import { getPlanOverview, getSettings } from "@/actions/settings";
+import { getEmailSettings, getPlanOverview, getSettings } from "@/actions/settings";
 import { listGoals } from "@/actions/goals";
 import { getDisplayProfile, isClerkConfigured } from "@/lib/auth";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
+import { EmailSettings } from "@/components/settings/email-settings";
 import { TargetCompaniesSettings } from "@/components/settings/target-companies-settings";
 import { getSchools, getTargetCompanies } from "@/actions/target-companies";
 import { CreditsSettings } from "@/components/settings/credits-settings";
@@ -63,7 +64,7 @@ const GROUP = Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.key, g])) as Reco
 >;
 
 /**
- * One of the five named groups, and the rail's anchor for it. Renders nothing when every
+ * One of the named groups, and the rail's anchor for it. Renders nothing when every
  * card in it is hidden, so a label never floats above an empty stretch of page — and the
  * rail, built from the same visibility, never offers a row that scrolls nowhere.
  */
@@ -103,6 +104,7 @@ export default async function SettingsPage() {
     schools,
     meetingAllowance,
     shortformAllowance,
+    emailSettings,
   ] = await Promise.all([
     getSettings(),
     listGoals(),
@@ -113,6 +115,10 @@ export default async function SettingsPage() {
     getSchools(),
     speechAllowance(userId, "meeting"),
     speechAllowance(userId, "shortform"),
+    // Loaded here, not by the section on mount: this page replaceStates on mount (OAuth
+    // params, hash cleanup), and a Next router restore drops any server action queued at
+    // that moment — the section would sit on its skeleton forever. Null when hidden.
+    getEmailSettings().catch(() => null),
   ]);
   // `speechAllowance` returns a Date; the panel below is a client component, so hand it
   // down as an ISO string the same way `managed-ai-policy`'s allowance already does.
@@ -177,6 +183,18 @@ export default async function SettingsPage() {
         </Section>
       </Group>
 
+      <Group group="goals" visible={groupVisible("goals")}>
+        <Section id="settings-goals" hidden={hidden}>
+          <GoalsSettings initialGoals={initialGoals} />
+        </Section>
+        <Section id="settings-targets" hidden={hidden}>
+          <TargetCompaniesSettings
+            initialCompanies={targetCompanies}
+            initialSchools={schools}
+          />
+        </Section>
+      </Group>
+
       <Group group="preferences" visible={groupVisible("preferences")}>
         {shows("settings-appearance") || shows("settings-notifications") ? (
           <SettingsSection
@@ -196,14 +214,8 @@ export default async function SettingsPage() {
             ) : null}
           </SettingsSection>
         ) : null}
-        <Section id="settings-goals" hidden={hidden}>
-          <GoalsSettings initialGoals={initialGoals} />
-        </Section>
-        <Section id="settings-targets" hidden={hidden}>
-          <TargetCompaniesSettings
-            initialCompanies={targetCompanies}
-            initialSchools={schools}
-          />
+        <Section id="settings-email" hidden={hidden}>
+          <EmailSettings initial={emailSettings} />
         </Section>
       </Group>
 

@@ -5300,7 +5300,10 @@
     "hasLinkedIn": true,
     "email": "sarah.chen@example.com",
     "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
-    "canSendEmail": false
+    "canSendEmail": false,
+    "sendBlock": "not_connected",
+    "sendBlockProvider": null,
+    "outlookAvailable": false
   },
   "action: listRecentMerges": [],
   "action: getSettings": {
@@ -5521,7 +5524,8 @@
     "basisInteractionId": "<interactions:Thirty minutes on what a Codex integration would need. She w>",
     "nextStep": null,
     "model": "demo-seed",
-    "inputHash": null
+    "inputHash": null,
+    "goalFit": null
   },
   "v1 me": {
     "status": 200,

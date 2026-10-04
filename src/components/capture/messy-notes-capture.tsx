@@ -40,7 +40,19 @@ import { extractLinkedInProfileRefs, isLinkedInOnlyPaste } from "@/lib/linkedin-
 import type { CaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { isIgnorableFile } from "@/lib/capture/file-drop";
 import { useCaptureFanout } from "@/lib/capture/use-capture-fanout";
-import type { PlannedUpload } from "@/lib/capture/bins";
+import {
+  emptyState,
+  oversizedUploads,
+  planUploads,
+  separateTray,
+  stageFiles,
+  type PlannedUpload,
+  type StagedFile,
+} from "@/lib/capture/bins";
+import { anchorForFile } from "@/lib/capture/file-date";
+import { estimatePreparedBytes } from "@/lib/capture/prepare-upload";
+import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
+import { UploadFilesDialog } from "@/components/capture/upload-files-dialog";
 import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
 import { NotesFanoutList } from "@/components/capture/notes-library-upload";
 import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
@@ -83,6 +95,9 @@ export function MessyNotesCapture({
   const [incoming, setIncoming] = useState<{ file: File; path: string }[]>([]);
   /** Hashing, checking and decoding a single file before its upload starts. */
   const [preparing, setPreparing] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  /** Set once a single uploaded file has been read into the box; the effect below then extracts. */
+  const extractWhenRead = useRef(false);
   const busy = ingest.busy || extracting || fanout.running || preparing;
   const { notes, setNotes, mentionPicks, setMentionPicks } = ingest;
   // A paste of nothing but profile URLs is looked up directly, with no model pass — so it
@@ -204,6 +219,87 @@ export function MessyNotesCapture({
     }
   }
 
+  /**
+   * Extract people from the upload pop-up. It does what pressing Extract on the box does, for
+   * the files: one file is read into the box and extracted from there; several are each their
+   * own note, read as background jobs in this upload's queue — the sorter's "separate" layout,
+   * without stopping to ask, since the person has just said what they want done.
+   */
+  async function extractUploaded(files: File[]) {
+    const kept = files.filter((f) => !isIgnorableFile(f.name));
+    if (!kept.length) return;
+    if (kept.length === 1) {
+      await ingestIntoBox(kept);
+      extractWhenRead.current = true;
+      return;
+    }
+    setPreparing(true);
+    try {
+      const hashes = await hashFilesSequentially(kept);
+      const byId = new Map<string, File>();
+      const staged: StagedFile[] = kept.map((file, i) => {
+        const id = crypto.randomUUID();
+        byId.set(id, file);
+        return {
+          id,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+          path: "",
+          hash: hashes[i] ?? "",
+        };
+      });
+      let state = separateTray(
+        stageFiles(emptyState(), staged).state,
+        () => crypto.randomUUID(),
+        (file) => {
+          const guess = anchorForFile({ name: file.name, lastModified: file.lastModified });
+          return { name: file.name.replace(/\.[^.]+$/, "").trim() || file.name, anchorIso: guess.iso };
+        }
+      );
+      // A file captured before is left out, as the sorter does by default — reading it again
+      // would bill the same pages twice.
+      const known = new Set<string>();
+      const res = await findCapturedFiles(state.files.map((f) => f.hash).filter(Boolean)).catch(() => null);
+      if (res?.ok) for (const m of res.matches) known.add(m.hash);
+      const skipped = state.files.filter((f) => f.hash && known.has(f.hash));
+      if (skipped.length) {
+        state = { ...state, excludedIds: skipped.map((f) => f.id) };
+        toast.message(
+          skipped.length === 1
+            ? `Skipped ${skipped[0]!.name} — you already captured it`
+            : `Skipped ${skipped.length} files you already captured`
+        );
+      }
+      const plans = planUploads(
+        state,
+        (file) => {
+          const guess = anchorForFile({ name: file.name, lastModified: file.lastModified });
+          return { name: file.name.replace(/\.[^.]+$/, "").trim() || file.name, anchorIso: guess.iso };
+        },
+        estimatePreparedBytes
+      );
+      if (!plans.length) return;
+      const oversized = oversizedUploads(plans, CAPTURE_MAX_UPLOAD_BYTES);
+      if (oversized.length) {
+        toast.error(`${oversized[0]!.label} is over ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} — remove it and try again`);
+        return;
+      }
+      fanout.start(plans, (id) => byId.get(id));
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  // Extract once the single uploaded file has finished reading into the box. Waits on `busy`
+  // rather than the read's own promise so the click handler sees the notes it just produced.
+  useEffect(() => {
+    if (!extractWhenRead.current || busy) return;
+    extractWhenRead.current = false;
+    if (ingest.notes.trim() && (ingest.hasApiKey || linkedInOnly)) onExtract();
+  }, [busy, ingest.notes, ingest.hasApiKey, linkedInOnly, onExtract]);
+
   function openSorter(files: File[]) {
     const kept = files.filter((f) => !isIgnorableFile(f.name));
     if (kept.length === 1) return void ingestIntoBox(kept);
@@ -294,6 +390,7 @@ export function MessyNotesCapture({
           onRawFiles={ingest.handleFilesSelected}
           onPages={ingest.ingestScanPages}
           onFiles={(files) => void acceptDropped(files)}
+          onUploadClick={() => setUploadOpen(true)}
           onTranscript={(text, sources, jobId) => ingest.onPhoneTranscript(text, sources, jobId ?? null)}
         />
         <div className="flex flex-wrap items-center gap-2">
@@ -332,6 +429,13 @@ export function MessyNotesCapture({
             : "Extract people"}
       </Button>
 
+      <UploadFilesDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        onExtract={(files) => void extractUploaded(files)}
+        busy={busy}
+        canExtract={ingest.hasApiKey}
+      />
       {/* Mounted only while open: closing unmounts it, which is what revokes its previews. */}
       {incoming.length > 0 && (
         <NotesSorterDialog incoming={incoming} onCancel={() => setIncoming([])} onConfirm={onSorted} />

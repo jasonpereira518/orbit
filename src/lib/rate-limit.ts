@@ -20,7 +20,7 @@ import { rateLimitBuckets } from "@/db/schema";
 /** What a bucket scope means to the person hitting it, for the error message. */
 const BUCKET_LABELS: Record<string, string> = {
   chat: "chat",
-  chatSend: "email send",
+  emailSend: "email send",
   capture: "capture",
   captureHandoff: "scan",
   captureParts: "capture",
@@ -28,6 +28,7 @@ const BUCKET_LABELS: Record<string, string> = {
   avatarResolve: "photo lookup",
   feedback: "feedback",
   radarRefresh: "Radar refresh",
+  knowledgeRefresh: "refresh",
   interestJoin: "sign-up",
   interestProgress: "progress check",
   pollResults: "poll results",
@@ -87,12 +88,13 @@ export const RATE_LIMITS = {
   /** `askNetwork` / `/api/chat`: a full retrieval plus a model completion per call. */
   chat: { limit: 20, windowSec: 60 },
   /**
-   * A chat draft sent from the user's own Gmail. Outbound and irreversible, so tighter than
-   * anything else here and measured over ten minutes: the shape to bound is a loop or a
-   * hijacked session mailing people in bulk from a real address, not a person sending a few
-   * follow-ups. The daily cap (`CHAT_SEND_DAILY_CAP`) is counted from the claim rows.
+   * Any person-to-person email through the outbox (`src/lib/email/outbox.ts`) — Chat,
+   * follow-ups, approved assistant drafts, recruiter replies. Outbound and sent from the user's
+   * real address, so tighter than anything else here and measured over ten minutes: the shape
+   * to bound is a loop or a hijacked session mailing people in bulk, not a person sending a
+   * few follow-ups. The daily cap is separate and per plan (`EMAIL_SEND_DAILY_CAP`).
    */
-  chatSend: { limit: 10, windowSec: 600 },
+  emailSend: { limit: 10, windowSec: 600 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
   /**
@@ -165,6 +167,13 @@ export const RATE_LIMITS = {
   // Each refresh re-scores the whole network and may write up to five AI lines on the
   // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
   radarRefresh: { limit: 3, windowSec: 600 },
+  /**
+   * `/api/knowledge/refresh`: rebuilding one person's brief on the Knowledge page — a model
+   * call on the account's own key, made when a dossier opens on a stale brief or a goal was
+   * added since it was judged. Sized for clicking through a list of people after adding a
+   * goal, and no more: past it the dossier simply shows what is on file.
+   */
+  knowledgeRefresh: { limit: 30, windowSec: 300 },
   /**
    * `joinInterestList`: ten submits per ten minutes per IP. Replaces the action's old
    * per-instance Map, which never held across instances. Loose on purpose — several friends
