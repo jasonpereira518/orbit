@@ -89,7 +89,11 @@ console.log("Microsoft");
 check("Outlook mail is no longer said to go unread", !privacy.includes("Orbit does not read Outlook mail"));
 check("Microsoft is no longer said to be contacts-only", !privacy.includes("used only to import Outlook contacts"));
 check("the Microsoft row names contacts, calendar and mail", /name: "Microsoft"[^\n]*contacts[^\n]*calendar[^\n]*mail/.test(privacy));
-check("Microsoft permissions are described as read-only and per feature", privacy.includes("one read-only permission per feature you turn on"));
+check("Microsoft permissions are described per feature", privacy.includes("one permission per feature you turn on"));
+check("sending from Outlook (Mail.Send) is disclosed", privacy.includes("Mail.Send"));
+check("Orbit no longer claims it cannot send Outlook mail", !privacy.includes("Orbit cannot send mail"));
+check("Resend no longer carries person-to-person mail", !privacy.includes("messages you send through the contact page"));
+check("email attachments' retention is stated", privacy.includes("Files attached to an email are deleted 7"));
 check("the Outlook recruiter scan is described", privacy.includes("<strong>Outlook.</strong>"));
 
 console.log("Corrections that must not regress");
