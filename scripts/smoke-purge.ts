@@ -119,6 +119,31 @@ async function seed() {
     effectiveAt: now,
   });
 
+  // Pricing v2 credit ledger: a pack (money, so anonymised like billing_events), the lock
+  // row, an in-flight hold and a monthly meter (all deleted).
+  await db.insert(schema.creditGrants).values({
+    userId: USER,
+    kind: "pack",
+    grantKey: `${USER}-pack`,
+    microsGranted: 2_500_000,
+    microsRemaining: 1_000_000,
+    amountCents: 500,
+    stripeRef: `cs_${USER}`,
+  });
+  await db.insert(schema.creditAccounts).values({ userId: USER });
+  await db.insert(schema.creditHolds).values({
+    userId: USER,
+    micros: 20_000,
+    operation: "chat.answer",
+    expiresAt: new Date(now.getTime() + 60_000),
+  });
+  await db.insert(schema.planMeterUsage).values({
+    userId: USER,
+    meter: "hosted_enrichment",
+    periodKey: "2026-09",
+    used: 3,
+  });
+
   await db.insert(schema.closenessCohorts).values({
     userId: USER,
     snapshot: {
@@ -234,6 +259,17 @@ async function seed() {
     organization: "Acme",
     organizationNormalized: "acme",
     source: "extension",
+  });
+
+  // Cascade-covered (from `contacts`), seeded anyway: the job-movement log.
+  await db.insert(schema.contactCareerMoves).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "joined",
+    fromOrg: "Initech",
+    toOrg: "Acme",
+    source: "web",
+    dedupeKey: "purge-smoke-move",
   });
 
   await db.insert(schema.actionItems).values({
@@ -377,6 +413,33 @@ async function seed() {
     userId: USER,
     suggestionType: "reconnect",
     title: "Reach out",
+  });
+
+  // Radar: a live recommendation (cascades from contacts), a "not for this person" that
+  // must not outlive the account, and a run ledger row, which has no FK at all.
+  await db.insert(schema.recommendations).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "reconnect",
+    score: 30,
+    bucket: "later",
+    expiresAt: new Date(Date.now() + 7 * 86_400_000),
+    inputsHash: "h",
+  });
+  await db.insert(schema.recommendationFeedback).values({
+    userId: USER,
+    contactId: contact.id,
+    action: "never",
+  });
+  await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
+  await db.insert(schema.contactSignals).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "company_news",
+    occurredAt: new Date(),
+    source: "manual",
+    payload: { title: "Globex raises a Series B", company: "Globex" },
+    dedupeHash: "smoke-purge-signal",
   });
 
   // Background AI still in flight at a provider when the account went.
@@ -640,6 +703,18 @@ async function seed() {
   });
   // A message an assistant drafted. It holds a body the user never sent, which is exactly
   // the kind of content a deletion has to take with it.
+  // A queued outbound email, body included.
+  await db.insert(schema.emailSends).values({
+    userId: USER,
+    provider: "gmail",
+    fromEmail: "me@example.org",
+    to: ["friend@example.org"],
+    subject: "Hi",
+    bodyText: "Unsent body",
+    origin: "compose",
+    sendAt: new Date(),
+    rfcMessageId: "<smoke-purge@orbit>",
+  });
   await db.insert(schema.agentSendRequests).values({
     userId: USER,
     toEmail: "someone@example.org",
@@ -705,6 +780,10 @@ async function main() {
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
     .catch(() => {});
+  await (await getDb())
+    .delete(schema.creditGrants)
+    .where(eq(schema.creditGrants.grantKey, `${USER}-pack`))
+    .catch(() => {});
   const { recruiterId, soleRecruiterId } = await seed();
 
   console.log("\nSeeded");
@@ -753,6 +832,21 @@ async function main() {
   await ledgerDb
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`));
+
+  // Same rule for a credit pack: the grant survives, anonymised, and its unused credits are
+  // closed out so they stop counting as an outstanding liability.
+  const [pack] = await ledgerDb
+    .select()
+    .from(schema.creditGrants)
+    .where(eq(schema.creditGrants.grantKey, `${USER}-pack`));
+  check("credit pack survives the purge", pack !== undefined);
+  check("...with the personal link severed", pack?.userId === null);
+  check("...its paid amount intact", pack?.amountCents === 500);
+  check(
+    "...and its unused credits closed out",
+    pack?.status === "revoked" && pack.microsRemaining === 0 && pack.microsRevoked === 1_000_000
+  );
+  await ledgerDb.delete(schema.creditGrants).where(eq(schema.creditGrants.grantKey, `${USER}-pack`));
 
   // The second deliberate survivor — see `purgeUserData`. Asserting BOTH halves matters:
   // the key surviving alone would miss a purge that forgot to delete-and-recreate the row,

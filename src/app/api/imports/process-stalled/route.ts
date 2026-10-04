@@ -1,4 +1,5 @@
 import { isNotNull, sql } from "drizzle-orm";
+import { sweepExpiredHolds } from "@/lib/credits/ledger";
 import { NextResponse } from "next/server";
 import { getDb, rowsOf } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
@@ -13,6 +14,8 @@ import { sweepExpiredHandoffs } from "@/lib/scan-handoff";
 import { clerkClient } from "@clerk/nextjs/server";
 import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
+import { hasBlobStorage } from "@/lib/contact-avatar";
+import { sweepEmailAttachments } from "@/lib/email/attachments";
 import {
   finishCronRun,
   startCronRun,
@@ -173,10 +176,13 @@ export async function GET(request: Request) {
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
+    /** Email attachment blobs deleted: settled sends past ATTACHMENT_RETENTION_MS, and uploads never sent. */
+    emailAttachmentsSwept: 0,
     /** Meetings nobody finished, past `ABANDONED_SESSION_TTL_DAYS`. */
     meetingSessionsSwept: 0,
     /** Phone-scan grants past their expiry. */
     handoffsSwept: 0,
+    creditHoldsSwept: 0,
     /** Background AI sent to a provider's Batch API: what came back this sweep. */
     aiBatchesApplied: 0,
     aiBatchesPending: 0,
@@ -240,11 +246,20 @@ export async function GET(request: Request) {
       // history only lists saved captures — so keeping them would be holding pictures of
       // someone's notes for no one.
       stats.capturePhotosPruned = await pruneUnattachedCapturePhotos();
+      // Email attachments: kept a week after the send settles (for a retry), and uploads the
+      // composer never sent.
+      if (hasBlobStorage()) {
+        const swept = await sweepEmailAttachments();
+        stats.emailAttachmentsSwept = swept.settled + swept.orphans;
+      }
       // Abandoned meeting transcripts. The per-user sweep only runs when that user records
       // again; without this, one recording never finished is kept forever.
       stats.meetingSessionsSwept = await sweepAbandonedMeetingSessions();
       // Expired scan grants. Minting sweeps too, but only when someone mints.
       stats.handoffsSwept = await sweepExpiredHandoffs();
+      // Credit holds whose call died without settling. They stopped counting when they
+      // expired; this only keeps the table small.
+      stats.creditHoldsSwept = await sweepExpiredHolds();
     } catch (err) {
       // Housekeeping must never fail the job-resumption backstop this route exists for,
       // but a silent failure here is how a table grows unbounded — so it downgrades the

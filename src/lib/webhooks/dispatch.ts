@@ -26,6 +26,7 @@
  * the response body is never echoed back beyond a short truncated snippet — because the
  * response is the channel an attacker would read secrets out of.
  */
+import { getEntitlements } from "@/lib/entitlements";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
@@ -116,6 +117,11 @@ export async function enqueueWebhookEvents(
     });
     const subscribed = endpoints.filter((e) => (e.eventTypes ?? []).includes(type));
     if (subscribed.length === 0) return [];
+    // Outbound webhooks are Max and Lifetime only (pricing v2). A Pro account's endpoints are
+    // kept exactly as they are — never disabled in the table, never deleted — and simply
+    // receive nothing until the account is on a plan that includes them again. Checked after
+    // the endpoint read, so the common case (no endpoints) costs no plan lookup.
+    if (!(await getEntitlements(userId)).canUseApi) return [];
 
     const createdAt = new Date();
     const rows = events.flatMap(({ object, eventId: chosen }) => {

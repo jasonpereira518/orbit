@@ -18,11 +18,13 @@ import {
   Check,
   Loader2,
   PenLine,
+  Radar,
   RefreshCw,
   X,
 } from "lucide-react";
 import type { ContactSnapshot, PageContext } from "@contract";
-import type { OrbitApi } from "@/lib/api";
+import { ApiError, type OrbitApi } from "@/lib/api";
+import { stripTracking } from "@/inject/dom/url";
 import { APP_URL } from "@/lib/env";
 import { cn } from "@/lib/cn";
 import { relativeTime } from "@/lib/format";
@@ -58,6 +60,7 @@ export function KnownContactView({
   const [editingSummary, setEditingSummary] = useState(false);
   const [summaryDraft, setSummaryDraft] = useState("");
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const [radarBusy, setRadarBusy] = useState(false);
 
   const changes = (state.resolved?.changes ?? []).filter(
     (change) => !dismissed.includes(change.field)
@@ -86,6 +89,43 @@ export function KnownContactView({
       toast("Couldn't save that");
     } finally {
       setBusy(false);
+    }
+  };
+
+  // A LinkedIn post by this contact, when the person let the extension save posts to Radar
+  // (Radar's settings). Off, or on any other page, there is nothing to show.
+  const canSaveToRadar =
+    page.kind === "post" && state.me?.capabilities.radarCaptureLinkedinActivity === true;
+
+  const saveToRadar = async () => {
+    // What they highlighted, else the post's own words, else the whole update. The server
+    // keeps the first 280 characters.
+    const excerpt = page.text.fromSelection
+      ? page.text.blob
+      : (page.text.postBody ?? page.text.blob);
+    if (!excerpt.trim()) {
+      toast("There's no text on this post to save");
+      return;
+    }
+    setRadarBusy(true);
+    try {
+      const result = await api.saveActivity({
+        contactId: contact.id,
+        excerpt: excerpt.slice(0, 4000),
+        // `page.url` is the author's profile on a post page; the post itself is the page.
+        url: stripTracking(page.sourceUrl),
+        seenAt: page.capturedAt,
+      });
+      toast(result.duplicate ? "Already in Radar" : "Saved to Radar");
+    } catch (err) {
+      // The server's own words for a refusal it explains (capture off, contact gone).
+      toast(
+        err instanceof ApiError && (err.status === 400 || err.status === 404)
+          ? err.message
+          : "Couldn't save that"
+      );
+    } finally {
+      setRadarBusy(false);
     }
   };
 
@@ -311,6 +351,27 @@ export function KnownContactView({
             </p>
           ) : null}
         </Section>
+
+        {canSaveToRadar ? (
+          <Section title="Radar">
+            <Meta className="mb-2 max-w-[38ch]">
+              Keep this post as a reason to reach out to {firstName}.
+            </Meta>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void saveToRadar()}
+              disabled={radarBusy}
+            >
+              {radarBusy ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Radar size={12} />
+              )}
+              Save post to Radar
+            </Button>
+          </Section>
+        ) : null}
 
         <Section>
           <StarterList

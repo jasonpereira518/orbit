@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -14,22 +14,18 @@ import { requireUserId } from "@/lib/auth";
 import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
-import { sendGmailMessage } from "@/lib/gmail-send";
-import { gmailConnections } from "@/db/schema";
+import "@/lib/email/origin-registrations";
+import { ENQUEUE_COPY, chargeEmailBurst, dispatchEmailSend, enqueueEmail } from "@/lib/email/outbox";
+import { getSendCapability, listMailboxes } from "@/lib/email/sender";
 import {
   generateRecruiterDraftsBatch,
   isRecruiterIntent,
   type RecruiterIntent,
 } from "@/lib/recruiter-drafts";
-import {
-  DAILY_RECRUITER_SEND_LIMIT,
-  type RecruiterDraft,
-  type SendDraftsResult,
-} from "@/lib/recruiter-message-types";
+import { RECRUITER_BATCH_LIMIT, type RecruiterDraft, type SendDraftsResult } from "@/lib/recruiter-message-types";
 import { pooledIdsForViewer, resolveRecruiterPii } from "@/lib/recruiters";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
-import { actionFailure } from "@/lib/action-failure";
 
 /** Spacing between sends in a batch, so an approved batch trickles rather than bursts. */
 const SEND_SPACING_MS = 1200;
@@ -54,30 +50,14 @@ function toDraft(
   };
 }
 
-async function countSendsToday(userId: string) {
-  const db = await getDb();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const rows = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(recruiterMessages)
-    .where(
-      and(
-        eq(recruiterMessages.userId, userId),
-        eq(recruiterMessages.status, "sent"),
-        gte(recruiterMessages.sentAt, start)
-      )
-    );
-  return rows[0]?.count ?? 0;
-}
-
+/** Recruiter email shares the one daily cap every 1:1 send counts against. */
 export async function getRecruiterSendQuota() {
   const userId = await requireUserId();
-  const used = await countSendsToday(userId);
+  const capability = await getSendCapability(userId);
   return {
-    used,
-    limit: DAILY_RECRUITER_SEND_LIMIT,
-    remaining: Math.max(0, DAILY_RECRUITER_SEND_LIMIT - used),
+    used: capability.usedToday,
+    limit: capability.dailyCap,
+    remaining: capability.ok ? capability.remainingToday : Math.max(0, capability.dailyCap - capability.usedToday),
   };
 }
 
@@ -96,10 +76,8 @@ export async function generateRecruiterDrafts(
     if (!isRecruiterIntent(intent)) throw new Error("Unknown message intent");
     const ids = Array.from(new Set(recruiterIds.filter(Boolean)));
     if (ids.length === 0) throw new UserFacingError("Pick at least one recruiter first");
-    if (ids.length > DAILY_RECRUITER_SEND_LIMIT) {
-      throw new Error(
-        `Draft at most ${DAILY_RECRUITER_SEND_LIMIT} at a time — that is the daily send limit.`
-      );
+    if (ids.length > RECRUITER_BATCH_LIMIT) {
+      throw new UserFacingError(`Draft at most ${RECRUITER_BATCH_LIMIT} at a time`);
     }
 
     const db = await getDb();
@@ -288,21 +266,18 @@ export async function sendRecruiterDrafts(
     const unique = Array.from(new Set(ids.filter(Boolean)));
     if (unique.length === 0) throw new UserFacingError("Pick at least one draft to send");
 
-    const used = await countSendsToday(userId);
-    const remaining = DAILY_RECRUITER_SEND_LIMIT - used;
+    const capability = await getSendCapability(userId);
+    const remaining = Math.max(0, capability.dailyCap - capability.usedToday);
     if (remaining <= 0) {
-      throw new Error(
-        `You've hit today's limit of ${DAILY_RECRUITER_SEND_LIMIT} recruiter emails. Try again tomorrow.`
-      );
+      throw new UserFacingError(ENQUEUE_COPY.cap_reached);
     }
     if (unique.length > remaining) {
-      throw new Error(
-        `You can send ${remaining} more today (limit ${DAILY_RECRUITER_SEND_LIMIT}). Deselect ${unique.length - remaining}.`
-      );
+      throw new UserFacingError(`You can send ${remaining} more today. Deselect ${unique.length - remaining}`);
     }
 
     // The demo workspace has no Gmail grant to send with (`demo-workspace-connections.ts`),
-    // and its recruiters are `.example` addresses: record the drafts as sent, deliver nothing.
+    // and its recruiters are `.example` addresses the outbox would refuse as placeholders:
+    // record the drafts as sent, deliver nothing.
     if (await isDemoWorkspace(userId)) {
       const marked = await db
         .update(recruiterMessages)
@@ -317,23 +292,22 @@ export async function sendRecruiterDrafts(
         .returning(); // bare: a field selector breaks over the Db union
       revalidatePath("/recruiters/compose");
       revalidatePath("/recruiters");
-      return {
-        sent: marked.length,
-        failed: [],
-        quotaRemaining: Math.max(0, DAILY_RECRUITER_SEND_LIMIT - used - marked.length),
-      };
+      return { sent: marked.length, failed: [], quotaRemaining: Math.max(0, remaining - marked.length) };
     }
 
-    // Resolve the sending identity once, not per message: every email in a batch must
-    // leave from the same address, and re-reading it mid-batch could straddle a reconnect.
-    const conn = await db.query.gmailConnections.findFirst({
-      where: eq(gmailConnections.userId, userId),
-    });
-    if (!conn || conn.status !== "active") {
-      throw new UserFacingError("Connect Gmail first, then send");
+    // Recruiter threads are Gmail threads (`gmailThreadId`), so replies always leave from
+    // Gmail — never from Outlook, even when Outlook is the default mailbox.
+    const gmail = (await listMailboxes(userId, false)).find((m) => m.id === "gmail");
+    if (!gmail?.canSend) {
+      throw new UserFacingError(
+        gmail?.needsReauth ? "Reconnect Gmail to send recruiter replies" : "Connect Gmail to send recruiter replies"
+      );
     }
+    // One approved batch is one burst, not one per message; the daily cap counts each email.
+    const limited = await chargeEmailBurst(userId);
+    if (limited && !limited.ok) throw new UserFacingError(limited.message);
     const profile = await getCurrentUserProfile().catch(() => null);
-    const from = { name: profile?.name?.trim() || null, email: conn.emailAddress };
+    const fromName = profile?.name?.trim() || null;
 
     const rows = await db
       .select({ message: recruiterMessages, recruiter: recruiters, link: userRecruiterLinks })
@@ -371,44 +345,39 @@ export async function sendRecruiterDrafts(
         continue;
       }
 
-      try {
-        const result = await sendGmailMessage(userId, {
-          to,
-          from,
-          subject: row.message.subject,
-          body: row.message.body,
-          threadId: row.message.gmailThreadId,
-        });
-        await db
-          .update(recruiterMessages)
-          .set({
-            status: "sent",
-            sentAt: new Date(),
-            gmailMessageId: result.gmailMessageId,
-            gmailThreadId: result.gmailThreadId ?? row.message.gmailThreadId,
-            errorMessage: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(recruiterMessages.id, row.message.id));
+      const queued = await enqueueEmail(userId, {
+        to: [to],
+        subject: row.message.subject,
+        bodyText: row.message.body,
+        fromName,
+        origin: "recruiter",
+        originRef: row.message.id,
+        idempotencyKey: `recruiter:${row.message.id}`,
+        threadId: row.message.gmailThreadId,
+        delayMs: 0,
+        chargeBurst: false,
+        provider: "gmail",
+      });
+      if (!queued.ok) {
+        failed.push({ id: row.message.id, recruiterName: row.recruiter.fullName, error: queued.message });
+        continue;
+      }
+      // Sent inline, one at a time, so the page can say what happened to each; the outbox
+      // records the outcome on the draft row (`origin-hooks/recruiter.ts`).
+      const outcome = await dispatchEmailSend(queued.id);
+      if (outcome === "sent") {
         sent += 1;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Send failed";
-        await db
-          .update(recruiterMessages)
-          .set({
-            status: "failed",
-            errorMessage: message.slice(0, 500),
-            updatedAt: new Date(),
-          })
-          .where(eq(recruiterMessages.id, row.message.id));
+      } else if (outcome === "retry") {
         failed.push({
           id: row.message.id,
           recruiterName: row.recruiter.fullName,
-          // Returned as data, so never stripped — and `message` can be a raw Gmail API
-          // body. The raw text stays in `errorMessage` above, which no screen renders.
-          error: await actionFailure(err, `Couldn’t send to ${row.recruiter.fullName} — try again?`, "recruiter-messages.send", {
-            messageId: row.message.id,
-          }),
+          error: `Gmail is slow — Orbit will keep trying to send to ${row.recruiter.fullName}.`,
+        });
+      } else {
+        failed.push({
+          id: row.message.id,
+          recruiterName: row.recruiter.fullName,
+          error: `Couldn’t send to ${row.recruiter.fullName} — try again?`,
         });
       }
 
@@ -422,7 +391,7 @@ export async function sendRecruiterDrafts(
     return {
       sent,
       failed,
-      quotaRemaining: Math.max(0, DAILY_RECRUITER_SEND_LIMIT - used - sent),
+      quotaRemaining: Math.max(0, remaining - sent),
     };
   });
 }

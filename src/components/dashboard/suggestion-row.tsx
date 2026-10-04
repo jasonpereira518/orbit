@@ -78,8 +78,7 @@ export function SuggestionRow({
     <div className="rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {tier && <ClosenessTierBadge tier={tier} />}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {contactId ? (
               <IntentLink
                 href={`/contacts/${contactId}`}
@@ -90,6 +89,7 @@ export function SuggestionRow({
             ) : (
               <p className="font-medium text-ink">{contactName}</p>
             )}
+            {tier && <ClosenessTierBadge tier={tier} />}
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
@@ -100,16 +100,20 @@ export function SuggestionRow({
             </span>
           </div>
           {(contactTitle || contactCompany) && (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {contactTitle}
-              {contactTitle && contactCompany ? " · " : ""}
+            <p className="mt-0.5 text-sm">
               {contactCompany && (
                 <span
-                  className="font-medium"
+                  className="font-semibold"
                   style={companyColor ? { color: companyColor } : undefined}
                 >
                   {contactCompany}
                 </span>
+              )}
+              {contactTitle && contactCompany ? (
+                <span className="text-muted-foreground"> · </span>
+              ) : null}
+              {contactTitle && (
+                <span className="text-xs text-muted-foreground">{contactTitle}</span>
               )}
             </p>
           )}

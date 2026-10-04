@@ -61,8 +61,25 @@
   --color-brand-pro: #599de7;
   --color-landing-button-surface: #eef7f4;
   --color-landing-button-label: #0f2e28;
-  --color-tier-lifetime: var(--tier-lifetime);
+  /* Plan colors (pricing v2): Free neutral teal, Pro blue, Max gold, Lifetime silver.
+     Theme-aware; every value clears 4.5:1 on a card in its theme
+     (`scripts/smoke-tier-contrast.ts`). `--color-night-*` are the fixed values for the
+     always-dark canvases (pricing, upgrade, landing, the celebration). */
+  --color-tier-free: var(--tier-free);
   --color-tier-pro: var(--tier-pro);
+  --color-tier-max: var(--tier-max);
+  --color-tier-lifetime: var(--tier-lifetime);
+  /* Plan-scoped: inside any `[data-plan="…"]` container these follow that plan. */
+  --color-tier-accent: var(--tier-accent);
+  --color-tier-surface: color-mix(in oklab, var(--tier-accent) 8%, transparent);
+  --color-tier-border: color-mix(in oklab, var(--tier-accent) 32%, transparent);
+  --color-tier-sheen-from: var(--tier-sheen-from);
+  --color-tier-sheen-to: var(--tier-sheen-to);
+  --color-tier-sheen-ink: var(--tier-sheen-ink);
+  --color-night-free: #cfdcd8;
+  --color-night-pro: #599de7;
+  --color-night-max: #f2c14e;
+  --color-night-lifetime: #c9d1db;
   --color-ink: var(--ink);
   --color-admin-nav-hover: var(--admin-nav-hover);
   --radius-sm: calc(var(--radius) * 0.6);
@@ -174,13 +191,18 @@
   --interaction-live: #a8375f;
   --interaction-written: #4a63c9;
   --interaction-yours: #6b7380;
-  /* Orbit Pro reads as `--primary` (the product's own color, per the pricing
-     tiers). Orbit Lifetime gets this dedicated gold so paywalled surfaces can
-     name which tier(s) unlock a feature without borrowing a hue that already
-     means something else (chart series, calendar import, etc). Dark enough
-     for 4.5:1 text contrast on a light card, not just icon-level contrast. */
-  --tier-lifetime: #8a6423;
+  /* Plan colors (pricing v2). Each is its own hue so a paywalled surface can name
+     the plan that unlocks it without borrowing a color that already means something
+     else (chart series, calendar import, --primary). Dark enough for 4.5:1 text
+     contrast on a light card, not just icon-level contrast.
+       Free      neutral teal — the product's own quiet voice
+       Pro       blue
+       Max       gold — the exact gold the app has always used for its top tier
+       Lifetime  silver-gray, metallic in badges */
+  --tier-free: #3d5b58;
   --tier-pro: #2f68b0;
+  --tier-max: #8a6423;
+  --tier-lifetime: #56616e;
   /* Emphasised content — names, titles, section headings. This is the value
      `--primary` has always had in light mode, which is why ~90 call sites reach
      for `text-primary` to mean "strong text". It only worked by coincidence:
@@ -301,10 +323,14 @@
   --interaction-live: #f5a3c0;
   --interaction-written: #8aa9f2;
   --interaction-yours: #8f9db2;
-  /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
-     read as near-black here). */
-  --tier-lifetime: #f2c14e;
+  /* Brighter on a dark card so they keep 4.5:1 text contrast (#8a6423 would read
+     as near-black here). Pro stays #599de7: bluer than `--primary` (#7cc3e2, a sky
+     cyan) and far brighter than the blue-cast graphite ground, so it never reads as
+     either. */
+  --tier-free: #a9c3be;
   --tier-pro: #599de7;
+  --tier-max: #f2c14e;
+  --tier-lifetime: #c5ccd6;
   --ink: #e7ecf1;
   --admin-nav-hover: rgb(124 195 226 / 0.16);
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
@@ -1312,7 +1338,11 @@
 }
 
 /* Shared waitlist panel surface — referral tracker + feature poll. Deep navy, gold wash,
- * edge vignette, faint card-local stars. Near-opaque so busy copy holds against the starfield. */
+ * edge vignette, faint card-local stars. Near-opaque so busy copy holds against the starfield.
+ *
+ * No backdrop-filter, here or on the glass inside: behind a 97–99% opaque fill a blur is
+ * invisible, but it is not free — the sky under it redraws every frame, so every blurred
+ * box was re-blurred every frame (the poll alone had seven). */
 .interest-panel-glass,
 .referral-tracker-glass,
 .landing-glass.feature-poll-panel {
@@ -1327,7 +1357,13 @@
   box-shadow:
     inset 0 1px 0 0 rgba(242, 193, 78, 0.06),
     0 0 48px -16px rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(16px);
+  backdrop-filter: none;
+}
+
+.interest-panel-glass .landing-glass,
+.referral-tracker-glass .landing-glass,
+.landing-glass.feature-poll-panel .landing-glass {
+  backdrop-filter: none;
 }
 
 .interest-panel-glass::before,
@@ -1502,6 +1538,23 @@
  * Two ambient loops. Linear, not the house curve: these are orbits, and an
  * orbit that eases would read as a wobble. The global reduced-motion clamp at
  * the bottom of this file freezes both. */
+/* The referral tracker's unlocked and next planets, bobbing (`referral-tracker.tsx`). */
+@keyframes tracker-planet-bob {
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.tracker-planet-bob {
+  animation: tracker-planet-bob 5.2s ease-in-out infinite both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tracker-planet-bob {
+    animation: none;
+  }
+}
+
 @keyframes interest-spin {
   to {
     transform: rotate(360deg);
@@ -1510,19 +1563,15 @@
 
 /* The decorative rings behind the signup card, and the dot circling the
  * submit button while a join is in flight (`animate-[interest-spin_…]`).
- * `transform-box: fill-box` centres the spin on the ring group's own box —
- * without it an SVG group rotates about the viewBox origin. */
+ * The rings spin whole <svg> boxes (see `rings-backdrop.tsx`), which the
+ * compositor runs off the main thread; a spun SVG child would not be. */
 .interest-rings-spin {
   animation: interest-spin 160s linear infinite;
-  transform-origin: 50% 50%;
-  transform-box: fill-box;
   will-change: transform;
 }
 
 .interest-rings-spin-reverse {
   animation: interest-spin 110s linear infinite reverse;
-  transform-origin: 50% 50%;
-  transform-box: fill-box;
   will-change: transform;
 }
 
@@ -1841,6 +1890,53 @@
   );
 }
 
+/* A word in bright yellow with a slow band of light crossing it: a saturated gold at rest and
+ * a pale lemon band on a light page, a brighter yellow with a cream band and a faint glow on a
+ * dark one. The gradient is the text colour, so reduced motion keeps the gold and
+ * only stops the band. */
+@keyframes gold-shimmer-text {
+  0% {
+    background-position: 120% 50%;
+  }
+  100% {
+    background-position: -20% 50%;
+  }
+}
+
+.gold-shimmer-text {
+  --gold-base: #f2ae00;
+  --gold-light: #fff08a;
+  background-image: linear-gradient(
+    105deg,
+    var(--gold-base) 0%,
+    var(--gold-base) 40%,
+    var(--gold-light) 49%,
+    var(--gold-light) 51%,
+    var(--gold-base) 60%,
+    var(--gold-base) 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: gold-shimmer-text 5s ease-in-out infinite;
+}
+
+.dark .gold-shimmer-text {
+  --gold-base: #ffd21f;
+  --gold-light: #fffbd6;
+  /* A faint glow so the brighter yellow lifts off the dark card instead of sitting on it. */
+  filter: drop-shadow(0 0 10px rgba(255, 200, 40, 0.3));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gold-shimmer-text {
+    animation: none;
+    background-position: 50% 50%;
+  }
+}
+
 .hero-solar-stage {
   transform-style: preserve-3d;
 }
@@ -2006,6 +2102,207 @@
 
 .reveal-celestial[data-reveal="in"] {
   animation-duration: var(--transition-duration-celestial);
+}
+
+/* The waitlist's "How early access works" orbit (`early-access-path.tsx`). Drawn by
+ * default; only when <Reveal> brings the section in does the arc trace itself, the gold
+ * cadence follow, and each stop light up in turn. One-shot, no loop. */
+@keyframes early-path-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+@keyframes early-path-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes early-path-stop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+
+.early-path-draw {
+  stroke-dasharray: 1;
+}
+
+[data-reveal="in"] .early-path-draw {
+  animation: early-path-draw 1.2s var(--ease-house) 0.15s both;
+}
+
+[data-reveal="in"] .early-path-cadence {
+  animation: early-path-fade 0.8s var(--ease-house) 1s both;
+}
+
+[data-reveal="in"] .early-path-stop {
+  animation: early-path-stop 0.6s var(--ease-house) both;
+}
+
+/* The journey version: the walked stretch draws in gold after the arc, then the visitor's
+ * planet drops onto it. "Start here" (no pass yet) pulses three times, then rests. A stop's
+ * detail fades in as it changes. All one-shot. */
+.early-path-covered {
+  stroke-dasharray: 1;
+}
+
+[data-reveal="in"] .early-path-covered {
+  animation: early-path-draw 0.9s var(--ease-house) 1s both;
+}
+
+@keyframes early-path-marker {
+  from {
+    opacity: 0;
+    translate: 0 -10px;
+  }
+}
+
+[data-reveal="in"] .early-path-marker {
+  animation: early-path-marker 0.6s var(--ease-house) 1.6s both;
+}
+
+@keyframes early-path-start {
+  from {
+    scale: 1;
+    opacity: 0.7;
+  }
+  to {
+    scale: 2.4;
+    opacity: 0;
+  }
+}
+
+.early-path-start {
+  opacity: 0;
+  animation: early-path-start 1.6s var(--ease-house) 1s 3 both;
+}
+
+.early-path-detail {
+  animation: early-path-fade 0.35s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal="in"] .early-path-draw,
+  [data-reveal="in"] .early-path-cadence,
+  [data-reveal="in"] .early-path-stop,
+  [data-reveal="in"] .early-path-covered,
+  [data-reveal="in"] .early-path-marker,
+  .early-path-start,
+  .early-path-detail {
+    animation: none;
+  }
+}
+
+/* The waitlist's feature-pillar pictures (`pillar-art.tsx`): drawn by default, traced
+ * once when <Reveal> brings the row in, glow brightened on hover. SVG children scale
+ * about their own box only with fill-box — the default origin is the canvas corner. */
+.pillar-draw {
+  stroke-dasharray: 1;
+}
+
+.pillar-pop {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.pillar-glow {
+  opacity: 0.55;
+  transition: opacity var(--transition-duration-slow) var(--ease-house);
+}
+
+.pillar-card:hover .pillar-glow {
+  opacity: 1;
+}
+
+[data-reveal="in"] .pillar-draw {
+  animation: early-path-draw 1s var(--ease-house) 0.15s both;
+}
+
+[data-reveal="in"] .pillar-pop {
+  animation: early-path-stop 0.5s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal="in"] .pillar-draw,
+  [data-reveal="in"] .pillar-pop {
+    animation: none;
+  }
+}
+
+/* The waitlist's tier-unlock moment (`tier-celebration.tsx`): two gold rings roll out
+ * from the tier's planet once. Transform and opacity only. */
+@keyframes tier-celebration-ring {
+  from {
+    transform: scale(0.8);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+.tier-celebration-ring {
+  animation: tier-celebration-ring 1.4s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tier-celebration-ring {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* The faint dotted sky behind the waitlist preview's window (`app-demo/demo-window.tsx`), like
+ * the real app's starfield but drawn once in CSS: no canvas, no loop. */
+.demo-starfield {
+  opacity: 0.85;
+  background-image:
+    radial-gradient(1px 1px at 8% 12%, rgba(231, 236, 241, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 22% 70%, rgba(231, 236, 241, 0.32), transparent),
+    radial-gradient(1px 1px at 34% 30%, rgba(242, 193, 78, 0.4), transparent),
+    radial-gradient(1px 1px at 47% 86%, rgba(231, 236, 241, 0.4), transparent),
+    radial-gradient(1.5px 1.5px at 58% 18%, rgba(231, 236, 241, 0.3), transparent),
+    radial-gradient(1px 1px at 66% 58%, rgba(231, 236, 241, 0.45), transparent),
+    radial-gradient(1px 1px at 74% 90%, rgba(242, 193, 78, 0.3), transparent),
+    radial-gradient(1.5px 1.5px at 83% 34%, rgba(231, 236, 241, 0.35), transparent),
+    radial-gradient(1px 1px at 91% 66%, rgba(231, 236, 241, 0.45), transparent),
+    radial-gradient(1px 1px at 96% 10%, rgba(231, 236, 241, 0.3), transparent),
+    radial-gradient(1px 1px at 15% 46%, rgba(231, 236, 241, 0.28), transparent),
+    radial-gradient(1px 1px at 41% 52%, rgba(231, 236, 241, 0.25), transparent),
+    radial-gradient(1.5px 1.5px at 52% 40%, rgba(231, 236, 241, 0.22), transparent),
+    radial-gradient(1px 1px at 79% 76%, rgba(231, 236, 241, 0.3), transparent);
+}
+
+/* The feature poll's icon field (`feature-poll.tsx`): an orb glides to its rank's slot and its
+ * disc grows and glows with its share. In CSS rather than inline styles because inline ones
+ * are decided during server rendering, where reduced motion is unknown, and React does not
+ * repair a mismatched style attribute on hydration. */
+.poll-orb {
+  transition:
+    left 700ms var(--ease-house),
+    top 700ms var(--ease-house);
+}
+
+.poll-orb-disc {
+  transition:
+    transform 700ms var(--ease-house),
+    box-shadow 700ms var(--ease-house);
+}
+
+.poll-orb-label {
+  transition: transform 700ms var(--ease-house);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .poll-orb,
+  .poll-orb-disc,
+  .poll-orb-label {
+    transition: none;
+  }
 }
 
 .landing-scene {
@@ -2886,4 +3183,33 @@ html[data-celebration-handoff] [data-app-logo] {
   .chat-orbit-rider {
     animation: none;
   }
+}
+
+/* Plan scope (pricing v2). Any container carrying `data-plan` gets that plan's accent,
+   and `bg-tier-surface` / `border-tier-border` / `text-tier-accent` / the sheen utilities
+   follow it — one set of classes for every badge, chip, card and meter. The sheen is the
+   metallic ramp badges use: a light edge and a shaded one for the glint to travel between. */
+[data-plan="free"] {
+  --tier-accent: var(--tier-free);
+  --tier-sheen-from: color-mix(in oklab, var(--tier-free) 18%, white);
+  --tier-sheen-to: color-mix(in oklab, var(--tier-free) 32%, white);
+  --tier-sheen-ink: #1d3533;
+}
+[data-plan="orbit"] {
+  --tier-accent: var(--tier-pro);
+  --tier-sheen-from: #8ec4f5;
+  --tier-sheen-to: #5b9de6;
+  --tier-sheen-ink: #0f2e4d;
+}
+[data-plan="max"] {
+  --tier-accent: var(--tier-max);
+  --tier-sheen-from: #f7d15f;
+  --tier-sheen-to: #e0a52e;
+  --tier-sheen-ink: #3d2c00;
+}
+[data-plan="lifetime"] {
+  --tier-accent: var(--tier-lifetime);
+  --tier-sheen-from: #eef1f5;
+  --tier-sheen-to: #a9b3bf;
+  --tier-sheen-ink: #242b34;
 }

@@ -39,6 +39,7 @@ import {
   assertReminderContactOwned,
   createReminderForUser,
   scheduleContactFollowUpForUser,
+  clearContactFollowUpForUser,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import { settle, unwrap } from "@/lib/settled";
@@ -647,35 +648,12 @@ export async function scheduleContactFollowUpAt(
 
 export async function clearContactFollowUp(contactId: string) {
   const userId = await requireUserId();
-  const db = await getDb();
-
-  await db
-    .update(contacts)
-    .set({
-      nextFollowUpAt: null,
-      followUpStatus: "none",
-      updatedAt: new Date(),
-    })
-    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
-
-  const open = await db.query.reminders.findMany({
-    where: and(
-      eq(reminders.userId, userId),
-      eq(reminders.contactId, contactId),
-      eq(reminders.status, "pending")
-    ),
-  });
-  for (const r of open) {
-    await completeReminder(userId, r.id);
-  }
-
-  revalidateReminderPaths(contactId);
-  revalidatePathIfRequestScoped("/contacts");
+  const { remindersClosed } = await clearContactFollowUpForUser(userId, contactId);
   // The count is load-bearing, not telemetry: clearing a follow-up also marks every
   // pending reminder for the contact done (and completes their linked action items),
   // which the caller has to be able to say out loud. It used to return a bare
   // `{ ok: true }` and the UI said only "Follow-up cleared".
-  return { ok: true, remindersClosed: open.length };
+  return { ok: true, remindersClosed };
 }
 
 export type FollowUpTouchChannel = "email" | "linkedin_message" | "note";
@@ -1030,11 +1008,12 @@ export async function listNotificationPanel() {
   // panel's entitlements and alerts would otherwise each read it again.
   const { userId, settings } = await requireAuthenticatedUser();
   const { isAdminUser } = await import("@/lib/admin");
-  const { isViewingAsUser } = await import("@/lib/surface-visibility");
+  const { isSurfaceLive, isViewingAsUser } = await import("@/lib/surface-visibility");
 
   const panel = await loadNotificationPanel(userId, new Date(), {
     withAlerts: true,
     settings,
+    radar: await isSurfaceLive(userId, "page.radar"),
   });
 
   return {

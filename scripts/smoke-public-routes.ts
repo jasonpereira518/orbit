@@ -98,13 +98,22 @@ function main() {
   // the cron never runs and a long import cannot continue, and it only shows in production.
   const internalRoutes = [
     "/api/imports/process-stalled",
+    "/api/email/drain",
     "/api/imports/imp_abc123/continue",
     "/api/capture/jobs/job_abc123/run",
     "/api/avatars/encode",
     "/api/embeddings/backfill",
+    "/api/work-history/research",
+    "/api/work-history/sweep",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
     "/api/sync/run",
+    "/api/radar/run",
+    "/api/radar/feeds/sweep",
+    "/api/radar/digest",
+    // Radar's Monday email's off switch: a mail client (or Gmail's own unsubscribe button)
+    // has no session. The signed token in the query is the credential.
+    "/api/radar/digest/unsubscribe",
     "/api/webhooks/outbound/drain",
     // The public API and MCP server authenticate with a per-user API key, which Clerk cannot
     // see. They are listed here so an unauthenticated call gets a JSON 401 rather than a 302

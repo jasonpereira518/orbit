@@ -7,7 +7,6 @@ import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
-import { GooglePhotoMatch } from "@/components/settings/google-photo-match";
 import { DeleteDataDialog } from "@/components/settings/delete-data-dialog";
 import { DeleteAccountDialog } from "@/components/settings/delete-account-dialog";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
@@ -65,7 +64,6 @@ export function DataSettings() {
         </Button>
       </SettingsRow>
 
-      <GooglePhotoMatch />
       <AvatarSyncStatus />
 
       <SettingsRow
@@ -88,7 +86,7 @@ export function DataSettings() {
 
       <SettingsRow
         title="Delete account"
-        description="Erase everything and remove your sign-in. Cancels an active Orbit Pro subscription."
+        description="Erase everything and remove your sign-in. Cancels an active Orbit subscription."
       >
         <DeleteAccountDialog
           trigger={

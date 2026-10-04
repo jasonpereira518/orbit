@@ -56,6 +56,7 @@ import { getGmailScanStatus, setCalendarSync, type GmailScanStatus } from "@/act
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
+import { GooglePhotoMatch } from "@/components/settings/google-photo-match";
 import { AccountPageShell, FeatureRow } from "@/components/settings/account-page";
 import { useContactsImport } from "@/components/settings/use-contacts-import";
 import { useGoogleConnection } from "@/components/settings/use-provider-connection";
@@ -156,6 +157,12 @@ export function GoogleAccountPage({
       <ContactsRow
         capability={capabilities.contacts}
         contacts={contacts}
+        busy={connection.busy}
+        onAllow={() => connection.connect(["contacts"])}
+      />
+
+      <GooglePhotoMatch
+        capability={capabilities.contacts}
         busy={connection.busy}
         onAllow={() => connection.connect(["contacts"])}
       />
@@ -429,7 +436,7 @@ function InboxRow({
     >
       {control.kind === "locked" ? (
         <p className="text-sm text-muted-foreground">
-          {capability?.detail ?? "Part of Orbit Pro and Lifetime"}
+          {capability?.detail ?? "Part of Orbit Pro and Max"}
         </p>
       ) : null}
 

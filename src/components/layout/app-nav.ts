@@ -12,6 +12,7 @@ import {
   Bell,
   BookOpen,
   PartyPopper,
+  Radar,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -89,6 +90,11 @@ const OUTREACH: AppNavItem = {
   label: "Outreach",
   icon: Send,
 };
+const RADAR: AppNavItem = {
+  href: "/radar",
+  label: "Radar",
+  icon: Radar,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -98,6 +104,7 @@ const KNOWLEDGE: AppNavItem = {
 /** Primary sidebar destinations (above the "Coming soon" divider) */
 export const APP_NAV_CORE: AppNavItem[] = [
   DASHBOARD,
+  RADAR,
   CONTACTS,
   CAPTURE,
   REMINDERS,
@@ -107,12 +114,12 @@ export const APP_NAV_CORE: AppNavItem[] = [
 ];
 
 /**
- * Items under the "Coming soon" divider (Settings is rendered separately).
+ * Default-secondary destinations (Settings is rendered separately).
  *
- * The name is stale for Knowledge, which has shipped — it stays in this group rather than
- * moving up to `APP_NAV_CORE` because the divider's label describes Events and Outreach,
- * the two items that actually are coming soon (`comingSoon` in `src/lib/surfaces.ts`), and
- * splitting the group over one released item was a deliberate no per product decision.
+ * The sidebar no longer treats this as "the group under the Coming soon divider": it merges
+ * core and extras, applies the operator's order, and puts whatever is currently marked
+ * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
+ * default order.
  */
 export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
 
@@ -139,6 +146,7 @@ export const MOBILE_BOTTOM_NAV: Array<
 ];
 
 export const MOBILE_MORE_NAV = [
+  RADAR,
   REMINDERS,
   IMPORTS,
   CONSTELLATION,

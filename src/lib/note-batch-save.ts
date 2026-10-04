@@ -46,6 +46,13 @@ import { deleteCapturePhotosForBatch } from "@/lib/capture-photos";
 
 export type NoteBatchParticipantInput = {
   notes: string;
+  /**
+   * The note this person came from, when the batch folds several (a combined upload). Keys
+   * their interaction, so the same contact in two notes gets both conversations; and a
+   * later card for a name an earlier card in this batch just created saves into that
+   * contact rather than creating a second one.
+   */
+  sourceHash?: string;
   parsed: ParsedNote;
   mergeContactId?: string | null;
   createReminder: boolean;
@@ -211,6 +218,11 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     for (const p of input.participants) {
       const { parsed } = p;
       let contactId = p.mergeContactId || null;
+      // A combined upload has one card per note, so the same new person can arrive twice.
+      // The first card creates them; a later one with the same name joins that contact.
+      if (!contactId && p.sourceHash && parsed.name) {
+        contactId = contactIdByName.get(parsed.name.trim().toLowerCase()) ?? null;
+      }
       let wasCreated = false;
       // Spec §3: a capture that asks for a reminder also moves the contact's own
       // follow-up stamp, on create AND on merge — the profile's "next follow-up" and
@@ -331,7 +343,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           interactionType: p.interactionType || "meeting_note",
           source: "capture",
           interactionDate,
-          externalId: noteInteractionExternalId(input.sourceHash, contactId),
+          externalId: noteInteractionExternalId(p.sourceHash ?? input.sourceHash, contactId),
           noteBatchId: batchId,
         },
         WRITE_OPTS

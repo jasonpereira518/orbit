@@ -1,4 +1,7 @@
 import { Suspense } from "react";
+import { listContactPendingSendsAction } from "@/actions/email-compose";
+import { PendingSends } from "@/components/email/pending-sends";
+import type { PendingSend } from "@/lib/email/compose";
 import { after } from "next/server";
 import {
   getContactForProfile,
@@ -36,6 +39,7 @@ import { listContactMentions } from "@/lib/contact-mentions";
 import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
 import { listJobMatchesForContact } from "@/lib/jobs/contact-matches";
 import { getContactProfile } from "@/lib/contact-profile";
+import { getWorkHistoryTracking } from "@/lib/job-changes";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
@@ -43,6 +47,13 @@ import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { RenderStamp } from "@/components/layout/render-stamp";
+
+/**
+ * Above the (main) layout's 60: "Find work history" runs a web search inside its server
+ * action, and a searched answer can take up to two minutes. Server actions take the page's
+ * limit, not the layout's.
+ */
+export const maxDuration = 300;
 
 export default async function ContactDetailPage({
   params,
@@ -57,9 +68,10 @@ export default async function ContactDetailPage({
   // (or racing notFound() into the error boundary on a bogus id); on
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
+  const pendingSendsPromise = listContactPendingSendsAction(id).catch((): PendingSend[] => []);
   // Guarded like the others: an unhandled getSettings() rejection would take the whole
   // page down for a section that only decides whether the add-notes card and the
-  // experience section's "Fill from Apollo" button are enabled.
+  // experience section's "Find work history" button are enabled.
   const settingsPromise = getSettings().catch(() => ({
     hasApiKey: false,
     hasApolloKey: false,
@@ -102,6 +114,9 @@ export default async function ContactDetailPage({
   const profilePromise = userIdPromise
     .then((u) => getContactProfile(u, id))
     .catch(() => null);
+  const trackingPromise = userIdPromise
+    .then((u) => getWorkHistoryTracking(u, id))
+    .catch(() => ({ moves: [], nextCheckAt: null }));
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -245,6 +260,8 @@ export default async function ContactDetailPage({
     phone: contact.phone || "",
     linkedinUrl: contact.linkedinUrl || "",
     website: contact.website || "",
+    blueskyHandle: contact.blueskyHandle || "",
+    mastodonAcct: contact.mastodonAcct || "",
     notes: contact.notes || "",
     industry: contact.industry || "",
     sharedInterests: contact.sharedInterests || [],
@@ -365,6 +382,7 @@ export default async function ContactDetailPage({
       <Suspense fallback={null}>
         <StreamedExperience
           data={profilePromise}
+          tracking={trackingPromise}
           settings={settingsPromise}
           contactId={contact.id}
           linkedinUrl={contact.linkedinUrl}
@@ -378,6 +396,16 @@ export default async function ContactDetailPage({
           contactName={displayName}
           nextFollowUpAt={contact.nextFollowUpAt}
           phone={contact.phone}
+        />
+      </Suspense>
+
+      {/* Emails to this person still on their way, or that didn't make it — the outbox rows
+          the timeline won't show until they send. Renders nothing when there are none. */}
+      <Suspense fallback={null}>
+        <StreamedPendingSends
+          contactId={contact.id}
+          contactName={displayName}
+          sends={pendingSendsPromise}
         />
       </Suspense>
 
@@ -476,6 +504,18 @@ async function StreamedFollowUp({
   );
 }
 
+async function StreamedPendingSends({
+  contactId,
+  contactName,
+  sends,
+}: {
+  contactId: string;
+  contactName: string;
+  sends: Promise<PendingSend[]>;
+}) {
+  return <PendingSends contactId={contactId} contactName={contactName} sends={await sends} />;
+}
+
 async function StreamedTimeline({
   settings,
   ...rest
@@ -500,27 +540,39 @@ async function StreamedTimeline({
 
 async function StreamedExperience({
   data,
+  tracking,
   settings,
   contactId,
   linkedinUrl,
 }: {
   data: Promise<Awaited<ReturnType<typeof getContactProfile>>>;
+  tracking: Promise<Awaited<ReturnType<typeof getWorkHistoryTracking>>>;
   // Consumed here rather than awaited in the parent (unlike the brief's original
   // sketch): `settingsPromise` is meant to stream — StreamedAddNotes below awaits
   // the same promise inside its own Suspense boundary for the same reason — so
   // awaiting it in the page body above this component's JSX would block everything
   // that follows on the settings read finishing first.
-  settings: Promise<{ hasApolloKey: boolean }>;
+  settings: Promise<{ hasApiKey: boolean }>;
   contactId: string;
   linkedinUrl: string | null;
 }) {
-  const [profile, { hasApolloKey }] = await Promise.all([data, settings]);
+  const [profile, { moves, nextCheckAt }, { hasApiKey }] = await Promise.all([data, tracking, settings]);
   return (
     <div className="reveal-mount">
       <ContactExperienceSection
         contactId={contactId}
         linkedinUrl={linkedinUrl}
-        canUseApollo={hasApolloKey}
+        canSearchWeb={hasApiKey}
+        moves={moves.map((m) => ({
+          id: m.id,
+          kind: m.kind,
+          fromOrg: m.fromOrg,
+          fromTitle: m.fromTitle,
+          toOrg: m.toOrg,
+          toTitle: m.toTitle,
+          detectedAt: m.detectedAt.toISOString(),
+        }))}
+        nextCheckAt={nextCheckAt ? nextCheckAt.toISOString() : null}
         profile={
           profile && {
             source: profile.source,

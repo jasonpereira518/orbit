@@ -128,13 +128,36 @@ run(async () => {
 
   // --- The paywall applies to a perfectly valid key ----------------------------------------
   // Checked BEFORE comping the account, so the free-plan refusal is exercised for real rather
-  // than assumed. `gate_events` is deliberately not written on this path — see auth.ts.
+  // than assumed. `gate_events` is written on this path only through the hourly throttle —
+  // see auth.ts.
   check(
     "a valid key on a free plan is refused for payment",
     (await reason(token)) === "payment_required"
   );
+  // Pricing v2: the REST API is Max and Lifetime only. A Pro account's key is refused the
+  // same way — the key itself is left alone, so it works again the moment they move to Max.
   await db.execute(sql`
     UPDATE user_settings SET comped_plan = 'orbit', comped_at = now() WHERE user_id = ${USER}
+  `);
+  check(
+    "a valid key on Pro is refused for payment",
+    (await reason(token)) === "payment_required"
+  );
+  // A polling integration hits this wall every few minutes; it is recorded once an hour.
+  await reason(token);
+  const apiHits = rowsOf<{ n: number; unlock: string | null }>(
+    await db.execute(sql`
+      SELECT count(*)::int AS n, max(unlock_plan) AS unlock
+        FROM gate_events WHERE user_id = ${USER} AND feature = 'api'
+    `)
+  )[0];
+  check(
+    "repeated API refusals record one throttled gate hit, unlocking on Max",
+    apiHits?.n === 1 && apiHits.unlock === "max",
+    JSON.stringify(apiHits)
+  );
+  await db.execute(sql`
+    UPDATE user_settings SET comped_plan = 'max', comped_at = now() WHERE user_id = ${USER}
   `);
 
   // --- Verification ---------------------------------------------------------------------------
@@ -213,7 +236,7 @@ run(async () => {
   check("a free plan gets a structured refusal, not a throw", refusal.ok === false, JSON.stringify(refusal));
   check(
     "the refusal carries a message the UI can show",
-    refusal.ok === false && refusal.message.toLowerCase().includes("orbit pro"),
+    refusal.ok === false && refusal.message.toLowerCase().includes("orbit max"),
     refusal.ok === false ? refusal.message : ""
   );
   const gateRows = rowsOf<{ n: number }>(
@@ -230,6 +253,10 @@ run(async () => {
   await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${free}`);
 
   await db.execute(sql`DELETE FROM api_keys WHERE user_id LIKE 'api-key-smoke%'`);
+  // The comped Max row would read as a Pro/Max account with no managed key to the ops sweep
+  // that runs later in the same suite (one shared PGlite).
+  await db.execute(sql`DELETE FROM gate_events WHERE user_id = ${USER}`);
+  await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${USER}`);
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

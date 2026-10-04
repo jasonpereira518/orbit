@@ -4,8 +4,13 @@ import { useEffect, useRef } from "react";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { STAR_GOLD, STAR_WHITE, paintSpace } from "@/lib/sky-palette";
 import {
+  announceStarfieldFigure,
+  STARFIELD_LIGHT_EVENT,
   STARFIELD_PULSE_EVENT,
+  STARFIELD_THREAD_EVENT,
+  type StarfieldLightDetail,
   type StarfieldPulseDetail,
+  type StarfieldThreadDetail,
 } from "@/lib/starfield-events";
 import {
   createConstellationSearch,
@@ -142,6 +147,29 @@ const FIGURE_EDGE_STAGGER_MS = 90;
  */
 const SEARCH_BUDGET_MS = 2;
 
+/**
+ * Interactive skies only: while NOTHING moves — no scroll, no shooting star, no
+ * pulse, no gravity well, no figure — the only change between frames is the
+ * twinkle, a slow alpha drift that nobody can tell from 30fps. So a calm sky
+ * repaints every other frame, halving what the page costs at rest (the canvas
+ * redraw, its commit and raster). Any motion is caught on the very next frame,
+ * so a scroll or a streak always runs at full rate.
+ */
+const CALM_FRAME_MS = 30;
+
+/* ── Share threads (interactive skies only) ──
+ *
+ * A completed share of the waitlist link draws a gold thread from the pass up into the
+ * sky and leaves a hollow star at its end: an invite, waiting. When a friend joins, the
+ * oldest waiting star fills in. The stars live in FIELD coordinates, so they drift with
+ * the parallax like every other star; they last as long as the page. */
+const THREAD_DRAW_MS = 700;
+/** The line itself is gone by this point; only the star remains. */
+const THREAD_LINE_MS = 1500;
+const THREAD_LIGHT_MS = 800;
+const THREAD_CAP = 10;
+const THREAD_RING_R = 3.5;
+
 /* Nebulae, the base gradient and the corner vignette all live in
  * `lib/sky-palette.ts` now: the warp stage cross-fades into this exact
  * image at the end of a lift-off, and a half-shade of drift between the two
@@ -214,6 +242,22 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     /** The stars `pending` was handed, in the order it knows them by. */
     let pendingStars: Star[] = [];
     let figureScrollY = 0;
+    /** When the sky was last actually drawn, and at what scroll — see CALM_FRAME_MS. */
+    let lastPaint = 0;
+    let lastPaintScrollY = -1;
+
+    /** Shared-link stars: where the thread started (viewport), where the star sits (field). */
+    type Thread = { ox: number; oy: number; fx: number; fy: number; start: number; litAt: number | null };
+    const threads: Thread[] = [];
+
+    /** Whether any thread is mid-draw or mid-light — motion, so the frame is not calm. */
+    function threadsBusy(now: number) {
+      for (const t of threads) {
+        if (now - t.start < THREAD_LINE_MS) return true;
+        if (t.litAt !== null && now - t.litAt < THREAD_LIGHT_MS) return true;
+      }
+      return false;
+    }
 
     function paintBackground() {
       // Resized in place: a fresh viewport-sized bitmap per resize event (~20MB at 2x) was
@@ -229,6 +273,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     }
 
     function resize() {
+      // Resizing the canvas clears it, so the next frame must draw, calm or not.
+      lastPaint = 0;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       width = window.innerWidth;
       height = window.innerHeight;
@@ -303,6 +349,79 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       });
     }
 
+    function onThread(e: Event) {
+      const { x, y } = (e as CustomEvent<StarfieldThreadDetail>).detail;
+      // Up, and away from the middle of the page, where the copy runs.
+      const away = x < width / 2 ? -1 : 1;
+      const angle = -Math.PI / 2 + away * (0.35 + Math.random() * 0.7);
+      const dist = 180 + Math.random() * 140;
+      const tx = Math.min(width - 24, Math.max(24, x + Math.cos(angle) * dist));
+      const ty = Math.min(height - 24, Math.max(24, y + Math.sin(angle) * dist));
+      const yOff = (window.scrollY * PARALLAX) % fieldH;
+      if (threads.length >= THREAD_CAP) threads.shift();
+      threads.push({ ox: x, oy: y, fx: tx, fy: (((ty + yOff) % fieldH) + fieldH) % fieldH, start: performance.now(), litAt: null });
+    }
+
+    function onLight(e: Event) {
+      let { count } = (e as CustomEvent<StarfieldLightDetail>).detail;
+      const now = performance.now();
+      for (const t of threads) {
+        if (count <= 0) break;
+        if (t.litAt !== null) continue;
+        t.litAt = now;
+        count--;
+      }
+    }
+
+    /** The threads and their stars, over the field. */
+    function paintThreads(now: number, yOff: number) {
+      for (const t of threads) {
+        const sx = t.fx;
+        const sy = (((t.fy - yOff) % fieldH) + fieldH) % fieldH;
+        const age = now - t.start;
+        const drawn = Math.min(1, age / THREAD_DRAW_MS);
+        const eased = 1 - Math.pow(1 - drawn, 3);
+
+        if (age < THREAD_LINE_MS) {
+          const fade = age < THREAD_DRAW_MS ? 1 : 1 - (age - THREAD_DRAW_MS) / (THREAD_LINE_MS - THREAD_DRAW_MS);
+          ctx!.strokeStyle = `rgba(${STAR_GOLD}, ${0.55 * fade})`;
+          ctx!.lineWidth = 1;
+          ctx!.lineCap = "round";
+          ctx!.beginPath();
+          ctx!.moveTo(t.ox, t.oy);
+          ctx!.lineTo(t.ox + (sx - t.ox) * eased, t.oy + (sy - t.oy) * eased);
+          ctx!.stroke();
+        }
+        if (drawn < 1 || sy < -30 || sy > height + 30) continue;
+
+        if (t.litAt === null) {
+          ctx!.strokeStyle = `rgba(${STAR_GOLD}, 0.6)`;
+          ctx!.lineWidth = 1;
+          ctx!.beginPath();
+          ctx!.arc(sx, sy, THREAD_RING_R, 0, Math.PI * 2);
+          ctx!.stroke();
+          continue;
+        }
+        const lt = Math.min(1, (now - t.litAt) / THREAD_LIGHT_MS);
+        if (lt < 1) {
+          ctx!.strokeStyle = `rgba(${STAR_GOLD}, ${0.6 * (1 - lt)})`;
+          ctx!.lineWidth = 1;
+          ctx!.beginPath();
+          ctx!.arc(sx, sy, THREAD_RING_R + 18 * (1 - Math.pow(1 - lt, 3)), 0, Math.PI * 2);
+          ctx!.stroke();
+        }
+        ctx!.shadowBlur = 8;
+        ctx!.shadowColor = BLOOM_SHADOW;
+        ctx!.fillStyle = GOLD_FILL;
+        ctx!.globalAlpha = 0.5 + 0.45 * lt;
+        ctx!.beginPath();
+        ctx!.arc(sx, sy, 2.6, 0, Math.PI * 2);
+        ctx!.fill();
+        ctx!.shadowBlur = 0;
+        ctx!.globalAlpha = 1;
+      }
+    }
+
     function onPulse(e: Event) {
       const { x, y } = (e as CustomEvent<StarfieldPulseDetail>).detail;
       if (pulses.length >= PULSE_CAP) pulses.shift();
@@ -373,6 +492,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         endedAt: null,
       };
       figureScrollY = window.scrollY;
+      // For the waitlist's one-time hint, which retires itself once a figure is found.
+      announceStarfieldFigure(match.name);
     }
 
     /**
@@ -543,6 +664,26 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     }
 
     function draw(now: number) {
+      if (
+        interactive &&
+        !reduced &&
+        now - lastPaint < CALM_FRAME_MS &&
+        window.scrollY === lastPaintScrollY &&
+        shooters.length === 0 &&
+        now < nextShot &&
+        pulses.length === 0 &&
+        !pointerActive &&
+        settled &&
+        !figure &&
+        !pending &&
+        !threadsBusy(now)
+      ) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      lastPaint = now;
+      lastPaintScrollY = window.scrollY;
+
       ctx!.clearRect(0, 0, width, height);
       // A zero-size viewport at mount (hidden tab being restored, prerender) produces a
       // zero-size bg canvas, and drawImage throws InvalidStateError on those — which
@@ -711,6 +852,7 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         }
       }
       if (figure) paintFigure(now, yOff);
+      if (threads.length > 0) paintThreads(now, yOff);
 
       if (!reduced) {
         if (now >= nextShot && shooters.length < 2) {
@@ -833,7 +975,11 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
 
     window.addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", onVisibility);
-    if (well) window.addEventListener(STARFIELD_PULSE_EVENT, onPulse);
+    if (well) {
+      window.addEventListener(STARFIELD_PULSE_EVENT, onPulse);
+      window.addEventListener(STARFIELD_THREAD_EVENT, onThread);
+      window.addEventListener(STARFIELD_LIGHT_EVENT, onLight);
+    }
     if (hoverOk) {
       window.addEventListener("pointermove", onPointerMove, { passive: true });
       document.addEventListener("pointerout", onPointerOut);
@@ -847,7 +993,11 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       window.removeEventListener("resize", onResize);
       cancelAnimationFrame(resizeFrame);
       document.removeEventListener("visibilitychange", onVisibility);
-      if (well) window.removeEventListener(STARFIELD_PULSE_EVENT, onPulse);
+      if (well) {
+        window.removeEventListener(STARFIELD_PULSE_EVENT, onPulse);
+        window.removeEventListener(STARFIELD_THREAD_EVENT, onThread);
+        window.removeEventListener(STARFIELD_LIGHT_EVENT, onLight);
+      }
       if (hoverOk) {
         window.removeEventListener("pointermove", onPointerMove);
         document.removeEventListener("pointerout", onPointerOut);

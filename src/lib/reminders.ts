@@ -26,6 +26,12 @@ import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
+import {
+  DORMANT_DAYS,
+  LINKEDIN_QUIET_MAX_DAYS,
+  LINKEDIN_QUIET_MIN_DAYS,
+  idleThresholdFor,
+} from "@/lib/outreach-thresholds";
 
 /**
  * The suggestion types `buildOutreachSuggestions` OWNS — it deletes and rebuilds exactly
@@ -43,33 +49,6 @@ const AUTO_SUGGESTION_TYPES = [
 ] as const;
 
 const MAX_AUTO_SUGGESTIONS = 12;
-
-/**
- * How long without a touch counts as dormant, when the person never said otherwise.
- *
- * A stated cadence replaces this per contact: somebody you agreed to speak with quarterly is
- * not dormant on day 31, and telling them they have "gone quiet" on schedule is how a
- * suggestion queue loses credibility.
- */
-const DORMANT_DAYS = 30;
-
-/**
- * How long a LinkedIn thread sits before it counts as gone quiet.
- *
- * Only the LOWER bound is cadence-aware. The upper bound (90 days) exists to stop ancient
- * threads resurfacing forever and has nothing to do with an agreed rhythm, so a quarterly
- * cadence must not drag it out to a year. Asymmetric on purpose.
- */
-const LINKEDIN_QUIET_MIN_DAYS = 14;
-const LINKEDIN_QUIET_MAX_DAYS = 90;
-
-/**
- * The idle window a contact's own cadence supplies, clamped to what the column allows.
- * Null-safe: a contact who never stated one falls back to the caller's default.
- */
-function idleThresholdFor(cadenceDays: number | null | undefined, fallback: number) {
-  return typeof cadenceDays === "number" && cadenceDays > 0 ? cadenceDays : fallback;
-}
 
 /**
  * The dashboard's "Constellation preview" card is a decorative, non-interactive

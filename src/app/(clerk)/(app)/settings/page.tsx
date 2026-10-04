@@ -1,9 +1,10 @@
-import { getPlanOverview, getSettings } from "@/actions/settings";
+import { getEmailSettings, getPlanOverview, getSettings } from "@/actions/settings";
 import { listGoals } from "@/actions/goals";
 import { getDisplayProfile, isClerkConfigured } from "@/lib/auth";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
+import { EmailSettings } from "@/components/settings/email-settings";
 import { TargetCompaniesSettings } from "@/components/settings/target-companies-settings";
 import { getSchools, getTargetCompanies } from "@/actions/target-companies";
 import { CreditsSettings } from "@/components/settings/credits-settings";
@@ -11,6 +12,7 @@ import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
+import { RadarDigestSetting } from "@/components/settings/radar-digest-setting";
 import { PlanSettings } from "@/components/settings/plan-settings";
 import { ProfileSettings } from "@/components/settings/profile-settings";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -28,6 +30,10 @@ import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { speechAllowance } from "@/lib/speech-quota";
 import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { cookies } from "next/headers";
+import { after } from "next/server";
+import { captureRadarTimeZone } from "@/lib/radar/digest";
+import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
 
 /**
  * Anchor for a card that stands alone. Ids and grouping live in `sections.ts`.
@@ -58,7 +64,7 @@ const GROUP = Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.key, g])) as Reco
 >;
 
 /**
- * One of the five named groups, and the rail's anchor for it. Renders nothing when every
+ * One of the named groups, and the rail's anchor for it. Renders nothing when every
  * card in it is hidden, so a label never floats above an empty stretch of page — and the
  * rail, built from the same visibility, never offers a row that scrolls nowhere.
  */
@@ -98,6 +104,7 @@ export default async function SettingsPage() {
     schools,
     meetingAllowance,
     shortformAllowance,
+    emailSettings,
   ] = await Promise.all([
     getSettings(),
     listGoals(),
@@ -108,6 +115,10 @@ export default async function SettingsPage() {
     getSchools(),
     speechAllowance(userId, "meeting"),
     speechAllowance(userId, "shortform"),
+    // Loaded here, not by the section on mount: this page replaceStates on mount (OAuth
+    // params, hash cleanup), and a Next router restore drops any server action queued at
+    // that moment — the section would sit on its skeleton forever. Null when hidden.
+    getEmailSettings().catch(() => null),
   ]);
   // `speechAllowance` returns a Date; the panel below is a client component, so hand it
   // down as an ISO string the same way `managed-ai-policy`'s allowance already does.
@@ -118,6 +129,13 @@ export default async function SettingsPage() {
 
   const { hidden } = visibility;
   const shows = (id: SettingsSectionId) => !hidden.has(surfaceKeyForSettingsId(id));
+  // Radar's Monday email is offered only to someone who can open Radar, and its zone is
+  // captured the same way the page does it.
+  const radarLive = !hidden.has("page.radar") && !visibility.comingSoon.has("page.radar");
+  if (radarLive) {
+    const tz = (await cookies()).get(TZ_COOKIE)?.value;
+    after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));
+  }
 
   // Section pages follow their own settings surface; account pages follow /imports, so
   // hiding it can't be undone by reaching it through Settings. The Google page's Gmail
@@ -165,6 +183,18 @@ export default async function SettingsPage() {
         </Section>
       </Group>
 
+      <Group group="goals" visible={groupVisible("goals")}>
+        <Section id="settings-goals" hidden={hidden}>
+          <GoalsSettings initialGoals={initialGoals} />
+        </Section>
+        <Section id="settings-targets" hidden={hidden}>
+          <TargetCompaniesSettings
+            initialCompanies={targetCompanies}
+            initialSchools={schools}
+          />
+        </Section>
+      </Group>
+
       <Group group="preferences" visible={groupVisible("preferences")}>
         {shows("settings-appearance") || shows("settings-notifications") ? (
           <SettingsSection
@@ -179,16 +209,13 @@ export default async function SettingsPage() {
                 initialAccountEnabled={initialSettings.desktopNotificationsEnabled}
               />
             ) : null}
+            {shows("settings-notifications") && radarLive ? (
+              <RadarDigestSetting initialEnabled={initialSettings.radarDigestEnabled} />
+            ) : null}
           </SettingsSection>
         ) : null}
-        <Section id="settings-goals" hidden={hidden}>
-          <GoalsSettings initialGoals={initialGoals} />
-        </Section>
-        <Section id="settings-targets" hidden={hidden}>
-          <TargetCompaniesSettings
-            initialCompanies={targetCompanies}
-            initialSchools={schools}
-          />
+        <Section id="settings-email" hidden={hidden}>
+          <EmailSettings initial={emailSettings} />
         </Section>
       </Group>
 

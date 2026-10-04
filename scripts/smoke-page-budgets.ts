@@ -46,6 +46,12 @@ import { traced } from "../src/lib/perf-trace";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { scaleContactRows } from "./lib/scale-fixture";
 import { loadKnowledgeBase } from "../src/lib/knowledge-base";
+import { loadKnowledgePeople } from "../src/lib/knowledge-people";
+import { KNOWLEDGE_PEOPLE_LIMIT } from "../src/lib/knowledge-people-types";
+import { radarRuns, userSettings } from "../src/db/schema";
+import { claimRadarLease, runRadarForUser } from "../src/lib/radar/run";
+import { loadRadarBriefing, loadRadarPage } from "../src/lib/radar/page-data";
+import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-page-budgets-user";
 const N = 3000;
@@ -89,6 +95,8 @@ const DAY_MS = 86_400_000;
 async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
+  await db.delete(radarRuns).where(eq(radarRuns.userId, USER));
+  await db.delete(userSettings).where(eq(userSettings.userId, USER));
 }
 
 /** A second, smaller account. Its only job is to give the scaling section a comparison. */
@@ -237,6 +245,51 @@ async function main() {
     Boolean(dueId) && dashboard.dueFollowUps.some((c) => c.id === dueId)
   );
 
+  // ---- Radar -------------------------------------------------------------------------
+  console.log("\nRadar (runRadarForUser, loadRadarPage)…");
+  await ensureUserSettings(USER);
+  await claimRadarLease(USER);
+  startQueryCount();
+  const radarRun = await runRadarForUser(USER, { trigger: "manual", ai: false });
+  const radarRunCount = stopQueryCount();
+  const radarRunQueries = capturedQueries();
+  console.log(`  run statements: ${radarRunCount} (${radarRun.candidates} candidates, ${radarRun.recommendations} cards)`);
+  // The nightly pass runs this for every account. Seven windowed signal reads, the
+  // candidate scan, goals, targets, feedback, the live list, one atomic write and the
+  // finish: none of them per contact. smoke-radar-run pins that it is the same at 12
+  // contacts as at 312; this pins the ceiling at 3,000. 24, up from 20: the outcome check
+  // (one UPDATE over the account's recent accepts, `detectRadarOutcomes`), the learned
+  // model's tallies (one grouped read over 90 days of resolved cards, `loadModelTallies`),
+  // the autopilot settings (one read, on nightly and manual runs only), job moves (one
+  // windowed read of `contact_career_moves`), the news probe (one indexed read of the global
+  // news tables with the account's company keys; a write only when it finds news), and the
+  // posts read (recent `contact_signals` posts, one windowed read, LIMIT 200). The nightly
+  // post check itself runs on `schedule` runs only and is not counted here.
+  check("radar run succeeds at 3,000 contacts", radarRun.ok);
+  check("radar run issues ≤ 26 statements", radarRunCount <= 26, `got ${radarRunCount}`);
+  check(
+    "radar run never pulls notes",
+    radarRunQueries.every((q) => !selectsBare(q, "notes")),
+    radarRunQueries.find((q) => selectsBare(q, "notes"))?.slice(0, 200)
+  );
+  startQueryCount();
+  const radarPage = await loadRadarPage(USER);
+  const radarPageCount = stopQueryCount();
+  console.log(`  page statements: ${radarPageCount}`);
+  // 5: the list, one settings read (which also answers "anyone in the network?" and "signals
+  // this week"), the AI key check (two), and what autopilot did. The plan's ceiling is 6.
+  check("radar page issues ≤ 6 statements", radarPageCount <= 6, `got ${radarPageCount}`);
+  const radarJson = JSON.stringify(radarPage);
+  check("radar page payload carries no inline base64", !radarJson.includes("data:image/"));
+  check("radar page payload under 100 KB", radarJson.length < 100_000, `${(radarJson.length / 1024).toFixed(0)} KB`);
+  startQueryCount();
+  const briefing = await loadRadarBriefing(USER);
+  const briefingCount = stopQueryCount();
+  // The dashboard's morning briefing is its own load, started beside the dashboard bundle,
+  // so the dashboard's own budget above does not move. The plan's ceiling is 3.
+  check("dashboard's morning briefing issues ≤ 3 statements", briefingCount <= 3, `got ${briefingCount}`);
+  check("and shows at most three people", briefing.hasRun && briefing.top.length <= 3);
+
   // ---- Graph -------------------------------------------------------------------------
   console.log("\nConstellation (loadGraphData)…");
   startQueryCount();
@@ -309,11 +362,15 @@ async function main() {
   // withAlerts: false — this budget targets the bounded-query design this phase adds.
   // Account alerts are a separate feature with their own statement budget, covered by
   // smoke-account-alerts.ts.
-  const panel = await loadNotificationPanel(USER, new Date(), { withAlerts: false });
+  const panel = await loadNotificationPanel(USER, new Date(), { withAlerts: false, radar: true });
   const panelCount = stopQueryCount();
   const panelScans = contactScans(capturedQueries());
   console.log(`  statements: ${panelCount}`);
-  check("panel issues ≤ 8 statements", panelCount <= 8, `got ${panelCount}`);
+  // 9, up from 8, and deliberately: Radar's one-line summary (a count and three names off
+  // the recommendations index), measured on, as it is for anyone who can open Radar. It is a
+  // sibling of `items`, never an item, so it adds a statement but no rows to the scaling
+  // bound below.
+  check("panel issues ≤ 9 statements", panelCount <= 9, `got ${panelCount}`);
   check(
     "panel contacts scan filters on next_follow_up_at",
     panelScans.some((s) => /where[\s\S]*"next_follow_up_at"/i.test(s)),
@@ -634,6 +691,37 @@ async function main() {
     `${(knowledgeBytes / renderedContacts).toFixed(0)} bytes a contact`
   );
 
+  // ---- Knowledge people index --------------------------------------------------------
+  console.log("\nKnowledge people index (loadKnowledgePeople)…");
+  startQueryCount();
+  const people = await loadKnowledgePeople(USER);
+  const peopleCount = stopQueryCount();
+  const peopleStatements = capturedQueries();
+  const peopleScans = contactScans(peopleStatements);
+  console.log(`  statements: ${peopleCount}`);
+  check("people index issues ≤ 4 statements", peopleCount <= 4, `got ${peopleCount}`);
+  check(
+    "every people-index contacts scan is bounded by LIMIT",
+    peopleScans.length >= 1 && peopleScans.every((s) => /\blimit\b/i.test(s)),
+    peopleScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 200)
+  );
+  check(
+    "people index never pulls notes as a bare column",
+    peopleScans.every((s) => !selectsBare(s, "notes")),
+    peopleScans.find((s) => selectsBare(s, "notes"))?.slice(0, 200)
+  );
+  check("people index returns at most its limit", people.rows.length <= KNOWLEDGE_PEOPLE_LIMIT, `${people.rows.length}`);
+  check("people index still counts every contact", people.total === N + SPECIAL_ROWS, `${people.total}`);
+  const peopleBytes = JSON.stringify(people).length;
+  console.log(`  ${(peopleBytes / 1024).toFixed(0)} KB, ${(peopleBytes / Math.max(1, people.rows.length)).toFixed(0)} bytes a person`);
+  // A row is a name, a role, a one-line gist and a few flags. An avatar or a whole summary
+  // per row blows through this.
+  check(
+    "people index moves under 700 bytes per person",
+    peopleBytes / Math.max(1, people.rows.length) < 700,
+    `${(peopleBytes / Math.max(1, people.rows.length)).toFixed(0)} bytes a person`
+  );
+
   // ---- Payload scaling ---------------------------------------------------------------
   //
   // Everything above runs at ONE account size, so it can prove a payload is narrow but not
@@ -645,8 +733,9 @@ async function main() {
 
   const smallDashboard = await getDashboardData(SCALE_USER);
   const smallGraph = await loadGraphData(SCALE_USER, { profile: Promise.resolve(null), scope: "all" });
-  const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false });
+  const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false, radar: true });
   const smallKnowledge = await loadKnowledgeBase(SCALE_USER);
+  const smallPeople = await loadKnowledgePeople(SCALE_USER);
   check(
     "knowledge payload does not grow with the account",
     JSON.stringify(knowledge).length / Math.max(1, JSON.stringify(smallKnowledge).length) < 1.5,
@@ -684,6 +773,9 @@ async function main() {
     // Bounded in SQL: four limited queries (80 + 100 + 30 + 25) feed `items`. This is the
     // shape the other two should end up in.
     { name: "notifications panel", small: smallPanel.items.length, large: panel.items.length, bound: 235 },
+    // One LIMITed read of the most recently touched people; the account's size only moves the
+    // `total` counter beside it.
+    { name: "knowledge people", small: smallPeople.rows.length, large: people.rows.length, bound: KNOWLEDGE_PEOPLE_LIMIT, flat: true },
   ];
   const sizeRatio = (N + SPECIAL_ROWS) / (SCALE_N + SPECIAL_ROWS);
 

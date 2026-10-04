@@ -15,7 +15,7 @@ import {
   noteBatches,
   reminders,
 } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
+import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { countsAsTouch } from "@/lib/interaction-provenance";
 import {
   type ContactPickerOption,
@@ -49,7 +49,7 @@ import {
   getApolloApiKey,
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
-import { saveContactProfile } from "@/lib/contact-profile";
+import { kickWorkHistoryResearch } from "@/lib/work-history-research";
 import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
@@ -83,10 +83,10 @@ import {
   nameAliases,
   type RelatedContact,
 } from "@/lib/related-contacts";
-import {
-  getOutreachSendConfig,
-  sendOutreachMessage,
-} from "@/lib/outreach-send";
+import { UNDO_DELAY_MS } from "@/lib/email/config";
+import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
+import { scheduleDispatch } from "@/lib/email/schedule";
+import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 
 export type {
   ContactInput,
@@ -1351,30 +1351,19 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       );
       if (profileImageUrl) await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
 
-      // Apollo fills a gap; it never overwrites an extension capture. `saveContactProfile`
-      // enforces that, so this call is unconditional and cheap when it is outranked.
-      if (profile.experiences.length) {
-        await saveContactProfile(userId, contact.id, {
-          source: "apollo",
-          sourceUrl: profile.linkedinUrl,
-          adapterVersion: null,
-          capturedAt: new Date(),
-          warnings: [],
-          headline: null,
-          about: null,
-          skills: [],
-          certifications: [],
-          volunteering: [],
-          publications: [],
-          experiences: profile.experiences,
-        }).catch(() => null); // never fail a refresh over the profile half
-      }
-
       refreshed += 1;
     } catch {
       failed += 1;
     }
   }
+
+  // Work history comes from a web search on the person's own AI key, not from Apollo, and
+  // in its own function: a few searches outlast this request. The route skips anyone with a
+  // recent history, so a repeated refresh does not search again.
+  await kickWorkHistoryResearch(
+    userId,
+    ordered.map((c) => c.id)
+  );
 
   revalidatePath("/contacts");
   revalidatePath("/");
@@ -1401,21 +1390,27 @@ export async function draftContactFollowUp(
 
 export type ContactFollowUpSendOptions = {
   canSendEmail: boolean;
+  /** Why email can't be sent from Orbit right now, or null when it can. */
+  sendBlock: SendBlockReason | "cap_reached" | null;
+  /** The mailbox to fix when `sendBlock` names one (null: nothing connected yet). */
+  sendBlockProvider: MailboxId | null;
+  /** Whether "Connect Outlook" may be offered alongside Gmail. */
+  outlookAvailable: boolean;
   hasEmail: boolean;
   hasLinkedIn: boolean;
   email: string | null;
   linkedinUrl: string | null;
 };
 
-/** Whether this contact can receive an automated email follow-up. */
+/** Whether this contact can be emailed from the user's own mailbox right now. */
 export async function getContactFollowUpSendOptions(
   contactId: string
 ): Promise<ContactFollowUpSendOptions> {
   const userId = await requireUserId();
   const db = await getDb();
-  // The send config needs nothing from the contact, so both reads start together. The
-  // not-found check still comes first; a config failure only surfaces after it, as before.
-  const configRead = settle(getOutreachSendConfig(userId));
+  // The capability needs nothing from the contact, so both reads start together. The
+  // not-found check still comes first; a capability failure only surfaces after it.
+  const capabilityRead = settle(getSendCapability(userId));
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: {
@@ -1425,7 +1420,7 @@ export async function getContactFollowUpSendOptions(
   });
   if (!contact) throw new Error("Contact not found");
 
-  const config = unwrap(await configRead);
+  const capability = unwrap(await capabilityRead);
   const email = contact.email?.trim() || null;
   const linkedinUrl = contact.linkedinUrl?.trim() || null;
 
@@ -1434,16 +1429,26 @@ export async function getContactFollowUpSendOptions(
     hasLinkedIn: Boolean(linkedinUrl),
     email,
     linkedinUrl,
-    canSendEmail: Boolean(email && config.resendApiKey),
+    canSendEmail: Boolean(email && capability.ok),
+    sendBlock: capability.ok ? null : capability.reason,
+    sendBlockProvider: capability.ok ? null : capability.provider,
+    outlookAvailable: capability.outlookAvailable,
   };
 }
 
-/** Send a follow-up email via Resend and log it as an interaction. */
+export type FollowUpSendResult =
+  | { ok: true; sendId: string; sendAt: string; to: string }
+  | { ok: false; reason: EnqueueRefusal | "no_email"; message: string };
+
+/**
+ * Queue a follow-up email from the user's own mailbox. It goes out after the undo window,
+ * and the follow-up clears only once it has (see `origin-hooks/follow-up.ts`).
+ */
 export async function sendContactFollowUpEmail(
   contactId: string,
   body: string,
   subject?: string
-) {
+): Promise<FollowUpSendResult> {
   const userId = await requireUserId();
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
@@ -1456,32 +1461,25 @@ export async function sendContactFollowUpEmail(
     },
   });
   if (!contact) throw new Error("Contact not found");
-  if (!contact.email?.trim()) throw new Error("Contact has no email address.");
-
-  const trimmed = body.trim();
-  if (!trimmed) throw new Error("Message body is empty.");
+  if (!contact.email?.trim()) {
+    return { ok: false, reason: "no_email", message: "Add an email address for this contact first." };
+  }
 
   const name = contact.preferredName || contact.fullName;
-  await sendOutreachMessage({
-    userId,
-    channel: "email",
-    toEmail: contact.email.trim(),
+  const profile = await getCurrentUserProfile().catch(() => null);
+  const queued = await enqueueEmail(userId, {
+    to: [contact.email.trim()],
     subject: subject?.trim() || `Following up · ${name}`,
-    body: trimmed,
+    bodyText: body,
+    fromName: profile?.name?.trim() || null,
+    origin: "follow_up",
+    originRef: contactId,
+    contactIds: [contactId],
+    delayMs: UNDO_DELAY_MS,
   });
-
-  await logInteraction({
-    contactId,
-    interactionType: "email",
-    source: "follow_up",
-    rawNotes: trimmed,
-    aiSummary: "Sent follow-up email from contact profile",
-  });
-
-  const { clearContactFollowUp } = await import("@/actions/reminders");
-  await clearContactFollowUp(contactId);
-
-  return { ok: true as const };
+  if (!queued.ok) return queued;
+  scheduleDispatch(queued.id, queued.sendAt);
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
 }
 
 /**

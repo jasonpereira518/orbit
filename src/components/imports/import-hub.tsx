@@ -25,6 +25,7 @@ import {
 } from "@/components/imports/import-history";
 import { ImportDropOverlay } from "@/components/imports/import-drop-overlay";
 import { ImportDropzone } from "@/components/imports/import-dropzone";
+import { FolderTriageCard } from "@/components/imports/folder-triage-card";
 import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import { ImportQueueCard } from "@/components/imports/import-queue-card";
 import { DriveImportCard } from "@/components/imports/drive-import-card";
@@ -44,7 +45,7 @@ import {
   useWindowFileDrop,
   useWindowFilePaste,
 } from "@/lib/use-window-file-drop";
-import { detectImportFiles } from "@/lib/imports/detect-import-file";
+import { detectImportFiles, type DetectionResult } from "@/lib/imports/detect-import-file";
 import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import {
@@ -403,11 +404,36 @@ export function ImportHub({
    */
   const refreshAfterUndo = useCallback(() => router.refresh(), [router]);
 
+  /** A folder's importable files, waiting for the person to confirm which. */
+  const [triage, setTriage] = useState<DetectionResult | null>(null);
+  /** Reading a pick's files to work out what they are. Folders can be thousands deep. */
+  const [scanning, setScanning] = useState(false);
+
   const handleFiles = useCallback(async (files: DroppedFile[]) => {
-    const result = await detectImportFiles(files, {
-      maxBytes: MAX_CONTACTS_FILE_BYTES,
-    });
-    await stageDrop(result);
+    const capped = files.length > IMPORT_DROP_LIMITS.maxFiles;
+    const kept = capped ? files.slice(0, IMPORT_DROP_LIMITS.maxFiles) : files;
+    setScanning(true);
+    try {
+      const result = await detectImportFiles(kept, {
+        maxBytes: MAX_CONTACTS_FILE_BYTES,
+        truncated: capped,
+      });
+      // A folder with more than one file Orbit reads is a choice, not a guess: rank them and
+      // let the person confirm. Loose files were hand-picked, and one candidate has no choice
+      // to make, so both go straight to the review as before.
+      const fromFolder = kept.some((f) => f.path !== "");
+      if (fromFolder && result.candidates.length >= 2) {
+        setTriage(result);
+        return;
+      }
+      setTriage(null);
+      await stageDrop(result);
+      if (capped) {
+        toast.message(`That folder has ${files.length.toLocaleString()} files — checked the first ${IMPORT_DROP_LIMITS.maxFiles}`);
+      }
+    } finally {
+      setScanning(false);
+    }
   }, []);
 
   /**
@@ -556,7 +582,7 @@ export function ImportHub({
 
       <ImportDropzone
         onFiles={(files) => void handleFiles(files)}
-        busy={reading}
+        busy={reading || scanning}
         extraAction={
           driveConfigured ? (
             <Button
@@ -595,6 +621,17 @@ export function ImportHub({
           step={job?.step}
           cancelling={Boolean(job?.cancelling)}
           onCancel={cancelImportJob}
+        />
+      ) : null}
+
+      {triage ? (
+        <FolderTriageCard
+          result={triage}
+          onCancel={() => setTriage(null)}
+          onConfirm={(chosen) => {
+            setTriage(null);
+            void stageDrop(chosen);
+          }}
         />
       ) : null}
 
