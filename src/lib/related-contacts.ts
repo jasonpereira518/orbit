@@ -53,6 +53,7 @@ const REASON_WEIGHT: Record<RelatedReason, number> = {
   company: 80,
   event: 75,
   howMet: 70,
+  role: 65,
   school: 60,
   sharedTags: 40,
   sharedInterests: 30,
@@ -198,6 +199,10 @@ function reasonLabel(
       return source.company?.trim()
         ? `Same company · ${source.company.trim()}`
         : "Same company";
+    case "role":
+      return source.title?.trim()
+        ? `Same role · ${source.title.trim()}`
+        : "Same role";
     case "howMet":
     case "event":
       return source.howMet?.trim()

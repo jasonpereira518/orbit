@@ -220,6 +220,17 @@ export function matchGraphContacts(
   return { ids, nameTier: false };
 }
 
+/**
+ * Whether a query that names this cluster exactly should highlight the whole cluster instead
+ * of running person matching. Role clusters are excluded: "Product" and "Operations" are also
+ * function words, and a search for them should still find those people inside company
+ * clusters, not just the cross-company role cluster.
+ */
+export function isExactClusterShortcut(cluster: GraphCluster, query: string): boolean {
+  if (cluster.kind === "role") return false;
+  return cluster.name.toLowerCase() === query.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export function findClusterMatch(
   clusters: GraphCluster[],
   query: string
