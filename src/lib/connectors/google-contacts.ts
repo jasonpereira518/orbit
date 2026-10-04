@@ -95,6 +95,8 @@ type PeopleApiPage = {
 export type ContactsSyncCursor = {
   syncToken?: string | null;
   pageToken?: string | null;
+  /** People the plan cap held back — carried through by the scheduler, never read here. */
+  blockedByPlan?: number | null;
 };
 
 export type ContactsFetchResult = {

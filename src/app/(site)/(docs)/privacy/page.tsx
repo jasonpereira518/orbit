@@ -54,7 +54,7 @@ const TOC: readonly TocItem[] = [
 /** Every service that receives personal data, verified against the code on 2026-09-23. */
 const PROCESSORS = [
   { name: "Clerk", badge: "Required", body: "Sign-in, sessions and account lifecycle. Holds your sign-in identity and records when you accepted these terms." },
-  { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos and feedback screenshots. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed." },
+  { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed." },
   { name: "Neon", badge: "Required", body: "The Postgres database that holds your Orbit data." },
   { name: "Sentry", badge: "Required", body: "Error reports: the error, where in the code it happened, the page and browser. Configured not to attach IP addresses or cookies, and with session replay off." },
   { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names and error messages. An error message can occasionally include a value it was processing." },
@@ -67,12 +67,12 @@ const PROCESSORS = [
   { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or — for included AI on Orbit Pro and Orbit Max — on Orbit's account with that provider." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
-  { name: "Microsoft", badge: "Optional", body: "Outlook, read-only, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, and your mail only for the recruiter scan you start. See The recruiter scan." },
+  { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address. See What Orbit collects and The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
   { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your Apollo key, or Orbit's on Pro, Max and Lifetime (up to your plan's monthly enrichments)." },
-  { name: "Resend", badge: "Optional", body: "Email Orbit sends: the waitlist confirmation, messages you send through the contact page, and outreach you send from Orbit." },
+  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
 ] as const;
 
@@ -131,14 +131,24 @@ export default function PrivacyPage() {
             <li>
               <strong>Connected accounts</strong> — if you connect Google, Orbit reads only what the
               feature you turned on needs (see <a href="#google">Google user data</a>). If you connect
-              Microsoft, Orbit asks for one read-only permission per feature you turn on: your
-              Outlook contacts, so you can pick who to import; your calendar, to add meetings with
-              people you know to their timelines; and your mail, only for the recruiter scan you
-              start. Each connection also asks for your Microsoft sign-in identity and email
-              address, to show which account is connected. Orbit cannot send mail or change
-              anything in your Microsoft account. Disconnecting deletes the tokens Orbit holds; to
+              Microsoft, Orbit asks for one permission per feature you turn on: your Outlook
+              contacts, so you can pick who to import; your calendar, to add meetings with people
+              you know to their timelines; your mail, for the recruiter scan you start, to find
+              your latest message with a contact when you reply in that conversation (its
+              Message-ID, subject and date only), and to check your Sent Items so a retried send is
+              never delivered twice; and permission to send mail (Mail.Send), only for email you
+              write and press Send on. Each connection also asks for your Microsoft sign-in
+              identity and email address, to show which account is connected. Orbit cannot read,
+              change or delete anything else in your Microsoft account. Disconnecting deletes the tokens Orbit holds; to
               also revoke the grant on Microsoft&rsquo;s side, remove Orbit from your Microsoft
               account&rsquo;s app permissions.
+            </li>
+            <li>
+              <strong>Email you send</strong> — when you send email from Orbit through your Gmail or
+              Outlook, Orbit keeps a record of each message (sender, recipients, subject, body, when
+              it was sent, and any files attached) so it can deliver it after the undo window or at
+              the time you scheduled, retry it safely, and log it on the contacts it went to. Orbit
+              never sends a message you did not send.
             </li>
             <li>
               <strong>The browser extension</strong> — when you open its panel on a LinkedIn profile,
@@ -481,7 +491,9 @@ export default function PrivacyPage() {
           </p>
           <p>
             Capture photos stay with the capture they belong to until you delete it; photos from a
-            capture you never save are deleted after 24 hours. Audio is never kept. Page views are
+            capture you never save are deleted after 24 hours. Files attached to an email are deleted 7
+            days after it is sent or canceled, and files you uploaded but never sent after 2 days.
+            Audio is never kept. Page views are
             deleted after 180 days; deleting your data or your account unlinks the ones made while
             you were signed in, keeping only the anonymous count.
           </p>

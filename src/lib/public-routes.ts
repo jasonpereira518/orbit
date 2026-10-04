@@ -84,6 +84,7 @@ export const PUBLIC_ROUTES = [
   "/api/credits/notices",
   "/api/webhooks/outbound/drain",
   "/api/connectors/outbox/drain",
+  "/api/email/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key
   // (`src/lib/api/auth.ts`), which Clerk knows nothing about. Exempted from
   // auth.protect() only so an unauthenticated call gets a JSON 401 a client can act on

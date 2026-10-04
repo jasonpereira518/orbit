@@ -8,6 +8,7 @@ import {
   hasCalendarScope as msHasCalendarScope,
   hasContactsScope as msHasContactsScope,
   hasMailScope as msHasMailScope,
+  hasSendScope as msHasSendScope,
   microsoftScopesFor,
   unionScopes,
   type MicrosoftPurpose,
@@ -47,6 +48,11 @@ export function hasCalendarScope(scopes: string | null | undefined) {
 /** True once a connection has been granted mail access, which the recruiter scan needs. */
 export function hasMailScope(scopes: string | null | undefined) {
   return msHasMailScope(scopes);
+}
+
+/** True once a connection may send as the user (Mail.Send), which sending from Outlook needs. */
+export function hasSendScope(scopes: string | null | undefined) {
+  return msHasSendScope(scopes);
 }
 
 /** Canonical Outlook OAuth callback path — must match the Azure app's redirect URI. */
@@ -350,7 +356,7 @@ const OUTLOOK_SESSION_EXPIRED = "Outlook session expired — reconnect";
  * Marks a connection as needing reconnection. Best-effort: health telemetry must never
  * turn a session-expired error into a 500.
  */
-async function markNeedsReauth(userId: string) {
+export async function markOutlookNeedsReauth(userId: string) {
   try {
     const db = await getDb();
     await db
@@ -410,7 +416,7 @@ export async function getValidAccessToken(
   }
 
   if (!conn.refreshTokenEncrypted) {
-    await markNeedsReauth(userId);
+    await markOutlookNeedsReauth(userId);
     throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
   }
 
@@ -419,7 +425,7 @@ export async function getValidAccessToken(
     refreshed = await refreshAccessToken(decrypt(conn.refreshTokenEncrypted));
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
-      await markNeedsReauth(userId);
+      await markOutlookNeedsReauth(userId);
       throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
     }
     throw err;
