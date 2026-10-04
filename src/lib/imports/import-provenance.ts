@@ -23,7 +23,7 @@ export type ImportedContactProvenance = { created: boolean; fp?: string };
  * avatar backfill or an enrichment job touched would make its people read "edited" and undo
  * would quietly remove nobody. That is why `profileImageUrl` (the avatar backfill writes it),
  * the closeness/priority scores (materialised by the scorer) and `aiSummary`/`keyFacts` (the
- * brief and message-enrichment writers) are absent. Checked for these five when they were
+ * brief and relationship-engine writers) are absent. Checked for these five when they were
  * added (Sep 2026): every writer of `location`, `school`, `phone`, `website` and `x_handle`
  * after an import is a person acting — the contact form, capture, the extension's save, the
  * MCP `update_contact` tool, the "Refresh from LinkedIn" button, a merge, or a later import

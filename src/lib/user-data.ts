@@ -68,6 +68,8 @@ import {
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
+  relationshipDigests,
+  relationshipRuns,
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
@@ -145,6 +147,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *                               global and never deleted with an account). The match is the
  *                               only per-user row in the job-feed trio; the feed itself and
  *                               its postings are global and carry no `user_id`.
+ *   - `relationship_digests` -> cascades from `contacts`
  * `recommendations`, `recommendation_feedback` and `contact_signals` also cascade from
  * `contacts`, but are deleted explicitly by `insights`, which can run without deleting
  * contacts. `radar_runs` has no parent and is always deleted explicitly. Radar's news tables
@@ -233,7 +236,7 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns)],
     counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
@@ -258,6 +261,16 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(recommendations).where(eq(recommendations.userId, userId));
       await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
       await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
+      // Relationship engine output: run history is deleted; per-contact digests have their
+      // derived text cleared (the memory_chunks precedent) but the rows stay. A digest row
+      // is also the read watermark: deleting it would make every conversation pending again
+      // and the engine would re-read (and re-bill) the whole history on its next pass.
+      // Digests cascade from contacts, so a contacts delete still removes them outright.
+      await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, userId));
+      await db
+        .update(relationshipDigests)
+        .set({ summary: null, whatTheyDo: null, workingOn: null, topics: [], openThreads: [] })
+        .where(eq(relationshipDigests.userId, userId));
       // What Radar learned from the outside world about these contacts (headlines, posts).
       // Also cascades from contacts; deleted here for the same reason.
       await db.delete(contactSignals).where(eq(contactSignals.userId, userId));
@@ -295,6 +308,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // user's own prose about named people, which makes it the most sensitive row in the
       // file.
       await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
+      // The relationship engine's run ledger (counters and flags per run). It keys on the user,
+      // not a contact, so no contact delete reaches it.
+      await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, userId));
       // Meeting transcripts: the words of everyone on a call, verbatim. Segments first and
       // explicitly, though they cascade from the session — they carry their own `user_id`,
       // and a transcript that outlived its account would be the worst leak this function
@@ -609,6 +625,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(duplicateSuggestions),
       own(targetCompanies),
       own(contactBriefs, "contact_id"),
+      own(relationshipDigests, "contact_id"),
       own(contactProfiles),
       own(contactExperiences),
       own(contactCareerMoves),

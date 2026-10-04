@@ -272,7 +272,7 @@ export const CONTACT_EMBEDDING_WITH = {
  * Embedding-content audit (spec §3), re-checked in Task 6:
  *
  * 1. This function never absorbs content that has its own source row. LinkedIn messages
- *    (`src/lib/message-enrichment.ts`) and meeting/interaction notes
+ *    (written by the relationship engine, `src/lib/relationship-engine/`) and meeting/interaction notes
  *    (`src/actions/imports.ts`, `src/lib/calendar-sync.ts`) call `upsertContactEmbedding`
  *    directly with their own `sourceType`/`sourceId` ("linkedin_message", "meeting") and
  *    never flow through here — no split needed on that front.

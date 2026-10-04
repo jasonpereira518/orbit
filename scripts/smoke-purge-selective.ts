@@ -398,6 +398,35 @@ async function main() {
     (await countFor("plan_upgrade_events")) === 0
   );
 
+  console.log("\nInsights keeps the relationship watermark, not the text");
+  await reset();
+  const adaContact = await db.query.contacts.findFirst({ where: eq(schema.contacts.userId, USER) });
+  const watermarkAt = new Date("2026-09-01T10:00:00.000Z");
+  const watermarkInteractionId = "00000000-0000-4000-8000-00000000abcd";
+  await db.insert(schema.relationshipDigests).values({
+    userId: USER,
+    contactId: adaContact!.id,
+    summary: "Talks about the deck.",
+    whatTheyDo: "PM",
+    workingOn: "Payments",
+    topics: [{ label: "payments", lastDiscussedAt: "2026-09-01" }],
+    openThreads: [{ key: "t1", text: "Send deck", owedBy: "me", sinceIso: "2026-09-01", interactionId: watermarkInteractionId, excerpt: "deck" }],
+    watermarkAt,
+    watermarkInteractionId,
+  });
+  await db.insert(schema.relationshipRuns).values({ userId: USER, status: "done" });
+  await purgeUserData(USER, { only: ["insights"] });
+  const keptDigest = await db.query.relationshipDigests.findFirst({ where: eq(schema.relationshipDigests.userId, USER) });
+  check(
+    "insights clears digest text but keeps the row and its watermark",
+    Boolean(keptDigest) &&
+      keptDigest!.summary === null && keptDigest!.whatTheyDo === null && keptDigest!.workingOn === null &&
+      keptDigest!.topics.length === 0 && keptDigest!.openThreads.length === 0 &&
+      keptDigest!.watermarkAt?.getTime() === watermarkAt.getTime() && keptDigest!.watermarkInteractionId === watermarkInteractionId,
+    JSON.stringify(keptDigest)
+  );
+  check("...and deletes the run history", (await countFor("relationship_runs")) === 0);
+
   console.log("\nSettings follow the preferences box, not the delete");
   await reset();
   await purgeUserData(USER, { only: ["chat"] });

@@ -252,3 +252,23 @@ export type SkipGatesEvalFixture = {
     why?: string;
   }>;
 };
+
+export type RelationshipEvalFixture = {
+  cases: Array<{
+    id: string;
+    contactName: string;
+    /** ISO "now" the rules run at. */
+    now: string;
+    messages: Array<{ at: string; from: "me" | "them"; text: string }>;
+    expect: {
+      /** Phrases that must appear in some fact. */
+      facts: string[];
+      commitments: Array<{ phrase: string; owedBy: "me" | "them"; dueIso?: string }>;
+      /** Reminders the rules must plan. */
+      reminders: number;
+      openThreads: number;
+      /** Must produce nothing at all (no model call). */
+      trivial?: boolean;
+    };
+  }>;
+};

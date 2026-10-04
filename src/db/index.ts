@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   terms_version text,
   timeline_backfill_enabled integer NOT NULL DEFAULT 1,
   work_history_auto_enabled integer NOT NULL DEFAULT 1,
+  relationship_engine_enabled integer NOT NULL DEFAULT 1,
   timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
@@ -333,6 +334,7 @@ CREATE TABLE IF NOT EXISTS action_items (
   completed_at timestamptz,
   item_hash text NOT NULL,
   reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  owed_by text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
@@ -371,6 +373,49 @@ CREATE TABLE IF NOT EXISTS contact_briefs (
   model text,
   input_hash text
 );
+CREATE TABLE IF NOT EXISTS relationship_digests (
+  contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  what_they_do text,
+  working_on text,
+  summary text,
+  topics jsonb NOT NULL DEFAULT '[]',
+  open_threads jsonb NOT NULL DEFAULT '[]',
+  message_count integer NOT NULL DEFAULT 0,
+  sources jsonb NOT NULL DEFAULT '[]',
+  watermark_at timestamptz,
+  watermark_interaction_id uuid,
+  history_truncated_before timestamptz,
+  attempts integer NOT NULL DEFAULT 0,
+  last_error text,
+  batch_job_id uuid,
+  batch_pending_until timestamptz,
+  run_id uuid,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS relationship_digests_user_idx ON relationship_digests(user_id);
+CREATE TABLE IF NOT EXISTS relationship_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  import_id uuid,
+  status text NOT NULL DEFAULT 'queued',
+  claim_token text,
+  lease_until timestamptz,
+  inline_used integer NOT NULL DEFAULT 0,
+  processed integer NOT NULL DEFAULT 0,
+  skipped integer NOT NULL DEFAULT 0,
+  failed integer NOT NULL DEFAULT 0,
+  reminders_created integer NOT NULL DEFAULT 0,
+  facts_added integer NOT NULL DEFAULT 0,
+  open_threads_added integer NOT NULL DEFAULT 0,
+  flags jsonb NOT NULL DEFAULT '[]',
+  note_batch_id uuid,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS relationship_runs_user_status_idx ON relationship_runs(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS relationship_runs_one_active_uidx ON relationship_runs(user_id) WHERE status IN ('queued', 'running', 'waiting_key');
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2502,7 +2547,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // (claude/email-search-context-7329e6) is the highest claimed anywhere, so 146 is the next free
 // integer. Re-checked Oct 4 2026 when merging main (144): still free; 147/148 are
 // claimed by the relationship-engine branches, which merge after.
-export const SCHEMA_VERSION = 146;
+//
+// 147 = the relationship engine: relationship_digests + relationship_runs (new tables),
+// action_items.owed_by, user_settings.relationship_engine_enabled. Re-scanned every remote ref
+// on Oct 4 2026 when merging main (146, the direct-email outbox): 146 is the highest claimed
+// outside the relationship-engine branches, so 147 stays free.
+export const SCHEMA_VERSION = 147;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3536,6 +3586,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "action_items", "owed_by", "text");
 
   try {
     await client.exec(
@@ -4409,6 +4461,10 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_text text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_html text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS default_send_provider text`,
+  // Schema v147: the relationship engine. Tables are in the template; these are the columns
+  // it adds to tables that older databases already have.
+  `ALTER TABLE action_items ADD COLUMN IF NOT EXISTS owed_by text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS relationship_engine_enabled integer NOT NULL DEFAULT 1`,
 ];
 
 /**

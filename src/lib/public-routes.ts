@@ -70,6 +70,7 @@ export const PUBLIC_ROUTES = [
   "/api/work-history/research",
   "/api/work-history/sweep",
   "/api/linkedin/timeline-events/backfill",
+  "/api/relationships/run",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
   "/api/sync/run",
