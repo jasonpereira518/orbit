@@ -9,7 +9,7 @@
  *
  * Two rules this file exists to enforce:
  *
- * 1. `ink` is DARK on both tiers and is used at FULL OPACITY. Body copy on a
+ * 1. `ink` is DARK on all three tiers and is used at FULL OPACITY. Body copy on a
  *    saturated field is exactly where `text-white/70` designs rot — the
  *    resulting ratio silently depends on the field behind it. `inkSoft` and
  *    `inkFaint` are measured values, never opacities of `ink`.
@@ -61,23 +61,21 @@ export type FacetRamp = {
 
 export type TierTheme = {
   plan: PaidPlan;
+  /** The motion signature of this plan's activation. */
+  signature: "orbit" | "flare" | "seal";
   /** "Orbit Pro" / "Orbit Lifetime" — the lockup uppercases it. */
   name: string;
   /** Fixed brand hex, kept for anything that needs the tier's own colour. */
   accent: string;
   field: FlatField;
   emblem: FacetRamp;
-  /** Body copy on the field. Dark, full opacity, AA on both tiers. */
+  /** Body copy on the field. Dark, full opacity, AA on all three tiers. */
   ink: string;
   inkRgb: string;
   /** Secondary copy (the welcome line). Measured, not derived. */
   inkSoft: string;
   /** The skip hint only. Quieter, and honestly decorative-adjacent. */
   inkFaint: string;
-  /** The perk-row slab. Must be the emblem's lightest facet, NOT a shade of
-   * the field — a chip one step off its own ground is invisible, which is
-   * exactly how the first pass failed. */
-  chip: string;
   /** The dismiss button, inverted into a dark slab against the bright field. */
   onField: string;
   onFieldInk: string;
@@ -96,6 +94,7 @@ export const MAX_PERKS = 6;
 const THEMES: Record<PaidPlan, TierTheme> = {
   orbit: {
     plan: "orbit",
+    signature: "orbit",
     name: PLAN_LABELS.orbit,
     accent: "#599de7",
     field: {
@@ -121,7 +120,6 @@ const THEMES: Record<PaidPlan, TierTheme> = {
     inkRgb: "4, 22, 46",
     inkSoft: "#0B2A52",
     inkFaint: "#16406F",
-    chip: "#DCE9F7", // ink on it: 14.9:1
     onField: "#0C1526",
     onFieldInk: "#FFFFFF",
     sparkRgb: "255, 255, 255",
@@ -132,6 +130,7 @@ const THEMES: Record<PaidPlan, TierTheme> = {
   },
   max: {
     plan: "max",
+    signature: "flare",
     name: PLAN_LABELS.max,
     accent: "#f2c14e",
     field: {
@@ -155,7 +154,6 @@ const THEMES: Record<PaidPlan, TierTheme> = {
     inkRgb: "59, 28, 2",
     inkSoft: "#5A3208",
     inkFaint: "#7A4A10",
-    chip: "#FFE9AE", // ink on it: 12.6:1
     onField: "#3B1C02",
     onFieldInk: "#FFFFFF",
     sparkRgb: "255, 255, 255",
@@ -166,6 +164,7 @@ const THEMES: Record<PaidPlan, TierTheme> = {
   },
   lifetime: {
     plan: "lifetime",
+    signature: "seal",
     name: PLAN_LABELS.lifetime,
     accent: "#c9d1db",
     field: {
@@ -191,7 +190,6 @@ const THEMES: Record<PaidPlan, TierTheme> = {
     inkRgb: "28, 33, 41",
     inkSoft: "#2D343D",
     inkFaint: "#434C57", // 5.3:1 on field.mid
-    chip: "#F2F4F7", // ink on it: 14.7:1
     onField: "#1C2129",
     onFieldInk: "#FFFFFF",
     sparkRgb: "255, 255, 255",

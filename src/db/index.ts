@@ -2488,13 +2488,20 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // at 142 would never run a 141, so it takes its own number. Scanned every remote ref on Sep 30
 // 2026: 142 (main) is the highest claimed anywhere, so 143 is the next free integer.
 //
+// 144 = contact_briefs.goal_fit, how a person bears on the user's active goals, judged by the
+// brief's model call and shown on the Knowledge page's dossier. Nullable with no backfill: a
+// brief with no fit is "not judged yet", and the dossier regenerates it on open. Scanned every
+// remote ref on Sep 30 2026: 143 (main, the radar_apollo_cursor drop) is the highest claimed
+// anywhere, so 144 is the next free integer.
+//
 // 146 = email_sends (the person-to-person outbox every 1:1 send goes through — direct email P1)
 // and user_settings.email_signature_text / email_signature_html / default_send_provider. First
 // claimed 140 on claude/orbit-direct-email-cc0746; main moved to 143 while it was open, and a
 // database already at 143 would never run a 140, so it takes its own number. Scanned every local
 // and remote ref and every worktree's working src/db/index.ts on Sep 30 2026: 145
 // (claude/email-search-context-7329e6) is the highest claimed anywhere, so 146 is the next free
-// integer.
+// integer. Re-checked Oct 4 2026 when merging main (144): still free; 147/148 are
+// claimed by the relationship-engine branches, which merge after.
 export const SCHEMA_VERSION = 146;
 
 /**
@@ -2561,6 +2568,9 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS confidence_score integer`,
   // The brief's single "what to do next" clause.
   `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS next_step text`,
+  // Schema v144: how the person bears on the user's active goals ({ judged, items }, see
+  // contactBriefs.goalFit). Null = never judged; no backfill.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS goal_fit jsonb`,
   // Multi-file capture: one file = one meeting = one job, grouped by batch_group_id.
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS batch_group_id uuid`,
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,

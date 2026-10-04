@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { CardStarfield } from "@/components/dashboard/card-starfield";
 import type { NetworkStatItem, NetworkStats } from "@/lib/network-stats";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
@@ -96,17 +97,23 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
   }, []);
 
   return (
+    // The sky lives on this wrapper, not inside the <details>. A <details> puts everything
+    // but its summary in a hidden slot and paints it in order after the summary, so a sky
+    // placed inside it was missing while the card was closed and, once open, painted over the
+    // heading. As a sibling behind the <details> it is there in both states and under both.
+    <div className="relative overflow-hidden rounded-2xl border border-[#f2c14e]/20 bg-[#03050c] text-[#e8f3f1]">
+    <CardStarfield />
     <details
       ref={detailsRef}
-      className="group rounded-2xl border border-border/70 bg-card"
+      className="group relative"
     >
       {/* The summary is this card's only control and had no hover state at all. */}
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl p-6 transition-colors duration-fast ease-house hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
+      <summary className="relative flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl p-6 transition-colors duration-fast ease-house hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
         <div>
-          <p className="text-sm font-medium text-ink">Your orbit in numbers</p>
-          <p className="mt-0.5 text-sm text-muted-foreground">{stats.subheadline}</p>
+          <p className="text-sm font-medium text-[#e8f3f1]">Your orbit in numbers</p>
+          <p className="mt-0.5 text-sm text-[#9aada8]">{stats.subheadline}</p>
         </div>
-        <ChevronDown className="h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-slow ease-house group-open:rotate-180" />
+        <ChevronDown className="h-5 w-5 shrink-0 text-[#9aada8] transition-transform duration-slow ease-house group-open:rotate-180" />
       </summary>
       {/* The chevron used to animate while the panel it points at teleported open —
           animating the indicator but not the thing indicated is worse than animating
@@ -117,22 +124,22 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
           `<details>` sets `content-visibility: hidden` on its collapsed content, which
           would skip the transition, so the panel is force-shown and the grid row does
           the hiding instead. */}
-      <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
+      <div className="relative grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
       <div className="overflow-hidden">
-      <div className="border-t border-border/60 px-6 pb-6 pt-4">
+      <div className="border-t border-white/10 px-6 pb-6 pt-4">
         <dl className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {stats.items.map((item) => (
             <div
               key={item.label}
-              className="flex h-full min-h-[5.5rem] flex-col rounded-xl border border-border/60 bg-background/60 px-3 py-3"
+              className="flex h-full min-h-[5.5rem] flex-col rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 backdrop-blur-sm"
             >
-              <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <dt className="text-[11px] font-medium uppercase tracking-wide text-[#9aada8]">
                 {item.label}
               </dt>
-              <dd className="mt-1 font-[family-name:var(--font-display)] text-2xl leading-none text-ink">
+              <dd className="mt-1 font-[family-name:var(--font-display)] text-2xl leading-none text-[#e8f3f1]">
                 <AnimatedStatValue item={item} active={open} />
               </dd>
-              <dd className="mt-1.5 min-h-[1rem] text-xs text-muted-foreground">
+              <dd className="mt-1.5 min-h-[1rem] text-xs text-[#9aada8]">
                 {item.detail && !item.empty ? item.detail : "\u00A0"}
               </dd>
             </div>
@@ -142,5 +149,6 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
       </div>
       </div>
     </details>
+    </div>
   );
 }

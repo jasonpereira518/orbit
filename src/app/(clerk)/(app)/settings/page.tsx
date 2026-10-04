@@ -63,7 +63,7 @@ const GROUP = Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.key, g])) as Reco
 >;
 
 /**
- * One of the five named groups, and the rail's anchor for it. Renders nothing when every
+ * One of the named groups, and the rail's anchor for it. Renders nothing when every
  * card in it is hidden, so a label never floats above an empty stretch of page — and the
  * rail, built from the same visibility, never offers a row that scrolls nowhere.
  */
@@ -177,6 +177,18 @@ export default async function SettingsPage() {
         </Section>
       </Group>
 
+      <Group group="goals" visible={groupVisible("goals")}>
+        <Section id="settings-goals" hidden={hidden}>
+          <GoalsSettings initialGoals={initialGoals} />
+        </Section>
+        <Section id="settings-targets" hidden={hidden}>
+          <TargetCompaniesSettings
+            initialCompanies={targetCompanies}
+            initialSchools={schools}
+          />
+        </Section>
+      </Group>
+
       <Group group="preferences" visible={groupVisible("preferences")}>
         {shows("settings-appearance") || shows("settings-notifications") ? (
           <SettingsSection
@@ -196,15 +208,6 @@ export default async function SettingsPage() {
             ) : null}
           </SettingsSection>
         ) : null}
-        <Section id="settings-goals" hidden={hidden}>
-          <GoalsSettings initialGoals={initialGoals} />
-        </Section>
-        <Section id="settings-targets" hidden={hidden}>
-          <TargetCompaniesSettings
-            initialCompanies={targetCompanies}
-            initialSchools={schools}
-          />
-        </Section>
       </Group>
 
       <Group group="integrations" visible={groupVisible("integrations")}>

@@ -1,5 +1,5 @@
-import { GenericPageSkeleton } from "@/components/loading/page-skeletons";
+import { KnowledgePageSkeleton } from "@/components/knowledge/knowledge-skeletons";
 
 export default function KnowledgeLoading() {
-  return <GenericPageSkeleton />;
+  return <KnowledgePageSkeleton />;
 }

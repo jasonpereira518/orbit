@@ -81,12 +81,6 @@ export default async function ContactsPage({
           </Suspense>
           <RefreshContactsButton />
           <Link
-            href="/capture"
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            AI capture
-          </Link>
-          <Link
             href="/contacts/new"
             className={cn(
               buttonVariants(),
