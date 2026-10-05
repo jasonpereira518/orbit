@@ -73,6 +73,7 @@ function hasAiKeyFor(
         geminiApiKeyEncrypted?: string | null;
         openaiApiKeyEncrypted?: string | null;
         anthropicApiKeyEncrypted?: string | null;
+        openrouterApiKeyEncrypted?: string | null;
       }
     | null
     | undefined
@@ -84,7 +85,9 @@ function hasAiKeyFor(
         ? settings?.openaiApiKeyEncrypted
         : provider === "anthropic"
           ? settings?.anthropicApiKeyEncrypted
-          : null;
+          : provider === "openrouter"
+            ? settings?.openrouterApiKeyEncrypted
+            : null;
   if (personal) return true;
   return Boolean(managedKeysConfigured()[provider]);
 }
