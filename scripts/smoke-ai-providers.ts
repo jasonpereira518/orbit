@@ -42,7 +42,7 @@ check("AI_PROVIDERS lists every provider", PROVIDERS.every((p) => AI_PROVIDERS.s
  * decision someone made on purpose.
  *
  * OpenRouter is now selectable, because the AI page gives it a card with a key field. The
- * onboarding wizard still offers only the first-party three, and the check below is what
+ * onboarding AI key step still offers only the first-party three, and the check below is what
  * holds that line — flipping `selectable` alone must not put a fourth tile in front of a
  * brand-new account.
  */
@@ -53,9 +53,9 @@ check(
 );
 check("openrouter is selectable", isSelectableAiProvider("openrouter"));
 {
-  const wizard = readFileSync("src/components/onboarding/wizard/wizard-ai-key.tsx", "utf8");
+  const wizard = readFileSync("src/components/onboarding/steps/ai-key-step.tsx", "utf8");
   check(
-    "the onboarding wizard still excludes openrouter from its tiles",
+    "the onboarding AI key step still excludes openrouter from its tiles",
     /SELECTABLE_AI_PROVIDERS\s*\.filter\(\s*\(p\)\s*=>\s*p\.id\s*!==\s*"openrouter"\s*\)/.test(wizard)
   );
 }
@@ -73,7 +73,7 @@ check(
 // is the exact regression above.
 for (const file of [
   "src/components/settings/ai-settings.tsx",
-  "src/components/onboarding/wizard/wizard-ai-key.tsx",
+  "src/components/onboarding/steps/ai-key-step.tsx",
 ]) {
   const source = readFileSync(file, "utf8");
   check(`${file} does not map over AI_PROVIDERS`, !/\bAI_PROVIDERS\s*\.\s*map\b/.test(source));

@@ -170,6 +170,15 @@ const OPENROUTER_ROUTED_AWAY =
   "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
+  // Onboarding's AI key step never offers OpenRouter (it renders from
+  // SELECTABLE_AI_PROVIDERS minus openrouter, which smoke-ai-providers pins), so its
+  // per-provider branches need no openrouter arm.
+  "src/components/onboarding/provider-logo.tsx:21": "ProviderLogo's Gemini mark; the " +
+    "onboarding grid never renders an OpenRouter tile, so no OpenRouter mark is drawn.",
+  "src/components/onboarding/provider-logo.tsx:38": "ProviderLogo's OpenAI mark — same " +
+    "reason as line 21.",
+  "src/components/onboarding/steps/ai-key-step.tsx:110": "the Gemini-only free-tier note " +
+    "under the key link; no other provider has one to show.",
   "src/lib/ai-access.ts:633": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
@@ -178,15 +187,15 @@ const ALLOWLIST: Record<string, string> = {
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
-  "src/lib/ai-providers.ts:212": "one statement, `value === \"openai\" || value === " +
+  "src/lib/ai-providers.ts:224": "one statement, `value === \"openai\" || value === " +
     "\"anthropic\" || value === \"gemini\" || value === \"openrouter\"` — the fourth arm is " +
     "the literal \"openrouter\" itself, which this checker does not flag because it isn't " +
     "one of the three narrowed literals; together the four are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:221": "modelBelongsToProvider has a fourth `if (provider === " +
+  "src/lib/ai-providers.ts:233": "modelBelongsToProvider has a fourth `if (provider === " +
     "\"openrouter\") return model.includes(\"/\")` right after this one; the four checks " +
     "together are exhaustive over AiProvider.",
-  "src/lib/ai-providers.ts:222": "same function as line 221 — see that entry.",
-  "src/lib/ai-providers.ts:225": "same function as line 221 — see that entry.",
+  "src/lib/ai-providers.ts:234": "same function as line 233 — see that entry.",
+  "src/lib/ai-providers.ts:237": "same function as line 233 — see that entry.",
   // Fix round 1: the old openai-literal arm here fell through to the Gemini branch for an
   // openrouter grant, throwing `No gemini grant` — fails closed, but breaks every chat
   // tool call for an OpenRouter user. Widened to isOpenAiShaped, same shape as ai.ts, so

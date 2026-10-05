@@ -252,7 +252,7 @@ function sourceGuard() {
   // literal itself tripping the guard everywhere else — including a split host/path form
   // (`const H = "https://openrouter.ai"; fetch(\`${H}/api/v1/...\`)`) that a "must contain
   // /api" pattern would miss, since the literal alone carries no path.
-  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|api\.deepgram\.com|openrouter\.ai(?!\/(settings\/credits|auth|api\/v1\/key|api\/v1\/auth\/keys)\b)/;
+  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|api\.deepgram\.com|openrouter\.ai(?!\/(settings\/credits|settings\/keys|auth|api\/v1\/key|api\/v1\/auth\/keys)\b)/;
 
   const offenders: string[] = [];
   for (const file of [...walk("src"), ...walk("scripts")]) {
