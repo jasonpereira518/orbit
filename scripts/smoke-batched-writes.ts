@@ -328,17 +328,34 @@ run(async () => {
 
   // ------------------------------------------------------------------ dashboard follow-ups
   console.log("\nreminders.generateDueFollowUps: existing reminders retitled in one UPDATE");
-  const [c1, c2] = await db
+  const [c1, c2, c3] = await db
     .insert(contacts)
     .values([
       { userId: REM_USER, fullName: "Carla One", preferredName: "Carla", priorityLevel: 3 },
       { userId: REM_USER, fullName: "Dev Two", priorityLevel: 3 },
+      { userId: REM_USER, fullName: "Hank Hand", preferredName: "Hank", priorityLevel: 3 },
     ])
     .returning();
   const [otherContact] = await db.insert(contacts).values({ userId: OTHER, fullName: "Not Yours", priorityLevel: 3 }).returning();
+  // `createdBy: "system"` — the rows this batched UPDATE is allowed to touch. It used to be
+  // seeded `"user"`, which made this check assert the data loss `reminders.ts`'s guard
+  // exists to prevent: a hand-written title rewritten and relabelled `system`. The batching
+  // is what is under test here; who may be retitled is pinned below and in
+  // `smoke-no-silent-data-loss.ts`.
   const [existingRem] = await db
     .insert(reminders)
-    .values({ userId: REM_USER, contactId: c1.id, title: "old title", reminderType: "manual", createdBy: "user", status: "pending" })
+    .values({ userId: REM_USER, contactId: c1.id, title: "old title", reminderType: "manual", createdBy: "system", status: "pending" })
+    .returning();
+  const [handWritten] = await db
+    .insert(reminders)
+    .values({
+      userId: REM_USER,
+      contactId: c3.id,
+      title: "Send Hank the intro deck",
+      reminderType: "manual",
+      createdBy: "user",
+      status: "pending",
+    })
     .returning();
   const [foreignRem] = await db
     .insert(reminders)
@@ -359,6 +376,23 @@ run(async () => {
   );
   check("no second reminder for that contact", remRows.filter((r) => r.contactId === c1.id).length === 1);
   check("the other contact gets a new one", remRows.some((r) => r.contactId === c2.id && r.title === "Follow up with Dev Two"));
+  // The batched UPDATE sets title, due date, type, kind AND created_by on every row it
+  // touches, so a user-authored row swept into it loses the evidence it was ever written by
+  // a person. Skipped, not rewritten — and skipped without the loop then inserting a second
+  // reminder for the same contact behind it.
+  const handAfter = remRows.find((r) => r.id === handWritten.id);
+  check(
+    "a hand-written reminder is left exactly as the person wrote it",
+    handAfter?.title === "Send Hank the intro deck" &&
+      handAfter.createdBy === "user" &&
+      handAfter.reminderType === "manual" &&
+      handAfter.dueDate === null,
+    JSON.stringify(handAfter)
+  );
+  check(
+    "and skipping it does not leave a duplicate behind",
+    remRows.filter((r) => r.contactId === c3.id).length === 1
+  );
   const foreignAfter = await db.query.reminders.findFirst({ where: eq(reminders.id, foreignRem.id) });
   check("another account's reminder is untouched", foreignAfter?.title === "foreign" && foreignAfter.reminderType === "manual");
 
