@@ -294,6 +294,18 @@ async function main() {
     `got "${folded?.company}"`
   );
 
+  // Clean up after ourselves.
+  //
+  // The pglite tier shares one database, and `smoke-admin-analytics` asserts a GLOBAL
+  // aggregate — `engagementDepth` counts chat messages across every user, and expects
+  // exactly the two it wrote. The threads and messages this script inserted were left
+  // behind, so it failed whenever it ran after this one: passing alone, failing in the
+  // suite. Deleting the threads cascades to their messages.
+  await db.delete(chatThreads).where(eq(chatThreads.userId, USER));
+  await db.delete(chatMessages).where(eq(chatMessages.userId, USER));
+  await db.delete(reminders).where(eq(reminders.userId, USER));
+  await db.delete(contacts).where(eq(contacts.userId, USER));
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);
