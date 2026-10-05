@@ -1,10 +1,11 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
   Calendar,
+  CheckCircle2,
   CircleAlert,
   Mail,
   Upload,
@@ -27,8 +28,10 @@ import {
   OpsButtons,
   RetryImportButton,
 } from "@/components/admin/health-actions";
+import { ProductTabs } from "@/components/admin/product-tabs";
 import { SystemStrip } from "@/components/admin/system-strip";
 import { useLivePoll } from "@/components/admin/use-live-poll";
+import { cn } from "@/lib/utils";
 import type { AdminHealth } from "@/lib/admin-health";
 import type {
   CronHealth,
@@ -110,108 +113,64 @@ function relativeMinutes(date: Date | string) {
 }
 
 /**
- * The whole live-scoped body: both status strips, the run-sweep/test-alert buttons, and
- * every panel from "Open alerts" through "Inbound webhooks". `bugsEmbeddingsMissingVector`
- * is the one value the "Search index" strip item needs from the excluded, static
- * bug-signatures panel — passed in rather than polled, so this component never has to
- * import `getBugSignatures` itself.
+ * The whole live-scoped body, split into three tabs by the question each answers:
+ * "Needs attention" (account-level things with a fix button), "Systems" (is Orbit itself
+ * running) and "AI & data" (slow-moving volume and quality). A status banner above the tabs
+ * rolls every signal into one line, so the first glance answers "is anything wrong" without
+ * opening a tab. The server-rendered panels (provider status, bug signatures, the AI/data
+ * panels) arrive as nodes and are placed in their tab.
  */
 export function HealthLiveBody({
-  bugsEmbeddingsMissingVector,
+  providerProblems,
+  providerPanel,
+  bugsPanel,
+  aiDataPanels,
 }: {
-  bugsEmbeddingsMissingVector: number | null;
+  /** Providers reporting degraded or unavailable (unconfigured is not a problem). */
+  providerProblems: number;
+  providerPanel: React.ReactNode;
+  bugsPanel: React.ReactNode;
+  aiDataPanels: React.ReactNode;
 }) {
   const { health, cron, webhooks, errors, outreach, ops } = useHealthLive();
+  const [tab, setTab] = useState("attention");
   const criticalOpen = ops?.openAlerts.filter((a) => a.severity === "critical").length ?? 0;
+  const openAlerts = ops?.openAlerts.length ?? 0;
+  const accountIssues =
+    health.connections.length +
+    health.calendars.length +
+    health.imports.length +
+    health.missingKeyTotal;
+  const sweepBad = Boolean(ops) && (!ops!.lastSweep || ops!.sweepQuiet);
+  const cronBad = Boolean(cron) && (!cron!.lastRun || cron!.missed);
+  const webhooksBad = Boolean(
+    webhooks?.byOutcome.some((o) => o.outcome === "invalid" || o.outcome === "error")
+  );
+  const systemIssues =
+    (sweepBad ? 1 : 0) + (cronBad ? 1 : 0) + (webhooksBad ? 1 : 0) + providerProblems;
 
-  return (
-    <>
-      {/* Is anyone watching? The sweep is what turns the rest of this page into Slack
-          messages; if it has gone quiet, nothing below will reach a phone. */}
-      <SystemStrip
-        items={[
-          {
-            label: "Ops sweep",
-            value: !ops
-              ? "not instrumented"
-              : !ops.lastSweep
-                ? "never run"
-                : ops.sweepQuiet
-                  ? "quiet for over 30 min"
-                  : `${ops.lastSweep.state} · ${relativeMinutes(ops.lastSweep.startedAt)}`,
-            tone: !ops || !ops.lastSweep || ops.sweepQuiet ? "danger" : "ok",
-          },
-          {
-            label: "Open alerts",
-            value: ops ? `${ops.openAlerts.length}${criticalOpen ? ` (${criticalOpen} critical)` : ""}` : "—",
-            tone: criticalOpen > 0 ? "danger" : ops && ops.openAlerts.length > 0 ? "warn" : "ok",
-            href: "#open-alerts",
-          },
-          {
-            label: "Deployed",
-            value: ops?.deployedSha
-              ? `${ops.deployedSha.slice(0, 7)}${ops.builtAt ? ` · built ${relativeMinutes(new Date(ops.builtAt))}` : ""}`
-              : "local",
-            tone: "ok",
-          },
-          {
-            label: "Errors",
-            value: ops?.sentryUrl ? "Sentry" : "not connected",
-            tone: ops?.sentryUrl ? "ok" : "warn",
-            href: ops?.sentryUrl ?? undefined,
-          },
-        ]}
-      />
-      <div className="-mt-4 mb-6 flex justify-end">
-        <OpsButtons
-          slackConfigured={Boolean(ops?.slackConfigured)}
-          slackDmConfigured={Boolean(ops?.slackDmConfigured)}
-        />
-      </div>
+  type Problem = { label: string; tab: string; tone: "danger" | "warn" };
+  const problems: Problem[] = [];
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (criticalOpen > 0) {
+    problems.push({ label: `${plural(criticalOpen, "critical alert")}`, tab: "attention", tone: "danger" });
+  }
+  if (openAlerts > criticalOpen) {
+    problems.push({ label: plural(openAlerts - criticalOpen, "open alert"), tab: "attention", tone: "warn" });
+  }
+  if (accountIssues > 0) {
+    problems.push({ label: plural(accountIssues, "account issue"), tab: "attention", tone: "warn" });
+  }
+  if (sweepBad) problems.push({ label: "Ops sweep is quiet", tab: "systems", tone: "danger" });
+  if (cronBad) problems.push({ label: "Nightly job missed", tab: "systems", tone: "danger" });
+  if (webhooksBad) problems.push({ label: "Webhook failures", tab: "systems", tone: "danger" });
+  if (providerProblems > 0) {
+    problems.push({ label: `${plural(providerProblems, "provider")} down`, tab: "systems", tone: "danger" });
+  }
+  const anyDanger = problems.some((p) => p.tone === "danger");
 
-      <SystemStrip
-        items={[
-          {
-            label: "Nightly job",
-            value: !cron?.lastRun
-              ? "no runs recorded"
-              : cron.missed
-                ? "has not run in over a day"
-                : cron.lastRun.state,
-            tone: !cron?.lastRun || cron.missed
-              ? "danger"
-              : cron.lastRun.state === "ok"
-                ? "ok"
-                : "warn",
-          },
-          {
-            label: "Overdue sends",
-            value: outreach ? `${outreach.overdue}` : "—",
-            tone: outreach && outreach.overdue > 0 ? "warn" : "ok",
-          },
-          {
-            label: "Webhooks (7d)",
-            value: webhooks
-              ? webhooks.byOutcome.map((o) => `${o.count} ${o.outcome}`).join(" · ") || "none"
-              : "not instrumented",
-            tone: webhooks?.byOutcome.some(
-              (o) => o.outcome === "invalid" || o.outcome === "error"
-            )
-              ? "danger"
-              : "ok",
-          },
-          {
-            label: "Search index",
-            value:
-              bugsEmbeddingsMissingVector === null
-                ? "pgvector unavailable"
-                : `${bugsEmbeddingsMissingVector} unindexed`,
-            tone: bugsEmbeddingsMissingVector ? "warn" : "ok",
-          },
-        ]}
-      />
-
-      <div className="space-y-6">
+  const attention = (
+    <div className="space-y-6">
         <AdminPanel title="Open alerts" className="scroll-mt-24">
           <div id="open-alerts" />
           {!ops || ops.openAlerts.length === 0 ? (
@@ -248,8 +207,8 @@ export function HealthLiveBody({
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <MetricTile
             label="No AI key"
-            value={health.missingKeyAccounts.length}
-            tone={health.missingKeyAccounts.length > 0 ? "accent" : "muted"}
+            value={health.missingKeyTotal}
+            tone={health.missingKeyTotal > 0 ? "accent" : "muted"}
             hint="every AI feature fails"
           />
           <MetricTile
@@ -293,6 +252,12 @@ export function HealthLiveBody({
                   </span>
                 </li>
               ))}
+              {health.missingKeyTotal > health.missingKeyAccounts.length && (
+                <li className="py-2 text-xs text-muted-foreground">
+                  and {health.missingKeyTotal - health.missingKeyAccounts.length} older — the
+                  CSV export lists every one
+                </li>
+              )}
             </ul>
           )}
         </AdminPanel>
@@ -475,69 +440,92 @@ export function HealthLiveBody({
             </AdminTable>
           )}
         </AdminPanel>
+    </div>
+  );
 
-        {/* Grouped by error kind x model x operation, with an account count per group. That
-            count is the point: forty auth failures on one account is a bad key, forty
-            across thirty accounts is the provider, and the two need opposite responses. */}
-        <AdminPanel
-          title="AI failures"
-          action={
-            <span className="text-xs text-muted-foreground tabular-nums">
-              last {health.windowDays} days
-            </span>
-          }
-        >
-          {health.aiErrors.length === 0 ? (
-            <EmptyState>
-              No AI calls have failed in the last {health.windowDays} days.
-            </EmptyState>
-          ) : (
-            <AdminTable
-              head={
-                <>
-                  <Th>Error</Th>
-                  <Th>Operation</Th>
-                  <Th>Model</Th>
-                  <Th numeric>Failures</Th>
-                  <Th numeric>Accounts</Th>
-                  <Th numeric>Last seen</Th>
-                </>
-              }
-            >
-              {health.aiErrors.map((group) => (
-                <tr
-                  key={`${group.errorKind}-${group.model}-${group.operation}`}
-                  className="border-b border-border/40 last:border-b-0"
-                >
-                  <Td>
-                    <span className="flex items-center gap-1.5">
-                      <AlertTriangle
-                        className="size-3 shrink-0 text-destructive"
-                        aria-hidden
-                      />
-                      {group.errorKind}
-                    </span>
-                  </Td>
-                  <Td className="text-muted-foreground">{group.operation}</Td>
-                  <Td className="text-muted-foreground">
-                    {group.provider} / {group.model}
-                  </Td>
-                  <Td numeric>{group.failures}</Td>
-                  <Td numeric>
-                    <span className={group.accounts > 1 ? "text-destructive" : undefined}>
-                      {group.accounts}
-                    </span>
-                  </Td>
-                  <Td numeric>
-                    <RelativeTime date={group.lastAt} />
-                  </Td>
-                </tr>
-              ))}
-            </AdminTable>
-          )}
-        </AdminPanel>
+  const systems = (
+    <>
+      {/* Is anyone watching? The sweep is what turns the rest of this page into Slack
+          messages; if it has gone quiet, nothing below will reach a phone. */}
+      <SystemStrip
+        items={[
+          {
+            label: "Ops sweep",
+            value: !ops
+              ? "not instrumented"
+              : !ops.lastSweep
+                ? "never run"
+                : ops.sweepQuiet
+                  ? "quiet for over 30 min"
+                  : `${ops.lastSweep.state} · ${relativeMinutes(ops.lastSweep.startedAt)}`,
+            tone: !ops || !ops.lastSweep || ops.sweepQuiet ? "danger" : "ok",
+          },
+          {
+            label: "Open alerts",
+            value: ops ? `${ops.openAlerts.length}${criticalOpen ? ` (${criticalOpen} critical)` : ""}` : "—",
+            tone: criticalOpen > 0 ? "danger" : ops && ops.openAlerts.length > 0 ? "warn" : "ok",
+            href: "#open-alerts",
+          },
+          {
+            label: "Deployed",
+            value: ops?.deployedSha
+              ? `${ops.deployedSha.slice(0, 7)}${ops.builtAt ? ` · built ${relativeMinutes(new Date(ops.builtAt))}` : ""}`
+              : "local",
+            tone: "ok",
+          },
+          {
+            label: "Errors",
+            value: ops?.sentryUrl ? "Sentry" : "not connected",
+            tone: ops?.sentryUrl ? "ok" : "warn",
+            href: ops?.sentryUrl ?? undefined,
+          },
+        ]}
+      />
+      <div className="-mt-4 mb-6 flex justify-end">
+        <OpsButtons
+          slackConfigured={Boolean(ops?.slackConfigured)}
+          slackDmConfigured={Boolean(ops?.slackDmConfigured)}
+        />
+      </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
+      <SystemStrip
+        items={[
+          {
+            label: "Nightly job",
+            value: !cron?.lastRun
+              ? "no runs recorded"
+              : cron.missed
+                ? "has not run in over a day"
+                : cron.lastRun.state,
+            tone: !cron?.lastRun || cron.missed
+              ? "danger"
+              : cron.lastRun.state === "ok"
+                ? "ok"
+                : "warn",
+          },
+          {
+            label: "Overdue sends",
+            value: outreach ? `${outreach.overdue}` : "—",
+            tone: outreach && outreach.overdue > 0 ? "warn" : "ok",
+          },
+          {
+            label: "Webhooks (7d)",
+            value: webhooks
+              ? webhooks.byOutcome.map((o) => `${o.count} ${o.outcome}`).join(" · ") || "none"
+              : "not instrumented",
+            tone: webhooks?.byOutcome.some(
+              (o) => o.outcome === "invalid" || o.outcome === "error"
+            )
+              ? "danger"
+              : "ok",
+          },
+        ]}
+      />
+
+      <div className="mb-6">{providerPanel}</div>
+
+      <div className="space-y-6">
+        <div>
           <AdminPanel title="Nightly job">
             {/* Nothing recorded cron runs before this, so "did it fire last night?" had no
                 answer — and the import backstop below silently depends on it. */}
@@ -588,37 +576,6 @@ export function HealthLiveBody({
                   </tr>
                 ))}
               </AdminTable>
-            )}
-          </AdminPanel>
-
-          <AdminPanel title="Queued work nothing will drain">
-            {!outreach ? (
-              <EmptyState>Not instrumented yet.</EmptyState>
-            ) : (
-              <>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <MetricTile
-                    label="Overdue sends"
-                    value={outreach.overdue}
-                    tone={outreach.overdue > 0 ? "danger" : "default"}
-                    hint={
-                      outreach.oldestOverdueDays !== null
-                        ? `oldest ${outreach.oldestOverdueDays}d`
-                        : undefined
-                    }
-                  />
-                  <MetricTile
-                    label="Not yet due"
-                    value={outreach.notYetDue}
-                    tone="muted"
-                    hint={`across ${outreach.accounts} account${outreach.accounts === 1 ? "" : "s"}`}
-                  />
-                </div>
-                <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-                  Scheduled outreach has no runner. It drains only when the owning user
-                  opens that campaign, so overdue messages accumulate silently.
-                </p>
-              </>
             )}
           </AdminPanel>
         </div>
@@ -709,6 +666,158 @@ export function HealthLiveBody({
           </AdminPanel>
         </div>
       </div>
+      <div className="mt-6">{bugsPanel}</div>
+    </>
+  );
+
+  const ai = (
+    <div className="space-y-6">
+        {/* Grouped by error kind x model x operation, with an account count per group. That
+            count is the point: forty auth failures on one account is a bad key, forty
+            across thirty accounts is the provider, and the two need opposite responses. */}
+        <AdminPanel
+          title="AI failures"
+          action={
+            <span className="text-xs text-muted-foreground tabular-nums">
+              last {health.windowDays} days
+            </span>
+          }
+        >
+          {health.aiErrors.length === 0 ? (
+            <EmptyState>
+              No AI calls have failed in the last {health.windowDays} days.
+            </EmptyState>
+          ) : (
+            <AdminTable
+              head={
+                <>
+                  <Th>Error</Th>
+                  <Th>Operation</Th>
+                  <Th>Model</Th>
+                  <Th numeric>Failures</Th>
+                  <Th numeric>Accounts</Th>
+                  <Th numeric>Last seen</Th>
+                </>
+              }
+            >
+              {health.aiErrors.map((group) => (
+                <tr
+                  key={`${group.errorKind}-${group.model}-${group.operation}`}
+                  className="border-b border-border/40 last:border-b-0"
+                >
+                  <Td>
+                    <span className="flex items-center gap-1.5">
+                      <AlertTriangle
+                        className="size-3 shrink-0 text-destructive"
+                        aria-hidden
+                      />
+                      {group.errorKind}
+                    </span>
+                  </Td>
+                  <Td className="text-muted-foreground">{group.operation}</Td>
+                  <Td className="text-muted-foreground">
+                    {group.provider} / {group.model}
+                  </Td>
+                  <Td numeric>{group.failures}</Td>
+                  <Td numeric>
+                    <span className={group.accounts > 1 ? "text-destructive" : undefined}>
+                      {group.accounts}
+                    </span>
+                  </Td>
+                  <Td numeric>
+                    <RelativeTime date={group.lastAt} />
+                  </Td>
+                </tr>
+              ))}
+            </AdminTable>
+          )}
+        </AdminPanel>
+      {aiDataPanels}
+    </div>
+  );
+
+  return (
+    <>
+      <div
+        className={cn(
+          "mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3",
+          problems.length === 0
+            ? "border-primary/30 bg-primary/5"
+            : anyDanger
+              ? "border-destructive/40 bg-destructive/5"
+              : "border-warning/40 bg-warning/5"
+        )}
+      >
+        <span className="flex items-center gap-2 text-sm font-medium">
+          {problems.length === 0 ? (
+            <>
+              <CheckCircle2 className="size-4 text-primary" aria-hidden />
+              All clear
+            </>
+          ) : (
+            <>
+              <AlertTriangle
+                className={cn("size-4", anyDanger ? "text-destructive" : "text-warning")}
+                aria-hidden
+              />
+              Needs attention
+            </>
+          )}
+        </span>
+        {problems.length === 0 ? (
+          <span className="text-xs text-muted-foreground">
+            Sweep, nightly job, webhooks, providers and every account are healthy. Updates every
+            20 seconds.
+          </span>
+        ) : (
+          <ul className="flex flex-wrap gap-2">
+            {problems.map((p) => (
+              <li key={p.label}>
+                <button
+                  type="button"
+                  onClick={() => setTab(p.tab)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-0.5 text-xs transition-colors duration-fast hover:bg-muted/60",
+                    p.tone === "danger"
+                      ? "border-destructive/40 text-destructive"
+                      : "border-warning/40 text-warning"
+                  )}
+                >
+                  {p.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <ProductTabs
+        value={tab}
+        onValueChange={setTab}
+        tabs={[
+          {
+            id: "attention",
+            label: "Needs attention",
+            flagged: openAlerts + accountIssues,
+            flaggedTitle: "open",
+            content: attention,
+          },
+          {
+            id: "systems",
+            label: "Systems",
+            flagged: systemIssues,
+            flaggedTitle: "failing",
+            content: systems,
+          },
+          {
+            id: "ai",
+            label: "AI & data",
+            flagged: health.aiErrors.length,
+            flaggedTitle: "failing groups",
+            content: ai,
+          },
+        ]}
+      />
     </>
   );
 }

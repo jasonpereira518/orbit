@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { putAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
+import { internalFetch } from "@/lib/internal-auth";
+import { guardedFetch, readBodyCapped } from "@/lib/net-guard";
+import { reportError } from "@/lib/report-error";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   isDurableAvatarUrl,
@@ -17,7 +20,11 @@ export {
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
 
-/** Max raw download we'll attempt before giving up. */
+/**
+ * Max raw download we'll attempt before giving up. Must not exceed the encoder's own input
+ * limit (`AVATAR_ENCODE_MAX_INPUT_BYTES` in `avatar-encode.ts`, which this file may not
+ * import), or the route would 413 a photo we chose to fetch.
+ */
 const MAX_DOWNLOAD_BYTES = 5_000_000;
 /** Target max for the sharp-decode fallback path (raw bytes, unresized). */
 const MAX_PERSIST_BYTES = 220_000;
@@ -183,6 +190,15 @@ function noteMicrolinkHeaders(res: Response) {
   }
 }
 
+const RASTER_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+]);
+
 /** Parse a `data:image/...;base64,...` URL into bytes. */
 export function parseImageDataUrl(
   dataUrl: string
@@ -191,7 +207,10 @@ export function parseImageDataUrl(
   const comma = dataUrl.indexOf(",");
   if (comma < 0) return null;
   const meta = dataUrl.slice(5, comma);
-  const contentType = meta.split(";")[0] || "image/jpeg";
+  const contentType = (meta.split(";")[0] || "image/jpeg").toLowerCase();
+  // `/api/avatars/[contactId]` serves this type verbatim from Orbit's own origin, so only
+  // raster formats pass: an `image/svg+xml` data URL there is script on the app's origin.
+  if (!RASTER_IMAGE_TYPES.has(contentType)) return null;
   const b64 = dataUrl.slice(comma + 1);
   if (!b64) return null;
   return { buf: Buffer.from(b64, "base64"), contentType };
@@ -248,9 +267,10 @@ export async function fetchLinkedInPhotoUrl(
   const microlinkBudget = await claimAvatarSourceLookup("microlink", userId);
   if (microlinkBudget) throw deferred ?? microlinkBudget;
 
-  const normalized = linkedinUrl.includes("linkedin.com/in/")
-    ? linkedinUrl.trim()
-    : `https://www.linkedin.com/in/${slug}`;
+  // Rebuilt from the slug, never passed through: a free-text field only has to CONTAIN
+  // "linkedin.com/in/" (`https://attacker.tld/?linkedin.com/in/x`), and Microlink would then
+  // hand back the attacker page's og:image for us to download.
+  const normalized = `https://www.linkedin.com/in/${slug}`;
 
   try {
     const imageUrl = await resolveLinkedInOgImage(normalized);
@@ -297,12 +317,13 @@ export async function fetchGravatarPhotoUrl(
  */
 export async function downloadAndPersistAvatar(
   contactId: string,
-  imageUrl: string
+  imageUrl: string,
+  deps?: ImageFetchDeps
 ): Promise<string | null> {
   if (isDurableAvatarUrl(imageUrl)) return imageUrl;
   if (isUnfetchableImageUrl(imageUrl)) return null;
 
-  const downloaded = await downloadImageBytes(imageUrl);
+  const downloaded = await downloadImageBytes(imageUrl, deps);
   if (!downloaded) return null;
   return persistAvatar(contactId, downloaded.buf, downloaded.contentType);
 }
@@ -320,24 +341,41 @@ export async function downloadAndPersistAvatar(
  * the honest one is retryable and reads as "no photo yet".
  */
 function isVectorContentType(contentType: string): boolean {
-  return contentType === "image/svg+xml" || contentType === "image/svg";
+  const type = contentType.toLowerCase();
+  return type === "image/svg+xml" || type === "image/svg";
 }
 
-/** Magic-byte check, for placeholders whose content-type does not admit to being SVG. */
+/**
+ * Magic-byte check, for placeholders whose content-type does not admit to being SVG. Any
+ * markup-looking head counts (a leading comment or doctype hides `<svg` from a prefix
+ * test): SVG is script-capable, so it must never be stored as a photo.
+ */
 function looksLikeSvg(buf: Buffer): boolean {
-  const head = buf.subarray(0, 256).toString("utf8").trimStart().toLowerCase();
-  return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"));
+  const head = buf.subarray(0, 1024).toString("utf8").trimStart().toLowerCase();
+  return head.startsWith("<") || head.includes("<svg");
 }
+
+/**
+ * How a download reaches the network. `guardedFetch` by default: the URL can be anything a
+ * user or a scraped page supplied (the extension's `photoUrl`, an `og:image`), so the SSRF
+ * guard runs on every redirect hop. A test serving from a local port passes plain `fetch`.
+ */
+export type ImageFetchDeps = {
+  fetch: (url: string, init: Omit<RequestInit, "redirect">) => Promise<Response | null>;
+};
+
+const guardedImageDeps: ImageFetchDeps = { fetch: (url, init) => guardedFetch(url, init) };
 
 export async function downloadImageBytes(
-  imageUrl: string
+  imageUrl: string,
+  deps: ImageFetchDeps = guardedImageDeps
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   const fromDataUrl = parseImageDataUrl(imageUrl);
   if (fromDataUrl) return fromDataUrl;
   if (isUnfetchableImageUrl(imageUrl)) return null;
 
   try {
-    const res = await fetch(imageUrl, {
+    const res = await deps.fetch(imageUrl, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -345,8 +383,8 @@ export async function downloadImageBytes(
         Referer: "https://www.linkedin.com/",
       },
       signal: AbortSignal.timeout(8_000),
-      redirect: "follow",
     });
+    if (!res) return null;
     if (res.status === 429) {
       throw new AvatarSourceRateLimitError(parseRateLimitReset(res), new URL(res.url || imageUrl).host);
     }
@@ -354,12 +392,13 @@ export async function downloadImageBytes(
 
     const contentType = (res.headers.get("content-type") || "image/jpeg")
       .split(";")[0]
-      .trim();
+      .trim()
+      .toLowerCase();
     if (!contentType.startsWith("image/")) return null;
     if (isVectorContentType(contentType)) return null;
 
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength === 0 || buf.byteLength > MAX_DOWNLOAD_BYTES) return null;
+    const buf = await readBodyCapped(res, MAX_DOWNLOAD_BYTES);
+    if (!buf || buf.byteLength === 0) return null;
     // Sniff too: a placeholder served as image/png that is really SVG still counts.
     if (looksLikeSvg(buf)) return null;
     return { buf, contentType };
@@ -371,6 +410,54 @@ export async function downloadImageBytes(
 }
 
 /**
+ * How long one encode round trip may take. It resizes a photo of at most 5MB, but it can
+ * land on a cold function, and its caller is a backfill tick with a 15s budget.
+ */
+const AVATAR_ENCODE_TIMEOUT_MS = 8_000;
+
+/** The bytes are not an image the encoder can decode — the caller keeps them as they are. */
+class UndecodableImageError extends Error {}
+
+/** The encoder route itself failed — not the same thing as an image it cannot decode. */
+class AvatarEncoderUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AvatarEncoderUnavailableError";
+  }
+}
+
+/**
+ * Encode through `/api/avatars/encode`, the one function that carries `sharp`.
+ *
+ * On Vercel `next.config.ts` strips `sharp` from every other function's bundle (it was
+ * over a gigabyte of Functions Storage per deployment), so this is the only way to reach
+ * it from there. Targets `getAppBaseUrl()` via `internalFetch`, like every other internal
+ * kick — which means a preview deployment encodes on production.
+ */
+async function encodeViaRoute(buf: Buffer): Promise<Buffer> {
+  let res: Response;
+  try {
+    res = await internalFetch("/api/avatars/encode", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: new Uint8Array(buf),
+      signal: AbortSignal.timeout(AVATAR_ENCODE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new AvatarEncoderUnavailableError("The photo encoder could not be reached", {
+      cause: err,
+    });
+  }
+  if (res.status === 422) throw new UndecodableImageError();
+  if (!res.ok) {
+    throw new AvatarEncoderUnavailableError(`The photo encoder answered ${res.status}`);
+  }
+  const out = Buffer.from(await res.arrayBuffer());
+  if (out.byteLength === 0) throw new AvatarEncoderUnavailableError("The photo encoder sent no bytes");
+  return out;
+}
+
+/**
  * Resize/compress to a small square JPEG.
  * LinkedIn CDN photos are often >180KB — we used to drop those entirely.
  */
@@ -379,16 +466,24 @@ async function encodeAvatar(
   contentType: string
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   try {
-    const sharp = (await import("sharp")).default;
-    const out = await sharp(buf)
-      .rotate()
-      .resize(256, 256, { fit: "cover", withoutEnlargement: true })
-      .jpeg({ quality: 82, mozjpeg: true })
-      .toBuffer();
-    if (out.byteLength === 0) return null;
+    // `VERCEL` is exactly what gates the trace exclusion in next.config.ts: where `sharp` is
+    // missing from this function's bundle we go over HTTP, everywhere else (dev, local
+    // builds, tsx scripts) it is called directly.
+    let out: Buffer;
+    if (process.env.VERCEL) {
+      out = await encodeViaRoute(buf);
+    } else {
+      const { encodeAvatarJpeg } = await import("@/lib/avatar-encode");
+      out = await encodeAvatarJpeg(buf);
+    }
     return { buf: out, contentType: "image/jpeg" };
-  } catch {
-    // Fall back to raw bytes when sharp can't decode (rare formats).
+  } catch (err) {
+    // A broken encoder is a fault, and unlike an undecodable image it would otherwise store
+    // full-size photos everywhere with nothing to say so. Report it, then degrade.
+    if (err instanceof AvatarEncoderUnavailableError) {
+      reportError(err, { where: "avatar.encode", level: "warning" });
+    }
+    // Fall back to raw bytes when the image can't be encoded (rare formats).
     if (
       !contentType.startsWith("image/") ||
       buf.byteLength === 0 ||

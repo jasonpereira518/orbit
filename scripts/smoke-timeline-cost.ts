@@ -1,6 +1,8 @@
 /**
- * The numbers the LinkedIn import card shows before anyone opts in to timeline events, and
- * the rule that keeps one-message threads away from the model (audit A6).
+ * The cost arithmetic behind deriving LinkedIn timeline events, and the rule that keeps
+ * one-message threads away from the model (audit A6). Nothing shows these numbers to anyone
+ * any more — the opt-in card is gone (schema v108, task 9) — so this smoke is the only
+ * remaining reader of `timelineEstimateLabel` and `TimelineBackfillStatus`.
  * Run: npx tsx scripts/smoke-timeline-cost.ts
  */
 import {
@@ -26,14 +28,14 @@ check("one message does not reach the model", !qualifiesForTimelineAi(1));
 check("two messages do", qualifiesForTimelineAi(2));
 check("the daily cap is 300 conversations", TIMELINE_DAILY_CONTACT_CAP === 300);
 
-// 2,500 in + 150 out per conversation. flash-lite: 250 + 60 = 310 micro-dollars each.
-check("10,000 conversations on Gemini flash-lite is $3.10", estimateTimelineCostMicros(10_000, "gemini-3.1-flash-lite") === 3_100_000, String(estimateTimelineCostMicros(10_000, "gemini-3.1-flash-lite")));
+// 2,500 in + 150 out per conversation. flash-lite ($0.25/$1.50): 625 + 225 = 850 micro-dollars each.
+check("10,000 conversations on Gemini flash-lite is $8.50", estimateTimelineCostMicros(10_000, "gemini-3.1-flash-lite") === 8_500_000, String(estimateTimelineCostMicros(10_000, "gemini-3.1-flash-lite")));
 // gpt-4o-mini: 375 + 90 = 465 each.
 check("10,000 on gpt-4o-mini is $4.65", estimateTimelineCostMicros(10_000, "gpt-4o-mini") === 4_650_000);
 check("an unpriced model estimates nothing rather than guessing", estimateTimelineCostMicros(5, "mystery-model") === null);
 check("no conversations cost nothing", estimateTimelineCostMicros(0, "gpt-4o-mini") === 0);
 
-check("the label for a big export", timelineEstimateLabel(10_000, "gemini-3.1-flash-lite") === "Derive timeline events for 10,000 conversations — about $3.10 on your key", timelineEstimateLabel(10_000, "gemini-3.1-flash-lite"));
+check("the label for a big export", timelineEstimateLabel(10_000, "gemini-3.1-flash-lite") === "Derive timeline events for 10,000 conversations — about $8.50 on your key", timelineEstimateLabel(10_000, "gemini-3.1-flash-lite"));
 check("the label for a tiny one", timelineEstimateLabel(1, "gemini-3.1-flash-lite") === "Derive timeline events for 1 conversation — under a cent on your key");
 check("the label for an unpriced model", timelineEstimateLabel(3, "mystery-model") === "Derive timeline events for 3 conversations — cost depends on your model");
 check("the label with nothing waiting", timelineEstimateLabel(0, "gpt-4o-mini") === "Derive timeline events from your LinkedIn conversations");

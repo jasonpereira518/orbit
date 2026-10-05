@@ -29,7 +29,7 @@ const lstar = (h) => {
 
 const FAMILIES = ["together", "live", "written", "yours"];
 /** Card and page ground, per theme — the two surfaces a node or a chip is ever drawn on. */
-const SURFACES = { light: ["#ffffff", "#fbfbf9"], dark: ["#1a2438", "#212c42"] };
+const SURFACES = { light: ["#ffffff", "#fbfbf9"], dark: ["#222427", "#292c30"] };
 const MIN_CONTRAST = 4.5;
 
 const found = [...css.matchAll(/--interaction-(together|live|written|yours):\s*(#[0-9a-f]{6})/gi)];

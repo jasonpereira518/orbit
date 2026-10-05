@@ -3,15 +3,27 @@ import { isDemoAccount } from "@/lib/demo-account";
 import { recordGateHit } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
 import {
+  FEATURE_KEYS,
+  EXTRA_CONNECTION_DENIAL,
   FREE_CONTACT_LIMIT,
+  PLAN_CONFIG,
   PLAN_LABELS,
+  unlockPlanFor,
+  type FeatureKey,
   type Plan,
   type PlanSource,
-} from "@/lib/plan-limits";
+} from "@/lib/plans/plan-config";
 
 // Re-exported so server code keeps importing plan identity from this module, while
-// client components can reach `plan-limits` directly without pulling in the database.
-export { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan, type PlanSource };
+// client components can reach `plans/plan-config` directly without pulling in the database.
+export {
+  FEATURE_KEYS,
+  FREE_CONTACT_LIMIT,
+  PLAN_LABELS,
+  type FeatureKey,
+  type Plan,
+  type PlanSource,
+};
 
 export type Entitlements = {
   plan: Plan;
@@ -27,40 +39,57 @@ export type Entitlements = {
    */
   canUseHostedSending: boolean;
   /**
-   * Whether Orbit's own Apollo key may be used for contact enrichment. Orbit Pro only.
-   * Enrichment has no quota anywhere in the product, so it is the single genuinely
-   * open-ended per-user cost, and the one thing a one-time payment cannot fund forever.
-   * Lifetime users add their own Apollo key in Settings, which `getApolloApiKey` prefers
-   * over Orbit's on every plan.
-   *
-   * This is the only entitlement that separates Orbit Pro from Orbit Lifetime.
+   * Whether Orbit's own Apollo key may be used for contact enrichment. Capped per month by
+   * `PLAN_CONFIG[plan].hostedEnrichmentsPerMonth` (Pro 10, Max and Lifetime 25). A user's own
+   * Apollo key, saved in Settings, is preferred over Orbit's on every plan and is uncapped.
    */
   canUseHostedEnrichment: boolean;
   canUseRecruiters: boolean;
   canUseSync: boolean;
   canUseExtension: boolean;
   /**
-   * The public API, outbound webhooks and the MCP server.
+   * The public REST API and outbound webhooks. Max and Lifetime only. (MCP is separate —
+   * see `canUseMcp` — and free on every plan.)
    *
    * A key of its own rather than folding into `canUseSync`, for two reasons. The denial copy
-   * for sync says "Mailbox and calendar sync are available on…", which is simply wrong on an
-   * API 402. More importantly `gate_events` is the only place demand for a gated feature is
-   * observable, and the pricing question depends entirely on it — conflating "someone wanted
-   * to connect Zapier" with "someone wanted mailbox sync" destroys exactly the signal that
-   * table exists to collect.
+   * for sync says "Calendar subscriptions and event sources are available on…", which is
+   * simply wrong on an API 402. More importantly `gate_events` is the only place demand for a
+   * gated feature is observable, and the pricing question depends entirely on it — conflating
+   * "someone wanted to connect Zapier" with "someone wanted a calendar subscription" destroys
+   * exactly the signal that table exists to collect.
    */
   canUseApi: boolean;
+  /**
+   * The MCP server — Orbit inside Claude, ChatGPT or any other assistant that speaks the
+   * protocol. True on every plan, including free, which is the one deliberate exception to
+   * the paid-connector line above.
+   *
+   * The reasoning is that this is the funnel, not an add-on. Someone who asks their assistant
+   * "who do I know at Stripe?" and gets a real answer has understood the product in one
+   * sentence, which no landing page has managed. The plan limits that cost money still apply
+   * underneath: the free contact cap bounds `create_contact`, and sending is not a tool at
+   * all — an agent can only queue a message for the user to approve.
+   *
+   * Kept as its own flag rather than reusing `canUseApi` so that the REST API and webhooks,
+   * which really are paid, do not silently become free with it.
+   */
+  canUseMcp: boolean;
+  /**
+   * Meeting recording and transcription. Orbit pays a per-minute transcription bill for
+   * every meeting, so unlike the rest of Capture (notes, voice, scans — all free), this is
+   * paid on both tiers. `loadMeetingTranscript` and `discardMeetingSession` stay ungated so
+   * a downgraded account can still read and delete meetings it already recorded — only
+   * starting, resuming, ending and analyzing a NEW recording cost money.
+   */
+  canUseMeetings: boolean;
+  /** AI on Orbit's provider keys, metered in credits. Pro and Max only. */
+  canUseHostedAi: boolean;
+  /** Buying a $5 top-up pack of credits. Pro and Max only. */
+  canBuyCreditPacks: boolean;
+  /** A second Google or Microsoft account. Free keeps its first connection. */
+  canUseExtraConnections: boolean;
 };
 
-/** Feature keys that `requireEntitlement` can gate on. */
-export type FeatureKey =
-  | "outreach"
-  | "hostedSending"
-  | "hostedEnrichment"
-  | "recruiters"
-  | "sync"
-  | "extension"
-  | "api";
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
@@ -87,9 +116,9 @@ export function isPaywallError(err: unknown): err is PaywallError {
 }
 
 export type BillingColumns = {
-  compedPlan?: "orbit" | "lifetime" | null;
+  compedPlan?: "orbit" | "max" | "lifetime" | null;
   lifetimePurchasedAt?: Date | null;
-  subscriptionPlan?: "orbit" | null;
+  subscriptionPlan?: "orbit" | "max" | null;
   subscriptionStatus?: "active" | "past_due" | "canceled" | null;
   subscriptionPeriodEnd?: Date | null;
 };
@@ -100,7 +129,7 @@ export type BillingColumns = {
  * on a transient card failure is the wrong response for a tool holding personal data.
  */
 function subscriptionIsLive(row: BillingColumns, now: Date) {
-  if (row.subscriptionPlan !== "orbit") return false;
+  if (row.subscriptionPlan !== "orbit" && row.subscriptionPlan !== "max") return false;
   if (row.subscriptionStatus === "active") return true;
   if (!row.subscriptionPeriodEnd) return false;
   return row.subscriptionPeriodEnd.getTime() > now.getTime();
@@ -110,9 +139,9 @@ function subscriptionIsLive(row: BillingColumns, now: Date) {
  * Precedence: comp > lifetime > subscription > free.
  *
  * Comp wins outright so a manually granted account is never downgraded by stale billing
- * state. Lifetime outranks subscription so that someone who bought Lifetime and later also
- * subscribed does not silently lose the Lifetime grant if the subscription lapses — the two
- * are additive in practice (see `getEntitlements`, which unions hosted enrichment back in).
+ * state. Lifetime outranks subscription: an account holds one plan at a time, and an admin
+ * granting Lifetime to a subscriber sets their subscription to end at the period end, so
+ * the subscription row still live until then must never outrank the Lifetime granted over it.
  */
 export function resolvePlan(
   row: BillingColumns | null | undefined,
@@ -120,40 +149,41 @@ export function resolvePlan(
 ): { plan: Plan; source: PlanSource } {
   if (!row) return { plan: "free", source: "free" };
   if (row.compedPlan === "lifetime") return { plan: "lifetime", source: "comp" };
+  if (row.compedPlan === "max") return { plan: "max", source: "comp" };
   if (row.compedPlan === "orbit") return { plan: "orbit", source: "comp" };
   if (row.lifetimePurchasedAt) return { plan: "lifetime", source: "lifetime" };
   if (subscriptionIsLive(row, now)) {
-    return { plan: "orbit", source: "subscription" };
+    return { plan: row.subscriptionPlan === "max" ? "max" : "orbit", source: "subscription" };
   }
   return { plan: "free", source: "free" };
 }
 
-export function entitlementsForPlan(
-  plan: Plan,
-  source: PlanSource,
-  opts: { hostedEnrichment?: boolean } = {}
-): Entitlements {
-  const paid = plan !== "free";
+/** Every flag and limit comes from `PLAN_CONFIG`; this only reshapes it for the gates. */
+export function entitlementsForPlan(plan: Plan, source: PlanSource): Entitlements {
+  const config = PLAN_CONFIG[plan];
+  const f = config.features;
   return {
     plan,
     source,
-    contactLimit: paid ? null : FREE_CONTACT_LIMIT,
-    canUseOutreach: paid,
-    canUseHostedSending: paid,
-    canUseHostedEnrichment: opts.hostedEnrichment ?? plan === "orbit",
-    canUseRecruiters: paid,
-    canUseSync: paid,
-    canUseExtension: paid,
-    canUseApi: paid,
+    contactLimit: config.contactLimit,
+    canUseOutreach: f.outreach,
+    canUseHostedSending: f.hostedSending,
+    canUseHostedEnrichment: f.hostedEnrichment,
+    canUseRecruiters: f.recruiters,
+    canUseSync: f.sync,
+    canUseExtension: f.extension,
+    canUseApi: f.api,
+    canUseMcp: true,
+    canUseMeetings: f.meetings,
+    canUseHostedAi: f.hostedAi,
+    canBuyCreditPacks: f.creditPacks,
+    canUseExtraConnections: f.extraConnections,
   };
 }
 
 /** Every flag on and no contact cap, under whatever plan the account actually holds. */
 function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements {
-  return {
-    ...entitlementsForPlan("orbit", source, { hostedEnrichment: true }),
-    plan,
-  };
+  return { ...entitlementsForPlan("max", source), plan };
 }
 
 /**
@@ -166,35 +196,47 @@ function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements 
  * background code resolve identically. Same rationale as the mirrored `email` column.
  */
 export const getEntitlements = cache(
-  async (userId: string): Promise<Entitlements> => {
-    const row = await ensureUserSettings(userId);
-    const { plan, source } = resolvePlan(row);
-    // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
-    // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
-    // from a free account, and the pricing surfaces should still tell the truth about
-    // what was bought. Only the gates are lifted.
-    if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
-    // A Lifetime holder who also subscribes gets hosted enrichment for as long as the
-    // subscription is live, without losing the Lifetime floor when it lapses. Enrichment
-    // is the only flag this can still matter for: `resolvePlan` ranks lifetime above
-    // subscription, so such a user resolves to `lifetime`, which is denied enrichment on
-    // its own. Everything else is already true on both paid tiers.
-    const hostedEnrichment =
-      plan === "orbit" || (row ? subscriptionIsLive(row, new Date()) : false);
-    return entitlementsForPlan(plan, source, { hostedEnrichment });
-  }
+  async (userId: string): Promise<Entitlements> =>
+    entitlementsFromSettings(userId, await ensureUserSettings(userId))
 );
 
-const FEATURE_DENIAL: Record<FeatureKey, string> = {
-  outreach: "Outreach is available on Orbit Pro and Orbit Lifetime.",
-  hostedSending:
-    "Sending email and SMS on Orbit's credits is available on Orbit Pro and Orbit Lifetime.",
-  hostedEnrichment:
-    "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
-  recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
-  api: "The Orbit API, webhooks and MCP server are available on Orbit Pro and Orbit Lifetime.",
-  sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
-  extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
+/**
+ * `getEntitlements` for a caller that already holds the account's `user_settings` row.
+ *
+ * `cache()` only deduplicates inside a React render. In a route handler or a Server Action
+ * it is a pass-through, so a path that has just read the row (an API key check, say) and
+ * then calls `getEntitlements` reads it again. Resolving from the row in hand is the same
+ * computation on the same data, one round trip cheaper.
+ */
+export function entitlementsFromSettings(userId: string, row: BillingColumns): Entitlements {
+  const { plan, source } = resolvePlan(row);
+  // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
+  // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
+  // from a free account, and the pricing surfaces should still tell the truth about
+  // what was bought. Only the gates are lifted.
+  if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
+  // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
+  // even while a subscription is still winding down to its period end.
+  return entitlementsForPlan(plan, source);
+}
+
+/** "on Orbit Pro and Orbit Max" or "on Orbit Max" — never Lifetime, which is not sold. */
+function availableOn(feature: FeatureKey) {
+  return unlockPlanFor(feature) === "orbit" ? "Orbit Pro and Orbit Max" : "Orbit Max";
+}
+
+export const FEATURE_DENIAL: Record<FeatureKey, string> = {
+  outreach: `Outreach is available on ${availableOn("outreach")}.`,
+  hostedSending: `Sending email and SMS on Orbit's credits is available on ${availableOn("hostedSending")}.`,
+  hostedEnrichment: `Contact enrichment on Orbit's Apollo key is available on ${availableOn("hostedEnrichment")}. On the Free Plan, add your own Apollo key in Settings.`,
+  recruiters: `Recruiter tracking is available on ${availableOn("recruiters")}.`,
+  api: `The Orbit API and webhooks are available on ${availableOn("api")}. Claude and ChatGPT connect on any plan, with no key.`,
+  sync: `Calendar subscriptions and event sources are available on ${availableOn("sync")}.`,
+  extension: `The Orbit extension is available on ${availableOn("extension")}.`,
+  meetings: `Meeting transcription is available on ${availableOn("meetings")}.`,
+  hostedAi: `AI on Orbit's keys is included on ${availableOn("hostedAi")}. On the Free Plan, add your own AI key in Settings.`,
+  creditPacks: `Credit packs are available on ${availableOn("creditPacks")}.`,
+  extraConnections: EXTRA_CONNECTION_DENIAL,
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
@@ -205,6 +247,10 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   sync: "canUseSync",
   extension: "canUseExtension",
   api: "canUseApi",
+  meetings: "canUseMeetings",
+  hostedAi: "canUseHostedAi",
+  creditPacks: "canBuyCreditPacks",
+  extraConnections: "canUseExtraConnections",
 };
 
 /**

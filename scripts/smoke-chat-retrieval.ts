@@ -155,17 +155,24 @@ async function main() {
   const snippets = new Map(
     budgetPool.map((c) => [
       c.id,
-      { timeline: Array.from({ length: 10 }, (_, j) => "m".repeat(400) + j) },
+      {
+        timeline: Array.from({ length: 10 }, (_, j) => ({
+          id: `${c.id}-int-${j}`,
+          date: "2026-01-01",
+          line: "m".repeat(400) + j,
+        })),
+      },
     ])
   );
   const budgeted = budgetContactsContext(budgetPool, snippets);
   check("budget keeps order", budgeted[0].id === "b0");
   check("top tier gets more notes than tail", budgeted[0].notes!.length > budgeted[11].notes!.length);
   check("messages trimmed per tier", budgeted[0].timeline.length <= 6 && budgeted[11].timeline.length <= 2);
+  check("every surviving timeline entry keeps its interaction id", budgeted[0].timeline.every((t) => typeof t.id === "string" && t.id.length > 0));
   const totalChars = budgeted.reduce(
     (n, c) =>
       n + (c.notes?.length ?? 0) + (c.aiSummary?.length ?? 0) +
-      c.timeline.join("").length + c.keyFacts.join("").length,
+      c.timeline.map((t) => t.line).join("").length + c.keyFacts.join("").length,
     0
   );
   check("total context under budget", totalChars <= 48000);

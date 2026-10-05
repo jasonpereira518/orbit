@@ -1,0 +1,116 @@
+{
+  "cases": [
+    {
+      "id": "ocr-print-01-alumni-mixer",
+      "style": "print",
+      "lines": [
+        "Sept 14 - Harrow State alumni mixer",
+        "Met Oluwaseun Adeyemi @ Brightwater",
+        "  - PM, infra + dev platforms",
+        "  - wants intro to Tomasz (Parcelwise)",
+        "Xiaoling Zhu - Emberline, grid analytics",
+        "  - hiring 2 analysts, send resume",
+        "  - loves bouldering",
+        "f/u Tue re: dashboards"
+      ],
+      "names": [
+        "Oluwaseun Adeyemi",
+        "Xiaoling Zhu"
+      ]
+    },
+    {
+      "id": "ocr-hand-01-coffee",
+      "style": "hand",
+      "lines": [
+        "Coffee w/ Bartholomew Achterberg",
+        "Stillwater Compute - DevRel",
+        "- speaking slot at Jan meetup?",
+        "- knows Siobhan OBriain @ Petrichor",
+        "- send him the eval deck",
+        "Next: lunch Thu Oct 8"
+      ],
+      "names": [
+        "Bartholomew Achterberg",
+        "Siobhan OBriain"
+      ]
+    },
+    {
+      "id": "ocr-print-02-meetup-list",
+      "style": "print",
+      "lines": [
+        "PyData night - Oct 12",
+        "1. Chidi Okonkwo - DS, Fernhill Health",
+        "   anomaly detection, wants help",
+        "2. Wen-Li Huang - backend, Quillfeather",
+        "   climbs at Hanwell gym",
+        "3. Radoslaw Wieczorek - freelance",
+        "   Rust + embedded, ex-Larkspur",
+        "todo: share slides w/ all 3"
+      ],
+      "names": [
+        "Chidi Okonkwo",
+        "Wen-Li Huang",
+        "Radoslaw Wieczorek"
+      ]
+    },
+    {
+      "id": "ocr-hand-02-career-fair",
+      "style": "hand",
+      "lines": [
+        "Career fair - booth notes",
+        "Fatima Al-Sayed (Emberline)",
+        "  grid analytics mgr",
+        "  data analyst roles, not SWE",
+        "Cormac Brennan - Tidewater, EM",
+        "  Rust forecasting engine!",
+        "  email him my GitHub",
+        "Beatriz Santos - Larkspur recruiter",
+        "  internship apps open Oct 1"
+      ],
+      "names": [
+        "Fatima Al-Sayed",
+        "Cormac Brennan",
+        "Beatriz Santos"
+      ]
+    },
+    {
+      "id": "ocr-print-03-call-notes",
+      "style": "print",
+      "lines": [
+        "Mon 9/28 - call notes",
+        "Nguyen Thi Lan - Glasswing Software",
+        "  head of data platform",
+        "  budget approved for Q4 pilot",
+        "  wants proposal by Oct 16",
+        "cc Bartosz Szczepanski (her eng lead)",
+        "  - security review needed first",
+        "next: demo Wed"
+      ],
+      "names": [
+        "Nguyen Thi Lan",
+        "Bartosz Szczepanski"
+      ]
+    },
+    {
+      "id": "ocr-hand-03-dinner",
+      "style": "hand",
+      "lines": [
+        "Dinner @ Saffron Table",
+        "Yusuf Demir - Brightwater ML platform",
+        "  feature store migration pain",
+        "Anjali Iyer - VP Eng, Quillfeather",
+        "  sounding board re: mgmt",
+        "Ngozi Chukwuemeka - consultant",
+        "  cloud cost audits",
+        "Aurelio Bianchi joined late",
+        "  Petrichor COO - send deck Fri"
+      ],
+      "names": [
+        "Yusuf Demir",
+        "Anjali Iyer",
+        "Ngozi Chukwuemeka",
+        "Aurelio Bianchi"
+      ]
+    }
+  ]
+}

@@ -13,9 +13,12 @@
  * runner (a) adopts a batch that already exists for this corpus and (b) re-runs duplicate
  * detection so a person created by the previous attempt is now an update, not a second row.
  */
+import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
+import { openEngines } from "@/lib/decisions/engine";
+import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import { and, desc, eq, gte } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, noteBatches } from "@/db/schema";
+import { contacts, noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { runCaptureParse } from "@/lib/capture-parse";
 import {
   claimCaptureJob,
@@ -34,11 +37,14 @@ import {
   saveTimeMergeTarget,
   setAsidePeople,
 } from "@/lib/capture/review-reducer";
-import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types";
+import type { CaptureJobResult, CaptureParseResult, CaptureDecisions, CaptureSavedSummary } from "@/lib/capture/types";
 
+import { resolveAvatarNow } from "@/lib/avatar-backfill";
+import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
 import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
@@ -55,6 +61,16 @@ import {
 } from "@/lib/note-batch-save";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import {
+  MAX_PERSONAL_DETAILS,
+  MAX_TAKEAWAYS,
+  cleanLines,
+  cleanWork,
+  normalizePhone,
+  normalizeWebsite,
+  normalizeXHandle,
+  summaryToTakeaways,
+} from "@/lib/capture/person-enrichment";
 
 export type CaptureRunnerDeps = {
   parse?: typeof runCaptureParse;
@@ -89,27 +105,94 @@ export async function runCaptureJobById(id: string, deps: CaptureRunnerDeps = {}
   }
 }
 
+/** Thrown inside `runExtraction` when the claim is gone — see `claimWatch`. Never reported. */
+class ClaimLostError extends Error {
+  constructor() {
+    super("capture job claim lost");
+    this.name = "ClaimLostError";
+  }
+}
+
+/**
+ * A promise that never settles; awaiting it parks the caller for good (see `claimWatch`).
+ * A FRESH one each time, never a shared constant: a module-level promise would hold every
+ * parked continuation — and the parse state it closes over — for the life of the process.
+ */
+const parked = () => new Promise<void>(() => {});
+
+/**
+ * The heartbeat, wired so that losing the claim STOPS the parse rather than merely being
+ * noticed at the end of it.
+ *
+ * The claim is lost when the person presses Stop or Start over (`discardCaptureJobRow`
+ * clears the token) or another runner took a stale row. Either way every model call after
+ * that point is billed to the person's key for a result nobody will see. Two things happen
+ * at the first heartbeat that finds the claim gone:
+ *
+ *   1. `lost` rejects, and `runExtraction` races the parse against it, so the runner
+ *      returns at once instead of waiting for the parse to finish.
+ *   2. This and every later heartbeat PARKS — returns a promise that never settles. The
+ *      parse awaits its heartbeat between model passes (`beat` in `src/lib/ai.ts`), and it
+ *      swallows a heartbeat that throws, so throwing would not stop anything; one that
+ *      never returns means the next pass is never started. A never-settling promise holds
+ *      no timer or socket, so it keeps nothing alive — the parked chain is garbage once the
+ *      runner has returned.
+ *
+ * A call already in flight when the claim goes (and the dates pass, which runs beside the
+ * people parse without heartbeats) finishes; there is no signal to hand it. What this buys
+ * is that nothing NEW starts.
+ */
+function claimWatch(id: string, token: string) {
+  let gone = false;
+  let reject!: (err: ClaimLostError) => void;
+  const lost = new Promise<never>((_, rej) => {
+    reject = rej;
+  });
+  // Handled here so a race that settles the other way never leaves an unhandled rejection.
+  lost.catch(() => {});
+  const heartbeat = async (): Promise<void> => {
+    if (gone) return parked();
+    const held = await heartbeatCaptureJob(id, token);
+    if (held) return;
+    gone = true;
+    reject(new ClaimLostError());
+    return parked();
+  };
+  return { heartbeat, lost };
+}
+
 async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobRow | null> {
   const claim = await claimCaptureJob(id, "extracting", { now: deps.now });
   if (!claim) return getCaptureJobById(id);
   const { row, token } = claim;
   const parse = deps.parse ?? runCaptureParse;
+  const watch = claimWatch(id, token);
 
   try {
     const corpus = assembleCaptureCorpus(row);
     if (!corpus) throw new Error("Nothing to read yet");
-    const parsed = await parse(row.userId, corpus, row.inputHints, {
-      meetingSessionId: row.meetingSessionId,
-      // Stored on the job rather than folded into `inputHints`, because a contact id is not
-      // a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
-      mentionPicks: row.mentionPicks ?? [],
-      now: deps.now,
-    });
-    await heartbeatCaptureJob(id, token);
+    const parsed = await Promise.race([
+      parse(row.userId, corpus, row.inputHints, {
+        meetingSessionId: row.meetingSessionId,
+        // Stored on the job rather than folded into `inputHints`, because a contact id is
+        // not a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
+        mentionPicks: row.mentionPicks ?? [],
+        now: deps.now,
+        // Keep the claim alive between the parse's model calls: a long two-pass parse used
+        // to outlast CAPTURE_CLAIM_STALE_MS in silence and get re-claimed — and re-billed —
+        // while still running. And stop between them once the claim is gone: `claimWatch`.
+        onProgress: watch.heartbeat,
+      }),
+      watch.lost,
+    ]);
+    if (!(await heartbeatCaptureJob(id, token))) throw new ClaimLostError();
     const { sourceText, sourceHash, ...rest } = parsed;
     const result: CaptureJobResult = rest;
     await settleCaptureJob(id, token, { status: "ready", result, sourceText, sourceHash, error: null });
   } catch (err) {
+    // Stopped, not failed: the row is discarded (or someone else's now), and there is no
+    // outcome to write — `settleCaptureJob` would refuse it anyway — and nothing to report.
+    if (err instanceof ClaimLostError) return getCaptureJobById(id);
     // The job row keeps the person's copy; the real error is reported with its reference
     // so "Couldn’t read those notes" is never the only trace of what went wrong.
     await settleCaptureJob(id, token, {
@@ -144,11 +227,15 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       : await findBatchForCorpus(userId, row.sourceHash, row.createdAt);
 
     let out: SaveNoteBatchOutput;
+    // Who this save pulled from LinkedIn. Empty on the resumed path: that batch's first
+    // attempt already kicked them, and the Experience section's button covers a miss.
+    let linkedInContactIds: string[] = [];
     if (existing) {
       out = summarizeExistingBatch(existing);
     } else {
       const input = await buildSaveInput(row);
       out = await save(userId, input);
+      linkedInContactIds = linkedInCaptureContactIds(input.participants, out.contactIds);
     }
 
     const saved = savedSummary(row, out);
@@ -173,7 +260,22 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     await upsertIgnoredPeople(userId, ignoredRowsFor(row, out)).catch(reportAndContinue(followOn("ignored"), null));
 
     if (deps.enrich !== false) {
+      // One person logged → fetch their photo now, so they arrive on the contact with a
+      // face rather than a placeholder that fills in on some later page load. Only for a
+      // single contact: a batch of them is what the background backfill is for, and one
+      // is also the case where the missing face is most obvious.
+      if (out.contactIds.length === 1) {
+        const db = await getDb();
+        await resolveAvatarNow(db, userId, out.contactIds[0]!, {
+          persistRemote: downloadAndPersistAvatar,
+          resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
+        }).catch(reportAndContinue(followOn("avatar"), false));
+      }
+
       await kickEmbeddingBackfill(userId).catch(reportAndContinue(followOn("embeddings"), null));
+      // Their work history, found by web search in its own function (it takes minutes, and
+      // rebuilds the search text and brief itself when it lands).
+      await kickWorkHistoryResearch(userId, linkedInContactIds);
       for (const contactId of out.contactIds) {
         await generateAndStoreContactBrief(userId, contactId).catch(reportAndContinue(followOn("brief"), null));
       }
@@ -219,13 +321,28 @@ function summarizeExistingBatch(batch: NonNullable<Awaited<ReturnType<typeof get
   };
 }
 
+/** What `buildSaveInput` needs from a job row, generalized to any caller holding a parse result. */
+export type ParseSaveContext = {
+  userId: string;
+  result: CaptureParseResult;
+  decisions: CaptureDecisions | null;
+  sourceText: string;
+  sourceHash: string | null;
+  entryPoint: SaveNoteBatchInput["entryPoint"];
+  seedContactId: string | null;
+  inputSources: CaptureSourceKind[];
+  meetingSessionId: string | null;
+};
+
 /**
- * Decisions → what `saveNoteBatch` writes. Follow-up days and whether to remind come from
- * closeness and relevance here, never from the card.
+ * Decisions → what `saveNoteBatch` writes, for any caller holding a parse result.
+ * `buildSaveInput` is the capture-job wrapper; the Drive import calls this directly.
+ * Follow-up days and whether to remind come from closeness and relevance here, never from
+ * the card.
  */
-export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchInput> {
-  const result = row.result!;
-  const decisions = row.decisions ?? {};
+export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNoteBatchInput> {
+  const result = ctx.result;
+  const decisions = ctx.decisions ?? {};
   const accepted = acceptedPeople(result.items, decisions);
 
   // (b) Re-run duplicate detection for anyone still marked "create": a previous attempt
@@ -235,7 +352,7 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
   if (needsCheck.length) {
     const db = await getDb();
     const existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, row.userId),
+      where: eq(contacts.userId, ctx.userId),
       columns: { id: true, fullName: true, email: true, linkedinUrl: true, xHandle: true, company: true, title: true },
     });
     index = buildDuplicateIndex(existing);
@@ -250,7 +367,9 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
   // decorative.
   const opportunityChoices = decisions.opportunities;
 
-  const participants: NoteBatchParticipantInput[] = accepted.map(({ item, decision }) => {
+  // Edits applied, and the save-time duplicate look-up done, before anything is decided —
+  // so the name-evidence folds among them can go to the decision model in one batch.
+  const prepared = accepted.map(({ item, decision }) => {
     const edits = decision.edits ?? {};
     const parsed = {
       ...item.parsed,
@@ -259,26 +378,79 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
       role: edits.role === undefined ? item.parsed.role : edits.role?.trim() || null,
       met_at: edits.metAt === undefined ? item.parsed.met_at : edits.metAt?.trim() || null,
       summary: edits.summary === undefined ? item.parsed.summary : edits.summary?.trim() || null,
+      // The card's richer fields. Absent means "as parsed"; present is what the person left,
+      // cleaned the same way the parse cleaned the model's version — the decision is stored
+      // as the browser sent it, so this is the first place it is trusted.
+      ...(edits.takeaways !== undefined
+        ? { takeaways: cleanLines(edits.takeaways ?? [], MAX_TAKEAWAYS) }
+        : edits.summary !== undefined
+          ? { takeaways: summaryToTakeaways(edits.summary) }
+          : {}),
+      ...(edits.personalDetails !== undefined
+        ? { personal_details: cleanLines(edits.personalDetails ?? [], MAX_PERSONAL_DETAILS) }
+        : {}),
+      ...(edits.work !== undefined ? { work: cleanWork(edits.work) } : {}),
+      ...(edits.phone !== undefined ? { phone: normalizePhone(edits.phone) } : {}),
+      ...(edits.xHandle !== undefined ? { x_handle: normalizeXHandle(edits.xHandle) } : {}),
+      ...(edits.website !== undefined ? { website: normalizeWebsite(edits.website) } : {}),
+      ...(edits.school !== undefined ? { school: edits.school?.trim().slice(0, 200) || null } : {}),
+      ...(edits.industry !== undefined ? { industry: edits.industry?.trim().slice(0, 200) || null } : {}),
     };
+    const top =
+      !decision.mergeContactId && index
+        ? findDuplicateCandidatesIndexed(index, {
+            fullName: parsed.name,
+            email: parsed.email,
+            linkedinUrl: parsed.linkedin_url,
+            company: parsed.company,
+            title: parsed.role,
+          })[0]
+        : undefined;
+    return { item, decision, parsed, top };
+  });
+
+  // (c) This fold is silent — the card said "new", and nobody sees the contact it lands in.
+  // So one resting on a NAME (not an identifier) is checked first; a confident "different
+  // people" saves the card as the new contact it said it was. Jev only.
+  const vetoed = new Set<number>();
+  const nameFolds = prepared
+    .map((p, i) => ({ p, i }))
+    .filter(
+      ({ p }) =>
+        p.top &&
+        !p.top.strong &&
+        saveTimeMergeTarget(p.item, p.decision, { id: p.top.contact.id, confidence: p.top.confidence }, DUPLICATE_MERGE_CONFIDENCE)
+    );
+  if (nameFolds.length) {
+    const vetoes = await nameMergeVetoes(
+      await openEngines(ctx.userId),
+      nameFolds.map(({ p }) =>
+        [
+          personCard({ fullName: p.parsed.name, company: p.parsed.company, title: p.parsed.role, email: p.parsed.email }),
+          personCard(p.top!.contact),
+        ] as const
+      ),
+      DUPLICATE_TUNING.backgroundBudgetMs
+    );
+    nameFolds.forEach(({ i }, j) => {
+      if (vetoes[j]) vetoed.add(i);
+    });
+  }
+
+  const participants: NoteBatchParticipantInput[] = prepared.map(({ item, decision, parsed, top }, i) => {
     let mergeContactId = decision.mergeContactId;
-    if (!mergeContactId && index) {
-      const top = findDuplicateCandidatesIndexed(index, {
-        fullName: parsed.name,
-        email: parsed.email,
-        linkedinUrl: parsed.linkedin_url,
-        company: parsed.company,
-        title: parsed.role,
-      })[0];
+    if (!mergeContactId && top && !vetoed.has(i)) {
       mergeContactId = saveTimeMergeTarget(
         item,
         decision,
-        top ? { id: top.contact.id, confidence: top.confidence } : null,
+        { id: top.contact.id, confidence: top.confidence },
         DUPLICATE_MERGE_CONFIDENCE
       );
     }
     const facts = reminderFactsFor(item, decision);
     return {
       notes: item.notes,
+      ...(item.noteHash ? { sourceHash: item.noteHash } : {}),
       parsed,
       mergeContactId,
       createReminder: facts.createReminder,
@@ -333,8 +505,8 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
     });
 
   let meeting: SaveNoteBatchInput["meeting"] = null;
-  if (row.meetingSessionId) {
-    const session = await getMeetingSession(row.userId, row.meetingSessionId);
+  if (ctx.meetingSessionId) {
+    const session = await getMeetingSession(ctx.userId, ctx.meetingSessionId);
     if (!session) throw new Error("That meeting no longer exists");
     const summary = toNoteBatchMeeting(session);
     const extras = session.digest ? meetingExtrasFromDigest(session.digest) : [];
@@ -348,12 +520,12 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
   }
 
   return {
-    sourceText: row.sourceText!,
-    sourceHash: row.sourceHash ?? hashSourceNote(row.sourceText!),
+    sourceText: ctx.sourceText,
+    sourceHash: ctx.sourceHash ?? hashSourceNote(ctx.sourceText),
     anchorIso: result.anchorIso,
     anchorBasis: result.anchorBasis,
-    entryPoint: row.entryPoint,
-    seedContactId: row.seedContactId,
+    entryPoint: ctx.entryPoint,
+    seedContactId: ctx.seedContactId,
     participants,
     commitments,
     mentions: result.mentions.map((m) => ({
@@ -366,9 +538,30 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
     })),
     skipped: result.suggestionsSkipped,
     // For the history's icons: what the notes arrived as. Typed text carries no label.
-    inputSources: captureSourceKinds([...row.sources, ...(row.photoIds.length ? ["photos"] : []), ...(row.sourceKind === "voice" ? ["voice"] : [])]),
+    inputSources: ctx.inputSources,
     meeting,
   };
+}
+
+export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchInput> {
+  return saveInputFromParse({
+    userId: row.userId,
+    // `CaptureJobResult` is `CaptureParseResult` minus the corpus (stored separately on the
+    // row as `sourceText`/`sourceHash`); put the corpus back so the shared shape is whole.
+    result: { ...row.result!, sourceText: row.sourceText!, sourceHash: row.sourceHash ?? hashSourceNote(row.sourceText!) },
+    decisions: row.decisions ?? null,
+    sourceText: row.sourceText!,
+    sourceHash: row.sourceHash ?? null,
+    entryPoint: row.entryPoint,
+    seedContactId: row.seedContactId,
+    // For the history's icons: what the notes arrived as. Typed text carries no label.
+    inputSources: captureSourceKinds([
+      ...row.sources,
+      ...(row.photoIds.length ? ["photos"] : []),
+      ...(row.sourceKind === "voice" ? ["voice"] : []),
+    ]),
+    meetingSessionId: row.meetingSessionId,
+  });
 }
 
 function savedSummary(row: CaptureJobRow, out: SaveNoteBatchOutput): CaptureSavedSummary {

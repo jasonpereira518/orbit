@@ -1,0 +1,43 @@
+{
+  "label": "rules",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T16:45:04.088Z",
+  "commit": "351fbe0c",
+  "fixtures": "6f98553308b3",
+  "runs": 1,
+  "decisions": null,
+  "tasks": {
+    "mentions": {
+      "cases": 24,
+      "metrics": {
+        "outcomeAccuracy": 0.2916666666666667,
+        "wrongLinks": 4,
+        "pickAccuracy": null
+      },
+      "misses": [
+        "m-veto-01",
+        "m-veto-02",
+        "m-veto-03",
+        "m-veto-04",
+        "m-amb-01",
+        "m-amb-02",
+        "m-amb-03",
+        "m-amb-04",
+        "m-amb-05",
+        "m-amb-07",
+        "m-amb-08",
+        "m-amb-09",
+        "m-amb-10",
+        "m-amb-12",
+        "m-amb-13",
+        "m-amb-14",
+        "m-amb-15"
+      ],
+      "p50LatencyMs": 0,
+      "costMicros": 0,
+      "costPerCaseMicros": 0,
+      "usage": []
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "label": "keywords-only",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T04:41:03.091Z",
+  "commit": "c5949a84",
+  "fixtures": "3040d1fd9c4a",
+  "runs": 1,
+  "decisions": null,
+  "tasks": {
+    "recruiter-prefilter": {
+      "cases": 40,
+      "metrics": {
+        "recall": 0.3888888888888889,
+        "precision": 0.875,
+        "keywordRecall": 0.3888888888888889
+      },
+      "misses": [
+        "rec-agency-03-contract-role",
+        "rec-agency-04-confidential-client",
+        "rec-inhouse-03-rejection-after-onsite",
+        "rec-sourcer-02-startup-bump",
+        "rec-hm-01-head-of-eng-outreach",
+        "rec-hm-02-cto-thread-takehome",
+        "rec-agency-05-executive-search",
+        "rec-inhouse-05-university-recruiter",
+        "rec-agency-06-submitted-then-rejected",
+        "rec-inhouse-07-offer-stage",
+        "rec-hm-03-founder-first-hire",
+        "not-sales-01-observability-sequence"
+      ],
+      "p50LatencyMs": 0,
+      "costMicros": 0,
+      "costPerCaseMicros": 0,
+      "usage": []
+    }
+  }
+}

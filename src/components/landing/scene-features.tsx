@@ -71,9 +71,9 @@ const NARRATIVE: Feature[] = [
  */
 const CODA: Feature[] = [
   {
-    kicker: "Send fewer, better messages",
-    title: "Ask who you know. Send the message. Track the reply.",
-    body: "Ask in plain language — “who do I know at Stripe?” — and Orbit answers from your own network. Draft from there, and it tracks who replied and who still owes you one.",
+    kicker: "Here, or in Claude",
+    title: "Ask who you know — from Orbit, or from your assistant.",
+    body: "Ask in plain language — “who do I know at Stripe?” — and Orbit answers from your own network. Connect it to Claude or ChatGPT and ask there instead: it can log what you discussed and draft the follow-up, which waits on your dashboard until you send it. Free on every plan.",
     visual: <AskVisual />,
   },
   {

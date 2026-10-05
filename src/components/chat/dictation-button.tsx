@@ -73,12 +73,15 @@ export function DictationButton({
   level,
   disabled,
   onToggle,
+  className,
 }: {
   state: DictationState;
   /** 0..1 speech energy. A MotionValue so the ring never re-renders the thread. */
   level: MotionValue<number>;
   disabled: boolean;
   onToggle: (source: "pointer" | "keyboard") => void;
+  /** Extra classes — e.g. a resting-state border where the mic sits alone rather than inline beside a text field. */
+  className?: string;
 }) {
   const reduced = usePrefersReducedMotion();
 
@@ -119,6 +122,7 @@ export function DictationButton({
           "bg-primary text-primary-foreground shadow-sm hover:bg-primary hover:text-primary-foreground",
         state === "requesting" && "bg-primary/12 text-primary",
         errored && "text-destructive",
+        className,
       )}
     >
       {/* The state cue, floating over the mic rather than sitting in a row under the

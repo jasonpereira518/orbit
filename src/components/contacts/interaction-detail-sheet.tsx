@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   ArrowDown,
@@ -85,8 +86,16 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
  * Contact identity is deliberately absent: this only opens from that contact's own profile, so
  * a name and avatar would restate the page behind it.
  */
+/** The fields a timeline row already has, so the header can draw before the detail lands. */
+export type InteractionPreview = {
+  id: string;
+  interactionType: string;
+  interactionDate: Date | string;
+};
+
 export function InteractionDetailSheet({
   interactionId,
+  preview,
   canReorder,
   onReorder,
   canStep,
@@ -94,6 +103,7 @@ export function InteractionDetailSheet({
   onOpenChange,
 }: {
   interactionId: string | null;
+  preview?: InteractionPreview | null;
   canReorder: { up: boolean; down: boolean };
   onReorder: (direction: -1 | 1) => void;
   /** Whether a newer/older interaction exists to step to. */
@@ -227,8 +237,17 @@ export function InteractionDetailSheet({
 
   // Read off the spec at the point of use: binding a lookup's result to a capitalized
   // local reads as constructing a component during render.
-  const typeSpec = interactionTypeSpec(detail?.interactionType ?? null);
-  const typeFamily = interactionFamilySpec(detail?.interactionType ?? null);
+  // While the detail loads, the header shows what the clicked row already knows about the same
+  // interaction — its type and date — instead of "Interaction · Loading…". Only a preview for
+  // the interaction actually requested; the body still waits for the detail.
+  const header =
+    detail && detail.id === interactionId
+      ? detail
+      : preview && preview.id === interactionId
+        ? preview
+        : null;
+  const typeSpec = interactionTypeSpec(header?.interactionType ?? null);
+  const typeFamily = interactionFamilySpec(header?.interactionType ?? null);
   const hasNotes = Boolean(detail?.rawNotes?.trim());
   const canMove = canReorder.up || canReorder.down;
 
@@ -252,16 +271,16 @@ export function InteractionDetailSheet({
             </span>
             <div className="min-w-0 flex-1">
               <SheetTitle>
-                {detail
-                  ? interactionTypeLabel(detail.interactionType)
+                {header
+                  ? interactionTypeLabel(header.interactionType)
                   : "Interaction"}
               </SheetTitle>
               {/* Not truncated: at the panel's desktop width the compact date fits on one
                   line, and on a narrow viewport wrapping to two reads better than clipping
                   the year off the end. */}
               <SheetDescription>
-                {detail
-                  ? `${format(new Date(detail.interactionDate), "EEE, MMM d, yyyy")} · ${formatDistanceToNow(new Date(detail.interactionDate), { addSuffix: true })}`
+                {header
+                  ? `${format(new Date(header.interactionDate), "EEE, MMM d, yyyy")} · ${formatDistanceToNow(new Date(header.interactionDate), { addSuffix: true })}`
                   : "Loading…"}
               </SheetDescription>
             </div>
@@ -477,13 +496,13 @@ export function InteractionDetailSheet({
                 <SectionLabel>Also came up</SectionLabel>
                 <div className="flex flex-wrap gap-1.5">
                   {detail.mentions.map((m) => (
-                    <Link
+                    <IntentLink
                       key={m.contactId}
                       href={`/contacts/${m.contactId}`}
                       className="rounded-full border border-border/60 px-2.5 py-1 text-xs text-ink transition-colors hover:border-primary/50 hover:text-primary"
                     >
                       {m.fullName}
-                    </Link>
+                    </IntentLink>
                   ))}
                 </div>
               </div>

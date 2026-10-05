@@ -25,21 +25,25 @@
  * And it does not call `requireEntitlement()`. That writes a `gate_events` row on every
  * denial, so one lapsed subscriber whose Zapier polls every five minutes would write ~300
  * rows a day and drown the very signal that table exists to collect. Gate hits from the
- * request path go through the throttle instead; the unthrottled version is correct in the
- * key-issuance actions, which a human triggers.
+ * request path go through `recordGateHitThrottled` instead (one row per user per hour); the
+ * unthrottled version is correct in the key-issuance actions, which a human triggers.
  */
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { apiKeys } from "@/db/schema";
 import { bearerFrom, hashApiKey, looksLikeApiKey, type ApiKeyScope } from "@/lib/api/keys";
-import { getEntitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings, FEATURE_DENIAL, type Entitlements } from "@/lib/entitlements";
+import { recordGateHitThrottled } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { isHeldByStealth } from "@/lib/site-access";
 
 export type ApiCaller = {
   userId: string;
   keyId: string;
   prefix: string;
   scopes: ApiKeyScope[];
+  /** Resolved from the settings row the suspension check read, so callers need not re-read it. */
+  entitlements: Entitlements;
 };
 
 export type ApiAuthFailure =
@@ -69,7 +73,7 @@ export class ApiAuthError extends Error {
  */
 export async function requireApiCaller(
   request: Request,
-  opts: { scope: ApiKeyScope; token?: string }
+  opts: { scope: ApiKeyScope; token?: string; surface?: "api" | "mcp" }
 ): Promise<ApiCaller> {
   const token = opts.token ?? bearerFrom(request.headers.get("authorization"));
   if (!token) {
@@ -89,6 +93,7 @@ export async function requireApiCaller(
       prefix: true,
       scopes: true,
       revokedAt: true,
+      kind: true,
     },
   });
   if (!row) {
@@ -96,6 +101,12 @@ export async function requireApiCaller(
   }
   if (row.revokedAt) {
     throw new ApiAuthError("revoked", "That API key has been revoked.");
+  }
+
+  // A connector key is minted to sit in a URL, where proxies, browser history and logs see
+  // it. It is good for the MCP connector and nothing else — never the REST API or webhooks.
+  if (row.kind === "mcp_url" && opts.surface !== "mcp") {
+    throw new ApiAuthError("unknown", "That key only works as an MCP connector URL.");
   }
 
   const scopes = (row.scopes ?? ["read"]) as ApiKeyScope[];
@@ -107,20 +118,51 @@ export async function requireApiCaller(
     );
   }
 
-  const settings = await ensureUserSettings(row.userId);
+  const entitlements = await assertAccountUsable(row.userId, { surface: opts.surface });
+
+  return { userId: row.userId, keyId: row.id, prefix: row.prefix, scopes, entitlements };
+}
+
+/**
+ * The two account-level refusals that apply however the caller authenticated.
+ *
+ * Separate from the key lookup above because the MCP server also reaches here with a Clerk
+ * OAuth token, which has no `api_keys` row — and a suspended account must be refused on both
+ * paths or the check is decorative.
+ *
+ * Returns the caller's entitlements, resolved from the same settings row. `getEntitlements`
+ * would read that row again: `cache()` does not deduplicate in a route handler, so every
+ * MCP message paid for the same `user_settings` read three times, one after another.
+ */
+export async function assertAccountUsable(
+  userId: string,
+  opts: { surface?: "api" | "mcp" } = {}
+): Promise<Entitlements> {
+  const settings = await ensureUserSettings(userId);
   if (settings.suspendedAt) {
     throw new ApiAuthError("suspended", "This Orbit account is suspended.");
   }
-
-  const entitlements = await getEntitlements(row.userId);
-  if (!entitlements.canUseApi) {
-    throw new ApiAuthError(
-      "payment_required",
-      "The Orbit API, webhooks and MCP server are available on Orbit Pro and Orbit Lifetime."
-    );
+  // An account stealth is holding is not signed in anywhere else in the app; a key or an
+  // OAuth grant must not be the way around that.
+  if (await isHeldByStealth(userId, settings)) {
+    throw new ApiAuthError("suspended", "This account is waiting for an invitation.");
   }
 
-  return { userId: row.userId, keyId: row.id, prefix: row.prefix, scopes };
+  const entitlements = entitlementsFromSettings(userId, settings);
+  // The MCP server is free on every plan; the REST API and webhooks are not. Two flags
+  // rather than one so that making the connector free cannot quietly open the paid surfaces
+  // beside it — see `canUseMcp` in `entitlements.ts`.
+  const allowed = opts.surface === "mcp" ? entitlements.canUseMcp : entitlements.canUseApi;
+  if (!allowed) {
+    await recordGateHitThrottled({
+      userId,
+      feature: "api",
+      plan: entitlements.plan,
+      context: { surface: opts.surface ?? "api" },
+    });
+    throw new ApiAuthError("payment_required", FEATURE_DENIAL.api);
+  }
+  return entitlements;
 }
 
 /**

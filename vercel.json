@@ -1,4 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run check:env && npm run db:migrate && next build"
+  "buildCommand": "npm run check:env && npm run db:migrate && next build",
+  "ignoreCommand": "bash scripts/vercel-ignore-build.sh"
 }

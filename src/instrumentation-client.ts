@@ -1,4 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
+import { scrubSentryEvent } from "@/lib/sentry-scrub";
+import { markNavStart } from "@/lib/nav-timing";
 
 /**
  * Browser-side Sentry: hydration errors, client exceptions, and errors caught by the
@@ -14,6 +16,20 @@ Sentry.init({
   replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 0,
   sendDefaultPii: false,
+  // Calendar, scan and MCP URLs carry their credential in the path (src/lib/sentry-scrub.ts).
+  beforeSend: scrubSentryEvent,
+  beforeSendTransaction: scrubSentryEvent,
+  beforeBreadcrumb: (crumb) => scrubSentryEvent({ breadcrumbs: [crumb] }).breadcrumbs![0]!,
 });
 
-export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
+/**
+ * Every client-side navigation starts here. Sentry gets its breadcrumb, and page-load timing
+ * gets its clock start (`src/lib/nav-timing.ts`, read back by the pageview beacon).
+ */
+export function onRouterTransitionStart(
+  url: string,
+  navigationType: "push" | "replace" | "traverse"
+) {
+  markNavStart(url);
+  Sentry.captureRouterTransitionStart(url, navigationType);
+}

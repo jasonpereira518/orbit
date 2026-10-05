@@ -13,8 +13,14 @@ import {
 } from "@/components/admin/health-live";
 import { getAdminHealth } from "@/lib/admin-health";
 import { cn } from "@/lib/utils";
-import { loadProviderStatuses } from "@/lib/admin-providers";
+import { isProviderProblem, loadProviderStatuses } from "@/lib/admin-providers";
 import { ProviderRefreshButton } from "@/components/admin/provider-refresh-button";
+import {
+  AiOperationsPanel,
+  AiVolumePanel,
+  ArtifactsPanel,
+  DataQualityPanel,
+} from "@/components/admin/product-health-panels";
 import {
   getBugSignatures,
   getCronHealth,
@@ -62,7 +68,7 @@ export default async function AdminHealthPage() {
     health.connections.length +
     health.calendars.length +
     health.imports.length +
-    health.missingKeyAccounts.length;
+    health.missingKeyTotal;
 
   const initialLive: HealthLiveData = { health, cron, webhooks, errors, outreach, ops };
 
@@ -91,7 +97,13 @@ export default async function AdminHealthPage() {
         }
       />
 
-      <div className="mb-6">
+      <HealthLiveProvider initial={initialLive}>
+        <HealthLiveBody
+          providerProblems={
+            providers?.filter(isProviderProblem).length ?? 0
+          }
+          providerPanel={
+            <>
         {/* First on the page: this answers "is Orbit itself up", not "is this account
             broken". Deliberately OUTSIDE HealthLiveProvider and server-rendered, the same
             treatment "Known bug signatures" gets below — `loadProviderStatuses` is cached
@@ -122,7 +134,7 @@ export default async function AdminHealthPage() {
                     href={p.href}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="w-24 shrink-0 truncate hover:text-primary"
+                    className="w-36 shrink-0 truncate hover:text-primary"
                   >
                     {p.label}
                   </a>
@@ -150,14 +162,10 @@ export default async function AdminHealthPage() {
             </ul>
           )}
         </AdminPanel>
-      </div>
-
-      <HealthLiveProvider initial={initialLive}>
-        <HealthLiveBody bugsEmbeddingsMissingVector={bugs?.embeddingsMissingVector ?? null} />
-      </HealthLiveProvider>
-
-      {bugs && (
-        <div className="mt-6">
+            </>
+          }
+          bugsPanel={
+            bugs ? (
           <AdminPanel title="Known bug signatures">
             <div className="grid gap-3 sm:grid-cols-3">
               <MetricTile
@@ -184,8 +192,23 @@ export default async function AdminHealthPage() {
               />
             </div>
           </AdminPanel>
+        
+            ) : null
+          }
+          aiDataPanels={
+            <>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AiVolumePanel />
+          <AiOperationsPanel />
         </div>
-      )}
+        <div className="grid gap-6 lg:grid-cols-2">
+          <DataQualityPanel />
+          <ArtifactsPanel />
+        </div>
+            </>
+          }
+        />
+      </HealthLiveProvider>
     </>
   );
 }

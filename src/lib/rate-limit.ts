@@ -20,21 +20,42 @@ import { rateLimitBuckets } from "@/db/schema";
 /** What a bucket scope means to the person hitting it, for the error message. */
 const BUCKET_LABELS: Record<string, string> = {
   chat: "chat",
+  emailSend: "email send",
   capture: "capture",
   captureHandoff: "scan",
+  captureParts: "capture",
   meetingChunk: "meeting transcription",
   avatarResolve: "photo lookup",
   feedback: "feedback",
+  radarRefresh: "Radar refresh",
+  knowledgeRefresh: "refresh",
   interestJoin: "sign-up",
+  interestProgress: "progress check",
+  pollResults: "poll results",
+  interestName: "sign-up",
   apiRead: "API read",
   apiWrite: "API write",
   apiIngest: "event import",
   mcp: "MCP tool call",
+  mcpWrite: "MCP write",
   providerSync: "sync",
   eventEnrich: "link lookup",
   eventHostFetch: "event lookup",
   eventWhy: "attendee lookup",
   lifetimeConfirm: "checkout check",
+  speechToken: "speech transcription",
+  // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
+  // rather than renaming the scope, which would reset those buckets' counters.
+  contactForm: "contact form",
+  "interest.join": "sign-up",
+  "interest.name": "sign-up",
+  "interest.progress": "progress check",
+  "avatar.resolve": "photo lookup",
+  "lifetime-confirm": "checkout check",
+  "poll.vote": "vote",
+  "poll.results": "results check",
+  "work-history": "work-history lookup",
+  "work-history-background": "background work-history check",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -66,8 +87,24 @@ export type BucketPolicy = { limit: number; windowSec: number };
 export const RATE_LIMITS = {
   /** `askNetwork` / `/api/chat`: a full retrieval plus a model completion per call. */
   chat: { limit: 20, windowSec: 60 },
+  /**
+   * Any person-to-person email through the outbox (`src/lib/email/outbox.ts`) — Chat,
+   * follow-ups, approved assistant drafts, recruiter replies. Outbound and sent from the user's
+   * real address, so tighter than anything else here and measured over ten minutes: the shape
+   * to bound is a loop or a hijacked session mailing people in bulk, not a person sending a
+   * few follow-ups. The daily cap is separate and per plan (`EMAIL_SEND_DAILY_CAP`).
+   */
+  emailSend: { limit: 10, windowSec: 600 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
+  /**
+   * The second and later parts of one capture sent in pieces (`continueJobId` on
+   * `/api/capture/jobs`). A capture bigger than one 4.5MB request is several requests, and
+   * charging each to `capture` would spend a twelve-page scan's budget four times over.
+   * They can only extend a job the first part already paid for, so this bucket only has to
+   * stop a runaway client, not price the work.
+   */
+  captureParts: { limit: 30, windowSec: 60 },
   /**
    * Photos posted from a phone against a scan handoff token.
    *
@@ -106,6 +143,19 @@ export const RATE_LIMITS = {
   apolloSearch: { limit: 20, windowSec: 86_400 },
   /** Person matches (one Apollo credit each) per user per day on the hosted key. */
   apolloEnrich: { limit: 50, windowSec: 86_400 },
+  /**
+   * Web-search work-history lookups. They run on the person's own AI key, but each one is
+   * several paid searches the person never clicked for — a pasted list or a refresh fans
+   * out — so a day has a ceiling that no ordinary use of LinkedIn pulls comes near.
+   */
+  workHistoryResearch: { limit: 60, windowSec: 86_400 },
+  /**
+   * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
+   * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
+   * up the lookups a person clicks for; every sweep search also counts against that one,
+   * so the two together still stop at its 60.
+   */
+  workHistoryBackground: { limit: 20, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**
@@ -114,6 +164,16 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  // Each refresh re-scores the whole network and may write up to five AI lines on the
+  // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
+  radarRefresh: { limit: 3, windowSec: 600 },
+  /**
+   * `/api/knowledge/refresh`: rebuilding one person's brief on the Knowledge page — a model
+   * call on the account's own key, made when a dossier opens on a stale brief or a goal was
+   * added since it was judged. Sized for clicking through a list of people after adding a
+   * goal, and no more: past it the dossier simply shows what is on file.
+   */
+  knowledgeRefresh: { limit: 30, windowSec: 300 },
   /**
    * `joinInterestList`: ten submits per ten minutes per IP. Replaces the action's old
    * per-instance Map, which never held across instances. Loose on purpose — several friends
@@ -121,6 +181,29 @@ export const RATE_LIMITS = {
    * whether addresses are on the list is what this is for.
    */
   interestJoin: { limit: 10, windowSec: 600 },
+  /**
+   * `castPollVote`: the waitlist's feature poll. A vote is one upsert, so this is loose on
+   * purpose — several friends behind one NAT voting is normal. What it stops is a loop
+   * stuffing the tally from one address.
+   */
+  pollVote: { limit: 20, windowSec: 600 },
+  /**
+   * `/api/interest-list/progress`: the referral tracker polls it about every 20 seconds
+   * while a pass is open, so one visitor is ~15 calls per five minutes. This leaves room
+   * for several people behind one NAT, and stops a script sweeping share tokens.
+   */
+  interestProgress: { limit: 120, windowSec: 300 },
+  /**
+   * `/api/waitlist-poll/results`: the poll's live tallies, read about every 30 seconds while
+   * the tab is visible (~10 calls per five minutes for one visitor). The answer is the
+   * instance's 30 s memo, so the limit only stops a script hammering the route.
+   */
+  pollResults: { limit: 60, windowSec: 300 },
+  /**
+   * `saveInterestListName`, the join's second step. A person makes one, maybe a couple of
+   * corrections' worth; the limit exists to stop a script walking guessed tokens.
+   */
+  interestName: { limit: 20, windowSec: 600 },
   /**
    * Public API reads. Generous — a read is one or two indexed queries — but bounded, because
    * these endpoints are reachable by anyone holding a key and a polling integration with a
@@ -131,8 +214,26 @@ export const RATE_LIMITS = {
   apiWrite: { limit: 60, windowSec: 60 },
   /** Event ingestion. Fewer, because each request carries a batch of up to 500 events. */
   apiIngest: { limit: 30, windowSec: 60 },
-  /** MCP tool calls. An agent can loop far faster than a person can click. */
-  mcp: { limit: 60, windowSec: 60 },
+  /**
+   * MCP tool calls on a paid plan. An agent can loop far faster than a person can click, and
+   * a single chat turn now fans out over several tools — search, then a contact, then a
+   * reminder — so the ceiling is per conversation rather than per question.
+   */
+  mcp: { limit: 120, windowSec: 60 },
+  /**
+   * MCP tool calls on the free plan. Lower because the connector is free on every plan and
+   * this is the one surface an unpaid account can drive continuously. Generous enough that a
+   * real conversation never touches it: a person asking questions produces a handful of calls
+   * a minute, and a loop producing thirty is a runaway, not a user.
+   */
+  mcpFree: { limit: 30, windowSec: 60 },
+  /**
+   * WRITE tool calls over MCP, on top of `mcp`. A write lands in the user's records, and a
+   * written note is re-read by Orbit's own chat on every later question — so a looping or
+   * injected agent writing fast is the shape to stop, not a person's assistant filing a few
+   * notes after a meeting. Counted per call, not per request (see `handleMcpRequest`).
+   */
+  mcpWrite: { limit: 30, windowSec: 60 },
   /** One provider sync run per connection per window — see `sync-scheduler.ts`. */
   providerSync: { limit: 4, windowSec: 3600 },
   /**
@@ -174,35 +275,42 @@ export const RATE_LIMITS = {
    * path, so this is a ceiling on an abandoned checkout costing a lookup per AI click.
    */
   lifetimeConfirm: { limit: 6, windowSec: 60 },
+  /** One token per connection attempt; a stuck reconnect loop must not mint endlessly. */
+  speechToken: { limit: 30, windowSec: 300 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**
  * Count one request against `scope:key`; throws `RateLimitedError` past `limit` within the
  * window. Returns how many are left. Never fails open on a DB error — a limiter that
  * cannot count should not silently allow — but the caller decides what a throw means.
+ *
+ * `cost` charges several units at once — an MCP request carrying a JSON-RPC batch of five
+ * tool calls is five calls, not one request.
  */
 export async function consumeBucket(
   scope: string,
   key: string,
-  policy: BucketPolicy
+  policy: BucketPolicy,
+  cost = 1
 ): Promise<{ remaining: number }> {
+  const units = Math.max(1, Math.floor(cost));
   const db = await getDb();
   const bucket = `${scope}:${key}`;
   const expired = sql`now() - ${rateLimitBuckets.windowStartedAt} > interval '${sql.raw(String(policy.windowSec))} seconds'`;
 
   const [row] = await db
     .insert(rateLimitBuckets)
-    .values({ bucket, windowStartedAt: new Date(), count: 1 })
+    .values({ bucket, windowStartedAt: new Date(), count: units })
     .onConflictDoUpdate({
       target: rateLimitBuckets.bucket,
       set: {
         windowStartedAt: sql`CASE WHEN ${expired} THEN now() ELSE ${rateLimitBuckets.windowStartedAt} END`,
-        count: sql`CASE WHEN ${expired} THEN 1 ELSE ${rateLimitBuckets.count} + 1 END`,
+        count: sql`CASE WHEN ${expired} THEN ${units} ELSE ${rateLimitBuckets.count} + ${units} END`,
       },
     })
     .returning();
 
-  const count = row?.count ?? 1;
+  const count = row?.count ?? units;
   if (count > policy.limit) {
     const elapsed = row?.windowStartedAt
       ? Math.floor((Date.now() - row.windowStartedAt.getTime()) / 1000)

@@ -120,14 +120,23 @@ async function buildDataset(
     const signups = await loadInterestListAll(
       isInterestListFilter(interestFilter) ? interestFilter : "all"
     );
+    // In line order: the first rows are the first invites.
     const rows = signups.map((r) => ({
+      position: r.position ?? "",
       email: r.email,
+      first_name: r.firstName ?? "",
+      last_name: r.lastName ?? "",
+      joined_rank: r.joinRank ?? "",
+      tier: r.tier ?? "",
+      referrals: r.referrals,
+      pass_checks: r.passCheckCount,
+      last_checked_at: iso(r.passLastCheckedAt),
       signed_up_at: iso(r.createdAt),
-      status: r.unsubscribedAt ? "unsubscribed" : r.converted ? "converted" : "active",
+      status: r.unsubscribedAt ? "left" : r.converted ? "converted" : "waiting",
       unsubscribed_at: iso(r.unsubscribedAt),
       converted: r.converted,
-      follow_up_sent_at: iso(r.followUpSentAt),
       source: sourceLabel(r),
+      signup_event: r.signupEventLabel ?? "",
       referrer: r.referrer ?? "",
       utm_source: r.utmSource ?? "",
       utm_medium: r.utmMedium ?? "",
@@ -197,7 +206,8 @@ async function buildDataset(
   }
 
   if (dataset === "health") {
-    const health = await getAdminHealth();
+    // Every keyless account, not the page's capped list.
+    const health = await getAdminHealth({ missingKeyLimit: null });
     const rows: Array<Record<string, unknown>> = [
       ...health.missingKeyAccounts.map((r) => ({
         kind: "missing-key",

@@ -1,0 +1,36 @@
+{
+  "label": "baseline-extension",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "date": "2026-09-20T00:26:10.440Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 1,
+  "tasks": {
+    "extension": {
+      "cases": 10,
+      "metrics": {
+        "fieldAccuracy": 1,
+        "nullAccuracy": 1,
+        "forbiddenHits": 0
+      },
+      "misses": [],
+      "p50LatencyMs": 3992.5,
+      "costMicros": 91308,
+      "costPerCaseMicros": 9130.8,
+      "usage": [
+        {
+          "operation": "extension.parse",
+          "model": "gemini-3.5-flash",
+          "calls": 10,
+          "failures": 0,
+          "inputTokens": 5929,
+          "outputTokens": 9157,
+          "cachedInputTokens": 0,
+          "costMicros": 91308,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

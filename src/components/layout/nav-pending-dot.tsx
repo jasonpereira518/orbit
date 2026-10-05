@@ -10,12 +10,14 @@ import { cn } from "@/lib/utils";
  * pill unmoved, for seconds — the pill is keyed on `pathname`, so it only moves once
  * the URL has already changed, and nothing acknowledged the click itself.
  *
- * This is a mitigation, not the fix. The underlying cause is that `(app)/layout.tsx`
- * is `force-dynamic` and awaits several database reads on the critical path of every
- * authenticated navigation, which per Next's own docs means `loading.tsx` cannot show
- * a fallback for it and navigation blocks until the layout finishes rendering. That is
- * an architecture change; this is the cheap acknowledgement in the meantime, which is
- * exactly what the `useLinkStatus` docs recommend it for.
+ * This is a mitigation, not the fix. A sidebar click does NOT re-run `(app)/layout.tsx`
+ * (shared layouts are skipped on soft navigation); what the click waits on is the
+ * destination page's own server render, or — when that route's `loading.tsx` was
+ * prefetched — nothing, since the skeleton shows at once. The fixes live elsewhere: the
+ * client router cache (`staleTimes` in next.config.ts), full prefetching of the daily
+ * routes (`prefetchFull` in app-nav.ts), and the pages' own query shape. Measured with
+ * `scripts/dev/nav-timing.mjs`. This stays as the cheap acknowledgement for whatever is
+ * still slow, which is exactly what the `useLinkStatus` docs recommend it for.
  *
  * Constraints from `node_modules/next/dist/docs/.../use-link-status.md`:
  *   - imports from `next/link`, NOT `next/navigation`

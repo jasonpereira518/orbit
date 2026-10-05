@@ -1,5 +1,5 @@
-import { InterestPageSkeleton } from "@/components/loading/page-skeletons";
+import { WaitlistSkeleton } from "@/components/interest/waitlist-skeleton";
 
 export default function InterestLoading() {
-  return <InterestPageSkeleton />;
+  return <WaitlistSkeleton />;
 }

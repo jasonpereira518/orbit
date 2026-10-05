@@ -36,6 +36,7 @@ export const TOAST_COPY = {
   copied: "Copied",
   chatFailed: "Couldn’t get an answer — try again?",
   chatStartFailed: "Couldn’t start a chat — try again?",
+  draftRefineFailed: "Couldn’t rewrite that — your draft is unchanged",
   notesReadFailed: "Couldn’t read those notes — try again?",
   fileReadFailed: "Couldn’t read that file — try a different one?",
   reminderSet: "Reminder set",

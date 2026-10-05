@@ -13,6 +13,7 @@ import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { LockedFeature } from "@/components/locked-feature";
 import { ComposeWorkspace } from "@/components/recruiters/compose-workspace";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 export default async function RecruiterComposePage() {
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
@@ -27,7 +28,7 @@ export default async function RecruiterComposePage() {
           "Review every message before anything sends",
           "Sends from your Gmail, threaded into the original conversation",
         ]}
-        note="Included in Orbit Pro and Orbit Lifetime."
+        note="Included in Orbit Pro and Orbit Max."
       />
     );
   }
@@ -42,6 +43,7 @@ export default async function RecruiterComposePage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <RenderStamp />
       <div>
         <Link
           href="/recruiters"

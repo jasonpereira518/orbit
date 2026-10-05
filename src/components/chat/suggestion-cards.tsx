@@ -13,6 +13,7 @@
  * A tooltip keeps the reason and gives the height back.
  */
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
   Clock,
@@ -87,21 +88,77 @@ function revealDelay(i: number) {
   } as React.CSSProperties;
 }
 
+/** How much of the edge the fade eats into, on the side it's showing on. */
+const FADE_SIZE = "2rem";
+
+/**
+ * A `mask-image`, not an overlay: an overlay would need a colour to fade to, and the
+ * composer sits on `bg-card`, which inverts between themes. Each edge only fades while
+ * there is actually a pill cut off behind it — a fade with nothing to hint at reads as a
+ * smudge, not an affordance.
+ */
+function maskFor(atStart: boolean, atEnd: boolean): string | undefined {
+  if (atStart && atEnd) return undefined;
+  const left = atStart ? "#000 0" : `transparent 0, #000 ${FADE_SIZE}`;
+  const right = atEnd ? "#000 100%" : `#000 calc(100% - ${FADE_SIZE}), transparent 100%`;
+  return `linear-gradient(to right, ${left}, ${right})`;
+}
+
 /**
  * The scroller.
  *
- * The trailing fade is a `mask-image`, not an overlay: an overlay would need a colour to
- * fade to, and the composer sits on `bg-card`, which inverts between themes.
+ * Horizontal only: `overflow-y-hidden` plus `touch-pan-x` means a vertical swipe or wheel
+ * over the row can't move it at all, and falls through to scrolling the page instead — the
+ * row has no vertical content to reveal, so there is nothing for it to do with that
+ * gesture.
  */
 function Scroller({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Both start true so a row that never overflows renders with no mask at all, rather than
+  // flashing a left fade for one frame before the first measurement lands.
+  const [edges, setEdges] = useState({ atStart: true, atEnd: true });
+
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    // A 1px slop: sub-pixel layout can leave `scrollLeft` a fraction short of the true
+    // edge, which would otherwise pin a fade on permanently at rest.
+    const atStart = el.scrollLeft <= 1;
+    const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
+    setEdges((prev) => (prev.atStart === atStart && prev.atEnd === atEnd ? prev : { atStart, atEnd }));
+  }, []);
+
+  useEffect(() => {
+    measure();
+    const el = ref.current;
+    if (!el) return;
+    // Catches a window resize changing how much of the row fits, not just the scroll
+    // position moving — `ResizeObserver` on the row itself sees the former; `onScroll`
+    // below sees the latter.
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // Re-measure whenever the pills themselves change (skeleton -> real cards, or a
+    // different suggestion set) — the row's own size may not change even though its
+    // content, and so its overflow, did.
+  }, [measure, children]);
+
+  const mask = maskFor(edges.atStart, edges.atEnd);
+
   return (
     <div
+      ref={ref}
+      onScroll={measure}
       data-slot="chat-suggestions"
       className={cn(
-        "-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-0.5",
+        "-mx-1 flex items-center gap-2 overflow-x-auto overflow-y-hidden touch-pan-x px-1 pb-0.5",
         "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-        "[mask-image:linear-gradient(to_right,#000_0,#000_calc(100%-2rem),transparent_100%)]",
       )}
+      // Both properties: this mask is computed at runtime, so — unlike the rest of the
+      // app's `[mask-image:...]` Tailwind arbitrary values — it never passes through
+      // Lightning CSS's autoprefixing, and Safari before 15.4 only understood the
+      // `-webkit-` form.
+      style={{ maskImage: mask, WebkitMaskImage: mask }}
     >
       {children}
     </div>

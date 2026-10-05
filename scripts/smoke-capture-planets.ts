@@ -4,7 +4,7 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { PLANETS, PLANET_ORDER, planetForIndex } from "../src/lib/capture/planets";
+import { PLANETS, PLANET_ORDER, PLANET_RINGS, planetForCloseness, planetForIndex } from "../src/lib/capture/planets";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -26,3 +26,16 @@ check("a negative index does not throw", planetForIndex(-1).id === "ganymede");
 check("Saturn and Uranus carry rings", PLANETS.saturn.rings === true && PLANETS.uranus.rings === true && !PLANETS.earth.rings);
 
 console.log("\nsmoke-capture-planets: all checks passed");
+
+// Planet = orbit ring: closeness picks the ring, the card's position picks the body in it.
+{
+  const all = Object.values(PLANET_RINGS).flat();
+  check("every ring body is a defined planet", all.every((id) => PLANETS[id]?.id === id));
+  check("no body sits on two rings", new Set(all).size === all.length);
+  check("closest people get Mercury", planetForCloseness(5, 0).id === "mercury");
+  check("a barely-known person is out past Neptune", PLANET_RINGS[1].includes(planetForCloseness(1, 7).id));
+  check("same closeness, next card → a different body", planetForCloseness(3, 0).id !== planetForCloseness(3, 1).id);
+  check("changing closeness moves the planet", planetForCloseness(2, 0).id !== planetForCloseness(4, 0).id);
+  check("out-of-range closeness clamps", planetForCloseness(9, 0).id === "mercury" && PLANET_RINGS[1].includes(planetForCloseness(-3, 0).id));
+  console.log("\nsmoke-capture-planets: ring checks passed");
+}

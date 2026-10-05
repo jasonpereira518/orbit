@@ -1,10 +1,16 @@
 import {
   FREE_CONTACT_LIMIT,
-  LIFETIME_INTRO_PRICE,
-  LIFETIME_INTRO_SEATS,
-  LIFETIME_STANDARD_PRICE,
+  PLAN_CONFIG,
+  annualMonthlyEquivalentCents,
+  formatPlanPrice,
+  type BillingPeriod,
   type Plan,
-} from "@/lib/plan-limits";
+  type PurchasablePlan,
+} from "@/lib/plans/plan-config";
+
+export type { BillingPeriod } from "@/lib/plans/plan-config";
+export { ANNUAL_SAVING_PERCENT } from "@/lib/plans/plan-config";
+import { FOUNDING_AMOUNT_OFF_CENTS, FOUNDING_MONTHS } from "@/lib/stripe-config";
 import type { DemoAccountReason } from "@/lib/demo-account";
 
 /**
@@ -12,29 +18,24 @@ import type { DemoAccountReason } from "@/lib/demo-account";
  * page, the settings card, and any upgrade prompt cannot drift from each other —
  * the same reason `settings/sections.ts` centralises the settings rail.
  *
- * Prices are display copy. The amounts actually charged live in the Stripe prices;
- * changing a string here does not change what anyone pays.
+ * Prices are read from `PLAN_CONFIG`, which is also what the gates enforce; the amount
+ * actually charged is the Stripe price with the matching lookup key.
  *
- * Display names and internal ids are deliberately decoupled: the tiers are shown as
- * "Orbit Pro" and "Orbit Lifetime", but the ids stay `orbit` / `lifetime` because they
- * are persisted in `user_settings` and matched against Stripe checkout metadata. Rename
- * the copy freely; renaming an id is a data migration.
+ * TWO RULES THIS COPY KEEPS:
+ *  - Only shipped features. Outreach, Events and the Chrome extension are behind their
+ *    coming-soon gates and appear in no plan copy until they ship.
+ *  - No fake urgency: no struck-through prices, countdowns or scarcity. A founding price is
+ *    shown only to an eligible account, and always with its full terms.
+ *
+ * Display names and internal ids are deliberately decoupled: "Orbit Pro" is id `orbit`,
+ * persisted in `user_settings` and Stripe metadata. Rename the copy freely; renaming an id
+ * is a data migration.
  */
-export type BillingPeriod = "monthly" | "annual";
 
 export type PlanPrice = {
   amount: string;
   /** Sits beside the amount, e.g. "per month". */
   cadence: string;
-  /**
-   * The undiscounted price, struck through beside the amount.
-   *
-   * Only set where a real price change is coming — Lifetime's introductory rate rises to
-   * the standard one after `LIFETIME_INTRO_SEATS` buyers. Never set it as decoration: a
-   * struck-through number the product has no intention of charging is a fake discount,
-   * and it is the kind of thing that is illegal in several of the places Orbit is sold.
-   */
-  compareAt?: string;
   /** Second line under the price, only where the billing needs explaining. */
   footnote?: string;
 };
@@ -43,118 +44,107 @@ export type PlanCopy = {
   id: Plan;
   name: string;
   tagline: string;
-  /**
-   * Priced per billing period. Tiers that ignore the period (Free, Lifetime) simply
-   * carry the same value under both keys, so the toggle never has to special-case them.
-   */
+  /** What the card shows for each billing period the toggle offers. */
   price: Record<BillingPeriod, PlanPrice>;
   features: string[];
   /** Shown under the feature list where a tier deliberately excludes something. */
   caveat?: string;
 };
 
-/**
- * $5/mo against $50/yr — two months free, 17% off.
- *
- * Worth knowing before changing this: net of Stripe fees (2.9% + $0.30), a subscriber
- * retained a full year nets $54.66 monthly against $48.25 annually, so annual only pays
- * off if they would otherwise churn before roughly month eleven. It is a retention and
- * cash-flow instrument here, not a fee saving.
- */
-/** Exported so the admin MRR figure reads the same number the pricing page charges. */
-export const MONTHLY_AMOUNT = 5;
-const ANNUAL_AMOUNT = 50;
+/** The one-line positioning, used wherever plans are summarised. */
+export const AI_POSITIONING = "Free: bring your own AI key. Pro and Max: AI included.";
 
-export const ANNUAL_SAVING_PERCENT = Math.round(
-  (1 - ANNUAL_AMOUNT / (MONTHLY_AMOUNT * 12)) * 100
-);
+const HOURS = (seconds: number) => `${seconds / 3600} hour${seconds === 3600 ? "" : "s"}`;
+const pro = PLAN_CONFIG.orbit;
+const max = PLAN_CONFIG.max;
+const lifetime = PLAN_CONFIG.lifetime;
+const free = PLAN_CONFIG.free;
 
-/**
- * Lifetime's introductory price, with the standard price struck through beside it.
- *
- * Not a marketing device: the standard price is what the next hundred-and-first buyer
- * actually pays, so the comparison is a real one.
- */
-const LIFETIME_INTRO_PRICE_COPY: PlanPrice = {
-  amount: `$${LIFETIME_INTRO_PRICE}`,
-  cadence: "once",
-  compareAt: `$${LIFETIME_STANDARD_PRICE}`,
-  // States what the struck-through number means. A crossed-out price with no explanation
-  // is indistinguishable from manufactured urgency — and this one is real, so it can
-  // afford to say exactly what it is.
-  footnote: `Introductory price for the first ${LIFETIME_INTRO_SEATS} buyers, then $${LIFETIME_STANDARD_PRICE}.`,
-};
+/** A paid plan's two prices. Annual is two months free, and says what that works out to. */
+function prices(plan: PurchasablePlan): Record<BillingPeriod, PlanPrice> {
+  return {
+    monthly: { amount: formatPlanPrice(PLAN_CONFIG[plan].monthlyPriceCents ?? 0), cadence: "per month" },
+    annual: {
+      amount: formatPlanPrice(PLAN_CONFIG[plan].annualPriceCents ?? 0),
+      cadence: "per year",
+      // One line on the narrowest card: the saving first, then what it works out to.
+      footnote: `Two months free · ${formatPlanPrice(annualMonthlyEquivalentCents(plan))}/mo`,
+    },
+  };
+}
+
+function samePrice(price: PlanPrice): Record<BillingPeriod, PlanPrice> {
+  return { monthly: price, annual: price };
+}
 
 export const PLAN_COPY: PlanCopy[] = [
   {
     id: "free",
     name: "Free Plan",
     tagline: "The whole core product, for a network you can hold in your head.",
-    price: {
-      monthly: { amount: "$0", cadence: "forever" },
-      annual: { amount: "$0", cadence: "forever" },
-    },
+    price: samePrice({ amount: "$0", cadence: "forever" }),
     features: [
       `Up to ${FREE_CONTACT_LIMIT} contacts`,
-      "Capture notes with AI extraction",
-      "Chat with your network",
+      "Capture notes, chat with your network, and summaries, on your own AI key",
       "Constellation map",
-      "LinkedIn import",
       "Reminders and follow-up feed",
       "Knowledge base",
-      "Export your data anytime",
+      "LinkedIn import and export anytime",
+      "Claude and ChatGPT connector",
+      "One Google or Microsoft account",
+      `${HOURS(free.speech.shortformSeconds)} of voice notes a month`,
     ],
-    caveat: "Bring your own AI key — Orbit never charges you for AI.",
+    caveat: "Bring your own AI key.",
   },
   {
     id: "orbit",
     name: "Orbit Pro",
     tagline: "For a network worth more than the price of a coffee.",
-    price: {
-      monthly: { amount: "$5", cadence: "per month" },
-      annual: {
-        amount: "$50",
-        cadence: "per year",
-        footnote: "Two months free",
-      },
-    },
+    price: prices("orbit"),
     features: [
       "Everything in the Free Plan, uncapped",
       "Unlimited contacts",
-      "Contact enrichment on Orbit's credits",
-      "Outreach campaigns with email and SMS sending",
+      `AI included: ${pro.monthlyCredits} credits a month`,
+      "Top up with $5 packs of 250 credits",
       "Recruiter tracking",
-      "Gmail, Outlook, and calendar sync",
-      "Chrome extension",
+      "Connect both Google and Microsoft",
+      "Calendar subscriptions",
+      `${HOURS(pro.speech.meetingSeconds)} of meeting transcription a month`,
+      `${HOURS(pro.speech.shortformSeconds)} of voice notes a month`,
+      `${pro.hostedEnrichmentsPerMonth} contact enrichments a month`,
     ],
-    caveat: "AI runs on your own provider key, billed to you at cost.",
+    caveat: "Prefer your own AI key? Add it any time; calls on it never use credits.",
   },
   {
+    id: "max",
+    name: "Orbit Max",
+    tagline: "For the people whose network is the job.",
+    price: prices("max"),
+    features: [
+      "Everything in Orbit Pro",
+      `AI included: ${max.monthlyCredits} credits a month`,
+      `${HOURS(max.speech.meetingSeconds)} of meeting transcription a month`,
+      `${HOURS(max.speech.shortformSeconds)} of voice notes a month`,
+      `${max.hostedEnrichmentsPerMonth} contact enrichments a month`,
+      "REST API and webhooks",
+    ],
+    caveat: "Prefer your own AI key? Add it any time; calls on it never use credits.",
+  },
+  {
+    // Not sold: granted by Orbit. Described for the plan card and the celebration only.
     id: "lifetime",
     name: "Orbit Lifetime",
-    tagline: "Pay once. Keep it for as long as Orbit exists.",
-    // The default is the INTRO offer, so any surface that renders `PLAN_COPY` without
-    // consulting the live sale count still shows the cheaper, currently-correct price.
-    // `/pricing` and `/upgrade` override this from `lifetimeOffer()`; see `planCopyFor`.
-    price: {
-      monthly: LIFETIME_INTRO_PRICE_COPY,
-      annual: LIFETIME_INTRO_PRICE_COPY,
-    },
-    // Also the celebration's perk list (`tier-theme.ts` takes the first six), so the
-    // headline Lifetime difference — included AI — sits near the top.
+    tagline: "Yours for as long as Orbit exists.",
+    price: samePrice({ amount: "Granted", cadence: "by Orbit" }),
     features: [
-      "Unlimited contacts, forever",
-      "AI included — no API key needed",
-      "Outreach campaigns with email and SMS sending",
-      "Recruiter tracking",
-      "Gmail, Outlook, and calendar sync",
-      "Chrome extension",
+      "Unlimited contacts",
+      "Recruiter tracking, with Google and Microsoft together",
+      `${HOURS(lifetime.speech.meetingSeconds)} of meeting transcription a month`,
+      `${HOURS(lifetime.speech.shortformSeconds)} of voice notes a month`,
+      `${lifetime.hostedEnrichmentsPerMonth} contact enrichments a month`,
+      "REST API and webhooks",
     ],
-    // Both halves are the ceilings that let a one-time price carry ongoing costs: included AI
-    // has a monthly allowance (MANAGED_AI_BUDGET), and enrichment has no ceiling at all, so it
-    // stays on the buyer's own Apollo key.
-    caveat:
-      "Included AI has a monthly allowance — add your own AI key any time and Orbit uses it instead, with no allowance. Contact enrichment runs on your own Apollo key rather than Orbit's credits, because enrichment has no ceiling at all.",
+    caveat: "AI runs on your own provider key.",
   },
 ];
 
@@ -162,34 +152,19 @@ export function planCopy(plan: Plan) {
   return PLAN_COPY.find((p) => p.id === plan) ?? PLAN_COPY[0];
 }
 
-/**
- * `PLAN_COPY` with Lifetime's price replaced by whatever is actually being charged today.
- *
- * Takes the resolved offer rather than reading it, so this stays free of database imports
- * and the client components that render the tiers can keep importing this module.
- */
-export function planCopyWithOffer(offer: {
-  priceUsd: number;
-  compareAtUsd: number | null;
-}): PlanCopy[] {
-  const price: PlanPrice = {
-    amount: `$${offer.priceUsd}`,
-    cadence: "once",
-    // Both only while the intro is live. Once it ends, $75 is simply the price and there
-    // is nothing to strike through or explain.
-    ...(offer.compareAtUsd
-      ? {
-          compareAt: `$${offer.compareAtUsd}`,
-          footnote: `Introductory price for the first ${LIFETIME_INTRO_SEATS} buyers, then $${LIFETIME_STANDARD_PRICE}.`,
-        }
-      : {}),
-  };
+/** The plans on sale, in the order the pricing page shows them. */
+export const PUBLIC_PLAN_COPY: PlanCopy[] = PLAN_COPY.filter((p) => p.id !== "lifetime");
 
-  return PLAN_COPY.map((plan) =>
-    plan.id === "lifetime"
-      ? { ...plan, price: { monthly: price, annual: price } }
-      : plan
-  );
+/**
+ * Founding pricing for an eligible account, always stated with its full terms — e.g.
+ * "$6.99/month for your first 3 months, then $8.99/month". Only ever rendered for a
+ * signed-in account whose `founding_eligible` is set and not yet redeemed. Monthly billing
+ * only: an annual plan is already two months free.
+ */
+export function foundingPriceTerms(plan: PurchasablePlan): string {
+  const list = PLAN_CONFIG[plan].monthlyPriceCents ?? 0;
+  const founding = list - FOUNDING_AMOUNT_OFF_CENTS[plan];
+  return `${formatPlanPrice(founding)}/month for your first ${FOUNDING_MONTHS} months, then ${formatPlanPrice(list)}/month`;
 }
 
 /**

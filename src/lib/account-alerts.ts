@@ -29,6 +29,7 @@ import { integrationHref } from "@/components/settings/sections";
  * has to respect: anything derived from a HISTORICAL row must be windowed, or a single bad
  * day becomes a permanent badge. See `IMPORT_ALERT_WINDOW_MS`.
  */
+import { icsFailureLine, importFailureLine } from "@/lib/import-errors";
 
 /** How many alerts the server will ever return. A pathological account cannot balloon the payload. */
 export const MAX_ACCOUNT_ALERTS = 6;
@@ -59,6 +60,9 @@ export const IMPORT_ALERT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Fraction of the free contact cap at which the warning appears. */
 export const CONTACT_CAP_WARN_RATIO = 0.9;
 
+/** Share of a cycle's AI allowance used at which the heads-up appears. */
+export const CREDITS_WARN_RATIO = 0.8;
+
 /** Longest system-authored detail string (a provider error) shown verbatim in a body. */
 const MAX_DETAIL_CHARS = 140;
 
@@ -74,11 +78,22 @@ export type HealthCode =
   | "connection.gmail"
   | "connection.outlook"
   | "connection.google_calendar"
+  | "connection.microsoft_calendar"
+  | "connection.apple_calendar"
   | "calendar.sync_error"
   | "import.failed"
   | "import.stalled"
+  | "email.send_failed"
   | "plan.contact_cap_reached"
   | "plan.contact_cap_near"
+  /** 80% of this cycle's AI allowance used (pricing v2). */
+  | "plan.credits_near"
+  /** The allowance is used and pack credits are now being spent. */
+  | "plan.credits_on_packs"
+  /** Nothing spendable left: included AI is paused until renewal or a pack. */
+  | "plan.credits_out"
+  /** REST API keys or webhooks kept on a plan without them (Pro, or Free after a downgrade). */
+  | "plan.api_paused"
   | "billing.past_due";
 
 /**
@@ -103,7 +118,7 @@ export type ConnectionFacts = {
 export type HealthInput = {
   aiProvider: AiProvider;
   /**
-   * Whether AI would run: a personal key for the selected provider, or — on Orbit Lifetime —
+   * Whether AI would run: a personal key for the selected provider, or — on Orbit Pro and Max —
    * Orbit's managed key (`aiReadyFromSettings`). Never a decrypted secret.
    */
   hasAiKey: boolean;
@@ -118,6 +133,23 @@ export type HealthInput = {
    * for being parked is not something to alert about.
    */
   googleCalendar: { paused: boolean; reason: string | null } | null;
+  /**
+   * Outlook Calendar sync, shaped and gated exactly like `googleCalendar` above — only when
+   * the grant includes the calendar scope, null for no connection, no OAuth app, or a grant
+   * without calendar.
+   */
+  microsoftCalendar: { paused: boolean; reason: string | null } | null;
+  /**
+   * iCloud calendar sync. Shaped like the other two, but NOT gated on scope — Apple grants no
+   * scopes for a CalDAV app-specific password (see `apple_connections.scopes`'s own comment),
+   * so calendar access is inherent to the connection existing at all. Null only for no
+   * connection. `paused` covers both a sync that gave up after repeated failures AND a
+   * revoked app-specific password — the connector maps that 401 to the same non-retryable
+   * failure that disarms sync, so both read as the same "disarmed" state here. There is no
+   * separate `connection.apple` alert the way `connection.gmail`/`connection.outlook` exist,
+   * because Apple's connection has no other feature riding on it — this alert IS the signal.
+   */
+  appleCalendar: { paused: boolean; reason: string | null } | null;
 
   calendarErrorCount: number;
   calendarErrorLabel: string | null;
@@ -131,6 +163,13 @@ export type HealthInput = {
   importStalledRows: number | null;
   importStalledTotal: number | null;
 
+  /**
+   * Person-to-person emails (`email_sends`) that ended `failed`, windowed by the caller to
+   * `EMAIL_FAILED_ALERT_WINDOW_MS`. Mail that didn't go is the one outcome the person can't
+   * see from the screen they sent it from — they were told "Sending…" and moved on.
+   */
+  emailSendFailedCount: number;
+
   plan: Plan;
   planSource: PlanSource;
   subscriptionStatus: "active" | "past_due" | "canceled" | null;
@@ -139,6 +178,19 @@ export type HealthInput = {
   contactLimit: number | null;
   /** null when `contactLimit` is null — the count is not queried for paid accounts. */
   contactCount: number | null;
+  /**
+   * The AI credit balance, in micros — Pro and Max accounts on included AI only. Absent or
+   * null means the credit predicates do not apply.
+   */
+  /** Live REST API keys + webhook endpoints held on a plan that no longer includes them. */
+  pausedApiItems?: number;
+  credits?: {
+    allowanceGranted: number;
+    allowanceRemaining: number;
+    packRemaining: number;
+    spendable: number;
+    resetsAt: string | null;
+  } | null;
 };
 
 export type HealthFinding = {
@@ -149,12 +201,7 @@ export type HealthFinding = {
 };
 
 export type AccountAlertKind =
-  | "ai_key"
-  | "connection"
-  | "calendar"
-  | "import"
-  | "billing"
-  | "plan_limit";
+  "ai_key" | "connection" | "calendar" | "import" | "email" | "billing" | "plan_limit";
 
 export type AccountAlert = {
   /**
@@ -201,7 +248,7 @@ function providerLabel(provider: AiProvider) {
  */
 export function evaluateAccountHealth(
   input: HealthInput,
-  now: Date = new Date()
+  now: Date = new Date(),
 ): HealthFinding[] {
   const findings: HealthFinding[] = [];
   const nowMs = now.getTime();
@@ -214,7 +261,10 @@ export function evaluateAccountHealth(
     findings.push({
       code: "ai.no_key",
       severity: "error",
-      data: { provider: input.aiProvider, providerLabel: providerLabel(input.aiProvider) },
+      data: {
+        provider: input.aiProvider,
+        providerLabel: providerLabel(input.aiProvider),
+      },
     });
   }
 
@@ -255,6 +305,30 @@ export function evaluateAccountHealth(
     });
   }
 
+  // --- Outlook Calendar sync -----------------------------------------------------------
+  // Same reasoning as Google's, above: only on a healthy grant, so a dead one raises
+  // `connection.outlook` alone rather than that plus this.
+  if (input.microsoftCalendar?.paused && input.outlook?.status === "active") {
+    findings.push({
+      code: "connection.microsoft_calendar",
+      severity: "warn",
+      data: { reason: truncate(input.microsoftCalendar.reason) },
+    });
+  }
+
+  // --- iCloud Calendar sync -------------------------------------------------------------
+  // NOT gated on a sibling connection the way Google's and Microsoft's are — Apple has no
+  // `connection.apple` mailbox alert to defer to, since the connection exists only for
+  // calendar sync. This finding is the only signal that connection ever raises, so it fires
+  // whenever `appleCalendar.paused` is true, full stop.
+  if (input.appleCalendar?.paused) {
+    findings.push({
+      code: "connection.apple_calendar",
+      severity: "warn",
+      data: { reason: truncate(input.appleCalendar.reason) },
+    });
+  }
+
   // --- Calendar feeds -----------------------------------------------------------------
   // `warn`, not `error` as the admin inspector has it. `lastSyncStatus` is sticky until the
   // next SUCCESSFUL sync, so one transient ICS 503 would otherwise pin a red dot on the
@@ -282,6 +356,14 @@ export function evaluateAccountHealth(
         label: input.importFailedLabel,
         detail: truncate(input.importFailedDetail),
       },
+    });
+  }
+  // --- Email -----------------------------------------------------------------------------
+  if (input.emailSendFailedCount > 0) {
+    findings.push({
+      code: "email.send_failed",
+      severity: "error",
+      data: { count: input.emailSendFailedCount },
     });
   }
   if (input.importStalledCount > 0) {
@@ -312,6 +394,38 @@ export function evaluateAccountHealth(
         code: "plan.contact_cap_near",
         severity: "warn",
         data: { limit, used, remaining: limit - used },
+      });
+    }
+  }
+
+  // --- REST API and webhooks on a plan without them ------------------------------------
+  if ((input.pausedApiItems ?? 0) > 0) {
+    findings.push({ code: "plan.api_paused", severity: "warn", data: { count: input.pausedApiItems ?? 0 } });
+  }
+
+  // --- AI credits ---------------------------------------------------------------------
+  // Mutually exclusive by construction, most severe first. 80% and 100% of the allowance
+  // are the two notices the plan promises; running on packs is the 100% notice for an
+  // account that still has somewhere to go.
+  if (input.credits) {
+    const c = input.credits;
+    const resetsAt = c.resetsAt;
+    if (c.spendable <= 0) {
+      findings.push({ code: "plan.credits_out", severity: "error", data: { resetsAt } });
+    } else if (c.allowanceGranted > 0 && c.allowanceRemaining <= 0 && c.packRemaining > 0) {
+      findings.push({
+        code: "plan.credits_on_packs",
+        severity: "warn",
+        data: { resetsAt, packCredits: Math.floor(c.packRemaining / 10_000) },
+      });
+    } else if (
+      c.allowanceGranted > 0 &&
+      c.allowanceGranted - c.allowanceRemaining >= Math.floor(c.allowanceGranted * CREDITS_WARN_RATIO)
+    ) {
+      findings.push({
+        code: "plan.credits_near",
+        severity: "warn",
+        data: { resetsAt, left: Math.floor(Math.max(0, c.allowanceRemaining) / 10_000) },
       });
     }
   }
@@ -363,6 +477,8 @@ export function evaluateAccountHealth(
 const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
   // Already happened. The import is over; the row is a receipt, not a blocker.
   "import.failed",
+  // Already happened, like a failed import: the email didn't go, and it won't go by staring.
+  "email.send_failed",
   // Retried automatically by the stalled-import cron.
   "import.stalled",
   // One input among several, and `lastSyncStatus` stays "error" until the next SUCCESS —
@@ -370,14 +486,21 @@ const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
   "calendar.sync_error",
   // Purely advisory: nothing is blocked until the cap is actually reached.
   "plan.contact_cap_near",
+  // Advisory too: AI still runs (on the rest of the allowance, or on pack credits).
+  "plan.credits_near",
+  "plan.credits_on_packs",
+  // The keys and endpoints are kept; nothing is lost by hiding the reminder.
+  "plan.api_paused",
 ]);
 
 /**
  * Non-dismissible, and why each one has to be:
  *   `ai.no_key` / `ai.no_embedding_key` — every AI feature is dark until a key exists.
- *   `connection.gmail` / `connection.outlook` / `connection.google_calendar` — sync and
- *     mailbox scans stay paused.
+ *   `connection.gmail` / `connection.outlook` / `connection.google_calendar` /
+ *     `connection.microsoft_calendar` / `connection.apple_calendar` — sync and mailbox
+ *     scans stay paused.
  *   `plan.contact_cap_reached` — no new contacts can be created at all.
+ *   `plan.credits_out` — included AI is paused until the person acts or the cycle renews.
  *   `billing.past_due` — see the note above.
  */
 export function isDismissible(code: HealthCode): boolean {
@@ -390,11 +513,18 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "connection.gmail": "connection",
   "connection.outlook": "connection",
   "connection.google_calendar": "connection",
+  "connection.microsoft_calendar": "connection",
+  "connection.apple_calendar": "connection",
   "calendar.sync_error": "calendar",
   "import.failed": "import",
   "import.stalled": "import",
+  "email.send_failed": "email",
   "plan.contact_cap_reached": "plan_limit",
   "plan.contact_cap_near": "plan_limit",
+  "plan.credits_near": "plan_limit",
+  "plan.credits_on_packs": "plan_limit",
+  "plan.credits_out": "plan_limit",
+  "plan.api_paused": "plan_limit",
   "billing.past_due": "billing",
 };
 
@@ -408,8 +538,9 @@ const KIND_RANK: Record<AccountAlertKind, number> = {
   connection: 1,
   billing: 2,
   plan_limit: 3,
-  import: 4,
-  calendar: 5,
+  email: 4,
+  import: 5,
+  calendar: 6,
 };
 
 /** Fully deterministic tiebreak, so two calls a second apart never reorder the list. */
@@ -419,9 +550,16 @@ const CODE_RANK: HealthCode[] = [
   "connection.gmail",
   "connection.outlook",
   "connection.google_calendar",
+  "connection.microsoft_calendar",
+  "connection.apple_calendar",
   "billing.past_due",
+  "plan.credits_out",
   "plan.contact_cap_reached",
+  "plan.credits_on_packs",
+  "plan.credits_near",
   "plan.contact_cap_near",
+  "plan.api_paused",
+  "email.send_failed",
   "import.failed",
   "import.stalled",
   "calendar.sync_error",
@@ -457,9 +595,12 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `Add your ${str(f.data.providerLabel) ?? "AI"} API key`,
-          body:
-            "Capture, chat, suggestions and search stay switched off until Orbit has a key. Orbit never charges you for AI — you bring your own.",
-          cta: { label: "Open AI settings", href: integrationHref("ai"), external: false },
+          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. On the Free Plan AI runs on your own key; Orbit Pro and Max include it.",
+          cta: {
+            label: "Open AI settings",
+            href: integrationHref("ai"),
+            external: false,
+          },
           surfaceKey: "settings.ai",
         });
         break;
@@ -470,9 +611,12 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: "Semantic search needs an OpenAI or Gemini key",
-          body:
-            "Anthropic has no embeddings API, so search falls back to keywords until you add a second key.",
-          cta: { label: "Open AI settings", href: integrationHref("ai"), external: false },
+          body: "Anthropic has no embeddings API, so search falls back to keywords until you add a second key.",
+          cta: {
+            label: "Open AI settings",
+            href: integrationHref("ai"),
+            external: false,
+          },
           surfaceKey: "settings.ai",
         });
         break;
@@ -488,12 +632,8 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           body: `${email ? `Your ${email} session` : "Your session"} expired. Contact sync and mailbox scans are paused until you sign in again.`,
           cta: {
             label: "Reconnect",
-            // Straight at that provider's card. `ImportHub` maps the anchor to its tab,
-            // so this opens the right tab as well as scrolling to it.
-            href:
-              f.code === "connection.gmail"
-                ? "/imports#import-google-contacts"
-                : "/imports#import-outlook-contacts",
+            // Straight at that account's page in the Integrations dialog.
+            href: integrationHref(f.code === "connection.gmail" ? "google" : "microsoft"),
             external: false,
           },
           surfaceKey: "page.imports",
@@ -506,8 +646,34 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           ...base,
           title: "Calendar sync is paused",
           body: "New meetings aren’t reaching Orbit. Reconnect Google to start calendar sync again.",
-          cta: { label: "Reconnect", href: "/imports#import-google-contacts", external: false },
+          cta: { label: "Reconnect", href: integrationHref("google"), external: false },
           surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "connection.microsoft_calendar": {
+        alerts.push({
+          ...base,
+          title: "Calendar sync is paused",
+          body: "New meetings aren’t reaching Orbit. Reconnect Outlook to start calendar sync again.",
+          cta: { label: "Reconnect", href: "/imports#import-outlook-contacts", external: false },
+          surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "connection.apple_calendar": {
+        alerts.push({
+          ...base,
+          title: "Calendar sync is paused",
+          body: "New meetings aren’t reaching Orbit. Your app-specific password may have been revoked at Apple — generate a new one in Settings to reconnect.",
+          // Points at Settings, not /imports: there is no OAuth flow to send someone through
+          // for Apple, and unlike Google and Microsoft, no Apple card exists on the imports
+          // page to land on yet. `surfaceKey` is null for the same reason — there is no
+          // registered surface to gate this on.
+          cta: { label: "Open settings", href: "/settings", external: false },
+          surfaceKey: null,
         });
         break;
       }
@@ -521,7 +687,9 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
             n === 1
               ? `${label ?? "Calendar feed"} isn't syncing`
               : `${n} calendar feeds aren't syncing`,
-          body: str(f.data.detail) ?? "Orbit couldn't read the feed on its last try.",
+          // `detail` is `calendar_subscriptions.last_sync_error` — provider prose, written for
+          // whoever wrote the fetcher. Mapped rather than shown.
+          body: icsFailureLine(str(f.data.detail)),
           cta: {
             label: "Check calendar feeds",
             // Settings → Integrations → Calendar feed is Orbit's OUTBOUND ICS feed. This alert is
@@ -535,6 +703,18 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         break;
       }
 
+      case "email.send_failed": {
+        const n = int(f.data.count) ?? 1;
+        alerts.push({
+          ...base,
+          title: n === 1 ? "An email didn't send" : `${n} emails didn't send`,
+          body: "Nothing went out. Open the contact to send it again, or reconnect Gmail if it asks you to.",
+          cta: { label: "Open contacts", href: "/contacts", external: false },
+          surfaceKey: "page.contacts",
+        });
+        break;
+      }
+
       case "import.failed": {
         const n = int(f.data.count) ?? 1;
         const label = str(f.data.label);
@@ -543,9 +723,13 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           ...base,
           title:
             n === 1 ? "An import didn't finish" : `${n} imports didn't finish`,
+          // `detail` is `imports.error_message` — raw Postgres and OAuth text. This is the
+          // second place it reaches a person, and it is the one nobody was looking at.
           body:
             n === 1
-              ? [label, detail].filter(Boolean).join(" — ") || null
+              ? [label, detail ? importFailureLine(detail) : null]
+                  .filter(Boolean)
+                  .join(" — ") || null
               : "Open imports to see which ones and try again.",
           cta: {
             label: "Open imports",
@@ -584,8 +768,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `You've reached the ${limit}-contact limit`,
-          body:
-            "Orbit won't add new people until you upgrade. Everything already in your orbit stays fully available — reads, edits and interaction logging are never gated.",
+          body: "Orbit won't add new people until you upgrade. Everything already in your orbit stays fully available — reads, edits and interaction logging are never gated.",
           cta: { label: "See plans", href: "/pricing", external: true },
           surfaceKey: null,
         });
@@ -606,19 +789,62 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         break;
       }
 
+      case "plan.credits_near":
+      case "plan.credits_on_packs":
+      case "plan.credits_out": {
+        const resets = str(f.data.resetsAt);
+        const when = resets
+          ? new Date(resets).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" })
+          : null;
+        const left = int(f.data.left) ?? 0;
+        const packs = int(f.data.packCredits) ?? 0;
+        alerts.push({
+          ...base,
+          title:
+            f.code === "plan.credits_out"
+              ? "You’re out of AI credits"
+              : f.code === "plan.credits_on_packs"
+                ? "Your monthly AI credits are used"
+                : `${left} ${plural(left, "credit", "credits")} left this cycle`,
+          body:
+            f.code === "plan.credits_out"
+              ? `Included AI is paused${when ? ` until ${when}` : ""}. Nothing is charged automatically — add a $5 pack, or use your own key.`
+              : f.code === "plan.credits_on_packs"
+                ? `Orbit is now using your pack credits (${packs} left)${when ? ` until your allowance resets on ${when}` : ""}.`
+                : `You’ve used 80% of this cycle’s AI credits${when ? `; they reset on ${when}` : ""}.`,
+          cta: { label: "View credits", href: integrationHref("ai"), external: false },
+          surfaceKey: "settings.ai",
+        });
+        break;
+      }
+
+      case "plan.api_paused": {
+        alerts.push({
+          ...base,
+          title: "Your API keys and webhooks are paused",
+          body: "The REST API and webhooks are part of Orbit Max. Your keys and endpoints are kept exactly as they are and start working again the moment you move to Max. The Claude and ChatGPT connector is unaffected.",
+          cta: { label: "See Orbit Max", href: "/upgrade", external: true },
+          surfaceKey: null,
+        });
+        break;
+      }
+
       case "billing.past_due": {
         const periodEnd = str(f.data.periodEnd);
         const until = periodEnd ? new Date(periodEnd) : null;
         const readable =
           until && !Number.isNaN(until.getTime())
-            ? until.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+            ? until.toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })
             : null;
         alerts.push({
           ...base,
           title: "Your last payment didn't go through",
           body: readable
-            ? `Orbit Pro stays on until ${readable}. Update your card to keep it.`
-            : "Update your payment method to keep Orbit Pro.",
+            ? `Your plan stays on until ${readable}. Update your card to keep it.`
+            : "Update your payment method to keep your plan.",
           cta: {
             label: "Manage billing",
             href: "/settings#settings-plan",

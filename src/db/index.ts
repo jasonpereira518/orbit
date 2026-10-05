@@ -2,9 +2,11 @@ import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
 import type { BatchItem } from "drizzle-orm/batch";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { neon } from "@neondatabase/serverless";
-import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
-import { PGlite } from "@electric-sql/pglite";
-import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
+// Type-only on purpose. PGlite is the local-development database (no DATABASE_URL); a real
+// import would load it — and make the bundler trace its 21MB of WASM into every serverless
+// function — in production, where it can never run. `ensureReady` imports it lazily instead.
+import type { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
@@ -25,6 +27,7 @@ type Db =
 
 const globalForDb = globalThis as unknown as {
   orbitPglite?: PGlite;
+  orbitDrizzlePglite?: typeof drizzlePglite;
   orbitNeonSql?: ReturnType<typeof neon>;
   orbitReady?: Promise<void>;
   orbitPgvector?: boolean;
@@ -43,8 +46,14 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
-  wispr_api_key_encrypted text,
-  ai_model text DEFAULT 'gemini-3.5-flash',
+  openrouter_api_key_encrypted text,
+  typesafe_api_key_encrypted text,
+  ai_model text DEFAULT 'gemini-3.8-flash',
+  ai_model_migrated_from text,
+  writing_instructions text,
+  email_signature_text text,
+  email_signature_html text,
+  default_send_provider text,
   onboarding_completed_at timestamptz,
   first_name text,
   last_name text,
@@ -71,17 +80,48 @@ CREATE TABLE IF NOT EXISTS user_settings (
   comped_note text,
   comped_at timestamptz,
   comped_by text,
+  subscription_period_start timestamptz,
+  founding_eligible boolean NOT NULL DEFAULT false,
+  founding_redeemed_at timestamptz,
+  founding_window_ends_at timestamptz,
+  founding_subscription_id text,
+  ai_key_preference text,
+  max_nudge_seen_at timestamptz,
+  credit_email_enabled integer NOT NULL DEFAULT 1,
+  credit_notice_period_start timestamptz,
+  credit_notice_level integer NOT NULL DEFAULT 0,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
   terms_version text,
-  timeline_backfill_enabled integer NOT NULL DEFAULT 0,
+  timeline_backfill_enabled integer NOT NULL DEFAULT 1,
+  work_history_auto_enabled integer NOT NULL DEFAULT 1,
+  relationship_engine_enabled integer NOT NULL DEFAULT 1,
+  chat_self_names jsonb NOT NULL DEFAULT '[]',
+  timeline_backfill_forced_on integer NOT NULL DEFAULT 1,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
+  speech_tag_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  inbound_log_token text,
+  inbound_log_token_created_at timestamptz,
+  inbound_log_last_received_at timestamptz,
+  stealth_cleared_at timestamptz,
+  radar_next_at timestamptz,
+  radar_lease_until timestamptz,
+  radar_last_run_at timestamptz,
+  radar_paused integer NOT NULL DEFAULT 0,
+  radar_model jsonb,
+  radar_autopilot jsonb NOT NULL DEFAULT '{}',
+  radar_capture_linkedin_activity integer NOT NULL DEFAULT 0,
+  radar_digest_enabled integer NOT NULL DEFAULT 1,
+  radar_digest_tz text,
+  radar_digest_last_week text,
+  radar_digest_unsub_token_hash text
 );
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -109,6 +149,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   linkedin_url text,
   x_handle text,
   website text,
+  bluesky_handle text,
+  mastodon_acct text,
   profile_image_url text,
   profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
@@ -129,6 +171,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   ai_summary text,
   notes text,
   embedding_stale_at timestamptz,
+  work_history_due_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -188,6 +231,8 @@ CREATE TABLE IF NOT EXISTS reminder_lists (
   name_normalized text NOT NULL,
   position integer NOT NULL DEFAULT 0,
   is_inbox integer NOT NULL DEFAULT 0,
+  icon text,
+  color text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS reminder_lists_user_idx ON reminder_lists(user_id);
@@ -294,6 +339,7 @@ CREATE TABLE IF NOT EXISTS action_items (
   completed_at timestamptz,
   item_hash text NOT NULL,
   reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  owed_by text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
@@ -329,8 +375,52 @@ CREATE TABLE IF NOT EXISTS contact_briefs (
   recent_discussions jsonb NOT NULL DEFAULT '[]',
   generated_at timestamptz NOT NULL DEFAULT now(),
   basis_interaction_id uuid,
-  model text
+  model text,
+  input_hash text
 );
+CREATE TABLE IF NOT EXISTS relationship_digests (
+  contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  what_they_do text,
+  working_on text,
+  summary text,
+  topics jsonb NOT NULL DEFAULT '[]',
+  open_threads jsonb NOT NULL DEFAULT '[]',
+  message_count integer NOT NULL DEFAULT 0,
+  sources jsonb NOT NULL DEFAULT '[]',
+  watermark_at timestamptz,
+  watermark_interaction_id uuid,
+  history_truncated_before timestamptz,
+  attempts integer NOT NULL DEFAULT 0,
+  last_error text,
+  batch_job_id uuid,
+  batch_pending_until timestamptz,
+  run_id uuid,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS relationship_digests_user_idx ON relationship_digests(user_id);
+CREATE TABLE IF NOT EXISTS relationship_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  import_id uuid,
+  status text NOT NULL DEFAULT 'queued',
+  claim_token text,
+  lease_until timestamptz,
+  inline_used integer NOT NULL DEFAULT 0,
+  processed integer NOT NULL DEFAULT 0,
+  skipped integer NOT NULL DEFAULT 0,
+  failed integer NOT NULL DEFAULT 0,
+  reminders_created integer NOT NULL DEFAULT 0,
+  facts_added integer NOT NULL DEFAULT 0,
+  open_threads_added integer NOT NULL DEFAULT 0,
+  flags jsonb NOT NULL DEFAULT '[]',
+  note_batch_id uuid,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS relationship_runs_user_status_idx ON relationship_runs(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS relationship_runs_one_active_uidx ON relationship_runs(user_id) WHERE status IN ('queued', 'running', 'waiting_key');
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -376,6 +466,110 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
   status text NOT NULL DEFAULT 'pending',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS recommendations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  score integer NOT NULL,
+  bucket text NOT NULL,
+  reasons jsonb NOT NULL DEFAULT '[]',
+  evidence jsonb NOT NULL DEFAULT '[]',
+  status text NOT NULL DEFAULT 'pending',
+  snoozed_until timestamptz,
+  expires_at timestamptz NOT NULL,
+  run_id uuid,
+  inputs_hash text NOT NULL,
+  ai_note jsonb,
+  base_score integer,
+  ai_delta integer,
+  ai_angle text,
+  draft jsonb,
+  autopilot jsonb,
+  first_seen_at timestamptz,
+  last_seen_at timestamptz,
+  seen_count integer NOT NULL DEFAULT 0,
+  acted_at timestamptz,
+  outcome_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS recommendations_live_v2_uidx ON recommendations(user_id, contact_id, kind) WHERE status IN ('pending', 'snoozed', 'auto_applied');
+CREATE INDEX IF NOT EXISTS recommendations_user_status_score_idx ON recommendations(user_id, status, score DESC);
+CREATE TABLE IF NOT EXISTS radar_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  trigger text NOT NULL,
+  status text NOT NULL DEFAULT 'running',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  duration_ms integer,
+  stats jsonb NOT NULL DEFAULT '{}',
+  error text
+);
+CREATE INDEX IF NOT EXISTS radar_runs_user_started_idx ON radar_runs(user_id, started_at DESC);
+CREATE TABLE IF NOT EXISTS recommendation_feedback (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  recommendation_id uuid,
+  kind text,
+  action text NOT NULL,
+  reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recommendation_feedback_user_contact_idx ON recommendation_feedback(user_id, contact_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS contact_signals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  occurred_at timestamptz NOT NULL,
+  source text NOT NULL,
+  external_item_id uuid,
+  payload jsonb NOT NULL DEFAULT '{}',
+  dedupe_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_signals_dedupe_uidx ON contact_signals(user_id, dedupe_hash);
+CREATE INDEX IF NOT EXISTS contact_signals_user_occurred_idx ON contact_signals(user_id, occurred_at DESC);
+CREATE TABLE IF NOT EXISTS external_sources (
+  id text PRIMARY KEY,
+  label text NOT NULL,
+  url text NOT NULL,
+  kind text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  etag text,
+  last_modified text,
+  last_fetched_at timestamptz,
+  last_status text,
+  last_error text,
+  consecutive_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS external_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_id text NOT NULL REFERENCES external_sources(id) ON DELETE CASCADE,
+  external_id text NOT NULL,
+  title text NOT NULL,
+  summary text,
+  url text,
+  published_at timestamptz NOT NULL,
+  first_seen_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_items_source_external_uidx ON external_items(source_id, external_id);
+CREATE INDEX IF NOT EXISTS external_items_published_idx ON external_items(published_at);
+CREATE TABLE IF NOT EXISTS external_item_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id uuid NOT NULL REFERENCES external_items(id) ON DELETE CASCADE,
+  company_key text NOT NULL,
+  company_name text NOT NULL,
+  published_at timestamptz NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_item_companies_item_key_uidx ON external_item_companies(item_id, company_key);
+CREATE INDEX IF NOT EXISTS external_item_companies_key_published_idx ON external_item_companies(company_key, published_at DESC);
 CREATE TABLE IF NOT EXISTS contact_embeddings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -384,6 +578,54 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   source_id text,
   embedding jsonb NOT NULL,
   content text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- The user's own writing, cut into passages that can be retrieved on their own.
+--
+-- Deliberately NOT more source_type rows in contact_embeddings. Two reasons, and the first is
+-- the expensive one: semanticArm selects contact_id ordered by distance with a 4x overscan
+-- and takes the best row per contact, so several rows per contact would spend that overscan
+-- on duplicates of one person and move a recall floor that is currently measured and passing.
+-- The second is that contact_embeddings.contact_id is NOT NULL, while a passage does not
+-- always have exactly one subject: a note about a dinner names four people, and one written
+-- before anyone was resolved names none.
+--
+-- No backticks in this block. It is inside a template literal, and a pair of them would both
+-- end the string and read as a statement to the schema-DDL smoke.
+CREATE TABLE IF NOT EXISTS memory_chunks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  -- 'interaction' | 'note_batch' | 'brief'. Text, not an enum, for the same reason every
+  -- other discriminator here is: a new kind must not need a migration to be writable.
+  source_kind text NOT NULL,
+  source_id uuid NOT NULL,
+  -- The passage's primary subject. Nullable so a note nobody has been resolved from is still
+  -- indexed. contact_ids carries the full set including anyone merely mentioned.
+  --
+  -- NO SEMICOLONS IN THESE COMMENTS, not even quoted ones. This template is split into
+  -- statements on that character by a splitter that does not respect quotes, so one inside a
+  -- comment cuts the CREATE TABLE in half and both halves fail at runtime — while the
+  -- schema-DDL guard, which reads the source rather than running it, still passes.
+  contact_id uuid REFERENCES contacts(id) ON DELETE CASCADE,
+  contact_ids uuid[] NOT NULL DEFAULT '{}',
+  occurred_at timestamptz,
+  chunk_index integer NOT NULL DEFAULT 0,
+  content text NOT NULL,
+  content_hash text NOT NULL,
+  -- md5 of the SOURCE this chunk set was built from, identical across the set. The sweep
+  -- claims an interaction when no chunk of it carries the hash of the text the interaction
+  -- holds NOW, which is one predicate for two cases: never indexed, and indexed then edited.
+  -- Postgres md5() and node crypto md5 agree byte for byte, so the claim can compute it in
+  -- SQL while the writer computes it in TypeScript. See memorySourceHash in
+  -- @/lib/memory-chunks, where the two renderings live side by side.
+  --
+  -- NO SEMICOLONS OR BACKTICKS IN THESE COMMENTS, for the reason spelled out above.
+  source_hash text,
+  -- The staleness predicate is embedded_hash IS DISTINCT FROM content_hash, per chunk.
+  -- Deliberately not contacts.embedding_stale_at, which is contact-grained and already has
+  -- five writers stamping it.
+  embedded_hash text,
+  embedding jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS embedding_failures (
@@ -432,6 +674,21 @@ CREATE TABLE IF NOT EXISTS contact_experiences (
   sort_index integer NOT NULL DEFAULT 0,
   source text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_career_moves (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  from_org text,
+  from_title text,
+  to_org text,
+  to_title text,
+  started_year integer,
+  started_month integer,
+  source text NOT NULL,
+  dedupe_key text NOT NULL,
+  detected_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS calendar_subscriptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -528,6 +785,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   title text,
+  context_note text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -541,10 +799,20 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content text NOT NULL,
   recommendations jsonb,
   attached_contacts jsonb DEFAULT '[]',
+  activity jsonb DEFAULT '[]',
+  evidence jsonb DEFAULT '{}',
+  proposed_actions jsonb DEFAULT '[]',
+  feedback text,
+  feedback_note text,
+  slot uuid,
+  version integer NOT NULL DEFAULT 1,
+  is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
 CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id);
+CREATE INDEX IF NOT EXISTS chat_messages_slot_idx ON chat_messages(slot);
+CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_slot_version_role_uidx ON chat_messages(slot, version, role) WHERE slot is not null;
 CREATE TABLE IF NOT EXISTS recruiters (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name text NOT NULL,
@@ -662,6 +930,44 @@ CREATE TABLE IF NOT EXISTS outlook_connections (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS outlook_connections_user_idx ON outlook_connections(user_id);
+CREATE TABLE IF NOT EXISTS apple_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  email_address text NOT NULL,
+  app_password_encrypted text NOT NULL,
+  principal_url text,
+  calendar_home_url text,
+  scopes text,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS apple_connections_user_idx ON apple_connections(user_id);
+CREATE INDEX IF NOT EXISTS apple_connections_due_idx ON apple_connections(next_sync_at) WHERE next_sync_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS calendar_sources (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  connection_id uuid NOT NULL,
+  calendar_id text NOT NULL,
+  display_name text,
+  color text,
+  read_only integer NOT NULL DEFAULT 0,
+  enabled integer NOT NULL DEFAULT 1,
+  sync_cursor jsonb,
+  last_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id);
 CREATE TABLE IF NOT EXISTS usage_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -673,6 +979,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   output_tokens integer,
   cached_input_tokens integer,
   estimated_cost_micros integer,
+  cost_source text NOT NULL DEFAULT 'estimated',
   key_owner text NOT NULL DEFAULT 'user',
   success integer NOT NULL DEFAULT 1,
   error_kind text,
@@ -682,6 +989,38 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS ai_result_cache (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  input_hash text NOT NULL,
+  result jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_result_cache_key_uidx ON ai_result_cache(user_id, operation, input_hash);
+CREATE INDEX IF NOT EXISTS ai_result_cache_created_idx ON ai_result_cache(created_at);
+CREATE TABLE IF NOT EXISTS ai_batch_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  key_owner text NOT NULL DEFAULT 'user',
+  provider_batch_id text NOT NULL,
+  status text NOT NULL DEFAULT 'submitted',
+  request_count integer NOT NULL,
+  est_cost_micros integer,
+  payload jsonb NOT NULL DEFAULT '{}',
+  provider_meta jsonb,
+  attempts integer NOT NULL DEFAULT 0,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS ai_batch_jobs_user_idx ON ai_batch_jobs(user_id, status);
+CREATE INDEX IF NOT EXISTS ai_batch_jobs_status_idx ON ai_batch_jobs(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_batch_jobs_provider_batch_uidx ON ai_batch_jobs(provider, provider_batch_id);
 CREATE TABLE IF NOT EXISTS plan_upgrade_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -794,6 +1133,26 @@ CREATE TABLE IF NOT EXISTS ops_alert_state (
   detail jsonb NOT NULL DEFAULT '{}',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS agent_send_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  channel text NOT NULL DEFAULT 'email',
+  to_email text NOT NULL,
+  subject text,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  client_name text,
+  error_message text,
+  delivery_id text,
+  decided_at timestamptz,
+  sent_at timestamptz,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_send_requests_user_status_idx ON agent_send_requests(user_id, status, created_at);
+CREATE INDEX IF NOT EXISTS agent_send_requests_contact_idx ON agent_send_requests(contact_id);
 CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   bucket text PRIMARY KEY,
   window_started_at timestamptz NOT NULL DEFAULT now(),
@@ -893,6 +1252,7 @@ CREATE TABLE IF NOT EXISTS data_purge_runs (
 CREATE INDEX IF NOT EXISTS data_purge_runs_status_attempt_idx ON data_purge_runs(status, last_attempt_at);
 CREATE INDEX IF NOT EXISTS data_purge_runs_target_idx ON data_purge_runs(target_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_stripe_customer_uidx ON user_settings(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_speech_tag_uidx ON user_settings(speech_tag_id) WHERE speech_tag_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS error_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -954,13 +1314,31 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   follow_up_sent_at timestamptz,
   share_token text,
   referred_by_id uuid,
+  first_name text,
+  last_name text,
+  referral_slug text,
+  pass_check_count integer NOT NULL DEFAULT 0,
+  pass_last_checked_at timestamptz,
+  signup_event_label text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_referral_slug_uidx ON interest_list_signups(referral_slug);
 CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
+CREATE TABLE IF NOT EXISTS waitlist_poll_votes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  option_id text NOT NULL,
+  voter_key text NOT NULL,
+  signup_id uuid,
+  stars jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_poll_votes_voter_uidx ON waitlist_poll_votes(voter_key);
+CREATE INDEX IF NOT EXISTS waitlist_poll_votes_option_idx ON waitlist_poll_votes(option_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subject text NOT NULL,
@@ -1017,11 +1395,58 @@ CREATE TABLE IF NOT EXISTS gate_events (
   user_id text NOT NULL,
   feature text NOT NULL,
   plan text NOT NULL,
+  unlock_plan text,
   context jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS gate_events_feature_created_idx ON gate_events(feature, created_at);
 CREATE INDEX IF NOT EXISTS gate_events_user_created_idx ON gate_events(user_id, created_at);
+CREATE TABLE IF NOT EXISTS credit_grants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text,
+  kind text NOT NULL,
+  grant_key text NOT NULL,
+  plan text,
+  micros_granted integer NOT NULL,
+  micros_remaining integer NOT NULL,
+  period_start timestamptz,
+  period_end timestamptz,
+  amount_cents integer,
+  stripe_ref text,
+  status text NOT NULL DEFAULT 'active',
+  revoked_at timestamptz,
+  revoked_reason text,
+  micros_revoked integer,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS credit_grants_key_uidx ON credit_grants(grant_key);
+CREATE INDEX IF NOT EXISTS credit_grants_user_idx ON credit_grants(user_id, kind, status);
+CREATE INDEX IF NOT EXISTS credit_grants_stripe_ref_idx ON credit_grants(stripe_ref);
+CREATE TABLE IF NOT EXISTS credit_accounts (
+  user_id text PRIMARY KEY,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS credit_holds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  micros integer NOT NULL,
+  operation text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS credit_holds_user_idx ON credit_holds(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS credit_holds_expires_idx ON credit_holds(expires_at);
+CREATE TABLE IF NOT EXISTS plan_meter_usage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  meter text NOT NULL,
+  period_key text NOT NULL,
+  used integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS plan_meter_usage_uidx ON plan_meter_usage(user_id, meter, period_key);
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
 CREATE TABLE IF NOT EXISTS app_surface_flags (
   surface_key text PRIMARY KEY,
@@ -1036,6 +1461,26 @@ CREATE TABLE IF NOT EXISTS constellation_settings (
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   CONSTRAINT constellation_settings_single_row CHECK (id = 1)
+);
+CREATE TABLE IF NOT EXISTS org_brand_colors (
+  name_key text NOT NULL,
+  kind text NOT NULL,
+  name text NOT NULL,
+  hex text,
+  domain text,
+  source text NOT NULL,
+  resolved_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind);
+CREATE TABLE IF NOT EXISTS site_settings (
+  id integer PRIMARY KEY DEFAULT 1,
+  stealth_enabled boolean,
+  stealth_since timestamptz,
+  waitlist_demo_enabled boolean,
+  managed_ai_paused boolean,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text,
+  CONSTRAINT site_settings_single_row CHECK (id = 1)
 );
 CREATE TABLE IF NOT EXISTS startup_expenses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1204,6 +1649,102 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS connector_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  auth_kind text NOT NULL,
+  label text,
+  account_ref text,
+  api_key_encrypted text,
+  access_token_encrypted text,
+  refresh_token_encrypted text,
+  token_expires_at timestamptz,
+  scopes text,
+  capabilities jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id);
+CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS external_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id text NOT NULL,
+  remote_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_links_entity_uidx ON external_links(user_id, connector_id, entity_type, entity_id);
+CREATE TABLE IF NOT EXISTS connector_outbox (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  action text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id text NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz,
+  claimed_by uuid,
+  claimed_until timestamptz,
+  last_error text,
+  last_attempted_at timestamptz,
+  delivered_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS connector_outbox_action_uidx ON connector_outbox(user_id, connector_id, action, entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS connector_outbox_due_idx ON connector_outbox(status, next_attempt_at);
+CREATE TABLE IF NOT EXISTS email_sends (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  from_email text NOT NULL,
+  from_name text,
+  to_emails jsonb NOT NULL,
+  cc jsonb NOT NULL DEFAULT '[]'::jsonb,
+  bcc jsonb NOT NULL DEFAULT '[]'::jsonb,
+  subject text NOT NULL,
+  body_text text NOT NULL,
+  body_html text,
+  contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  origin text NOT NULL,
+  origin_ref text,
+  idempotency_key text,
+  status text NOT NULL DEFAULT 'queued',
+  send_at timestamptz NOT NULL,
+  sent_at timestamptz,
+  attempts integer NOT NULL DEFAULT 0,
+  claimed_by uuid,
+  lease_until timestamptz,
+  last_error text,
+  failure_kind text,
+  rfc_message_id text NOT NULL,
+  provider_message_id text,
+  provider_thread_id text,
+  in_reply_to_send_id uuid,
+  in_reply_to_rfc_id text,
+  attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  dismissed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS email_sends_idempotency_uidx ON email_sends(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND (status IN ('queued','sending','sent') OR failure_kind = 'ambiguous');
+CREATE INDEX IF NOT EXISTS email_sends_due_idx ON email_sends(send_at) WHERE status = 'queued';
+CREATE INDEX IF NOT EXISTS email_sends_user_created_idx ON email_sends(user_id, created_at);
+CREATE INDEX IF NOT EXISTS email_sends_user_status_idx ON email_sends(user_id, status);
+CREATE INDEX IF NOT EXISTS email_sends_contact_ids_idx ON email_sends USING gin (contact_ids);
 CREATE TABLE IF NOT EXISTS contact_identities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1249,6 +1790,7 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   started_at timestamptz NOT NULL DEFAULT now(),
   ended_at timestamptz,
   duration_ms integer NOT NULL DEFAULT 0,
+  off_deepgram_ms integer NOT NULL DEFAULT 0,
   last_seq integer NOT NULL DEFAULT -1,
   digest jsonb,
   digest_error text,
@@ -1265,6 +1807,16 @@ CREATE TABLE IF NOT EXISTS meeting_transcript_segments (
   end_ms integer NOT NULL,
   text text NOT NULL,
   engine text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS speech_usage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  seconds integer NOT NULL DEFAULT 0,
+  source text NOT NULL,
+  session_id uuid,
+  request_id text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status);
@@ -1342,7 +1894,10 @@ CREATE TABLE IF NOT EXISTS page_views (
   city text,
   device text NOT NULL,
   is_bot boolean NOT NULL DEFAULT false,
+  is_internal boolean NOT NULL DEFAULT false,
   dwell_ms integer,
+  load_ms integer,
+  nav_type text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
@@ -1350,6 +1905,7 @@ CREATE INDEX IF NOT EXISTS page_views_route_created_idx ON page_views(route, cre
 CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, created_at);
 CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
 CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
+CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_internal, created_at);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1575,7 +2131,450 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
 // `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
-export const SCHEMA_VERSION = 66;
+//
+// 66 = the reminders redesign: no DDL. One idempotent data migration at the end of `alters`
+// folds the legacy `completed` reminder status into `done`. Checked against every remote
+// branch on Sep 18 2026: none claimed anything above main's 65.
+//
+// 67 = reminder_lists.icon / .color, for the list editor. Its own bump rather than folded into
+// 66: PR #220's preview build may already have stamped its preview database 66, which would
+// then skip these columns. Checked against every remote branch on Sep 18 2026.
+//
+// 68 = page_views.load_ms + nav_type, the page-load timing the navigation-speed work is
+// measured by (PR #222). Built as 67; renumbered past #220's 66 and 67.
+//
+// 69 = merging main (66, 67) into #222 (68). No DDL of its own. #222's preview builds stamped
+// the shared preview database 68 WITHOUT 67's reminder_lists columns, so a merged build at
+// 68 would skip them there; only a number above both makes every database pick up both.
+//
+// 70 = chat_threads.context_note: freeform context the user types for one chat conversation
+// (never extracted into contacts). Built as 34, then 63, before this branch merged main's DDL
+// through 69; renumbered past every claim (checked against all remote branches and local
+// worktrees on Sep 18 2026: none above 69).
+//
+// 71 = the AI cost work's first schema: contact_briefs.input_hash (skip a brief regeneration
+// whose inputs did not change) and the ai_result_cache table (recruiter verdicts, extension
+// profile reads, follow-up drafts keyed by exactly what was asked). Checked against every
+// remote branch and local worktree on Sep 19 2026: none above 70.
+//
+// 72 = ai_batch_jobs: background AI work submitted to a provider's Batch API (half price,
+// results minutes to a day later). Checked against every remote branch on Sep 19 2026.
+//
+// 73 = user_settings.ai_model_migrated_from, plus the move of accounts on the old Gemini
+// default (3.5 Flash) to 3.8 Flash — half the price, and the eval in docs/ai-evals/ found
+// nothing lost. Checked against every remote branch on Sep 19 2026.
+//
+// 74 = connector_connections: one credential row per (user, connector) for every connector
+//      that is not Gmail or Outlook, with a capabilities list so write-back stays opt-in.
+//      71-73 were already claimed on other branches (checked against every remote branch and
+//      local worktree on Sep 19 2026: both ai-api-optimization and mcp-server-vision-5e9a07
+//      are at 73, the highest found).
+//
+// 75 = external_links + connector_outbox: at-least-once write-back to other systems, with
+//      the remote id recorded so a re-send updates instead of duplicating. Re-checked against
+//      every remote and local branch on Sep 20 2026: 74 (this branch) was the highest found.
+//
+// 76 = connector_outbox.claimed_by + claimed_until: the outbox claim becomes an identity with
+//      its own lease, instead of overloading next_attempt_at as the lock and `attempts` as the
+//      mutual-exclusion token. The overloaded version double-delivered, because enqueue's
+//      `attempts: 0` revive made a stale drain's token recur (ABA). Re-checked against every
+//      remote and local branch on Sep 20 2026: 75 (this branch) was the highest found.
+//
+// 77 = agent_send_requests: messages an assistant drafted through MCP, held until the user
+// approves them in Orbit. Built as 73, which main then took for the AI model migration above
+// — and because BOTH sides wrote `SCHEMA_VERSION = 73`, that line merged silently with no
+// conflict, which would have left every database main had already stamped 73 skipping this
+// table forever. Renumbered past 74-76, claimed by the unpushed integrations-strategy
+// worktree (connector_connections, external_links + connector_outbox, and the outbox lease).
+// Checked against every remote branch and local worktree on Sep 20 2026.
+//
+// 78 = showing the chat its own work: chat_messages.activity (the stages an answer actually
+// ran, with their real counts and durations), plus feedback and feedback_note for thumbs on
+// an answer. Checked against all 493 refs on Sep 20 2026 — main was at 77, and the only
+// other claimant of 77 is the unmerged mcp-server-vision branch, which has the same silent
+// collision described above waiting for it. 78 is free.
+//
+// 79 = memory_chunks: the user's own writing, chunked and retrievable at passage level, plus
+// tsvector columns on `interactions` and `reminders` — the first full-text index either has
+// ever had. Chat could rank a contact by a note it then could not quote from, because notes
+// were embedded as one blob per contact and the prompt took the head of the field.
+//
+// NOT 78. 78 was claimed by the unpushed `recursing-matsumoto-4f1d1d` worktree (chat ask-bar
+// narration), whose own changelog note says "78 is free" — it was, when that line was
+// written. 76 is likewise claimed by the unpushed `brave-bouman-df6c4f` worktree. This is the
+// third time a number has been contested, so: the scan has to cover `git worktree list`, not
+// just the remote. Checked against every remote branch AND all 69 local worktrees on
+// Sep 20 2026; 78 was the highest found anywhere.
+// 82 = chat_messages.evidence — citations for a chat answer, keyed by the `[eN]` id each
+// interaction or contact's summary/notes was cited under. Branch B, item 1 of the chat plan.
+// #252 (chat UX branch) holds 80/81 unmerged; rescanned against every local and remote ref on
+// Sep 22 2026 — nothing else claims 82.
+//
+// 83 = chat_messages.proposed_actions — log/remind/follow-up actions a chat answer PROPOSED,
+// never one it took; a person's own click is the only path to the real write. Branch B, item
+// 2. Rescanned against every local and remote ref on Sep 22 2026 — nothing claims 83.
+//
+// 84 (landed in main via PR #256) = user_settings.typesafe_api_key_encrypted — a person's own
+// TypeSafe key, for Jev, the decision model behind the recruiter gate and the chat rerank
+// (src/lib/decisions/).
+//
+// 85 (landed in main via PR #252, chat-ux-features-v2) = user_settings.writing_instructions
+// and chat_messages.slot/version/is_active, for the chat Context sheet's writing preferences
+// and edit-and-regenerate on the last turn of a chat.
+//
+// NOT 83 anymore. Both 84 and 85 above landed in main while this branch (chat-source-chips)
+// was still in review. Rescanned against every remote branch and every local worktree on
+// Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
+// the highest found anywhere and is still free.
+//
+// 87 = merging main (77-86) into the connector foundation branch (74, 75, 76). No DDL of its
+// own. Same rule as 69 above: this branch's preview databases are stamped 76 WITHOUT main's
+// 77-86 columns, and main's are stamped 86 without 74-76, so only a number above both makes
+// every database pick up both halves. Rescanned against every remote branch and every local
+// worktree on Sep 22 2026: 86 was the highest found anywhere.
+//
+// 88 = memory_chunks.source_hash — what the passage index was built from, so an edited note
+// can be told from an unindexed one. The sweep's claim was a pure anti-join ("has no
+// passages"), so an interaction was indexed once and never revisited: editing a note left its
+// original passages in the index, and chat could quote text the user had since rewritten or
+// deleted. Five paths change that text and three of them are bulk (import upsert, calendar
+// ingest upsert, calendar event update), so a write-path hook could not have covered it.
+//
+// NOT 87. That is held by the unpushed `brave-bouman-df6c4f` worktree
+// (claude/orbit-integrations-strategy-0b8be6), which took it for its own main merge. Scanned
+// every remote branch and every local worktree on Sep 22 2026: 87 was the highest found
+// anywhere, so this takes 88.
+//
+// 89 = merging main (88) into the connector foundation branch (74-76, 87). No DDL of its own,
+// and the third time this branch has needed one: its preview databases are stamped 87 WITHOUT
+// main's `memory_chunks.source_hash`, and main's are stamped 88 without 74-76, so only a
+// number above both makes every database pick up both halves. Scanned every remote branch and
+// every local worktree on Sep 23 2026: 88 was taken by main and 90-95 by five other branches,
+// and 89 was free between them.
+// 89 (also) = speech_usage, meeting_transcript_segments.speaker, and the Deepgram engine value;
+// also drops user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept
+// until now so the removal and its migration were one version, not two. 87 and 88 were
+// already claimed (integrations-strategy, and the re-chunk fix in #263). Rescanned against
+// every remote branch and every local worktree on Sep 22 2026.
+//
+// 95 = the review fixes on the same Deepgram branch: meeting_sessions.off_deepgram_ms (the
+// audio a meeting did not spend on Orbit's key, so a fallback stretch is not charged to the
+// user's meeting cap) and user_settings.speech_tag_id plus its partial unique index (the
+// opaque per-account identifier that replaced the raw Clerk user id in the `shortform:` tag
+// Deepgram keeps in its usage records). 90 through 93 were already claimed while this branch
+// was in review — leads-p2-teams, calendar-connections-apple, leads-p3-pipeline and
+// onboarding-flow-revision-b7be62.
+//
+// NOT 94 anymore. This branch wrote 94 and so, thirteen minutes earlier the same morning, did
+// `claude/leads-p4-hubspot` (63f2e17e) — the same silent collision 53, 54 and 73 above record,
+// and for the same reason: both sides scanned, both sides were right at the time, and neither
+// line would have conflicted on merge. Rescanned against every remote ref, every local branch
+// and every worktree's working file on Sep 23 2026 immediately before committing: 94 is the
+// highest claimed anywhere, and 95 is free.
+//
+// 96 = no new DDL of its own. This branch merged main (then at 88, carrying
+// memory_chunks.source_hash) after preview builds had already stamped databases with 95, and
+// `reconcileSchema` only runs when the stored version differs — so those databases would have
+// matched 95, skipped the merged-in column, and 500'd on it, which is exactly what PR #143 hit
+// in September. The merge itself is what needs the new number. Rescanned every remote ref,
+// every local branch and every worktree's working file on Sep 23 2026: 95 was this branch's
+// own, 94 the highest elsewhere, so 96 is free.
+// 97 = merging main (89, 95, 96 — Deepgram and the re-chunk fix) into the connector
+// foundation branch (74-76, 87, 89). No DDL of its own, and the fourth time this branch has
+// needed one. Note the 89 above it: main and this branch both wrote 89, thirteen entries
+// apart, the same silent collision 53, 54, 73 and 94 record — neither line conflicted on
+// merge, and only the fingerprint check saved the databases stamped by one build and served
+// by the other. This branch's preview databases are stamped 89 WITHOUT main's Deepgram
+// columns, and main's are stamped 96 without 74-76, so only a number above both makes every
+// database pick up both halves. Scanned every remote ref, every local branch and every
+// worktree's working file on Sep 23 2026: 96 was the highest found anywhere.
+// 98 = user_settings.inbound_log_token (+ created/last-received) and its partial unique
+// index: the BCC logging address, `log-<token>@<domain>`. The column holds the token's
+// SHA-256, never the token — same rule as calendar_feed_token, and a sharper one, because
+// this address is a WRITE path into the account rather than a read of it.
+//
+// NOT 96 anymore. This branch wrote 96 and so did the Deepgram branch's own main merge, two
+// entries up — the fifth silent collision this log records, and caught only because both
+// landed before either merged. Rescanned every remote ref, every local branch and every
+// worktree's working file on Sep 23 2026: 97 is the connector foundation's own merge below
+// this one, so 98 is free.
+//
+// 99 = apple_connections (an iCloud CalDAV connection — an app-specific password rather than
+// OAuth tokens) and calendar_sources (one row per calendar Orbit can read, for all three
+// providers; the sync cursor moves down from the connection to the calendar, since iCloud
+// accounts routinely hold several calendars with no obvious primary).
+//
+// NOT 91, which is what this branch carried through its whole review, and NOT 98, which it
+// carried for the last hour of it. Both were the same failure. `isSchemaCurrent` returns true
+// for any recorded version ABOVE the running one (the never-downgrade rule), so a build
+// declaring a number main had already passed would have skipped its own DDL in silence and
+// created neither table, with nothing failing anywhere to say so. Main was at 96 when 91 was
+// corrected to 98; then the connector foundation (#262, #272) and the BCC logging address
+// (#275) all merged within a minute of each other at 14:59-15:00 on Sep 23 2026, and #275
+// took 98 — the sixth silent collision this log records, and again only visible because both
+// branches declared it before either merged. Rescanned every remote ref, every local branch
+// and every worktree's working file on Sep 23 2026 immediately before committing: 98 is the
+// highest claimed anywhere, so 99 is free.
+//
+// 102 = site_settings (stealth as an admin-console switch rather than a build-time env var)
+// and user_settings.stealth_cleared_at. NOT 100 or 101: the waitlist-referral branch claims
+// 101 and skipped 100 for a sibling. Rescanned every remote ref, every local branch and every
+// worktree's working file on Sep 24 2026: 101 was the highest claimed anywhere.
+//
+// 103 = page_views.is_internal (traffic analytics accuracy pass). Rescanned every remote ref,
+// every local branch and every worktree's working file on Sep 24 2026: 102 was the highest
+// claimed anywhere.
+// 104 (this branch, integrations-dialog P3) = user_settings.openrouter_api_key_encrypted —
+// OpenRouter becomes a provider the type system knows about, ahead of the one-click connect
+// flow. Rescanned every local and remote ref on Sep 25 2026: 86 is still this branch's own
+// number, and 87 through 103 have all been claimed elsewhere at one point or another; 104 is
+// the next free integer and is still free.
+//
+// 105 (this branch, integrations-dialog P3, task 4) = usage_events.cost_source — a second,
+// separate DDL change on this same branch, given its own version rather than folded into
+// 104: `smoke-schema-ddl.ts`'s lock file already recorded 104's fingerprint, and changing
+// the DDL again at that version would either fail the guard or force rewriting the lock to
+// match a diff, which is exactly what the guard exists to catch. Rescanned every local
+// worktree and every remote branch on Sep 25 2026 (git refs plus each worktree's own
+// uncommitted src/db/index.ts): the highest SCHEMA_VERSION found anywhere is 104, so 105 is
+// the next free integer and is still free.
+//
+// 107 = merging P2b (which carries main at 103 — apple_connections/calendar_sources at 99,
+// site_settings at 102, page_views.is_internal at 103) into this branch (104, 105). No DDL
+// of its own. NOT the silent-skip hazard recorded at 87, 96, 97 and 99 above: those entries
+// predate `schemaFingerprint()`, and `isSchemaCurrent` now compares fingerprints at an EQUAL
+// version, so a database stamped 105 by this branch would disagree with a merged-105 build
+// and re-sweep on its own. The reasons to bump are narrower, and all three hold:
+//
+//   - `smoke-schema-ddl.ts` refuses 105 outright. The lock holds 105 with a different
+//     fingerprint, which takes its `lock.version === schemaVersion` branch — the one whose
+//     remedy text says to bump first and only then `--update`. Keeping 105 would mean
+//     re-recording the lock at an un-bumped version, which is the exact move that guard
+//     exists to prevent.
+//   - The runtime fingerprint is a narrower net than the version integer, and deliberately
+//     so: `schemaFingerprint()` hashes DDL, SCALE_DDL and `alters`, but NOT `migratePglite`'s
+//     `ensureColumn` calls or `migratePgvector` (see the comment above it). It is not a
+//     general substitute for a bump.
+//   - This file's convention, set at 87, 96 and 99, is never to reuse a number another
+//     branch shipped.
+//
+// NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62. Scanned
+// every remote ref, every local branch and every worktree's working src/db/index.ts on
+// Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
+//
+// 108 (this branch, integrations dialog Task 9) = user_settings.timeline_backfill_enabled's
+// default flips from 0 to 1, and every existing row is flipped on with it (the `alters`
+// entry above). The column's own DDL type does not change, but the DEFAULT clause in the
+// CREATE TABLE template is part of what `schemaFingerprint()` hashes, so this is a real DDL
+// change and needs its own version, not just a data migration riding on 107's number.
+// Rescanned every local ref, every remote ref, and every sibling worktree's working
+// src/db/index.ts (including uncommitted changes) on Sep 26 2026: 107 (this branch) is the
+// highest claimed anywhere, so 108 is the next free integer and is still free.
+// of its own. Keeping 105 was the plan and is wrong for the reason recorded at 87, 96, 97
+// and 99 above: this branch's preview databases are stamped 105 WITHOUT main's 99/102/103
+// columns, and main's are stamped 103 without 104/105, and `isSchemaCurrent` returns true
+// for any recorded version at or above the running one — so either half would be skipped in
+// silence. `smoke-schema-ddl.ts` caught it: same version 105, different DDL fingerprint.
+// NOT 106, which is claimed (and pushed) by claude/onboarding-flow-revision-b7be62.
+// Scanned every remote ref, every local branch and every worktree's working
+// src/db/index.ts on Sep 25 2026: 106 is the highest claimed anywhere, so 107 is free.
+//
+// 109 = site_settings.waitlist_demo_enabled (the admin console's switch for the waitlist page's
+// product demo). NOT 104: rescanned every remote ref and every worktree's working file on Sep 26
+// 2026 — 108 (claude/integrations-ui-pass, and a worktree) was the highest claimed anywhere.
+//
+// 113 = merging main (109 — site_settings.waitlist_demo_enabled, on top of the 99/102/103
+// columns this branch already carried) into this branch (104, 105, 107). No DDL of its own.
+// Keeping either side's number is the failure recorded at 87, 96, 97, 99 and 107 above: this
+// branch's databases are stamped 107 WITHOUT main's waitlist_demo_enabled, main's are stamped
+// 109 without openrouter_api_key_encrypted and cost_source, and `isSchemaCurrent` returns true
+// for any recorded version at or above the running one — so whichever half lost would be
+// skipped in silence. Both sides' `alters` are kept; only the version is new.
+// NOT 110, 111 or 112, all of which are claimed elsewhere. Scanned every local and remote ref
+// and every worktree's working src/db/index.ts on Sep 26 2026: 112 is the highest claimed
+// anywhere, so 113 is the next free integer.
+//
+// 114 = merging the P3 branch at 113 (which carries main's 109 waitlist_demo_enabled plus
+// 104/105) into this branch at 108 (timeline_backfill_enabled defaulting on, and its
+// timeline_backfill_forced_on marker). No DDL of its own. Same reasoning as 107 and 113
+// above: databases stamped 108 would never get waitlist_demo_enabled, databases stamped 113
+// would never get the timeline marker, and `isSchemaCurrent` returns true for any recorded
+// version at or above the running one, so the losing half would be skipped in silence. Both
+// sides' `alters` are kept; only the version is new. Scanned every local and remote ref and
+// every worktree's working src/db/index.ts on Sep 26 2026: 113 is the highest claimed
+// anywhere, so 114 is the next free integer.
+// 117 = org_brand_colors (learned brand colors for companies and schools the curated table
+// does not know), merged onto main at 113. This branch first shipped it as 110, which was
+// then claimed elsewhere. NOT 114–116: scanned every remote ref and every worktree's working
+// src/db/index.ts on Sep 26 2026 — 116 was the highest claimed anywhere.
+//
+// 119 = merging main at 117 into this branch at 114. No DDL of its own. Same reasoning as
+// 107, 113 and 114 above: each side carries columns the other does not, `isSchemaCurrent`
+// returns true for any recorded version at or above the running one, and so whichever half
+// lost the merge would be skipped in silence on databases already stamped with the winner.
+// Both sides' `alters` are kept; only the version is new. Scanned every local and remote ref
+// and every worktree's working src/db/index.ts on Sep 26 2026: 118 is the highest claimed
+// anywhere, so 119 is the next free integer.
+// 118 = foreign-key, sweep and admin-window indexes (database performance pass, first stamped
+// 111 on its branch) merged with main at 113. Keeping either number is the failure recorded
+// above: main's databases are stamped 113 without these indexes. NOT 114-117, all claimed
+// elsewhere. Scanned every remote ref on Sep 26 2026: 117 was the highest claimed anywhere.
+//
+// Still 118 after merging main at 117 (org_brand_colors): 118 is above main's number, so main's
+// databases take this pass, and a database this branch stamped 118 without org_brand_colors
+// re-sweeps on the fingerprint mismatch (isSchemaCurrent compares it at an equal version).
+// Scanned every remote ref on Sep 26 2026: 118 is claimed only here.
+//
+// 120 = merging main at 118 (the foreign-key/sweep/admin-window index pass) into this branch
+// at 119. P3's columns are no longer in dispute — main carries them now, #324 having merged —
+// so the only thing each side still holds alone is main's indexes and this branch's
+// timeline_backfill_forced_on marker. A database stamped 119 would be treated as current and
+// would never get main's indexes; one stamped 118 would never get the marker. Both sides'
+// `alters` are kept and the version is new, so every database re-runs the full list once.
+// Scanned every local and remote ref and every worktree's working src/db/index.ts on Sep 26
+// 2026: 119 is the highest claimed anywhere, so 120 is the next free integer.
+//
+// 125 = interest_list_signups.first_name + last_name, the name the waitlist's second join step
+// collects, and referral_slug, the `/waitlist/<slug>` in a person's share link (folded into
+// 125 before it shipped). NOT 121-124, which the Leads stack (#264 -> #343) claims. Scanned every local and
+// remote ref and every worktree's working src/db/index.ts on Sep 27 2026: 124 is the highest
+// claimed anywhere, so 125 is the next free integer.
+//
+// 126 was this branch's own version for waitlist_poll_votes, stamped before merging main at
+// 125 (the waitlist join-step name + referral_slug pass above). Keeping 126 through that merge
+// would repeat the failure recorded at 118/120 above: a database already stamped 126 from
+// before the merge would never re-sweep for main's first_name/last_name/referral_slug columns,
+// because `isSchemaCurrent` treats any recorded version at or above the running one as current.
+// So the merge gets its own number.
+//
+// 127 = merging main at 125 into this branch's 126. Both sides' DDL and alters are kept; only
+// the version is new, so every database re-runs the full list once. Scanned every local and
+// remote ref and every worktree's working src/db/index.ts on Sep 27 2026: 126 is the highest
+// claimed anywhere, so 127 is the next free integer.
+//
+// 128 = interest_list_signups.pass_check_count + pass_last_checked_at, how many times someone
+// opened their own waitlist pass and when they last did. Scanned every local and remote ref
+// on Sep 27 2026: 127 is the highest claimed anywhere, so 128 is the next free integer.
+//
+// 129 = interest_list_signups.signup_event_label for operator-added event signups. Scanned
+// every local and remote ref on Sep 27 2026: 128 is the highest claimed anywhere, so 129
+// is the next free integer.
+//
+// 132 = capture_jobs.source_file_hashes (text[], GIN-indexed): the SHA-256 of every original
+// file a capture was read from, so the same file dropped again is flagged "Already captured"
+// instead of being read and billed twice. In SCALE_DDL, which both engines run. NOT 130 or
+// 131: scanned every local and remote ref and every worktree's working src/db/index.ts on
+// Sep 29 2026 — every ref is at 129, but the orbit-pricing-plans worktree claims 130 and
+// the linkedin-work-history worktree claims 131, so 132 is the next free integer.
+//
+// 133 = contact_career_moves (the job-movement log — not "contact_job_changes", which open
+// PR #187 already created with another shape on the shared preview database),
+// contacts.work_history_due_at (the
+// staggered re-check schedule) and user_settings.work_history_auto_enabled. This branch
+// first claimed 131, but main moved to 132 meanwhile; a database already stamped 132 would
+// treat 131 as current and never add these, so it takes a new number. Scanned every local
+// and remote ref and every worktree's working src/db/index.ts on Sep 29 2026: 132 is the
+// highest claimed anywhere, so 133 is the next free integer.
+//
+// Radar P0 (recommendations, radar_runs, recommendation_feedback, and
+// user_settings.radar_next_at + radar_lease_until + radar_last_run_at + radar_paused) was
+// stamped 133 on its own branch, and the Radar flagship 135 on top of it (contact_signals,
+// external_sources + external_items + external_item_companies for global news,
+// recommendations.base_score / ai_delta / ai_angle / draft / first_seen_at / last_seen_at /
+// seen_count / acted_at / outcome_at and the v2 live index that covers auto_applied,
+// contacts.bluesky_handle + mastodon_acct, and user_settings radar_model / radar_autopilot /
+// radar_capture_linkedin_activity / radar_digest_* / radar_apollo_cursor). Main took 133 for
+// the work-history log above while that branch was open, and claude/waitlist-pass-news
+// claims 134.
+//
+// 136 = merging main at 133 into the Radar branch at 135, plus recommendations.autopilot
+// (what autopilot scheduled, so its Undo reverses exactly that). A database stamped 135 by
+// the branch's preview never ran main's 133, and one stamped 133 by main never ran Radar's,
+// so the merge takes its own number and every database re-runs the full list once. Scanned
+// every remote ref on Sep 29 2026: 135 is the highest claimed anywhere, so 136 is the next
+// free integer.
+//
+// 130 = pricing v2 as first claimed (never on main; main skipped 130 and 131 for it): credit_grants, credit_accounts, credit_holds and plan_meter_usage (managed-AI
+// credits and the monthly Apollo enrichment meter); user_settings.subscription_period_start,
+// founding_eligible/_redeemed_at/_window_ends_at/_subscription_id, ai_key_preference and
+// max_nudge_seen_at; gate_events.unlock_plan; site_settings.managed_ai_paused. Scanned every
+// local and remote ref and all 48 worktrees' working src/db/index.ts on Sep 29 2026: 129 is
+// the highest claimed anywhere, so 130 is the next free integer.
+//
+// 137 = merging main at 133 into pricing v2 (130). Both sides' DDL and alters are kept; only the
+// version is new, so a database stamped 130 from this branch's previews still re-sweeps for
+// main's 132/133 columns, and main's databases pick up the pricing tables. NOT 134–136:
+// scanned every local and remote ref and every worktree's working src/db/index.ts on Sep 29
+// 2026 — waitlist-pass-news claims 134 and inspiring-fermi-npcgb7 claims 136, so 137 is the
+// next free integer.
+//
+// 138 = merging main at 136 (Radar) into pricing v2 at 137. Both sides' DDL and alters are kept;
+// only the version is new, so a database stamped 137 by this branch's previews still runs
+// Radar's DDL, and main's databases stamped 136 pick up the pricing tables. Scanned every
+// local and remote ref and every worktree's working src/db/index.ts on Sep 29 2026: 137 (this
+// branch) is the highest claimed anywhere, so 138 is the next free integer.
+//
+// 139 = user_settings.credit_email_enabled, credit_notice_period_start and credit_notice_level:
+// the emails at 80% and 100% of an account's monthly AI credits, sent at most once per level
+// per allowance cycle. Scanned every local and remote ref and every worktree's working
+// src/db/index.ts on Sep 29 2026: 138 (this branch) is the highest claimed anywhere, so 139 is
+// the next free integer.
+//
+// 141 = waitlist_poll_votes.stars, the feature poll's star budgets (3 stars, +1 per friend who
+// joined through your link, capped at +10). Originally stamped 134 on
+// claude/waitlist-pass-news; main had moved to 136 by the time it shipped, and a database
+// already at 136 would never run a 134, so it takes its own number. Scanned every local and
+// remote ref on Sep 30 2026: 140 (claude/orbit-direct-email-cc0746) is the highest claimed
+// anywhere, so 141 is the next free integer.
+//
+// 142 = merging main at 141 (the waitlist poll's stars) into pricing v2 at 139. Both sides' DDL
+// and alters are kept; only the version is new, so a database stamped 139 by this branch's
+// previews still runs the 141 DDL, and main's databases stamped 141 pick up the credit emails'
+// columns. Scanned every local and remote ref and every worktree's working src/db/index.ts on
+// Sep 30 2026: 141 is the highest claimed anywhere (140 is claude/orbit-direct-email-cc0746),
+// so 142 is the next free integer.
+//
+// 143 = drops user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo re-check
+// that was never built (job moves come from contact_career_moves). #371 took it out of the
+// code first, so the deployment still serving while this migration runs never selects it:
+// the same two steps as wispr_api_key_encrypted (#245, then v89). This PR first claimed 141,
+// but claude/waitlist-ship took 141 and pricing v2 142 on main meanwhile; a database already
+// at 142 would never run a 141, so it takes its own number. Scanned every remote ref on Sep 30
+// 2026: 142 (main) is the highest claimed anywhere, so 143 is the next free integer.
+//
+// 144 = contact_briefs.goal_fit, how a person bears on the user's active goals, judged by the
+// brief's model call and shown on the Knowledge page's dossier. Nullable with no backfill: a
+// brief with no fit is "not judged yet", and the dossier regenerates it on open. Scanned every
+// remote ref on Sep 30 2026: 143 (main, the radar_apollo_cursor drop) is the highest claimed
+// anywhere, so 144 is the next free integer.
+//
+// 146 = email_sends (the person-to-person outbox every 1:1 send goes through — direct email P1)
+// and user_settings.email_signature_text / email_signature_html / default_send_provider. First
+// claimed 140 on claude/orbit-direct-email-cc0746; main moved to 143 while it was open, and a
+// database already at 143 would never run a 140, so it takes its own number. Scanned every local
+// and remote ref and every worktree's working src/db/index.ts on Sep 30 2026: 145
+// (claude/email-search-context-7329e6) is the highest claimed anywhere, so 146 is the next free
+// integer. Re-checked Oct 4 2026 when merging main (144): still free; 147/148 are
+// claimed by the relationship-engine branches, which merge after.
+//
+// 147 = the relationship engine: relationship_digests + relationship_runs (new tables),
+// action_items.owed_by, user_settings.relationship_engine_enabled. Re-scanned every remote ref
+// on Oct 4 2026 when merging main (146, the direct-email outbox): 146 is the highest claimed
+// outside the relationship-engine branches, so 147 stays free.
+//
+// 148 = user_settings.chat_self_names (relationship engine P2). 147 is P1 (merged as #398).
+//
+// 149 = this branch (PR #187): user_settings.sender_bio, user_settings.email_activity_sync
+// and contacts_user_last_touch_idx. Built as 35-39, merged once as 66, and renumbered again
+// here because main has since claimed every number up to 148 for different DDL — a database
+// stamped by any of those would treat 66 as ancient and never run these.
+//
+// `contact_job_changes` is NOT in this list any more. Main built the same feature as
+// `contact_career_moves` (v133) with a typed `kind`, start dates and a dedupe-key unique
+// index, and its changelog names this PR as the reason it picked a different table name.
+// Keeping both would give one database two job-movement logs, so this branch's table, its
+// detection module and its suggestion type are dropped in favour of main's.
+export const SCHEMA_VERSION = 149;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -1616,18 +2615,6 @@ async function storedLinkedinSlugExpression(run: StatementRunner): Promise<strin
   }
 }
 
-// 66 = this branch's DDL, collapsed into one bump because it merges as one commit:
-// contacts_user_last_touch_idx (built as 36),
-// user_settings.sender_bio (37), the contact_job_changes table (38) and
-// user_settings.email_activity_sync (39). `keep_in_touch_days` (built as 35) is NOT here:
-// main's v62 added contacts.cadence_days for the same job, with a `cadence_source` that can
-// say whether the user or a note stated it, so this branch's column was dropped in the merge
-// rather than kept beside it. Every one of those numbers carries DIFFERENT DDL
-// on main — 35-39 there are the composer index, events, event discovery, cross-event
-// identity and companies-at-events — so reusing any of them would leave these columns
-// unapplied on every database main has already stamped. This is the collision the notes
-// above keep describing; the only safe move is a number above everything either side has
-// claimed.
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1654,29 +2641,20 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS confidence_score integer`,
   // The brief's single "what to do next" clause.
   `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS next_step text`,
+  // Schema v144: how the person bears on the user's active goals ({ judged, items }, see
+  // contactBriefs.goalFit). Null = never judged; no backfill.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS goal_fit jsonb`,
   // Multi-file capture: one file = one meeting = one job, grouped by batch_group_id.
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS batch_group_id uuid`,
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS mention_picks jsonb NOT NULL DEFAULT '[]'`,
   `CREATE INDEX IF NOT EXISTS capture_jobs_user_batch_idx ON capture_jobs(user_id, batch_group_id)`,
+  // v132: what each capture was read from, by content hash, so a file dropped a second time
+  // is recognised (`findCapturedFiles`). GIN because the one question asked of it is an
+  // `&&` overlap against a handful of hashes, across every job the user has.
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_file_hashes text[] NOT NULL DEFAULT '{}'`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_source_file_hashes_idx ON capture_jobs USING gin (source_file_hashes)`,
 
-  // Job-change history. In SCALE_DDL rather than the local `alters` list further down
-  // because that one is only scanned for ALTERs — a CREATE TABLE there runs, but
-  // `smoke-schema-ddl` cannot see it, and the table would be invisible to the parity check
-  // that keeps Neon and PGlite in step.
-  `CREATE TABLE IF NOT EXISTS contact_job_changes (
-     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-     user_id text NOT NULL,
-     contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-     previous_company text,
-     new_company text,
-     previous_title text,
-     new_title text,
-     source text,
-     detected_at timestamptz NOT NULL DEFAULT now()
-   )`,
-  `CREATE INDEX IF NOT EXISTS contact_job_changes_user_idx ON contact_job_changes(user_id, detected_at DESC)`,
-  `CREATE INDEX IF NOT EXISTS contact_job_changes_contact_idx ON contact_job_changes(contact_id, detected_at DESC)`,
   // --- Generated columns -----------------------------------------------------------
   //
   // An attendee's employer, normalised. MUST stay byte-identical to `normalizeCompanyKey`
@@ -1843,6 +2821,47 @@ export const SCALE_DDL: string[] = [
   // call entirely when a row's source content hasn't changed since it was last embedded.
   `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS content_hash text`,
 
+  // --- Passage retrieval over the user's own writing (v79) -------------------------------
+  //
+  // `interactions` — the real note, meeting and call rows — has never had a full-text index.
+  // Only `contacts` did, which is why the only way to find a note was to already know whose
+  // it was: "what did I discuss about fundraising in March" had no query plan at all.
+  //
+  // 'simple', matching `contacts.search_tsv`, so one `websearch_to_tsquery('simple', …)`
+  // string serves both and the stopword handling cannot diverge between them. A generated
+  // column is legal here because every source column lives on the same row — unlike the tags
+  // that could not join `contacts.search_tsv`.
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (
+       setweight(to_tsvector('simple', coalesce(ai_summary, '')), 'B') ||
+       setweight(to_tsvector('simple', coalesce(topics::text, '') || ' ' || coalesce(action_items::text, '')), 'C') ||
+       setweight(to_tsvector('simple', coalesce(raw_notes, '')), 'D')
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS interactions_search_gin ON interactions USING gin(search_tsv)`,
+  // Reminders are the other thing the user wrote that chat could not find by its words.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (
+       to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(description, ''))
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS reminders_search_gin ON reminders USING gin(search_tsv)`,
+
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED`,
+  `CREATE INDEX IF NOT EXISTS memory_chunks_search_gin ON memory_chunks USING gin(search_tsv)`,
+  // The identity of a chunk: one row per (source, position). `syncMemoryChunks` writes
+  // against it, so re-chunking an edited note replaces rather than accumulates.
+  `CREATE UNIQUE INDEX IF NOT EXISTS memory_chunks_source_uidx
+     ON memory_chunks(user_id, source_kind, source_id, chunk_index)`,
+  // Date-scoped recall — "in March" — is a plain range predicate on this.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_user_date_idx ON memory_chunks(user_id, occurred_at DESC)`,
+  // Anyone named in the passage, not just its subject: this is what makes a note about a
+  // dinner findable from any of the four people at it.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_contacts_gin ON memory_chunks USING gin(contact_ids)`,
+  // The backfill's claim. Partial, so it stays the size of the work outstanding rather than
+  // the size of the table — the same shape as `contacts.embedding_stale_at`'s index.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_pending_idx ON memory_chunks(user_id)
+     WHERE embedded_hash IS DISTINCT FROM content_hash`,
+
   // --- YC-mode admin console --------------------------------------------------------
   //
   // Every one of these tables shipped with `CREATE TABLE IF NOT EXISTS` above and no
@@ -1901,6 +2920,11 @@ export const SCALE_DDL: string[] = [
   // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
+  // The job-movement log. The unique key makes re-detecting the same move a no-op.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_career_moves_dedupe_uidx
+     ON contact_career_moves(user_id, contact_id, dedupe_key)`,
+  `CREATE INDEX IF NOT EXISTS contact_career_moves_contact_idx
+     ON contact_career_moves(user_id, contact_id, detected_at)`,
 
   // --- Duplicate prevention --------------------------------------------------------
   //
@@ -1951,6 +2975,105 @@ export const SCALE_DDL: string[] = [
   // Here rather than only in the CREATE TABLE above, which never adds a column to a
   // note_batches table that already exists.
   `ALTER TABLE note_batches ADD COLUMN IF NOT EXISTS input_sources jsonb NOT NULL DEFAULT '[]'`,
+
+  // --- v118: foreign-key and sweep indexes -------------------------------------------
+  //
+  // Postgres enforces ON DELETE CASCADE / SET NULL by running "WHERE fk_col = $1" against
+  // the child table once per parent row deleted, and it never adds user_id to that probe.
+  // Every child below had only indexes LEADING with user_id, which that probe cannot use,
+  // so deleting one contact (a delete, a merge, an import undo, an account purge) or one
+  // interaction seq-scanned each of these tables across every tenant. Partial where the
+  // column is nullable and mostly null: the probe's equality implies NOT NULL, so the
+  // planner still uses the smaller index.
+  //
+  // Contact children.
+  `CREATE INDEX IF NOT EXISTS reminders_contact_idx
+     ON reminders(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS memory_chunks_contact_idx
+     ON memory_chunks(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS interaction_mentions_contact_idx
+     ON interaction_mentions(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS action_items_contact_idx ON action_items(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_opportunities_contact_idx
+     ON contact_opportunities(contact_id)`,
+  // Also the contact page's job-match list, which filters on (user_id, contact_id) and
+  // could only use the user_id prefix of the (user_id, posting_id, contact_id) key.
+  `CREATE INDEX IF NOT EXISTS job_posting_matches_contact_idx
+     ON job_posting_matches(contact_id)`,
+  // v133: Radar's contact children. Recommendations are rewritten nightly and feedback
+  // is kept for suppression, so both see contact deletes and merges.
+  `CREATE INDEX IF NOT EXISTS recommendations_contact_idx ON recommendations(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS recommendation_feedback_contact_idx
+     ON recommendation_feedback(contact_id)`,
+  // v135: Radar's outside-world signals, same reasoning: contact deletes and merges.
+  `CREATE INDEX IF NOT EXISTS contact_signals_contact_idx ON contact_signals(contact_id)`,
+  // Merge relies on this cascade on purpose, and dismissed pairs are kept forever.
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_contact_a_idx
+     ON duplicate_suggestions(contact_a_id)`,
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_contact_b_idx
+     ON duplicate_suggestions(contact_b_id)`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_contact_idx
+     ON suggested_reminders(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS outreach_prospects_contact_idx
+     ON outreach_prospects(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS contact_experiences_contact_fk_idx
+     ON contact_experiences(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_profiles_contact_fk_idx
+     ON contact_profiles(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS user_recruiter_links_contact_idx
+     ON user_recruiter_links(contact_id) WHERE contact_id IS NOT NULL`,
+  // Interaction children. action_items also serves syncActionItems and the note-save
+  // reads, which filter on interaction_id and order by position.
+  `CREATE INDEX IF NOT EXISTS reminders_source_interaction_idx
+     ON reminders(source_interaction_id) WHERE source_interaction_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS action_items_interaction_idx
+     ON action_items(interaction_id, position)`,
+  `CREATE INDEX IF NOT EXISTS contact_opportunities_source_interaction_idx
+     ON contact_opportunities(source_interaction_id) WHERE source_interaction_id IS NOT NULL`,
+  // Reminder children. action_items also serves completeReminder, which looks up the open
+  // items behind the reminder being completed.
+  `CREATE INDEX IF NOT EXISTS action_items_reminder_idx
+     ON action_items(reminder_id) WHERE reminder_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_reminder_idx
+     ON suggested_reminders(reminder_id) WHERE reminder_id IS NOT NULL`,
+  // Deleting a reminder list nulls list_id on its reminders.
+  `CREATE INDEX IF NOT EXISTS reminders_list_id_idx
+     ON reminders(list_id) WHERE list_id IS NOT NULL`,
+  // Company children, fired once per company by an account purge.
+  `CREATE INDEX IF NOT EXISTS event_companies_company_idx ON event_companies(company_id)`,
+  `CREATE INDEX IF NOT EXISTS target_companies_company_idx ON target_companies(company_id)`,
+
+  // Chat sends are a sliver of interactions, but opening a thread (its sent claims) and
+  // the daily send cap both filter on source = 'chat_send', which no interactions index
+  // carries: each walked every interaction the account has, imports included.
+  `CREATE INDEX IF NOT EXISTS interactions_user_chat_send_idx
+     ON interactions(user_id, interaction_date) WHERE source = 'chat_send'`,
+
+  // Sweeps that ran a full scan on every tick to find nothing once they had caught up:
+  // the person-key backfill (every sync pass), the unattached capture-photo purge and the
+  // idempotency-key purge (every drain). The partial ones are near-empty in steady state.
+  `CREATE INDEX IF NOT EXISTS event_attendees_person_key_pending_idx
+     ON event_attendees(id) WHERE person_key_kind IS NULL`,
+  `CREATE INDEX IF NOT EXISTS capture_photos_unattached_created_idx
+     ON capture_photos(created_at) WHERE note_batch_id IS NULL`,
+  `CREATE INDEX IF NOT EXISTS api_idempotency_created_idx
+     ON api_idempotency_keys(created_at)`,
+
+  // Admin reads. The growth charts window every table by created_at across all accounts,
+  // which the (user_id, created_at) indexes cannot serve; with user_id second these are
+  // index-only scans of just the window. created_at never changes after insert, so they
+  // cost an insert-time write and leave HOT updates alone. The chat-feedback page reads
+  // only rated messages, newest first. page_views had no user_id index at all, which the
+  // admin account-traffic panel, the data export and the account purge all filter on.
+  `CREATE INDEX IF NOT EXISTS contacts_created_user_idx ON contacts(created_at, user_id)`,
+  `CREATE INDEX IF NOT EXISTS interactions_created_user_idx
+     ON interactions(created_at, user_id)`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_created_user_idx
+     ON chat_messages(created_at, user_id)`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_feedback_created_idx
+     ON chat_messages(created_at DESC) WHERE feedback IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS page_views_user_created_idx
+     ON page_views(user_id, created_at) WHERE user_id IS NOT NULL`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -2111,6 +3234,45 @@ export function isSchemaCurrent(recorded: { version: number; fingerprint: string
 }
 
 /**
+ * `schemaIsCurrent` + `detectExtensions` in a single statement, for the path every cold
+ * start takes. On neon-http each statement is its own HTTPS request, and the slow way is
+ * three in sequence (CREATE TABLE IF NOT EXISTS, the version read, the extension read)
+ * ahead of the first query a visitor is waiting on.
+ *
+ * Only ever answers "yes, current — and here are the extensions". Anything else (the
+ * table is missing, no row, a version behind, a read error) returns false and the caller
+ * falls through to the original slow path, which is what creates the table and migrates.
+ * So a wrong answer here can cost a round trip, never a skipped migration.
+ */
+async function schemaIsCurrentFast(run: StatementRunner): Promise<boolean> {
+  try {
+    const result = await run(
+      `SELECT m.version,
+              m.fingerprint,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS has_vector,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS has_trigram
+         FROM schema_migrations m
+        WHERE m.id = 1`
+    );
+    const row = rowsOf<{
+      version: number | string;
+      fingerprint: string | null;
+      has_vector: boolean;
+      has_trigram: boolean;
+    }>(result)[0];
+    if (!row) return false;
+    if (!isSchemaCurrent({ version: Number(row.version), fingerprint: row.fingerprint ?? null })) {
+      return false;
+    }
+    globalForDb.orbitPgvector = Boolean(row.has_vector);
+    globalForDb.orbitTrigram = Boolean(row.has_trigram);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Establishes which optional extensions this database actually has.
  *
  * `isPgvectorAvailable()` reads module state that the migration path normally sets as a
@@ -2236,7 +3398,6 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "timestamptz NOT NULL DEFAULT now()"
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
-  await ensureColumn(client, "user_settings", "wispr_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -2299,6 +3460,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email", "text");
   await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
+  await ensureColumn(client, "user_settings", "inbound_log_token", "text");
+  await ensureColumn(client, "user_settings", "inbound_log_token_created_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "inbound_log_last_received_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "stealth_cleared_at", "timestamptz");
   await ensureColumn(
     client,
     "user_settings",
@@ -2320,7 +3485,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "user_settings", "terms_accepted_at", "timestamptz");
   await ensureColumn(client, "user_settings", "terms_version", "text");
-  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "timeline_backfill_forced_on", "integer NOT NULL DEFAULT 1");
   await ensureColumn(
     client,
     "user_recruiter_links",
@@ -2453,6 +3619,11 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // unconstrained — which matches the writer, since `upsertContactEmbedding` skips its
   // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
+  await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
+  await ensureColumn(client, "action_items", "owed_by", "text");
 
   try {
     await client.exec(
@@ -2524,6 +3695,51 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
   await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
+  // v76: the outbox claim is an identity with its own lease, not an overloaded schedule.
+  await ensureColumn(client, "connector_outbox", "claimed_by", "uuid");
+  await ensureColumn(client, "connector_outbox", "claimed_until", "timestamptz");
+
+  // v89: Deepgram diarization label on a local database built before it existed.
+  await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
+
+  // v95: the audio a meeting did NOT spend on Deepgram, and the opaque identifier that
+  // replaced the raw user id in a dictation's Deepgram usage tag. Same reasoning as every
+  // block above — the DDL template only helps a database that does not have these tables yet.
+  await ensureColumn(client, "meeting_sessions", "off_deepgram_ms", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "speech_tag_id", "text");
+
+  // v133: Radar's per-account schedule. Same reasoning as every block above.
+  await ensureColumn(client, "user_settings", "radar_next_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "radar_lease_until", "timestamptz");
+  await ensureColumn(client, "user_settings", "radar_last_run_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "radar_paused", "integer NOT NULL DEFAULT 0");
+
+  // v135: the Radar flagship. Recommendations and contacts gain columns on databases the
+  // v133 template already built, and the account gains its model, autopilot and digest state.
+  await ensureColumn(client, "user_settings", "radar_model", "jsonb");
+  await ensureColumn(client, "user_settings", "radar_autopilot", "jsonb NOT NULL DEFAULT '{}'");
+  await ensureColumn(client, "user_settings", "radar_capture_linkedin_activity", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "radar_digest_enabled", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "user_settings", "radar_digest_tz", "text");
+  await ensureColumn(client, "user_settings", "radar_digest_last_week", "text");
+  await ensureColumn(client, "user_settings", "radar_digest_unsub_token_hash", "text");
+  await ensureColumn(client, "contacts", "bluesky_handle", "text");
+  await ensureColumn(client, "contacts", "mastodon_acct", "text");
+  await ensureColumn(client, "recommendations", "base_score", "integer");
+  await ensureColumn(client, "recommendations", "ai_delta", "integer");
+  await ensureColumn(client, "recommendations", "ai_angle", "text");
+  await ensureColumn(client, "recommendations", "draft", "jsonb");
+  await ensureColumn(client, "recommendations", "first_seen_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "last_seen_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "seen_count", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "recommendations", "acted_at", "timestamptz");
+  await ensureColumn(client, "recommendations", "outcome_at", "timestamptz");
+  // v136: what autopilot scheduled for a card.
+  await ensureColumn(client, "recommendations", "autopilot", "jsonb");
+  // v146 (first claimed 140): direct email — signature and default sending mailbox. Same reasoning as every block above.
+  await ensureColumn(client, "user_settings", "email_signature_text", "text");
+  await ensureColumn(client, "user_settings", "email_signature_html", "text");
+  await ensureColumn(client, "user_settings", "default_send_provider", "text");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -2682,6 +3898,16 @@ async function migratePgvector(run: StatementRunner) {
       `CREATE INDEX IF NOT EXISTS embeddings_vector_hnsw_idx
        ON contact_embeddings USING hnsw (embedding_vector vector_cosine_ops)`
     );
+    // The passage index (v79). Its own column and its own HNSW, for the same reason
+    // `memory_chunks` is its own table: sharing `contact_embeddings`' index would have put
+    // many rows per contact into an overscan that assumes roughly one.
+    await run(
+      `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)`
+    );
+    await run(
+      `CREATE INDEX IF NOT EXISTS memory_chunks_vector_hnsw_idx
+       ON memory_chunks USING hnsw (embedding_vector vector_cosine_ops)`
+    );
     globalForDb.orbitPgvector = true;
   } catch {
     globalForDb.orbitPgvector = false;
@@ -2694,6 +3920,11 @@ async function migratePgvector(run: StatementRunner) {
  * BEFORE its indexes — see `applySchema`.
  */
 const alters = [
+  // memory_chunks predates this column (v79), so every existing row has NULL here and is
+  // claimed by the sweep exactly once, re-chunked, and then matches. Nothing is re-embedded
+  // by that pass: syncMemoryChunks carries vectors across by content_hash, which unchanged
+  // text does not move.
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS source_hash text`,
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
   // The events feature landed whole at v32, so these are its first incremental columns.
@@ -2738,6 +3969,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS typesafe_api_key_encrypted text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS preferred_name text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS website text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS met_context text`,
@@ -2751,7 +3983,6 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wispr_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
@@ -2844,6 +4075,11 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
+  // Schema v96: the BCC logging address. The token column holds a SHA-256, never the token.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS inbound_log_token text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS inbound_log_token_created_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS inbound_log_last_received_at timestamptz`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
   // Added a version after the table itself. A preview deployment of the branch that
   // introduced `interest_list_signups` already created it without these, and
@@ -2855,6 +4091,37 @@ const alters = [
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referred_by_id uuid`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token)`,
   `CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id)`,
+  // v125: the name on the pass, collected in the waitlist join's second step.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS first_name text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS last_name text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_slug text`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_referral_slug_uidx ON interest_list_signups(referral_slug)`,
+  // v128: how many times someone opened their own waitlist pass, and when last.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS pass_check_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS pass_last_checked_at timestamptz`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS signup_event_label text`,
+  // v130: pricing v2 — founding pricing, the AI key preference, the Max nudge, the billing
+  // period start the credit allowance resets on, the plan a refused gate would unlock, and
+  // the admin console's managed-AI switch. The credit and meter tables are new, so the DDL
+  // template alone creates them.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_start timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_eligible boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_redeemed_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_window_ends_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS founding_subscription_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_key_preference text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS max_nudge_seen_at timestamptz`,
+  `ALTER TABLE gate_events ADD COLUMN IF NOT EXISTS unlock_plan text`,
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS managed_ai_paused boolean`,
+  // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
+  // which cycle and level were last sent (claimed in one UPDATE before each send).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_notice_period_start timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_notice_level integer NOT NULL DEFAULT 0`,
+  // v130 backfill: accounts created through a beta invitation BEFORE pricing v2 carry the comp
+  // note the invitation wrote. They are founding-eligible (their comp itself is untouched).
+  // Idempotent, and never un-sets a flag.
+  `UPDATE user_settings SET founding_eligible = true WHERE comped_note = 'Invited by an admin' AND founding_eligible = false`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
@@ -2878,6 +4145,17 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS evidence jsonb DEFAULT '{}'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS proposed_actions jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_slot_idx ON chat_messages(slot)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_slot_version_role_uidx ON chat_messages(slot, version, role) WHERE slot is not null`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,
@@ -2963,7 +4241,11 @@ const alters = [
   //
   // `sync_failures` is the only NOT NULL column here, and it carries a DEFAULT, so the
   // ALTER is safe on a populated table.
-  ...["gmail_connections", "outlook_connections"].flatMap((table) => [
+  //
+  // Schema v99 added `apple_connections` to this list: its own CREATE TABLE already carries
+  // these columns, so the ALTERs are no-ops there, but the shared list is what also gets it
+  // the partial due index below without a fourth copy of that statement.
+  ...["gmail_connections", "outlook_connections", "apple_connections"].flatMap((table) => [
     `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_cursor jsonb`,
     `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS next_sync_at timestamptz`,
     `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_status text`,
@@ -2994,6 +4276,9 @@ const alters = [
     WHERE status = 'active' AND next_sync_at IS NULL AND sync_status IS NULL`,
   // Schema v31: the connector platform. The CREATE TABLEs above land on a fresh database;
   // these repair an existing one, which is why every index appears in both places.
+  `CREATE TABLE IF NOT EXISTS agent_send_requests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL, channel text NOT NULL DEFAULT 'email', to_email text NOT NULL, subject text, body text NOT NULL, status text NOT NULL DEFAULT 'pending', client_name text, error_message text, delivery_id text, decided_at timestamptz, sent_at timestamptz, expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS agent_send_requests_user_status_idx ON agent_send_requests(user_id, status, created_at)`,
+  `CREATE INDEX IF NOT EXISTS agent_send_requests_contact_idx ON agent_send_requests(contact_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash)`,
   `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS api_idempotency_uidx ON api_idempotency_keys(user_id, idempotency_key)`,
@@ -3068,6 +4353,187 @@ const alters = [
   // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
   `UPDATE interactions SET source = 'ai_derived'
     WHERE external_id LIKE 'li-event:%' AND source IS DISTINCT FROM 'ai_derived'`,
+  // Schema v66: `completed` was an early spelling of a done reminder. Every reader matched
+  // both; after this only `done` exists, and the reminders query matches that alone.
+  // Idempotent: nothing writes `completed` to reminders any more.
+  `UPDATE reminders SET status = 'done' WHERE status = 'completed'`,
+  // Schema v67: a reminder list's icon and colour, chosen from its right-click editor.
+  // Keys into src/lib/reminder-list-style.ts; NULL means the default (Inbox tray / list glyph,
+  // no tint), so existing lists need no backfill.
+  `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS icon text`,
+  `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS color text`,
+  // v68: page-load timing on the traffic pipeline (src/lib/nav-timing.ts).
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS load_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
+  // Schema v70: chat context note.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
+  // Schema v71: a brief remembers what it was asked, so an unchanged regeneration is free.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS input_hash text`,
+  // Schema v73: the Gemini default moved to 3.8 Flash — newer, and half the price of 3.5
+  // Flash. Accounts still carrying the OLD DEFAULT move with it and are told so once;
+  // anyone who chose a model themselves is left alone. `ai_model_migrated_from IS NULL`
+  // keeps this from re-migrating someone who read the notice and picked 3.5 Flash again.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_model_migrated_from text`,
+  `ALTER TABLE user_settings ALTER COLUMN ai_model SET DEFAULT 'gemini-3.8-flash'`,
+  `UPDATE user_settings SET ai_model_migrated_from = ai_model, ai_model = 'gemini-3.8-flash'
+     WHERE ai_model = 'gemini-3.5-flash' AND ai_model_migrated_from IS NULL`,
+  // Schema v74: the connector platform's generic credential table. The CREATE TABLE in the
+  // template above repairs a fresh database; this repairs one already stamped past v74's
+  // predecessor, and both indexes are written in both places because smoke-schema-ddl
+  // compares the `uniqueIndex()` declarations in schema.ts against this file by name and
+  // column list.
+  `CREATE TABLE IF NOT EXISTS connector_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, auth_kind text NOT NULL, label text, account_ref text, api_key_encrypted text, access_token_encrypted text, refresh_token_encrypted text, token_expires_at timestamptz, scopes text, capabilities jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id)`,
+  `CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v75: connector write-back. Same both-places rule as v74 above.
+  `CREATE TABLE IF NOT EXISTS external_links (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL, remote_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS external_links_entity_uidx ON external_links(user_id, connector_id, entity_type, entity_id)`,
+  `CREATE TABLE IF NOT EXISTS connector_outbox (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, action text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL, payload jsonb NOT NULL, status text NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0, next_attempt_at timestamptz, claimed_by uuid, claimed_until timestamptz, last_error text, last_attempted_at timestamptz, delivered_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS connector_outbox_action_uidx ON connector_outbox(user_id, connector_id, action, entity_type, entity_id)`,
+  `CREATE INDEX IF NOT EXISTS connector_outbox_due_idx ON connector_outbox(status, next_attempt_at)`,
+  // Schema v76: outbox ownership moved off next_attempt_at/attempts onto its own two columns.
+  // The CREATE TABLE above already carries them for a fresh database; these are for the
+  // v75 databases that already exist.
+  `ALTER TABLE connector_outbox ADD COLUMN IF NOT EXISTS claimed_by uuid`,
+  `ALTER TABLE connector_outbox ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
+  // Schema v89: Deepgram speech-to-text. speech_usage meters seconds against the plan caps;
+  // meeting_transcript_segments.speaker holds Deepgram's diarization label. Also drops
+  // user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept until now so
+  // the removal and its migration were one version, not two.
+  `CREATE TABLE IF NOT EXISTS speech_usage (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, kind text NOT NULL, seconds integer NOT NULL DEFAULT 0, source text NOT NULL, session_id uuid, request_id text, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS speech_usage_user_created_idx ON speech_usage(user_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS speech_usage_session_uidx ON speech_usage(session_id)`,
+  `ALTER TABLE meeting_transcript_segments ADD COLUMN IF NOT EXISTS speaker text`,
+  `ALTER TABLE user_settings DROP COLUMN IF EXISTS wispr_api_key_encrypted`,
+  // Schema v95: the two corrections to how Deepgram spend is attributed.
+  // `meeting_sessions.off_deepgram_ms` records the milliseconds of a meeting that Orbit did
+  // not pay Deepgram for, so a chunk that fell through to the user's own key is subtracted
+  // from what the meeting meter books instead of being charged to their cap. Zero is the
+  // right value for every meeting recorded before this column existed: nothing metered so
+  // far claimed a fallback stretch, so there is nothing to backfill.
+  // `user_settings.speech_tag_id` is the opaque per-account identifier that replaces the raw
+  // Clerk user id in the `shortform:` tag Deepgram keeps in its usage records. Minted lazily
+  // on first use (src/lib/speech-tag-id.ts), hence nullable and no backfill.
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS off_deepgram_ms integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS speech_tag_id text`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_speech_tag_uidx ON user_settings(speech_tag_id) WHERE speech_tag_id IS NOT NULL`,
+  // Schema v99: apple_connections (an iCloud CalDAV connection) and calendar_sources (one row
+  // per calendar Orbit can read, for all three providers — the cursor moves down from the
+  // connection to the calendar). The CREATE TABLEs above land on a fresh database; these
+  // repair an existing one, which is why every index appears in both places.
+  `CREATE TABLE IF NOT EXISTS apple_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL UNIQUE, email_address text NOT NULL, app_password_encrypted text NOT NULL, principal_url text, calendar_home_url text, scopes text, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS apple_connections_user_idx ON apple_connections(user_id)`,
+  `CREATE TABLE IF NOT EXISTS calendar_sources (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, connection_id uuid NOT NULL, calendar_id text NOT NULL, display_name text, color text, read_only integer NOT NULL DEFAULT 0, enabled integer NOT NULL DEFAULT 1, sync_cursor jsonb, last_synced_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id)`,
+  // Schema v102: stealth as a runtime switch. `site_settings` is the admin console's one-row
+  // table for it; `user_settings.stealth_cleared_at` records that an account was found to be
+  // allowed in, so the Clerk lookup behind that answer runs once per account.
+  `CREATE TABLE IF NOT EXISTS site_settings (id integer PRIMARY KEY DEFAULT 1, stealth_enabled boolean, stealth_since timestamptz, updated_at timestamptz NOT NULL DEFAULT now(), updated_by text, CONSTRAINT site_settings_single_row CHECK (id = 1))`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stealth_cleared_at timestamptz`,
+  // Schema v103: `page_views.is_internal`, Orbit's own traffic (admins, the showcase account,
+  // and browsers an admin opted out). No backfill: the read side also excludes admin user ids
+  // at query time, which covers every row from before this column without the migration
+  // having to know ADMIN_USER_IDS. The index lives in the template (step 4 of applySchema).
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS is_internal boolean NOT NULL DEFAULT false`,
+  // Schema v104: user_settings.openrouter_api_key_encrypted — a person's own OpenRouter key,
+  // the BYOK path P3 of the integrations dialog simplification turns into a one-click
+  // connect. OpenRouter is never a managed provider (Orbit holds no key for it), so this
+  // column only ever holds a key the account saved itself.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openrouter_api_key_encrypted text`,
+  // Schema v105: usage_events.cost_source — distinguishes a provider-reported cost
+  // (OpenRouter's `usage.cost`) from Orbit's own `ai-pricing.ts` estimate, since
+  // `ai-pricing.ts` has no OpenRouter slugs at all and blending the two figures in one
+  // column with no source would make that gap invisible.
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cost_source text NOT NULL DEFAULT 'estimated'`,
+  // Schema v108: user_settings.timeline_backfill_enabled defaults to 1 instead of 0.
+  // Deriving LinkedIn timeline events used to be opt-in (audit A6, a checkbox on the import
+  // card); the owner decided it should just happen, so the checkbox is gone
+  // (src/components/imports/timeline-backfill-toggle.tsx deleted) and the column is now an
+  // operator-only kill switch with no UI. This DOES start spending each account's own AI
+  // budget (one model call per qualifying conversation, capped at
+  // RATE_LIMITS.timelineBackfillDaily a day) without asking — that is the point, not a bug
+  // to revert.
+  //
+  // `alters` runs in FULL on every sweep — every future SCHEMA_VERSION bump or fingerprint
+  // change re-runs this same list — so a bare `UPDATE ... WHERE timeline_backfill_enabled =
+  // 0` would silently re-flip an operator's deliberate kill switch back to 1 the next time
+  // anyone bumps the schema, resuming that account's AI spend behind their back. That is
+  // exactly the failure v73's `ai_model` migration above guards against with
+  // `ai_model_migrated_from IS NULL`, so this follows the same marker-column shape:
+  // `timeline_backfill_forced_on` records "this row has already been force-flipped once"
+  // and is born DEFAULT 1 for every row created from here on, so the one-shot UPDATE below
+  // can never match a fresh row either. Re-running this block is then a genuine no-op: the
+  // ADD COLUMN no-ops (column exists), the UPDATE matches nothing (every row is marked),
+  // and the SET DEFAULT no-ops (already 1).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timeline_backfill_forced_on integer NOT NULL DEFAULT 0`,
+  `UPDATE user_settings SET timeline_backfill_enabled = 1, timeline_backfill_forced_on = 1 WHERE timeline_backfill_forced_on = 0`,
+  `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_forced_on SET DEFAULT 1`,
+  `ALTER TABLE user_settings ALTER COLUMN timeline_backfill_enabled SET DEFAULT 1`,
+  // Schema v109: `site_settings.waitlist_demo_enabled`. Null (never set) reads as on, so no
+  // backfill: the demo stays up until an admin takes it down from the waitlist admin page.
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS waitlist_demo_enabled boolean`,
+  // Schema v134: the feature poll's star budgets. Null on older votes, which read as the whole
+  // base budget on their `option_id` — no backfill needed.
+  `ALTER TABLE waitlist_poll_votes ADD COLUMN IF NOT EXISTS stars jsonb`,
+  // Schema v117: learned brand colors for companies and schools outside the curated table.
+  `CREATE TABLE IF NOT EXISTS org_brand_colors (name_key text NOT NULL, kind text NOT NULL, name text NOT NULL, hex text, domain text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS org_brand_colors_key_uidx ON org_brand_colors(name_key, kind)`,
+  // Schema v133: the staggered work-history re-check schedule and its per-account switch.
+  // NULL due = never checked = due now; the sweep orders NULLs first, closest people first.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_due_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS contacts_work_history_due_idx ON contacts(user_id, work_history_due_at) WHERE linkedin_url IS NOT NULL`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS work_history_auto_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v133: Radar's nightly schedule, lease and pause flag for each account.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_next_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_lease_until timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_last_run_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_paused integer NOT NULL DEFAULT 0`,
+  // Schema v135: the Radar flagship. A database the v133 template built has `recommendations`
+  // without these columns and the v1 live index, whose predicate leaves out `auto_applied`.
+  // The v1 index is dropped here, before the template's indexes run, so the v2 one replaces it.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_model jsonb`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_autopilot jsonb NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_capture_linkedin_activity integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_tz text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_last_week text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_unsub_token_hash text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bluesky_handle text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_delta integer`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS ai_angle text`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS draft jsonb`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS first_seen_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS last_seen_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS seen_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS acted_at timestamptz`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
+  `DROP INDEX IF EXISTS recommendations_live_uidx`,
+  // Schema v136: what autopilot scheduled for a card, so its Undo reverses exactly that.
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS autopilot jsonb`,
+  // Schema v143: user_settings.radar_apollo_cursor, the cursor for a Radar-owned Apollo
+  // re-check that was never built. #371 took it out of the code first, so the deployment
+  // still serving while this runs never selects it (the wispr_api_key_encrypted precedent, v89).
+  `ALTER TABLE user_settings DROP COLUMN IF EXISTS radar_apollo_cursor`,
+  // Schema v146 (first claimed 140): email_sends, the person-to-person outbox (direct email P1),
+  // plus the signature and default sending mailbox on user_settings.
+  `CREATE TABLE IF NOT EXISTS email_sends (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, from_email text NOT NULL, from_name text, to_emails jsonb NOT NULL, cc jsonb NOT NULL DEFAULT '[]'::jsonb, bcc jsonb NOT NULL DEFAULT '[]'::jsonb, subject text NOT NULL, body_text text NOT NULL, body_html text, contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb, origin text NOT NULL, origin_ref text, idempotency_key text, status text NOT NULL DEFAULT 'queued', send_at timestamptz NOT NULL, sent_at timestamptz, attempts integer NOT NULL DEFAULT 0, claimed_by uuid, lease_until timestamptz, last_error text, failure_kind text, rfc_message_id text NOT NULL, provider_message_id text, provider_thread_id text, in_reply_to_send_id uuid, in_reply_to_rfc_id text, attachments jsonb NOT NULL DEFAULT '[]'::jsonb, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS email_sends_idempotency_uidx ON email_sends(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND (status IN ('queued','sending','sent') OR failure_kind = 'ambiguous')`,
+  `CREATE INDEX IF NOT EXISTS email_sends_due_idx ON email_sends(send_at) WHERE status = 'queued'`,
+  `CREATE INDEX IF NOT EXISTS email_sends_user_created_idx ON email_sends(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS email_sends_user_status_idx ON email_sends(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS email_sends_contact_ids_idx ON email_sends USING gin (contact_ids)`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_text text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_html text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS default_send_provider text`,
+  // Schema v147: the relationship engine. Tables are in the template; these are the columns
+  // it adds to tables that older databases already have.
+  `ALTER TABLE action_items ADD COLUMN IF NOT EXISTS owed_by text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS relationship_engine_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v148: sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me").
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_self_names jsonb NOT NULL DEFAULT '[]'`,
 ];
 
 /**
@@ -3088,9 +4554,19 @@ async function applySchema(run: StatementRunner, failed: SchemaFailure[]): Promi
   const statements = DDL.split(";")
     .map((s) => s.trim())
     .filter(Boolean);
-  const tables = statements.filter((s) => /^CREATE TABLE/i.test(s));
-  const columns = statements.filter((s) => /^ALTER TABLE/i.test(s));
-  const rest = statements.filter((s) => !/^(CREATE TABLE|ALTER TABLE)/i.test(s));
+  // Classify on the statement with its leading `--` comments stripped, not on its raw text.
+  // Splitting on `;` leaves any comment block that introduces a statement attached to the
+  // FRONT of it, so a CREATE TABLE with an explanation above it did not look like a CREATE
+  // TABLE and fell through to `rest` — which runs after `alters`. The first ALTER naming
+  // such a table then failed on a fresh database with "relation does not exist", and since
+  // the version is only recorded on zero failures (see `sweep`), every boot re-ran the
+  // whole sweep and the app got slower on every request until it timed out. Only the
+  // ORDER changes here; each statement still executes with its comments attached.
+  // `scripts/smoke-schema-ddl.ts` asserts no CREATE TABLE can hide in `rest` again.
+  const body = (s: string) => s.replace(/^(?:\s*--[^\n]*\n)+/, "");
+  const tables = statements.filter((s) => /^CREATE TABLE/i.test(body(s)));
+  const columns = statements.filter((s) => /^ALTER TABLE/i.test(body(s)));
+  const rest = statements.filter((s) => !/^(CREATE TABLE|ALTER TABLE)/i.test(body(s)));
   await runStatements(run, tables, "DDL", failed);
   await runStatements(run, columns, "DDL", failed);
   await runStatements(run, alters, "alters", failed);
@@ -3145,8 +4621,10 @@ async function ensureReady(): Promise<void> {
     // package (`@electric-sql/pglite-pgvector`) pinned to a newer PGlite than the one this
     // project has installed; it is not installed here, so local vector search uses the JS
     // fallback instead.
+    const { PGlite: PGliteClient } = await import("@electric-sql/pglite");
+    const { pg_trgm } = await import("@electric-sql/pglite/contrib/pg_trgm");
     const open = () =>
-      PGlite.create({ dataDir, extensions: { pg_trgm } });
+      PGliteClient.create({ dataDir, extensions: { pg_trgm } });
 
     try {
       globalForDb.orbitPglite = await open();
@@ -3178,9 +4656,38 @@ async function ensureReady(): Promise<void> {
       schemaReconciled = undefined;
       globalForDb.orbitPglite = await open();
     }
+    simulateNetworkLatency(globalForDb.orbitPglite);
   }
 
+  globalForDb.orbitDrizzlePglite ??= (await import("drizzle-orm/pglite")).drizzle;
   await globalForDb.orbitPglite.waitReady;
+}
+
+/**
+ * LOCAL MEASUREMENT ONLY: `ORBIT_SIM_DB_LATENCY_MS=20` makes every PGlite statement wait
+ * that long before it runs, the way each neon-http statement in production is its own
+ * HTTPS round trip. Local PGlite answers in microseconds, so without this a page that
+ * awaits eight queries one after another is exactly as fast as one that runs them all at
+ * once — and the difference is the whole cost of a slow page in production. With it, a
+ * loader's wall time is roughly (sequential depth × latency), which is what
+ * `scripts/smoke-page-depth.ts` and `scripts/dev/nav-timing.mjs` measure.
+ *
+ * The delay is applied before the statement is queued, so concurrent statements wait in
+ * parallel just as concurrent HTTPS requests would. Never reachable in production: this is
+ * the PGlite branch, which only runs without a `DATABASE_URL`.
+ */
+function simulateNetworkLatency(client: PGlite) {
+  const ms = Number(process.env.ORBIT_SIM_DB_LATENCY_MS);
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  const marked = client as PGlite & { orbitSimLatency?: boolean };
+  if (marked.orbitSimLatency) return;
+  marked.orbitSimLatency = true;
+  const query = client.query.bind(client);
+  const sleep = () => new Promise((resolve) => setTimeout(resolve, ms));
+  client.query = (async (...args: Parameters<PGlite["query"]>) => {
+    await sleep();
+    return query(...args);
+  }) as PGlite["query"];
 }
 
 /**
@@ -3363,6 +4870,12 @@ export async function reconcileSchema(options: ReconcileOptions = {}): Promise<S
     ? (statement) => neonSql.query(statement)
     : (statement) => globalForDb.orbitPglite!.query(statement);
 
+  // Every cold start lands here before its first real query, so the common case — the build
+  // already migrated — has to be ONE round trip, not three.
+  if (await schemaIsCurrentFast(run)) {
+    return { version: SCHEMA_VERSION, applied: false, failed: [] };
+  }
+
   if (await schemaIsCurrent(run)) {
     // pgvector/pg_trgm availability lives in module state, not in the database, so it
     // still has to be established on a boot that skips the DDL.
@@ -3403,9 +4916,7 @@ export async function reconcileSchema(options: ReconcileOptions = {}): Promise<S
   });
 }
 
-export async function getDb(): Promise<Db> {
-  await ready();
-
+function startSchemaReconcile(): Promise<void> {
   if (!schemaReconciled) {
     schemaReconciled = reconcileSchema({ lockWaitMs: RUNTIME_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "skip" })
       .then(() => undefined)
@@ -3414,7 +4925,34 @@ export async function getDb(): Promise<Db> {
         throw err;
       });
   }
-  await schemaReconciled;
+  return schemaReconciled;
+}
+
+/**
+ * COLD START: begin the schema check the moment this module loads in a production server,
+ * not when the first query asks for it. A new instance evaluates this module partway
+ * through loading the route, and still has the rest of the route's modules and the render
+ * up to its first `getDb()` ahead of it; the check's round trip — on a cold instance also
+ * the TLS handshake to Neon, and a suspended Neon compute waking — overlaps that work
+ * instead of queueing behind it. It is the very promise `getDb()` awaits, so nothing runs
+ * twice, and a failure only clears it for `getDb()` to retry as before.
+ *
+ * Neon only (PGlite is single-writer and opens a directory; it waits for a real caller),
+ * inside a Next server only (scripts import this module and must not touch the network on
+ * import), and never while `next build` collects pages.
+ */
+if (
+  process.env.DATABASE_URL?.trim() &&
+  process.env.NEXT_RUNTIME === "nodejs" &&
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
+  startSchemaReconcile().catch(() => undefined);
+}
+
+export async function getDb(): Promise<Db> {
+  await ready();
+  await startSchemaReconcile();
 
   // In dev the wrapper is rebuilt per call so schema HMR picks up new relations. In
   // production the schema cannot change under us, and `getDb()` is called dozens of times
@@ -3423,13 +4961,13 @@ export async function getDb(): Promise<Db> {
     if (globalForDb.orbitNeonSql) {
       return drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db;
     }
-    return drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
+    return globalForDb.orbitDrizzlePglite!(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
 
   if (!globalForDb.orbitDrizzle) {
     globalForDb.orbitDrizzle = globalForDb.orbitNeonSql
       ? (drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db)
-      : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
+      : globalForDb.orbitDrizzlePglite!(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
 }
@@ -3484,6 +5022,38 @@ export async function runAtomicWrite(
     for (const statement of build(tx as unknown as AtomicWriter)) {
       await (statement as unknown as Promise<unknown>);
     }
+  });
+}
+
+/**
+ * `runAtomicWrite`, returning each statement's result in order — for a group whose LAST
+ * statement is a conditional write the caller needs to read back (the credit hold: lock the
+ * account row, then insert a hold only if the balance covers it, RETURNING the new id).
+ *
+ * Postgres runs each statement of a transaction under READ COMMITTED with a fresh snapshot,
+ * so a statement placed after a row lock sees every write committed by whoever held that
+ * lock before it. That is what makes lock-then-conditional-insert atomic per account on both
+ * drivers without an interactive transaction (which neon-http cannot hold open).
+ */
+export async function runAtomicBatch(
+  db: Db,
+  build: (writer: AtomicWriter) => AtomicStatement[]
+): Promise<unknown[]> {
+  const batchable = db as unknown as {
+    batch?: (statements: AtomicStatement[]) => Promise<unknown[]>;
+  };
+  if (typeof batchable.batch === "function") {
+    const statements = build(db as unknown as AtomicWriter);
+    if (!statements.length) return [];
+    return batchable.batch(statements);
+  }
+  const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
+  return local.transaction(async (tx) => {
+    const results: unknown[] = [];
+    for (const statement of build(tx as unknown as AtomicWriter)) {
+      results.push(await (statement as unknown as Promise<unknown>));
+    }
+    return results;
   });
 }
 

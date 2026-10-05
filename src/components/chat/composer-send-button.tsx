@@ -14,9 +14,10 @@
  */
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, Loader2, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
@@ -28,25 +29,39 @@ export function ComposerSendButton({
   busy,
   disabled,
   onClick,
+  onStop,
 }: {
   /** "recall" reuses this control to pull the last message back. */
   mode: "send" | "recall";
   busy: boolean;
   disabled: boolean;
   onClick: () => void;
+  /** Given, the button becomes a stop control while the answer streams. */
+  onStop?: () => void;
 }) {
   const reduced = usePrefersReducedMotion();
   const duration = reduced ? 0 : DUR.slow;
+  // While streaming this is the only control in reach, so it stops rather than sits
+  // disabled — a long answer the user no longer wants had no way out before.
+  const stopping = busy && Boolean(onStop);
+  const label = stopping ? "Stop generating" : mode === "send" ? "Send" : "Recall last message";
 
   return (
     <Button
       type="button"
       data-slot="chat-send"
-      disabled={disabled}
-      className="size-9 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
-      onClick={onClick}
-      aria-label={mode === "send" ? "Send" : "Recall last message"}
-      title={mode === "send" ? "Send" : "Recall last message"}
+      disabled={stopping ? false : disabled}
+      className={cn(
+        "size-9 shrink-0 rounded-full",
+        // Red while it means "stop", so it reads as a different control from the send arrow
+        // it just replaced — the same button in the same place doing the opposite.
+        stopping
+          ? "bg-destructive text-white hover:bg-destructive/90"
+          : "bg-primary text-primary-foreground hover:bg-primary/90"
+      )}
+      onClick={stopping ? onStop : onClick}
+      aria-label={label}
+      title={label}
     >
       {/* Fixed box with the glyphs stacked inside, so the departing arrow and the arriving
           spinner overlap during the handover instead of shifting the button's layout. */}
@@ -62,7 +77,11 @@ export function ComposerSendButton({
               // Held back so the arrow is clear of the box before the spinner appears.
               transition={{ duration, ease: EASE_HOUSE, delay: reduced ? 0 : DUR.fast }}
             >
-              <Loader2 className="size-4 animate-spin" />
+              {stopping ? (
+                <Square className="size-3 fill-current" />
+              ) : (
+                <Loader2 className="size-4 animate-spin" />
+              )}
             </motion.span>
           ) : (
             <motion.span

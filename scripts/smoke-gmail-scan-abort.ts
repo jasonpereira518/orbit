@@ -77,6 +77,8 @@ function depsWith(classify: Classify) {
     fetchHeaders: async () => { throw new Error("discovery must not run"); },
     fetchMessages: async (_token, ids) => ids.map(message),
     classify: async (userId, input) => { calls++; return classify(userId, input); },
+    // This test is about the inline path aborting on a key problem, so nothing is batched.
+    submit: async () => null,
     continueLater: async () => {},
   };
   return { deps, calls: () => calls };

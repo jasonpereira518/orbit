@@ -20,6 +20,12 @@ Push to `main`. CI (`typecheck · lint · build`, `smoke suite`) must be green; 
 runs `npm run check:env && npm run db:migrate && next build`. A missing production
 variable or a failing DDL statement fails the build and the previous deployment stays live.
 
+**A `claude/*` branch with no pull request does not build a preview.** Vercel's Ignored Build
+Step (`vercel.json` → `scripts/vercel-ignore-build.sh`) skips it, because every retained
+deployment's function bundles count against Functions Storage. It builds once the branch has a
+PR and gets a push. To get a preview sooner, put `[deploy]` in the commit message, or redeploy
+from the dashboard. Everything else (main, other branches, production) always builds.
+
 ## Roll back
 
 Vercel → Deployments → the last good one → **Promote to Production**. Schema changes are
@@ -41,7 +47,7 @@ BEHIND the code — a build whose migration did not run — and is worth waking 
 1. `/admin/health` → "Ops sweep" tile. Quiet for over 30 min means the GitHub schedule is not
    firing — see "Scheduled workflows were disabled" below.
 2. "Nightly job" tile red (it runs hourly, from `ops.yml` only): trigger it by hand —
-   `curl -H "Authorization: Bearer $CRON_SECRET" https://orbit.jasonpereira.live/api/imports/process-stalled`
+   `curl -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/imports/process-stalled`
    A 401 means `CRON_SECRET` differs between Vercel and GitHub.
 
 ## Scheduled workflows were disabled (GitHub's 60-day rule)
@@ -74,7 +80,13 @@ above. Vercel Pro crons remove the rule entirely.
 | `import.wedged` / `import.failed_burst` | `/admin/health` → Failed and stalled imports → Retry. After 3 stalled resumes the job is marked failed with a message; the user re-uploads. |
 | `purge.stuck` | `SELECT id, target_user_id, last_error, completed_steps FROM data_purge_runs WHERE status = 'failed';` Fix the cause `last_error` names, then requeue: `UPDATE data_purge_runs SET status = 'running', attempts = 0, last_attempt_at = now() - interval '1 hour' WHERE id = '<id>';` The next nightly run finishes it (or trigger `/api/imports/process-stalled`). |
 | `cron.partial_streak` | `/admin/health` → Nightly job → the run's stats. Each housekeeping step in `src/app/api/imports/process-stalled/route.ts` is its own try/catch; the one whose counter stays at zero is failing. Sentry has the exception. |
-| `drain.failed` | No outbound webhook is being retried. Run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://orbit.jasonpereira.live/api/webhooks/outbound/drain`; a 500 means the drain throws — Sentry has it. |
+| `drain.failed` | No outbound webhook is being retried. Run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/webhooks/outbound/drain`; a 500 means the drain throws — Sentry has it. |
+| `radar.schedule_missed` | Radar's nightly pass started once and then went quiet for over 30 hours, so nobody's list is being refreshed overnight. Check the ops workflow ran the 04:17 step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/run`. Pages still rebuild a list older than a day when someone opens Radar. |
+| `radar.run_failed` | The last nightly pass failed or was killed at the 300 s ceiling. Read its `cron_runs` row and the `job.radar` / `job.radar.user` errors, fix, then run it by hand with the same `curl`. One account failing marks the pass `partial`, which is not an alert. |
+| `radarfeeds.schedule_missed` | Radar's hourly news sweep started once and then went quiet for over six hours, so headlines about people's companies stop arriving (cards still come from everything else). Check the ops workflow ran the :53 step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/feeds/sweep`. |
+| `radarfeeds.run_failed` | The last news sweep failed or was killed. Read its `cron_runs` row and the `job.radar.feeds` error. One feed being down marks the sweep `partial`, which is not an alert; `external_sources.consecutive_failures` says which feed and for how long. To turn a feed off, set its `enabled` to false. |
+| `radardigest.schedule_missed` | Radar's Monday email, which runs hourly through Sunday and Monday UTC, has not started for six days, so a whole Sunday passed without a run and nobody gets their weekly list. Check the ops workflow ran the `13 * * * 0,1` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/digest`. A run outside someone's Monday 06:00–09:00 sends them nothing, and the week claim means a repeated run never sends twice. |
+| `radardigest.run_failed` | The last Monday-email run failed or was killed. Read its `cron_runs` row and the `job.radar.digest` error. A send Resend refused marks the run `partial`, which is not an alert: that person's claim is released and the next hour retries; the `resend.rejected` error (kind `radar.digest`) carries Resend's reason, recorded once per run. `notConfigured` in the stats means `RESEND_API_KEY` or `RESEND_FROM_EMAIL` is unset. To stop the email for everyone, hide `page.radar`; for one person, set their `radar_digest_enabled` to 0. |
 | `backfill.failed` | `/admin/health` → error events, source `backfill.failed`: `kind` names the backfill, `message` says why. Two or more accounts means it is not one user's key — check the provider status panel and `ai.provider_outage`. |
 | `config.statement_timeout_unbounded` | Run `ALTER ROLE <app role> SET statement_timeout = '20s';` (Neon one-time settings below), then confirm `GET /api/health?token=$HEALTH_TOKEN` shows `config.statementTimeout: "20s"`. It clears on the next sweep. |
 | `embedding.backlog` | Check `backfill.failed`, `embedding.unembeddable` and `ai.provider_outage` first. One account: usually that user's key (they already see an account alert). Several: `/admin/health` → Nightly job stats — `embeddingsGenerated` 0 with `embeddingBackfillsKicked` > 0 means every kick is failing. |
@@ -94,14 +106,93 @@ above. Vercel Pro crons remove the rule entirely.
 | `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is outrunning what Lifetime brought in. `/admin/billing/costs` → "On Orbit's AI keys". Lower `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
 | `ai.managed_cap_hit` | Info: accounts used their whole monthly allowance. A rising count means the cap is too tight for real use. |
 
-## Managed AI keys (Orbit Lifetime)
+## Radar: switches
+
+Radar (`src/lib/radar/`) is the nightly "who to reach out to" list, with its news sweep and
+Monday email. Every switch, smallest first:
+
+- **One account's email:** `UPDATE user_settings SET radar_digest_enabled = 0 WHERE user_id = '<id>';`
+  (the person can do it themselves from Settings, the Radar settings sheet, or the email's link).
+- **One account's autopilot:** `UPDATE user_settings SET radar_autopilot = '{}' WHERE user_id = '<id>';`
+  Autopilot only ever schedules a follow-up; it never sends. Every action it took shows under
+  "Autopilot did this" on `/radar` with Undo.
+- **One news feed:** `UPDATE external_sources SET enabled = false WHERE id = '<id>';`
+- **The AI rerank, for everyone:** set `RADAR_RERANK_ENABLED` to `false` in
+  `src/lib/radar/run.ts` and deploy. The deterministic order comes back on the next nightly
+  run; nothing else changes. Do it if `/admin/analytics/radar` shows cards the rerank promoted
+  not beating the ones it demoted after two weeks.
+- **All of Radar:** hide `page.radar` in `/admin/product`. The nightly pass, the news sweep and
+  the Monday email all stand down, and no AI key is spent.
+- **Coming soon or released:** Radar ships coming soon (`comingSoon: true` on `page.radar` in
+  `src/lib/surfaces.ts`). Either way round can be flipped without a deploy from the coming-soon
+  toggle in `/admin/product` (a `live:page.radar` or `soon:page.radar` row, which wins over the
+  code), or in code by deleting or restoring that line. While it is coming soon, the nightly
+  pass runs only for accounts that have opened Radar (admins previewing it, plus anyone who
+  opened it while it was out), the news sweep runs only once one of them has had a pass, and the
+  Monday email sends nothing. Once released, the pass claims every account active in the last
+  60 days and the email goes to active accounts with a pending card. It was released on Sep 30
+  2026 (#380) and put back behind coming soon the same day.
+
+## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
+
+**Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every deployed plan, Lifetime included, and no `ORBIT_MANAGED_*` variable is read anywhere. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.
+
+**The one exception is `next dev`**, which runs AI on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` names in the developer's `.env.local` (`localDevAiEnabled` in `ai-access.ts`: managed AI off, `VERCEL` unset, `NODE_ENV=development` — a deployment is none of these). A key saved in Settings still wins, and `ORBIT_DEMO_MANAGED_AI=off` turns it off to see the production BYOK states.
 
 AI is bring-your-own-key on every plan except Lifetime. A Lifetime account with no key of its own runs on Orbit's managed keys, and only `src/lib/ai-access.ts` can issue one (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client).
 
-- **Keys:** `ORBIT_MANAGED_GEMINI_API_KEY` (cheapest, preferred), `ORBIT_MANAGED_OPENAI_API_KEY`, `ORBIT_MANAGED_ANTHROPIC_API_KEY`, `ORBIT_MANAGED_WISPR_API_KEY`. Production only reads these names; the bare `GEMINI_API_KEY`-style names work off Vercel only.
+- **Keys:** `ORBIT_MANAGED_GEMINI_API_KEY` (cheapest, preferred), `ORBIT_MANAGED_OPENAI_API_KEY`, `ORBIT_MANAGED_ANTHROPIC_API_KEY`. Production only reads these names; the bare `GEMINI_API_KEY`-style names work off Vercel only.
 - **Kill switch:** `ORBIT_MANAGED_AI=off`. Every Lifetime account falls back to BYOK, with the notice "Orbit’s AI isn’t available right now — add your own API key".
 - **Cap:** `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, per account per calendar month (UTC), metered from `usage_events` where `key_owner = 'orbit'`. Bulk background work stops at half.
 - **Revocation:** anything that takes Lifetime away takes managed AI away on the account's next AI call — there is no cache to clear. Today that is removing a comp in `/admin`; a full refund or a lost dispute does it once the launch plan's P0 revocation (`revokeLifetimePurchase`) lands. Until then, refund a Lifetime purchase AND clear `lifetime_purchased_at` by hand.
+
+## Deepgram (speech-to-text)
+
+Deepgram is Orbit's own speech-to-text key — the first engine for voice notes, the chat
+microphone and meetings, on every plan. `src/lib/deepgram.ts` is the only file that reads
+`DEEPGRAM_API_KEY` / `DEEPGRAM_PROJECT_ID`, enforced by `scripts/smoke-ai-access.ts`. It is not
+part of the BYOK/managed-AI gate above — Orbit pays for it on every plan, like hosted Apollo
+enrichment.
+
+- **Key:** `DEEPGRAM_API_KEY` in Vercel (Production and Preview). `DEEPGRAM_PROJECT_ID` is only
+  needed for the nightly reconciliation job below, not for transcription itself.
+- **Kill switch:** `ORBIT_DEEPGRAM=off` reverts every surface to the Whisper/Gemini chain
+  (`deepgramEnabled()` in `deepgram.ts`). Use it if Deepgram is down or misbehaving; transcription
+  keeps working, just on a different engine and without keyterm-boosted contact names.
+- **Nightly reconciliation:** `POST /api/ops/speech-usage`, run daily by the GitHub Actions
+  scheduler (`.github/workflows/ops.yml`). Meetings stream straight from the browser to Deepgram
+  on Orbit's key and the browser self-reports its seconds into `speech_usage`, so this job
+  compares Deepgram's own billed seconds per meeting (tag `meeting:<sessionId>`) against what was
+  recorded and posts a `:warning:` to Slack (`ops-notify.ts`) for any meeting Deepgram reports
+  more than 110% of. It never suspends anyone — a single divergent meeting could be a legitimate
+  reconnect, not abuse — so treat an alert as "go look," not "go block." A run with
+  `requestsSeen: 0` means the page-index assumption in `fetchDeepgramUsage` is wrong, not that
+  nobody met; see the comment there before trusting a clean run again. The same run also
+  reconciles the **chat mic**, in aggregate per account rather than per session (tag
+  `shortform:<speechTagId>`): those seconds arrive only as a best-effort `sendBeacon` from a
+  closing tab, so a crashed tab or a blocking extension is spend the meter never saw. It alerts only on
+  a gap over both 110% and two minutes a day (`MIN_SHORTFORM_GAP_SECONDS`), because dictation is
+  many tiny rounded sessions; a gap is usually a lost beacon, not abuse.
+- **The two caps**, both in `src/lib/speech-limits.ts` (`SPEECH_LIMITS`), metered in audio
+  seconds per calendar month (UTC) and enforced through `speechAllowance` in
+  `src/lib/speech-quota.ts`:
+  - `meeting` — Free: none; Pro: 5 hours (18,000 s); Lifetime: 10 hours (36,000 s). Paid-only by
+    design; free accounts get `limit: 0` and never reach Deepgram for a meeting.
+  - `shortform` (voice notes + chat mic) — Free: 1 hour (3,600 s); Pro and Lifetime: 5 hours
+    (18,000 s) each. Generous on purpose: an abuse ceiling, not a meter anyone should watch.
+  - Raising either is a one-line change to `SPEECH_LIMITS`; there is no `ORBIT_MANAGED_*`-style
+    env var for it.
+  - A cap is only enforced while Deepgram is the engine. With the kill switch on, transcription
+    runs on the user’s own OpenAI/Gemini key and costs Orbit nothing, so a spent cap blocks
+    nothing — pulling the lever during an incident does not also lock paying accounts out of
+    recording.
+- **What a tag contains:** a meeting is tagged with its own session uuid; everything short-form
+  is tagged with `user_settings.speech_tag_id`, a random opaque per-account value minted on first
+  use (`src/lib/speech-tag-id.ts`). Never the Clerk user id — tags persist in Deepgram’s usage
+  records, which the zero-retention flag does not cover. The nightly job resolves a tag back to an
+  account through `user_settings_speech_tag_uidx`; a tag nobody claims (the account deleted its
+  data and minted a new value) is counted in `invalidTags` and warned under
+  `job.speech-usage.unknown-tag`.
 
 ## Refund or chargeback
 

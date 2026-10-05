@@ -20,6 +20,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { FollowUpDraftComposer } from "@/components/follow-up/follow-up-draft-composer";
+import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -28,11 +29,17 @@ export function FollowUpDraftSheet({
   onOpenChange,
   contactId,
   contactName,
+  initialDraft,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contactId: string;
   contactName: string;
+  /**
+   * A draft already written for this person (Radar writes one overnight for Today's cards).
+   * Shown the moment the sheet opens, with no model call; Regenerate still asks for a new one.
+   */
+  initialDraft?: string | null;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState("");
@@ -50,21 +57,40 @@ export function FollowUpDraftSheet({
     setSendOptions(null);
 
     start(async () => {
-      try {
-        const [options, result] = await Promise.all([
-          getContactFollowUpSendOptions(contactId),
-          draftContactFollowUp(contactId),
-        ]);
-        if (session !== sessionRef.current) return;
-        setSendOptions(options);
-        setDraft(result.body);
-      } catch (err) {
-        if (session !== sessionRef.current) return;
-        toast.error(
-          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
-        );
-      }
+      // Two independent reads, each shown as soon as it lands. They used to share one
+      // `Promise.all`, so the quick send-options read waited on the model call behind the
+      // draft, and a draft that failed (no AI key, a provider error) left "Loading send
+      // options…" on screen for good — with the send buttons it gates. Server Actions go out
+      // one at a time anyway, so asking for the options first costs the draft nothing.
+      let reported = false;
+      const report = (err: unknown) => {
+        if (session !== sessionRef.current || reported) return;
+        reported = true;
+        toast.error(friendlyError(err, TOAST_COPY.draftFollowUpFailed));
+      };
+      const optionsRead = getContactFollowUpSendOptions(contactId).then(
+        (options) => {
+          if (session === sessionRef.current) setSendOptions(options);
+        },
+        report
+      );
+      // Opening the sheet shows the draft already written for this context; only
+      // Regenerate below pays for a new one. A draft handed in (Radar's) needs no read at all.
+      const handed = initialDraft?.trim();
+      if (handed) setDraft(handed);
+      const draftRead = handed
+        ? Promise.resolve()
+        : draftContactFollowUp(contactId, { reuse: true }).then(
+            (result) => {
+              if (session === sessionRef.current) setDraft(result.body);
+            },
+            report
+          );
+      await Promise.all([optionsRead, draftRead]);
     });
+    // `initialDraft` is read when the sheet opens, not tracked: a draft arriving while the
+    // sheet is open must not overwrite what the person is editing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contactId]);
 
   function regenerate() {
@@ -91,8 +117,14 @@ export function FollowUpDraftSheet({
     if (!draft.trim()) return;
     startSend(async () => {
       try {
-        await sendContactFollowUpEmail(contactId, draft);
-        finishAndClose(`Email sent to ${contactName}`);
+        const res = await sendContactFollowUpEmail(contactId, draft);
+        if (!res.ok) {
+          toast.error(res.message);
+          return;
+        }
+        showUndoSendToast({ sendId: res.sendId, recipientLabel: contactName, onUndone: () => router.refresh() });
+        onOpenChange(false);
+        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "That email didn’t send — try again?"));
       }

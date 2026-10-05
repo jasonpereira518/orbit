@@ -1,13 +1,29 @@
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
+import { formatDistanceToNow } from "date-fns";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
+import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
-import { formatDueLabel } from "@/lib/dates";
 
-/** Delegates to the shared formatter; see `@/lib/dates`. */
 function followUpDueLabel(nextFollowUpAt?: Date | string | null) {
-  const due = formatDueLabel(nextFollowUpAt);
-  return due ? { text: due.text, overdue: due.tone === "overdue" } : null;
+  if (!nextFollowUpAt) return null;
+  const d = new Date(nextFollowUpAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  const overdue = d <= now;
+  if (overdue) {
+    const days = Math.max(
+      1,
+      Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24))
+    );
+    return { text: `Overdue ${days} day${days === 1 ? "" : "s"}`, overdue: true };
+  }
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return { text: "Due today", overdue: false };
+  return {
+    text: `Due ${formatDistanceToNow(d, { addSuffix: true })}`,
+    overdue: false,
+  };
 }
 
 function lastTouchLabel(lastInteractionAt?: Date | string | null) {
@@ -38,16 +54,30 @@ export function DueFollowUpRow({
 }) {
   const due = followUpDueLabel(nextFollowUpAt);
   const lastTouch = lastTouchLabel(lastInteractionAt);
-  const meta = [
-    [title, company].filter(Boolean).join(" · "),
-    due?.text,
-    lastTouch,
-  ].filter(Boolean);
+  const companyColor = companyBrandColor(company);
+  // The role line carries the company, tinted; it stays index 0 so the overdue styling
+  // below (index 1) keeps pointing at the due label.
+  const role: React.ReactNode =
+    title || company ? (
+      <>
+        {title}
+        {title && company ? " · " : ""}
+        {company && (
+          <span
+            className="font-medium"
+            style={companyColor ? { color: companyColor } : undefined}
+          >
+            {company}
+          </span>
+        )}
+      </>
+    ) : null;
+  const meta = [role, due?.text, lastTouch].filter(Boolean);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start justify-between gap-3">
-        <Link href={`/contacts/${id}`} className="min-w-0 hover:underline">
+        <IntentLink href={`/contacts/${id}`} className="min-w-0 hover:underline">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium text-ink">{fullName}</p>
             {tier && <ClosenessTierBadge tier={tier} />}
@@ -60,7 +90,7 @@ export function DueFollowUpRow({
                     <span
                       className={cn(
                         "mx-1.5",
-                        due?.overdue && i === 1 && "text-amber-700 dark:text-amber-300 font-medium"
+                        due?.overdue && i === 1 && "text-amber-700 dark:text-warning font-medium"
                       )}
                     >
                       ·
@@ -68,7 +98,7 @@ export function DueFollowUpRow({
                   )}
                   <span
                     className={cn(
-                      due?.overdue && i === 1 && "font-medium text-amber-700 dark:text-amber-300"
+                      due?.overdue && i === 1 && "font-medium text-amber-700 dark:text-warning"
                     )}
                   >
                     {part}
@@ -77,7 +107,7 @@ export function DueFollowUpRow({
               ))}
             </p>
           )}
-        </Link>
+        </IntentLink>
       </div>
       <EasyFollowUp
         contactId={id}

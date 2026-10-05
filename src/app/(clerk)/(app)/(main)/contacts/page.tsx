@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import type { ContactSort } from "@/lib/contacts-page";
 import { Copy, Plus } from "lucide-react";
@@ -16,6 +17,7 @@ import { ContactsList } from "@/components/contacts/contacts-list";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 
 export default async function ContactsPage({
@@ -30,6 +32,8 @@ export default async function ContactsPage({
     quiet?: string;
     letter?: string;
     tag?: string;
+    /** Marks one import's new people in the list (`ContactsList` draws them in yellow). */
+    importId?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -49,6 +53,7 @@ export default async function ContactsPage({
     sort,
     letter: params.letter,
     tag: params.tag,
+    importId: params.importId,
   };
 
   const filtersActive = Boolean(
@@ -60,14 +65,17 @@ export default async function ContactsPage({
       quiet !== null
   );
 
-  const [page, letters, planOverview, duplicateCount] = await Promise.all([
+  // The duplicates button streams in behind the list (`DuplicatesButton` below): its count
+  // is a self-join over the whole network, two round trips deep, and it was the slowest
+  // thing in this `Promise.all`, so it decided when the list appeared. The quota notice
+  // stays here — it renders a line above the list for every free account, and arriving
+  // late it would shove the list down after it had painted.
+  const [page, letters, planOverview] = await Promise.all([
     // One page, not the whole network. Filtering, searching and ordering all happen in
     // Postgres now, so this costs the same whether the user knows 50 people or 50,000.
     listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE }),
     listContactLetters(),
     getPlanOverview(),
-    // Cheap and capped; decides whether the review entry point appears at all.
-    countDuplicates(),
   ]);
 
   return (
@@ -86,22 +94,12 @@ export default async function ContactsPage({
       }
       actions={
         <>
-          {duplicateCount > 0 ? (
-            <Link
-              href="/contacts/duplicates"
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              <Copy className="mr-1 h-4 w-4" aria-hidden />
-              {duplicateCount >= 99 ? "99+ duplicates" : `${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`}
-            </Link>
-          ) : null}
+          {/* No fallback: the button only exists when there are duplicates, so it arriving
+              a beat late is indistinguishable from it being there. */}
+          <Suspense fallback={null}>
+            <DuplicatesButton />
+          </Suspense>
           <RefreshContactsButton />
-          <Link
-            href="/capture"
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            AI capture
-          </Link>
           <Link
             href="/contacts/new"
             className={cn(
@@ -115,6 +113,7 @@ export default async function ContactsPage({
         </>
       }
     >
+      <RenderStamp />
       <div className="space-y-6">
         <ContactQuotaNotice
           used={planOverview.usage.used}
@@ -129,6 +128,7 @@ export default async function ContactsPage({
           initialQuiet={quiet === null ? "" : String(quiet)}
           initialTag={params.tag || ""}
           initialLetter={params.letter || ""}
+          importId={params.importId}
         >
           {/*
             Keyed on the filters so a new query starts from a clean list rather than appending
@@ -137,7 +137,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, params.tag, String(quiet), sort].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, params.tag, String(quiet), sort, params.importId].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}
@@ -148,5 +148,19 @@ export default async function ContactsPage({
         </ContactsFilters>
       </div>
     </PeopleListShell>
+  );
+}
+
+/** Cheap and capped; decides whether the review entry point appears at all. */
+async function DuplicatesButton() {
+  const duplicateCount = await countDuplicates().catch(() => 0);
+  if (duplicateCount <= 0) return null;
+  return (
+    <Link href="/contacts/duplicates" className={cn(buttonVariants({ variant: "outline" }))}>
+      <Copy className="mr-1 h-4 w-4" aria-hidden />
+      {duplicateCount >= 99
+        ? "99+ duplicates"
+        : `${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`}
+    </Link>
   );
 }

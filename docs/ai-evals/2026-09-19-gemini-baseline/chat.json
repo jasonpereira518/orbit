@@ -1,0 +1,81 @@
+{
+  "label": "baseline-chat",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "date": "2026-09-20T00:26:10.302Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 1,
+  "tasks": {
+    "chat": {
+      "cases": 15,
+      "metrics": {
+        "mentionRecall": 0.9047619047619048,
+        "retrievalRecall": 1
+      },
+      "misses": [
+        "chat-13-location-canada"
+      ],
+      "p50LatencyMs": 6656,
+      "costMicros": 159576,
+      "costPerCaseMicros": 10638.4,
+      "usage": [
+        {
+          "operation": "chat.answer",
+          "model": "gemini-3.5-flash",
+          "calls": 15,
+          "failures": 0,
+          "inputTokens": 15169,
+          "outputTokens": 12296,
+          "cachedInputTokens": 0,
+          "costMicros": 133421,
+          "unpriced": 0
+        },
+        {
+          "operation": "chat.rerank",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 15,
+          "failures": 0,
+          "inputTokens": 21136,
+          "outputTokens": 12003,
+          "cachedInputTokens": 0,
+          "costMicros": 23291,
+          "unpriced": 0
+        },
+        {
+          "operation": "chat.understand",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 15,
+          "failures": 0,
+          "inputTokens": 4536,
+          "outputTokens": 1152,
+          "cachedInputTokens": 0,
+          "costMicros": 2864,
+          "unpriced": 0
+        },
+        {
+          "operation": "search.embed",
+          "model": "gemini-embedding-001",
+          "calls": 15,
+          "failures": 0,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 15
+        },
+        {
+          "operation": "search.embed.batch",
+          "model": "gemini-embedding-001",
+          "calls": 1,
+          "failures": 0,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 1
+        }
+      ]
+    }
+  }
+}

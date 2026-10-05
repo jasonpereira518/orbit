@@ -1,9 +1,8 @@
-import { and, eq, gt, gte, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { billingEvents, errorEvents, usageEvents, userSettings } from "@/db/schema";
+import { billingEvents, errorEvents, usageEvents } from "@/db/schema";
 import { managedAiSwitchedOff, managedCostSql, managedKeysConfigured } from "@/lib/ai-access";
 import { ERROR_SOURCES } from "@/lib/error-events";
-import { MANAGED_AI_BUDGET, managedWindow } from "@/lib/managed-ai-policy";
 import type { ManagedAiOpsFacts } from "@/lib/ops-alerts";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -11,49 +10,55 @@ const DAY_MS = 24 * HOUR_MS;
 
 /**
  * The aggregate picture of Orbit's managed AI keys, for the ops sweep's catalogue
- * (`managedAiConditions` in `ops-alerts.ts`). Five small reads, all on indexed columns:
- * spend windows ride `usage_events_created_idx`, the at-cap count rides the per-user index
- * over one month, and the Lifetime counts are a scan of a table with one row per account.
+ * (`managedAiConditions` in `ops-alerts.ts`): who is on included AI, what it cost, the
+ * revenue behind it, who has run dry, and which provider keys are failing. Five small reads,
+ * all on indexed columns or small tables.
  */
 export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFacts> {
   const db = await getDb();
   const hourAgo = new Date(now.getTime() - HOUR_MS);
   const dayAgo = new Date(now.getTime() - DAY_MS);
   const monthAgo = new Date(now.getTime() - 30 * DAY_MS);
-  const { start: monthStart } = managedWindow(now);
   const orbit = eq(usageEvents.keyOwner, "orbit");
+  // Deepgram rows carry keyOwner "orbit" too (Orbit's own key), but they are metered by
+  // `speech_usage`, not credits — without this, voice-note volume would inflate the
+  // spend-spike and margin alerts below.
+  const notDeepgram = ne(usageEvents.provider, "deepgram");
 
-  const [lifetime, spend, cash, atCap, failing] = await Promise.all([
-    // `resolvePlan`'s Lifetime branch: a lifetime comp, or a purchase with no comp over it.
-    db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(userSettings)
-      .where(
-        or(
-          eq(userSettings.compedPlan, "lifetime"),
-          and(isNull(userSettings.compedPlan), sql`${userSettings.lifetimePurchasedAt} IS NOT NULL`),
-        ),
-      ),
+  const [included, spend, revenue, dry, failing] = await Promise.all([
+    // `resolvePlan`, in SQL, narrowed to the plans with included AI.
+    db.execute(sql`
+      SELECT count(*)::int AS n FROM user_settings s
+       WHERE CASE
+               WHEN s.comped_plan IS NOT NULL THEN s.comped_plan
+               WHEN s.lifetime_purchased_at IS NOT NULL THEN 'lifetime'
+               WHEN s.subscription_plan IN ('orbit', 'max')
+                AND (s.subscription_status = 'active' OR s.subscription_period_end > now())
+                 THEN s.subscription_plan
+               ELSE 'free'
+             END IN ('orbit', 'max')
+    `),
     db
       .select({
         day: sql<string>`coalesce(sum(${managedCostSql()}) FILTER (WHERE ${usageEvents.createdAt} > ${dayAgo}), 0)::bigint`,
         month: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
       })
       .from(usageEvents)
-      .where(and(orbit, gt(usageEvents.createdAt, monthAgo))),
+      .where(and(orbit, gt(usageEvents.createdAt, monthAgo), notDeepgram)),
     db
       .select({ cents: sql<string>`coalesce(sum(${billingEvents.amountCents}), 0)::bigint` })
       .from(billingEvents)
-      .where(eq(billingEvents.kind, "lifetime")),
+      .where(and(inArray(billingEvents.kind, ["payment", "credit_pack"]), gt(billingEvents.effectiveAt, monthAgo))),
     db.execute(sql`
-      SELECT count(*)::int AS n FROM (
-        SELECT ${usageEvents.userId}
-          FROM ${usageEvents}
-         WHERE ${usageEvents.keyOwner} = 'orbit' AND ${usageEvents.createdAt} >= ${monthStart}
-         GROUP BY ${usageEvents.userId}
-        HAVING sum(${managedCostSql()}) >= ${MANAGED_AI_BUDGET.monthlyCostMicros}
-            OR count(*) >= ${MANAGED_AI_BUDGET.monthlyCalls}
-      ) capped
+      SELECT count(DISTINCT a.user_id)::int AS n
+        FROM credit_grants a
+       WHERE a.kind = 'allowance' AND a.status = 'active'
+         AND a.period_start <= now() AND a.period_end > now()
+         AND a.micros_remaining = 0
+         AND NOT EXISTS (
+           SELECT 1 FROM credit_grants p
+            WHERE p.user_id = a.user_id AND p.kind = 'pack' AND p.status = 'active' AND p.micros_remaining > 0
+         )
     `),
     db
       .selectDistinct({ provider: sql<string | null>`${errorEvents.context}->>'provider'` })
@@ -64,11 +69,11 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
   return {
     configured: Object.values(managedKeysConfigured()).some(Boolean),
     switchedOff: managedAiSwitchedOff(),
-    lifetimeAccounts: lifetime[0]?.n ?? 0,
+    includedAccounts: Number(rowsOf<{ n: number }>(included)[0]?.n ?? 0),
     spentLast24hMicros: Number(spend[0]?.day ?? 0),
     spentLast30dMicros: Number(spend[0]?.month ?? 0),
-    lifetimeCashCents: Number(cash[0]?.cents ?? 0),
-    accountsAtCap: Number(rowsOf<{ n: number }>(atCap)[0]?.n ?? 0),
+    revenueLast30dCents: Number(revenue[0]?.cents ?? 0),
+    accountsAtCap: Number(rowsOf<{ n: number }>(dry)[0]?.n ?? 0),
     failingProviders: failing.map((f) => f.provider ?? "unknown"),
   };
 }

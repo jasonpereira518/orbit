@@ -1,14 +1,8 @@
 import type { NextRequest } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
-import { decideStripeEvent } from "@/lib/billing-stripe";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
-import {
-  applyStripeDecision,
-  isStripeEventProcessed,
-  markStripeEventProcessed,
-  readDecideContext,
-} from "@/lib/stripe-fulfilment";
+import { processStripeEvent } from "@/lib/stripe-event-processor";
 import { WEBHOOK_REASONS, recordWebhookDelivery } from "@/lib/webhook-deliveries";
 import { reportError } from "@/lib/report-error";
 
@@ -18,7 +12,8 @@ import { reportError } from "@/lib/report-error";
  * DEDUPE, ORDER AND RETRIES. A delivery whose event id is already in
  * `stripe_processed_events` answers 200 and touches nothing. Only `handled` events are
  * recorded there, so an event ignored for a reason that can change is re-evaluated on
- * retry. Reading context and applying the decision live in `@/lib/stripe-fulfilment`,
+ * retry. The per-event path is `processStripeEvent` (`@/lib/stripe-event-processor`); reading
+ * context and applying the decision live in `@/lib/stripe-fulfilment`,
  * which books before it mirrors: see that module for why a retry can never lose a row.
  */
 
@@ -59,7 +54,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    if (await isStripeEventProcessed(event.id)) {
+    const processed = await processStripeEvent(event, {
+      updateSubscription: (id, params) => getStripe().subscriptions.update(id, params),
+    });
+    if (processed.duplicate) {
       await recordWebhookDelivery({
         source: "stripe",
         eventId: event.id,
@@ -70,13 +68,7 @@ export async function POST(req: NextRequest) {
       });
       return new Response("OK", { status: 200 });
     }
-
-    const ctx = await readDecideContext(event, new Date());
-    const decision = decideStripeEvent(event, ctx);
-    await applyStripeDecision(decision);
-    if (decision.outcome === "handled") {
-      await markStripeEventProcessed(event.id, event.type);
-    }
+    const { decision } = processed;
 
     if (decision.outcome === "ignored" && decision.reason === "missing_user_id") {
       console.error(
@@ -94,7 +86,8 @@ export async function POST(req: NextRequest) {
     // Kept from Phase 0: /admin/health reads this to show when access was withdrawn.
     const revoked =
       decision.mirror?.type === "lifetime_revoked" ||
-      decision.mirror?.type === "subscription_revoked"
+      decision.mirror?.type === "subscription_revoked" ||
+      decision.mirror?.type === "credit_pack_revoked"
         ? decision.mirror.reason
         : null;
     await recordWebhookDelivery({

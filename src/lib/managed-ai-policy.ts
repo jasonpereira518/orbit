@@ -1,19 +1,22 @@
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
-import type { Plan } from "@/lib/plan-limits";
+import { BACKGROUND_AI_OPERATIONS } from "@/lib/ai-operations";
+import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 
 /**
  * Who may run AI on whose key — the whole rule, as pure functions.
  *
- * THE RULE. Every AI call runs on the user's own key (BYOK) unless the account is on Orbit
- * Lifetime, in which case Orbit's own managed key is used for any provider the user has not
- * brought a key for. A Lifetime user who HAS a key keeps using it: buying Lifetime never
- * silently moves someone's traffic onto a different key, and removing their key is the one
- * explicit way to switch to Orbit's. Orbit Pro is a subscription for the rest of the
- * product and is BYOK like Free — the rule is Lifetime or nothing.
+ * THE RULE (pricing v2). Free is bring-your-own-key. Orbit Pro and Orbit Max include AI on
+ * Orbit's own provider keys, metered in credits (`src/lib/credits/`). Orbit Lifetime is every
+ * Max entitlement EXCEPT this one: its AI runs on its own key only.
  *
- * Demo accounts (every account on `next dev`, and the showcase account) count as Lifetime
- * here, the same exemption `getEntitlements` already gives them. On a laptop the "managed"
- * key is the developer's own `.env.local` key, which is exactly what local dev always used.
+ * A paid account may still save its own key. Which one runs by default is the account's
+ * choice (`user_settings.ai_key_preference`): `included` puts Orbit's key first, `own` the
+ * saved key; unset keeps the pre-v2 behaviour, where a saved key wins — nobody who added a
+ * key has their traffic silently moved. Calls on the account's own key never use credits.
+ *
+ * Demo accounts on `next dev` count as eligible and run unmetered on the developer's own
+ * `.env.local` keys. A DEPLOYED demo (the showcase account) is NOT exempt: it follows the
+ * plan it actually holds, so it cannot spend Orbit's money without credits.
  *
  * Pure on purpose: no `@/db`, no `process.env`, no SDKs, so the decision can be pinned by a
  * smoke test without a database and imported by client components that explain it. The
@@ -23,34 +26,44 @@ import type { Plan } from "@/lib/plan-limits";
 export type AiKeySource = "personal" | "managed";
 
 /**
+ * MANAGED AI IS ON (pricing v2). A code constant rather than an env var, so no deployment
+ * flips the model by accident. Two switches still stop it without a deploy: the
+ * `ORBIT_MANAGED_AI=off` env kill switch and the admin console's runtime pause
+ * (`site_settings.managed_ai_paused`, which reads as PAUSED in production until set — the
+ * legal text describing managed AI has to ship first).
+ */
+export const MANAGED_AI_ENABLED: boolean = true;
+
+/**
  * Why AI cannot run for this account right now.
  *
- *  - `key_required`         not on Lifetime and no key of their own for what was asked
- *  - `managed_unavailable`  on Lifetime, no key of their own, and Orbit has no managed key
- *                           configured for any provider (or the kill switch is on)
- *  - `managed_limit`        on Lifetime, no key of their own, and this month's managed
- *                           allowance is spent
- *  - `upgrade_pending`      a Lifetime payment exists but has not cleared yet
+ *  - `key_required`         Free or Lifetime (or an included-AI account whose AI is paused)
+ *                           with no key of their own for what was asked
+ *  - `managed_unavailable`  Pro or Max, no key of their own, and Orbit holds no managed key
+ *                           for any provider right now
+ *  - `managed_limit`        Pro or Max on Orbit's key, and the credits are spent: the hard
+ *                           stop. Buy a pack, upgrade to Max, or use your own key.
  */
-export type AiAccessDenial =
-  | "key_required"
-  | "managed_unavailable"
-  | "managed_limit"
-  | "upgrade_pending";
+export type AiAccessDenial = "key_required" | "managed_unavailable" | "managed_limit";
 
 /** Why an account may use Orbit's managed keys at all. Null = it may not. */
-export type ManagedEligibility = "lifetime" | "demo" | null;
+export type ManagedEligibility = "plan" | "demo" | null;
 
 export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibility {
-  if (plan === "lifetime") return "lifetime";
   if (isDemo) return "demo";
+  if (MANAGED_AI_ENABLED && PLAN_CONFIG[plan].features.hostedAi) return "plan";
   return null;
 }
+
+/** Which key runs by default when an eligible account has both. Null = the saved key wins. */
+export type AiKeyPreference = "included" | "own" | null;
 
 /**
  * The order Orbit reaches for its own keys when the user's chosen provider has none
  * configured. Cheapest first: the managed path is paid for once, at checkout, forever.
  */
+// OpenRouter is deliberately absent: Orbit holds no OpenRouter key, so it is never a managed
+// provider, and this order is exactly the set of providers Orbit will ever pay for.
 export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["gemini", "openai", "anthropic"];
 
 /**
@@ -61,50 +74,32 @@ export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["gemini", "openai"
  * would record no cost and slip under the dollar cap (`smoke-ai-access.ts` enforces this).
  */
 export const MANAGED_MODELS: Record<AiProvider, readonly string[]> = {
-  gemini: ["gemini-3.5-flash", "gemini-3.1-flash-lite"],
+  gemini: ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
   openai: ["gpt-4o-mini", "gpt-4.1-mini"],
   anthropic: ["claude-haiku-4-5"],
+  // Unreachable: MANAGED_PROVIDER_ORDER excludes openrouter, so this arm exists only to
+  // satisfy the Record — Orbit never selects it as a managed provider.
+  openrouter: [],
 };
 
 export const MANAGED_DEFAULT_MODELS: Record<AiProvider, string> = {
-  gemini: "gemini-3.5-flash",
+  gemini: "gemini-3.8-flash",
   openai: "gpt-4o-mini",
   anthropic: "claude-haiku-4-5",
+  // Unreachable for the same reason as MANAGED_MODELS.openrouter above.
+  openrouter: "google/gemini-3.8-flash",
 };
 
 export function managedModel(provider: AiProvider, requested: string | null | undefined): string {
+  // The allowlist protects Orbit's money. With managed AI off the only key behind this path
+  // is the developer's own, so `next dev` keeps running whatever model Settings asks for.
+  if (!MANAGED_AI_ENABLED) return requested || MANAGED_DEFAULT_MODELS[provider];
   if (requested && MANAGED_MODELS[provider].includes(requested)) return requested;
   return MANAGED_DEFAULT_MODELS[provider];
 }
 
 /**
- * THE CAP. A one-time payment funding open-ended inference is only safe with a ceiling, so
- * every managed call counts against a monthly allowance per account (calendar month, UTC).
- *
- * The NUMBERS are a pricing decision, not an engineering one. Jason chose $1.00 a month
- * (Sep 16 2026, over $0.50 and $2.50): roughly 140 chat answers or 200 note captures on
- * Gemini 3.5 Flash. At that ceiling the $25 intro price covers two years of maximal use and
- * the $75 standard price six; typical use is far lower. Change it here, and only here.
- *
- *  - `monthlyCostMicros`  estimated provider spend, from `usage_events.estimated_cost_micros`
- *  - `monthlyCalls`       a runaway-loop guard that holds even where cost is unknown
- *  - `backgroundShare`    how much of the month bulk background work may use, so a 3,000-row
- *                         LinkedIn import cannot spend the allowance a person needs for chat
- */
-export const MANAGED_AI_BUDGET = {
-  monthlyCostMicros: 1_000_000,
-  monthlyCalls: 2_000,
-  backgroundShare: 0.5,
-} as const;
-
-export type ManagedBudget = {
-  monthlyCostMicros: number;
-  monthlyCalls: number;
-  backgroundShare: number;
-};
-
-/**
- * What an UNPRICED managed call is charged against the allowance, by kind.
+ * What an UNPRICED managed call is charged against the credits, by kind.
  *
  * Two providers report no usage: Whisper bills per second of audio and returns no usage
  * object, and Gemini's embed endpoint returns no metadata. `usage_events` stores null for
@@ -119,58 +114,56 @@ export const UNPRICED_CALL_MICROS: Record<"transcription" | "embedding" | "other
 };
 
 /**
- * Operations that are bulk work running on the user's behalf rather than something they
- * are waiting on. They stop at `backgroundShare` of the allowance.
+ * Operations that are bulk work running on the user's behalf rather than something they are
+ * waiting on. On Orbit's key they may only spend while MORE than `BACKGROUND_FLOOR_SHARE` of
+ * the plan's monthly allowance is still spendable — so a 3,000-row import can never spend the
+ * credits a person needs for chat and capture.
  */
-export const BACKGROUND_OPERATIONS: ReadonlySet<string> = new Set([
-  "import.enrich",
-  "import.linkedin.timeline",
-  "recruiter.scan",
-  "search.embed.batch",
-]);
+export const BACKGROUND_OPERATIONS: ReadonlySet<string> = BACKGROUND_AI_OPERATIONS;
+export const BACKGROUND_FLOOR_SHARE = 0.5;
+
+/**
+ * What a managed call holds against the balance while it runs, by the operation's tier —
+ * a little above the measured typical cost (docs/ai-evals: a chat answer ≈ $0.0025, a capture
+ * ≈ $0.0086), so near zero the hard stop errs toward refusing rather than overshooting.
+ * Settlement always charges the real cost.
+ */
+export function holdEstimateMicros(tier: string | undefined): number {
+  switch (tier) {
+    case "embed":
+      return 1_000;
+    case "fast":
+    case "decision":
+      return 5_000;
+    case "transcribe":
+      return 20_000;
+    case "vision":
+      return 30_000;
+    default:
+      return 20_000;
+  }
+}
 
 /**
  * When the ops sweep speaks up about managed spend (`src/lib/ops-alerts.ts`).
  *
- * The per-account cap bounds any ONE account; these watch the aggregate, which the cap
- * bounds only by `accounts × cap`. `runwayYears` is the unit-economics line: if the last 30
- * days' managed spend, annualised, would consume every Lifetime dollar ever booked in fewer
- * than this many years, the pricing is not covering the promise.
+ * Credits bound any ONE account; these watch the aggregate. `maxCostShare` is the
+ * unit-economics line: if the last 30 days of managed AI cost more than this share of the
+ * last 30 days of subscription and pack revenue, the allowances are not covered by the
+ * prices. `dailySpikeMicros` is fifty Pro allowances in one day.
  */
 export const MANAGED_AI_ALERTS = {
-  dailySpikeMicros: 5_000_000,
-  runwayYears: 4,
-  /** Below this 30-day spend the runway figure is noise, not a trend. */
+  dailySpikeMicros: 10_000_000,
+  maxCostShare: 0.5,
+  /** Below this 30-day spend the margin figure is noise, not a trend. */
   runwayMinSpendMicros: 1_000_000,
 } as const;
 
-/** The current allowance window: this calendar month in UTC. */
+/** A calendar month in UTC — the window the ops sweep reports managed spend over. */
 export function managedWindow(now: Date): { start: Date; resetsAt: Date } {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const resetsAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
   return { start, resetsAt };
-}
-
-export type ManagedUsage = { spentMicros: number; calls: number };
-
-export type ManagedAllowance = ManagedUsage & {
-  limitMicros: number;
-  callLimit: number;
-  /** ISO timestamp — the allowance crosses the server/client boundary as a string. */
-  resetsAt: string;
-};
-
-/** Whether one more managed call fits. Background work gets only its share. */
-export function managedCallAllowed(
-  usage: ManagedUsage,
-  operation: string,
-  budget: ManagedBudget = MANAGED_AI_BUDGET,
-): boolean {
-  const share = BACKGROUND_OPERATIONS.has(operation) ? budget.backgroundShare : 1;
-  return (
-    usage.spentMicros < budget.monthlyCostMicros * share &&
-    usage.calls < budget.monthlyCalls * share
-  );
 }
 
 /* ------------------------------------------------------------------ key selection ------ */
@@ -182,6 +175,8 @@ export function managedCallAllowed(
  */
 export type KeyFacts = {
   eligibility: ManagedEligibility;
+  /** The account's default when it could use either key. */
+  preference?: AiKeyPreference;
   selectedProvider: AiProvider;
   /** The model already resolved for the selected provider (`resolveAiModel`). */
   selectedModel: string;
@@ -199,14 +194,14 @@ function anyManaged(facts: KeyFacts) {
 }
 
 /**
- * Denial for "nothing usable". Only a real Lifetime account was PROMISED Orbit's AI, so only
- * it hears "Orbit's AI isn't available"; a demo account with no local key is simply missing
+ * Denial for "nothing usable". Only a Pro or Max account was PROMISED Orbit's AI, so only it
+ * hears "Orbit's AI isn't available"; a demo account with no local key is simply missing
  * one, like anybody else.
  */
 export function nothingUsable(
   eligibility: ManagedEligibility,
 ): { ok: false; reason: "key_required" | "managed_unavailable" } {
-  return { ok: false, reason: eligibility === "lifetime" ? "managed_unavailable" : "key_required" };
+  return { ok: false, reason: eligibility === "plan" ? "managed_unavailable" : "key_required" };
 }
 
 function denied(facts: KeyFacts) {
@@ -216,15 +211,16 @@ function denied(facts: KeyFacts) {
 /**
  * Chat, capture parsing, drafts, briefs — anything that runs "the user's model".
  *
- * Their own key for their chosen provider wins, at their chosen model. Otherwise, only for
+ * Their own key for their chosen provider wins, at their chosen model — unless an eligible
+ * account has chosen `included`, in which case Orbit's key comes first. Otherwise, only for
  * an eligible account, Orbit's key: the chosen provider if Orbit holds one, else the
  * cheapest provider Orbit does hold, at a managed model. A key they saved for some OTHER
- * provider is not used for completions — same as before this module existed; the provider
- * they picked is the one they are shown.
+ * provider is not used for completions; the provider they picked is the one they are shown.
  */
 export function chooseCompletionKey(facts: KeyFacts): KeyChoice {
   const selected = facts.selectedProvider;
-  if (facts.personal[selected]) {
+  const includedFirst = facts.preference === "included" && Boolean(facts.eligibility) && anyManaged(facts);
+  if (facts.personal[selected] && !includedFirst) {
     return { ok: true, provider: selected, source: "personal", model: facts.selectedModel };
   }
   if (!facts.eligibility || !anyManaged(facts)) return denied(facts);
@@ -239,18 +235,33 @@ export function chooseCompletionKey(facts: KeyFacts): KeyChoice {
   };
 }
 
-const EMBEDDING_ORDER: readonly EmbeddingBackend[] = ["openai", "gemini"];
+/**
+ * Personal-key preference for embeddings, cheapest usable first.
+ *
+ * `openrouter` is LAST on purpose, and it is the one member that is not preferred when it
+ * is the selected provider. Stored vectors carry no record of which backend wrote them, and
+ * `saveAiSettings` reacts to a backend change by DELETING every `contact_embeddings` row so
+ * the two spaces are never compared. That is correct, and it is also a full re-index paid
+ * for in the person's own API spend — not something to hand someone for pressing Connect.
+ * So an account that already has a Gemini or OpenAI key keeps embedding with it, and
+ * OpenRouter embeds only for an account that has nothing else.
+ */
+const EMBEDDING_ORDER: readonly EmbeddingBackend[] = ["openai", "gemini", "openrouter"];
 
 /**
  * Search embeddings. Anthropic has none, so an Anthropic user embeds with OpenAI or Gemini.
  *
  * Any personal OpenAI/Gemini key beats any managed one — the chosen provider first — so the
- * embedding space only moves onto Orbit's key when the user has nothing of their own.
+ * embedding space only moves onto Orbit's key when the user has nothing of their own. The
+ * `included` preference deliberately does NOT apply here: stored vectors are tied to their
+ * backend, and moving them means deleting and re-embedding the whole index.
  */
 export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend> {
   const selected = facts.selectedProvider;
+  // Anthropic has no embeddings API at all, and OpenRouter must not displace an existing
+  // key (see EMBEDDING_ORDER) — so neither is promoted to the front.
   const order: EmbeddingBackend[] =
-    selected === "anthropic"
+    selected === "anthropic" || selected === "openrouter"
       ? [...EMBEDDING_ORDER]
       : [selected, ...EMBEDDING_ORDER.filter((p) => p !== selected)];
 
@@ -263,22 +274,6 @@ export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend>
   const managed = managedOrder.find((p) => facts.managed[p]);
   if (managed) return { ok: true, provider: managed, source: "managed", model: "" };
   return denied(facts);
-}
-
-/**
- * One named provider, for chains that walk several (transcription: Wispr, Whisper, Gemini).
- * Null when neither the user nor, for an eligible account, Orbit has a key for it.
- */
-export function chooseProviderKey(
-  facts: Pick<KeyFacts, "eligibility"> & {
-    personal: Partial<Record<string, boolean>>;
-    managed: Partial<Record<string, boolean>>;
-  },
-  provider: string,
-): AiKeySource | null {
-  if (facts.personal[provider]) return "personal";
-  if (facts.eligibility && facts.managed[provider]) return "managed";
-  return null;
 }
 
 /**

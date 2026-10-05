@@ -62,9 +62,8 @@ function yesterdayYmd() {
 /** Why a note was saved without a summary, completing "…, so it was saved as written". */
 const PLAIN_SAVE_REASON: Record<AiAccessDenial, string> = {
   key_required: "no AI key",
-  managed_limit: "this month’s included AI is used",
+  managed_limit: "your AI credits are used",
   managed_unavailable: "Orbit’s AI is unavailable right now",
-  upgrade_pending: "your Lifetime payment is still clearing",
 };
 
 export function LogInteractionSheet({

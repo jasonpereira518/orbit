@@ -31,6 +31,11 @@ function adminIds(): Set<string> {
   );
 }
 
+/** The configured operator ids, for callers that filter by them (traffic analytics). */
+export function adminUserIds(): string[] {
+  return [...adminIds()];
+}
+
 /**
  * Gated on `isClerkConfigured()` rather than `!isDemoMode()` on purpose.
  *

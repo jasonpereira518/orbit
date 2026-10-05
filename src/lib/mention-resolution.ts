@@ -19,7 +19,9 @@ export type MentionMatchedBy =
   | "name_company"
   | "first_name_unique"
   /** The user chose them from the `@` menu. Not a guess, and never re-litigated. */
-  | "user_pick";
+  | "user_pick"
+  /** The decision model read the sentence and picked them (decisions/capture.ts). */
+  | "decision";
 export type ResolvedMention = { text: string; context: string | null; nearPerson: string | null; contactId: string; confidence: number; matchedBy: MentionMatchedBy };
 export type UnresolvedMention = { text: string; context: string | null; nearPerson: string | null };
 

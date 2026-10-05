@@ -14,15 +14,18 @@ const AppStarfield = dynamic(
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { useSmallSky } from "@/components/graph/use-small-sky";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
-import { PreviewUnreleasedBanner } from "@/components/layout/preview-unreleased-banner";
+import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
+import { PlanDowngradeWatcher } from "@/components/celebration/plan-downgrade-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { ComposeHost } from "@/components/email/compose-host";
+import { HiddenSurfacesProvider } from "@/components/layout/hidden-surfaces";
 import { Button } from "@/components/ui/button";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { Search } from "lucide-react";
@@ -45,16 +48,19 @@ const FloatingAskBar = dynamic(
 
 export function AppShell({
   children,
+  userId,
   clerkOn,
   demoMode,
   theme,
   plan,
   hidden,
   hiddenForUsers,
+  comingSoon,
+  navOrder,
   viewingAsUser,
-  previewingUnreleased,
 }: {
   children: React.ReactNode;
+  userId: string;
   clerkOn: boolean;
   demoMode: boolean;
   theme: ThemePreference | null;
@@ -63,14 +69,18 @@ export function AppShell({
   hidden: string[];
   /** Surface keys hidden from ordinary users, for the operator's "Hidden" tags. */
   hiddenForUsers: string[];
+  /** Page keys marked coming soon, for the nav's "Soon" tags. */
+  comingSoon: string[];
+  /** Operator-chosen sidebar order, as surface keys. */
+  navOrder: string[];
   viewingAsUser: boolean;
   /** True when an admin has opted into seeing real pages behind a coming-soon screen. */
-  previewingUnreleased: boolean;
 }) {
   const pathname = usePathname();
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
   // once here rather than in each consumer on every render.
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
+  const comingSoonSet = useMemo(() => new Set(comingSoon), [comingSoon]);
   const hiddenForUsersSet = useMemo(
     () => new Set(hiddenForUsers),
     [hiddenForUsers]
@@ -81,7 +91,13 @@ export function AppShell({
     pathname === "/settings" || pathname.startsWith("/settings/");
   const isConstellation =
     pathname === "/graph" || pathname.startsWith("/graph/");
-  const isViewportLocked = isChat || isConstellation;
+  // The reminders page is a three-pane workspace whose panes scroll on their own, so it
+  // fills the viewport like /chat and /graph rather than scrolling as a document.
+  const isReminders = pathname === "/reminders";
+  // Knowledge is a list beside a dossier, each scrolling inside its own pane under a header
+  // that holds still, so it is locked to the viewport as well.
+  const isKnowledge = pathname === "/knowledge";
+  const isViewportLocked = isChat || isConstellation || isReminders || isKnowledge;
   const smallSky = useSmallSky();
   // The ask bar is not a link to /chat — it calls `askNetwork` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
@@ -91,6 +107,10 @@ export function AppShell({
     !isChat &&
     !isSettings &&
     !isConstellation &&
+    // A floating bar over a viewport-locked queue would sit on its last rows and on the
+    // detail pane. ⌘K still asks from there (the palette falls back to /chat).
+    !isReminders &&
+    !isKnowledge &&
     !hiddenSet.has("page.chat");
   // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
   // the page has no bar, and nowhere on /chat itself (its composer is already right there)
@@ -106,6 +126,7 @@ export function AppShell({
       <MotionConfig reducedMotion="user">
         <div className="min-h-screen bg-background">
           <ThemeSync theme={theme} />
+          <ConnectivityBanner />
           {children}
         </div>
       </MotionConfig>
@@ -120,10 +141,10 @@ export function AppShell({
       {/* Transparent in dark so the portalled starfield behind this tree
           shows through; the body still paints `--background` either way. */}
       <div className="flex h-dvh flex-col">
+        <ConnectivityBanner />
         {viewingAsUser && (
           <ViewAsUserBanner hiddenCount={hiddenForUsersSet.size} />
         )}
-        {previewingUnreleased && <PreviewUnreleasedBanner />}
         <div
           data-warp-craft
           className="flex min-h-0 flex-1 overflow-hidden bg-background dark:bg-transparent"
@@ -143,10 +164,12 @@ export function AppShell({
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
+          <PlanDowngradeWatcher key={userId} userId={userId} plan={plan} />
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
           <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
+          <ComposeHost userId={userId} hidden={hiddenSet} />
           <div
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"
             style={{ viewTransitionName: "app-sidebar" }}
@@ -158,9 +181,12 @@ export function AppShell({
               plan={plan}
               hidden={hiddenSet}
               hiddenForUsers={hiddenForUsersSet}
+              comingSoon={comingSoonSet}
+              navOrder={navOrder}
             />
           </div>
           <main
+            id="app-main-scroll"
             className={cn(
               "relative flex h-full min-h-0 flex-1 flex-col",
               isViewportLocked
@@ -243,14 +269,14 @@ export function AppShell({
                 "pr-[calc(1rem+var(--content-rail-gutter,0px))]",
                 "md:pr-[calc(2.5rem+var(--content-rail-gutter,0px))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
                   : isSettings
-                    ? "flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-8"
-                    : "flex-1 pb-[calc(9.25rem+env(safe-area-inset-bottom))] md:pb-24",
+                    ? "flex-1 pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
+                    : "flex-1 pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:pb-24",
                 isConstellation && "py-4 md:py-5",
               )}
             >
-              {children}
+              <HiddenSurfacesProvider value={hiddenSet}>{children}</HiddenSurfacesProvider>
             </div>
 
             {showAskBar && <FloatingAskBar />}
@@ -258,6 +284,8 @@ export function AppShell({
               clerkOn={clerkOn}
               demoMode={demoMode}
               hidden={hiddenSet}
+              comingSoon={comingSoonSet}
+              navOrder={navOrder}
             />
           </main>
         </div>

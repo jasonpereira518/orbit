@@ -30,8 +30,14 @@ export type TourHotspot = {
   label: string;
 };
 
+/**
+ * The pages the tour stops on. Outreach stays in the tour's sidebar (as "soon", like the real
+ * one) but gets no stop: it hasn't shipped, and the tour only walks through what has.
+ */
+export type TourStepId = Exclude<TourNavKey, "outreach">;
+
 export type TourStep = {
-  id: TourNavKey;
+  id: TourStepId;
   navKey: TourNavKey | null;
   title: string;
   body: string;
@@ -131,9 +137,9 @@ export const TOUR_STEPS: TourStep[] = [
     id: "reminders",
     navKey: "reminders",
     title: "Reminders",
-    body: "Everything due or overdue lands here — filter by status and clear it in one click.",
+    body: "Everything due or overdue lands here, grouped by day — clear it in one click, or a whole selection at once.",
     hotspots: [
-      { id: "status", label: "Filter by Active, Done, or All." },
+      { id: "status", label: "Switch between Today, Upcoming, and Done." },
       { id: "reminder", label: "Overdue and type badges at a glance." },
       { id: "actions", label: "Mark done or snooze a week, right from the list." },
     ],
@@ -156,17 +162,6 @@ export const TOUR_STEPS: TourStep[] = [
     hotspots: [
       { id: "figure", label: "People linked into a constellation." },
       { id: "spica", label: "Brightest stars are your closest ties." },
-    ],
-  },
-  {
-    id: "outreach",
-    navKey: "outreach",
-    title: "Outreach",
-    body: "Run cold campaigns — find prospects, generate drafts, and send from your apps.",
-    hotspots: [
-      { id: "campaign", label: "Your campaigns live here." },
-      { id: "new", label: "Start a new cold outreach campaign." },
-      { id: "draft", label: "AI drafts messages you can edit & send." },
     ],
   },
 ];

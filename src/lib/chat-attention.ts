@@ -1,6 +1,8 @@
 import { and, desc, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiSuggestions, contacts } from "@/db/schema";
+import { CONTEXT_CODES as RADAR_CONTEXT_CODES } from "@/lib/radar/score";
+import { listPendingRecommendations } from "@/lib/radar/store";
 
 /**
  * The "who needs attention" half of chat grounding.
@@ -45,6 +47,51 @@ const DAY_MS = 86_400_000;
 // that already have the brief in hand need not know that.
 export { ATTENTION_PATTERNS, isAttentionQuestion } from "@/lib/chat-attention-match";
 
+/** How many overdue people the one-line summary names before it stops counting out loud. */
+const LITE_NAME_CAP = 5;
+
+/**
+ * The overdue queue as a single line, computed for EVERY question.
+ *
+ * `isAttentionQuestion` is a substring list, and a narrow one on purpose — the full brief
+ * carries an instruction to name those people and not plead ignorance, which would hijack
+ * "who do I know at Google?" if it fired on everything. But a narrow list has a cliff:
+ * "anyone slipping through the cracks?" uses none of its phrases, so the model was told
+ * nothing and answered that it had nothing, with eight overdue follow-ups sitting one query
+ * away.
+ *
+ * This is the other side of that trade — one factual line, no instruction to act on it. It
+ * costs one indexed read on a column the dashboard reads anyway, and it means the answer can
+ * never be "I don't know" about a fact the product already computed.
+ */
+export async function renderAttentionLite(userId: string): Promise<string | null> {
+  const db = await getDb();
+  const now = new Date();
+  const rows = await db.query.contacts
+    .findMany({
+      where: and(
+        eq(contacts.userId, userId),
+        isNotNull(contacts.nextFollowUpAt),
+        lte(contacts.nextFollowUpAt, now)
+      ),
+      columns: { id: true, fullName: true, preferredName: true, nextFollowUpAt: true },
+      orderBy: (c, { asc }) => [asc(c.nextFollowUpAt)],
+      limit: OVERDUE_CAP,
+    })
+    .catch(() => []);
+
+  if (!rows.length) return "No follow-up is overdue right now.";
+
+  const nowMs = now.getTime();
+  const named = rows.slice(0, LITE_NAME_CAP).map((c) => {
+    const days = daysBetween(c.nextFollowUpAt, nowMs) ?? 0;
+    return `${c.preferredName || c.fullName} (${days}d)`;
+  });
+  const more = rows.length > named.length ? `, +${rows.length - named.length} more` : "";
+  const total = rows.length === OVERDUE_CAP ? `${OVERDUE_CAP}+` : String(rows.length);
+  return `${total} follow-up${rows.length === 1 ? " is" : "s are"} overdue: ${named.join(", ")}${more}.`;
+}
+
 function daysBetween(from: Date | string | null, now: number) {
   if (!from) return null;
   const t = new Date(from).getTime();
@@ -54,13 +101,15 @@ function daysBetween(from: Date | string | null, now: number) {
 
 export async function getAttentionBrief(
   userId: string,
-  interactedIds?: Set<string>
+  interactedIds?: Set<string>,
+  /** Lead with Radar's list. Only for a viewer who can open Radar (`isSurfaceLive`). */
+  opts: { radar?: boolean } = {}
 ): Promise<AttentionBrief> {
   const db = await getDb();
   const now = new Date();
   const nowMs = now.getTime();
 
-  const [overdueRows, suggestionRows] = await Promise.all([
+  const [overdueRows, suggestionRows, radarRows] = await Promise.all([
     db.query.contacts.findMany({
       where: and(
         eq(contacts.userId, userId),
@@ -87,6 +136,9 @@ export async function getAttentionBrief(
       orderBy: [desc(aiSuggestions.confidenceScore)],
       limit: SUGGESTION_CAP,
     }),
+    // Radar's live list, already joined to its contacts. Empty for anyone Radar has never
+    // run for, so their brief is exactly what it was.
+    opts.radar ? listPendingRecommendations(userId, SUGGESTION_CAP).catch(() => []) : [],
   ]);
 
   const suggestionContactIds = suggestionRows
@@ -113,6 +165,7 @@ export async function getAttentionBrief(
   // A contact already listed as overdue does not need a second entry as a suggestion —
   // the dashboard applies the same de-duplication.
   const overdueIds = new Set(overdueRows.map((c) => c.id));
+  const radarContactIds = new Set(radarRows.map((r) => r.contactId));
 
   return {
     overdue: overdueRows.map((c) => ({
@@ -125,19 +178,36 @@ export async function getAttentionBrief(
       // Without this the model would report an import stamp as a conversation.
       hasLoggedInteraction: interactedIds ? interactedIds.has(c.id) : false,
     })),
-    suggestions: suggestionRows.flatMap((s) => {
-      const contactId = s.relatedContactIds?.[0];
-      const contact = contactId ? byId.get(contactId) : null;
-      if (!contact || overdueIds.has(contact.id)) return [];
-      return [
-        {
-          id: contact.id,
-          name: contact.preferredName || contact.fullName,
-          title: contact.title,
-          company: contact.company,
-          reason: (s.description || s.title || "").trim(),
-        },
-      ];
-    }),
+    // Radar first: it is the same list the /radar page and the dashboard show, with its
+    // own reasons. The legacy queue fills in for anyone Radar does not cover.
+    suggestions: [
+      ...radarRows
+        .filter((r) => !overdueIds.has(r.contactId))
+        .map((r) => ({
+          id: r.contactId,
+          name: r.contactName,
+          title: r.title,
+          company: r.company,
+          reason: r.reasons
+            .filter((reason) => reason.points > 0 && !RADAR_CONTEXT_CODES.has(reason.code))
+            .slice(0, 2)
+            .map((reason) => reason.label)
+            .join("; "),
+        })),
+      ...suggestionRows.flatMap((s) => {
+        const contactId = s.relatedContactIds?.[0];
+        const contact = contactId ? byId.get(contactId) : null;
+        if (!contact || overdueIds.has(contact.id) || radarContactIds.has(contact.id)) return [];
+        return [
+          {
+            id: contact.id,
+            name: contact.preferredName || contact.fullName,
+            title: contact.title,
+            company: contact.company,
+            reason: (s.description || s.title || "").trim(),
+          },
+        ];
+      }),
+    ].slice(0, SUGGESTION_CAP),
   };
 }

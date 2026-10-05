@@ -8,7 +8,9 @@
  * runner's; the `claim_token` is what makes the second statement safe — only the holder's
  * outcome lands, the other runner's UPDATE matches zero rows.
  */
-import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, arrayOverlaps, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
+import { combineCaptureResults } from "@/lib/capture/combine-results";
 import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
@@ -25,6 +27,7 @@ import {
   type CaptureReminderChoices,
   type CaptureJobSource,
 } from "@/lib/capture/types";
+import { internalFetch } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
 
 export type CaptureJobRow = typeof captureJobs.$inferSelect;
@@ -45,7 +48,6 @@ export const CAPTURE_JOB_RETENTION_DAYS = 30;
 /** A job that failed this recently is still shown on /capture so the person sees why. */
 const FAILED_VISIBLE_MS = 24 * 60 * 60 * 1000;
 
-const CAPTURE_INPUT_MAX_CHARS = 100_000;
 
 // ---------------------------------------------------------------------------------------
 // The client's view
@@ -77,7 +79,7 @@ export type CaptureJobView = {
   updatedAt: string;
 };
 
-export function toCaptureJobView(row: CaptureJobRow): CaptureJobView {
+export function toCaptureJobView(row: Omit<CaptureJobRow, "sourceText">): CaptureJobView {
   return {
     id: row.id,
     status: row.status,
@@ -129,6 +131,10 @@ export async function findActiveCaptureJob(userId: string, now = new Date()): Pr
   const row = await db.query.captureJobs.findFirst({
     where: and(
       eq(captureJobs.userId, userId),
+      // One file of a multi-file upload is never resumed on its own: the upload is reviewed
+      // together, once every file is read (`mergeCaptureBatchRows`). Until then it is
+      // reachable through the queue panel, which `findActiveCaptureJobs` still feeds.
+      isNull(captureJobs.batchGroupId),
       or(
         inArray(captureJobs.status, [...ACTIVE_CAPTURE_JOB_STATUSES]),
         and(eq(captureJobs.status, "failed"), gt(captureJobs.updatedAt, new Date(now.getTime() - FAILED_VISIBLE_MS)))
@@ -150,9 +156,14 @@ export async function findActiveCaptureJobs(
   userId: string,
   limit = 25,
   now = new Date()
-): Promise<CaptureJobRow[]> {
+): Promise<Omit<CaptureJobRow, "sourceText">[]> {
   const db = await getDb();
   return db.query.captureJobs.findMany({
+    // Everything but the assembled corpus the model read (`source_text`, written by the
+    // runner, up to a whole meeting transcript per job). Nothing downstream of this reads
+    // it — the page and the polling client see `toCaptureJobView`, which never has — and
+    // this list is re-fetched while a queue is in flight.
+    columns: { sourceText: false },
     where: and(
       eq(captureJobs.userId, userId),
       or(
@@ -163,6 +174,90 @@ export async function findActiveCaptureJobs(
     orderBy: [desc(captureJobs.updatedAt)],
     limit,
   });
+}
+
+/** Still being read: while any file of an upload is here, the upload is not ready to review. */
+const BATCH_BUSY: CaptureJobStatus[] = ["ingesting", "transcribed", "queued", "extracting"];
+
+/**
+ * Fold a multi-file upload's ready jobs into one job, reviewed as a single deck.
+ *
+ * Nothing happens while any file is still being read — the upload is reviewed together, so
+ * it waits for the slowest file. Files that failed stay in the queue panel with their error;
+ * they are not held up by, and do not hold up, the rest.
+ *
+ * The ready rows are CLAIMED first (`ready` → `merged`, returning), which is what makes two
+ * callers safe: a second tab, or a second poll, finds nothing left to claim and gets null.
+ * If writing the combined row then fails, the claim is undone so the files are not stranded.
+ *
+ * One ready file needs no fold: it just leaves the batch and becomes an ordinary capture.
+ */
+export async function mergeCaptureBatchRows(
+  userId: string,
+  batchGroupId: string
+): Promise<CaptureJobRow | null> {
+  const db = await getDb();
+  const inBatch = and(eq(captureJobs.userId, userId), eq(captureJobs.batchGroupId, batchGroupId));
+  const busy = await db
+    .select({ id: captureJobs.id })
+    .from(captureJobs)
+    .where(and(inBatch, inArray(captureJobs.status, BATCH_BUSY)))
+    .limit(1);
+  if (busy.length) return null;
+
+  const claimed = await db
+    .update(captureJobs)
+    .set({ status: "merged", updatedAt: new Date() })
+    .where(and(inBatch, eq(captureJobs.status, "ready")))
+    .returning();
+  const parts = claimed
+    .filter((r) => r.result && r.sourceText)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const unusable = claimed.filter((r) => !parts.includes(r));
+  if (unusable.length) {
+    // A ready row always has both; if one somehow does not, it goes back rather than vanish.
+    await db.update(captureJobs).set({ status: "ready" }).where(inArray(captureJobs.id, unusable.map((r) => r.id)));
+  }
+  if (!parts.length) return null;
+
+  if (parts.length === 1) {
+    const [only] = await db
+      .update(captureJobs)
+      .set({ status: "ready", batchGroupId: null, updatedAt: new Date() })
+      .where(eq(captureJobs.id, parts[0]!.id))
+      .returning();
+    return only ?? null;
+  }
+
+  try {
+    const combined = combineCaptureResults(
+      parts.map((r) => ({ label: r.sourceLabel, sourceText: r.sourceText!, sourceHash: r.sourceHash ?? "", result: r.result! }))
+    );
+    const union = <T,>(lists: T[][]) => [...new Set(lists.flat())];
+    const [row] = await db
+      .insert(captureJobs)
+      .values({
+        userId,
+        sourceKind: "messy",
+        status: "ready",
+        entryPoint: parts[0]!.entryPoint,
+        sourceLabel: `${parts.length} notes`,
+        result: combined.result,
+        sourceText: combined.sourceText,
+        sourceHash: combined.sourceHash,
+        sources: union(parts.map((r) => r.sources)),
+        photoIds: union(parts.map((r) => r.photoIds)),
+        sourceFileHashes: union(parts.map((r) => r.sourceFileHashes)),
+      })
+      .returning();
+    return row ?? null;
+  } catch (err) {
+    await db
+      .update(captureJobs)
+      .set({ status: "ready" })
+      .where(inArray(captureJobs.id, parts.map((r) => r.id)));
+    throw err;
+  }
 }
 
 /**
@@ -202,30 +297,168 @@ export type CreateCaptureJobInput = {
   sourceLabel?: string | null;
   mentionPicks?: MentionPick[] | null;
   result?: CaptureJobResult | null;
+  /**
+   * SHA-256 of each original file this job is read from. See the column in schema.ts.
+   * Typed loosely because it arrives from a browser; `cleanFileHashes` is the filter.
+   */
+  sourceFileHashes?: readonly unknown[] | null;
 };
 
 export async function createCaptureJob(userId: string, input: CreateCaptureJobInput): Promise<CaptureJobRow> {
   const db = await getDb();
+  const [row] = await db.insert(captureJobs).values(captureJobValues(userId, input)).returning();
+  return row!;
+}
+
+/**
+ * `createCaptureJob` under an id the BROWSER minted, or null when that id is already taken.
+ *
+ * Exists for Stop. An upload's job id otherwise comes back only in the response, and a
+ * person who presses Stop mid-transcription has, by definition, not had the response yet —
+ * so the tab could abort the request but never discard the job, which the server then
+ * finishes, marks `transcribed`, and the next visit to /capture restores as if the person
+ * had wanted it. With the id minted up front, Stop can discard it at once.
+ *
+ * Taken means one of two things, and both answer the same way: a Stop that arrived before
+ * this insert left a `discarded` tombstone under the id (`discardCaptureJobRow` with
+ * `tombstone`), or somebody sent an id that is not theirs to use. `ON CONFLICT DO NOTHING`
+ * on the primary key refuses both without reading, or revealing, whose row it is.
+ */
+export async function createCaptureJobWithId(
+  userId: string,
+  id: string,
+  input: CreateCaptureJobInput
+): Promise<CaptureJobRow | null> {
+  const db = await getDb();
   const [row] = await db
     .insert(captureJobs)
-    .values({
-      userId,
-      sourceKind: input.sourceKind,
-      status: input.status,
-      inputText: clipInput(input.inputText),
-      inputHints: input.inputHints ?? {},
-      entryPoint: input.entryPoint ?? "capture",
-      seedContactId: input.seedContactId ?? null,
-      meetingSessionId: input.meetingSessionId ?? null,
-      batchGroupId: input.batchGroupId ?? null,
-      sourceLabel: input.sourceLabel?.slice(0, 200) ?? null,
-      // Sanitised here rather than at the caller: this is the only door into the column,
-      // and both doors into this function carry a browser-supplied payload.
-      mentionPicks: sanitizeMentionPicks(input.mentionPicks ?? []),
-      result: input.result ?? null,
-    })
+    .values({ ...captureJobValues(userId, input), id })
+    .onConflictDoNothing({ target: captureJobs.id })
     .returning();
-  return row!;
+  return row ?? null;
+}
+
+function captureJobValues(userId: string, input: CreateCaptureJobInput) {
+  return {
+    userId,
+    sourceKind: input.sourceKind,
+    status: input.status,
+    inputText: clipInput(input.inputText),
+    inputHints: input.inputHints ?? {},
+    entryPoint: input.entryPoint ?? "capture",
+    seedContactId: input.seedContactId ?? null,
+    meetingSessionId: input.meetingSessionId ?? null,
+    batchGroupId: input.batchGroupId ?? null,
+    sourceLabel: input.sourceLabel?.slice(0, 200) ?? null,
+    // Sanitised here rather than at the caller: this is the only door into the column,
+    // and both doors into this function carry a browser-supplied payload.
+    mentionPicks: sanitizeMentionPicks(input.mentionPicks ?? []),
+    result: input.result ?? null,
+    sourceFileHashes: cleanFileHashes(input.sourceFileHashes),
+  } satisfies typeof captureJobs.$inferInsert;
+}
+
+/**
+ * Well-formed, deduped, bounded. Both doors into the column carry a browser-supplied list,
+ * so a malformed entry is dropped here rather than trusted — a hash that is not 64 hex
+ * characters can never match a real one, and storing it would only grow the index.
+ */
+export function cleanFileHashes(hashes: readonly unknown[] | null | undefined): string[] {
+  const out = new Set<string>();
+  for (const h of hashes ?? []) {
+    if (typeof h === "string" && /^[0-9a-f]{64}$/.test(h)) out.add(h);
+    if (out.size >= MAX_FILE_HASHES_PER_JOB) break;
+  }
+  return [...out];
+}
+
+/** More than any one note's files; the sorter stages at most 60. */
+export const MAX_FILE_HASHES_PER_JOB = 100;
+
+/** Record more original-file hashes on a job — a later part of a multi-part upload. */
+export async function appendSourceFileHashes(id: string, hashes: readonly unknown[]): Promise<void> {
+  const clean = cleanFileHashes(hashes);
+  if (!clean.length) return;
+  const db = await getDb();
+  await db
+    .update(captureJobs)
+    .set({
+      sourceFileHashes: sql`array_cat(coalesce(${captureJobs.sourceFileHashes}, '{}'::text[]), ARRAY[${sql.join(
+        clean.map((h) => sql`${h}`),
+        sql`, `
+      )}]::text[])`,
+      updatedAt: new Date(),
+    })
+    // A discarded job is finished with. See `discardCaptureJobRow`.
+    .where(and(eq(captureJobs.id, id), ne(captureJobs.status, "discarded")));
+}
+
+export type CapturedFileMatch = {
+  hash: string;
+  jobId: string;
+  capturedAt: string;
+  /** The job's `source_label` — what the queue row called it. Null for older jobs. */
+  label: string | null;
+};
+
+/**
+ * Which of these file hashes this user has already captured, newest capture first per hash.
+ *
+ * Anything but `discarded` counts. A discarded job is one the person threw away (or
+ * stopped), and treating its files as captured would refuse the very retry they are
+ * attempting. Everything else — in flight, waiting for review, saved, even failed — means
+ * the file already has a row somewhere they can reach.
+ */
+export async function findCapturedFileRows(userId: string, hashes: readonly unknown[]): Promise<CapturedFileMatch[]> {
+  const wanted = cleanFileHashes(hashes);
+  if (!wanted.length) return [];
+  const db = await getDb();
+  const rows = await db.query.captureJobs.findMany({
+    columns: { id: true, createdAt: true, sourceLabel: true, sourceFileHashes: true },
+    where: and(
+      eq(captureJobs.userId, userId),
+      ne(captureJobs.status, "discarded"),
+      arrayOverlaps(captureJobs.sourceFileHashes, wanted)
+    ),
+    orderBy: [desc(captureJobs.createdAt)],
+    // Bounded: a hash matches at most a handful of jobs, and one match per hash is all
+    // anyone reads. Enough headroom that a file captured many times still finds itself.
+    limit: 200,
+  });
+  const wantedSet = new Set(wanted);
+  const out = new Map<string, CapturedFileMatch>();
+  for (const row of rows) {
+    for (const hash of row.sourceFileHashes ?? []) {
+      if (!wantedSet.has(hash) || out.has(hash)) continue;
+      out.set(hash, { hash, jobId: row.id, capturedAt: row.createdAt.toISOString(), label: row.sourceLabel });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * A job of this user's whose corpus hashed to `sourceHash` (`hashSourceNote`), newest
+ * first — the same pasted notes extracted before. `excludeId` is the job being queued,
+ * which must not count as its own duplicate. Discarded jobs do not count, for the reason
+ * given on `findCapturedFileRows`.
+ */
+export async function findJobBySourceHash(
+  userId: string,
+  sourceHash: string,
+  excludeId?: string | null
+): Promise<Pick<CaptureJobRow, "id" | "createdAt" | "sourceLabel"> | null> {
+  const db = await getDb();
+  const row = await db.query.captureJobs.findFirst({
+    columns: { id: true, createdAt: true, sourceLabel: true },
+    where: and(
+      eq(captureJobs.userId, userId),
+      eq(captureJobs.sourceHash, sourceHash),
+      ne(captureJobs.status, "discarded"),
+      ...(excludeId ? [ne(captureJobs.id, excludeId)] : [])
+    ),
+    orderBy: [desc(captureJobs.createdAt)],
+  });
+  return row ?? null;
 }
 
 function clipInput(text: string | null | undefined): string | null {
@@ -251,10 +484,30 @@ export async function appendIngestedBlocks(
       ...(extra.transcriptionEngine ? { transcriptionEngine: extra.transcriptionEngine } : {}),
       updatedAt: new Date(),
     })
-    .where(eq(captureJobs.id, id));
+    // Stop arrives while the transcription is still running; its text must not land on a
+    // job the person has already thrown away. See `discardCaptureJobRow`.
+    .where(and(eq(captureJobs.id, id), ne(captureJobs.status, "discarded")));
 }
 
-/** Media is all in; the person can now read the transcript and press Extract. */
+/**
+ * Keep one part's parse hints on a job still collecting parts, so the part that finishes
+ * it can queue with the hints of the WHOLE note (a date read off page 1 still counts when
+ * page 9 arrives last). Replaces the column: the caller has already merged.
+ */
+export async function setIngestingHints(id: string, hints: CaptureParseHints): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(captureJobs)
+    .set({ inputHints: hints, updatedAt: new Date() })
+    .where(and(eq(captureJobs.id, id), eq(captureJobs.status, "ingesting")));
+}
+
+/**
+ * Media is all in; the person can now read the transcript and press Extract.
+ *
+ * `status = 'ingesting'` is what refuses a discarded row here — a job that was stopped
+ * mid-transcription stays discarded rather than reappearing, transcribed, on the next visit.
+ */
 export async function markCaptureJobTranscribed(id: string): Promise<void> {
   const db = await getDb();
   await db
@@ -265,7 +518,9 @@ export async function markCaptureJobTranscribed(id: string): Promise<void> {
 
 /**
  * Extract pressed. From `transcribed` (edited text replaces the input) or a fresh row.
- * Returns the row when it moved to `queued`, null when it was in no state to.
+ * Returns the row when it moved to `queued`, null when it was in no state to — which
+ * includes `discarded`: the status allowlist below is the refusal, so a Stop that landed
+ * first is never undone by an `autoQueue` that finishes after it.
  */
 export async function queueCaptureJobRow(
   userId: string,
@@ -340,13 +595,24 @@ export async function claimCaptureJob(
   return row ? { row, token } : null;
 }
 
-/** Keep the claim fresh between model calls so the sweep does not take it mid-parse. */
-export async function heartbeatCaptureJob(id: string, token: string): Promise<void> {
+/**
+ * Keep the claim fresh between model calls so the sweep does not take it mid-parse.
+ *
+ * Returns whether we STILL HOLD it. False means the row is gone, was discarded (which
+ * clears the token — see `discardCaptureJobRow`), or was re-claimed by another runner; in
+ * every case the work in progress is for nobody, and the runner stops before paying for
+ * another model pass (see `runExtraction`).
+ */
+export async function heartbeatCaptureJob(id: string, token: string): Promise<boolean> {
   const db = await getDb();
-  await db
+  const rows = await db
     .update(captureJobs)
     .set({ updatedAt: new Date() })
-    .where(and(eq(captureJobs.id, id), eq(captureJobs.claimToken, token)));
+    .where(and(eq(captureJobs.id, id), eq(captureJobs.claimToken, token), ne(captureJobs.status, "discarded")))
+    // Whole-row `returning()`: `getDb()` is a union of two drivers, and a partial
+    // selection does not type-check against it.
+    .returning();
+  return rows.length > 0;
 }
 
 /** Write a phase's outcome — only if we still hold the claim. Returns whether it landed. */
@@ -362,7 +628,9 @@ export async function settleCaptureJob(
   const rows = await db
     .update(captureJobs)
     .set({ ...patch, ...(releases ? { claimToken: null } : {}), updatedAt: new Date() })
-    .where(and(eq(captureJobs.id, id), eq(captureJobs.claimToken, token)))
+    // The status check is belt to the token's braces: a discard clears the token, but an
+    // outcome must never resurrect a discarded row even if something left one behind.
+    .where(and(eq(captureJobs.id, id), eq(captureJobs.claimToken, token), ne(captureJobs.status, "discarded")))
     .returning();
   return rows.length > 0;
 }
@@ -441,11 +709,31 @@ export async function recordCaptureChoicesRow(
   return row ?? null;
 }
 
-export async function discardCaptureJobRow(userId: string, id: string): Promise<boolean> {
+/**
+ * Throw a job away — Start over, Clear, or Stop while it is still being read.
+ *
+ * Clears `claim_token` as it goes, and that is what makes Stop actually stop: a runner
+ * mid-parse holds the token, its next heartbeat matches nothing, and it gives up before the
+ * next model pass instead of finishing a parse nobody will look at (`runExtraction`). Every
+ * later write — the outcome, a transcription landing, an `autoQueue` — also refuses a
+ * `discarded` row, so none of them can bring it back.
+ *
+ * `tombstone` is for a Stop that may have beaten the job's own INSERT: the upload route
+ * creates the row under a browser-minted id only once the body has arrived, and a Stop
+ * pressed just before that finds nothing to discard. So when nothing matched, a discarded
+ * row is written under the id instead, and the route's insert then conflicts and gives up
+ * (`createCaptureJobWithId`). Swept with every other discarded row after
+ * `CAPTURE_JOB_RETENTION_DAYS`.
+ */
+export async function discardCaptureJobRow(
+  userId: string,
+  id: string,
+  opts: { tombstone?: boolean } = {}
+): Promise<boolean> {
   const db = await getDb();
   const rows = await db
     .update(captureJobs)
-    .set({ status: "discarded", updatedAt: new Date() })
+    .set({ status: "discarded", claimToken: null, updatedAt: new Date() })
     .where(
       and(
         eq(captureJobs.id, id),
@@ -454,7 +742,15 @@ export async function discardCaptureJobRow(userId: string, id: string): Promise<
       )
     )
     .returning();
-  return rows.length > 0;
+  if (rows.length > 0) return true;
+  if (opts.tombstone) {
+    // Nothing here when the id is already somebody's row, discarded or otherwise.
+    await db
+      .insert(captureJobs)
+      .values({ id, userId, sourceKind: "messy", status: "discarded" })
+      .onConflictDoNothing({ target: captureJobs.id });
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -486,7 +782,30 @@ export async function failCaptureJob(id: string, message: string): Promise<void>
     .where(eq(captureJobs.id, id));
 }
 
-export type CaptureStallSweepResult = { found: number; resumed: number; resumeFailed: number; gaveUp: number; swept: number };
+/** Stalled capture jobs picked up per sweep; the same bound as `STALL_SWEEP_LIMIT`. */
+export const CAPTURE_STALL_SWEEP_LIMIT = 50;
+
+/**
+ * Resume a capture job through its internal run route, which has its own 300s invocation,
+ * rather than awaiting it inside the hourly backstop. See `kickImportContinuation`.
+ */
+export async function kickCaptureJob(id: string): Promise<void> {
+  const res = await internalFetch(`/api/capture/jobs/${id}/run`, { method: "POST" });
+  if (!res.ok) throw new Error(`capture job kick answered ${res.status}`);
+}
+
+export type CaptureStallSweepResult = {
+  found: number;
+  resumed: number;
+  resumeFailed: number;
+  gaveUp: number;
+  swept: number;
+  /** Uploads sent in parts whose final part never came. */
+  abandoned: number;
+};
+
+/** How long a capture may sit collecting parts before it is called abandoned. */
+export const ABANDONED_INGEST_MS = 30 * 60 * 1000;
 
 /**
  * The cron backstop, a copy of `resumeStalledImports`: pick up jobs that went quiet, a
@@ -496,6 +815,7 @@ export async function resumeStalledCaptureJobs(options: {
   now?: Date;
   thresholdMs?: number;
   maxResumes?: number;
+  limit?: number;
   runner: (id: string) => Promise<unknown>;
 }): Promise<CaptureStallSweepResult> {
   const now = options.now ?? new Date();
@@ -509,9 +829,12 @@ export async function resumeStalledCaptureJobs(options: {
       lt(captureJobs.updatedAt, new Date(now.getTime() - threshold))
     ),
     columns: { id: true },
+    // Oldest first, and bounded: the rest wait for the next sweep.
+    orderBy: [asc(captureJobs.updatedAt)],
+    limit: options.limit ?? CAPTURE_STALL_SWEEP_LIMIT,
   });
 
-  const result: CaptureStallSweepResult = { found: stalled.length, resumed: 0, resumeFailed: 0, gaveUp: 0, swept: 0 };
+  const result: CaptureStallSweepResult = { found: stalled.length, resumed: 0, resumeFailed: 0, gaveUp: 0, swept: 0, abandoned: 0 };
   for (const job of stalled) {
     const resumes = await bumpCaptureStallResumes(job.id);
     if (resumes > maxResumes) {
@@ -528,10 +851,30 @@ export async function resumeStalledCaptureJobs(options: {
     }
   }
 
+  // A capture sent in parts sits `ingesting` between its requests. If the tab closed
+  // mid-way, nothing will ever send the final part, and the queue would show it collecting
+  // forever. Phone scans are excluded: their handoff has its own expiry sweep.
+  const abandoned = await db
+    .update(captureJobs)
+    .set({
+      status: "failed",
+      error: "That upload stopped part-way — add the files again.",
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(captureJobs.status, "ingesting"),
+        ne(captureJobs.sourceKind, "phone"),
+        lt(captureJobs.updatedAt, new Date(now.getTime() - ABANDONED_INGEST_MS))
+      )
+    )
+    .returning();
+  result.abandoned = abandoned.length;
+
   const cutoff = new Date(now.getTime() - CAPTURE_JOB_RETENTION_DAYS * 86_400_000);
   const swept = await db
     .delete(captureJobs)
-    .where(and(inArray(captureJobs.status, ["saved", "failed", "discarded"]), lt(captureJobs.updatedAt, cutoff)))
+    .where(and(inArray(captureJobs.status, ["saved", "failed", "discarded", "merged"]), lt(captureJobs.updatedAt, cutoff)))
     .returning();
   result.swept = swept.length;
   return result;

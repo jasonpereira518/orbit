@@ -104,12 +104,15 @@ export function setAsidePeople(
  * from) above both.
  */
 export function defaultMergeId(
-  item: Pick<BulkNotePersonPreview, "duplicates" | "suggestedMergeId">,
+  item: Pick<BulkNotePersonPreview, "duplicates" | "suggestedMergeId" | "suggestedNew">,
   preferredContactId?: string | null
 ): string | null {
   if (preferredContactId && item.duplicates.some((d) => d.id === preferredContactId)) {
     return preferredContactId;
   }
+  // The decision model read the note and says this is someone new: a bare name match must
+  // not default the card into an existing contact (the person can still pick one).
+  if (item.suggestedNew) return null;
   return item.suggestedMergeId ?? item.duplicates[0]?.id ?? null;
 }
 

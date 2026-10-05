@@ -1,14 +1,17 @@
 import { Plus } from "lucide-react";
-import {
-  FREE_CONTACT_LIMIT,
-  LIFETIME_INTRO_PRICE,
-  LIFETIME_INTRO_SEATS,
-  LIFETIME_STANDARD_PRICE,
-} from "@/lib/plan-limits";
+import { CREDIT_PACK_CREDITS } from "@/lib/stripe-config";
+import { FREE_CONTACT_LIMIT, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
+
+const pro = PLAN_CONFIG.orbit;
+const max = PLAN_CONFIG.max;
+const h = (seconds: number) => `${seconds / 3600} hours`;
 
 /**
  * Native <details> rather than a scripted accordion: it is keyboard-operable, works
  * before hydration, and is findable by in-page search when closed in supporting browsers.
+ *
+ * Numbers come from the plan table, never typed in here. Refund wording matches the Terms
+ * as they stand; change it only together with them.
  */
 const FAQ: Array<{ q: string; a: string }> = [
   {
@@ -16,28 +19,32 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: "You stop being able to add new people — and that is all. Every contact, note, reminder, and interaction you already have stays fully visible and editable, forever. Orbit never hides your own network behind a paywall.",
   },
   {
-    q: "Do I need my own AI provider key?",
-    a: "On the Free Plan and Orbit Pro, yes: capture, chat, and summaries run on a key you supply from Google, OpenAI, or Anthropic. You pay your provider directly at cost, and Orbit never adds a margin to your tokens — which is also why Pro costs so little. Orbit Lifetime includes AI on Orbit's own keys, up to a monthly allowance. Add a key of your own on Lifetime and Orbit uses yours instead, with no allowance.",
+    q: "Do I need my own AI key?",
+    a: `On the Free Plan, yes: capture, chat and summaries run on a key you add from Google, OpenAI, or Anthropic. Orbit Pro and Orbit Max include AI — ${pro.monthlyCredits} and ${max.monthlyCredits} credits a month — so there is nothing to set up. You can still add your own key on any plan and choose which one runs first; calls on your own key never use credits.`,
   },
   {
-    q: "What is the difference between Orbit Pro and Orbit Lifetime?",
-    a: "Two things: AI and contact enrichment. Both plans are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Lifetime includes AI on Orbit's keys up to a monthly allowance, where Pro runs AI on your own key. Pro enriches contacts on Orbit's Apollo credits, where Lifetime connects your own Apollo key. The rule behind both is the same: a single payment can cover a cost with a ceiling — sending is capped per day, included AI per month — but enrichment has no ceiling, so a single payment cannot honestly cover it forever.",
+    q: "What is the difference between Orbit Pro and Orbit Max?",
+    a: `Max includes more of everything that costs Orbit money to run: ${max.monthlyCredits} AI credits a month instead of ${pro.monthlyCredits}, ${h(max.speech.meetingSeconds)} of meeting transcription instead of ${h(pro.speech.meetingSeconds)}, ${h(max.speech.shortformSeconds)} of voice notes instead of ${h(pro.speech.shortformSeconds)}, and ${max.hostedEnrichmentsPerMonth} contact enrichments a month instead of ${pro.hostedEnrichmentsPerMonth}. Max also includes the REST API and webhooks. Everything else is the same.`,
   },
   {
-    q: `Why is Orbit Lifetime $${LIFETIME_INTRO_PRICE} instead of $${LIFETIME_STANDARD_PRICE}?`,
-    a: `Because you are early. The first ${LIFETIME_INTRO_SEATS} people to buy Lifetime pay $${LIFETIME_INTRO_PRICE}; after that it is $${LIFETIME_STANDARD_PRICE}. To be clear about what that is and is not: Lifetime itself is not limited, does not run out, and will not stop being sold — the only thing that changes at ${LIFETIME_INTRO_SEATS} buyers is the price. If you buy at $${LIFETIME_INTRO_PRICE} you keep everything Lifetime ever includes, at the price you paid, permanently.`,
+    q: "What happens when my AI credits run out?",
+    a: "AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews; to keep going before then, add a $5 pack, move to Max, or switch to your own key. Everything else in Orbit keeps working.",
   },
   {
-    q: "Can I cancel?",
-    a: "Any time, and you keep Orbit Pro until the period you already paid for runs out. After that your account returns to the Free Plan — still holding every contact you added while subscribed, even if that is well past the free limit.",
+    q: "How do credit packs work?",
+    a: `A pack is ${CREDIT_PACK_CREDITS} credits for $5, bought whenever you choose, on Pro or Max. Pack credits are used only after your monthly credits run out, and they roll over from month to month while you're subscribed. If you move to the Free Plan they're kept, frozen, and come back when you subscribe again. If a pack's payment is refunded or disputed, its unused credits are removed.`,
+  },
+  {
+    q: "Is there annual billing?",
+    a: `Yes. Paying for a year up front is two months free: ${formatPlanPrice(pro.annualPriceCents ?? 0)} a year for Orbit Pro and ${formatPlanPrice(max.annualPriceCents ?? 0)} for Orbit Max. Your AI credits still arrive every month, and you can move between monthly and annual billing from Settings.`,
+  },
+  {
+    q: "Can I switch plans or cancel?",
+    a: "Any time. Moving from Pro to Max, or from monthly to annual, takes effect at once, and you pay only the difference for the rest of the period; moving from Max to Pro, or from annual to monthly, takes effect when the period you've paid for ends. If you cancel, you keep your plan until that period runs out, then your account returns to the Free Plan — still holding every contact you added while subscribed, even past the free limit. Canceling does not trigger a pro-rated refund.",
   },
   {
     q: "What happens to my data if I stop paying?",
     a: "Nothing is deleted and nothing is hidden. You can export everything you have put into Orbit at any point, on any plan, including Free.",
-  },
-  {
-    q: "Why is Orbit Lifetime so much cheaper than subscribing?",
-    a: "Because it asks you to pay before Orbit has proven itself, and that is worth a discount. It is not a trick: Lifetime is the full product, and the one thing it leaves out — enrichment on our Apollo credits — is the only cost that would grow without limit for as long as you keep the account.",
   },
 ];
 

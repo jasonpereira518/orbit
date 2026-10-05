@@ -1,0 +1,56 @@
+{
+  "label": "gemini-gemini-3.8-flash",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T17:20:37.923Z",
+  "commit": "3b9eca9d",
+  "fixtures": "074a060d9c04",
+  "runs": 1,
+  "decisions": null,
+  "tasks": {
+    "skip-gates": {
+      "cases": 62,
+      "metrics": {
+        "gateAccuracy": 0.5161290322580645,
+        "wrongSkips": 0,
+        "savedShare": 0
+      },
+      "misses": [
+        "dates-07",
+        "dates-08",
+        "dates-09",
+        "dates-10",
+        "dates-12",
+        "dates-13",
+        "brief-02",
+        "brief-04",
+        "brief-06",
+        "brief-08",
+        "brief-10",
+        "starters-01",
+        "starters-04",
+        "starters-06",
+        "starters-08",
+        "starters-10",
+        "starters-12",
+        "starters-13",
+        "enrich-01",
+        "enrich-03",
+        "enrich-05",
+        "enrich-07",
+        "enrich-09",
+        "enrich-11",
+        "timeline-02",
+        "timeline-04",
+        "timeline-06",
+        "timeline-08",
+        "timeline-10",
+        "timeline-12"
+      ],
+      "p50LatencyMs": 0,
+      "costMicros": 0,
+      "costPerCaseMicros": 0,
+      "usage": []
+    }
+  }
+}

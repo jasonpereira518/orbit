@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import type { ReminderActionKind } from "@/db/schema";
 import { ReminderRow } from "@/components/dashboard/reminder-row";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-const PREVIEW_COUNT = 5;
+// Four, not five: this card shares a stretched row with Due follow-ups, whose rows are
+// about a third the height of these. Five reminders left that card with a quarter of its
+// height empty; four keeps the pair close, and "See more" opens the full page for the rest.
+const PREVIEW_COUNT = 4;
 
 export type DashboardReminderItem = {
   id: string;
@@ -28,10 +30,8 @@ export function RemindersDashboardCard({
 }: {
   items: DashboardReminderItem[];
 }) {
-  const [expanded, setExpanded] = useState(false);
   const hasMore = items.length > PREVIEW_COUNT;
   const preview = items.slice(0, PREVIEW_COUNT);
-  const overflow = items.slice(PREVIEW_COUNT);
   const hiddenCount = items.length - PREVIEW_COUNT;
 
   return (
@@ -73,51 +73,17 @@ export function RemindersDashboardCard({
               ))}
             </div>
             {hasMore ? (
-              <>
-                {/* Same collapse as Suggested outreach — see the comment there. */}
-                <div
-                  id="reminders-overflow"
-                  inert={!expanded}
+              <div className="mt-auto pt-1">
+                <Link
+                  href="/reminders"
                   className={cn(
-                    "grid transition-[grid-template-rows,opacity] duration-slow ease-house",
-                    expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                    buttonVariants({ variant: "ghost", size: "sm" }),
+                    "w-full text-muted-foreground"
                   )}
                 >
-                  <div className="overflow-hidden">
-                    <div className="space-y-2 pt-2">
-                      {overflow.map((r) => (
-                        <ReminderRow
-                          key={r.id}
-                          id={r.id}
-                          title={r.title}
-                          description={r.description}
-                          dueDate={r.dueDate}
-                          reminderType={r.reminderType}
-                          actionKind={r.actionKind}
-                          contactId={r.contactId}
-                          contactName={r.contactName}
-                          noteBatchId={r.noteBatchId}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-auto pt-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="w-full text-muted-foreground"
-                    aria-expanded={expanded}
-                    aria-controls="reminders-overflow"
-                    onClick={() => setExpanded((v) => !v)}
-                  >
-                    {expanded
-                      ? "See less"
-                      : `See more${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}
-                  </Button>
-                </div>
-              </>
+                  {`See more (${hiddenCount})`}
+                </Link>
+              </div>
             ) : null}
           </>
         )}

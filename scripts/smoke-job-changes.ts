@@ -1,244 +1,224 @@
 /**
- * Noticing that a contact moved.
+ * Job moves: what counts as one, and what recording one does.
  *
- * A job change is the easiest moment to reach out — congratulations are welcome and the
- * window is narrow — and Orbit could not see one. `contacts.company` and `.title` are
- * overwritten in place by the Apollo/LinkedIn refresh, by imports and by ordinary edits, so
- * the previous employer was gone and "just joined Stripe" was indistinguishable from "has
- * been at Stripe for six years".
- *
- * The rule this file exists to protect: a transition FROM nothing is not a job change. A
- * network of imported LinkedIn connections has thousands of contacts with no company on
- * file; the first enrichment pass fills them in, and if that counted as moving, one
- * afternoon would produce hundreds of congratulations for jobs people have held for years —
- * every one wrong, in a queue the user would then stop reading. The same goes in reverse:
- * enrichment returning no company means it did not find one, never that someone is out of
- * work.
+ * The detection half is pure. The recording half runs against PGlite, and also through
+ * `researchContactWorkHistory` with a fake researcher, so the whole "search → compare →
+ * log → act" path is exercised with no AI key and no network.
  *
  * Run: npx tsx scripts/smoke-job-changes.ts
  */
 import "./smoke/_env";
-process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-job-changes";
-process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-job-changes";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { aiSuggestions, contactJobChanges, contacts, userSettings } from "../src/db/schema";
-import { describeJobChange, detectJobChange } from "../src/lib/job-changes";
-import { createContactForUser, updateContactForUser } from "../src/lib/contact-writes";
-import { refreshOutreachSuggestions } from "../src/lib/reminders";
-import { ensureUserSettings } from "../src/lib/user-settings";
-
-let failures = 0;
-function check(label: string, ok: boolean, detail?: string) {
-  if (ok) console.log(`  ok   ${label}`);
-  else {
-    failures++;
-    console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`);
-  }
-}
-function section(name: string) {
-  console.log(`\n${name}`);
-}
+import { aiSuggestions, contactCareerMoves, contacts, interactions } from "../src/db/schema";
+import type { IncomingExperience } from "../src/lib/contact-profile";
+import { isLoggedTouch } from "../src/lib/interaction-provenance";
+import {
+  detectJobChanges,
+  getRecentMoveLines,
+  JOB_CHANGE_SUGGESTION_TYPE,
+  recentMoveAsFieldChanges,
+  type JobBaseline,
+  type SnapshotRole,
+} from "../src/lib/job-changes";
+import type { WorkHistoryResearcher } from "../src/lib/work-history-research";
+import { researchContactWorkHistory } from "../src/lib/work-history-research";
 
 const USER = "smoke-job-changes-user";
-const OPTS = {
-  skipRevalidate: true,
-  skipEmbedding: true,
-  skipSummary: true,
-  skipCloseness: true,
-} as const;
 
-function pureChecks() {
-  section("A real move is a move");
-
-  const moved = detectJobChange(
-    { company: "Figma", title: "Designer" },
-    { company: "Stripe", title: "Design Lead" }
-  );
-  check("employer change is detected", moved?.changedCompany === true);
-  check("and carries where they came from", moved?.previousCompany === "Figma");
-  check(
-    "a promotion at the same employer counts too",
-    detectJobChange({ company: "Stripe", title: "Engineer" }, { company: "Stripe", title: "Staff Engineer" }) !== null
-  );
-  check(
-    "but is not reported as an employer change",
-    detectJobChange({ company: "Stripe", title: "Engineer" }, { company: "Stripe", title: "Staff Engineer" })
-      ?.changedCompany === false,
-    "telling someone they 'joined' a company they have worked at for years is worse than saying nothing"
-  );
-
-  section("Learning is not moving");
-
-  check(
-    "null to a company is not a move",
-    detectJobChange({ company: null, title: null }, { company: "Stripe", title: "Engineer" }) === null,
-    "this is the one that would congratulate a whole imported network in an afternoon"
-  );
-  check(
-    "empty string counts as null",
-    detectJobChange({ company: "   ", title: "" }, { company: "Stripe", title: "Engineer" }) === null
-  );
-  check(
-    "a company to null is not a move either",
-    detectJobChange({ company: "Stripe", title: "Engineer" }, { company: null, title: null }) === null,
-    "enrichment finding nothing does not mean the person is unemployed"
-  );
-
-  section("The same job written differently is the same job");
-
-  check(
-    "company punctuation, case and legal suffix",
-    detectJobChange({ company: "Stripe" }, { company: "stripe, inc." }) === null,
-    "two sources spelling the same employer differently must not read as a move"
-  );
-  check(
-    "a suffix-only company is not stripped to nothing",
-    detectJobChange({ company: "Inc" }, { company: "Stripe" }) !== null,
-    "stripping every token would make every one-word company equal to every other"
-  );
-  check(
-    "a genuinely different employer still counts",
-    detectJobChange({ company: "Stripe Inc" }, { company: "Square Inc" }) !== null
-  );
-  check(
-    "title case and spacing",
-    detectJobChange({ title: "Staff  Engineer" }, { title: "staff engineer" }) === null
-  );
-  check(
-    "a field the patch omits is left alone",
-    detectJobChange({ company: "Stripe", title: "Engineer" }, { title: "Engineer" }) === null,
-    "undefined means 'not in this patch', which must not read as 'cleared'"
-  );
-
-  section("What the queue says");
-
-  check(
-    "a move names both ends",
-    describeJobChange({
-      previousCompany: "Figma",
-      newCompany: "Stripe",
-      previousTitle: "Designer",
-      newTitle: "Design Lead",
-    }) === "Moved to Design Lead at Stripe — was at Figma"
-  );
-  check(
-    "a promotion reads as one",
-    describeJobChange({
-      previousCompany: "Stripe",
-      newCompany: "Stripe",
-      previousTitle: "Engineer",
-      newTitle: "Staff Engineer",
-    }) === "New title at Stripe: Engineer → Staff Engineer",
-    "never 'Moved to' for somebody who did not move"
-  );
+function check(label: string, condition: boolean, detail?: string) {
+  if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
+  console.log(`  ok  ${label}`);
 }
 
-async function dbChecks() {
+function role(organization: string, extra: Partial<IncomingExperience> = {}): IncomingExperience {
+  return {
+    kind: "role",
+    organization,
+    title: "PM",
+    fieldOfStudy: null,
+    location: null,
+    description: null,
+    startYear: 2020,
+    startMonth: 1,
+    endYear: null,
+    endMonth: null,
+    isCurrent: true,
+    ...extra,
+  };
+}
+
+function snap(organization: string, extra: Partial<SnapshotRole> = {}): SnapshotRole {
+  return { organization, title: "PM", startYear: 2020, startMonth: 1, isCurrent: true, ...extra };
+}
+
+function baseline(roles: SnapshotRole[], recentlyLeft: string[] = []): JobBaseline {
+  return { hasBaseline: true, roles, recentlyLeft: new Set(recentlyLeft) };
+}
+
+async function reset() {
   const db = await getDb();
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
-  await db.delete(userSettings).where(eq(userSettings.userId, USER));
-  await ensureUserSettings(USER);
+}
 
-  section("The write path records it");
+function detection() {
+  console.log("\nDetection");
+  const joined = detectJobChanges(baseline([snap("Stripe")]), [
+    role("Ramp", { title: "Staff PM", startYear: 2026, startMonth: 8 }),
+    role("Stripe", { isCurrent: false, endYear: 2026, endMonth: 7 }),
+  ]);
+  check("a new current employer is a join", joined.length === 1 && joined[0]?.kind === "joined", JSON.stringify(joined));
+  check("…from the employer it replaced", joined[0]?.fromOrg === "Stripe" && joined[0]?.toOrg === "Ramp");
+  check("…carrying the new title", joined[0]?.toTitle === "Staff PM");
 
-  const mover = await createContactForUser(
-    USER,
-    { fullName: "Mover Mia", company: "Figma", title: "Designer" },
-    OPTS
+  const family = detectJobChanges(baseline([snap("Google")]), [role("Google DeepMind")]);
+  check("Google → Google DeepMind is not a move", family.length === 0, JSON.stringify(family));
+
+  const banks = detectJobChanges(baseline([snap("Bank of America")]), [role("Bank of Montreal", { startYear: 2026 })]);
+  check("Bank of America → Bank of Montreal IS a move", banks.length === 1 && banks[0]?.kind === "joined", JSON.stringify(banks));
+
+  const promo = detectJobChanges(baseline([snap("Stripe", { title: "PM" })]), [role("Stripe, Inc.", { title: "Senior PM" })]);
+  check("a new title at the same employer is a title change", promo.length === 1 && promo[0]?.kind === "title_change", JSON.stringify(promo));
+  check(
+    "…and the same title spelled differently is not",
+    detectJobChanges(baseline([snap("Stripe", { title: "Sr. PM" })]), [role("Stripe", { title: "sr pm" })]).length === 0
   );
-  const learner = await createContactForUser(USER, { fullName: "Blank Ben" }, OPTS);
 
-  await updateContactForUser(USER, mover!.id, { company: "Stripe", title: "Design Lead" }, OPTS);
-  // The enrichment-fills-in-a-blank case, which must record nothing.
-  await updateContactForUser(USER, learner!.id, { company: "Notion", title: "Engineer" }, OPTS);
+  const first = detectJobChanges({ hasBaseline: false, roles: [], recentlyLeft: new Set() }, [role("Ramp")]);
+  check("a first-ever capture is not a move", first.length === 0);
 
-  const rows = await db.query.contactJobChanges.findMany({
-    where: eq(contactJobChanges.userId, USER),
+  const stale = detectJobChanges(baseline([snap("Ramp", { startYear: 2025 })]), [
+    role("Ramp", { startYear: 2025 }),
+    role("Stripe", { startYear: 2019 }),
+  ]);
+  check("a stale snippet (current role older than the stored one) is not a join", stale.length === 0, JSON.stringify(stale));
+
+  const flap = detectJobChanges(baseline([snap("Ramp", { startYear: null })], ["stripe"]), [role("Stripe", { startYear: null })]);
+  check("back onto an employer they just left is not a join", flap.length === 0, JSON.stringify(flap));
+
+  const left = detectJobChanges(baseline([snap("Stripe")]), [role("Stripe", { isCurrent: false, endYear: 2026, endMonth: 6 })]);
+  check("an old role that now shows an end is a departure", left.length === 1 && left[0]?.kind === "left", JSON.stringify(left));
+
+  const missing = detectJobChanges(baseline([snap("Stripe")]), [role("MIT", { kind: "education", isCurrent: false })]);
+  check("a role the search simply did not surface is NOT a departure", missing.length === 0, JSON.stringify(missing));
+
+  const again = detectJobChanges(baseline([snap("Stripe")]), [role("Ramp", { title: "Staff PM", startYear: 2026 })]);
+  check("the same move detected twice has the same dedupe key", again[0]?.dedupeKey === joined[0]?.dedupeKey);
+}
+
+async function recording() {
+  console.log("\nRecording, through a real research run");
+  await reset();
+  const db = await getDb();
+  const now = new Date();
+  const [contact] = await db
+    .insert(contacts)
+    .values({
+      userId: USER,
+      fullName: "Priya Rao",
+      linkedinUrl: "https://www.linkedin.com/in/priya-rao",
+      company: "Stripe",
+      title: "PM",
+    })
+    .returning();
+  const id = contact!.id;
+
+  const answer = (experiences: IncomingExperience[]): WorkHistoryResearcher => async () => ({
+    confident: true,
+    headline: null,
+    sources: [],
+    experiences,
   });
-  check("the move is recorded", rows.some((r) => r.contactId === mover!.id));
+  const moved = [
+    role("Ramp", { title: "Staff PM", startYear: now.getFullYear(), startMonth: now.getMonth() + 1 }),
+    role("Stripe", { isCurrent: false, startYear: 2019, endYear: now.getFullYear() }),
+  ];
+
+  // The contact's own company is the baseline when no history is stored yet.
+  const outcome = await researchContactWorkHistory(USER, id, { researcher: answer(moved), now });
+  check("the research run saved", outcome === "saved", outcome);
+
+  const logged = await db.select().from(contactCareerMoves).where(eq(contactCareerMoves.contactId, id));
+  check("the move is logged", logged.length === 1 && logged[0]?.kind === "joined" && logged[0]?.toOrg === "Ramp", JSON.stringify(logged));
+
+  const after = await db.query.contacts.findFirst({ where: eq(contacts.id, id) });
+  check("the contact's company follows the move", after?.company === "Ramp", String(after?.company));
+  check("…and its title", after?.title === "Staff PM", String(after?.title));
+
+  const timeline = await db
+    .select()
+    .from(interactions)
+    .where(and(eq(interactions.contactId, id), eq(interactions.interactionType, "job_change")));
+  check("the timeline has a job-change entry", timeline.length === 1, String(timeline.length));
+  check("…that is not a touch (no closeness, no last-contacted)", !isLoggedTouch(timeline[0]!));
   check(
-    "learning a first employer is not",
-    !rows.some((r) => r.contactId === learner!.id),
-    "a first enrichment pass over an imported network must stay silent"
+    "…and did not move last-interaction",
+    after?.lastInteractionAt === null || after?.lastInteractionAt === undefined,
+    String(after?.lastInteractionAt)
   );
-  check("exactly one row", rows.length === 1, `got ${rows.length}`);
-  check("with the old employer kept", rows[0]?.previousCompany === "Figma");
 
-  section("It reaches the outreach queue");
+  const nudges = await db
+    .select()
+    .from(aiSuggestions)
+    .where(and(eq(aiSuggestions.userId, USER), eq(aiSuggestions.suggestionType, JOB_CHANGE_SUGGESTION_TYPE)));
+  check("a congratulations suggestion is offered", nudges.length === 1 && nudges[0]!.title.includes("Ramp"), JSON.stringify(nudges.map((n) => n.title)));
 
-  await refreshOutreachSuggestions(USER);
-  const suggestions = await db.query.aiSuggestions.findMany({
-    where: eq(aiSuggestions.userId, USER),
+  // The same answer again: the snapshot now matches, and the log's dedupe key holds anyway.
+  await researchContactWorkHistory(USER, id, { researcher: answer(moved), now, force: true });
+  const loggedAgain = await db.select().from(contactCareerMoves).where(eq(contactCareerMoves.contactId, id));
+  const nudgesAgain = await db
+    .select()
+    .from(aiSuggestions)
+    .where(and(eq(aiSuggestions.userId, USER), eq(aiSuggestions.suggestionType, JOB_CHANGE_SUGGESTION_TYPE)));
+  check("re-checking does not log the move twice", loggedAgain.length === 1, String(loggedAgain.length));
+  check("…or suggest it twice", nudgesAgain.length === 1, String(nudgesAgain.length));
+
+  const lines = await getRecentMoveLines(USER, [id]);
+  check("chat and the brief get a recent-moves line", /Joined Ramp as Staff PM/.test(lines.get(id) ?? ""), lines.get(id));
+  const opener = await recentMoveAsFieldChanges(USER, id);
+  check(
+    "the extension's opener sees the move as a company + title change",
+    opener.some((c) => c.field === "company" && c.to === "Ramp") && opener.some((c) => c.field === "title" && c.to === "Staff PM"),
+    JSON.stringify(opener)
+  );
+
+  // An old move found late: logged, but no "congrats" on a job started years ago.
+  const [late] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "Old News", linkedinUrl: "https://www.linkedin.com/in/old-news", company: "Initech" })
+    .returning();
+  await researchContactWorkHistory(USER, late!.id, {
+    researcher: answer([role("Acme", { startYear: 2021 }), role("Initech", { isCurrent: false, endYear: 2021 })]),
+    now,
   });
-  const forMover = suggestions.find((s) =>
-    (s.relatedContactIds as string[] | null)?.includes(mover!.id)
-  );
-  check("a suggestion is raised", forMover?.suggestionType === "job_change", `got ${forMover?.suggestionType}`);
-  check("titled as a congratulation", (forMover?.title ?? "").startsWith("Congratulate"));
-  check(
-    "describing the move",
-    (forMover?.description ?? "").includes("Stripe") && (forMover?.description ?? "").includes("Figma"),
-    `got ${JSON.stringify(forMover?.description)}`
-  );
-  check(
-    "and nothing is raised for the contact who merely got enriched",
-    !suggestions.some(
-      (s) =>
-        (s.relatedContactIds as string[] | null)?.includes(learner!.id) &&
-        s.suggestionType === "job_change"
-    )
-  );
+  const lateLog = await db.select().from(contactCareerMoves).where(eq(contactCareerMoves.contactId, late!.id));
+  const lateNudge = await db
+    .select()
+    .from(aiSuggestions)
+    .where(and(eq(aiSuggestions.userId, USER), eq(aiSuggestions.suggestionType, JOB_CHANGE_SUGGESTION_TYPE)));
+  check("a move found years late is still logged", lateLog.length === 1);
+  check("…but not offered as a congratulations", lateNudge.length === 1, String(lateNudge.length));
 
-  section("One suggestion per contact, however many hops");
+  // No baseline at all: the first history fills title/company without calling it a move.
+  const [blank] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "Blank Slate", linkedinUrl: "https://www.linkedin.com/in/blank" })
+    .returning();
+  await researchContactWorkHistory(USER, blank!.id, { researcher: answer([role("Figma", { title: "Designer" })]), now });
+  const blankAfter = await db.query.contacts.findFirst({ where: eq(contacts.id, blank!.id) });
+  const blankLog = await db.select().from(contactCareerMoves).where(eq(contactCareerMoves.contactId, blank!.id));
+  check("a first history fills in the company", blankAfter?.company === "Figma", String(blankAfter?.company));
+  check("…without logging a move", blankLog.length === 0);
 
-  await updateContactForUser(USER, mover!.id, { title: "Head of Design" }, OPTS);
-  await refreshOutreachSuggestions(USER);
-  const after = await db.query.aiSuggestions.findMany({
-    where: eq(aiSuggestions.userId, USER),
-  });
-  const moverRows = after.filter((s) =>
-    (s.relatedContactIds as string[] | null)?.includes(mover!.id)
-  );
-  check("still one row for them", moverRows.length === 1, `got ${moverRows.length}`);
-  check(
-    "naming where they ended up",
-    (moverRows[0]?.description ?? "").includes("Head of Design"),
-    `got ${JSON.stringify(moverRows[0]?.description)}`
-  );
-
-  section("A stale move drops out");
-
-  await db
-    .update(contactJobChanges)
-    .set({ detectedAt: new Date(Date.now() - 120 * 86_400_000) })
-    .where(eq(contactJobChanges.userId, USER));
-  await refreshOutreachSuggestions(USER);
-  const stale = await db.query.aiSuggestions.findMany({
-    where: eq(aiSuggestions.userId, USER),
-  });
-  check(
-    "four months on, it is no longer news",
-    !stale.some((s) => s.suggestionType === "job_change"),
-    "a congratulation that late reads as an afterthought"
-  );
-
-  await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, USER));
-  await db.delete(contacts).where(eq(contacts.userId, USER));
-  await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  await reset();
 }
 
 async function main() {
-  pureChecks();
-  await dbChecks();
-
-  if (failures > 0) {
-    console.error(`\n${failures} check(s) failed.`);
-    process.exit(1);
-  }
-  console.log("\nAll job-change checks passed.");
+  detection();
+  await recording();
+  console.log("\nsmoke-job-changes: all checks passed");
   process.exit(0);
 }
 

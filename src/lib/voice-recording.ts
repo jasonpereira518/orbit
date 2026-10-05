@@ -9,11 +9,10 @@
  * WHY WAV AND NOT `MediaRecorder`. The obvious way to record in a browser is
  * `MediaRecorder`, which hands back webm/opus. Three things argue against it here:
  *
- *   1. Wispr's transcribe endpoint takes base64 16 kHz WAV and nothing else, so webm would
- *      need transcoding, and Vercel's serverless runtime has no ffmpeg to do it with.
- *   2. Whisper and Gemini both accept WAV too, so one recording format feeds all three
- *      engines and the fallback chain in `transcribeAudioWithAI` never has to re-encode.
- *   3. `MediaRecorder`'s mime support is genuinely inconsistent across Safari versions,
+ *   1. Whisper and Gemini both accept WAV, so one recording format feeds every engine and
+ *      `transcribeAudioWithAI` never has to re-encode — Vercel's serverless runtime has no
+ *      ffmpeg to do it with.
+ *   2. `MediaRecorder`'s mime support is genuinely inconsistent across Safari versions,
  *      whereas `AudioContext` + a worklet is uniform.
  *
  * The cost is size: 16 kHz mono int16 is 32 KB/s where opus is ~8 KB/s. At the six-minute
@@ -27,15 +26,15 @@ export const TARGET_SAMPLE_RATE = 16_000;
 /**
  * The hard ceiling on one recording.
  *
- * Six minutes is Wispr's documented per-request limit, and it is far longer than the
- * thirty-second note this feature exists for. Enforced client-side so a long recording is
+ * Six minutes keeps one 16 kHz WAV near 12 MB, inside Whisper's per-request cap, and it is
+ * far longer than the thirty-second note this feature exists for. Enforced client-side so a long recording is
  * stopped and kept, rather than uploaded and rejected — losing six minutes of someone's
  * speech to a 413 would be the worst failure this feature could have.
  */
 export const MAX_RECORDING_MS = 6 * 60_000;
 
-/** Wispr's per-request payload ceiling, checked before we bother encoding base64. */
-export const WISPR_MAX_BYTES = 25 * 1024 * 1024;
+/** Whisper's per-request payload ceiling, checked before we bother encoding base64. */
+export const WHISPER_MAX_BYTES = 25 * 1024 * 1024;
 
 /**
  * Below this, treat a recording as a mis-tap and discard it rather than spending an AI
@@ -182,6 +181,51 @@ export function concatInt16(chunks: readonly Int16Array[]): Int16Array {
     offset += c.length;
   }
   return out;
+}
+
+/**
+ * 16-bit samples gathered into one growing buffer.
+ *
+ * The worklet posts every 128-sample render quantum, so a push-and-concat list held one
+ * small `Int16Array` per ~3ms of audio: ~135k objects for a six-minute note, whose
+ * per-object overhead outweighed the audio itself, and then a full copy to join them.
+ * Growth doubles, never past `maxSamples`, so the cap is also the most this ever holds.
+ */
+export class PcmAccumulator {
+  private data: Int16Array;
+  private used = 0;
+
+  constructor(
+    private readonly maxSamples: number,
+    initialSamples = 16_000 * 15
+  ) {
+    this.data = new Int16Array(Math.min(initialSamples, maxSamples));
+  }
+
+  get length(): number {
+    return this.used;
+  }
+
+  /** Append as much of `samples` as fits under the cap; returns how many were kept. */
+  append(samples: Int16Array): number {
+    const kept = Math.min(samples.length, this.maxSamples - this.used);
+    if (kept <= 0) return 0;
+    if (this.used + kept > this.data.length) {
+      const grown = new Int16Array(
+        Math.min(this.maxSamples, Math.max(this.used + kept, this.data.length * 2))
+      );
+      grown.set(this.data.subarray(0, this.used));
+      this.data = grown;
+    }
+    this.data.set(kept === samples.length ? samples : samples.subarray(0, kept), this.used);
+    this.used += kept;
+    return kept;
+  }
+
+  /** The samples so far, as a view — no copy. */
+  samples(): Int16Array {
+    return this.data.subarray(0, this.used);
+  }
 }
 
 // ── WAV framing ───────────────────────────────────────────────────────────────────────

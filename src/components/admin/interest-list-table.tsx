@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MailX, Trash2 } from "lucide-react";
 import { AdminTable, RelativeTime, Td, Th } from "@/components/admin/primitives";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
@@ -18,23 +18,109 @@ import { cn } from "@/lib/utils";
  * the bulk bar on top. Dates are passed as ISO strings rather than `Date` objects — the
  * server/client boundary serialises them either way, and being explicit about it stops the
  * absolute label from silently depending on how Next happened to revive the value.
+ *
+ * `showInLine`: only the "In line" sort needs the place-in-line column. Moved spots ride
+ * on that cell's hover title rather than their own column.
  */
 
 export type InterestListTableRow = {
   id: string;
   email: string;
+  /** Full name when known; shown above the address. */
+  displayName: string | null;
   createdAtIso: string;
   createdAtLabel: string;
   source: string;
   status: "active" | "converted" | "unsubscribed";
-  followUpSentAtIso: string | null;
+  /** Place in line; null once they have left. */
+  position: number | null;
+  /** Place by join order alone; null once they have left. */
+  joinRank: number | null;
+  referrals: number;
+  /** Label of the referral tier they hold, once they hold one (0 referrals holds none). */
+  tierLabel: string | null;
   planet: string | null;
+  /** Times they opened their own pass. */
+  passCheckCount: number;
+  /** ISO of the most recent pass open, or null if never. */
+  passLastCheckedAtIso: string | null;
 };
+
+/** Hover copy for how far place-in-line moved vs join order. */
+function movedTitle(position: number | null, joinRank: number | null): string | undefined {
+  if (position === null || joinRank === null || position === joinRank) return undefined;
+  const moved = joinRank - position;
+  return moved > 0
+    ? `Moved up ${moved.toLocaleString("en-US")} from join order`
+    : `Moved down ${Math.abs(moved).toLocaleString("en-US")} from join order`;
+}
+
+/**
+ * Check count with "how long ago was the last one" in the hover title.
+ *
+ * The title is relative and client-driven for the same purity/hydration reason as
+ * `RelativeTime`: a relative label is a function of "now".
+ */
+function PassChecksCell({
+  count,
+  lastCheckedAtIso,
+}: {
+  count: number;
+  lastCheckedAtIso: string | null;
+}) {
+  const [ago, setAgo] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lastCheckedAtIso) {
+      setAgo(null);
+      return;
+    }
+    const update = () => setAgo(relativeAgoLabel(new Date(lastCheckedAtIso)));
+    update();
+    const timer = setInterval(update, 60_000);
+    return () => clearInterval(timer);
+  }, [lastCheckedAtIso]);
+
+  const title = !lastCheckedAtIso
+    ? "Never checked their pass"
+    : ago
+      ? `Last checked ${ago}`
+      : undefined;
+
+  return (
+    <span
+      className={cn("tabular-nums", count === 0 && "text-muted-foreground/50")}
+      title={title}
+    >
+      {count.toLocaleString("en-US")}
+    </span>
+  );
+}
+
+/** Same compact relative labels as `RelativeTime`, with an "ago" suffix for title copy. */
+function relativeAgoLabel(d: Date): string {
+  const diff = Date.now() - d.getTime();
+  const mins = Math.round(diff / 60_000);
+  if (Math.abs(mins) < 1) return "just now";
+  if (Math.abs(mins) < 60) return `${mins}m ago`;
+  const hours = Math.round(diff / 3_600_000);
+  if (Math.abs(hours) < 24) return `${hours}h ago`;
+  const days = Math.round(diff / 86_400_000);
+  if (Math.abs(days) < 365) return `${days}d ago`;
+  return `${Math.round(days / 365)}y ago`;
+}
 
 const BULK_BUTTON =
   "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors duration-fast";
 
-export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
+export function InterestListTable({
+  rows,
+  showInLine = false,
+}: {
+  rows: InterestListTableRow[];
+  /** Place-in-line column — only when sorting by the line. */
+  showInLine?: boolean;
+}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const ids = [...selected];
@@ -77,12 +163,12 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                   )}
                 >
                   <MailX className="size-3" aria-hidden />
-                  Unsubscribe {ids.length}
+                  Remove {ids.length}
                 </span>
               }
-              title={`Stop mailing ${ids.length} ${ids.length === 1 ? "address" : "addresses"}?`}
-              description="They stop receiving anything immediately. The rows stay, so you keep their signup dates and sources, and each can be restored individually."
-              confirmLabel="Unsubscribe"
+              title={`Take ${ids.length} ${ids.length === 1 ? "address" : "addresses"} off the waitlist?`}
+              description="They leave the line and stop receiving anything immediately. The rows stay, so you keep their signup dates and sources, and each can be restored to its old place."
+              confirmLabel="Remove from line"
               onConfirm={async (reason) => {
                 await bulkUnsubscribeInterestListAction({ ids, reason });
                 setSelected(new Set());
@@ -101,7 +187,7 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 </span>
               }
               title={`Delete ${ids.length} ${ids.length === 1 ? "signup" : "signups"} entirely?`}
-              description="The rows are erased. Their signup dates and sources are lost, and those addresses can rejoin later as brand-new signups. To simply stop mailing them, use Unsubscribe."
+              description="The rows are erased. Their signup dates and sources are lost, and those addresses can rejoin later as brand-new signups. To take them out of line but keep the record, use Remove."
               confirmLabel="Delete permanently"
               danger
               typedConfirmation={String(ids.length)}
@@ -131,11 +217,14 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 className="size-3.5 accent-current"
               />
             </Th>
-            <Th>Email</Th>
+            {showInLine && <Th numeric>In line</Th>}
+            <Th numeric>Joined #</Th>
+            <Th>Name / email</Th>
+            <Th numeric>Referrals</Th>
+            <Th numeric>Checks</Th>
             <Th>Signed up</Th>
             <Th>Source</Th>
             <Th>Status</Th>
-            <Th>Follow-up</Th>
             <Th>Planet</Th>
             <Th className="text-right">Actions</Th>
           </>
@@ -158,34 +247,67 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 className="size-3.5 accent-current"
               />
             </Td>
-            <Td className="font-medium text-ink">{row.email}</Td>
-            <Td>
+            {showInLine && (
+              <Td numeric className="tabular-nums">
+                <span title={movedTitle(row.position, row.joinRank)}>
+                  {row.position !== null ? `#${row.position.toLocaleString("en-US")}` : "—"}
+                </span>
+              </Td>
+            )}
+            <Td numeric className="tabular-nums text-muted-foreground">
+              {row.joinRank !== null ? `#${row.joinRank.toLocaleString("en-US")}` : "—"}
+            </Td>
+            <Td className="max-w-[16rem]">
+              {row.displayName ? (
+                <div className="min-w-0 leading-tight">
+                  <div className="truncate font-medium text-ink">{row.displayName}</div>
+                  <div className="truncate text-xs text-muted-foreground">{row.email}</div>
+                </div>
+              ) : (
+                <span className="truncate font-medium text-ink">{row.email}</span>
+              )}
+            </Td>
+            <Td numeric className={row.referrals === 0 ? "text-muted-foreground/50" : undefined}>
+              {row.referrals}
+            </Td>
+            <Td numeric>
+              <PassChecksCell
+                count={row.passCheckCount}
+                lastCheckedAtIso={row.passLastCheckedAtIso}
+              />
+            </Td>
+            <Td className="whitespace-nowrap">
               {/* Absolute first — "when did they join" is the question, and a relative
-                  label alone stops being an answer after a month. */}
+                  label alone stops being an answer after a month. Kept on one line so
+                  the roster row stays a single band. */}
               <span className="tabular-nums">{row.createdAtLabel}</span>
-              <span className="ml-2 text-xs text-muted-foreground">
+              <span className="ml-1.5 text-xs text-muted-foreground">
                 <RelativeTime date={row.createdAtIso} /> ago
               </span>
             </Td>
-            <Td className="text-muted-foreground">{row.source}</Td>
-            <Td>
+            <Td className="max-w-[14rem] text-muted-foreground">
+              <span className="block truncate whitespace-nowrap" title={row.source}>
+                {row.source}
+              </span>
+            </Td>
+            <Td className="whitespace-nowrap">
               {row.status === "unsubscribed" ? (
-                <span className="text-destructive">Unsubscribed</span>
+                <span className="text-destructive">Left</span>
               ) : row.status === "converted" ? (
                 <span className="text-accent-foreground">Converted</span>
+              ) : row.tierLabel ? (
+                <span className="font-medium text-accent-foreground">{row.tierLabel}</span>
               ) : (
-                <span className="text-muted-foreground">Active</span>
+                <span className="text-muted-foreground">Waiting</span>
               )}
             </Td>
-            <Td className="text-muted-foreground">
-              {row.followUpSentAtIso ? <RelativeTime date={row.followUpSentAtIso} /> : "—"}
-            </Td>
-            <Td className="capitalize text-muted-foreground">{row.planet ?? "—"}</Td>
+            <Td className="whitespace-nowrap capitalize text-muted-foreground">{row.planet ?? "—"}</Td>
             <Td>
               <InterestListRowActions
                 id={row.id}
                 email={row.email}
                 unsubscribed={row.status === "unsubscribed"}
+                invitable={row.status === "active"}
               />
             </Td>
           </tr>

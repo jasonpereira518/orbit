@@ -29,7 +29,8 @@ import { getDb } from "../src/db";
 import { chatMessages, chatThreads, contacts, reminders } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import {
-  deleteReminder,
+  dismissReminder,
+  restoreDismissedReminder,
   generateDueFollowUps,
   completeReminder,
   reopenReminder,
@@ -163,21 +164,37 @@ async function main() {
     `got ${afterReopen?.dueDate?.toISOString()}`
   );
 
-  const snapshot = await deleteReminder(USER, handWritten.id);
+  // Deleting a reminder is a soft dismiss with an undo, not a DELETE — see
+  // `deleteReminderAction`. What matters for data loss is the same either way: the row the
+  // user wrote has to survive the delete well enough to come back, and one account's
+  // delete must not reach another's row.
+  const snapshot = await dismissReminder(USER, handWritten.id);
   check("delete returns a snapshot", Boolean(snapshot));
   check(
     "the snapshot carries what an undo needs",
-    snapshot?.title === "Send the intro deck" &&
-      snapshot?.description === "He asked for it after the AWS Summit chat" &&
-      snapshot?.dueDate?.getTime() === userDue.getTime()
+    snapshot?.reminderId === handWritten.id && snapshot?.previousStatus === "pending",
+    JSON.stringify(snapshot)
   );
-  const gone = await db.query.reminders.findFirst({
+  const dismissed = await db.query.reminders.findFirst({
     where: eq(reminders.id, handWritten.id),
   });
-  check("the row is actually gone", !gone);
+  check("the row leaves the list", dismissed?.status === "dismissed");
+  check(
+    "and keeps every word the user wrote, so undo restores the reminder and not a stub",
+    dismissed?.title === "Send the intro deck" &&
+      dismissed?.description === "He asked for it after the AWS Summit chat" &&
+      dismissed?.dueDate?.getTime() === userDue.getTime()
+  );
+  check(
+    "undo brings it back as it was",
+    (await restoreDismissedReminder(USER, snapshot!)).restored &&
+      (
+        await db.query.reminders.findFirst({ where: eq(reminders.id, handWritten.id) })
+      )?.status === "pending"
+  );
   check(
     "deleting someone else's reminder is a no-op",
-    (await deleteReminder("some-other-user", generated.id)) === null
+    (await dismissReminder("some-other-user", generated.id)) === null
   );
 
   // -------------------------------------------------------------- 3. chat turns

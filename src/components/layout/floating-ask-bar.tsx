@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
@@ -15,28 +16,33 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
-import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
+import { ArrowUp, CornerDownLeft, RotateCcw, Search, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
-import { SuggestionPills } from "@/components/chat/suggestion-cards";
+import {
+  createStreamSmoother,
+  prefersReducedMotionNow,
+  type StreamSmoother,
+} from "@/lib/stream-smoother";
+import type { ChatStep } from "@/lib/chat-stream-protocol";
+import { ChatActivity } from "@/components/chat/chat-activity";
+import { OrbitMark } from "@/components/chat/orbit-mark";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  MATCHED_FIELD_LABELS,
-  type KeywordSearchHit,
-} from "@/lib/keyword-search";
+import type { KeywordSearchHit } from "@/lib/keyword-search";
+import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 /**
  * Split out of the shell's chunk.
@@ -78,6 +84,8 @@ type AssistantMessage = {
   retrieved: ChatResult["retrieved"];
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
+  /** The stages the server reported, so this bar narrates the same work `/chat` does. */
+  steps?: ChatStep[];
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -145,6 +153,7 @@ export function FloatingAskBar() {
   // itself is the progress indicator.
   const awaitingFirstToken =
     chatPending && !messages.some((m) => m.role === "assistant" && m.streaming);
+  const reduceMotion = usePrefersReducedMotion();
 
   const [profileContact, setProfileContact] = useState<AskBarContact | null>(
     null
@@ -211,6 +220,9 @@ export function FloatingAskBar() {
   // Read through a ref so the listener below is registered once, not re-bound every time
   // `sendQuestion`'s identity changes with a pending reply.
   const sendQuestionRef = useRef<(q: string) => void>(() => {});
+  // The reveal buffer for the answer in flight, so unmounting stops it drawing.
+  const smootherRef = useRef<StreamSmoother | null>(null);
+  useEffect(() => () => smootherRef.current?.cancel(), []);
 
   useEffect(() => {
     function onOpenRequest(e: Event) {
@@ -390,6 +402,16 @@ export function FloatingAskBar() {
           ]);
         };
 
+        // Same frame-at-a-time reveal as the chat page; every path that ends the answer flushes it.
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
         await streamChat(
           {
             question: q,
@@ -403,26 +425,39 @@ export function FloatingAskBar() {
               : undefined,
           },
           {
-            onAnswer: (delta) => {
-              ensurePlaceholder();
-              patch((m) => ({ ...m, answer: m.answer + delta }));
-            },
+            onAnswer: (delta) => smoother.push(delta),
             onRecommendations: (items) => {
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
             },
+            onStep: (step) => {
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
+            },
             onDone: (info) => {
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
               if (info.notice) toast.message(info.notice);
             },
             onError: (message) => {
+              smoother.cancel();
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               setQuery(q);
             },
           }
         );
+        smoother.flush();
+        smootherRef.current = null;
         setChatPending(false);
       })();
     },
@@ -470,6 +505,10 @@ export function FloatingAskBar() {
       ? `Ask about ${activeContactName}…`
       : "Ask your network…";
 
+  // Nothing asked, typed or found yet: the panel is an invitation, so it gets a real heading.
+  const idleIntro =
+    messages.length === 0 && !chatPending && !searchPending && hits.length === 0 && !query.trim();
+
   // After every hook, before the tree — see the note on `feedbackState` above.
   if (feedbackState === "capturing") return null;
 
@@ -490,14 +529,21 @@ export function FloatingAskBar() {
         // "Ask your network" item in the More sheet opens it. Desktop keeps
         // the persistent collapsed pill.
         open ? "flex" : "hidden md:flex",
-        "bottom-[calc(6.5rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "bottom-[calc(6.875rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       aria-hidden={!visible}
     >
-      <div
+      {/* A slim pill at rest that opens out to full width once it is in use. A spring, not a
+          CSS transition: it picks up from wherever it is when a click lands mid-animation. */}
+      <motion.div
+        initial={false}
+        animate={{ maxWidth: open || query ? 448 : 288 }}
+        transition={
+          reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 36, mass: 0.8 }
+        }
         className={cn(
-          "flex w-full max-w-md flex-col gap-2",
+          "flex w-full flex-col gap-2",
           visible ? "pointer-events-auto" : "pointer-events-none"
         )}
       >
@@ -509,41 +555,51 @@ export function FloatingAskBar() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.98 }}
               transition={{ duration: DUR.base, ease: EASE_HOUSE }}
-              className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-card/95 shadow-xl backdrop-blur-md"
+              className="overflow-hidden rounded-3xl border border-border/60 bg-card/95 shadow-2xl shadow-black/[0.08] backdrop-blur-md"
             >
-              <div className="flex items-center justify-between border-b border-border/60 px-3.5 py-2">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles className="size-3 text-primary" />
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {messages.length > 0
-                      ? personContextActive && activeContactName
-                        ? `Ask about ${activeContactName}`
-                        : "Ask your network"
-                      : searchPending
-                        ? "Searching…"
-                        : hits.length > 0
-                          ? `${hits.length} match${hits.length === 1 ? "" : "es"}`
-                          : "Semantic search"}
-                  </p>
-                </div>
+              <div
+                className={cn(
+                  "flex items-center justify-between pr-2 pl-4",
+                  idleIntro ? "pt-2.5 pb-0.5" : "py-2"
+                )}
+              >
+                <p
+                  className={cn(
+                    idleIntro
+                      ? "font-display text-sm font-medium text-ink"
+                      : "text-xs text-muted-foreground"
+                  )}
+                >
+                  {messages.length > 0
+                    ? personContextActive && activeContactName
+                      ? `About ${activeContactName}`
+                      : "Your network"
+                    : searchPending
+                      ? "Looking…"
+                      : hits.length > 0
+                        ? `${hits.length} ${hits.length === 1 ? "person matches" : "people match"}`
+                        : personContextActive && activeContactName
+                          ? `Ask about ${activeContactName}`
+                          : "Ask your network"}
+                </p>
                 <div className="flex items-center gap-0.5">
                   {messages.length > 0 && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="h-6 px-2 text-[11px] text-muted-foreground"
+                      className="h-7 rounded-full px-2.5 text-xs text-muted-foreground"
                       onClick={clearThread}
                     >
                       <RotateCcw className="mr-1 size-3" />
-                      New
+                      Start over
                     </Button>
                   )}
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    className="text-muted-foreground"
+                    className="rounded-full text-muted-foreground"
                     aria-label="Close"
                     onClick={() => setOpen(false)}
                   >
@@ -552,92 +608,112 @@ export function FloatingAskBar() {
                 </div>
               </div>
 
-              <div className="max-h-[min(48vh,24rem)] overflow-y-auto">
+              <div className="max-h-[min(56vh,30rem)] overflow-y-auto">
                 {messages.length === 0 && !chatPending && hits.length === 0 && (
-                  <div className="space-y-2.5 px-3.5 py-3">
+                  <div className="px-2 pb-2">
                     {query.trim() ? (
-                      <p className="text-sm text-muted-foreground">
-                        {searchPending
-                          ? "Searching…"
-                          : `No people matched “${query.trim()}”. Press Enter to ask your network.`}
+                      <p className="px-2 pt-1 pb-2 text-sm text-muted-foreground">
+                        {searchPending ? (
+                          "Looking…"
+                        ) : (
+                          <>
+                            Nobody by that name. Press{" "}
+                            <kbd className="inline-flex h-5 items-center rounded-md border border-border/60 bg-background px-1 align-middle">
+                              <CornerDownLeft className="size-3" aria-hidden />
+                              <span className="sr-only">Enter</span>
+                            </kbd>{" "}
+                            to ask instead.
+                          </>
+                        )}
                       </p>
                     ) : (
                       <>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="px-2 pb-2 text-xs text-muted-foreground">
                           {personContextActive && activeContactName
-                            ? `Ask anything about ${activeContactName}—relationship history, talking points, or follow-ups.`
+                            ? `What would you like to know about ${activeContactName}?`
                             : "Ask anything about people, companies, or follow-ups in your network."}
                         </p>
-                        <SuggestionPills
-                          items={suggestionChips}
-                          disabled={chatPending}
-                          onPick={(s) =>
-                            sendQuestion(s.question, {
-                              contextContactIds: s.contactIds.length ? s.contactIds : undefined,
-                            })
-                          }
-                        />
+                        {suggestionChips.length > 0 && (
+                          <ul aria-label="Suggested questions" className="flex flex-col gap-1.5">
+                            {suggestionChips.map((s) => (
+                              <li key={s.id} className="flex">
+                                <button
+                                  type="button"
+                                  disabled={chatPending}
+                                  onClick={() =>
+                                    sendQuestion(s.question, {
+                                      contextContactIds: s.contactIds.length ? s.contactIds : undefined,
+                                    })
+                                  }
+                                  className="group flex w-full flex-col rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-left shadow-xs transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-primary/30 hover:bg-primary/[0.04] focus-visible:border-primary/40 focus-visible:ring-[3px] focus-visible:ring-primary/15 focus-visible:outline-none active:translate-y-0 disabled:opacity-50 motion-reduce:hover:translate-y-0 dark:bg-background/40 dark:hover:bg-primary/[0.08]"
+                                >
+                                  <span className="flex items-start gap-2">
+                                    <span className="min-w-0 flex-1 truncate text-[13px] leading-snug text-ink">
+                                      <BrandedQuestion question={s.question} company={s.company} />
+                                    </span>
+                                    <ArrowUp
+                                      className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                                      aria-hidden
+                                    />
+                                  </span>
+                                  {/* The why, only on hover or focus — at rest the cards are just questions.
+                                      Grid rows animate the height without measuring it. */}
+                                  {s.basis && (
+                                    <span className="grid grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:grid-rows-[1fr] group-hover:opacity-100 group-focus-visible:grid-rows-[1fr] group-focus-visible:opacity-100 motion-reduce:transition-none">
+                                      <span className="block min-h-0 overflow-hidden">
+                                        <span className="block pt-1 text-xs leading-relaxed text-muted-foreground">
+                                          {s.basis}
+                                        </span>
+                                      </span>
+                                    </span>
+                                  )}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </>
                     )}
                   </div>
                 )}
 
                 {messages.length === 0 && hits.length > 0 && (
-                  <ul className="p-1.5">
+                  <ul className="px-2 pb-2">
                     {hits.map((hit) => (
                       <li key={hit.id}>
-                        <Link
+                        <IntentLink
                           href={`/contacts/${hit.id}`}
-                          className="block rounded-2xl px-3 py-2 transition-colors hover:bg-muted/60"
+                          className="block rounded-xl px-2 py-2 transition-colors hover:bg-primary/[0.06] dark:hover:bg-primary/[0.1]"
                           onClick={() => setOpen(false)}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-ink">
-                                {hit.preferredName || hit.fullName}
-                              </p>
-                              <p className="truncate text-xs text-muted-foreground">
-                                {[hit.title, hit.company]
-                                  .filter(Boolean)
-                                  .join(" · ") || "No role yet"}
-                              </p>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              {(hit.source === "semantic" ||
-                                hit.source === "hybrid") && (
-                                <Badge
-                                  variant="secondary"
-                                  className="text-[10px]"
-                                >
-                                  {hit.source === "hybrid" ? "AI+text" : "AI"}
-                                </Badge>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-ink">
+                              {hit.preferredName || hit.fullName}
+                              {(hit.title || hit.company) && (
+                                <span className="font-normal text-muted-foreground">
+                                  {" · "}
+                                  {hit.title}
+                                  {hit.title && hit.company && ", "}
+                                  {hit.company && (
+                                    <span style={{ color: companyBrandColor(hit.company) ?? undefined }}>
+                                      {hit.company}
+                                    </span>
+                                  )}
+                                </span>
                               )}
-                            </div>
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {hit.explanation}
+                            </p>
                           </div>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {hit.explanation}
-                          </p>
-                          {hit.matchedFields.length > 0 && (
-                            <div className="mt-1.5 flex flex-wrap gap-1">
-                              {hit.matchedFields.slice(0, 3).map((field) => (
-                                <Badge
-                                  key={field}
-                                  variant="secondary"
-                                  className="text-[10px] capitalize"
-                                >
-                                  {MATCHED_FIELD_LABELS[field]}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-                        </Link>
+                        </IntentLink>
                       </li>
                     ))}
                   </ul>
                 )}
 
                 {messages.length > 0 && (
-                  <div className="space-y-2.5 px-2.5 py-2.5">
+                  <div className="space-y-3 px-4 pt-1 pb-4">
                     {messages.map((msg) =>
                       msg.role === "user" ? (
                         <UserBubble key={msg.id} msg={msg} />
@@ -649,10 +725,13 @@ export function FloatingAskBar() {
                         />
                       )
                     )}
+                    {/* Only until the first step lands, which is now near-immediate — after
+                        that ChatActivity names the stage actually running, rather than
+                        claiming a search that may already be finished. */}
                     {awaitingFirstToken && (
-                      <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
-                        Searching your network…
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <OrbitMark reduceMotion={reduceMotion} />
+                        Looking through your network…
                       </div>
                     )}
                     <div ref={threadEndRef} />
@@ -660,9 +739,9 @@ export function FloatingAskBar() {
                 )}
 
                 {messages.length === 0 && chatPending && (
-                  <div className="flex items-center gap-2 px-3.5 py-4 text-sm text-muted-foreground">
-                    <Loader2 className="size-3.5 animate-spin" />
-                    Searching your network…
+                  <div className="flex items-center gap-2 px-4 pt-1 pb-4 text-sm text-muted-foreground">
+                    <OrbitMark reduceMotion={reduceMotion} />
+                    Looking through your network…
                   </div>
                 )}
               </div>
@@ -709,7 +788,6 @@ export function FloatingAskBar() {
         </AnimatePresence>
 
         <motion.div
-          layout
           className={cn(
             "flex h-12 items-center gap-2 rounded-full border border-border/70 bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
             "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
@@ -754,7 +832,7 @@ export function FloatingAskBar() {
             }}
           />
           {!open && !query && (
-            <kbd className="hidden shrink-0 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground sm:inline">
+            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-[11px] text-muted-foreground sm:inline-flex">
               ⌘J
             </kbd>
           )}
@@ -789,21 +867,36 @@ export function FloatingAskBar() {
             aria-label={query.trim() ? "Ask" : "Recall last message"}
           >
             {chatPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <OrbitMark reduceMotion={reduceMotion} tone="current" />
             ) : (
               <ArrowUp className="size-3.5" />
             )}
           </Button>
         </motion.div>
-      </div>
+      </motion.div>
     </motion.div>
+  );
+}
+
+/** A suggested question with the company it names drawn in that company's brand color. */
+function BrandedQuestion({ question, company }: { question: string; company?: string }) {
+  const at = company ? question.lastIndexOf(company) : -1;
+  if (!company || at < 0) return <>{question}</>;
+  return (
+    <>
+      {question.slice(0, at)}
+      <span className="font-medium" style={{ color: companyBrandColor(company) ?? undefined }}>
+        {company}
+      </span>
+      {question.slice(at + company.length)}
+    </>
   );
 }
 
 const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[90%] rounded-2xl rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary/[0.08] px-3 py-1.5 text-sm text-ink dark:bg-primary/[0.14]">
         {msg.content}
       </div>
     </div>
@@ -817,11 +910,21 @@ const AssistantBubble = memo(function AssistantBubble({
   msg: AssistantMessage;
   onNavigate: (open: boolean) => void;
 }) {
+  const steps = msg.steps ?? [];
   return (
     <div className="space-y-2">
-      <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
-        <ChatMarkdown>{msg.answer}</ChatMarkdown>
-      </div>
+      {steps.length > 0 && (
+        <ChatActivity
+          steps={steps}
+          state={msg.streaming ? "live" : "final"}
+          variant="compact"
+        />
+      )}
+      {msg.answer && (
+        <div className="text-sm leading-relaxed text-foreground/90">
+          <ChatMarkdown>{msg.answer}</ChatMarkdown>
+        </div>
+      )}
       {msg.recommendations.map((r) => (
         <MiniRecommendation
           key={r.recruiter_id || r.contact_id || r.name}
@@ -830,16 +933,16 @@ const AssistantBubble = memo(function AssistantBubble({
       ))}
       {msg.retrieved.length > 0 &&
         msg.recommendations.length === 0 && (
-          <div className="flex flex-wrap gap-1.5 px-1">
+          <div className="flex flex-wrap gap-1.5">
             {msg.retrieved.slice(0, 6).map((c) => (
-              <Link
+              <IntentLink
                 key={c.id}
                 href={`/contacts/${c.id}`}
-                className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="rounded-full bg-muted/60 px-2.5 py-1 text-xs text-foreground/80 transition-colors hover:bg-primary/[0.08] hover:text-ink"
                 onClick={() => onNavigate(false)}
               >
                 {c.fullName}
-              </Link>
+              </IntentLink>
             ))}
           </div>
         )}
@@ -861,23 +964,21 @@ const MiniRecommendation = memo(function MiniRecommendation({
   const canRemind = Boolean(rec.contact_id);
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/80 p-2.5">
+    <div className="rounded-2xl border border-border/60 bg-background/60 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <Link
             href={href}
-            className="text-sm font-medium text-primary hover:underline"
+            className="text-sm font-medium text-ink hover:underline"
           >
             {rec.name}
           </Link>
           {rec.recruiter_id && (
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Recruiter
-            </p>
+            <span className="text-xs text-muted-foreground"> · Recruiter</span>
           )}
           <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
           <p className="mt-1 text-xs">
-            <span className="font-medium">Next: </span>
+            <span className="text-muted-foreground">Next: </span>
             {rec.suggested_action}
           </p>
         </div>
@@ -901,7 +1002,7 @@ const MiniRecommendation = memo(function MiniRecommendation({
               })
             }
           >
-            Reminder
+            Remind me
           </Button>
         )}
       </div>

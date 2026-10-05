@@ -2,19 +2,22 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ImageResponse } from "next/og";
 import { NextResponse, type NextRequest } from "next/server";
-import { SHARE_TOKEN_MAX, formatTicketNumber, type InterestTicket } from "@/lib/interest-list";
-import { getTicketByShareToken } from "@/lib/interest-list-ticket";
+import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
+import { getInviterPlanet } from "@/lib/interest-list-ticket";
 import { PLANET_GLOW, planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
 
 /**
- * The boarding pass as a 1200×630 link preview, one per share token.
+ * The waitlist's 1200×630 link preview, one per share token: the sharer's planet beside the
+ * waitlist's pitch.
+ *
+ * UNBRANDED, like the rest of the waitlist (see `lib/waitlist-host.ts`): no product name,
+ * and nothing about what it does beyond the one line the page itself says. No place in
+ * line either — it moves, and this image sits in a day-long CDN cache.
  *
  * Public (see `PUBLIC_ROUTES`): social crawlers carry no session. A missing token renders
  * the generic "get your planet" card with a 200; an unknown token 308s to that same
  * tokenless URL, so every bogus token collapses onto one CDN entry and one render. Neither
  * ever fails, because X and LinkedIn cache a failed preview and never come back for it.
- * No moons on the image: they would go stale under the day-long CDN cache, and the number
- * and planet are the part people share.
  *
  * Fonts are vendored TTFs (Satori reads TTF/OTF/WOFF, not woff2, and `next/font` exposes
  * no file). Read at request time, not imported: `next.config.ts` lists the directory in
@@ -57,14 +60,13 @@ async function loadAssets(planet: WelcomePlanet) {
 function Card({
   planet,
   planetSrc,
-  number,
+  invited,
 }: {
   planet: WelcomePlanet;
   planetSrc: string;
-  /** null renders the generic card. */
-  number: number | null;
+  /** A real sharer's card, rather than the generic one. */
+  invited: boolean;
 }) {
-  const label = planetLabel(planet);
   return (
     <div
       style={{
@@ -110,13 +112,8 @@ function Card({
           >
             <img src={planetSrc} width={220} height={220} alt="" />
           </div>
-          {number !== null ? (
-            <div style={{ display: "flex", fontSize: 72, marginTop: 28, letterSpacing: -2 }}>
-              #{formatTicketNumber(number)}
-            </div>
-          ) : null}
-          <div style={{ display: "flex", fontSize: 26, color: MUTED, marginTop: number !== null ? 4 : 28 }}>
-            {number !== null ? label : "Your planet awaits"}
+          <div style={{ display: "flex", fontSize: 26, color: MUTED, marginTop: 28 }}>
+            {invited ? planetLabel(planet) : "Early access"}
           </div>
         </div>
         {/* Details */}
@@ -130,45 +127,39 @@ function Card({
           }}
         >
           <div style={{ display: "flex", fontSize: 20, letterSpacing: 4, color: ACCENT }}>
-            ORBIT · INTEREST LIST
+            EARLY ACCESS · WAITLIST
           </div>
           {/*
             Two real element children, never a fragment and never a `{" "}` text node: Satori
-            drops standalone whitespace (the headline read "bound forMercury") and lays a
-            fragment out as one nowrap row, so the accent word ran off the card instead of
-            wrapping. The first span carries its own trailing gap as a margin; the planet and
-            its period sit in one span so they can never be split across lines.
+            drops standalone whitespace and lays a fragment out as one nowrap row, so the
+            accent word would run off the card instead of wrapping. The first span carries
+            its own trailing gap as a margin; the accent word and its period share a span so
+            they can never be split across lines.
           */}
           <div
             style={{
               display: "flex",
               flexWrap: "wrap",
               alignItems: "baseline",
-              fontSize: 56,
+              fontSize: 64,
               lineHeight: 1.1,
               marginTop: 20,
               letterSpacing: -1.5,
             }}
           >
-            <span style={{ marginRight: 16 }}>
-              {number !== null
-                ? `Passenger ${formatTicketNumber(number)}, bound for`
-                : "Every person who joins is handed a"}
-            </span>
+            <span style={{ marginRight: 18 }}>The future of</span>
             <span style={{ display: "flex" }}>
-              <span style={{ fontStyle: "italic", color: ACCENT }}>
-                {number !== null ? label : "planet"}
-              </span>
+              <span style={{ fontStyle: "italic", color: ACCENT }}>networking</span>
               <span>.</span>
             </span>
           </div>
           <div style={{ display: "flex", fontSize: 26, color: MUTED, marginTop: 28, lineHeight: 1.4 }}>
-            {number !== null
-              ? "Occasional notes from the one person building Orbit. Get your own planet."
-              : "Occasional notes from the one person building Orbit. Join and get yours."}
+            {invited
+              ? "A friend saved you a seat. Join the waitlist for early access."
+              : "A central intelligence for everyone you know. Join the waitlist for early access."}
           </div>
           <div style={{ display: "flex", fontSize: 22, color: FAINT, marginTop: 40 }}>
-            orbit — the personal networking CRM
+            Opening in waves
           </div>
         </div>
       </div>
@@ -182,16 +173,18 @@ export async function GET(request: NextRequest) {
 
   // A lookup failure (a transient DB hiccup) must not become a 500 — it falls through to
   // the generic card, same as a bogus token.
-  let ticket: InterestTicket | null = null;
+  // The planet is all the card needs, so this is the one-row planet read, not the ticket
+  // with its place-in-line counting.
+  let sharer: WelcomePlanet | null = null;
   if (token) {
     try {
-      ticket = await getTicketByShareToken(token);
+      sharer = await getInviterPlanet(token);
     } catch (err) {
       console.error("[interest-list] ticket lookup failed for the image route", err);
     }
   }
 
-  if (token && !ticket) {
+  if (token && !sharer) {
     // Every bogus token would otherwise be its own cache key and its own render. Send them
     // all to the one generic card, which the CDN keeps for a day.
     const canonical = new URL(request.nextUrl);
@@ -199,7 +192,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(canonical, { status: 308, headers: { "Cache-Control": CACHE_CONTROL } });
   }
 
-  const planet: WelcomePlanet = ticket?.planet ?? "earth";
+  const planet: WelcomePlanet = sharer ?? "earth";
 
   // A missing/corrupt font or planet PNG, or any other failure building the full card,
   // must not 500 either — X and LinkedIn cache a failed preview and never retry. The
@@ -212,7 +205,7 @@ export async function GET(request: NextRequest) {
   try {
     const { fonts, planetSrc } = await loadAssets(planet);
     const png = await new ImageResponse(
-      <Card planet={planet} planetSrc={planetSrc} number={ticket?.number ?? null} />,
+      <Card planet={planet} planetSrc={planetSrc} invited={Boolean(sharer)} />,
       {
         width: 1200,
         height: 630,
@@ -239,13 +232,9 @@ export async function GET(request: NextRequest) {
         }}
       >
         <div style={{ display: "flex", fontSize: 20, letterSpacing: 4, color: ACCENT }}>
-          ORBIT · INTEREST LIST
+          EARLY ACCESS · WAITLIST
         </div>
-        <div style={{ display: "flex", marginTop: 24 }}>
-          {ticket
-            ? `Passenger ${formatTicketNumber(ticket.number)}, bound for ${planetLabel(ticket.planet)}.`
-            : "Every person who joins is handed a planet."}
-        </div>
+        <div style={{ display: "flex", marginTop: 24 }}>The future of networking.</div>
       </div>,
       { width: 1200, height: 630 }
     ).arrayBuffer();

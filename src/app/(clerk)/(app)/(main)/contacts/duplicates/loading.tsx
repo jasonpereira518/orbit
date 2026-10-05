@@ -1,14 +1,9 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { DuplicatesListSkeleton } from "@/components/loading/page-skeletons";
 
 /**
- * Without this, `/contacts/duplicates` inherited `contacts/loading.tsx` — a Suspense
- * boundary covers its own segment AND everything nested under it — so opening the duplicate
- * review flashed the contacts LIST skeleton: a search bar and rows, for a page that has
- * neither. An inherited skeleton of the wrong shape is worse than none, because the layout
- * moves twice.
- *
- * Mirrors the real page: back link, heading, the paragraph explaining what merging does, and
- * the review list.
+ * Its own skeleton: without this file the nearest one was `/contacts`', a list of people,
+ * which then jumped to a header and a stack of pair cards. Same frame as the page.
  */
 export default function DuplicatesLoading() {
   return (
@@ -17,14 +12,9 @@ export default function DuplicatesLoading() {
         <Skeleton className="h-4 w-20" />
         <Skeleton className="h-8 w-40" />
         <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-11/12" />
         <Skeleton className="h-4 w-4/5" />
       </div>
-      <div className="space-y-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-28 w-full rounded-xl" />
-        ))}
-      </div>
+      <DuplicatesListSkeleton />
     </div>
   );
 }

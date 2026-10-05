@@ -47,6 +47,11 @@ export type ExtractedOpportunity = {
   dueDate: Date | null;
   /** 0-100. */
   confidenceScore: number;
+  /**
+   * The model's own kind, when the referral language test overrode it. Kept so the decision
+   * model can veto an override the sentence does not support (decisions/capture.ts).
+   */
+  overriddenKind?: OpportunityKind;
 };
 
 export type OpportunityRejectedCounts = {
@@ -89,7 +94,7 @@ function startOfDay(d: Date) {
  * A resolved date already in the past is discarded — but only the date. See the module
  * header: the opportunity survives its own stale deadline.
  */
-function resolveDuePhrase(phrase: string, opts: { today: Date; anchor: Date }): Date | null {
+export function resolveDuePhrase(phrase: string, opts: { today: Date; anchor: Date }): Date | null {
   const md = deriveMonthDay(phrase);
   if (md) {
     if (md.month < 0 || md.month > 11 || md.day < 1 || md.day > 31) return null;
@@ -148,9 +153,8 @@ export function validateOpportunities(
     // Nothing searchable is lost when this overrides. The label keeps the note's own words,
     // so an opportunity relabelled from `internship` to `referral` still matches a search for
     // "internship" — and both kinds are watched by the job feed either way.
-    const kind = looksLikeReferral(label, item.source_excerpt)
-      ? "referral"
-      : normalizeOpportunityKind(item.kind);
+    const modelKind = normalizeOpportunityKind(item.kind);
+    const kind = looksLikeReferral(label, item.source_excerpt) ? "referral" : modelKind;
     const key = `${kind}|${label.toLowerCase()}`;
     if (seen.has(key)) {
       result.rejected.duplicate += 1;
@@ -178,6 +182,7 @@ export function validateOpportunities(
       confidenceScore: Math.round(
         Math.min(1, Math.max(0, item.confidence ?? 0.5)) * 100
       ),
+      ...(kind !== modelKind ? { overriddenKind: modelKind } : {}),
     });
   }
 

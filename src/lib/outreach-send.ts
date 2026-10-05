@@ -1,8 +1,6 @@
 import { outreachFromAddress } from "@/lib/outreach-sender";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { Resend } from "resend";
-import twilio from "twilio";
 import { getDb } from "@/db";
 import {
   outreachCampaigns,
@@ -10,26 +8,37 @@ import {
   outreachProspects,
   userSettings,
 } from "@/db/schema";
+import { countAgentSendsToday } from "@/lib/agent-sends";
 import { decryptOrNull } from "@/lib/crypto";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
-import { getEntitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { isPlaceholderAddress, PLACEHOLDER_ADDRESS_SEND_MESSAGE } from "@/lib/outreach-quality";
 import { outreachEmailPayload } from "@/lib/outreach-email";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
-export async function getOutreachSendConfig(userId: string) {
-  const db = await getDb();
-  const settings = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
+export async function getOutreachSendConfig(
+  userId: string,
+  // Optional: a caller already holding the account's `user_settings` row (from
+  // `requireAuthenticatedUser()`, say) passes it and skips the read. Omitted, it is read here.
+  loadedSettings?: typeof userSettings.$inferSelect
+) {
+  const settings =
+    loadedSettings ??
+    (await (await getDb()).query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+    }));
 
   // Orbit's own Resend/Twilio credits are metered, but not open-endedly: every user is
   // capped at DAILY_SEND_LIMIT sends a day regardless of plan, so both paid tiers can
   // reach them — including Lifetime, whose single payment funds a bounded obligation
   // rather than an unbounded one. `hosted` gates the env fallback, never the personal
   // key: a user who supplies their own Resend or Twilio credentials uses it on any plan.
-  const { canUseHostedSending: hosted } = await getEntitlements(userId);
+  //
+  // Resolved from the row just read rather than `getEntitlements`, which would read it again
+  // (in a Server Action or route handler `cache()` does not deduplicate). The same resolver on
+  // the same row; a missing row resolves as `getEntitlements` would for a brand-new account.
+  const { canUseHostedSending: hosted } = entitlementsFromSettings(userId, settings ?? {});
   const envKey = (value: string | undefined) => (hosted ? value || null : null);
 
   const ownResendKey = decryptOrNull(settings?.resendApiKeyEncrypted);
@@ -58,6 +67,13 @@ export async function getOutreachSendConfig(userId: string) {
   };
 }
 
+/**
+ * How many messages this account has sent today, across every path that sends one.
+ *
+ * Campaign messages plus assistant drafts the user approved. The second half matters for the
+ * cap's meaning: an MCP connector that did not count here would be a documented way to send
+ * past a limit the rest of the product enforces.
+ */
 export async function countSendsToday(userId: string) {
   const db = await getDb();
   const start = new Date();
@@ -82,7 +98,7 @@ export async function countSendsToday(userId: string) {
       )
     );
 
-  return rows[0]?.count ?? 0;
+  return (rows[0]?.count ?? 0) + (await countAgentSendsToday(userId));
 }
 
 function appendComplianceFooter(channel: OutreachChannel, body: string) {
@@ -137,6 +153,9 @@ export async function sendOutreachMessage(input: {
       hostedFrom: config.fromEmail,
     });
 
+    // Imported here for the same reason as Twilio below: this module sits under every page
+    // that can reach an outreach action, and only an actual email send needs the SDK.
+    const { Resend } = await import("resend");
     const resend = new Resend(config.resendApiKey);
     const result = await resend.emails.send(
       outreachEmailPayload({
@@ -169,6 +188,11 @@ export async function sendOutreachMessage(input: {
     throw new Error("Twilio is not fully configured. Add credentials in Settings.");
   }
 
+  // Imported here, not at the top of the file. The Twilio SDK is ~19 MB on disk and this
+  // module sits under every page that can reach an outreach action, so a static import put
+  // it in the shared server chunk and made every cold start of the app evaluate it — for a
+  // channel almost nobody uses. Only an actual SMS send pays for it now.
+  const { default: twilio } = await import("twilio");
   const client = twilio(config.twilioAccountSid, config.twilioAuthToken);
   let message;
   try {

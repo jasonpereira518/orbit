@@ -3,13 +3,16 @@ import { getDb } from "@/db";
 import { usageEvents } from "@/db/schema";
 import { estimateCostMicros } from "@/lib/ai-pricing";
 import { classifyAiError } from "@/lib/errors";
+import { settleManagedUsage } from "@/lib/credits/ledger";
 import type { AiProvider } from "@/lib/ai-providers";
 
 export type UsageKind =
   | "completion"
   | "multimodal"
   | "embedding"
-  | "transcription";
+  | "transcription"
+  /** A question set answered by the decision model (TypeSafe's Jev). */
+  | "decision";
 
 /**
  * Token counts as reported by the provider.
@@ -20,19 +23,33 @@ export type UsageKind =
  * zero is a lie that would get summed into a total.
  */
 export type TokenCounts = {
+  /** The WHOLE prompt, cached and audio parts included — every extractor below normalises to this. */
   inputTokens?: number | null;
+  /** Everything billed at the output rate, thinking/reasoning tokens included. */
   outputTokens?: number | null;
   cachedInputTokens?: number | null;
+  /**
+   * Priced but not stored: Anthropic's cache-write tokens (billed at 1.25× input) and
+   * Gemini's audio prompt tokens (billed at the audio rate). Both are parts of
+   * `inputTokens`; they change the cost estimate, not the ledger's shape.
+   */
+  cacheWriteTokens?: number | null;
+  audioInputTokens?: number | null;
+  /**
+   * The provider's own figure for what this call cost, in USD × 1e6. Null or undefined
+   * means it did not report one. Zero is a real answer and must not be treated as missing.
+   * Lives here rather than only on `UsageRecord` because it travels the same `report(...)`
+   * path as the token counts above — OpenRouter puts it on the same `usage` object.
+   */
+  reportedCostMicros?: number | null;
 };
 
 /**
- * Who was billed for a call.
- *
- * A superset of `AiProvider`, not the same type. Wispr transcribes and does not complete,
- * so it never takes part in provider/model selection and must not be assignable where an
- * `AiProvider` is expected — but its calls still cost money and still belong in the ledger.
+ * Who was billed for a call. "typesafe" is the decision model and "deepgram" is Orbit's
+ * hosted speech-to-text — ledger values, neither one a provider a person picks for chat (see
+ * `DecisionGrant` in ai-access.ts and `@/lib/deepgram`).
  */
-export type UsageProvider = AiProvider | "wispr";
+export type UsageProvider = AiProvider | "typesafe" | "deepgram";
 
 export type UsageMeta = {
   userId: string;
@@ -41,18 +58,62 @@ export type UsageMeta = {
   model: string;
   kind: UsageKind;
   /**
-   * Whose API key paid. "orbit" = a managed key the AI gate issued (Lifetime or demo
-   * accounts only) — and the meter the managed allowance reads. Always `grant.keyOwner`.
+   * Whose API key paid. "orbit" = a managed key the AI gate issued (Pro and Max, or a
+   * localhost demo account) — and what settles the credit ledger. Always `grant.keyOwner`.
    */
   keyOwner: "user" | "orbit";
+  /**
+   * Sent through a provider Batch API (`src/lib/ai-batch.ts`), which bills at half price.
+   * Not a column: the ledger stores what it cost, and that is where the halving belongs.
+   */
+  batch?: boolean;
 };
 
-type UsageRecord = UsageMeta &
+export type UsageRecord = UsageMeta &
   TokenCounts & {
     success: boolean;
     errorKind?: string | null;
     durationMs?: number | null;
   };
+
+/**
+ * Builds the row `recordUsage` inserts, as a pure function so a smoke test can assert on the
+ * real mapping rather than a copy of it.
+ *
+ * A reported cost (OpenRouter's `usage.cost`) wins over Orbit's own estimate from
+ * `ai-pricing.ts` — that table has no OpenRouter slugs at all and is ~5x low for the
+ * providers it does cover. `costSource` records which figure ended up in the column, since
+ * blending the two without a source would make that gap invisible.
+ */
+export function usageRow(rec: UsageRecord) {
+  const reported = rec.reportedCostMicros ?? null;
+  return {
+    userId: rec.userId,
+    operation: rec.operation,
+    provider: rec.provider,
+    model: rec.model,
+    kind: rec.kind,
+    keyOwner: rec.keyOwner,
+    inputTokens: rec.inputTokens ?? null,
+    outputTokens: rec.outputTokens ?? null,
+    cachedInputTokens: rec.cachedInputTokens ?? null,
+    estimatedCostMicros:
+      reported ??
+      estimateCostMicros({
+        model: rec.model,
+        inputTokens: rec.inputTokens,
+        outputTokens: rec.outputTokens,
+        cachedInputTokens: rec.cachedInputTokens,
+        cacheWriteTokens: rec.cacheWriteTokens,
+        audioInputTokens: rec.audioInputTokens,
+        batch: rec.batch,
+      }),
+    costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
+    success: rec.success ? 1 : 0,
+    errorKind: rec.errorKind ?? null,
+    durationMs: rec.durationMs ?? null,
+  };
+}
 
 /**
  * Fire-and-forget write. Never throws, never blocks the response.
@@ -62,30 +123,19 @@ type UsageRecord = UsageMeta &
  */
 export function recordUsage(rec: UsageRecord): void {
   const write = async () => {
+    const row = usageRow(rec);
     try {
       const db = await getDb();
-      await db.insert(usageEvents).values({
-        userId: rec.userId,
-        operation: rec.operation,
-        provider: rec.provider,
-        model: rec.model,
-        kind: rec.kind,
-        keyOwner: rec.keyOwner,
-        inputTokens: rec.inputTokens ?? null,
-        outputTokens: rec.outputTokens ?? null,
-        cachedInputTokens: rec.cachedInputTokens ?? null,
-        estimatedCostMicros: estimateCostMicros({
-          model: rec.model,
-          inputTokens: rec.inputTokens,
-          outputTokens: rec.outputTokens,
-          cachedInputTokens: rec.cachedInputTokens,
-        }),
-        success: rec.success ? 1 : 0,
-        errorKind: rec.errorKind ?? null,
-        durationMs: rec.durationMs ?? null,
-      });
+      await db.insert(usageEvents).values(row);
     } catch {
       // Telemetry must never surface as a user-visible failure.
+    }
+    // A call on Orbit's key spends credits (pricing v2). Separate from the insert on
+    // purpose: a lost telemetry row must not also lose the charge, and vice versa.
+    try {
+      await settleManagedUsage(row);
+    } catch (err) {
+      console.error("[credits] settling a managed call did not complete", err);
     }
   };
 
@@ -155,16 +205,29 @@ type GeminiUsage = {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
     cachedContentTokenCount?: number;
+    /** Thinking tokens. Billed at the output rate, and NOT included in candidatesTokenCount. */
+    thoughtsTokenCount?: number;
+    promptTokensDetails?: Array<{ modality?: string; tokenCount?: number }>;
   };
 };
 
 export function tokensFromGemini(response: unknown): TokenCounts {
   const meta = (response as GeminiUsage | null)?.usageMetadata;
   if (!meta) return {};
+  const audio = (meta.promptTokensDetails ?? [])
+    .filter((d) => d.modality === "AUDIO")
+    .reduce((sum, d) => sum + (d.tokenCount ?? 0), 0);
+  // Gemini 3.x thinks by default, and a thinking token costs what an output token costs.
+  // Leaving them out understated every Gemini row — and the managed allowance read those rows.
+  const output =
+    meta.candidatesTokenCount == null && meta.thoughtsTokenCount == null
+      ? null
+      : (meta.candidatesTokenCount ?? 0) + (meta.thoughtsTokenCount ?? 0);
   return {
     inputTokens: meta.promptTokenCount ?? null,
-    outputTokens: meta.candidatesTokenCount ?? null,
+    outputTokens: output,
     cachedInputTokens: meta.cachedContentTokenCount ?? null,
+    ...(audio > 0 ? { audioInputTokens: audio } : {}),
   };
 }
 
@@ -181,7 +244,8 @@ export function tokensFromOpenAi(response: unknown): TokenCounts {
   if (!usage) return {};
   return {
     inputTokens: usage.prompt_tokens ?? null,
-    // Embedding responses carry prompt_tokens only — no completion_tokens.
+    // Embedding responses carry prompt_tokens only — no completion_tokens. Reasoning tokens
+    // are already inside completion_tokens.
     outputTokens: usage.completion_tokens ?? null,
     cachedInputTokens: usage.prompt_tokens_details?.cached_tokens ?? null,
   };
@@ -191,16 +255,37 @@ type AnthropicUsage = {
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
-    cache_read_input_tokens?: number;
+    cache_read_input_tokens?: number | null;
+    cache_creation_input_tokens?: number | null;
   };
 };
 
+/**
+ * Anthropic is the odd one out: its `input_tokens` counts only what comes AFTER the last
+ * cache breakpoint, leaving cache reads and writes out. Summed here so `inputTokens` means
+ * the whole prompt for every provider, which is what `estimateCostMicros` subtracts from.
+ */
 export function tokensFromAnthropic(response: unknown): TokenCounts {
   const usage = (response as AnthropicUsage | null)?.usage;
   if (!usage) return {};
+  const read = usage.cache_read_input_tokens ?? 0;
+  const write = usage.cache_creation_input_tokens ?? 0;
   return {
-    inputTokens: usage.input_tokens ?? null,
+    inputTokens: usage.input_tokens == null ? null : usage.input_tokens + read + write,
     outputTokens: usage.output_tokens ?? null,
     cachedInputTokens: usage.cache_read_input_tokens ?? null,
+    ...(write > 0 ? { cacheWriteTokens: write } : {}),
   };
+}
+
+type JevUsage = { usage?: { input_tokens?: unknown; output_tokens?: unknown } };
+
+/**
+ * TypeSafe reports `usage.input_tokens` / `usage.output_tokens`. Output is free, but it is
+ * recorded when reported so the ledger says what happened rather than what it cost.
+ */
+export function tokensFromJev(response: unknown): TokenCounts {
+  const u = (response as JevUsage | null)?.usage;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return { inputTokens: num(u?.input_tokens), outputTokens: num(u?.output_tokens) };
 }

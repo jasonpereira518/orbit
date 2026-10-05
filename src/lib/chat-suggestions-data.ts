@@ -11,6 +11,7 @@ import {
 } from "@/db/schema";
 import { goalRelevanceComponent } from "@/lib/closeness";
 import { getAttentionBrief } from "@/lib/chat-attention";
+import { isSurfaceLive } from "@/lib/surface-visibility";
 import { findMentions } from "@/lib/chat-mentions";
 import { isRosterMatchableOrg, orgMatchKey } from "@/lib/chat-roster-match";
 import { canonicalCompanyClusterName } from "@/lib/company-family";
@@ -93,7 +94,10 @@ export async function loadSuggestionSignals(
     // Bare, with no `interactedIds`: the closeness-cohort path costs several more statements
     // and two full scans, and on a cold branch recomputes and *writes* scores — all to fill
     // `hasLoggedInteraction`, which nothing here reads.
-    getAttentionBrief(userId).catch(() => null),
+    isSurfaceLive(userId, "page.radar")
+      .catch(() => false)
+      .then((radar) => getAttentionBrief(userId, undefined, { radar }))
+      .catch(() => null),
     db
       .select({
         contactId: interactions.contactId,
@@ -206,6 +210,7 @@ export async function loadSuggestionSignals(
         and(
           eq(chatMessages.userId, userId),
           eq(chatMessages.role, "user"),
+          eq(chatMessages.isActive, true),
           gte(chatMessages.createdAt, since(RECENT_QUESTION_DAYS))
         )
       )

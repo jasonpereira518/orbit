@@ -18,9 +18,9 @@ import { MAX_BODY_BYTES } from "./contract.schema";
 import {
   ExtensionRateLimitError,
   ExtensionUnauthorizedError,
-  requireExtensionUserId,
+  requireExtensionUser,
 } from "./auth";
-import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
+import { isPaywallError } from "@/lib/entitlements";
 
 /** Rolling one-minute budgets, per user. */
 const REQUEST_LIMIT_PER_MINUTE = 60;
@@ -48,8 +48,8 @@ const STATUS_BY_CODE: Record<ExtensionErrorCode, number> = {
   not_found: 404,
   duplicate: 409,
   limit_exceeded: 402,
-  payload_too_large: 413,
   payment_required: 402,
+  payload_too_large: 413,
   server_error: 500,
 };
 
@@ -200,6 +200,12 @@ async function readJsonBody<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
 
 export type RouteContext<TIn> = {
   userId: string;
+  /**
+   * The caller's `user_settings` row, as authentication just read it. A route handler is
+   * where `cache()` does nothing, so pass this on (`entitlementsFromSettings`,
+   * `userHasApolloKey(userId, settings)`) rather than reading the row again.
+   */
+  settings: Awaited<ReturnType<typeof requireExtensionUser>>["settings"];
   input: TIn;
   req: Request;
 };
@@ -215,6 +221,8 @@ function toErrorResponse(error: unknown) {
       retryAfterSeconds: error.retryAfterSeconds,
     });
   }
+  // Re-applied after a main merge dropped it: without this arm a plan refusal left the
+  // extension with a 500 and "Something went wrong" instead of a reason it could act on.
   if (isPaywallError(error)) {
     return jsonError({ code: "payment_required", message: error.message });
   }
@@ -256,21 +264,14 @@ export function extensionRoute<TIn, TOut>(config: {
 }) {
   return async function handle(req: Request) {
     try {
-      const userId = await requireExtensionUserId(req);
-      // The extension is a paid feature — it is a bullet on both the Pro and Lifetime
-      // cards and absent from the Free list — but `canUseExtension` was read only by UI
-      // components and settings. No route enforced it, so a free user who installed the
-      // extension got the whole thing. Checked here, in the shared pipeline, so a route
-      // added later cannot forget it; contrast the public API, which gates at its own
-      // auth layer and correctly returns 402.
-      await requireEntitlement(userId, "extension");
+      const { userId, settings } = await requireExtensionUser(req);
       await consumeBudget(userId, config.cost ?? "request");
 
       const input = config.schema
         ? await readJsonBody(req, config.schema)
         : (undefined as TIn);
 
-      const data = await config.handler({ userId, input, req });
+      const data = await config.handler({ userId, settings, input, req });
       return jsonOk(data);
     } catch (error) {
       return toErrorResponse(error);

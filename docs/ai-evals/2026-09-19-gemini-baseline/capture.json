@@ -1,0 +1,76 @@
+{
+  "label": "baseline-capture",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "date": "2026-09-20T00:26:10.406Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 1,
+  "tasks": {
+    "capture": {
+      "cases": 20,
+      "metrics": {
+        "personRecall": 1,
+        "personPrecision": 1,
+        "fieldAccuracy": 1,
+        "opportunityRecall": 1,
+        "referralRecall": 1,
+        "reminderRecall": 0.8333333333333334,
+        "phantomParticipants": 0,
+        "forbiddenHits": 0
+      },
+      "misses": [
+        "cap-dates-03-mixed"
+      ],
+      "p50LatencyMs": 12629,
+      "costMicros": 1243440,
+      "costPerCaseMicros": 62172,
+      "usage": [
+        {
+          "operation": "capture.dates",
+          "model": "gemini-3.5-flash",
+          "calls": 20,
+          "failures": 3,
+          "inputTokens": 26647,
+          "outputTokens": 24624,
+          "cachedInputTokens": 0,
+          "costMicros": 261590,
+          "unpriced": 0
+        },
+        {
+          "operation": "capture.parse",
+          "model": "gemini-3.5-flash",
+          "calls": 18,
+          "failures": 0,
+          "inputTokens": 30260,
+          "outputTokens": 63521,
+          "cachedInputTokens": 0,
+          "costMicros": 617085,
+          "unpriced": 0
+        },
+        {
+          "operation": "capture.parse.details",
+          "model": "gemini-3.5-flash",
+          "calls": 7,
+          "failures": 0,
+          "inputTokens": 11767,
+          "outputTokens": 31824,
+          "cachedInputTokens": 0,
+          "costMicros": 304069,
+          "unpriced": 0
+        },
+        {
+          "operation": "capture.parse.identify",
+          "model": "gemini-3.5-flash",
+          "calls": 3,
+          "failures": 0,
+          "inputTokens": 2663,
+          "outputTokens": 6300,
+          "cachedInputTokens": 0,
+          "costMicros": 60696,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

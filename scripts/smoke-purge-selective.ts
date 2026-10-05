@@ -61,7 +61,17 @@ async function seed() {
     userId: USER,
     email: `${USER}@example.test`,
     geminiApiKeyEncrypted: "ciphertext",
+    // Every BYO provider key column, not just the one the account happens to use:
+    // PRESERVED_SETTINGS_COLUMNS is what `purgeUserSettings` re-inserts, and a column left
+    // off it is silently revoked by every delete, partial ones included. `aiProvider` IS
+    // preserved, so a dropped key column leaves the account pointed at a provider whose
+    // key is gone — AI silently dead, with nothing in the UI to say why.
+    openaiApiKeyEncrypted: "ciphertext",
+    anthropicApiKeyEncrypted: "ciphertext",
+    openrouterApiKeyEncrypted: "ciphertext",
     calendarFeedToken: "feed-token",
+    // User-written content, not a setting: a preferences delete must clear it.
+    writingInstructions: "Keep it short.",
     // `recomputeRecruiterRating` only counts links whose owner opted into the shared pool,
     // so without this the counter is 0 before and after and the check below proves nothing.
     recruiterSharing: 1,
@@ -388,6 +398,35 @@ async function main() {
     (await countFor("plan_upgrade_events")) === 0
   );
 
+  console.log("\nInsights keeps the relationship watermark, not the text");
+  await reset();
+  const adaContact = await db.query.contacts.findFirst({ where: eq(schema.contacts.userId, USER) });
+  const watermarkAt = new Date("2026-09-01T10:00:00.000Z");
+  const watermarkInteractionId = "00000000-0000-4000-8000-00000000abcd";
+  await db.insert(schema.relationshipDigests).values({
+    userId: USER,
+    contactId: adaContact!.id,
+    summary: "Talks about the deck.",
+    whatTheyDo: "PM",
+    workingOn: "Payments",
+    topics: [{ label: "payments", lastDiscussedAt: "2026-09-01" }],
+    openThreads: [{ key: "t1", text: "Send deck", owedBy: "me", sinceIso: "2026-09-01", interactionId: watermarkInteractionId, excerpt: "deck" }],
+    watermarkAt,
+    watermarkInteractionId,
+  });
+  await db.insert(schema.relationshipRuns).values({ userId: USER, status: "done" });
+  await purgeUserData(USER, { only: ["insights"] });
+  const keptDigest = await db.query.relationshipDigests.findFirst({ where: eq(schema.relationshipDigests.userId, USER) });
+  check(
+    "insights clears digest text but keeps the row and its watermark",
+    Boolean(keptDigest) &&
+      keptDigest!.summary === null && keptDigest!.whatTheyDo === null && keptDigest!.workingOn === null &&
+      keptDigest!.topics.length === 0 && keptDigest!.openThreads.length === 0 &&
+      keptDigest!.watermarkAt?.getTime() === watermarkAt.getTime() && keptDigest!.watermarkInteractionId === watermarkInteractionId,
+    JSON.stringify(keptDigest)
+  );
+  check("...and deletes the run history", (await countFor("relationship_runs")) === 0);
+
   console.log("\nSettings follow the preferences box, not the delete");
   await reset();
   await purgeUserData(USER, { only: ["chat"] });
@@ -398,6 +437,10 @@ async function main() {
     "a delete without preferences leaves settings alone",
     settingsKept?.calendarFeedToken === "feed-token"
   );
+  check(
+    "...including the writing notes",
+    settingsKept?.writingInstructions === "Keep it short."
+  );
 
   await purgeUserData(USER, { only: ["preferences"] });
   const settingsReset = await db.query.userSettings.findFirst({
@@ -405,8 +448,18 @@ async function main() {
   });
   check("preferences resets the row", settingsReset?.calendarFeedToken === null);
   check(
+    "...and clears the writing notes, which are content the user wrote",
+    settingsReset?.writingInstructions === null
+  );
+  check(
     "...keeping the BYO provider key",
     settingsReset?.geminiApiKeyEncrypted === "ciphertext"
+  );
+  check(
+    "...and EVERY provider's key column, since aiProvider survives the reset",
+    settingsReset?.openaiApiKeyEncrypted === "ciphertext" &&
+      settingsReset?.anthropicApiKeyEncrypted === "ciphertext" &&
+      settingsReset?.openrouterApiKeyEncrypted === "ciphertext"
   );
   check(
     "...and the contacts it was not asked to delete",

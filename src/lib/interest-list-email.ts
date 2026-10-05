@@ -1,12 +1,17 @@
 import { randomBytes } from "node:crypto";
-import { Resend } from "resend";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
-import { getAppBaseUrl } from "@/lib/app-url";
-import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import { getWaitlistOrigin } from "@/lib/app-url";
+import {
+  formatTicketNumber,
+  SPOTS_PER_REFERRAL,
+  spotsEarned,
+  type ReferralTier,
+} from "@/lib/interest-list";
+import { waitlistHost } from "@/lib/waitlist-host";
 import { planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
 
 // Re-exported so existing importers keep working; the definitions moved to a client-safe
-// module because the boarding pass needs them in the browser.
+// module because the pass needs them in the browser.
 export {
   WELCOME_PLANETS,
   asWelcomePlanet,
@@ -22,19 +27,41 @@ export function generateUnsubscribeToken() {
   return randomBytes(32).toString("base64url");
 }
 
+/** The leave link. On the waitlist's own domain, like everything else in these emails. */
 export function buildUnsubscribeUrl(token: string) {
-  return `${getAppBaseUrl()}/api/interest-list/unsubscribe?token=${token}`;
+  return `${getWaitlistOrigin()}/api/interest-list/unsubscribe?token=${token}`;
 }
 
+/**
+ * The dark palette. Shared with the admin invitation (`site-invite-email.ts`) and the
+ * waitlist pass ticket nested inside the night-sky letter.
+ */
 export const BG = "#05070f";
 export const TEXT = "#e8f3f1";
 export const MUTED = "#9aada8";
 export const FAINT = "#6d807c";
 export const ACCENT = "#f2c14e";
-/** The drift/warning tone the landing page and forms already use for at-risk states. */
-const WARN = "#e8a84e";
 export const FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+/** Pass chrome — same wallet-card colours as the site-invite still pass. */
+const PASS_BG = "#0e1524";
+const PASS_BORDER = "#333f5a";
+
+/**
+ * Former cream-letter tokens. Kept as named exports so older imports compile; the waitlist
+ * shell itself is the night sky (`BG` / `TEXT` / `MUTED`) — do not use these for new markup.
+ */
+export const PAPER = BG;
+export const INK = TEXT;
+export const INK_MUTED = MUTED;
+export const INK_FAINT = FAINT;
+export const RULE = "rgba(232,243,241,0.14)";
+export const LINK = ACCENT;
+export const SERIF_STACK = "'Fraunces', Georgia, 'Times New Roman', serif";
+
+/** Hosted under `/waitlist/` so the waitlist origin serves it (see `waitlist-host.ts`). */
+export const STARFIELD_PATH = "/waitlist/starfield.gif";
 
 export function escapeHtml(value: string) {
   return value
@@ -44,214 +71,196 @@ export function escapeHtml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
+/** The footer every waitlist email ends with. */
+export const WAITLIST_FOOTER = "You're getting this because you joined the Orbit waitlist.";
+
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const inWords = (n: number) => NUMBER_WORDS[n] ?? String(n);
+const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+/** A body paragraph. `content` is HTML the caller has already escaped. */
+export const paperParagraph = (content: string) =>
+  `<tr><td style="font-size:15px;line-height:1.65;color:${MUTED};padding-bottom:16px;">${content}</td></tr>`;
+
 /**
- * The one email this list sends today.
+ * Dark wallet-pass ticket with the Open your pass CTA. Planet art and both hrefs stay on
+ * the waitlist origin — no app logo, no app-base URLs. Still tables only so it nests
+ * inside the night-sky shell (no kinetic CSS; that stays invite-only).
  *
- * WRITTEN AS A PERSONAL NOTE, not a product announcement: the list is small and Orbit is a
- * one-person project, so a branded blast would read as overproduced. `/contact` already sets
- * this expectation ("expect a reply from Jason"), and the send below sets a matching From
- * name and a real Reply-To so the signature is not a costume.
- *
- * IT OPENS BY ADMITTING IT IS NOT THE NEWS. The landing page's confirmation promises "we'll
- * email you when there's news", and this lands seconds later — so it names itself as the
- * hello up front rather than letting an immediate arrival read as a broken promise.
- *
- * The one thing it does argue: there is nothing to wait for. Someone who chose the email box
- * over the sign-up button may believe Orbit is unreleased, and that belief is simply wrong.
- *
- * Inline styles and a table shell rather than a stylesheet: most email clients strip
- * `<style>` blocks or run them through their own reset, so anything that matters is written
- * on the element itself. Kept to a single column and web-safe fonts for the same reason —
- * the display face the landing page uses is not reliably available in mail clients.
- *
- * GRAPHICS ARE BUILT TO SURVIVE BLOCKED IMAGES, which Outlook and many Gmail configurations
- * do by default until the reader clicks "show images". So nothing load-bearing is carried by
- * an `<img>`: the logo sits beside a real text wordmark, the product card below is drawn with
- * table cells and background colours rather than a screenshot, and the planet is decorative
- * with empty alt text. Inline SVG and `data:` URIs are both unusable here — Gmail strips the
- * former and blocks the latter — so every real image is a hosted PNG at an absolute URL.
+ * The invite link is `/waitlist/<slug>` — the address's local part — the same path the
+ * pass page shares. A `?ref=` fallback is never printed here; only the pretty path is.
  */
-export function buildInterestListWelcomeEmail(input: {
-  unsubscribeUrl: string;
-  /** Which planet this send gets. See `planetForSignupNumber`. */
+export function waitlistPassTicket(input: {
   planet: WelcomePlanet;
-  links?: EmailLinks;
+  ticketUrl: string;
+  /** `/waitlist/<slug>` invite link. Shown on the ticket when it is that path form. */
+  shareUrl: string;
+  /** 1-based place in line when known; omitted from the ticket when missing. */
+  position?: number | null;
 }) {
-  const appUrl = getAppBaseUrl();
-  const signUpUrl = `${appUrl}/sign-up`;
-  const logoUrl = `${appUrl}/orbit-logo.png`;
-  const planetUrl = `${appUrl}/landing/planets/${input.planet}.png`;
-  const subject = "You're on the Orbit list";
+  const place = input.position ? formatTicketNumber(input.position) : null;
+  const planet = planetLabel(input.planet);
+  const planetUrl = `${getWaitlistOrigin()}/landing/planets/${input.planet}.png`;
+  const subtitle = place ? `No. ${place} · ${planet}` : planet;
+  const label = (text: string) =>
+    `<div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:${FAINT};padding-bottom:3px;">${text}</div>`;
+  // Only the pretty `/waitlist/<slug>` form — never a `?ref=` token URL.
+  const invitePath = (() => {
+    try {
+      const u = new URL(input.shareUrl);
+      return /^\/waitlist\/[^/?#]+$/.test(u.pathname) ? `${u.host}${u.pathname}` : null;
+    } catch {
+      return null;
+    }
+  })();
+  const inviteRow = invitePath
+    ? `<tr>
+                          <td colspan="2" valign="top" style="padding:0 0 16px 0;">
+                            ${label("Invite link")}
+                            <div style="font-size:14px;line-height:1.4;color:${ACCENT};word-break:break-all;">
+                              <a href="${escapeHtml(input.shareUrl)}" style="color:${ACCENT};text-decoration:none;">${escapeHtml(invitePath)}</a>
+                            </div>
+                          </td>
+                        </tr>`
+    : "";
 
-  const text = [
-    "You're on the list.",
-    "",
-    "This one's just the hello — the actual news will come later, and not often.",
-    "",
-    `Though there is one thing worth saying now: Orbit is already live. No waitlist to clear, no invite to wait for, free for your first ${FREE_CONTACT_LIMIT} contacts — and you don't have to connect LinkedIn or Gmail to try it. You can add a few people by hand first and see how it works.`,
-    "",
-    "If you're interviewing at the moment, that's when it earns its keep — it's built so the person who could refer you doesn't go cold while you're busy with everything else.",
-    "",
-    "    This week in your network",
-    "     3  warm intros available",
-    "    12  people drifting",
-    "     2  follow-ups due",
-    "",
-    `Try it now: ${signUpUrl}`,
-    "",
-    "And if you're not signing up, I'd genuinely like to know what put you off — just hit reply. It comes straight to me.",
-    "",
-    "— Jason",
-    "",
-    `PS — everyone on this list gets a different planet, in order out from the sun. You got ${planetLabel(input.planet)}.`,
-    ...(input.links
-      ? [
-          "",
-          `Your ticket, with your number and your planet: ${input.links.ticketUrl}`,
-          `Know someone who'd like a planet? Send them your link: ${input.links.shareUrl}`,
-        ]
-      : []),
-    "",
-    "—",
-    "You're getting this because you joined Orbit's interest list.",
-    `Unsubscribe any time: ${input.unsubscribeUrl}`,
-  ].join("\n");
-
-  const paragraph = (content: string) =>
-    `<tr><td style="font-size:15px;line-height:1.65;color:${MUTED};padding-bottom:18px;">${content}</td></tr>`;
-
-  const html = `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background-color:${BG};font-family:${FONT_STACK};">
-    <span style="display:none;font-size:1px;color:${BG};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
-      Orbit's already live — there's nothing to wait for.
-    </span>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${BG};">
-      <tr>
-        <td align="center" style="padding:40px 20px;">
-          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
-            <!-- Logo lockup. The wordmark is real text beside the mark, so a client with
-                 images off still shows "Orbit" rather than an empty box. -->
-            <tr>
-              <td style="padding-bottom:30px;">
-                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+  return `<tr>
+              <td style="padding-bottom:16px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                       style="background-color:${PASS_BG};border:1px solid ${PASS_BORDER};border-radius:18px;border-collapse:separate;">
                   <tr>
-                    <!-- alt="" on purpose: the wordmark beside it is real text, so the mark
-                         is redundant. Giving it alt="Orbit" renders "Orbit Orbit" (plus a
-                         broken-image glyph) in every client that blocks images. -->
-                    <td style="padding-right:11px;" valign="middle">
-                      <img src="${logoUrl}" alt="" width="40" height="40"
-                           style="display:block;border:0;outline:none;text-decoration:none;width:40px;height:40px;border-radius:50%;" />
-                    </td>
-                    <td valign="middle">
-                      <span style="font-size:20px;font-weight:600;color:${TEXT};letter-spacing:-0.01em;">Orbit</span>
+                    <td align="center" style="padding:28px 22px 20px;">
+                      <img src="${escapeHtml(planetUrl)}" alt="" width="76" height="76"
+                           style="display:block;border:0;outline:none;width:76px;height:76px;" />
+                      <div style="font-family:${SERIF_STACK};font-size:22px;line-height:1.3;color:${TEXT};padding-top:16px;">Your Orbit pass</div>
+                      <div style="font-size:14px;line-height:1.5;color:${MUTED};padding-top:4px;">${escapeHtml(subtitle)}</div>
                     </td>
                   </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="font-size:21px;line-height:1.35;color:${TEXT};font-weight:600;padding-bottom:18px;">
-                You're on the list.
-              </td>
-            </tr>
-            ${paragraph("This one's just the hello — the actual news will come later, and not often.")}
-            ${paragraph(
-              `Though there is one thing worth saying now: Orbit is <strong style="color:${TEXT};font-weight:600;">already live</strong>. No waitlist to clear, no invite to wait for, free for your first ${FREE_CONTACT_LIMIT} contacts — and you don't have to connect LinkedIn or Gmail to try it. You can add a few people by hand first and see how it works.`
-            )}
-            ${paragraph(
-              "If you're interviewing at the moment, that's when it earns its keep — it's built so the person who could refer you doesn't go cold while you're busy with everything else."
-            )}
-            <!-- The product at a glance, drawn rather than screenshotted: table cells and
-                 background colours render with images blocked, and stay crisp on any DPI.
-                 Deliberately carries no invented person — the numbers alone say what Orbit
-                 watches, and a fabricated name in a real inbox invites the reader to work
-                 out whether it is someone they know. -->
-            <tr>
-              <td style="padding-top:6px;padding-bottom:28px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-                       style="background-color:#0a0f1c;border:1px solid rgba(232,243,241,0.12);border-radius:14px;">
                   <tr>
-                    <td style="padding:18px 20px;">
-                      <div style="font-size:11px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${ACCENT};padding-bottom:14px;">
-                        This week in your network
-                      </div>
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                        ${[
-                          { n: "3", label: "warm intros available", color: ACCENT },
-                          { n: "12", label: "people drifting", color: WARN },
-                          { n: "2", label: "follow-ups due", color: TEXT },
-                        ]
-                          .map(
-                            (row) => `<tr>
-                          <td width="38" align="right" valign="middle"
-                              style="font-size:19px;font-weight:600;color:${row.color};padding:5px 12px 5px 0;">${row.n}</td>
-                          <td valign="middle" style="font-size:14px;color:${MUTED};padding:5px 0;">${row.label}</td>
-                        </tr>`
-                          )
-                          .join("\n                        ")}
+                    <td style="border-top:1px dashed ${PASS_BORDER};padding:20px 22px 4px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td valign="top" width="50%" style="padding:0 8px 16px 0;">
+                            ${label("Class")}
+                            <div style="font-size:15px;line-height:1.4;color:${TEXT};">Waitlist</div>
+                          </td>
+                          <td valign="top" width="50%" style="padding:0 0 16px 0;">
+                            ${label("Planet")}
+                            <div style="font-size:15px;line-height:1.4;color:${TEXT};">${escapeHtml(planet)}</div>
+                          </td>
+                        </tr>
+                        ${inviteRow}
                       </table>
                     </td>
                   </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding-bottom:30px;">
-                <a href="${signUpUrl}"
-                   style="display:inline-block;background-color:${ACCENT};color:${BG};font-weight:600;font-size:15px;text-decoration:none;padding:13px 26px;border-radius:10px;">
-                  Try it now
-                </a>
-              </td>
-            </tr>
-            <!-- Plain text, deliberately not a second button: the reply is the point, and a
-                 rival CTA would compete with "Try it now" above. Reply-To is a real inbox. -->
-            ${paragraph(
-              "And if you're not signing up, I'd genuinely like to know what put you off — just hit reply. It comes straight to me."
-            )}
-            <!-- Signature, with the planet as a right-aligned flourish. Sharing the row is
-                 deliberate: on its own line a blocked image leaves a conspicuous empty
-                 placeholder box, whereas here it degrades to whitespace beside the sign-off.
-                 Decorative, so alt="". -->
-            <tr>
-              <td style="padding-bottom:26px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                   <tr>
-                    <td valign="middle" style="font-size:15px;line-height:1.65;color:${MUTED};">
-                      — Jason
-                    </td>
-                    <td align="right" valign="middle">
-                      <img src="${planetUrl}" alt="" width="38" height="38"
-                           style="display:block;border:0;outline:none;width:38px;height:38px;opacity:0.8;" />
+                    <td style="padding:4px 22px 22px;">
+                      <a href="${escapeHtml(input.ticketUrl)}"
+                         style="display:block;text-align:center;background-color:${ACCENT};color:${BG};font-weight:600;font-size:15px;text-decoration:none;padding:14px 0;border-radius:10px;">
+                        Open your pass
+                      </a>
                     </td>
                   </tr>
                 </table>
               </td>
-            </tr>
-            <!-- The postscript names the planet above, which is the only thing in the mail
-                 that explains it. It reads as a throwaway; it is also the reason the planet
-                 is stored on the row rather than recomputed, so this stays true on a resend. -->
-            <tr>
-              <td style="font-size:13px;line-height:1.6;color:${FAINT};padding-bottom:28px;">
-                PS — everyone on this list gets a different planet, in order out from the sun.
-                You got <span style="color:${MUTED};">${planetLabel(input.planet)}</span>.
+            </tr>`;
+}
+
+/**
+ * The night-sky letter every waitlist email shares: a twinkling starfield band, an Orbit
+ * mark, an eyebrow line, a serif headline, the body rows, the sign-off and the leave link.
+ *
+ * NAMES ORBIT. The waitlist may say "Orbit" and show the waitlist-hosted
+ * mark the way the page header does. It must not describe product features beyond the
+ * sanctioned subject line, or link anywhere but the waitlist's own domain (see
+ * `lib/waitlist-host.ts`). An email is the easiest thing in the world to forward.
+ *
+ * WRITTEN TO REACH THE INBOX. A dark letter with no printed referral URL and a plain-text
+ * twin. The pass ticket (when present) nests inside; its CTA is the only button.
+ * `color-scheme: dark` asks clients not to invert the sky.
+ *
+ * STARS. CSS animations do not run in Gmail or Outlook, so the twinkle is an animated GIF
+ * (`STARFIELD_PATH`) hosted on the waitlist origin. Gmail / Apple Mail / Outlook.com play
+ * it; classic Outlook desktop freezes on frame 0, which is still a readable starfield.
+ * Solid `BG` underneath means a client that blocks images still gets a black letter.
+ *
+ * Inline styles and a table shell rather than a stylesheet: most email clients strip
+ * `<style>` blocks. Mark, starfield and planet images are decorative with empty alt text.
+ */
+export function paperShell(input: {
+  preheader?: string;
+  /** Small caps line above the headline. Escaped here. */
+  eyebrow?: string;
+  /** Serif headline. Escaped here. Omitted, the rows start straight away. */
+  headline?: string;
+  rows: string;
+  unsubscribeUrl: string;
+}) {
+  const origin = getWaitlistOrigin();
+  const markUrl = `${origin}/waitlist/logo.png`;
+  const starfieldUrl = `${origin}${STARFIELD_PATH}`;
+  const mark = `<tr>
+              <td style="padding-bottom:18px;">
+                <img src="${escapeHtml(markUrl)}" alt="" width="40" height="40"
+                     style="display:block;border:0;outline:none;width:40px;height:40px;border-radius:20px;" />
               </td>
-            </tr>
-            ${
-              input.links
-                ? `<tr>
-              <td style="font-size:14px;line-height:1.7;color:${MUTED};padding-bottom:26px;">
-                <a href="${escapeHtml(input.links.ticketUrl)}" style="color:${ACCENT};text-decoration:underline;">Your ticket</a>, with your number and your planet.
-                Know someone who'd like a planet?
-                <a href="${escapeHtml(input.links.shareUrl)}" style="color:${ACCENT};text-decoration:underline;">Send them your link</a>.
+            </tr>`;
+  const eyebrow = input.eyebrow
+    ? `<tr>
+              <td style="padding-bottom:18px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${FAINT};">
+                ${escapeHtml(input.eyebrow)}
               </td>
             </tr>`
-                : ""
-            }
+    : "";
+  const headline = input.headline
+    ? `<tr>
+              <td style="font-family:${SERIF_STACK};font-size:25px;line-height:1.25;color:${TEXT};padding-bottom:16px;">
+                ${escapeHtml(input.headline)}
+              </td>
+            </tr>`
+    : "";
+  const preheader = input.preheader
+    ? `<span style="display:none;font-size:1px;color:${BG};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+      ${escapeHtml(input.preheader)}
+    </span>`
+    : "";
+  // Full-width band above the letter. width=480 matches the column; height keeps aspect
+  // of the 600×220 asset. Empty alt: decorative, and a blocked image must not leave a
+  // broken-image glyph in the letter.
+  const starfield = `<tr>
+              <td style="padding:0 0 22px 0;font-size:0;line-height:0;">
+                <img src="${escapeHtml(starfieldUrl)}" alt="" width="480" height="176"
+                     style="display:block;border:0;outline:none;width:100%;max-width:480px;height:auto;" />
+              </td>
+            </tr>`;
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="supported-color-schemes" content="dark" />
+  </head>
+  <body style="margin:0;padding:0;background-color:${BG};font-family:${FONT_STACK};color:${TEXT};">
+    ${preheader}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${BG};">
+      <tr>
+        <td align="center" style="padding:36px 20px 44px;background-color:${BG};">
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
+            ${starfield}
+            ${mark}
+            ${eyebrow}
+            ${headline}
+            ${input.rows}
             <tr>
-              <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid rgba(232,243,241,0.14);padding-top:22px;">
-                You're getting this because you joined Orbit's interest list.
-                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Unsubscribe any time</a>.
+              <td style="font-size:15px;line-height:1.65;color:${TEXT};padding-top:4px;padding-bottom:28px;">
+                — Jason
+              </td>
+            </tr>
+            <tr>
+              <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid ${RULE};padding-top:18px;">
+                ${WAITLIST_FOOTER}
+                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Leave the waitlist</a>.
               </td>
             </tr>
           </table>
@@ -260,170 +269,208 @@ export function buildInterestListWelcomeEmail(input: {
     </table>
   </body>
 </html>`;
-
-  return { subject, html, text };
 }
 
+/** Subject on every waitlist welcome — name + positioning, no place-in-line (that stays in the body). */
+export const WELCOME_SUBJECT = "You're on the list | Orbit — Personal Networking Intelligence";
+
 /**
- * The day-3 follow-up, sent only to someone who joined the list and did NOT go on to create
- * an account (see `sweepInterestListFollowUps`).
+ * Sent the moment someone joins (and again when someone who left rejoins).
  *
- * ONE TIP, NO PITCH — and that constraint is load-bearing. This is the second unsolicited
- * mail in three days from a product they declined once; a second sales push is how a list
- * this small teaches people to mark it as spam. So the advice has to stand on its own even
- * for a reader who never signs up, and the only link is a quiet text one, never a button.
- *
- * The tip attacks the same objection the welcome mail does — that setting this up is a
- * project — from the other side: not "it's easy" but "you're allowed to start tiny".
+ * It says three things: your place in line, that seats open in waves and the invite will
+ * come by email, and how to move up. `position` is null only when the line could not be
+ * counted at join time; the email then leaves the number out rather than guessing one.
+ * The referral link itself is not in the email: the pass page shows it with a copy button,
+ * and a printed `?ref=` URL was one of the things filters held against it.
  */
-export function buildInterestListFollowUpEmail(input: {
+export function buildInterestListWelcomeEmail(input: {
   unsubscribeUrl: string;
   planet: WelcomePlanet;
   links?: EmailLinks;
+  position?: number | null;
+  /** In-person / operator-added signups: named in the opening line of the welcome note. */
+  signupEventLabel?: string | null;
 }) {
-  const appUrl = getAppBaseUrl();
-  const signUpUrl = `${appUrl}/sign-up`;
-  const logoUrl = `${appUrl}/orbit-logo.png`;
-  const planetUrl = `${appUrl}/landing/planets/${input.planet}.png`;
-  const subject = "One tip: start with five people";
+  const place = input.position ? formatTicketNumber(input.position) : null;
+  const subject = WELCOME_SUBJECT;
+  const headline = "Your place is held.";
+  const eventLabel = input.signupEventLabel?.trim();
+  const eventLead = eventLabel
+    ? `You're receiving this because you filled out the interest form at ${eventLabel}.`
+    : null;
+  const thanks = `Thanks for joining the Orbit waitlist.${place ? ` You're #${place} in line.` : ""} Seats open in waves — when yours is ready, I'll email you from here.`;
+  const opening = eventLead ? `${eventLead} ${thanks}` : thanks;
+  const moveUp = `Want to move up? Every friend who joins from your pass bumps you ${SPOTS_PER_REFERRAL} spots.`;
+
+  const inviteLine =
+    input.links && /\/waitlist\/[^/?#]+$/.test(input.links.shareUrl)
+      ? `Your invite link: ${input.links.shareUrl}`
+      : null;
 
   const text = [
-    "A few days ago you joined Orbit's interest list. No pitch in this one — just the thing I'd tell anyone starting out.",
+    headline,
     "",
-    "Start with five people, not five hundred.",
+    opening,
     "",
-    "The instinct is to import everything and sort it out later. That usually ends in a list nobody opens. Pick the five people who could actually change your next month — the ones who would take your call — and put only them in.",
-    "",
-    "Five is small enough that keeping it current costs nothing, and big enough that you notice when one of them goes quiet. If it earns its place, the rest can follow.",
-    "",
-    "That works whether or not you use Orbit. A note in your phone is a fine start.",
-    "",
-    `If you'd rather it nagged you for you: ${signUpUrl}`,
-    "",
-    ...(input.links ? [`Your ticket is still here: ${input.links.ticketUrl}`, ""] : []),
+    ...(input.links
+      ? [moveUp, "", ...(inviteLine ? [inviteLine, ""] : []), `Open your pass: ${input.links.ticketUrl}`, ""]
+      : []),
     "— Jason",
     "",
     "—",
-    "You're getting this because you joined Orbit's interest list. This is the last one unless there's real news.",
-    `Unsubscribe any time: ${input.unsubscribeUrl}`,
+    WAITLIST_FOOTER,
+    `Leave the waitlist: ${input.unsubscribeUrl}`,
   ].join("\n");
 
-  const paragraph = (content: string) =>
-    `<tr><td style="font-size:15px;line-height:1.65;color:${MUTED};padding-bottom:18px;">${content}</td></tr>`;
+  const rows = [
+    paperParagraph(escapeHtml(opening)),
+    ...(input.links
+      ? [
+          paperParagraph(escapeHtml(moveUp)),
+          waitlistPassTicket({
+            planet: input.planet,
+            ticketUrl: input.links.ticketUrl,
+            shareUrl: input.links.shareUrl,
+            position: input.position,
+          }),
+        ]
+      : []),
+  ].join("\n            ");
 
-  const html = `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background-color:${BG};font-family:${FONT_STACK};">
-    <span style="display:none;font-size:1px;color:${BG};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
-      The one thing I'd tell anyone starting out.
-    </span>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${BG};">
-      <tr>
-        <td align="center" style="padding:40px 20px;">
-          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
-            <tr>
-              <td style="padding-bottom:30px;">
-                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td style="padding-right:11px;" valign="middle">
-                      <img src="${logoUrl}" alt="" width="40" height="40"
-                           style="display:block;border:0;outline:none;text-decoration:none;width:40px;height:40px;border-radius:50%;" />
-                    </td>
-                    <td valign="middle">
-                      <span style="font-size:20px;font-weight:600;color:${TEXT};letter-spacing:-0.01em;">Orbit</span>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            ${paragraph(
-              "A few days ago you joined Orbit's interest list. No pitch in this one — just the thing I'd tell anyone starting out."
-            )}
-            <tr>
-              <td style="font-size:21px;line-height:1.35;color:${TEXT};font-weight:600;padding-bottom:18px;">
-                Start with five people, not five hundred.
-              </td>
-            </tr>
-            ${paragraph(
-              "The instinct is to import everything and sort it out later. That usually ends in a list nobody opens. Pick the five people who could actually change your next month — the ones who would take your call — and put only them in."
-            )}
-            ${paragraph(
-              `Five is small enough that keeping it current costs nothing, and big enough that you notice when one of them goes quiet. If it earns its place, the rest can follow.`
-            )}
-            ${paragraph(
-              `That works whether or not you use Orbit — a note in your phone is a fine start. If you'd rather it nagged you for you, <a href="${signUpUrl}" style="color:${ACCENT};text-decoration:underline;">it's here</a>.`
-            )}
-            ${
-              input.links
-                ? `<tr>
-              <td style="font-size:14px;line-height:1.7;color:${MUTED};padding-bottom:26px;">
-                <a href="${escapeHtml(input.links.ticketUrl)}" style="color:${ACCENT};text-decoration:underline;">Your ticket</a> is still here.
-              </td>
-            </tr>`
-                : ""
-            }
-            <tr>
-              <td style="padding-top:8px;padding-bottom:26px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td valign="middle" style="font-size:15px;line-height:1.65;color:${MUTED};">
-                      — Jason
-                    </td>
-                    <td align="right" valign="middle">
-                      <img src="${planetUrl}" alt="" width="38" height="38"
-                           style="display:block;border:0;outline:none;width:38px;height:38px;opacity:0.8;" />
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid rgba(232,243,241,0.14);padding-top:22px;">
-                You're getting this because you joined Orbit's interest list. This is the last
-                one unless there's real news.
-                <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Unsubscribe any time</a>.
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`;
+  const html = paperShell({
+    preheader: "Your place is held on the Orbit waitlist.",
+    eyebrow: place ? `Orbit · No. ${place}` : "Orbit · On the waitlist",
+    headline,
+    rows,
+    unsubscribeUrl: input.unsubscribeUrl,
+  });
+
+  return { subject, html, text };
+}
+
+/** What each referral tier's email says. `move-up` and `joined` share the first-friend note. */
+function tierCopy(tier: ReferralTier, friends: number) {
+  const moved = spotsEarned(friends);
+  switch (tier.id) {
+    case "priority-beta":
+      return {
+        subject: "Priority beta access",
+        headline: "You've unlocked priority beta access.",
+        body: `${capitalize(inWords(friends))} friends joined from your pass. You'll get first look at new features in the beta, and you've moved up ${moved} spots.`,
+      };
+    case "early-access":
+      return {
+        subject: "You've unlocked early access",
+        headline: "You've unlocked early access.",
+        body: `${capitalize(inWords(friends))} friends joined from your pass, so you'll be invited early. There's nothing else to do; your invite will come by email.`,
+      };
+    case "founding":
+      return {
+        subject: "You're a founding member",
+        headline: "You're a founding member.",
+        body: `${capitalize(inWords(friends))} friends joined from your pass. You'll carry the founding member badge, and you've moved up ${moved} spots.`,
+      };
+    default:
+      return {
+        subject: "You moved up",
+        headline: `You moved up ${SPOTS_PER_REFERRAL} spots.`,
+        body: `A friend joined from your pass, so you're ${SPOTS_PER_REFERRAL} spots closer. Every friend after that moves you up ${SPOTS_PER_REFERRAL} more.`,
+      };
+  }
+}
+
+/** Sent to a referrer when their friends unlock a referral tier (1, 3, 5 or 10 friends). */
+export function buildTierEmail(input: {
+  unsubscribeUrl: string;
+  planet: WelcomePlanet;
+  links: EmailLinks;
+  tier: ReferralTier;
+}) {
+  const { subject, headline, body } = tierCopy(input.tier, input.tier.at);
+  const thanks = "Thank you for passing it on.";
+  const inviteLine = /\/waitlist\/[^/?#]+$/.test(input.links.shareUrl)
+    ? `Your invite link: ${input.links.shareUrl}`
+    : null;
+
+  const text = [
+    headline,
+    "",
+    body,
+    "",
+    thanks,
+    "",
+    ...(inviteLine ? [inviteLine, ""] : []),
+    `Open your pass: ${input.links.ticketUrl}`,
+    "",
+    "— Jason",
+    "",
+    "—",
+    WAITLIST_FOOTER,
+    `Leave the waitlist: ${input.unsubscribeUrl}`,
+  ].join("\n");
+
+  const html = paperShell({
+    preheader: thanks,
+    eyebrow: `Orbit · ${input.tier.label}`,
+    headline,
+    rows: [
+      paperParagraph(escapeHtml(body)),
+      paperParagraph(escapeHtml(thanks)),
+      waitlistPassTicket({
+        planet: input.planet,
+        ticketUrl: input.links.ticketUrl,
+        shareUrl: input.links.shareUrl,
+        position: null,
+      }),
+    ].join("\n            "),
+    unsubscribeUrl: input.unsubscribeUrl,
+  });
 
   return { subject, html, text };
 }
 
 /**
- * A personal note should look like it came from a person in the inbox list, not from a
- * no-reply robot. Only wraps a bare address: a RESEND_FROM_EMAIL that already carries its
- * own display name (`Orbit <hi@…>`) is left exactly as configured.
+ * Who waitlist mail is from: `WAITLIST_FROM_EMAIL`, on the waitlist's own domain. A bare
+ * address is given Jason's name; one that already carries a display name is left as is.
+ *
+ * Before a waitlist domain exists (no `WAITLIST_HOST`) the app's own sender still works,
+ * so local development and the old list keep sending. Once there IS a waitlist domain, mail
+ * never falls back to the app's sender: that would put the app's domain in the From line
+ * of the one thing that must not show it. `lib/env.ts` requires the variable in that case.
  */
-function fromAddress() {
-  const configured = process.env.RESEND_FROM_EMAIL?.trim();
+export function waitlistSender(): string | null {
+  const configured =
+    process.env.WAITLIST_FROM_EMAIL?.trim() ||
+    (waitlistHost() ? "" : process.env.RESEND_FROM_EMAIL?.trim() ?? "");
   if (!configured) return null;
-  return configured.includes("<") ? configured : `Jason from Orbit <${configured}>`;
+  return configured.includes("<") ? configured : `Jason <${configured}>`;
+}
+
+/** Where replies go. Never the app's contact inbox, whose address names the product. */
+export function waitlistReplyTo(): string | undefined {
+  return process.env.WAITLIST_REPLY_TO?.trim() || undefined;
 }
 
 /**
- * Never throws. Returns whether the message actually went out, which the day-3 sweep needs
- * in order to release a row it has already claimed — the welcome path ignores it, because
+ * Never throws. Returns whether the message actually went out; the join ignores it, because
  * its signup row is durable either way and a Resend hiccup must not fail the submission.
  */
 async function deliver(
-  kind: "welcome" | "follow-up",
+  kind: "welcome" | "tier",
   email: string,
   unsubscribeUrl: string,
   message: { subject: string; html: string; text: string }
 ): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
-  const from = fromAddress();
+  const from = waitlistSender();
   if (!apiKey || !from) {
     console.warn(`[interest-list] Resend not configured — skipping ${kind} email`);
     return false;
   }
 
   try {
+    // Loaded on send, inside the same try: the SDK stays off cold starts that send nothing.
+    const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
     const { error } = await resend.emails.send({
       from,
@@ -431,9 +478,9 @@ async function deliver(
       subject: message.subject,
       html: message.html,
       text: message.text,
-      // Signed "— Jason", so a reply has to reach one. Falls back to the From address when
-      // no contact inbox is configured rather than inventing a destination.
-      replyTo: process.env.CONTACT_INBOX_EMAIL?.trim() || undefined,
+      // Signed "— Jason", so a reply has to reach one: WAITLIST_REPLY_TO, or the From
+      // address itself when none is configured.
+      replyTo: waitlistReplyTo(),
       headers: {
         // One-click unsubscribe. Gmail and Yahoo require this on bulk mail, and without it
         // the only way out is the footer link — which recipients skip in favour of "spam",
@@ -475,27 +522,25 @@ export async function sendInterestListWelcomeEmail(
   email: string,
   unsubscribeUrl: string,
   planet: WelcomePlanet,
-  links?: EmailLinks
+  links?: EmailLinks,
+  position?: number | null,
+  signupEventLabel?: string | null
 ) {
   await deliver(
     "welcome",
     email,
     unsubscribeUrl,
-    buildInterestListWelcomeEmail({ unsubscribeUrl, planet, links })
+    buildInterestListWelcomeEmail({ unsubscribeUrl, planet, links, position, signupEventLabel })
   );
 }
 
-/** Returns whether it sent, so the sweep can un-claim the row if it did not. */
-export async function sendInterestListFollowUpEmail(
+/** Best-effort, like the welcome. Returns whether it sent. */
+export async function sendTierEmail(
   email: string,
   unsubscribeUrl: string,
   planet: WelcomePlanet,
-  links?: EmailLinks
+  links: EmailLinks,
+  tier: ReferralTier
 ): Promise<boolean> {
-  return deliver(
-    "follow-up",
-    email,
-    unsubscribeUrl,
-    buildInterestListFollowUpEmail({ unsubscribeUrl, planet, links })
-  );
+  return deliver("tier", email, unsubscribeUrl, buildTierEmail({ unsubscribeUrl, planet, links, tier }));
 }

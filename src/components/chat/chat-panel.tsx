@@ -5,31 +5,48 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useTransition,
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
+  ArrowDown,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   History,
   Loader2,
+  Mail,
   NotebookPen,
+  Pencil,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { friendlyError } from "@/lib/errors";
+import { ChatThreadProvider } from "@/components/chat/chat-thread-context";
+import { DraftEditor } from "@/components/chat/draft-editor";
+import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
+import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
+import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
   askNetwork,
   createChatThread,
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  switchChatVersion,
+  updateChatThreadContext,
+  type ChatThreadPage,
 } from "@/actions/chat";
-import { createReminder } from "@/actions/reminders";
-import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
+import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
+import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
+import { readRailOpen, writeRailOpen } from "@/lib/chat-rail-pref";
+import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
   ComposerMirror,
@@ -53,8 +70,21 @@ import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
+import { ChatActivity } from "@/components/chat/chat-activity";
+import { OrbitMark } from "@/components/chat/orbit-mark";
+import { AnswerActions } from "@/components/chat/answer-actions";
+import { ReminderButton } from "@/components/chat/reminder-button";
+import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
+import { Skeleton } from "@/components/ui/skeleton";
+import { createThreadPrefetcher } from "@/lib/chat-thread-prefetch";
+import type { ChatStep } from "@/lib/chat-stream-protocol";
+import type { EvidenceSource } from "@/lib/chat-evidence";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+import { ProposedActionsCard } from "@/components/chat/proposed-actions";
+import type { ChatPerson } from "@/components/chat/chat-markdown";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,8 +101,14 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import type { ChatRecommendation } from "@/db/schema";
-import { streamChat } from "@/lib/chat-stream-client";
+import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
+import {
+  createStreamSmoother,
+  prefersReducedMotionNow,
+  type StreamSmoother,
+} from "@/lib/stream-smoother";
 import { activeMentions } from "@/lib/chat-mentions";
 import { addMentionPick } from "@/lib/mentions/mention-picks";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
@@ -84,12 +120,28 @@ type ChatResult = Extract<
   { ok: true }
 >;
 
-type ThreadSummary = {
+export type ThreadSummary = {
   id: string;
   title: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
 };
+
+/**
+ * A page of the history list read from the server, in place of the list on screen — except
+ * for the thread that is open. The server list carries titled threads only, so a chat just
+ * started (untitled until its first answer lands) is only in the panel's own list, and the
+ * rail promises the open thread stays visible however empty it is.
+ */
+function withOpenThread(
+  server: readonly ThreadSummary[],
+  onScreen: readonly ThreadSummary[],
+  openId: string | null
+): ThreadSummary[] {
+  if (!openId || server.some((t) => t.id === openId)) return [...server];
+  const open = onScreen.find((t) => t.id === openId);
+  return open ? [open, ...server] : [...server];
+}
 
 type UserMessage = {
   id: string;
@@ -121,12 +173,59 @@ type AssistantMessage = {
   recommendations: ChatRecommendation[];
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
+  /**
+   * The stages the server reported for this answer, newest state per stage.
+   *
+   * Kept per message rather than in one panel-level slot so scrolling back through a thread
+   * still shows what each individual answer did, and so a new question cannot overwrite the
+   * record of the previous one.
+   */
+  steps?: ChatStep[];
+  /** Next questions derived from what retrieval found. Never model-generated. */
+  followUps?: string[];
+  /**
+   * The contacts retrieval grounded this answer in. Gives a recommendation card its role and
+   * company, and tells the prose which names are safe to link. Not persisted, so a reloaded
+   * thread falls back to what the recommendation itself carries.
+   */
+  retrieved?: DoneInfo["retrieved"];
+  /** Every source this answer cited, keyed by its `[eN]` id — see `@/lib/chat-evidence`. */
+  evidence?: Record<string, EvidenceSource>;
+  /** Actions this answer proposed — see `@/lib/chat-proposed-actions`. */
+  proposedActions?: StoredProposedAction[];
+  /** Thumbs already on this answer, when it came back from a saved thread. */
+  feedback?: "up" | "down" | null;
+  /**
+   * True once the server has a row for this answer.
+   *
+   * A stopped or failed turn keeps its text on screen but was never persisted, so it has
+   * nothing to rate — and saying so is better than offering a button that would fail.
+   */
+  persisted?: boolean;
+  /** The user cut this answer short. */
+  stopped?: boolean;
+  /**
+   * Drafts on this answer that have already been emailed, by contact id → send time. Read
+   * from the timeline when a thread loads, so a card cannot offer to send again what has gone.
+   */
+  sentTo?: Record<string, string>;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
 
+/** One version of the last turn — see `getChatThread`'s `versions` and `@/lib/chat-versions`. */
+type VersionRow = { version: number; userMessageId: string; assistantMessageId: string };
+/** One shared empty list, so a non-last AssistantBubble's `versions` prop keeps its identity. */
+const EMPTY_VERSIONS: VersionRow[] = [];
+
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function formatSentAt(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
 function formatThreadLabel(thread: ThreadSummary) {
@@ -144,15 +243,83 @@ function initialQuestionFromUrl() {
   return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
 }
 
-export function ChatPanel() {
-  const router = useRouter();
-  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+type LoadedThread = Awaited<ReturnType<typeof getChatThread>>;
+
+export function ChatPanel({
+  initialThreads = null,
+}: {
+  /**
+   * The history list's first page as the page read it on the server, so the rail paints with
+   * it rather than fetching after mount. `null` when the page could not read it: the panel
+   * then loads it itself, as it always did, and shows a placeholder list until that settles.
+   */
+  initialThreads?: ChatThreadPage | null;
+} = {}) {
+  const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads?.threads ?? []);
+  /**
+   * Whether the history list has been read at least once. Until then an empty list means
+   * "not known yet", not "none" — the rail shows a placeholder, never "no saved chats".
+   */
+  const [threadsLoaded, setThreadsLoaded] = useState(initialThreads !== null);
+  /** Where the next (older) page of history starts; null when everything has been read. */
+  const [olderCursor, setOlderCursor] = useState<string | null>(
+    () => initialThreads?.nextCursor ?? null
+  );
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
+  /**
+   * A NEW server list — the page re-rendered (`FreshOnArrival` refreshing a copy that came
+   * out of the router cache, or any other `router.refresh()`) — replaces the one on screen.
+   * This is what lets the mount below skip its own read: a page old enough to be stale is
+   * refreshed on arrival, and its fresh list lands here. Adjusted during render (React's
+   * "storing information from previous renders"), so there is no frame showing the old list.
+   */
+  const [adoptedInitial, setAdoptedInitial] = useState(initialThreads);
+  if (initialThreads !== adoptedInitial) {
+    setAdoptedInitial(initialThreads);
+    if (initialThreads) {
+      setThreads((prev) => withOpenThread(initialThreads.threads, prev, threadId));
+      setOlderCursor(initialThreads.nextCursor);
+      setThreadsLoaded(true);
+    }
+  }
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
+  /** Every version of the current thread's LAST turn, oldest first. One entry is the normal case. */
+  const [versions, setVersions] = useState<VersionRow[]>([]);
+  /** The slot `versions` belongs to — needed to call `switchChatVersion`. */
+  const [versionSlot, setVersionSlot] = useState<string | null>(null);
+  /** Which user bubble is mid-edit, if any. Only the LAST one is ever editable. */
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [question, setQuestion] = useState(initialQuestionFromUrl);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
-  const [notesOpen, setNotesOpen] = useState(false);
+  /** The list on screen, readable from async work (a thread revalidation checks it is untouched). */
+  const messagesRef = useRef(messages);
+  useLayoutEffect(() => {
+    messagesRef.current = messages;
+  });
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextSaving, setContextSaving] = useState(false);
+  /**
+   * Photo/webcam/phone-QR OCR for the context box, reusing the same media-to-text pipeline
+   * as Capture's Messy Notes tab (`ScanControls` + `useCaptureIngest`) — server-side OCR
+   * only, never the contact-extraction step, since nothing here ever calls Extract.
+   */
+  const contextIngest = useCaptureIngest({ sourceKind: "messy" });
+  // Destructured for stable `useCallback` deps: `contextIngest` itself is a fresh object
+  // every render, but `setNotes` (a `useState` setter) and `reset` (its own `useCallback`)
+  // are not.
+  const { setNotes: setContextNotes, reset: resetContext } = contextIngest;
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Read in the initializer, which is safe because this panel is `ssr: false` — there is no
+  // server render for a stored value to disagree with (same reasoning as the `?q=` seed).
+  const [railOpen, setRailOpen] = useState(readRailOpen);
+  const toggleRail = useCallback(() => {
+    setRailOpen((open) => {
+      const next = !open;
+      writeRailOpen(next);
+      return next;
+    });
+  }, []);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
   /**
@@ -170,17 +337,30 @@ export function ChatPanel() {
   // Streaming is deliberately NOT a transition: updates inside `startTransition` are
   // deferred, which would hold every streamed token back until the whole answer landed.
   const [streaming, setStreaming] = useState(false);
+  // Lets the user cut a long answer short. `streamChat` has always accepted a signal and
+  // the route already honours `request.signal`; nothing was passing one.
+  const abortRef = useRef<AbortController | null>(null);
+  // The reveal buffer for the answer being streamed, so an unmount can stop it drawing.
+  const smootherRef = useRef<StreamSmoother | null>(null);
+  useEffect(() => () => smootherRef.current?.cancel(), []);
+  // Whether the reader is at the bottom of the thread. Drives the jump-to-latest button; kept as
+  // state (not just the ref) because it changes what is rendered.
+  const [atBottom, setAtBottom] = useState(true);
   const busy = pending || streaming;
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
   const awaitingFirstToken =
     busy && !messages.some((m) => m.role === "assistant" && m.streaming);
+  const reduceMotion = usePrefersReducedMotion();
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   /** The `+` menu is outside the field, so it reaches the splice through here. */
   const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
+  /** The context box's text when the current dictation session started. */
+  const contextDictationBaseRef = useRef("");
+  const contextTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Dictation ───────────────────────────────────────────────────────────────────────
   // Dictated words occupy a span anchored at wherever the caret was when you started, so
@@ -311,6 +491,36 @@ export function ChatPanel() {
   }, [dictation.cancel]);
 
   /**
+   * Dictation for the context box — the simple case `useDictation`'s own doc comment
+   * anticipates. No caret anchoring: the box is a plain, one-at-a-time `<Textarea>` in a
+   * sheet with nothing else focused while it's open, so a session can just replace
+   * "everything after what was there when it started" on every transcript.
+   */
+  const contextDictation = useDictation({
+    onSessionStart: () => {
+      contextDictationBaseRef.current = contextIngest.notes;
+    },
+    onTranscript: (span) => {
+      const base = contextDictationBaseRef.current;
+      contextIngest.setNotes(base && span ? `${base} ${span}` : base || span);
+    },
+    onEffect: (effect) => {
+      if (effect === "toast-denied") {
+        toast.error(
+          "Orbit needs microphone access to dictate — allow it in your browser’s site settings",
+          { id: "dictation-denied" },
+        );
+      } else if (effect === "toast-no-microphone") {
+        toast.error("No microphone found", { id: "dictation-no-mic" });
+      } else if (effect === "toast-network") {
+        toast.error("Dictation needs a connection right now", {
+          id: "dictation-network",
+        });
+      }
+    },
+  });
+
+  /**
    * Caret restoration, before paint. The rAF idiom used elsewhere in this file visibly
    * lags when results land five times a second.
    */
@@ -343,18 +553,54 @@ export function ChatPanel() {
     setAttached([]);
   }, [resetQuestion]);
 
+  /** The open thread, readable from async work (the history list and the prefetcher check it). */
+  const threadIdRef = useRef(threadId);
+  useLayoutEffect(() => {
+    threadIdRef.current = threadId;
+  });
+
   const refreshThreads = useCallback(async () => {
     try {
-      const rows = await listChatThreads();
-      setThreads(rows);
+      const page = await listChatThreads();
+      setThreads((prev) => withOpenThread(page.threads, prev, threadIdRef.current));
+      setOlderCursor(page.nextCursor);
     } catch {
       // History is non-blocking on first paint
+    } finally {
+      // Settled either way: a failed read falls back to the empty list it always showed,
+      // rather than a placeholder that never resolves.
+      setThreadsLoaded(true);
     }
   }, []);
 
+  // Read on mount only when the page could not hand a list down. It used to read again even
+  // when it had, because that list could come out of the router's cache of this page
+  // (`staleTimes.dynamic`) and show history as it was on the last visit. The page renders a
+  // `RenderStamp`, so a copy that old is refreshed on arrival, and the refreshed list is
+  // adopted above — the second read of every visit was a duplicate of the page's own.
+  const hadInitialThreads = useRef(initialThreads !== null);
   useEffect(() => {
+    if (hadInitialThreads.current) return;
     void refreshThreads();
   }, [refreshThreads]);
+
+  /** The next page of history, appended below what is on screen. */
+  const loadOlderThreads = useCallback(async () => {
+    if (!olderCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const page = await listChatThreads(olderCursor);
+      setThreads((prev) => {
+        const have = new Set(prev.map((t) => t.id));
+        return [...prev, ...page.threads.filter((t) => !have.has(t.id))];
+      });
+      setOlderCursor(page.nextCursor);
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t load older chats — try again?"));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [olderCursor, loadingOlder]);
 
   // The other half of `initialQuestionFromUrl`: take `q` back out of the address bar, so a
   // reload or a shared link does not re-seed a question that was already dealt with.
@@ -388,12 +634,17 @@ export function ChatPanel() {
     // heading out of view and cut its first line in half under the chat header.
     if (messages.length === 0 && !busy) return;
     if (!stickToBottomRef.current && !isNearBottom()) return;
-    // Defer so DOM has laid out new messages
-    requestAnimationFrame(() => scrollToBottom(true));
-  }, [messages, busy, isNearBottom, scrollToBottom]);
+    // Defer so DOM has laid out new messages. While an answer streams this runs on every frame,
+    // and a *smooth* scroll re-issued every frame keeps interrupting the last one — the view
+    // judders instead of tracking. Instant while streaming, smooth only when a whole message lands.
+    requestAnimationFrame(() => scrollToBottom(!streaming));
+  }, [messages, busy, streaming, isNearBottom, scrollToBottom]);
 
   function onListScroll() {
-    stickToBottomRef.current = isNearBottom();
+    const near = isNearBottom();
+    stickToBottomRef.current = near;
+    // Scroll fires at high frequency; only re-render when the answer actually changes.
+    setAtBottom((prev) => (prev === near ? prev : near));
   }
 
   const ensureThread = useCallback(async () => {
@@ -413,42 +664,190 @@ export function ChatPanel() {
     return created.id;
   }, [threadId]);
 
-  const loadThread = useCallback(async (id: string) => {
-    setLoadingThread(true);
-    try {
-      const { thread, messages: rows } = await getChatThread(id);
-      setThreadId(thread.id);
-      setThreadTitle(thread.title);
+  /**
+   * History rows read ahead of the click — see `@/lib/chat-thread-prefetch` for the rules
+   * that keep a prefetched thread from ever being the wrong one or a stale one.
+   */
+  const [threadPrefetch] = useState(() => createThreadPrefetcher(getChatThread));
+  useEffect(() => () => threadPrefetch.dispose(), [threadPrefetch]);
+  // The thread being left may have gained messages, versions or a title while it was open,
+  // and the one arrived at is now the live copy — neither should be served from a prefetch.
+  const prevThreadIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    threadPrefetch.forget(prevThreadIdRef.current);
+    threadPrefetch.forget(threadId);
+    prevThreadIdRef.current = threadId;
+  }, [threadId, threadPrefetch]);
+  const prefetchHandlers = useMemo(
+    () => ({
+      // Never the open thread: it is the one thing on screen that can change under an entry.
+      hover: (id: string) => {
+        if (id !== threadIdRef.current) threadPrefetch.hover(id);
+      },
+      leave: () => threadPrefetch.leave(),
+      now: (id: string) => {
+        if (id !== threadIdRef.current) threadPrefetch.prefetch(id);
+      },
+    }),
+    [threadPrefetch]
+  );
+
+  /**
+   * Which `loadThread` call is the latest. A load that a newer one has overtaken applies
+   * nothing: with a prefetched thread arriving instantly beside an ordinary one still in
+   * flight, the order results land in no longer follows the order of the clicks.
+   */
+  const loadSeqRef = useRef(0);
+
+  /**
+   * Put a loaded thread on screen and return the message list it set. `opening` is the first
+   * paint of a thread (composer cleared, edit closed, pinned to the bottom); a revalidation
+   * swaps the rows in place and leaves all of that as the person has it.
+   */
+  const applyThread = useCallback((loaded: LoadedThread, { opening }: { opening: boolean }) => {
+    const { thread, messages: rows, sent, versions: loadedVersions, versionSlot: loadedSlot } = loaded;
+    setThreadId(thread.id);
+    setThreadTitle(thread.title);
+    setContextNotes(thread.contextNote ?? "");
+    setVersions(loadedVersions);
+    setVersionSlot(loadedSlot);
+    if (opening) {
+      setEditingUserId(null);
       stickToBottomRef.current = true;
-      setMessages(
-        rows.map((row) =>
-          row.role === "user"
-            ? {
-                id: row.id,
-                role: "user" as const,
-                content: row.content,
-                mentionNames: row.attachedContacts?.length
-                  ? row.attachedContacts.map((c) => c.name)
-                  : undefined,
-              }
-            : {
-                id: row.id,
-                role: "assistant" as const,
-                answer: row.content,
-                recommendations: row.recommendations || [],
-              }
-        )
-      );
-      const lastUser = [...rows].reverse().find((row) => row.role === "user");
-      setLastUserQuery(lastUser?.content ?? "");
+    }
+    const next: ThreadMessage[] = rows.map((row) =>
+      row.role === "user"
+        ? {
+            id: row.id,
+            role: "user" as const,
+            content: row.content,
+            mentionNames: row.attachedContacts?.length
+              ? row.attachedContacts.map((c) => c.name)
+              : undefined,
+          }
+        : {
+            id: row.id,
+            role: "assistant" as const,
+            answer: row.content,
+            recommendations: row.recommendations || [],
+            // Answers written before this column existed have none, and simply show no
+            // summary rather than a fabricated one.
+            steps: row.activity ?? undefined,
+            evidence: row.evidence ?? undefined,
+            proposedActions: row.proposedActions ?? undefined,
+            feedback: row.feedback ?? null,
+            // It came out of the database, so by definition there is a row to rate.
+            persisted: true,
+            sentTo: sent[row.id],
+          }
+    );
+    messagesRef.current = next;
+    setMessages(next);
+    const lastUser = [...rows].reverse().find((row) => row.role === "user");
+    setLastUserQuery(lastUser?.content ?? "");
+    if (opening) {
       clearComposer();
       requestAnimationFrame(() => scrollToBottom(false));
-    } catch (err) {
-      toast.error(friendlyError(err, "Couldn’t load that chat — try again?"));
-    } finally {
-      setLoadingThread(false);
     }
-  }, [clearComposer, scrollToBottom]);
+    return next;
+  }, [clearComposer, scrollToBottom, setContextNotes]);
+
+  /**
+   * Open a saved thread. `prefetched: true` — only from a history click — lets it use a read
+   * that started on hover; every other caller (a reload after a version switch or a stream,
+   * the `?thread=` return) always reads fresh.
+   */
+  const loadThread = useCallback(async (id: string, opts?: { prefetched?: boolean }) => {
+    const seq = ++loadSeqRef.current;
+    const taken = opts?.prefetched ? threadPrefetch.take(id) : null;
+    const ready = taken && "value" in taken && taken.value.thread.id === id ? taken.value : null;
+    // A prefetch older than THREAD_PREFETCH_FRESH_MS shows at once, then is re-read below.
+    const revalidate = ready && taken && "fresh" in taken && !taken.fresh;
+    // An already-landed prefetch swaps straight in: no spinner frame in between.
+    if (!ready) setLoadingThread(true);
+    try {
+      let loaded: LoadedThread;
+      if (ready) {
+        loaded = ready;
+      } else if (taken && "promise" in taken && taken.promise) {
+        // Still in flight: wait for it, but a failure — or a result for any other thread —
+        // falls back to the ordinary read.
+        const early = await taken.promise.catch(() => null);
+        loaded = early && early.thread.id === id ? early : await getChatThread(id);
+      } else {
+        loaded = await getChatThread(id);
+      }
+      if (seq !== loadSeqRef.current) return;
+      const shown = applyThread(loaded, { opening: true });
+      if (revalidate) {
+        const pending = ("promise" in taken && taken.promise) || getChatThread(id);
+        void pending.then(
+          (current) => {
+            // Only onto the same untouched thread: another load, a send or an edit since the
+            // stale copy went up wins over this read, and an unchanged thread is left as is.
+            if (seq !== loadSeqRef.current || current.thread.id !== id) return;
+            if (messagesRef.current !== shown) return;
+            if (JSON.stringify(current) === JSON.stringify(loaded)) return;
+            applyThread(current, { opening: false });
+          },
+          () => {}
+        );
+      }
+    } catch (err) {
+      if (seq === loadSeqRef.current) {
+        toast.error(friendlyError(err, "Couldn’t load that chat — try again?"));
+      }
+    } finally {
+      // An overtaken load leaves the spinner to the one that overtook it.
+      if (seq === loadSeqRef.current) setLoadingThread(false);
+    }
+  }, [applyThread, threadPrefetch]);
+
+  const saveContext = useCallback(async () => {
+    setContextSaving(true);
+    try {
+      const id = await ensureThread();
+      await updateChatThreadContext(id, contextIngest.notes);
+      setContextOpen(false);
+      toast.success(contextIngest.notes.trim() ? "Context saved" : "Context cleared");
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t save that context — try again?"));
+    } finally {
+      setContextSaving(false);
+    }
+  }, [ensureThread, contextIngest.notes]);
+
+  // Coming back from the Gmail connect redirect lands on `/chat?thread=<id>&gmail=connected`:
+  // reopen that conversation (the draft's own edits are restored by its card) and say what
+  // happened. The params come out only once the thread has loaded — a server action that is
+  // still in flight when the URL is rewritten can be dropped, so nothing here does both at once.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const thread = params.get("thread");
+    const gmail = params.get("gmail");
+    if (!thread && !gmail) return;
+    if (gmail === "connected") {
+      toast.success("Gmail connected — you can send now");
+    } else if (gmail === "error") {
+      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
+      if (oauth.cancelled) toast.message(oauth.message);
+      else toast.error(oauth.message);
+    }
+    const strip = () => {
+      const next = new URLSearchParams(window.location.search);
+      for (const key of ["thread", "gmail", "google", "purpose", "reason"]) next.delete(key);
+      const rest = next.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+    };
+    // A thread id from the address bar is only ever passed to `getChatThread`, which scopes it
+    // to the signed-in user; anything that is not an id is dropped without a request.
+    const isId = thread ? /^[0-9a-f-]{36}$/i.test(thread) : false;
+    // A microtask, so the load's first state update is not made inside the effect body itself.
+    if (isId) queueMicrotask(() => void loadThread(thread!).finally(strip));
+    else strip();
+    // Once, on arrival. `loadThread` is stable enough for that: it closes over refs and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startNewChat = useCallback(() => {
     start(async () => {
@@ -459,6 +858,7 @@ export function ChatPanel() {
         setMessages([]);
         clearComposer();
         setLastUserQuery("");
+        resetContext();
         setThreads((prev) => [
           {
             id: created.id,
@@ -473,19 +873,21 @@ export function ChatPanel() {
         toast.error(friendlyError(err, "Couldn’t start a chat — try again?"));
       }
     });
-  }, [clearComposer]);
+  }, [clearComposer, resetContext]);
 
   const removeThread = useCallback(
     (id: string) => {
       start(async () => {
         try {
           await deleteChatThread(id);
+          threadPrefetch.forget(id);
           setThreads((prev) => prev.filter((t) => t.id !== id));
           if (threadId === id) {
             setThreadId(null);
             setThreadTitle(null);
             setMessages([]);
             clearComposer();
+            resetContext();
           }
           toast.success("Chat deleted");
         } catch (err) {
@@ -493,7 +895,7 @@ export function ChatPanel() {
         }
       });
     },
-    [clearComposer, threadId]
+    [clearComposer, threadId, resetContext, threadPrefetch]
   );
 
   const sendQuestion = useCallback(
@@ -502,6 +904,10 @@ export function ChatPanel() {
       if (!q || busy || loadingThread) return;
 
       setLastUserQuery(q);
+      // A fresh turn starts a fresh slot; the switcher belongs to whichever turn is last.
+      setVersions([]);
+      setVersionSlot(null);
+      setEditingUserId(null);
       // Resolved from the text, not from `attached` directly: a token the user deleted
       // must not still ship that person's history to the model.
       const sending = activeMentions(q, attached);
@@ -553,6 +959,20 @@ export function ChatPanel() {
           ]);
         };
 
+        // The answer is revealed a frame at a time rather than a network chunk at a time. Every
+        // path that ends the answer (recommendations, done, stop) flushes it first, so what is on
+        // screen is complete whenever the stream is.
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
+        const controller = new AbortController();
+        abortRef.current = controller;
         await streamChat(
           {
             question: q,
@@ -560,17 +980,47 @@ export function ChatPanel() {
             contextContactIds,
           },
           {
-            onAnswer: (delta) => {
-              ensurePlaceholder();
-              patch((m) => ({ ...m, answer: m.answer + delta }));
-            },
+            onAnswer: (delta) => smoother.push(delta),
             onRecommendations: (items) => {
+              // Recommendations follow the last word of the prose; show that word first.
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
             },
-            onDone: (info) => {
+            onEvidence: (items) => {
               ensurePlaceholder();
-              patch((m) => ({ ...m, id: info.messageId || assistantId, streaming: false }));
+              patch((m) => ({ ...m, evidence: items }));
+            },
+            onActions: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, proposedActions: items }));
+            },
+            onStep: (step) => {
+              // The first step arrives before any prose, which is the point: it replaces the
+              // old blank wait. Steps are keyed by id, so a stage finishing updates its own
+              // line in place instead of appending a second copy of itself.
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
+            },
+            onDone: (info) => {
+              smoother.flush();
+              ensurePlaceholder();
+              patch((m) => ({
+                ...m,
+                id: info.messageId || assistantId,
+                streaming: false,
+                followUps: info.followUps ?? [],
+                retrieved: info.retrieved,
+                // Only a real message id means there is a row to rate.
+                persisted: Boolean(info.messageId),
+              }));
               if (info.notice) toast.message(info.notice);
               if (info.title) setThreadTitle(info.title);
               setThreads((prev) => {
@@ -587,17 +1037,157 @@ export function ChatPanel() {
               });
             },
             onError: (message) => {
+              // A stop is the user's own doing, not a failure: keep whatever arrived and
+              // say plainly that it was cut short rather than deleting it and apologising.
+              if (controller.signal.aborted) return;
+              // The bubble is about to be removed; there is nothing to reveal into.
+              smoother.cancel();
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               resetQuestion(q);
             },
-          }
+          },
+          controller.signal
         );
+        // However the stream ended, show everything that arrived. A no-op after done or an error.
+        smoother.flush();
+        smootherRef.current = null;
+        if (controller.signal.aborted) {
+          // Stopping during retrieval means no answer bubble was ever placed, which used to
+          // leave the question sitting alone with nothing to say what happened. The user
+          // message may already be saved server-side by then, so the honest move is to mark
+          // the turn stopped rather than delete a question that was really asked.
+          if (!placed) ensurePlaceholder();
+          patch((m) => ({ ...m, streaming: false, stopped: true }));
+        }
+        abortRef.current = null;
         setStreaming(false);
       })();
     },
     [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
   );
+
+  /**
+   * Another version of the LAST turn: a plain regenerate (no `newQuestion`) re-asks the same
+   * question; an edit sends different text. Either way the current last user+assistant bubbles
+   * are replaced in place — not appended, the way a fresh question is — and the version list
+   * is re-read from the server once the answer lands, which is also what a stopped or failed
+   * regenerate needs: nothing here assumes success, so on any failure the thread simply keeps
+   * showing what it already had.
+   */
+  const sendVersioned = useCallback(
+    (assistantMessageId: string, newQuestion?: string) => {
+      if (!threadId || busy || loadingThread) return;
+      const target = messages.find(
+        (m): m is AssistantMessage => m.role === "assistant" && m.id === assistantMessageId
+      );
+      const targetIndex = messages.findIndex((m) => m.id === assistantMessageId);
+      const priorUser = targetIndex > 0 ? messages[targetIndex - 1] : undefined;
+      if (!target || !priorUser || priorUser.role !== "user") return;
+
+      const displayQuestion = newQuestion?.trim() || priorUser.content;
+      setEditingUserId(null);
+      setLastUserQuery(displayQuestion);
+
+      const userMsg: UserMessage = {
+        id: newId(),
+        role: "user",
+        content: displayQuestion,
+        mentionNames: newQuestion ? undefined : priorUser.mentionNames,
+      };
+      const assistantId = newId();
+      stickToBottomRef.current = true;
+      // Replace, not append: this turn is being redone, not repeated.
+      setMessages((prev) => [...prev.slice(0, targetIndex - 1), userMsg]);
+      requestAnimationFrame(() => scrollToBottom(true));
+
+      setStreaming(true);
+      void (async () => {
+        let placed = false;
+        const patch = (fn: (m: AssistantMessage) => AssistantMessage) =>
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId && m.role === "assistant" ? fn(m) : m))
+          );
+        const ensurePlaceholder = () => {
+          if (placed) return;
+          placed = true;
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantId, role: "assistant", answer: "", recommendations: [], streaming: true },
+          ]);
+        };
+
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+        let landed = false;
+        await streamChat(
+          {
+            question: displayQuestion,
+            threadId,
+            versionOf: { assistantMessageId, question: newQuestion },
+          },
+          {
+            onAnswer: (delta) => smoother.push(delta),
+            onRecommendations: (items) => {
+              smoother.flush();
+              ensurePlaceholder();
+              patch((m) => ({ ...m, recommendations: items }));
+            },
+            onStep: (step) => {
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
+            },
+            onDone: () => {
+              landed = true;
+            },
+            onError: (message) => {
+              if (controller.signal.aborted) return;
+              smoother.cancel();
+              toast.error(message);
+            },
+          },
+          controller.signal
+        );
+        smoother.flush();
+        smootherRef.current = null;
+        abortRef.current = null;
+        setStreaming(false);
+        // Authoritative either way: on success this shows the new version active and its
+        // place in the switcher; on a stop or failure it shows the version that was never
+        // replaced, because the server never flipped anything — reloading just proves it.
+        if (landed || controller.signal.aborted) {
+          await loadThread(threadId);
+        }
+      })();
+    },
+    [threadId, busy, loadingThread, messages, scrollToBottom, loadThread]
+  );
+
+  /**
+   * Cut the answer short.
+   *
+   * The partial text stays on screen, but the server never reaches `persistAssistantTurn`,
+   * so nothing is saved — the bubble says so rather than letting a reload silently lose it.
+   */
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   function fillMostRecentUserMessage() {
     const fromThread = [...messages]
@@ -723,8 +1313,56 @@ export function ChatPanel() {
 
   const headerTitle = threadTitle?.trim() || "New chat";
 
+  // Bubble handlers that never change identity, so the `memo` on UserBubble/AssistantBubble
+  // holds while streaming (a setMessages per frame) and composer keystrokes re-render the
+  // panel. Each takes the message id and reads the latest committed render's state and
+  // functions through a ref — the same values the old per-render closures captured.
+  const bubbleLive = useRef({ messages, threadId, versionSlot, lastUserQuery, sendQuestion, sendVersioned, loadThread });
+  useLayoutEffect(() => {
+    bubbleLive.current = { messages, threadId, versionSlot, lastUserQuery, sendQuestion, sendVersioned, loadThread };
+  });
+  const bubbleHandlers = useMemo(
+    () => ({
+      startEdit: (id: string) => setEditingUserId(id),
+      cancelEdit: () => setEditingUserId(null),
+      submitEdit: (userMessageId: string, text: string) => {
+        const { messages: current, sendVersioned: send } = bubbleLive.current;
+        const i = current.findIndex((m) => m.id === userMessageId);
+        if (i < 0) return;
+        const nextAssistant = current[i + 1];
+        if (nextAssistant?.role === "assistant") send(nextAssistant.id, text);
+      },
+      regenerate: (assistantMessageId: string) => bubbleLive.current.sendVersioned(assistantMessageId),
+      askAgain: () => bubbleLive.current.sendQuestion(bubbleLive.current.lastUserQuery),
+      followUp: (q: string) => bubbleLive.current.sendQuestion(q),
+      actionSettled: (messageId: string, actionId: string, next: StoredProposedAction) =>
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId && m.role === "assistant"
+              ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
+              : m
+          )
+        ),
+      switchVersion: async (version: number) => {
+        const { threadId: tid, versionSlot: slot, loadThread: load } = bubbleLive.current;
+        if (!tid || !slot) return;
+        try {
+          await switchChatVersion(tid, slot, version);
+          await load(tid);
+        } catch (err) {
+          toast.error(friendlyError(err, "Couldn’t switch versions — try again?"));
+        }
+      },
+    }),
+    []
+  );
+  const selectThread = useCallback(
+    (id: string) => void loadThread(id, { prefetched: true }),
+    [loadThread]
+  );
+
   return (
-    <>
+    <ChatThreadProvider value={threadId}>
       {/*
         Always bounded; the internal message list is the only scroller (flex 1 1 0 +
         overflow-y-auto). On phones the chat page bounds itself and this card fills
@@ -738,7 +1376,29 @@ export function ChatPanel() {
           the suggestion chips. The whole ancestor chain is bounded (app-shell `h-dvh` →
           `min-h-0 flex-1` → page `flex min-h-0 flex-1`), and ChatPanelSkeleton already sized
           itself this way — so this also removes the height jump when the panel swaps in. */}
-      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-2xl border border-border/70 bg-card">
+        {/* From md up the history is a rail beside the conversation. Below that the header
+            keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
+            conversation should have the full width. */}
+        <ChatHistoryRail
+          id="chat-history-rail"
+          open={railOpen}
+          onToggle={toggleRail}
+          threads={threads}
+          loading={!threadsLoaded}
+          hasMore={olderCursor !== null}
+          loadingMore={loadingOlder}
+          onLoadMore={loadOlderThreads}
+          activeId={threadId}
+          busy={busy}
+          onSelect={selectThread}
+          onIntent={prefetchHandlers.hover}
+          onIntentEnd={prefetchHandlers.leave}
+          onIntentNow={prefetchHandlers.now}
+          onNew={startNewChat}
+          onDelete={removeThread}
+        />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
@@ -747,7 +1407,7 @@ export function ChatPanel() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="shrink-0 text-muted-foreground"
+                  className="shrink-0 text-muted-foreground md:hidden"
                   aria-label="Chat history"
                 />
               }
@@ -758,7 +1418,16 @@ export function ChatPanel() {
             <DropdownMenuContent align="start" className="w-72">
               <DropdownMenuLabel>Recent chats</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {threads.length === 0 ? (
+              {!threadsLoaded && threads.length === 0 ? (
+                // Not read yet — a placeholder list, never "no saved chats" for someone who has some.
+                <div aria-busy="true" aria-label="Loading recent chats">
+                  {["w-3/4", "w-1/2", "w-2/3"].map((width) => (
+                    <div key={width} className="flex h-9 items-center px-2">
+                      <Skeleton className={cn("h-3.5", width)} />
+                    </div>
+                  ))}
+                </div>
+              ) : threads.length === 0 ? (
                 <div className="px-2 py-3 text-xs text-muted-foreground">
                   No saved chats yet.
                 </div>
@@ -767,8 +1436,11 @@ export function ChatPanel() {
                   <DropdownMenuItem
                     key={thread.id}
                     className="group items-start gap-2 py-2"
+                    onPointerEnter={() => prefetchHandlers.hover(thread.id)}
+                    onPointerLeave={prefetchHandlers.leave}
+                    onFocus={() => prefetchHandlers.now(thread.id)}
                     onClick={() => {
-                      void loadThread(thread.id);
+                      void loadThread(thread.id, { prefetched: true });
                       setHistoryOpen(false);
                     }}
                   >
@@ -797,6 +1469,17 @@ export function ChatPanel() {
                   </DropdownMenuItem>
                 ))
               )}
+              {olderCursor !== null && threads.length > 0 && (
+                <DropdownMenuItem
+                  // Stays open: the older chats land in this same list.
+                  closeOnClick={false}
+                  disabled={loadingOlder}
+                  className="justify-center py-2 text-xs text-muted-foreground"
+                  onClick={() => void loadOlderThreads()}
+                >
+                  {loadingOlder ? "Loading…" : "Show older chats"}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -813,7 +1496,7 @@ export function ChatPanel() {
             type="button"
             variant="ghost"
             size="sm"
-            className="shrink-0 text-muted-foreground"
+            className="shrink-0 text-muted-foreground md:hidden"
             onClick={startNewChat}
             disabled={busy}
           >
@@ -826,14 +1509,17 @@ export function ChatPanel() {
             variant="outline"
             size="sm"
             className="shrink-0"
-            onClick={() => setNotesOpen(true)}
+            onClick={() => setContextOpen(true)}
           >
             <NotebookPen className="size-4" />
-            <span className="hidden sm:inline">Notes</span>
+            <span className="hidden sm:inline">Context</span>
           </Button>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* `relative` so the jump button can sit on the scroller's bottom edge — above the
+              composer, but not inside the scrolling content, where it would scroll away. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
           <div
             ref={listRef}
             onScroll={onListScroll}
@@ -858,7 +1544,7 @@ export function ChatPanel() {
                   {messages.length === 0 && !busy && (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
-                        Ask your network
+                        Ask your <span className="gold-shimmer-text">network</span>
                       </p>
                       <p className="max-w-md text-sm text-muted-foreground">
                         Who can help, who to follow up with, or who knows what —
@@ -867,19 +1553,50 @@ export function ChatPanel() {
                     </div>
                   )}
 
-                  {messages.map((msg) =>
-                    msg.role === "user" ? (
-                      <UserBubble key={msg.id} msg={msg} />
+                  {messages.map((msg, i) => {
+                    // Only the pair that ends the thread can be edited or regenerated —
+                    // versions exist for the last turn only.
+                    const isLastAssistant =
+                      msg.role === "assistant" && i === messages.length - 1 && msg.persisted;
+                    const isLastUser =
+                      msg.role === "user" &&
+                      i === messages.length - 1 - (messages[messages.length - 1]?.role === "assistant" ? 1 : 0) &&
+                      Boolean(messages[messages.length - 1]?.role === "assistant" && (messages[messages.length - 1] as AssistantMessage).persisted);
+                    return msg.role === "user" ? (
+                      <UserBubble
+                        key={msg.id}
+                        msg={msg}
+                        editable={isLastUser && !busy}
+                        editing={editingUserId === msg.id}
+                        onStartEdit={bubbleHandlers.startEdit}
+                        onCancelEdit={bubbleHandlers.cancelEdit}
+                        onSubmitEdit={bubbleHandlers.submitEdit}
+                      />
                     ) : (
-                      <AssistantBubble key={msg.id} msg={msg} />
-                    )
-                  )}
+                      <AssistantBubble
+                        key={msg.id}
+                        msg={msg}
+                        onRetry={isLastAssistant ? bubbleHandlers.regenerate : bubbleHandlers.askAgain}
+                        retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
+                        onFollowUp={bubbleHandlers.followUp}
+                        onActionSettled={bubbleHandlers.actionSettled}
+                        versions={isLastAssistant ? versions : EMPTY_VERSIONS}
+                        onSwitchVersion={isLastAssistant ? bubbleHandlers.switchVersion : undefined}
+                      />
+                    );
+                  })}
 
+                  {/*
+                    Only reachable before the first `step` event lands — which is now within
+                    a few milliseconds of sending, because the route opens the stream before
+                    it starts retrieving. After that the assistant bubble's own ChatActivity
+                    takes over and says what is actually happening.
+                  */}
                   {awaitingFirstToken && (
                     <div className="flex justify-start">
-                      <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
-                        Searching your network…
+                      <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
+                        <OrbitMark reduceMotion={reduceMotion} />
+                        Starting…
                       </div>
                     </div>
                   )}
@@ -887,6 +1604,34 @@ export function ChatPanel() {
                 </>
               )}
             </div>
+          </div>
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-x-0 bottom-3 flex justify-center transition-opacity duration-150",
+              !atBottom && messages.length > 0 ? "opacity-100" : "opacity-0"
+            )}
+          >
+            <button
+              type="button"
+              // Only a tab stop while it is visible: an invisible button in the tab order is a
+              // control you can land on and cannot see.
+              tabIndex={!atBottom && messages.length > 0 ? 0 : -1}
+              aria-hidden={atBottom || messages.length === 0}
+              aria-label="Jump to latest"
+              title="Jump to latest"
+              onClick={() => {
+                stickToBottomRef.current = true;
+                setAtBottom(true);
+                scrollToBottom(true);
+              }}
+              className={cn(
+                "flex size-8 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                !atBottom && messages.length > 0 && "pointer-events-auto"
+              )}
+            >
+              <ArrowDown className="size-4" />
+            </button>
+          </div>
           </div>
 
           <div className="shrink-0 border-t border-border/60 bg-card p-3 sm:p-4">
@@ -929,6 +1674,8 @@ export function ChatPanel() {
                   onPicksChange={setAttached}
                   // Chat is the surface where a past conversation is worth naming.
                   events
+                  // `/` at the start of a line opens the command menu (prefills and page jumps).
+                  commands
                   // Off while the recogniser owns the box — an accepted row splices text
                   // the dictated span is anchored against. (Mid-IME is the composer's own
                   // business and it shuts itself.)
@@ -985,6 +1732,7 @@ export function ChatPanel() {
                     loadingThread ||
                     (!question.trim() && !lastUserQuery)
                   }
+                  onStop={stopStreaming}
                   onClick={() => {
                     if (!question.trim()) {
                       fillMostRecentUserMessage();
@@ -1024,47 +1772,187 @@ export function ChatPanel() {
             </div>
           </div>
         </div>
+        </div>
       </div>
 
-      <Sheet open={notesOpen} onOpenChange={setNotesOpen}>
+      <Sheet open={contextOpen} onOpenChange={setContextOpen}>
         <SheetContent
           side="right"
-          className="w-full gap-0 overflow-y-auto sm:max-w-md"
+          // 26rem (416px) instead of the Sheet's `data-[side=right]:sm:max-w-sm` (384px):
+          // the three compact scan buttons need ~370px side by side and the sheet leaves
+          // 382px inside its border and padding at this width, at 384px only 350px.
+          // `data-[side=right]:` matches the built-in rule's selector shape so this wins the
+          // cascade; a plain `sm:max-w-*` loses to it.
+          className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-[26rem]"
         >
           <SheetHeader className="border-b border-border/60">
-            <SheetTitle>Update from notes</SheetTitle>
+            <SheetTitle>Chat context</SheetTitle>
             <SheetDescription>
-              Paste notes to create or update many contacts.
+              Add context for Orbit to keep in mind during this conversation.
+              This won&apos;t create or update any contacts.
             </SheetDescription>
           </SheetHeader>
-          <div className="p-4">
-            <BulkNotesPanel
-              compact
-              onSaved={(res) => {
-                setNotesOpen(false);
-                router.refresh();
-                const peopleCount = res.created + res.updated;
-                toast.success(
-                  `Saved ${peopleCount} ${peopleCount === 1 ? "person" : "people"} and ${res.remindersCreated} ${res.remindersCreated === 1 ? "reminder" : "reminders"}`,
-                  {
-                    action: {
-                      label: "See what was created",
-                      onClick: () => router.push(`/capture/${res.batchId}`),
-                    },
-                  }
-                );
-              }}
+          <div className="flex flex-col gap-3 p-4">
+            <h3 className="text-sm font-medium text-foreground">This chat</h3>
+            <Textarea
+              ref={contextTextareaRef}
+              rows={8}
+              placeholder="e.g. I'm prepping for a fundraise this quarter, so prioritize investor intros."
+              value={contextIngest.notes}
+              onChange={(e) => contextIngest.setNotes(e.target.value)}
+              // `field-sizing-content` (the shared Textarea's default) sizes off the typed
+              // content alone, so `rows` never gave this its starting height — an explicit
+              // floor does. Matches Capture's own notes box (`messy-notes-capture.tsx`).
+              className="min-h-[220px] resize-none"
+              disabled={contextSaving}
             />
+
+            {/* Same media-to-text pipeline as Capture's Messy Notes tab: a photo, the
+                webcam, or a phone QR handoff all just OCR into the box above — nothing
+                here ever queues extraction. */}
+            <ScanControls
+              accept={CAPTURE_FILE_ACCEPT}
+              disabled={contextSaving || contextIngest.busy || contextDictation.listening}
+              onRawFiles={contextIngest.handleFilesSelected}
+              onPages={contextIngest.ingestScanPages}
+              onTranscript={(text, sources, jobId) =>
+                contextIngest.onPhoneTranscript(text, sources, jobId ?? null)
+              }
+              compact
+            />
+            {contextIngest.busy && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" /> Reading…
+              </span>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <DictationButton
+                state={contextDictation.state}
+                level={contextDictation.level}
+                disabled={contextSaving || contextIngest.busy}
+                onToggle={(source) => {
+                  contextDictation.toggle();
+                  if (source === "pointer") contextTextareaRef.current?.focus();
+                }}
+                // Unlike the main composer's mic, which sits inline right next to the
+                // field it dictates into, this one is alone in the footer — an outline
+                // gives it the same "this is a control" weight the Save button has.
+                className="border border-border/70"
+              />
+              <Button
+                type="button"
+                onClick={saveContext}
+                disabled={contextSaving || contextIngest.busy}
+              >
+                {contextSaving ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Save"
+                )}
+              </Button>
+            </div>
           </div>
+          <WritingInstructionsField active={contextOpen} />
         </SheetContent>
       </Sheet>
-    </>
+    </ChatThreadProvider>
   );
 }
 
-const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
+const UserBubble = memo(function UserBubble({
+  msg,
+  editable = false,
+  editing = false,
+  onStartEdit,
+  onCancelEdit,
+  onSubmitEdit,
+}: {
+  msg: UserMessage;
+  /** Only the very last user turn can be edited — versions exist for the last turn only. */
+  editable?: boolean;
+  editing?: boolean;
+  /** Called with this bubble's message id — a stable handler shared by every bubble. */
+  onStartEdit?: (id: string) => void;
+  onCancelEdit?: () => void;
+  onSubmitEdit?: (id: string, text: string) => void;
+}) {
+  const [text, setText] = useState(msg.content);
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    setText(msg.content);
+    const el = fieldRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing, msg.content]);
+
+  function submit() {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    onSubmitEdit?.(msg.id, trimmed);
+  }
+
+  if (editing) {
+    return (
+      <div className="flex justify-end">
+        <div className="w-full max-w-[85%] rounded-2xl rounded-br-md border border-primary/40 bg-background p-2">
+          <Textarea
+            ref={fieldRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                onCancelEdit?.();
+              }
+            }}
+            rows={2}
+            aria-label="Edit your question"
+            className="min-h-16 resize-none border-none bg-transparent p-1 text-sm shadow-none focus-visible:ring-0"
+          />
+          <div className="mt-1 flex justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Cancel edit"
+              title="Cancel"
+            >
+              <X className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!text.trim()}
+              className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Save & ask
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex justify-end">
+    <div className="group flex items-center justify-end gap-1.5">
+      {editable && (
+        <button
+          type="button"
+          onClick={() => onStartEdit?.(msg.id)}
+          aria-label="Edit this question"
+          title="Edit"
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Pencil className="size-3.5" />
+        </button>
+      )}
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
         <MentionText text={msg.content} names={msg.mentionNames} />
       </div>
@@ -1074,22 +1962,146 @@ const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
 
 const AssistantBubble = memo(function AssistantBubble({
   msg,
+  onRetry,
+  retryLabel,
+  onFollowUp,
+  onActionSettled,
+  versions = [],
+  onSwitchVersion,
 }: {
   msg: AssistantMessage;
+  /** Called with this bubble's message id — the handlers are stable and shared by every bubble. */
+  onRetry?: (id: string) => void;
+  retryLabel?: string;
+  onFollowUp?: (question: string) => void;
+  onActionSettled?: (messageId: string, actionId: string, next: StoredProposedAction) => void;
+  /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
+  versions?: VersionRow[];
+  onSwitchVersion?: (version: number) => void;
 }) {
+  const steps = msg.steps ?? [];
+
+  // Who this answer may name, from its own grounding only: the contacts retrieval returned
+  // and the people it recommended. Exact names, so the prose links only what is known.
+  const people = useMemo<ChatPerson[]>(() => {
+    const out: ChatPerson[] = [];
+    for (const c of msg.retrieved ?? []) {
+      out.push({ name: c.fullName, href: `/contacts/${c.id}` });
+    }
+    for (const r of msg.recommendations) {
+      if (r.recruiter_id) out.push({ name: r.name, href: `/recruiters/${r.recruiter_id}` });
+      else if (r.contact_id) out.push({ name: r.name, href: `/contacts/${r.contact_id}` });
+    }
+    return out;
+  }, [msg.retrieved, msg.recommendations]);
+
+  // A name for a proposed action's contact — same sources as `people`, keyed by id instead
+  // of assembled into link text.
+  const nameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of msg.retrieved ?? []) map.set(c.id, c.fullName);
+    for (const r of msg.recommendations) if (r.contact_id) map.set(r.contact_id, r.name);
+    return map;
+  }, [msg.retrieved, msg.recommendations]);
+
+  // Photos learned by the activity steps, so a card shows the same face the orbit did.
+  const photoById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const step of msg.steps ?? []) {
+      for (const ref of step.refs ?? []) {
+        if (ref.kind === "contact" && ref.photoUrl && !map.has(ref.id)) map.set(ref.id, ref.photoUrl);
+      }
+    }
+    return map;
+  }, [msg.steps]);
+
+  // Role and company for a card come from retrieval's own rows, not from the model.
+  const subtitleById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of msg.retrieved ?? []) {
+      const line = [c.title, c.company].filter(Boolean).join(" · ");
+      if (line) map.set(c.id, line);
+    }
+    return map;
+  }, [msg.retrieved]);
+
   return (
+    // No bubble on the assistant side: the answer is the page's content, not a chat turn
+    // from a stranger. The user's own words keep a bubble, so the two are still easy to
+    // tell apart while scanning.
     <div className="flex justify-start">
-      <div className="max-w-[92%] space-y-3">
-        <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm leading-relaxed text-foreground">
-          <ChatMarkdown>{msg.answer}</ChatMarkdown>
-        </div>
+      <div className="w-full min-w-0 max-w-[92%] space-y-3">
+        {steps.length > 0 && (
+          <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} />
+        )}
+        {msg.answer && (
+          <div className="text-sm leading-relaxed text-foreground">
+            {/* Only once persisted: `msg.id` is a client-minted placeholder until `done`
+                swaps in the real row id, and a chip needs the real id to fetch its snippet. */}
+            <ChatMarkdown people={people} messageId={msg.persisted ? msg.id : undefined} evidence={msg.evidence}>
+              {msg.answer}
+            </ChatMarkdown>
+          </div>
+        )}
+        {msg.stopped && (
+          <p className="text-xs text-muted-foreground">
+            Stopped — this answer wasn’t saved.
+          </p>
+        )}
         {msg.recommendations.length > 0 && (
-          <div className="space-y-2">
+          <div className="grid gap-2 sm:grid-cols-2">
             {msg.recommendations.map((r) => (
               <RecommendationCard
                 key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
                 rec={r}
+                subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
+                photoUrl={r.contact_id ? photoById.get(r.contact_id) : undefined}
+                // Only a saved answer can send: the server checks the message recommended this
+                // person, and a streamed-but-unsaved one has no row to check against.
+                messageId={msg.persisted ? msg.id : undefined}
+                sentAt={r.contact_id ? msg.sentTo?.[r.contact_id] : undefined}
               />
+            ))}
+          </div>
+        )}
+        {/* Only once persisted: committing needs a real row to address. */}
+        {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
+          <div className="flex flex-col gap-2">
+            {msg.proposedActions!.map((action) => (
+              <ProposedActionsCard
+                key={action.id}
+                messageId={msg.id}
+                action={action}
+                contactName={"contactId" in action.args && action.args.contactId ? nameById.get(action.args.contactId) : null}
+                onSettled={(next) => onActionSettled?.(msg.id, action.id, next)}
+              />
+            ))}
+          </div>
+        )}
+        {!msg.streaming && msg.answer && (
+          <div className="flex flex-wrap items-center gap-2">
+            <AnswerActions
+              messageId={msg.id}
+              answer={msg.answer}
+              persisted={Boolean(msg.persisted)}
+              initialFeedback={msg.feedback ?? null}
+              onRetry={onRetry && (() => onRetry(msg.id))}
+              retryLabel={retryLabel}
+            />
+            {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
+          </div>
+        )}
+        {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {msg.followUps?.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => onFollowUp?.(q)}
+                className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {q}
+              </button>
             ))}
           </div>
         )}
@@ -1098,71 +2110,178 @@ const AssistantBubble = memo(function AssistantBubble({
   );
 });
 
+function VersionSwitcher({
+  versions,
+  currentId,
+  onSwitch,
+}: {
+  versions: VersionRow[];
+  /** The assistant message id currently shown, to find its place among `versions`. */
+  currentId: string;
+  onSwitch?: (version: number) => void;
+}) {
+  const index = versions.findIndex((v) => v.assistantMessageId === currentId);
+  if (index === -1) return null;
+  const current = versions[index]!;
+  return (
+    <div className="flex items-center gap-0.5 text-xs text-muted-foreground" role="group" aria-label="Answer version">
+      <button
+        type="button"
+        onClick={() => onSwitch?.(versions[index - 1]!.version)}
+        disabled={index === 0}
+        aria-label="Previous version"
+        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <ChevronLeft className="size-3.5" />
+      </button>
+      <span className="tabular-nums" aria-live="polite">
+        {index + 1}/{versions.length}
+      </span>
+      <button
+        type="button"
+        onClick={() => onSwitch?.(versions[index + 1]!.version)}
+        disabled={index === versions.length - 1}
+        aria-label="Next version"
+        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <ChevronRight className="size-3.5" />
+      </button>
+      <span className="sr-only">version {current.version}</span>
+    </div>
+  );
+}
+
 const RecommendationCard = memo(function RecommendationCard({
   rec,
+  subtitle,
+  photoUrl,
+  messageId,
+  sentAt,
 }: {
   rec: ChatResult["recommendations"][number];
+  /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
+  subtitle?: string | null;
+  /** The contact's stored photo, when the activity steps learned it. */
+  photoUrl?: string | null;
+  /** The saved answer this card belongs to. Absent until it is saved, which hides Send. */
+  messageId?: string;
+  /** When this draft was already emailed to this person, from the timeline. */
+  sentAt?: string;
 }) {
-  const [pending, start] = useTransition();
+  // A draft edited before the Gmail connect redirect comes back with the person. Read-only
+  // here and cleared in an effect, so a StrictMode double render cannot lose it.
+  const [resume] = useState(() =>
+    messageId && rec.contact_id ? peekSendResumeFor(messageId, rec.contact_id) : null
+  );
+  useEffect(() => {
+    if (resume) clearSendResume();
+  }, [resume]);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendBody, setSendBody] = useState("");
+  const [sent, setSent] = useState<{ at: string; maybe: boolean } | null>(
+    sentAt ? { at: sentAt, maybe: false } : null
+  );
   const href = rec.recruiter_id
     ? `/recruiters/${rec.recruiter_id}`
     : rec.contact_id
       ? `/contacts/${rec.contact_id}`
       : "#";
   const canRemind = Boolean(rec.contact_id);
+  const line = rec.recruiter_id ? "Recruiter" : subtitle;
 
   return (
-    <div className="rounded-xl border border-border/70 bg-background p-3.5">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <div className="flex h-full flex-col rounded-xl border border-border/70 bg-background p-3">
+      <div className="flex items-center gap-2.5">
+        {/* The picture opens the profile too — it is the obvious thing to click. The name
+            beside it is the same link and stays the keyboard and screen-reader route, so this
+            one is left out of both (`tabIndex`, `aria-hidden`) rather than announced twice. */}
+        {href !== "#" ? (
+          <Link
+            href={href}
+            tabIndex={-1}
+            aria-hidden="true"
+            className="shrink-0 rounded-full ring-2 ring-transparent transition-[transform,box-shadow] hover:scale-105 hover:ring-primary/40"
+          >
+            <ContactAvatar
+              contactId={rec.contact_id ?? null}
+              fullName={rec.name}
+              profileImageUrl={photoUrl}
+              size="sm"
+              className="size-9"
+            />
+          </Link>
+        ) : (
+          <ContactAvatar
+            contactId={rec.contact_id ?? null}
+            fullName={rec.name}
+            profileImageUrl={photoUrl}
+            size="sm"
+            className="size-9 shrink-0"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <Link
             href={href}
-            className="text-sm font-medium text-primary hover:underline"
+            className="block truncate text-sm font-medium text-foreground hover:text-primary hover:underline"
           >
             {rec.name}
           </Link>
-          {rec.recruiter_id && (
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Recruiter
-            </p>
-          )}
-          <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
-          <p className="mt-1.5 text-xs">
-            <span className="font-medium">Next: </span>
-            {rec.suggested_action}
-          </p>
+          {line && <p className="truncate text-xs text-muted-foreground">{line}</p>}
         </div>
-        {canRemind && (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              start(async () => {
-                await createReminder({
-                  contactId: rec.contact_id!,
-                  title: `Reach out to ${rec.name}`,
-                  description: rec.suggested_action,
-                  dueDate: new Date(
-                    Date.now() + 3 * 24 * 60 * 60 * 1000
-                  ).toISOString(),
-                });
-                toast.success(TOAST_COPY.reminderSet);
-              })
-            }
-          >
-            Reminder
-          </Button>
-        )}
       </div>
+      <p className="mt-2 text-xs leading-snug text-muted-foreground">{rec.reason}</p>
+      <p className="mt-1.5 text-xs leading-snug">
+        <span className="font-medium">Next: </span>
+        {rec.suggested_action}
+      </p>
       {rec.draft_message && (
-        <div className="mt-2.5 rounded-lg bg-muted/50 p-2.5 text-xs">
-          <Badge variant="secondary" className="mb-1.5 text-[10px]">
-            Draft
-          </Badge>
-          <p className="whitespace-pre-wrap text-muted-foreground">
-            {rec.draft_message}
-          </p>
+        <DraftEditor
+          initial={resume?.body ?? rec.draft_message}
+          name={rec.name}
+          actions={
+            messageId && rec.contact_id
+              ? (text) =>
+                  sent ? (
+                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <Check className="size-3.5" aria-hidden />
+                      {sent.maybe ? "May have been sent — check your Sent folder" : `Sent to ${rec.name}`}
+                      {!sent.maybe && ` · ${formatSentAt(sent.at)}`}
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSendBody(text);
+                        setSendOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    >
+                      <Mail className="size-3.5" aria-hidden /> Send email…
+                    </button>
+                  )
+              : undefined
+          }
+        />
+      )}
+      {messageId && rec.contact_id && (
+        <GmailSendDialog
+          open={sendOpen}
+          onOpenChange={setSendOpen}
+          messageId={messageId}
+          contactId={rec.contact_id}
+          name={rec.name}
+          body={sendBody}
+          onSent={(at, maybe) => setSent({ at, maybe })}
+          onUndone={() => setSent(null)}
+        />
+      )}
+      {canRemind && (
+        <div className="mt-auto pt-2.5">
+          <ReminderButton
+            contactId={rec.contact_id!}
+            name={rec.name}
+            suggestedAction={rec.suggested_action}
+          />
         </div>
       )}
     </div>

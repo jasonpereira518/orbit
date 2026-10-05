@@ -1,46 +1,47 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Check } from "lucide-react";
-import { BillingToggle } from "@/components/pricing/billing-toggle";
-import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
 import { Panel } from "@/components/motion/upgrade-transition";
+import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
-import { ProCheckoutButton } from "@/components/pricing/pro-checkout-button";
-import { planCopyWithOffer, type BillingPeriod, type PlanCopy } from "@/lib/plan-copy";
+import { SubscriptionCheckoutButton } from "@/components/pricing/subscription-checkout-button";
+import { foundingPriceTerms, planCopy, type PlanCopy } from "@/lib/plan-copy";
+import type { BillingPeriod, Plan, PurchasablePlan } from "@/lib/plans/plan-config";
 import { cn } from "@/lib/utils";
 
 /**
- * Same accent language as the three-tier grid on /pricing (see `TIER_ACCENT` in
- * `pricing-tiers.tsx`), narrowed to the two plans actually sold here. Kept as its own copy
- * rather than imported: that map also carries Free's styling and the `raised`/hover-lift
- * behaviour a two-card confirm step doesn't use, so sharing it would drag unused shape
- * along for the one page that has no third card to react to.
+ * Same accent language as the tier grid on /pricing (see `TIER_ACCENT` in
+ * `pricing-tiers.tsx`), narrowed to the two plans actually sold here, badges included.
  */
 const ACCENT = {
   orbit: {
-    surface: "border-brand-pro/40 bg-[#070b18]/80",
-    tick: "text-brand-pro",
+    surface: "border-night-pro/40 bg-[#070b18]/80",
+    tick: "text-night-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: { label: "Most popular", className: "bg-brand-pro text-[#081326]" },
+    badge: { label: "Most popular", className: "bg-night-pro text-[#081326]" },
   },
-  lifetime: {
-    surface: "border-[#f2c14e]/40 bg-[#070b18]/80",
-    tick: "text-[#f2c14e]",
+  max: {
+    surface: "border-night-max/40 bg-[#070b18]/80",
+    tick: "text-night-max",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
-    badge: { label: "Best value", className: "bg-[#f2c14e] text-[#241a00]" },
+    badge: { label: "Best value", className: "bg-night-max text-[#241a00]" },
   },
 } as const;
 
 function PlanCard({
   plan,
+  period,
   accent,
   footer,
+  founding,
 }: {
   plan: PlanCopy;
+  period: BillingPeriod;
   accent: (typeof ACCENT)[keyof typeof ACCENT];
   footer: ReactNode;
+  founding?: string | null;
 }) {
   return (
     <section
@@ -55,15 +56,9 @@ function PlanCard({
         className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[360px] w-[360px] -translate-x-1/2 -translate-y-1/3 rounded-full"
         style={{ background: accent.glow }}
       />
-      <p
-        className={cn(
-          "absolute -top-3 left-6 rounded-full px-3 py-1 text-xs font-medium",
-          accent.badge.className
-        )}
-      >
+      <p className={cn("absolute -top-3 left-6 rounded-full px-3 py-1 text-xs font-medium", accent.badge.className)}>
         {accent.badge.label}
       </p>
-
       <h2
         id={`upgrade-${plan.id}`}
         className="font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]"
@@ -73,7 +68,15 @@ function PlanCard({
       <p className="mt-1 text-sm leading-relaxed text-[#9aada8]">{plan.tagline}</p>
 
       <div className="mt-4">
-        <PlanPriceDisplay price={plan.price.monthly} />
+        <PlanPriceDisplay price={plan.price[period]} />
+        {/* Founding pricing: eligible accounts only, always with the full terms. It is for
+            monthly billing, which the annual view says rather than hides. */}
+        {founding && (
+          <p className="mt-2 text-xs leading-relaxed text-[#cfdcd8]">
+            {period === "monthly" ? "Your founding price: " : "Your founding price, on monthly billing: "}
+            {founding}.
+          </p>
+        )}
       </div>
 
       <ul className="mt-5 flex-1 space-y-2.5">
@@ -100,99 +103,77 @@ function PlanCard({
 function CardNotice({ children }: { children: ReactNode }) {
   return (
     <p className="flex items-center gap-2.5 rounded-xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/50 p-4 text-sm text-[#9aada8]">
-      <Check className="size-4 shrink-0 text-[#f2c14e]" aria-hidden="true" />
+      <Check className="size-4 shrink-0 text-night-max" aria-hidden="true" />
       {children}
     </p>
   );
 }
 
 export function UpgradePlanCards({
-  initialPeriod,
-  hasPro,
-  hasLifetime,
-  proCheckoutConfigured,
-  lifetimePurchasable,
-  lifetimeOffer,
+  currentPlan,
+  founding,
+  checkoutOpen,
 }: {
-  initialPeriod: BillingPeriod;
-  hasPro: boolean;
-  hasLifetime: boolean;
-  /** Stripe is configured for the Pro subscription price, so checkout can actually complete. */
-  proCheckoutConfigured: boolean;
-  /** Stripe is configured for the Lifetime price. */
-  lifetimePurchasable: boolean;
-  lifetimeOffer: { priceUsd: number; compareAtUsd: number | null };
+  currentPlan: Plan;
+  /** Whether this account's first subscription gets founding pricing. */
+  founding: boolean;
+  /** Stripe is configured, so checkout can actually complete. */
+  checkoutOpen: boolean;
 }) {
-  const [period, setPeriod] = useState<BillingPeriod>(initialPeriod);
-  const plans = planCopyWithOffer(lifetimeOffer);
-  const pro = plans.find((p) => p.id === "orbit")!;
-  const lifetime = plans.find((p) => p.id === "lifetime")!;
-
-  // Only the Pro price actually moves with the toggle — Lifetime is a flat one-time
-  // amount — but both cards render through the same `PlanPriceDisplay`-driven `PlanCard`,
-  // so Pro's copy is resolved to whichever period is selected before it gets there.
-  const proForPeriod: PlanCopy = {
-    ...pro,
-    price: { monthly: pro.price[period], annual: pro.price[period] },
+  const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  const footerFor = (plan: PurchasablePlan): ReactNode => {
+    if (currentPlan === plan) {
+      return (
+        <CardNotice>
+          This is your current plan. Manage or cancel it in{" "}
+          <Link href="/settings#settings-plan" className="text-[#e8f3f1] underline underline-offset-4">
+            Settings
+          </Link>
+          .
+        </CardNotice>
+      );
+    }
+    if (currentPlan === "lifetime") {
+      return <CardNotice>Your Lifetime plan already includes this, with AI on your own key.</CardNotice>;
+    }
+    if (currentPlan === "orbit" || currentPlan === "max") {
+      return (
+        <CardNotice>
+          Switch between Pro and Max in{" "}
+          <Link href="/settings#settings-plan" className="text-[#e8f3f1] underline underline-offset-4">
+            Settings
+          </Link>
+          , where Stripe shows exactly what changes first.
+        </CardNotice>
+      );
+    }
+    if (!checkoutOpen) {
+      return (
+        <p className="rounded-xl border border-dashed border-[#e8f3f1]/[0.14] p-4 text-center text-sm text-[#9aada8]">
+          Subscription checkout is unavailable in this environment.
+        </p>
+      );
+    }
+    return <SubscriptionCheckoutButton plan={plan} period={period} />;
   };
 
-  const showToggle = !hasPro && !hasLifetime;
-
   return (
-    <div className="mt-12 space-y-8">
-      {showToggle && (
-        <Panel order={2} className="flex justify-center">
-          <BillingToggle period={period} onChange={setPeriod} />
-        </Panel>
-      )}
-
+    <div className="mt-10 space-y-10">
+      <Panel order={2}>
+        <BillingToggle period={period} onChange={setPeriod} />
+      </Panel>
       <div className="grid gap-5 md:grid-cols-2 md:gap-6">
-        <Panel order={3} className="h-full">
-          <PlanCard
-            plan={proForPeriod}
-            accent={ACCENT.orbit}
-            footer={
-              hasPro ? (
-                <CardNotice>
-                  This is your current plan. Manage or cancel it in{" "}
-                  <Link href="/settings#settings-plan" className="text-[#e8f3f1] underline underline-offset-4">
-                    Settings
-                  </Link>
-                  .
-                </CardNotice>
-              ) : hasLifetime ? (
-                <CardNotice>
-                  Already covered by Orbit Lifetime, minus contact enrichment on
-                  Orbit&apos;s credits.
-                </CardNotice>
-              ) : proCheckoutConfigured ? (
-                <ProCheckoutButton period={period} />
-              ) : (
-                <p className="rounded-xl border border-dashed border-[#e8f3f1]/[0.14] p-4 text-center text-sm text-[#9aada8]">
-                  Subscription checkout is unavailable in this environment.
-                </p>
-              )
-            }
-          />
-        </Panel>
-
-        <Panel order={4} className="h-full">
-          <PlanCard
-            plan={lifetime}
-            accent={ACCENT.lifetime}
-            footer={
-              hasLifetime ? (
-                <CardNotice>Yours permanently. Nothing further to pay.</CardNotice>
-              ) : lifetimePurchasable ? (
-                <LifetimeCheckoutButton priceUsd={lifetimeOffer.priceUsd} />
-              ) : (
-                <p className="rounded-xl border border-dashed border-[#f2c14e]/35 px-4 py-3 text-center text-sm text-[#f2c14e]">
-                  Not on sale yet
-                </p>
-              )
-            }
-          />
-        </Panel>
+        {(["orbit", "max"] as const).map((plan, index) => (
+          <Panel key={plan} order={3 + index} className="h-full">
+            <PlanCard
+              plan={planCopy(plan)}
+              period={period}
+              accent={ACCENT[plan]}
+              founding={founding && currentPlan === "free" ? foundingPriceTerms(plan) : null}
+              footer={footerFor(plan)}
+            />
+          </Panel>
+        ))}
       </div>
     </div>
   );

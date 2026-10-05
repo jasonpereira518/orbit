@@ -1,7 +1,7 @@
 import type { LinkedInMessageThreadRowPayload } from "@/db/schema";
 import type { ImportAdapter, InteractionInsert } from "@/lib/import-engine";
 import { kickLinkedInTimelineBackfill } from "@/lib/linkedin-timeline-backfill";
-import { enrichContactsFromMessages } from "@/lib/message-enrichment";
+import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 
 /**
  * The `imports.import_type` value LinkedIn messages import jobs carry.
@@ -152,24 +152,16 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
   },
 
   /**
-   * AI enrichment, restored per Task 14 fix round 1: `enrichContactsFromMessages` re-reads
-   * each contact's `interactions` rows itself (see `src/lib/message-enrichment.ts` — it
-   * queries by `contactId` + `interactionType: "linkedin_message"`, nothing from this job's
-   * payloads), so it fits the engine's once-per-job finalization seam exactly, the same
-   * shape as `recalibrateCloseness`/`refreshOutreachSuggestions`. Kept off the per-chunk
-   * path deliberately: it makes one AI provider call per contact, and running it per chunk
-   * instead of once per job would reintroduce a per-row provider round trip — exactly what
-   * Phase 2 removed from the embedding path.
+   * Understanding the conversations — what each person does, what you talk about, what is
+   * open, and the dated follow-ups — is the relationship engine's job
+   * (src/lib/relationship-engine/). It is KICKED, never run here: finalize has no time
+   * budget, and one model call per contact across a 500-conversation import cannot fit in
+   * this invocation. The touched contacts are already pending by construction (they have
+   * messages past their watermark), so the kick needs no ids.
    */
   async finalize(userId, contactIds) {
     if (contactIds.length === 0) return;
-    await enrichContactsFromMessages(userId, contactIds);
-    // Timeline-event derivation (reach-out / meeting / in-person) is kicked, not run: it is
-    // one AI completion per contact with no cap, so running it here would do inline what
-    // `enrichContactsFromMessages` above only gets away with by silently capping itself at
-    // 40 contacts. `kickLinkedInTimelineBackfill` hands it to a time-boxed, self-continuing
-    // runner that finishes the whole set across as many invocations as it takes — see
-    // `src/lib/linkedin-timeline-backfill.ts` for why it cannot live on this seam.
+    await kickRelationshipRun(userId);
     await kickLinkedInTimelineBackfill(userId);
   },
 };

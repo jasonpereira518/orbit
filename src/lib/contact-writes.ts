@@ -14,20 +14,25 @@
 import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
+import {
+  buildMemoryChunks,
+  deleteMemoryChunks,
+  memorySourceHash,
+  syncMemoryChunks,
+} from "@/lib/memory-chunks";
+import { interactionTypeLabel } from "@/lib/interaction-types";
 import { mergeFactList } from "@/lib/fact-lists";
-import { detectJobChange } from "@/lib/job-changes";
 import {
   contactIdentities,
-  contactJobChanges,
   contactTags,
   contacts,
   interactions,
   tags,
   type Interaction,
 } from "@/db/schema";
-import { PaywallError, getEntitlements } from "@/lib/entitlements";
-import { recordGateHit } from "@/lib/gate-events";
+import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
+import { recordGateHit, recordGateHitThrottled } from "@/lib/gate-events";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -38,6 +43,7 @@ import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import { claimIdentities, syncIdentitiesForContact } from "@/lib/contact-identity";
 import { identityKeysFor } from "@/lib/duplicates";
+import { normalizeBlueskyHandle, normalizeMastodonAcct } from "@/lib/social-handles";
 import {
   rebuildContactEmbedding,
   rebuildContactEmbeddingsBatch,
@@ -82,6 +88,13 @@ export type ContactWriteOptions = {
    * to re-derive a number that has not changed since the previous chunk.
    */
   headroom?: number | null;
+  /**
+   * The account's entitlements, for a caller that already resolved them (from the settings
+   * row it holds, via `entitlementsFromSettings`). In a Server Action or route handler
+   * `getEntitlements` is not deduplicated by `cache()`, so omitting this costs a read of the
+   * settings row the caller may already have. Omitted, they are read as before.
+   */
+  entitlements?: Entitlements;
 };
 
 export type ContactInput = {
@@ -98,6 +111,9 @@ export type ContactInput = {
   linkedinUrl?: string;
   xHandle?: string;
   website?: string;
+  /** Public Bluesky handle / Mastodon account, for Radar's post signals. Normalized here. */
+  blueskyHandle?: string | null;
+  mastodonAcct?: string | null;
   profileImageUrl?: string | null;
   relationshipScore?: number;
   /**
@@ -204,6 +220,41 @@ export function safeTimestamp(value?: string | Date | null): Date | null {
   return date;
 }
 
+/** Trimmed, blank-free, and de-duplicated case-insensitively (the first spelling wins). */
+function cleanTagNames(tagNames: readonly string[] = []): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of tagNames) {
+    const name = raw.trim();
+    if (name && !seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * The account's tags for these names, creating the missing ones — matched CASE-
+ * INSENSITIVELY. An exact match made "Fintech", "fintech" and "FinTech" three tags, because
+ * every capture writes whatever casing the model happened to produce. Keyed by lowercase.
+ */
+async function tagsFor(userId: string, names: readonly string[]) {
+  const db = await getDb();
+  const byLower = new Map<string, typeof tags.$inferSelect>();
+  if (names.length === 0) return byLower;
+  const existing = await db.query.tags.findMany({
+    where: and(eq(tags.userId, userId), inArray(sql`lower(${tags.name})`, names.map((n) => n.toLowerCase()))),
+  });
+  for (const tag of existing) if (!byLower.has(tag.name.toLowerCase())) byLower.set(tag.name.toLowerCase(), tag);
+
+  const missing = names.filter((name) => !byLower.has(name.toLowerCase()));
+  if (missing.length > 0) {
+    const created = await db
+      .insert(tags)
+      .values(missing.map((name) => ({ userId, name })))
+      .returning();
+    for (const tag of created) byLower.set(tag.name.toLowerCase(), tag);
+  }
+  return byLower;
+}
+
 async function syncTags(
   userId: string,
   contactId: string,
@@ -211,34 +262,51 @@ async function syncTags(
 ) {
   const db = await getDb();
   await db.delete(contactTags).where(eq(contactTags.contactId, contactId));
+  await attachTags(userId, contactId, tagNames);
+}
 
-  const names = [
-    ...new Set(tagNames.map((raw) => raw.trim()).filter(Boolean)),
-  ];
+/**
+ * The insert half of `syncTags`, for a contact that provably has no tags: one this call
+ * just inserted. Its id is a fresh database-generated uuid, `contact_tags.contact_id` is a
+ * cascading foreign key (so no orphan row can carry a recycled id), and nothing else knows
+ * the id yet — so `syncTags`' DELETE could only ever match zero rows there.
+ */
+async function attachTags(
+  userId: string,
+  contactId: string,
+  tagNames: string[] = []
+) {
+  const names = cleanTagNames(tagNames);
   if (names.length === 0) return;
 
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, names)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = names.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
+  const db = await getDb();
+  const byLower = await tagsFor(userId, names);
   await db.insert(contactTags).values(
     names.map((name) => ({
       contactId,
-      tagId: byName.get(name)!.id,
+      tagId: byLower.get(name.toLowerCase())!.id,
     }))
   );
+}
+
+/**
+ * A contact's current tag names plus `adding` — for writes that ADD tags rather than set
+ * the full list. Saving a capture onto an existing contact used to pass only the note's tags
+ * into a write that replaces the list, so the contact's other tags were deleted, and a note
+ * with no tags wiped them all.
+ */
+export async function withExistingTagNames(
+  userId: string,
+  contactId: string,
+  adding: readonly string[]
+): Promise<string[]> {
+  const db = await getDb();
+  const current = await db
+    .select({ name: tags.name })
+    .from(contactTags)
+    .innerJoin(tags, eq(tags.id, contactTags.tagId))
+    .where(and(eq(contactTags.contactId, contactId), eq(tags.userId, userId)));
+  return cleanTagNames([...current.map((t) => t.name), ...adding]);
 }
 
 /** Bulk variant of `syncTags` for freshly-created contacts (no existing tags to delete). */
@@ -246,33 +314,16 @@ async function syncTagsBulk(
   userId: string,
   items: { contactId: string; tagNames?: string[] }[]
 ) {
-  const perContactNames = items.map((item) => [
-    ...new Set((item.tagNames || []).map((raw) => raw.trim()).filter(Boolean)),
-  ]);
-  const allNames = [...new Set(perContactNames.flat())];
+  const perContactNames = items.map((item) => cleanTagNames(item.tagNames));
+  const allNames = cleanTagNames(perContactNames.flat());
   if (allNames.length === 0) return;
 
   const db = await getDb();
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, allNames)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = allNames.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
+  const byLower = await tagsFor(userId, allNames);
   const rows = items.flatMap((item, i) =>
     perContactNames[i].map((name) => ({
       contactId: item.contactId,
-      tagId: byName.get(name)!.id,
+      tagId: byLower.get(name.toLowerCase())!.id,
     }))
   );
   if (rows.length > 0) {
@@ -308,6 +359,8 @@ function contactInsertValues(
     linkedinUrl: input.linkedinUrl,
     xHandle: input.xHandle,
     website: input.website,
+    blueskyHandle: normalizeBlueskyHandle(input.blueskyHandle),
+    mastodonAcct: normalizeMastodonAcct(input.mastodonAcct),
     profileImageUrl: input.profileImageUrl ?? null,
     relationshipScore: input.relationshipScore ?? 2,
     // Deliberately NOT `input.statedCloseness ?? input.relationshipScore` —
@@ -344,8 +397,12 @@ function contactInsertValues(
  * gated, so a lapsed subscriber sitting above the cap keeps full access to everything
  * already in their orbit — nothing is ever hidden behind the paywall.
  */
-export async function contactHeadroomForUser(userId: string) {
-  const { contactLimit } = await getEntitlements(userId);
+export async function contactHeadroomForUser(
+  userId: string,
+  // Optional: a caller already holding the account's entitlements skips re-reading them.
+  entitlements?: Entitlements
+) {
+  const { contactLimit } = entitlements ?? (await getEntitlements(userId));
   if (contactLimit === null) return null;
 
   const db = await getDb();
@@ -384,9 +441,11 @@ export async function createContactForUser(
   // allowance or record a paywall gate-hit on its way to being rejected.
   const input = parseContactInput(rawInput);
 
-  const headroom = await contactHeadroomForUser(userId);
+  // Resolved once for both the headroom check and the paywall below; each used to read it.
+  const entitlements = options?.entitlements ?? (await getEntitlements(userId));
+  const headroom = await contactHeadroomForUser(userId, entitlements);
   if (headroom !== null && headroom < 1) {
-    const { plan, contactLimit } = await getEntitlements(userId);
+    const { plan, contactLimit } = entitlements;
     // The cap is the most direct pricing lever Orbit has, and until now hitting it left no
     // trace — so "does the 100-contact limit convert, or just annoy?" had no evidence
     // behind it either way.
@@ -429,7 +488,8 @@ export async function createContactForUser(
   // so doing it twice costs a statement and changes nothing.
   await claimIdentities(userId, contact.id, identityKeysFor(input), input.source);
 
-  await syncTags(userId, contact.id, input.tagNames);
+  // Just inserted, so there are no tags to clear first — see `attachTags`.
+  await attachTags(userId, contact.id, input.tagNames);
   if (!options?.skipEmbedding) {
     deferEmbeddingRebuild(userId, contact.id, now);
   }
@@ -456,6 +516,25 @@ export async function createContactForUser(
  * Failure here is not worth failing a write over. An unscored contact is picked up by the
  * next recalibration either way, which is exactly what the dirty flag is asking for.
  */
+/**
+ * Refresh a contact's stored brief after the response.
+ *
+ * `after()` rather than a bare floating promise: on Vercel the function can be suspended the
+ * moment the response is sent, which would cut an unawaited summary request off partway
+ * through. And wrapped, because `after()` THROWS outside a request scope — so an unguarded
+ * call turns an already-committed write into a failed one for every caller that has no
+ * request: a tsx script, a background job, an MCP tool call. Same shape as
+ * `deferEmbeddingRebuild`.
+ */
+function deferBriefRefresh(userId: string, contactId: string) {
+  const task = () => generateAndStoreContactBrief(userId, contactId).catch(() => null);
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
+}
+
 /**
  * Rebuild a contact's semantic embedding AFTER the response, not before it.
  *
@@ -571,9 +650,23 @@ export async function createContactsBulkForUser(
     options?.headroom !== undefined
       ? options.headroom
       : await contactHeadroomForUser(userId);
-  if (headroom !== null && headroom < 1) return [];
+  // Sliced from `valid`, not `inputs`: everything below inserts these rows, and the raw
+  // inputs have not been through `normalizeContactInput`. The invariant above makes the
+  // two the same length, so the shortfall reported below is still exactly the cap.
   const admitted =
-    headroom === null ? valid : valid.slice(0, headroom);
+    headroom === null ? valid : valid.slice(0, Math.max(0, headroom));
+  if (admitted.length < valid.length) {
+    // The cap truncated an import. Throttled: a large import runs as many batches, and
+    // each one would otherwise record the same wall.
+    const { plan } = await getEntitlements(userId);
+    await recordGateHitThrottled({
+      userId,
+      feature: "contacts",
+      plan,
+      context: { bulk: true, refused: valid.length - admitted.length },
+    });
+  }
+  if (admitted.length === 0) return [];
 
   const db = await getDb();
   const now = new Date();
@@ -664,6 +757,40 @@ export async function createContactsBulkForUser(
 }
 
 /**
+ * One merge per contact. `UPDATE ... FROM (VALUES ...)` applies only ONE arbitrary tuple when
+ * a contact id repeats (a long chat is staged as several rows per person), so several merges
+ * for one contact are folded first: the interaction window widens across all of them, and
+ * every other field takes the first defined value, in order.
+ */
+export function foldMergesByContact(
+  merges: Array<{ contactId: string; input: Partial<ContactInput> }>
+): Array<{ contactId: string; input: Partial<ContactInput> }> {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const m of merges) {
+    const acc = byId.get(m.contactId);
+    if (!acc) {
+      byId.set(m.contactId, { ...m.input });
+      continue;
+    }
+    for (const [k, v] of Object.entries(m.input)) {
+      if (v === undefined || v === null) continue;
+      if (k === "firstInteractionAt" || k === "lastInteractionAt") {
+        const next = safeTimestamp(v as string | Date);
+        const cur = safeTimestamp(acc[k] as string | Date | null | undefined);
+        if (!next) continue;
+        if (!cur || (k === "firstInteractionAt" ? next < cur : next > cur)) acc[k] = next;
+      } else if (acc[k] === undefined || acc[k] === null) {
+        acc[k] = v;
+      }
+    }
+  }
+  return [...byId].map(([contactId, input]) => ({
+    contactId,
+    input: input as Partial<ContactInput>,
+  }));
+}
+
+/**
  * Apply a column patch to many existing contacts in one statement.
  *
  * The import merge path used to call `updateContactForUser` per row, which re-resolved the
@@ -724,6 +851,7 @@ export async function bulkMergeContactsForUser(
   companyResolve: CompanyResolver
 ): Promise<Date | null> {
   if (merges.length === 0) return null;
+  merges = foldMergesByContact(merges);
   const db = await getDb();
   const now = new Date();
 
@@ -851,16 +979,6 @@ export async function updateContactForUser(
     ? await mergedFactLists(db, userId, id, input)
     : null;
 
-  // The before-image, read only when this patch could constitute a move. One extra read on
-  // writes that touch company or title — which is enrichment refreshes and the edit form,
-  // not the hot paths.
-  const previousJob =
-    input.company !== undefined || input.title !== undefined
-      ? ((await db.query.contacts.findFirst({
-          where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
-          columns: { company: true, title: true },
-        })) ?? null)
-      : null;
 
   const [contact] = await db
     .update(contacts)
@@ -886,6 +1004,9 @@ export async function updateContactForUser(
         : {}),
       ...(input.xHandle !== undefined ? { xHandle: input.xHandle } : {}),
       ...(input.website !== undefined ? { website: input.website } : {}),
+      // Normalized, and cleared by an empty or unrecognizable value rather than stored raw.
+      ...(input.blueskyHandle !== undefined ? { blueskyHandle: normalizeBlueskyHandle(input.blueskyHandle) } : {}),
+      ...(input.mastodonAcct !== undefined ? { mastodonAcct: normalizeMastodonAcct(input.mastodonAcct) } : {}),
       ...(input.profileImageUrl !== undefined
         ? { profileImageUrl: input.profileImageUrl }
         : {}),
@@ -938,30 +1059,6 @@ export async function updateContactForUser(
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
     .returning();
 
-  // Record the move, if it was one. After the update and deliberately non-fatal: a failure
-  // to note a job change must never cost the user the edit they actually made.
-  if (contact && previousJob) {
-    const change = detectJobChange(previousJob, {
-      company: input.company,
-      title: input.title,
-    });
-    if (change) {
-      try {
-        await db.insert(contactJobChanges).values({
-          userId,
-          contactId: id,
-          previousCompany: change.previousCompany,
-          newCompany: change.newCompany,
-          previousTitle: change.previousTitle,
-          newTitle: change.newTitle,
-          source: input.source ?? null,
-        });
-      } catch {
-        // Nothing to do about it here; the contact row is already correct.
-      }
-    }
-  }
-
   // Keep identity rows in step with the columns. An email corrected here must release the
   // old address and claim the new one, or duplicate prevention keeps matching on a value
   // the contact no longer has.
@@ -1001,10 +1098,7 @@ export async function updateContactForUser(
     input.sharedInterests !== undefined;
 
   if (significant && !options?.skipRevalidate && !options?.skipSummary) {
-    // `after()` rather than a bare floating promise: on Vercel the function can be
-    // suspended the moment the response is sent, which would cut an unawaited summary
-    // request off partway through.
-    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
+    deferBriefRefresh(userId, id);
   }
 
   await scoreAfterWrite(userId, id, options);
@@ -1050,11 +1144,25 @@ export async function logInteractionForUser(
   // Touch the contact first: the userId-scoped WHERE doubles as the ownership
   // check, so an unowned contactId returns no rows and we bail before writing
   // an orphaned interaction. Costs no extra round trip.
-  const [owned] = await db
-    .update(contacts)
-    .set({ lastInteractionAt: when, updatedAt: new Date() })
-    .where(and(eq(contacts.id, input.contactId), eq(contacts.userId, userId)))
-    .returning();
+  //
+  // Only the names come back: they are all that is read below (the passage label), and a
+  // bare `.returning()` shipped the whole row — notes, enrichment blobs, an inline base64
+  // avatar — on every logged note. Raw SQL because an explicit `.returning({ … })` does not
+  // type-check against the union `Db` (see contact-identity.ts); the timestamps are bound
+  // as `toISOString()`, which is exactly what the columns' own mapper sends.
+  const ownedRows = rowsOf<{ preferred_name: string | null; full_name: string }>(
+    await db.execute(sql`
+      update ${contacts}
+         set last_interaction_at = ${when.toISOString()}::timestamptz,
+             updated_at = ${new Date().toISOString()}::timestamptz
+       where ${contacts.id} = ${input.contactId}
+         and ${contacts.userId} = ${userId}
+      returning ${contacts.preferredName}, ${contacts.fullName}
+    `)
+  );
+  const owned = ownedRows[0]
+    ? { preferredName: ownedRows[0].preferred_name, fullName: ownedRows[0].full_name }
+    : undefined;
 
   if (!owned) {
     throw new ContactNotFoundError();
@@ -1086,13 +1194,47 @@ export async function logInteractionForUser(
 
   if ((input.rawNotes || input.aiSummary) && !options?.skipEmbedding) {
     await scheduleEmbeddingRebuild(userId, input.contactId);
+    // Index the note as passages, now, using the row and contact already in hand — no extra
+    // reads. Inline rather than left to the sweep because this is the path a person is
+    // waiting on (a typed note, a capture, an assistant's add_note), and a note that is not
+    // searchable until tomorrow's cron is not searchable when they ask about it tonight.
+    //
+    // Bulk paths pass `skipEmbedding` and are deliberately not indexed here: an import
+    // writing thousands of rows should not pay per row. `backfillMemoryChunks` sweeps them,
+    // along with all the history that predates this table.
+    //
+    // Never fatal. Failing to index a note must not fail writing it.
+    await syncMemoryChunks(userId, {
+      sourceKind: "interaction",
+      sourceId: row.id,
+      // Without this the row would read as stale to the next sweep and be re-chunked for
+      // nothing — the hash is what says "these passages describe the text as it stands".
+      sourceHash: memorySourceHash({
+        text: input.rawNotes || input.aiSummary,
+        occurredAt: when,
+        interactionType: row.interactionType,
+        contactId: input.contactId,
+      }),
+      drafts: buildMemoryChunks({
+        text: input.rawNotes || input.aiSummary,
+        occurredAt: when,
+        kindLabel: interactionTypeLabel(row.interactionType),
+        contactId: input.contactId,
+        contactName: owned.preferredName || owned.fullName,
+        // No mentions to fold in: `interaction_mentions` hangs off the row that was just
+        // inserted, so nothing can name it yet. The paths that DO write mentions widen the
+        // array themselves (`syncMemoryChunkMentions`, called from `note-batch-save`), and
+        // the sweep reads them for everything it indexes.
+        contactIds: [],
+      }),
+    }).catch((err) => {
+      console.warn("[memory-chunks] could not index interaction", row.id, err);
+    });
   }
 
   // Significant change: refresh stored person summary
   if (!options?.skipSummary) {
-    after(() =>
-      generateAndStoreContactBrief(userId, input.contactId).catch(() => null)
-    );
+    deferBriefRefresh(userId, input.contactId);
   }
 
   // Recency and cadence are the two components an interaction actually moves, so this is
@@ -1107,6 +1249,38 @@ export async function logInteractionForUser(
   }
 
   return row;
+}
+
+/**
+ * The consequences of an interaction row that was written some other way.
+ *
+ * `logInteractionForUser` inserts the row and THEN does everything a new touch implies. A send
+ * cannot work in that order: the row has to exist first, as the claim that stops a second click
+ * emailing the same person, and the touch only really happened once the mail went. So the claim
+ * inserts the row itself and calls this after a confirmed send — the same last-touch stamp,
+ * embedding and brief refresh, closeness re-score and revalidation, in the same order, so a
+ * sent email moves a contact's ring exactly as a logged one does.
+ */
+export async function settleWrittenInteraction(
+  userId: string,
+  contactId: string,
+  when: Date,
+  options?: ContactWriteOptions
+) {
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ lastInteractionAt: when, updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+  if (!options?.skipEmbedding) await scheduleEmbeddingRebuild(userId, contactId);
+  if (!options?.skipSummary) deferBriefRefresh(userId, contactId);
+  await scoreAfterWrite(userId, contactId, options);
+  if (!options?.skipRevalidate) {
+    revalidatePath(`/contacts/${contactId}`);
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/graph");
+  }
 }
 
 /**
@@ -1163,6 +1337,8 @@ export async function deleteInteractionForUser(
 
   const existing = await db.query.interactions.findFirst({
     where: and(eq(interactions.id, interactionId), eq(interactions.userId, userId)),
+    // Existence and the owning contact are all that is read — not the note body.
+    columns: { contactId: true },
   });
   if (!existing) throw new Error("Interaction not found");
   const contactId = existing.contactId;
@@ -1170,6 +1346,17 @@ export async function deleteInteractionForUser(
   await db
     .delete(interactions)
     .where(and(eq(interactions.id, interactionId), eq(interactions.userId, userId)));
+
+  // `memory_chunks.source_id` is a plain uuid with no foreign key — deliberately, so the
+  // table can index things that are not interactions — so nothing cascades here. Left to the
+  // prune, a deleted note stays quotable until the next sweep, which is the one kind of
+  // staleness in this table that is a privacy problem rather than a quality one.
+  await deleteMemoryChunks(userId, {
+    sourceKind: "interaction",
+    sourceIds: [interactionId],
+  }).catch((err) => {
+    console.warn("[memory-chunks] could not drop passages for", interactionId, err);
+  });
 
   const [remaining] = await db
     .select({ latest: sql<Date | null>`max(${interactions.interactionDate})` })
@@ -1186,7 +1373,7 @@ export async function deleteInteractionForUser(
     await scheduleEmbeddingRebuild(userId, contactId);
   }
   if (!options?.skipSummary) {
-    after(() => generateAndStoreContactBrief(userId, contactId).catch(() => null));
+    deferBriefRefresh(userId, contactId);
   }
   await scoreAfterWrite(userId, contactId, options);
 

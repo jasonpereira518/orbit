@@ -119,6 +119,31 @@ async function seed() {
     effectiveAt: now,
   });
 
+  // Pricing v2 credit ledger: a pack (money, so anonymised like billing_events), the lock
+  // row, an in-flight hold and a monthly meter (all deleted).
+  await db.insert(schema.creditGrants).values({
+    userId: USER,
+    kind: "pack",
+    grantKey: `${USER}-pack`,
+    microsGranted: 2_500_000,
+    microsRemaining: 1_000_000,
+    amountCents: 500,
+    stripeRef: `cs_${USER}`,
+  });
+  await db.insert(schema.creditAccounts).values({ userId: USER });
+  await db.insert(schema.creditHolds).values({
+    userId: USER,
+    micros: 20_000,
+    operation: "chat.answer",
+    expiresAt: new Date(now.getTime() + 60_000),
+  });
+  await db.insert(schema.planMeterUsage).values({
+    userId: USER,
+    meter: "hosted_enrichment",
+    periodKey: "2026-09",
+    used: 3,
+  });
+
   await db.insert(schema.closenessCohorts).values({
     userId: USER,
     snapshot: {
@@ -197,6 +222,16 @@ async function seed() {
     engine: "whisper",
   });
 
+  // The Deepgram usage meter (v89). Tied to the same session id as the segment above —
+  // the unique index on `session_id` is what makes a meeting's usage one row that grows.
+  await db.insert(schema.speechUsage).values({
+    userId: USER,
+    kind: "meeting",
+    seconds: 60,
+    source: "stream",
+    sessionId: meetingRow.id,
+  });
+
   // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
   // thing under test, and an unseeded table proves nothing about it.
   await db.insert(schema.contactBriefs).values({
@@ -226,18 +261,6 @@ async function seed() {
     source: "extension",
   });
 
-  // Cascade-covered (from `contacts`), seeded anyway for the same reason: a new user-scoped
-  // table that account deletion silently misses is exactly what this script exists to catch.
-  await db.insert(schema.contactJobChanges).values({
-    userId: USER,
-    contactId: contact.id,
-    previousCompany: "Google",
-    newCompany: "Databricks",
-    previousTitle: "Engineering Manager",
-    newTitle: "Director of Engineering",
-    source: "apollo",
-  });
-
   await db.insert(schema.actionItems).values({
     userId: USER,
     contactId: contact.id,
@@ -245,6 +268,10 @@ async function seed() {
     text: "send them the deck",
     itemHash: "action-item-hash",
   });
+
+  // The relationship engine's per-contact digest and the run that produced it.
+  await db.insert(schema.relationshipDigests).values({ userId: USER, contactId: contact.id, summary: "Talks about the deck." });
+  await db.insert(schema.relationshipRuns).values({ userId: USER, status: "done" });
 
   await db.insert(schema.interactionMentions).values({
     userId: USER,
@@ -381,6 +408,54 @@ async function seed() {
     title: "Reach out",
   });
 
+  // Radar: a live recommendation (cascades from contacts), a "not for this person" that
+  // must not outlive the account, and a run ledger row, which has no FK at all.
+  await db.insert(schema.recommendations).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "reconnect",
+    score: 30,
+    bucket: "later",
+    expiresAt: new Date(Date.now() + 7 * 86_400_000),
+    inputsHash: "h",
+  });
+  await db.insert(schema.recommendationFeedback).values({
+    userId: USER,
+    contactId: contact.id,
+    action: "never",
+  });
+  await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
+  await db.insert(schema.contactSignals).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "company_news",
+    occurredAt: new Date(),
+    source: "manual",
+    payload: { title: "Globex raises a Series B", company: "Globex" },
+    dedupeHash: "smoke-purge-signal",
+  });
+
+  // Background AI still in flight at a provider when the account went.
+  await db.insert(schema.aiBatchJobs).values({
+    userId: USER,
+    operation: "relationship.digest",
+    provider: "gemini",
+    model: "gemini-3.5-flash",
+    keyOwner: "user",
+    providerBatchId: "batches/smoke-purge",
+    requestCount: 1,
+    payload: { items: [] },
+  });
+
+  // A remembered AI answer: a recruiter verdict, a profile read or a draft — prose derived
+  // from this person's mail and contacts, so it goes with their data.
+  await db.insert(schema.aiResultCache).values({
+    userId: USER,
+    operation: "followup.draft",
+    inputHash: "smoke-purge-hash",
+    result: { v: "Great catching up last week — here is the deck I promised." },
+  });
+
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
 
   await db.insert(schema.contactEmbeddings).values({
@@ -389,6 +464,20 @@ async function seed() {
     sourceType: "note",
     embedding: [0.1, 0.2],
     content: "embedded note content",
+  });
+
+  // A passage of the user's own note. Derived data, but derived from the most personal text
+  // in the product — a deletion that left these behind would leave the notes behind.
+  await db.insert(schema.memoryChunks).values({
+    userId: USER,
+    sourceKind: "interaction",
+    sourceId: interaction.id,
+    contactId: contact.id,
+    contactIds: [contact.id],
+    occurredAt: new Date(),
+    chunkIndex: 0,
+    content: "2026-03-12 · Note · Ada Lovelace\nShe is raising a Series A.",
+    contentHash: "smoke-purge-memory-chunk-hash",
   });
 
   await db.insert(schema.embeddingFailures).values({
@@ -502,6 +591,31 @@ async function seed() {
     authKind: "api_key",
     apiKeyEncrypted: "ciphertext-luma-key",
   });
+  // Same class of secret as the rows above, for a connector that is not Gmail or Outlook.
+  await db.insert(schema.connectorConnections).values({
+    userId: USER,
+    connectorId: "hubspot",
+    authKind: "oauth2",
+    accessTokenEncrypted: "ciphertext-hubspot-access",
+    refreshTokenEncrypted: "ciphertext-hubspot-refresh",
+  });
+  // Maps this user's rows into someone else's system; must not outlive the connection.
+  await db.insert(schema.externalLinks).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    entityType: "reminder",
+    entityId: "rem-1",
+    remoteId: "remote-1",
+  });
+  // A pending write, possibly still carrying an unsent payload.
+  await db.insert(schema.connectorOutbox).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-1",
+    payload: { title: "Follow up" },
+  });
 
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
@@ -511,6 +625,24 @@ async function seed() {
       refreshTokenEncrypted: "ciphertext-refresh",
     });
   }
+
+  // An iCloud connection: an app-specific password rather than OAuth tokens.
+  await db.insert(schema.appleConnections).values({
+    userId: USER,
+    emailAddress: `${USER}@icloud.test`,
+    appPasswordEncrypted: "ciphertext-app-password",
+    principalUrl: "https://caldav.icloud.com/1/principal/",
+    calendarHomeUrl: "https://caldav.icloud.com/1/calendars/",
+  });
+
+  // A calendar picked off one of the connections above. No FK to any of the three connection
+  // tables by design (they are separate — see provider-connections.ts), so any uuid does.
+  await db.insert(schema.calendarSources).values({
+    userId: USER,
+    provider: "google",
+    connectionId: randomUUID(),
+    calendarId: "primary",
+  });
 
   const [thread] = await db
     .insert(schema.chatThreads)
@@ -561,6 +693,26 @@ async function seed() {
     prefix: "orb_live_deadbeef",
     keyHash: "0".repeat(64),
     scopes: ["read"],
+  });
+  // A message an assistant drafted. It holds a body the user never sent, which is exactly
+  // the kind of content a deletion has to take with it.
+  // A queued outbound email, body included.
+  await db.insert(schema.emailSends).values({
+    userId: USER,
+    provider: "gmail",
+    fromEmail: "me@example.org",
+    to: ["friend@example.org"],
+    subject: "Hi",
+    bodyText: "Unsent body",
+    origin: "compose",
+    sendAt: new Date(),
+    rfcMessageId: "<smoke-purge@orbit>",
+  });
+  await db.insert(schema.agentSendRequests).values({
+    userId: USER,
+    toEmail: "someone@example.org",
+    body: "purge fixture",
+    expiresAt: new Date(Date.now() + 86_400_000),
   });
   await db.insert(schema.apiIdempotencyKeys).values({
     userId: USER,
@@ -621,6 +773,10 @@ async function main() {
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
     .catch(() => {});
+  await (await getDb())
+    .delete(schema.creditGrants)
+    .where(eq(schema.creditGrants.grantKey, `${USER}-pack`))
+    .catch(() => {});
   const { recruiterId, soleRecruiterId } = await seed();
 
   console.log("\nSeeded");
@@ -669,6 +825,21 @@ async function main() {
   await ledgerDb
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`));
+
+  // Same rule for a credit pack: the grant survives, anonymised, and its unused credits are
+  // closed out so they stop counting as an outstanding liability.
+  const [pack] = await ledgerDb
+    .select()
+    .from(schema.creditGrants)
+    .where(eq(schema.creditGrants.grantKey, `${USER}-pack`));
+  check("credit pack survives the purge", pack !== undefined);
+  check("...with the personal link severed", pack?.userId === null);
+  check("...its paid amount intact", pack?.amountCents === 500);
+  check(
+    "...and its unused credits closed out",
+    pack?.status === "revoked" && pack.microsRemaining === 0 && pack.microsRevoked === 1_000_000
+  );
+  await ledgerDb.delete(schema.creditGrants).where(eq(schema.creditGrants.grantKey, `${USER}-pack`));
 
   // The second deliberate survivor — see `purgeUserData`. Asserting BOTH halves matters:
   // the key surviving alone would miss a purge that forgot to delete-and-recreate the row,

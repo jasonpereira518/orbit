@@ -4,7 +4,7 @@
  * Comped plans win over every other billing source in `resolvePlan`, so this is how you
  * hand someone Orbit or Lifetime for free without involving Clerk or Stripe.
  *
- *   npx tsx scripts/grant-plan.ts someone@example.com lifetime "early adopter"
+ *   npx tsx scripts/grant-plan.ts someone@example.com max "early adopter"
  *   npx tsx scripts/grant-plan.ts someone@example.com orbit
  *   npx tsx scripts/grant-plan.ts someone@example.com none
  *
@@ -20,14 +20,16 @@ config();
 
 import { findUsersByEmail, setCompedPlan } from "../src/lib/user-settings";
 
-const VALID = ["orbit", "lifetime", "none"] as const;
+// Lifetime is granted from the admin console only (`/admin/users/<id>` → Grant Lifetime), which
+// also ends a live subscription at its period end and writes the audit log.
+const VALID = ["orbit", "max", "none"] as const;
 type Grant = (typeof VALID)[number];
 
 async function main() {
   const [emailArg, planArg] = process.argv.slice(2);
 
   if (!emailArg || !planArg) {
-    console.error("Usage: tsx scripts/grant-plan.ts <email> <orbit|lifetime|none>");
+    console.error("Usage: tsx scripts/grant-plan.ts <email> <orbit|max|none>");
     process.exit(1);
   }
   if (!VALID.includes(planArg as Grant)) {

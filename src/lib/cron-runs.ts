@@ -16,11 +16,18 @@ import { reportError } from "@/lib/report-error";
 
 /** `ops.sweep` is the ten-minute known-condition sweep (`src/lib/ops-sweep.ts`). */
 export type CronJobName =
+  | "connectors.outbox"
+  | "credits.notices"
+  | "email.drain"
   | "imports.process-stalled"
   | "jobs.feed-sweep"
   | "ops.sweep"
+  | "radar.digest"
+  | "radar.feeds"
+  | "radar.run"
   | "sync.run"
-  | "webhooks.drain";
+  | "webhooks.drain"
+  | "work-history.sweep";
 
 export type CronRunStatus = "ok" | "partial" | "failed";
 

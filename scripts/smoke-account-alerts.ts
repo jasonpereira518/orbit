@@ -28,14 +28,22 @@ process.env.GOOGLE_CLIENT_ID = "smoke-client-id";
 process.env.GOOGLE_CLIENT_SECRET = "smoke-client-secret";
 process.env.GOOGLE_REDIRECT_URI = "http://localhost:3000/api/gmail/callback";
 
+/** Same reasoning as the Google config above, for the Outlook calendar cases. */
+process.env.MICROSOFT_CLIENT_ID = "smoke-microsoft-client-id";
+process.env.MICROSOFT_CLIENT_SECRET = "smoke-microsoft-client-secret";
+process.env.MICROSOFT_REDIRECT_URI = "http://localhost:3000/api/outlook/callback";
+
 import { eq } from "drizzle-orm";
 import { closeDb, getDb } from "../src/db";
 import {
+  appleConnections,
   appSurfaceFlags,
   calendarSubscriptions,
   contacts,
+  emailSends,
   gmailConnections,
   imports,
+  outlookConnections,
   userSettings,
 } from "../src/db/schema";
 import {
@@ -50,6 +58,7 @@ import { FREE_CONTACT_LIMIT } from "../src/lib/plan-limits";
 import { getSurface } from "../src/lib/surfaces";
 import { startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { invalidateHiddenSurfaceKeys } from "../src/lib/surface-visibility";
 
 const USER = "smoke-account-alerts-user";
 const MINUTE = 60 * 1000;
@@ -78,12 +87,16 @@ async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
+  await db.delete(emailSends).where(eq(emailSends.userId, USER));
   await db
     .delete(calendarSubscriptions)
     .where(eq(calendarSubscriptions.userId, USER));
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, USER));
+  await db.delete(outlookConnections).where(eq(outlookConnections.userId, USER));
+  await db.delete(appleConnections).where(eq(appleConnections.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   await db.delete(appSurfaceFlags);
+  invalidateHiddenSurfaceKeys();
   await ensureUserSettings(USER);
   // Healthy baseline: onboarded, a key for the selected provider, on a paid plan so the
   // contact cap does not apply.
@@ -228,6 +241,41 @@ async function main() {
     "8 failed import older than the window is silent",
     !(await codes()).includes("import.failed")
   );
+
+  // --- 8b. email that didn't send ----------------------------------------------------
+  const addFailedSend = async (over: Partial<typeof emailSends.$inferInsert> = {}) => {
+    const db = await getDb();
+    await db.insert(emailSends).values({
+      userId: USER,
+      provider: "gmail",
+      fromEmail: "me@acme-corp.io",
+      to: ["ben@acme-corp.io"],
+      subject: "Hi",
+      bodyText: "Hello",
+      origin: "compose",
+      status: "failed",
+      failureKind: "permanent",
+      sendAt: new Date(),
+      rfcMessageId: `<${crypto.randomUUID()}@orbit.mail>`,
+      ...over,
+    });
+  };
+  await reset();
+  await addFailedSend();
+  await addFailedSend();
+  const emailAlerts = await getAccountAlerts(USER);
+  const emailAlert = emailAlerts.find((a) => a.code === "email.send_failed");
+  check("8b recent failed sends alert, counted", emailAlert?.title === "2 emails didn't send", emailAlert?.title);
+  check("8b and point at contacts", emailAlert?.cta?.href === "/contacts");
+  await reset();
+  await addFailedSend({ updatedAt: ago(IMPORT_ALERT_WINDOW_MS + DAY) });
+  check("8b a failure older than the window is silent", !(await codes()).includes("email.send_failed"));
+  await reset();
+  await addFailedSend({ dismissedAt: new Date() });
+  check("8b a dismissed failure is silent", !(await codes()).includes("email.send_failed"));
+  await reset();
+  await addFailedSend({ status: "canceled", failureKind: null });
+  check("8b an undone send is not a failure", !(await codes()).includes("email.send_failed"));
 
   await reset();
   await addImport({
@@ -390,11 +438,14 @@ async function main() {
     .insert(appSurfaceFlags)
     .values({ surfaceKey: "settings.ai", hiddenBy: "smoke" })
     .onConflictDoNothing();
+  // Written directly, not through setSurfaceHidden, so the instance memo must be told.
+  invalidateHiddenSurfaceKeys();
   check(
     "17 an alert pointing at a hidden surface is dropped",
     !(await codes()).includes("ai.no_key")
   );
   await db.delete(appSurfaceFlags);
+  invalidateHiddenSurfaceKeys();
 
   // Every surfaceKey the copy layer emits must be a real registry key, or the filter
   // above silently never matches.
@@ -413,11 +464,14 @@ async function main() {
     "connection.gmail",
     "connection.outlook",
     "connection.google_calendar",
+    "connection.microsoft_calendar",
+    "connection.apple_calendar",
     "plan.contact_cap_reached",
     "billing.past_due",
   ];
   const hideable: HealthCode[] = [
     "import.failed",
+    "email.send_failed",
     "import.stalled",
     "calendar.sync_error",
     "plan.contact_cap_near",
@@ -467,7 +521,7 @@ async function main() {
   const pausedAlert = paused.find((a) => a.code === "connection.google_calendar");
   check("20 a disarmed calendar sync alerts", Boolean(pausedAlert), JSON.stringify(paused.map((a) => a.code)));
   check("20 it is a warning (no red dot)", pausedAlert?.severity === "warn");
-  check("20 it points at the Google card", pausedAlert?.cta?.href === "/imports#import-google-contacts");
+  check("20 it points at the Google page", pausedAlert?.cta?.href === "/settings?integration=google");
   check("20 it never shows the raw sync error", !(pausedAlert?.body ?? "").includes("403"));
 
   await reset();
@@ -492,6 +546,74 @@ async function main() {
   });
   const dead = await codes();
   check("20d a dead grant raises only the reconnect alert", dead.includes("connection.gmail") && !dead.includes("connection.google_calendar"), dead.join(","));
+
+  // --- 21. paused Outlook and Apple calendar sync --------------------------------------
+  const MS_CALENDAR_SCOPE = "Calendars.Read";
+  const outlookBase = {
+    userId: USER,
+    emailAddress: "smoke@outlook.example.com",
+    accessTokenEncrypted: "enc:access",
+  };
+  const appleBase = {
+    userId: USER,
+    emailAddress: "smoke@icloud.example.com",
+    appPasswordEncrypted: "enc:app-password",
+  };
+
+  await reset();
+  await db.insert(outlookConnections).values({
+    ...outlookBase, status: "active", refreshTokenEncrypted: "enc:refresh",
+    scopes: MS_CALENDAR_SCOPE, nextSyncAt: null, syncError: "Outlook Calendar 403: forbidden",
+  });
+  const outlookPaused = await getAccountAlerts(USER);
+  const outlookAlert = outlookPaused.find((a) => a.code === "connection.microsoft_calendar");
+  check(
+    "21 a paused Outlook calendar raises its own alert",
+    Boolean(outlookAlert),
+    JSON.stringify(outlookPaused.map((a) => a.code))
+  );
+  check("21 it is a warning (no red dot)", outlookAlert?.severity === "warn");
+  check("21 it points at the Outlook card", outlookAlert?.cta?.href === "/imports#import-outlook-contacts");
+  check("21 it never shows the raw sync error", !(outlookAlert?.body ?? "").includes("403"));
+
+  // A revoked app-specific password disarms the same way a sync that gave up on its own
+  // does — see `appleCalendarFacts`'s own comment for why there is no separate "dead" state
+  // to distinguish for Apple.
+  await reset();
+  await db.insert(appleConnections).values({
+    ...appleBase, status: "active", nextSyncAt: null, syncError: "CalDAV 401: unauthorized",
+  });
+  const applePaused = await getAccountAlerts(USER);
+  const appleAlert = applePaused.find((a) => a.code === "connection.apple_calendar");
+  check(
+    "21 a paused Apple calendar raises its own alert",
+    Boolean(appleAlert),
+    JSON.stringify(applePaused.map((a) => a.code))
+  );
+  check("21 it is a warning (no red dot)", appleAlert?.severity === "warn");
+  check("21 its CTA points at Settings, not imports", appleAlert?.cta?.href === "/settings");
+  check(
+    "21 its copy explains the app-specific password rather than saying 'reconnect Apple'",
+    (appleAlert?.body ?? "").includes("app-specific password") &&
+      !/reconnect apple/i.test(appleAlert?.body ?? "")
+  );
+  check("21 it never shows the raw sync error", !(appleAlert?.body ?? "").includes("401"));
+
+  // The dead-grant suppression Google already has (case 20d), mirrored for Outlook: a
+  // `needs_reauth` mailbox connection already raises `connection.outlook`, so the
+  // calendar-specific alert on top of it would just be a second alert for one root cause.
+  await reset();
+  await db.insert(outlookConnections).values({
+    ...outlookBase, status: "needs_reauth", refreshTokenEncrypted: "enc:refresh",
+    scopes: MS_CALENDAR_SCOPE, nextSyncAt: null, syncError: "Outlook session expired — reconnect",
+  });
+  const codesWithDeadGrant = await codes();
+  check(
+    "21 a dead grant suppresses the calendar alert",
+    codesWithDeadGrant.includes("connection.outlook") &&
+      !codesWithDeadGrant.includes("connection.microsoft_calendar"),
+    codesWithDeadGrant.join(",")
+  );
 
   // --- 19. query budget ---------------------------------------------------------------
   await reset();

@@ -1,5 +1,11 @@
 import Papa from "papaparse";
 import { isRoleEmail } from "@/lib/duplicates";
+import { headerFields } from "@/lib/imports/csv-header";
+import {
+  looksLikeConnectionsExport,
+  looksLikeMessagesExport,
+  stripLinkedInConnectionsPreamble,
+} from "@/lib/linkedin-connections";
 
 /**
  * Address-book file parsing: vCard (.vcf) and the contacts CSVs Google and Outlook export.
@@ -57,15 +63,10 @@ export class ContactsFileError extends Error {
 }
 
 /**
- * The largest file the browser will even read.
- *
- * Deliberately far above `MAX_CONTACTS_FILE_CHARS`, because the raw file is not what gets
- * uploaded: an iCloud or Android export embeds every contact photo as base64, and a few hundred
- * photos is tens of megabytes of pixels around a few hundred kilobytes of names.
- * `compactContactsFileText` strips those in the browser before anything is sent, so this only
- * has to stop someone feeding `file.text()` something absurd.
+ * The largest file the browser will even read. Lives in the dependency-free `import-constants`
+ * so the /imports page can read it without this module (and papaparse) in its first load.
  */
-export const MAX_CONTACTS_FILE_BYTES = 50 * 1024 * 1024;
+export { MAX_CONTACTS_FILE_BYTES } from "@/lib/imports/import-constants";
 
 /**
  * The most text the server actions will parse — measured after `compactContactsFileText`.
@@ -628,15 +629,6 @@ const CSV_FIELDS = {
   notes: ["notes", "note"],
 } as const;
 
-/** Headers a LinkedIn Connections export carries; "connected on" is the one nothing else has. */
-function looksLikeLinkedInConnections(head: string) {
-  return head.includes("first name") && head.includes("last name") && head.includes("connected on");
-}
-
-function looksLikeLinkedInMessages(head: string) {
-  return head.includes("conversation id") && head.includes("conversation title");
-}
-
 type HeaderIndex = Map<string, string>;
 
 function headerIndex(fields: string[]): HeaderIndex {
@@ -720,21 +712,44 @@ function csvFormat(index: HeaderIndex): ContactsFileFormat {
   return "csv";
 }
 
+/**
+ * Whether these header fields describe people rather than something else entirely.
+ *
+ * Exported because detection asks the same question before it routes a dropped CSV here, and
+ * a second copy of the answer would be the drift this file just finished removing. It is
+ * deliberately permissive — one name or email column is enough — because the refusal it
+ * guards is the last resort, not a filter.
+ */
+export function looksLikeContactsCsv(fields: string[]): boolean {
+  const index = headerIndex(fields);
+  if (numberedColumns(fields, "e-mail").length > 0) return true;
+  return [
+    ...CSV_FIELDS.fullName,
+    ...CSV_FIELDS.firstName,
+    ...CSV_FIELDS.lastName,
+    ...CSV_FIELDS.email,
+  ].some((key) => index.has(key));
+}
+
 function parseContactsCsv(text: string): {
   format: ContactsFileFormat;
   rows: ContactsFileRow[];
   unnamed: number;
   malformed: number;
 } {
-  const head = text.slice(0, 5000).toLowerCase();
-  if (looksLikeLinkedInConnections(head)) {
+  // Field-based, not a substring scan of the first 5KB, so that one definition of "this is a
+  // LinkedIn export" serves both this refusal and the detection that routes a dropped file.
+  // The preamble strip is load-bearing: a real Connections.csv opens with three `Notes:` lines,
+  // so parsing it unstripped yields the preamble as the header and matches nothing.
+  const guardFields = headerFields(stripLinkedInConnectionsPreamble(text));
+  if (looksLikeConnectionsExport(guardFields)) {
     throw new ContactsFileError(
       "This looks like a LinkedIn Connections export — upload it on the LinkedIn connections card, which keeps each person’s profile link and when you connected"
     );
   }
-  if (looksLikeLinkedInMessages(head)) {
+  if (looksLikeMessagesExport(guardFields)) {
     throw new ContactsFileError(
-      "This looks like a LinkedIn Messages export — upload it on the Messages tab instead"
+      "This looks like a LinkedIn Messages export — upload it on the LinkedIn messages card instead"
     );
   }
 
@@ -748,12 +763,7 @@ function parseContactsCsv(text: string): {
 
   const emailColumns = numberedColumns(fields, "e-mail");
   const phoneColumns = numberedColumns(fields, "phone");
-  const recognised =
-    emailColumns.length > 0 ||
-    [...CSV_FIELDS.fullName, ...CSV_FIELDS.firstName, ...CSV_FIELDS.lastName, ...CSV_FIELDS.email].some(
-      (key) => index.has(key)
-    );
-  if (!recognised) {
+  if (!looksLikeContactsCsv(fields)) {
     const found = fields.length
       ? ` (it has ${fields.slice(0, 6).join(", ")}${fields.length > 6 ? "…" : ""})`
       : "";

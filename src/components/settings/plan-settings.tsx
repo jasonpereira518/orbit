@@ -1,6 +1,20 @@
-import { Check, Sparkles } from "lucide-react";
+import {
+  CalendarCheck,
+  Check,
+  Coins,
+  Globe,
+  Infinity as InfinityIcon,
+  Megaphone,
+  MessageCircle,
+  Network,
+  ScanText,
+  Sparkles,
+  UserSearch,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { ManageBillingButton } from "@/components/settings/manage-billing-button";
+import { SubscriptionManager } from "@/components/settings/subscription-manager";
 import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy, unlimitedContactsLine } from "@/lib/plan-copy";
@@ -16,17 +30,24 @@ const SOURCE_NOTE: Record<PlanSource, string | null> = {
 };
 
 /**
- * The same tier identities the pricing page paints — Orbit Pro in the colour the
- * product itself runs on, Orbit Lifetime in the gold the marketing site reserves
- * for offers, Free deliberately recessed — restated for app chrome.
+ * The same plan identities the pricing page paints — Free deliberately recessed, Pro blue,
+ * Max gold, Lifetime silver — restated for app chrome through the plan tokens.
  *
- * The pricing page can use the flat `--brand-pro` and `#f2c14e` because it only ever
- * sits on a dark starfield. This card sits on `--card` in either theme, which splits
- * the gold in two: as a *surface* it can be the real brand gold, because the text
- * riding on it is near-black; as *text* on a white card it cannot, since `#f2c14e`
- * is 1.8:1 there. So the badge carries the bright metal and the ticks carry a
- * deeper amber that still clears 4.5:1.
+ * The pricing page uses the fixed "night" values because it only ever sits on a dark
+ * starfield. This card sits on `--card` in either theme, so it splits each metal in two: as
+ * a *surface* (the badge's sheen) it can be the bright metal, because the text on it is
+ * near-black; as *text* (the ticks) it uses the theme-aware `--tier-*`, which clears 4.5:1.
  */
+const PAID = {
+  ring: "border-tier-border",
+  wash: "bg-tier-surface",
+  badge: "bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink shadow-sm",
+  ink: "text-tier-accent",
+  chip: "bg-tier-accent/15",
+  meter: "bg-tier-accent",
+  glint: true,
+};
+
 const TIER_ACCENT: Record<
   Plan,
   {
@@ -38,6 +59,8 @@ const TIER_ACCENT: Record<
     badge: string;
     /** Ticks and other accent marks. */
     ink: string;
+    /** Tinted tile behind each feature's symbol. */
+    chip: string;
     /** Usage meter fill. */
     meter: string;
     /** Whether the badge catches a travelling highlight. */
@@ -49,37 +72,66 @@ const TIER_ACCENT: Record<
     wash: null,
     badge: "border border-border/70 text-muted-foreground",
     ink: "text-muted-foreground",
+    chip: "bg-muted",
     meter: "bg-muted-foreground/70",
     glint: false,
   },
-  orbit: {
-    // A dedicated blue rather than `--primary`: primary is the app's everyday
-    // chrome color (links, buttons, focus rings) in both themes — a badge in it
-    // didn't read as a distinct tier, just as more of the same UI. `--brand-pro`
-    // matches the ring in orbit-logo.tsx and the pricing page's Orbit Pro card,
-    // so "blue" means the same tier everywhere. `ink` uses the theme-aware
-    // `--tier-pro` instead, since the flat blue is only 2.7:1 on a light card.
-    ring: "border-brand-pro/40 dark:border-brand-pro/45",
-    wash: "bg-brand-pro/15 dark:bg-brand-pro/12",
-    // Same vertical-ramp technique as Lifetime's gold: a light edge and a
-    // shaded one for the glint to travel between.
-    badge: "bg-gradient-to-b from-[#8ec4f5] to-[#5b9de6] text-[#0f2e4d] shadow-sm",
-    ink: "text-tier-pro",
-    meter: "bg-brand-pro",
-    glint: true,
-  },
-  lifetime: {
-    ring: "border-[#e0a52e]/60 dark:border-[#f2c14e]/40",
-    wash: "bg-[#f2c14e]/25 dark:bg-[#f2c14e]/15",
-    // A vertical ramp rather than one flat fill: gold reads as metal only when
-    // it has a light edge and a shaded one for the glint to travel between.
-    badge:
-      "bg-gradient-to-b from-[#f7d15f] to-[#e0a52e] text-[#3d2c00] shadow-sm",
-    ink: "text-[#a06a00] dark:text-[#f2c14e]",
-    meter: "bg-[#e0a52e] dark:bg-[#f2c14e]",
-    glint: true,
-  },
+  // Pro, Max and Lifetime share one shape; the `data-plan` on the card picks the colors
+  // (Pro blue, Max gold, Lifetime silver — see the plan tokens in globals.css). The badge is
+  // a vertical metallic ramp rather than a flat fill: a light edge and a shaded one for the
+  // glint to travel between.
+  orbit: PAID,
+  max: PAID,
+  lifetime: PAID,
 };
+
+/**
+ * How one feature line is dressed here: a symbol, and the phrase to bold. Matched on the
+ * shared copy from `plan-copy.ts` rather than stored beside it, because the marketing page
+ * renders the same strings and has no use for either. A line nothing matches keeps the plain
+ * tick and no bold, so new copy degrades to the old look instead of breaking.
+ */
+const FEATURE_STYLE: ReadonlyArray<{
+  test: RegExp;
+  icon: LucideIcon;
+  bold: RegExp;
+}> = [
+  { test: /^Everything in/i, icon: Check, bold: /^Everything in the Free Plan/i },
+  { test: /contacts/i, icon: Users, bold: /(Up to \d+|Unlimited) contacts/i },
+  { test: /AI extraction/i, icon: ScanText, bold: /AI extraction/i },
+  { test: /^Chat with/i, icon: MessageCircle, bold: /^Chat with your network/i },
+  { test: /Constellation/i, icon: Network, bold: /Constellation map/i },
+  { test: /LinkedIn/i, icon: Network, bold: /LinkedIn import/i },
+  { test: /Reminders/i, icon: Check, bold: /Reminders and follow-up feed/i },
+  { test: /Knowledge/i, icon: Check, bold: /Knowledge base/i },
+  { test: /^Export/i, icon: Check, bold: /^Export your data/i },
+  { test: /enrichment/i, icon: Coins, bold: /Contact enrichment/i },
+  { test: /Outreach/i, icon: Megaphone, bold: /Outreach campaigns/i },
+  { test: /Recruiter/i, icon: UserSearch, bold: /Recruiter tracking/i },
+  { test: /Calendar/i, icon: CalendarCheck, bold: /Calendar links/i },
+  { test: /Chrome/i, icon: Globe, bold: /Chrome extension/i },
+];
+
+function styleFeature(feature: string) {
+  const match = FEATURE_STYLE.find((f) => f.test.test(feature));
+  const icon: LucideIcon = /forever/i.test(feature) ? InfinityIcon : (match?.icon ?? Check);
+  const bold = match ? feature.match(match.bold)?.[0] : undefined;
+  return { icon, bold };
+}
+
+/** The feature's text with its key phrase bold and in the plan colour. */
+function FeatureText({ feature, ink }: { feature: string; ink: string }) {
+  const { bold } = styleFeature(feature);
+  const at = bold ? feature.indexOf(bold) : -1;
+  if (!bold || at < 0) return <span>{feature}</span>;
+  return (
+    <span>
+      {feature.slice(0, at)}
+      <strong className={cn("font-semibold", ink)}>{bold}</strong>
+      {feature.slice(at + bold.length)}
+    </span>
+  );
+}
 
 export function PlanSettings({
   entitlements,
@@ -104,6 +156,7 @@ export function PlanSettings({
 
   return (
     <section
+      data-plan={entitlements.plan}
       className={cn(
         "relative overflow-hidden rounded-2xl border bg-card p-6",
         accent.ring
@@ -199,32 +252,41 @@ export function PlanSettings({
               the tallest of them, so a feature that wraps to two lines opened a
               double gap under its short neighbour. Columns flow independently,
               so every row sits the same distance from the last. */}
-          <ul className="-mb-2 mt-3 sm:columns-2 sm:gap-x-6">
-            {copy.features.map((feature) => (
-              <li
-                key={feature}
-                className="flex break-inside-avoid gap-2 pb-2 text-sm text-muted-foreground"
-              >
-                <Check
-                  className={cn("mt-0.5 size-4 shrink-0", accent.ink)}
-                  aria-hidden="true"
-                />
-                <span>{feature}</span>
-              </li>
-            ))}
+          <ul className="-mb-2.5 mt-3 sm:columns-2 sm:gap-x-6">
+            {copy.features.map((feature) => {
+              const { icon: Icon } = styleFeature(feature);
+              return (
+                <li
+                  key={feature}
+                  className="flex break-inside-avoid items-start gap-2.5 pb-2.5 text-sm text-ink"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "flex size-6 shrink-0 items-center justify-center rounded-lg",
+                      accent.chip,
+                      accent.ink
+                    )}
+                  >
+                    <Icon className="size-3.5" strokeWidth={2.25} />
+                  </span>
+                  <span className="pt-0.5">
+                    <FeatureText feature={feature} ink={accent.ink} />
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </div>
 
-        {!entitlements.canUseHostedEnrichment && entitlements.plan !== "free" && (
-          <p className="rounded-xl border border-border/70 bg-muted/40 p-3 text-sm text-muted-foreground">
-            Contact enrichment runs on your own Apollo key. Add it in the
-            Outreach section below. Email and SMS sending is included on your
-            plan.
-          </p>
+        {entitlements.source === "subscription" && (
+          <div className="border-t border-border/60 pt-4">
+            <h4 className="mb-3 text-sm font-medium text-ink">Your subscription</h4>
+            <SubscriptionManager />
+          </div>
         )}
 
         <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-4">
-          {entitlements.source === "subscription" && <ManageBillingButton />}
           {isFree && (
             /* Points at the transaction page, not back at /pricing — that round
                trip was a loop with no way to actually pay at either end.

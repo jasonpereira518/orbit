@@ -7,17 +7,16 @@
  * a person it has never seen and creates a *second* contact. Voice capture that silently
  * forks your contacts on every note is worse than no voice capture.
  *
- * Every engine in the chain can be biased toward a word list, and all three take it
+ * Every engine in the chain can be biased toward a word list, and each takes it
  * differently:
  *
- *   - Wispr  → `context.dictionary_context`, a real array of terms.
  *   - Whisper → the `prompt` parameter, which is prior text, not a list, and is capped at
  *               224 tokens. Much tighter, so it gets a shorter slice.
  *   - Gemini  → ordinary prompt text, since it is a general model reading instructions.
  *
  * So the term list is built once here and shaped per engine at the call site. The pure
  * half is everything except `loadNetworkVocabulary`, which is the only function that
- * touches the database — that split is what lets `scripts/smoke-wispr.ts` test the
+ * touches the database — that split is what lets `scripts/smoke-vocabulary-terms.ts` test the
  * selection and the caps under node.
  */
 
@@ -26,11 +25,8 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 
 /**
- * How many terms Wispr's dictionary gets.
- *
- * A guess at a sane ceiling rather than a documented limit — see the header of
- * `src/lib/wispr.ts` about what could not be verified. Chosen so the JSON stays small
- * (~6 KB) next to an 11 MB audio payload, where it costs nothing.
+ * The most terms any engine is handed. A sane ceiling rather than a documented limit; each
+ * engine's shaper (`vocabularyToWhisperPrompt`, `vocabularyToPromptLine`) cuts further.
  */
 export const MAX_VOCABULARY_TERMS = 300;
 

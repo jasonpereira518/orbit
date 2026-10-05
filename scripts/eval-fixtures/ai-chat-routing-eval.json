@@ -1,0 +1,1381 @@
+{
+ "$comment": "Chat routing labels (decisions/chat-route.ts): depth single|research, whether the attention brief should load, whether the recruiter list should, and which seeded company rosters should attach (Stripe, Ramp, Notion, Square, Block, Figma). Hard negatives carry a 'why'.",
+ "cases": [
+  {
+   "id": "lookup-01",
+   "question": "Who do I know at Stripe?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Stripe"
+    ]
+   }
+  },
+  {
+   "id": "lookup-02",
+   "question": "Who works in fintech?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-03",
+   "question": "Who do I know in Boston?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-04",
+   "question": "Which product managers do I know?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-05",
+   "question": "Which investors do I know?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-06",
+   "question": "Who should I ask about Kubernetes?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'who should i' must not fire the attention brief"
+  },
+  {
+   "id": "lookup-07",
+   "question": "Who should I talk to about raising a seed round?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "an expertise lookup, not a research round ('talk to' rule)"
+  },
+  {
+   "id": "lookup-08",
+   "question": "Who can help me with hiring?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "expertise lookup; not a path, not recruiters"
+  },
+  {
+   "id": "lookup-09",
+   "question": "Who is Ada Park?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-10",
+   "question": "Ada Park",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-11",
+   "question": "Tell me about Marcus",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-12",
+   "question": "Who at Ramp works on growth?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Ramp"
+    ]
+   }
+  },
+  {
+   "id": "lookup-13",
+   "question": "How many people do I know at Notion?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Notion"
+    ]
+   }
+  },
+  {
+   "id": "lookup-14",
+   "question": "Who do I know at Square?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Square"
+    ]
+   }
+  },
+  {
+   "id": "lookup-15",
+   "question": "Does anyone I know work at Figma?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Figma"
+    ]
+   }
+  },
+  {
+   "id": "lookup-16",
+   "question": "I need to ramp up on enterprise sales — who knows it well?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'ramp' is an ordinary word here"
+  },
+  {
+   "id": "lookup-17",
+   "question": "Who has a good notion of SaaS pricing?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'notion' is an ordinary word here"
+  },
+  {
+   "id": "lookup-18",
+   "question": "Who could help me square this with legal — any lawyers I know?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'square' is an ordinary word here"
+  },
+  {
+   "id": "lookup-19",
+   "question": "What did Ada work on before Stripe?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "a profile question; Stripe is background, not the subject"
+  },
+  {
+   "id": "lookup-20",
+   "question": "Who's a designer I could hire for a logo?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-21",
+   "question": "Which founders do I know in climate tech?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-22",
+   "question": "Who do I know from my YC batch?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-23",
+   "question": "Who are my closest friends in San Francisco?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-24",
+   "question": "Who works on payments infrastructure?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-25",
+   "question": "Find engineers who know Go",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-26",
+   "question": "Who's good at fundraising?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-27",
+   "question": "List everyone I know at Block",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Block"
+    ]
+   }
+  },
+  {
+   "id": "lookup-28",
+   "question": "Who is the best person to ask about the block editor in WordPress?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'block' is an ordinary word here"
+  },
+  {
+   "id": "lookup-29",
+   "question": "Who do I know on the research team at Stripe?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Stripe"
+    ]
+   },
+   "why": "'research' is just a team name"
+  },
+  {
+   "id": "lookup-30",
+   "question": "Who writes the best cold emails?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'cold' must not fire the attention brief"
+  },
+  {
+   "id": "lookup-31",
+   "question": "Who is quietly building something interesting in AI?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'quietly' must not fire the attention brief"
+  },
+  {
+   "id": "lookup-32",
+   "question": "Which of my contacts are data scientists?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-33",
+   "question": "Who went to Stanford?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-34",
+   "question": "Anyone who worked at Google and now runs a startup?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-35",
+   "question": "Who knows the most about hardware supply chains?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-36",
+   "question": "Who in my network lives in London?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-37",
+   "question": "What does Leo Chen do?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-38",
+   "question": "Which angels invest in developer tools?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-39",
+   "question": "Is Figma hiring right now?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Figma"
+    ]
+   },
+   "why": "about the company, not about recruiters"
+  },
+  {
+   "id": "lookup-40",
+   "question": "Who's recruiting engineers at Stripe?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Stripe"
+    ]
+   },
+   "why": "people at Stripe who hire, not recruiters themselves"
+  },
+  {
+   "id": "lookup-41",
+   "question": "Who is the hiring manager for the platform role at Ramp?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Ramp"
+    ]
+   }
+  },
+  {
+   "id": "lookup-42",
+   "question": "Who's staffing the new AI team at Notion?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Notion"
+    ]
+   },
+   "why": "'staffing' is not recruiters"
+  },
+  {
+   "id": "lookup-43",
+   "question": "Cold outreach tips — who is great at outbound sales?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-44",
+   "question": "Who did I meet this week?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'this week' must not fire the attention brief; recent meetings are in context"
+  },
+  {
+   "id": "lookup-45",
+   "question": "Draft a follow-up email to Ada",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "one named person: no attention brief"
+  },
+  {
+   "id": "lookup-46",
+   "question": "Write a short reconnect note for Marcus",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "one named person: no attention brief"
+  },
+  {
+   "id": "lookup-47",
+   "question": "Is it too late to reach out to Dana about the job?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "advice about one person"
+  },
+  {
+   "id": "lookup-48",
+   "question": "Who has the most experience with Series B fundraising?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-49",
+   "question": "Which of my contacts speak Spanish?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "lookup-50",
+   "question": "Who knows a lot about React Native?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-01",
+   "question": "What did Priya say about the Series A?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-02",
+   "question": "What did I promise Marcus?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-03",
+   "question": "What did we discuss with Dana last time?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-04",
+   "question": "What did James tell me about his new role?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-05",
+   "question": "Summarize my notes on Ada",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-06",
+   "question": "What did I write about the offsite?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-07",
+   "question": "Did Leo mention a timeline for the hire?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-08",
+   "question": "What was my conversation with Tomas about?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-09",
+   "question": "Remind me what Kai asked me for",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-10",
+   "question": "What advice did Maria give me?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "rules miss 'give'"
+  },
+  {
+   "id": "said-11",
+   "question": "Any notes about pricing from my calls?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-12",
+   "question": "What did I learn from coffee with Sam?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "rules miss 'learn'"
+  },
+  {
+   "id": "said-13",
+   "question": "Which of my contacts talked about burnout?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-14",
+   "question": "What feedback did investors give on my deck?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-15",
+   "question": "What did Raj think of the product demo?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-16",
+   "question": "What were Ada's concerns about the migration?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "rules miss: no speech verb"
+  },
+  {
+   "id": "said-17",
+   "question": "Did anyone recommend a lawyer to me?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "said-18",
+   "question": "What next steps did I agree with Leo?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "path-01",
+   "question": "Who can introduce me to someone at OpenAI?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "path-02",
+   "question": "Is there a warm path to the CEO of Microsoft?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "path-03",
+   "question": "How do I get in touch with the Figma design team?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Figma"
+    ]
+   }
+  },
+  {
+   "id": "path-04",
+   "question": "Who could connect me with a partner at Sequoia?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "path-05",
+   "question": "Find me an intro to the CTO of Ramp",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Ramp"
+    ]
+   }
+  },
+  {
+   "id": "path-06",
+   "question": "Can anyone get me in front of the Notion founders?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Notion"
+    ]
+   }
+  },
+  {
+   "id": "path-07",
+   "question": "Who knows someone at Anthropic?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "path-08",
+   "question": "Help me reach the hiring manager at Stripe",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Stripe"
+    ]
+   }
+  },
+  {
+   "id": "path-09",
+   "question": "What's the best way to get an intro to Patrick Collison?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "path-10",
+   "question": "Who in my network could vouch for me at Square?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Square"
+    ]
+   }
+  },
+  {
+   "id": "time-01",
+   "question": "Who did I meet in March?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "time-02",
+   "question": "What happened with Leo last month?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "time-03",
+   "question": "Who did I talk to last week?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "time-04",
+   "question": "When did I last see Ada?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "time-05",
+   "question": "Who did I meet at conferences last year?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "time-06",
+   "question": "What did I do with Dana in early June?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "time-07",
+   "question": "How long ago did I meet Tom?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "time-08",
+   "question": "Who did I catch up with during September?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "'catch up' here is past meetings, not the attention brief"
+  },
+  {
+   "id": "time-09",
+   "question": "Which intros did I make in the past quarter?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "time-10",
+   "question": "Who did I have coffee with over the summer?",
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "rules miss 'over the summer'"
+  },
+  {
+   "id": "follow-01",
+   "question": "What does she work on day to day?",
+   "priorTurns": [
+    {
+     "role": "user",
+     "content": "Who do I know at Stripe?"
+    },
+    {
+     "role": "assistant",
+     "content": "You know Ada Park, a staff engineer on payments, and Leo Chen, a product manager on Stripe Billing."
+    }
+   ],
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "follow-02",
+   "question": "Tell me more about the second one",
+   "priorTurns": [
+    {
+     "role": "user",
+     "content": "Who do I know at Stripe?"
+    },
+    {
+     "role": "assistant",
+     "content": "You know Ada Park, a staff engineer on payments, and Leo Chen, a product manager on Stripe Billing."
+    }
+   ],
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "follow-03",
+   "question": "Which of them is closest to me?",
+   "priorTurns": [
+    {
+     "role": "user",
+     "content": "Which investors do I know?"
+    },
+    {
+     "role": "assistant",
+     "content": "Three stand out: Maria Lopez at Seedcamp, Tomas Berg at Northzone and Kai Moreno, an angel."
+    }
+   ],
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "follow-04",
+   "question": "Draft an intro to him",
+   "priorTurns": [
+    {
+     "role": "user",
+     "content": "Who do I know at Stripe?"
+    },
+    {
+     "role": "assistant",
+     "content": "You know Ada Park, a staff engineer on payments, and Leo Chen, a product manager on Stripe Billing."
+    }
+   ],
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "follow-05",
+   "question": "What did Maria say when we last spoke?",
+   "priorTurns": [
+    {
+     "role": "user",
+     "content": "Which investors do I know?"
+    },
+    {
+     "role": "assistant",
+     "content": "Three stand out: Maria Lopez at Seedcamp, Tomas Berg at Northzone and Kai Moreno, an angel."
+    }
+   ],
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "follow-06",
+   "question": "And who do I know at Ramp?",
+   "priorTurns": [
+    {
+     "role": "user",
+     "content": "Who do I know at Stripe?"
+    },
+    {
+     "role": "assistant",
+     "content": "You know Ada Park, a staff engineer on payments, and Leo Chen, a product manager on Stripe Billing."
+    }
+   ],
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": [
+     "Ramp"
+    ]
+   },
+   "why": "a new lookup, not a follow-up"
+  },
+  {
+   "id": "follow-07",
+   "question": "Which investors do I know in Berlin?",
+   "priorTurns": [
+    {
+     "role": "user",
+     "content": "Which investors do I know?"
+    },
+    {
+     "role": "assistant",
+     "content": "Three stand out: Maria Lopez at Seedcamp, Tomas Berg at Northzone and Kai Moreno, an angel."
+    }
+   ],
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "a new lookup despite the thread"
+  },
+  {
+   "id": "follow-08",
+   "question": "When did I last talk to them?",
+   "priorTurns": [
+    {
+     "role": "user",
+     "content": "Which investors do I know?"
+    },
+    {
+     "role": "assistant",
+     "content": "Three stand out: Maria Lopez at Seedcamp, Tomas Berg at Northzone and Kai Moreno, an angel."
+    }
+   ],
+   "expect": {
+    "depth": "research",
+    "attention": false,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-01",
+   "question": "Who should I reconnect with this week?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-02",
+   "question": "Who have I lost touch with?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-03",
+   "question": "Anyone slipping through the cracks?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "rules miss"
+  },
+  {
+   "id": "attn-04",
+   "question": "Who's overdue for a follow-up?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-05",
+   "question": "Which relationships are going cold?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-06",
+   "question": "Who haven’t I talked to in a while?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "curly apostrophe: rules miss"
+  },
+  {
+   "id": "attn-07",
+   "question": "Who should I check in with?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-08",
+   "question": "Remind me who I owe a follow-up",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-09",
+   "question": "Who needs attention in my network?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-10",
+   "question": "Who have I been neglecting lately?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-11",
+   "question": "Which contacts have gone quiet?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-12",
+   "question": "Who's dormant that I should ping?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-13",
+   "question": "Which mentors should I catch up with soon?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-14",
+   "question": "Anyone I should reach out to this month?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-15",
+   "question": "Who haven't I spoken to since spring?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   }
+  },
+  {
+   "id": "attn-16",
+   "question": "Who's fallen off my radar?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "rules miss"
+  },
+  {
+   "id": "attn-17",
+   "question": "Which important people am I ignoring?",
+   "expect": {
+    "depth": "single",
+    "attention": true,
+    "recruiters": false,
+    "roster": []
+   },
+   "why": "rules miss"
+  },
+  {
+   "id": "rec-01",
+   "question": "Which recruiters do I know?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   }
+  },
+  {
+   "id": "rec-02",
+   "question": "Any headhunters in my network?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   }
+  },
+  {
+   "id": "rec-03",
+   "question": "Who in talent acquisition have I worked with?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   }
+  },
+  {
+   "id": "rec-04",
+   "question": "Find me a recruiter who places ML engineers",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   }
+  },
+  {
+   "id": "rec-05",
+   "question": "Which recruiting agencies have reached out about roles?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   }
+  },
+  {
+   "id": "rec-06",
+   "question": "Who is a good head hunter for design roles?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   },
+   "why": "rules miss 'head hunter'"
+  },
+  {
+   "id": "rec-07",
+   "question": "Recruitment people I trust?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   },
+   "why": "rules miss 'recruitment'"
+  },
+  {
+   "id": "rec-08",
+   "question": "Which sourcers have contacted me?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   }
+  },
+  {
+   "id": "rec-09",
+   "question": "Who's the best talent partner I've dealt with?",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   },
+   "why": "rules miss 'talent partner'"
+  },
+  {
+   "id": "rec-10",
+   "question": "Show me the recruiters I rated highly",
+   "expect": {
+    "depth": "single",
+    "attention": false,
+    "recruiters": true,
+    "roster": []
+   }
+  }
+ ]
+}

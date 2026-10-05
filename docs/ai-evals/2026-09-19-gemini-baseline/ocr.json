@@ -1,0 +1,35 @@
+{
+  "label": "baseline-ocr",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "date": "2026-09-20T00:26:10.540Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 1,
+  "tasks": {
+    "ocr": {
+      "cases": 6,
+      "metrics": {
+        "nameRecall": 1,
+        "cer": 0
+      },
+      "misses": [],
+      "p50LatencyMs": 3812,
+      "costMicros": 50892,
+      "costPerCaseMicros": 8482,
+      "usage": [
+        {
+          "operation": "capture.transcribe.page",
+          "model": "gemini-3.5-flash",
+          "calls": 6,
+          "failures": 0,
+          "inputTokens": 7456,
+          "outputTokens": 4412,
+          "cachedInputTokens": 0,
+          "costMicros": 50892,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

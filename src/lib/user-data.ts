@@ -1,6 +1,10 @@
-import { del } from "@vercel/blob";
+import { cancelBatchJobsFor } from "@/lib/ai-batch";
+import { del } from "@/lib/blob-lazy";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
+import { hasBlobStorage } from "@/lib/contact-avatar";
+import { purgeEmailAttachmentsForUser } from "@/lib/email/attachments";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
@@ -9,19 +13,33 @@ import {
   actionItems,
   aiSuggestions,
   apiIdempotencyKeys,
+  agentSendRequests,
   apiKeys,
+  appleConnections,
   billingEvents,
+  creditAccounts,
+  creditGrants,
+  creditHolds,
+  planMeterUsage,
+  calendarSources,
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
   capturePhotos,
+  aiBatchJobs,
+  aiResultCache,
   chatMessages,
   chatThreads,
   closenessCohorts,
   companies,
+  connectorConnections,
+  connectorOutbox,
   contactBriefs,
+  emailSends,
   contactEmbeddings,
+  memoryChunks,
   contactExperiences,
+  contactCareerMoves,
   contactIdentities,
   contactMerges,
   contactProfiles,
@@ -37,6 +55,7 @@ import {
   eventProviderConnections,
   events,
   extensionUsage,
+  externalLinks,
   feedback,
   feedbackScreenshots,
   gateEvents,
@@ -49,16 +68,23 @@ import {
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
+  relationshipDigests,
+  relationshipRuns,
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
   pageViews,
   planUpgradeEvents,
+  radarRuns,
+  contactSignals,
+  recommendationFeedback,
+  recommendations,
   recruiterMessages,
   recruiters,
   recruiterScanState,
   reminderLists,
   reminders,
+  speechUsage,
   suggestedReminders,
   tags,
   targetCompanies,
@@ -113,7 +139,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *   - `contact_profiles`     -> cascades from `contacts` (verified by `scripts/smoke-purge.ts`,
  *                               not assumed — see that script's header)
  *   - `contact_experiences`  -> cascades from `contacts` (same)
- *   - `contact_job_changes`  -> cascades from `contacts` (same)
+ *   - `contact_career_moves`  -> cascades from `contacts` (same)
  *   - `contact_opportunities`-> cascades from `contacts`. Its `source_interaction_id` is
  *                               `on delete set null`, so the interaction FK is NOT what
  *                               covers it — the contact one is.
@@ -121,6 +147,12 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *                               global and never deleted with an account). The match is the
  *                               only per-user row in the job-feed trio; the feed itself and
  *                               its postings are global and carry no `user_id`.
+ *   - `relationship_digests` -> cascades from `contacts`
+ * `recommendations`, `recommendation_feedback` and `contact_signals` also cascade from
+ * `contacts`, but are deleted explicitly by `insights`, which can run without deleting
+ * contacts. `radar_runs` has no parent and is always deleted explicitly. Radar's news tables
+ * (`external_sources`, `external_items`, `external_item_companies`) are global, like the
+ * job feed's, carry no `user_id`, and are never deleted with an account.
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly. `suggested_reminders` looks like it would cascade
@@ -142,16 +174,29 @@ type Db = Awaited<ReturnType<typeof getDb>>;
 export type ExportSource = {
   name: string;
   page: (userId: string, limit: number, offset: number) => SQL;
+  /**
+   * Single-table sources only: `page` with `columns` in place of `*`. The export uses it to
+   * name exactly the columns that survive redaction (in table order), so vectors and raw
+   * bytes it would drop anyway are never read or shipped. Same rows, same order.
+   */
+  pageColumns?: (columns: SQL, userId: string, limit: number, offset: number) => SQL;
+  /**
+   * Column -> the expression selected in its place under the same name, for a column the
+   * `transform` only inspects. Must be provably output-identical after `transform`.
+   */
+  columnExpressions?: Record<string, SQL>;
   transform?: (row: Record<string, unknown>) => Record<string, unknown>;
 };
 
 /** Every row of `table` whose `user_id` is this user, in a stable order. */
 export function ownRowsSource(table: PgTable, orderBy = "id"): ExportSource {
   const name = getTableName(table);
+  const pageColumns: NonNullable<ExportSource["pageColumns"]> = (columns, userId, limit, offset) =>
+    sql`SELECT ${columns} FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`;
   return {
     name,
-    page: (userId, limit, offset) =>
-      sql`SELECT * FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`,
+    page: (userId, limit, offset) => pageColumns(sql`*`, userId, limit, offset),
+    pageColumns,
   };
 }
 
@@ -163,6 +208,12 @@ const withUrl = (source: ExportSource, prefix: string): ExportSource => ({
 });
 const contactsSource: ExportSource = {
   ...own(contacts),
+  // An inline avatar is replaced below whatever its bytes are, so only its `data:` prefix is
+  // read. `LIKE 'data:%'` is exactly `startsWith("data:")` (case-sensitive, no wildcards in
+  // the prefix); every other value, null included, passes through untouched.
+  columnExpressions: {
+    profile_image_url: sql`CASE WHEN profile_image_url LIKE 'data:%' THEN 'data:' ELSE profile_image_url END`,
+  },
   // Inline bytes and public Blob URLs become the owner-only avatar route.
   transform: (row) => {
     const url = typeof row.profile_image_url === "string" ? row.profile_image_url : null;
@@ -185,13 +236,54 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id")],
-    counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns)],
+    counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts],
     run: async (db, userId) => {
+      // Background AI still in flight at a provider. Cancelled there first — the provider is
+      // holding this person's prompts, and deleting our row would only lose the handle to
+      // them. Best effort: the rows go either way.
+      await cancelBatchJobsFor(userId).catch(() => 0);
+      await db.delete(aiBatchJobs).where(eq(aiBatchJobs.userId, userId));
+      // Remembered AI answers (recruiter verdicts, profile reads, drafts): derived from this
+      // person's mail and contacts, and rebuilt on the next ask.
+      await db.delete(aiResultCache).where(eq(aiResultCache.userId, userId));
       await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+      // Passages of the person's own notes. Derived, but derived from the most personal text
+      // in the product — leaving these behind after a deletion would leave the notes behind.
+      await db.delete(memoryChunks).where(eq(memoryChunks.userId, userId));
       await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
+      // Radar's list, what the person did with it, and its run history. The first two also
+      // cascade from contacts, but an insights-only delete keeps the contacts. `radar_runs`
+      // has no parent at all. The schedule columns are cleared so the next visit rebuilds
+      // from scratch; the pause flag is a preference and survives (see below).
+      await db.delete(recommendations).where(eq(recommendations.userId, userId));
+      await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
+      await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
+      // Relationship engine output: run history is deleted; per-contact digests have their
+      // derived text cleared (the memory_chunks precedent) but the rows stay. A digest row
+      // is also the read watermark: deleting it would make every conversation pending again
+      // and the engine would re-read (and re-bill) the whole history on its next pass.
+      // Digests cascade from contacts, so a contacts delete still removes them outright.
+      await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, userId));
+      await db
+        .update(relationshipDigests)
+        .set({ summary: null, whatTheyDo: null, workingOn: null, topics: [], openThreads: [] })
+        .where(eq(relationshipDigests.userId, userId));
+      // What Radar learned from the outside world about these contacts (headlines, posts).
+      // Also cascades from contacts; deleted here for the same reason.
+      await db.delete(contactSignals).where(eq(contactSignals.userId, userId));
+      // The learned model is derived from the data just deleted.
+      await db
+        .update(userSettings)
+        .set({
+          radarLastRunAt: null,
+          radarNextAt: null,
+          radarLeaseUntil: null,
+          radarModel: null,
+        })
+        .where(eq(userSettings.userId, userId));
     },
   },
   notes: {
@@ -216,6 +308,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // user's own prose about named people, which makes it the most sensitive row in the
       // file.
       await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
+      // The relationship engine's run ledger (counters and flags per run). It keys on the user,
+      // not a contact, so no contact delete reaches it.
+      await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, userId));
       // Meeting transcripts: the words of everyone on a call, verbatim. Segments first and
       // explicitly, though they cascade from the session — they carry their own `user_id`,
       // and a transcript that outlived its account would be the worst leak this function
@@ -254,12 +349,27 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   connections: {
-    exports: [own(gmailConnections), own(outlookConnections), own(calendarSubscriptions), own(eventProviderConnections)],
+    exports: [
+      own(gmailConnections),
+      own(outlookConnections),
+      own(appleConnections),
+      own(calendarSources),
+      own(calendarSubscriptions),
+      own(eventProviderConnections),
+      own(connectorConnections),
+      own(externalLinks),
+      own(connectorOutbox),
+    ],
     counts: [
       gmailConnections,
       outlookConnections,
+      appleConnections,
+      calendarSources,
       calendarSubscriptions,
       eventProviderConnections,
+      connectorConnections,
+      externalLinks,
+      connectorOutbox,
     ],
     run: async (db, userId) => {
       // Read before the delete: once the row is gone there is nothing to revoke with.
@@ -270,18 +380,31 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         })
         .from(gmailConnections)
         .where(eq(gmailConnections.userId, userId));
+      // Before the connection tables: `calendar_sources` has no FK (the three connection
+      // tables are separate by design — see provider-connections.ts), so nothing cascades it.
+      await db.delete(calendarSources).where(eq(calendarSources.userId, userId));
       await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
       await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
       // Best-effort and time-boxed (see oauth-revoke.ts): a Google outage must never
       // block an erasure. Outlook has no per-app revoke endpoint; Luma keys and Eventbrite
-      // tokens have none Orbit can call.
+      // tokens have none Orbit can call. Apple's app-specific password is revocable only by
+      // the user, at appleid.apple.com — there is nothing here to call either.
       for (const grant of googleGrants) await revokeGoogleGrant(grant);
       await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+      await db.delete(appleConnections).where(eq(appleConnections.userId, userId));
       // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as
       // the Gmail/Outlook rows above, and it must not outlive the account.
       await db
         .delete(eventProviderConnections)
         .where(eq(eventProviderConnections.userId, userId));
+      // Holds encrypted OAuth tokens, API keys and iCloud app passwords for every connector
+      // that is not Gmail or Outlook. Same class of secret as the rows above, and it must
+      // not outlive the account.
+      await db.delete(connectorConnections).where(eq(connectorConnections.userId, userId));
+      // The outbox may hold an unsent payload and external_links maps this user's rows into
+      // other systems. Both go with the connection that produced them.
+      await db.delete(connectorOutbox).where(eq(connectorOutbox.userId, userId));
+      await db.delete(externalLinks).where(eq(externalLinks.userId, userId));
     },
   },
   events: {
@@ -375,11 +498,31 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // The recruiter scan's watermark. Not derived from `gmail_connections`, so it
       // survives a disconnect/reconnect on purpose — but it must not survive the account.
       await db.delete(recruiterScanState).where(eq(recruiterScanState.userId, userId));
+      // The Outlook scan's watermark is not a row of its own: it is the newest completed scan
+      // job's frozen start time (`lastCompletedScanStart`). Left behind, "disconnect and delete
+      // what was imported" would remove the recruiters but keep the record of having read the
+      // mailbox, and the next Outlook scan would run incrementally — never re-reading the
+      // history it just deleted. The rows cascade to `import_job_rows`.
+      await db
+        .delete(imports)
+        .where(and(eq(imports.userId, userId), eq(imports.importType, OUTLOOK_SCAN_IMPORT_TYPE)));
     },
   },
   api: {
-    exports: [own(apiKeys), own(webhookEndpoints), own(outboundWebhookDeliveries), own(apiIdempotencyKeys, "idempotency_key")],
-    counts: [apiKeys, webhookEndpoints, outboundWebhookDeliveries, apiIdempotencyKeys],
+    exports: [
+      own(apiKeys),
+      own(webhookEndpoints),
+      own(outboundWebhookDeliveries),
+      own(apiIdempotencyKeys, "idempotency_key"),
+      own(agentSendRequests),
+    ],
+    counts: [
+      apiKeys,
+      webhookEndpoints,
+      outboundWebhookDeliveries,
+      apiIdempotencyKeys,
+      agentSendRequests,
+    ],
     run: async (db, userId) => {
       // `api_keys` matters most: a key that outlives the data it reaches is a live credential
       // with nothing behind it. The deliveries go before the endpoints they reference,
@@ -388,6 +531,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // rule here admits no exceptions that are not written down — and this is the fifth
       // user-scoped table family caught by `scripts/smoke-purge.ts` rather than by review.
       await db.delete(apiKeys).where(eq(apiKeys.userId, userId));
+      // Drafts an assistant wrote. They hold message bodies the user never sent, which is
+      // exactly the kind of content a deletion is meant to take with it.
+      await db.delete(agentSendRequests).where(eq(agentSendRequests.userId, userId));
       await db.delete(apiIdempotencyKeys).where(eq(apiIdempotencyKeys.userId, userId));
       await db
         .delete(outboundWebhookDeliveries)
@@ -396,10 +542,13 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
-    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews)],
-    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents],
+    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews), own(speechUsage)],
+    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents, speechUsage],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
+      // Deepgram usage meter (v89) — same reasoning as `usage_events` above: it is a record
+      // of what the account did, not a financial or operational record anyone else needs.
+      await db.delete(speechUsage).where(eq(speechUsage.userId, userId));
       // The extension's per-user rate-limit window, keyed on `user_id` as the primary key
       // with no parent to cascade from. A counter, not prose — but it is keyed on the person,
       // and it was the FOURTH user-scoped table found unpurged. Caught the first time
@@ -476,16 +625,22 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(duplicateSuggestions),
       own(targetCompanies),
       own(contactBriefs, "contact_id"),
+      own(relationshipDigests, "contact_id"),
       own(contactProfiles),
       own(contactExperiences),
+      own(contactCareerMoves),
+      own(emailSends),
       joined("contact_tags", (userId, limit, offset) => sql`SELECT ct.* FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.user_id = ${userId} ORDER BY ct.id LIMIT ${limit} OFFSET ${offset}`),
     ],
     // The `implies` list in `DATA_CATEGORY_META` is what stops this step from quietly
     // exceeding a partial request: `interactions`, `reminders`, `contact_embeddings` and
     // `contact_tags` are all `on delete cascade` from `contacts` and go the moment a
     // contact does, ticked or not.
-    counts: [contacts, companies, contactMerges],
+    counts: [contacts, companies, contactMerges, emailSends],
     run: async (db, userId) => {
+      // Queued and sent 1:1 mail. Deleted with contacts so a purge also stops anything still
+      // waiting in the outbox — a queued send outliving its contact would still go out.
+      await db.delete(emailSends).where(eq(emailSends.userId, userId));
       // Read before anything goes: the contact rows and merge snapshots are the only record
       // of which Blob objects are this user's. The objects have no foreign key to cascade.
       const photoRows = await db.execute(sql`
@@ -525,6 +680,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(companies).where(eq(companies.userId, userId));
       // After the rows: a Blob outage leaves orphaned objects, never undeleted people.
       await deleteAvatarBlobs(photoUrls);
+      // Email attachments live under the user's own prefix, so the listing finds every one —
+      // sent, queued or never sent — without a row to read first.
+      if (hasBlobStorage()) await purgeEmailAttachmentsForUser(userId).catch(() => {});
     },
   },
   tags: {
@@ -559,7 +717,7 @@ export function countedTableNames(category: DataCategory): string[] {
  * delete. The reasoning is that "delete all data" means "delete the data I put in," not
  * "erase the account":
  *   - the BYO provider keys (`*_api_key_encrypted` for Gemini/OpenAI/Anthropic/Apollo/Resend/
- *     Twilio/Wispr) plus `aiProvider`/`aiModel`, since a key without the selection that uses
+ *     Twilio) plus `aiProvider`/`aiModel`, since a key without the selection that uses
  *     it is inert — these are credentials for third-party services the user pays for
  *     directly, not Orbit data about them, unlike the Gmail/Outlook OAuth tokens the
  *     `connections` step purges
@@ -586,12 +744,13 @@ const PRESERVED_SETTINGS_COLUMNS = {
   geminiApiKeyEncrypted: true,
   openaiApiKeyEncrypted: true,
   anthropicApiKeyEncrypted: true,
+  openrouterApiKeyEncrypted: true,
+  typesafeApiKeyEncrypted: true,
   apolloApiKeyEncrypted: true,
   resendApiKeyEncrypted: true,
   twilioAccountSidEncrypted: true,
   twilioAuthTokenEncrypted: true,
   twilioFromNumber: true,
-  wisprApiKeyEncrypted: true,
   aiProvider: true,
   aiModel: true,
   theme: true,
@@ -617,17 +776,47 @@ const PRESERVED_SETTINGS_COLUMNS = {
   subscriptionStatus: true,
   subscriptionPeriodEnd: true,
   subscriptionEventAt: true,
+  // Both were missing before pricing v2, so a partial delete reset an annual subscriber to
+  // "never recorded", which reads as the monthly price.
+  subscriptionMonthlyCents: true,
+  subscriptionInterval: true,
+  subscriptionPeriodStart: true,
+  // Founding pricing is a promise made to the account, not to its contents.
+  foundingEligible: true,
+  foundingRedeemedAt: true,
+  foundingWindowEndsAt: true,
+  foundingSubscriptionId: true,
+  aiKeyPreference: true,
+  maxNudgeSeenAt: true,
+  // Credit emails: the person's choice, and what was already sent this cycle (so deleting
+  // data mid-cycle never re-sends a notice).
+  creditEmailEnabled: true,
+  creditNoticePeriodStart: true,
+  creditNoticeLevel: true,
   compedNote: true,
   compedAt: true,
   compedBy: true,
   suspendedAt: true,
   suspendedReason: true,
   suspendedBy: true,
+  // Stealth admission is about the account, not its contents: a delete must not re-hold it.
+  stealthClearedAt: true,
   createdAt: true,
   lastActiveAt: true,
   termsAcceptedAt: true,
   termsVersion: true,
   timelineBackfillEnabled: true,
+  // A person who paused Radar did not ask for it back by deleting their data. The same goes
+  // for autopilot, extension capture and the digest: preferences, not content. The digest's
+  // week claim and unsubscribe hash survive too, so a delete neither re-sends this week's
+  // email nor breaks the unsubscribe link in the last one.
+  radarPaused: true,
+  radarAutopilot: true,
+  radarCaptureLinkedinActivity: true,
+  radarDigestEnabled: true,
+  radarDigestTz: true,
+  radarDigestLastWeek: true,
+  radarDigestUnsubTokenHash: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
@@ -666,6 +855,26 @@ const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
   if (key === "billing") {
     await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
+    // Credit grants are money for the same reason billing rows are: a pack is cash received
+    // and its unused credits are a liability, so the rows are anonymised, never deleted. The
+    // account is gone, so whatever it had not spent is closed out as revoked — which is what
+    // takes it off the outstanding-liability figure.
+    await db
+      .update(creditGrants)
+      .set({
+        userId: null,
+        status: "revoked",
+        revokedAt: sql`coalesce(${creditGrants.revokedAt}, now())`,
+        revokedReason: sql`coalesce(${creditGrants.revokedReason}, 'account_deleted')`,
+        microsRevoked: sql`coalesce(${creditGrants.microsRevoked}, 0) + ${creditGrants.microsRemaining}`,
+        microsRemaining: 0,
+        updatedAt: new Date(),
+      })
+      .where(eq(creditGrants.userId, userId));
+    // A lock row, in-flight holds and monthly counters: operational, keyed on the person.
+    await db.delete(creditHolds).where(eq(creditHolds.userId, userId));
+    await db.delete(creditAccounts).where(eq(creditAccounts.userId, userId));
+    await db.delete(planMeterUsage).where(eq(planMeterUsage.userId, userId));
     return;
   }
   if (key === "preferences") {

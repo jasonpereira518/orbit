@@ -3,7 +3,7 @@ import { Lock } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
-import { type Plan } from "@/lib/plan-limits";
+import { PURCHASABLE_PLANS, PLAN_RANK, type PurchasablePlan } from "@/lib/plans/plan-config";
 import { PlanBadge } from "@/components/plan-badge";
 
 /**
@@ -12,30 +12,33 @@ import { PlanBadge } from "@/components/plan-badge";
  * Shows what the feature does rather than hiding it, so the paywall reads as an
  * explanation instead of a dead end. This is presentation only — the real boundary is
  * `requireEntitlement` inside the server actions, which holds even against direct POSTs.
+ *
+ * Wears the color of the plan that unlocks it (Pro blue, Max gold) and lists the plans on
+ * sale that include it. Lifetime is never offered: it is not sold.
  */
 export function LockedFeature({
   title,
   description,
   highlights,
-  plans = ["orbit", "lifetime"],
+  unlockPlan = "orbit",
   note,
 }: {
   title: string;
   description: string;
   highlights: string[];
-  /** Tiers that include this feature — renders as the colored badges below. */
-  plans?: Plan[];
+  /** The cheapest plan that includes this feature (`unlockPlanFor`). */
+  unlockPlan?: PurchasablePlan;
   note?: string;
 }) {
+  const plans = PURCHASABLE_PLANS.filter((plan) => PLAN_RANK[plan] >= PLAN_RANK[unlockPlan]);
   return (
-    // Two changes for the same 13px. `mb-[var(--orbit-bottom-nav)]` gives the scroll
-    // container room to lift "See plans" clear of the fixed mobile nav; the tighter
-    // padding and spacing below `sm` keep it clear on FIRST PAINT, without which the one
-    // control this screen exists to offer starts out half-hidden.
-    <div className="mx-auto mb-[var(--orbit-bottom-nav)] max-w-xl space-y-5 rounded-2xl border border-tier-lifetime/25 bg-card p-6 text-center sm:space-y-6 sm:p-8">
+    <div
+      data-plan={unlockPlan}
+      className="mx-auto max-w-xl space-y-6 rounded-2xl border border-tier-border bg-card p-8 text-center"
+    >
       <div className="space-y-3">
-        <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-tier-lifetime/35 bg-tier-lifetime/10">
-          <Lock className="size-5 text-tier-lifetime" />
+        <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-tier-border bg-tier-surface">
+          <Lock className="size-5 text-tier-accent" />
         </span>
         <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
           {title}
@@ -72,7 +75,7 @@ export function LockedFeature({
           href="/pricing"
           className={cn(
             buttonVariants({ size: "sm" }),
-            "border-tier-lifetime/40 bg-tier-lifetime/10 text-tier-lifetime hover:bg-tier-lifetime/15"
+            "border-tier-border bg-tier-surface text-tier-accent hover:bg-tier-accent/15"
           )}
         >
           See plans
@@ -107,7 +110,7 @@ export function OutreachLocked() {
         "Reply tracking and per-campaign quality scores",
         "Sequenced follow-ups that stop when someone replies",
       ]}
-      note="Both send email and SMS on Orbit's credits. On Orbit Lifetime you supply your own Apollo key for prospect search."
+      note="Sending email and SMS runs on Orbit's credits."
     />
   );
 }

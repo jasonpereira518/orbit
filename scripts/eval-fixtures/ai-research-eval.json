@@ -1,0 +1,80 @@
+{
+  "$comment": "Whole answers to questions one retrieval cannot answer. The network is contact-search-eval.json and the notes are passage-search-eval.json, seeded the same way eval-retrieval seeds them. Every `mustSay` fact lives ONLY in a note — never on the contact card — so a case cannot pass by paraphrasing what retrieval put in the prompt; it passes only if the research step found the note and the answer used it. `mustMention` is satisfied by naming the person or recommending them (after the allowlist filter). `forbidden` strings are claims the notes do not support. `expectDepth` checks the routing: the two `single` cases are controls that must stay on the fast path and still answer.",
+  "cases": [
+    {
+      "id": "research-seed-detail",
+      "question": "What did James say about the seed round he's leading?",
+      "expectDepth": "research",
+      "mustMention": ["james@sequoia.example"],
+      "mustSay": ["treasury"],
+      "forbidden": ["Series A"]
+    },
+    {
+      "id": "research-sre-where",
+      "question": "Who told me they're hiring site reliability engineers, and for which office?",
+      "expectDepth": "research",
+      "mustMention": ["tom@datadog.example"],
+      "mustSay": ["Paris"]
+    },
+    {
+      "id": "research-custody-ask",
+      "question": "What did Raj ask us to send before he reviews our key custody setup?",
+      "expectDepth": "research",
+      "mustMention": ["raj@coinbase.example"],
+      "mustSay": ["architecture"]
+    },
+    {
+      "id": "research-no-person",
+      "question": "What did I note about introductions to Nigerian banks?",
+      "expectDepth": "research",
+      "mustMention": ["kofi@flutterwave.example"],
+      "mustSay": ["pilot"]
+    },
+    {
+      "id": "research-date-scoped",
+      "question": "Who did I talk to about hiring in March?",
+      "expectDepth": "research",
+      "mustMention": ["hana@notion.example"],
+      "mustSay": ["Notion AI"]
+    },
+    {
+      "id": "research-mentioned",
+      "question": "Who mentioned moving to Lisbon, and when?",
+      "expectDepth": "research",
+      "mustMention": ["amelia@nyt.example"],
+      "mustSay": ["September"]
+    },
+    {
+      "id": "research-follow-up",
+      "question": "What did he say about stablecoins?",
+      "priorTurns": [
+        { "role": "user", "content": "Who do I know at Sequoia?" },
+        { "role": "assistant", "content": "James Okafor leads fintech investments at Sequoia Capital; you met him at Money2020." }
+      ],
+      "expectDepth": "research",
+      "mustMention": ["james@sequoia.example"],
+      "mustSay": ["stablecoin"]
+    },
+    {
+      "id": "research-intro-path",
+      "question": "Who could introduce me to someone investing in fintech?",
+      "expectDepth": "research",
+      "mustMention": ["james@sequoia.example"],
+      "mustSay": []
+    },
+    {
+      "id": "control-company",
+      "question": "Who do I know at Stripe?",
+      "expectDepth": "single",
+      "mustMention": ["maya@stripe.example", "omar@stripe.example"],
+      "mustSay": []
+    },
+    {
+      "id": "control-school",
+      "question": "Which of my contacts went to Stanford?",
+      "expectDepth": "single",
+      "mustMention": ["maya@stripe.example", "ines@shopify.example"],
+      "mustSay": []
+    }
+  ]
+}

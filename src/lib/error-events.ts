@@ -44,6 +44,14 @@ export const ERROR_SOURCES = {
    */
   eventPageFetch: "event.page_fetch",
   oauthEventbriteCallback: "oauth.eventbrite.callback",
+  /**
+   * A CalDAV request to iCloud (`src/lib/caldav/client.ts`) exhausted its retries. Kept
+   * apart from `eventPageFetch` deliberately — the two share `guardedFetchText`'s retry
+   * ladder but not a failure domain, and folding CalDAV retry exhaustion into event-page
+   * fetch failures would make either signal harder to read. A 401 is NOT logged here — see
+   * `eventProviderSync`'s reasoning just below: that flags `needs_reauth` instead.
+   */
+  caldavSync: "caldav.sync",
   /** A Luma or Eventbrite sync that exhausted its retries. Auth failures are NOT logged here
    *  — those flag the connection `needs_reauth`, which the user can see and act on. */
   eventProviderSync: "event.provider_sync",
@@ -87,11 +95,6 @@ export const ERROR_SOURCES = {
   /** A Stripe event no account matched (checkout, invoice, refund). Ids only. */
   stripeUnattributed: "stripe.unattributed",
   /**
-   * Wispr answered 401/403 to a user's own key. One row per rejected capture at most; the
-   * key's fingerprint (never the key) lets Settings say "this key" rather than "a key".
-   */
-  wisprTranscribe: "wispr.transcribe",
-  /**
    * Resend refused an email Orbit tried to send ON ORBIT'S KEY: an interest-list welcome or
    * follow-up, or a hosted outreach message. Invisible before — a console line Vercel keeps
    * for an hour (every waitlist welcome of Sep 7–9 2026 died this way) or a per-message error
@@ -114,6 +117,20 @@ export const ERROR_SOURCES = {
    * and a few malformed listings are normal, so neither is an error.
    */
   jobFeedFetch: "jobs.feed_fetch",
+  /**
+   * A public news feed could not be read (`src/lib/radar/feeds/sweep.ts`), recorded only when
+   * the fetcher's retry ladder was exhausted. The source row's `consecutive_failures` is the
+   * running count an operator reads.
+   */
+  radarNewsFetch: "radar.news_fetch",
+  /**
+   * Security-relevant AI behaviour (`src/lib/ai-security.ts`): a tool call the registry
+   * refused, an MCP batch over the cap, a draft flood, an answer the output guard scrubbed,
+   * agent-written text shaped like an injection. `kind` is which; context carries ids and
+   * signal names, never the untrusted text itself. Throttled per (kind, account) per ten
+   * minutes, and the ops sweep opens `ai.security` when an hour's rows cross its threshold.
+   */
+  aiSecurity: "ai.security",
 } as const;
 
 export type ErrorEventInput = {

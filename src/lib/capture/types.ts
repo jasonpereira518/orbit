@@ -12,6 +12,7 @@ import type {
   ReminderOrigin,
 } from "@/db/schema";
 import type { ImpliedNextStep } from "@/lib/implied-next-steps";
+import type { LinkedInLookupSummary } from "@/lib/linkedin-paste";
 import type { PreviewMention } from "@/lib/note-batches";
 
 export type BulkNoteDuplicate = {
@@ -38,10 +39,22 @@ export type BulkNotePersonPreview = {
   cadence: { days: number; phrase: string; sourceExcerpt: string } | null;
   duplicates: BulkNoteDuplicate[];
   suggestedMergeId: string | null;
+  /**
+   * The decision model is confident this is a NEW person, not any of `duplicates` — so the
+   * card should default to "create" rather than to the top name match. Absent otherwise.
+   */
+  suggestedNew?: boolean;
   /** Shared group/event notes folded into this person's save payload. */
   sharedNoteTexts: string[];
   interactionDate: string | null;
   interactionType: string | null;
+  /**
+   * Set on a card from a combined upload (`combine-results.ts`): the hash of the note this
+   * card came from, which keys its interaction on save, and the file's name for the card.
+   * Absent on an ordinary single capture, where the job's own hash is the note's.
+   */
+  noteHash?: string;
+  noteLabel?: string | null;
 };
 
 /** One typed opportunity awaiting review, shaped for the client. */
@@ -54,6 +67,8 @@ export type CaptureOpportunityPreview = {
   confidenceScore: number;
   /** YYYY-MM-DD, so a date input round-trips without timezone drift. */
   dueDateIso: string | null;
+  /** The model's kind when the referral language test overrode it (see ExtractedOpportunity). */
+  overriddenKind?: OpportunityKind;
 };
 
 /** A dated commitment awaiting the user's review, shaped for the client. */
@@ -106,6 +121,12 @@ export type CaptureParseResult = {
   suggestionsSkipped: RejectedCounts;
   mentions: PreviewMention[];
   mentionedOnly: MentionedOnlyPerson[];
+  /**
+   * Set when the notes carried LinkedIn profile URLs, so the review step can say when a
+   * name was read off a URL rather than looked up. Null when none were pasted, and absent
+   * on a job result stored before this field existed.
+   */
+  linkedinLookup?: LinkedInLookupSummary | null;
 };
 
 // --- the durable capture job ----------------------------------------------------------
@@ -121,7 +142,10 @@ export type CaptureParseResult = {
  *   ready       people are extracted, nobody has decided anything
  *   reviewing   at least one card was decided
  *   saving      Save pressed; a runner owns the write
- *   saved | failed | discarded — terminal
+ *   merged      one file of a multi-file upload, folded into a combined job for review
+ *               (`combine-results.ts`); kept, not discarded, so its hashes still say
+ *               "already captured"
+ *   saved | failed | discarded | merged — terminal
  */
 export type CaptureJobStatus =
   | "ingesting"
@@ -133,7 +157,8 @@ export type CaptureJobStatus =
   | "saving"
   | "saved"
   | "failed"
-  | "discarded";
+  | "discarded"
+  | "merged";
 
 export const ACTIVE_CAPTURE_JOB_STATUSES: readonly CaptureJobStatus[] = [
   "ingesting",
@@ -145,7 +170,18 @@ export const ACTIVE_CAPTURE_JOB_STATUSES: readonly CaptureJobStatus[] = [
   "saving",
 ];
 
-export type CaptureJobSource = "messy" | "voice" | "meeting" | "scan" | "phone";
+/**
+ * `"api"` is set ONLY by `src/app/api/v1/notes/route.ts`, never client-forgeable: `noteBody`
+ * (`src/lib/api/schemas.ts`) has no `sourceKind` field for a caller to set, the in-app
+ * media-upload route's own allow-list (`src/app/api/capture/jobs/route.ts`'s `SOURCE_KINDS`)
+ * does not include it either, and `queueCaptureJob` (src/actions/capture-jobs.ts) — a
+ * `"use server"` action, reachable by a crafted POST that supplies any literal here —
+ * coerces an incoming `"api"` down to `"messy"` before it can reach a new row. That third
+ * path is what makes it safe to key a discard exemption on; without the coercion, a forged
+ * server-action call could make its own row immortal (the retention purge in
+ * `resumeStalledCaptureJobs` never reaps a `ready`/`reviewing` row).
+ */
+export type CaptureJobSource = "messy" | "voice" | "meeting" | "scan" | "phone" | "api";
 
 /** One transcribed block of media, in the order it arrived. */
 export type CaptureIngestedBlock = { text: string; source: string };
@@ -178,7 +214,22 @@ export type CapturePersonEdits = {
   company: string | null;
   role: string | null;
   metAt: string | null;
+  /** Legacy: a decision recorded before takeaways replaced the one summary box. */
   summary: string | null;
+  takeaways: string[] | null;
+  personalDetails: string[] | null;
+  work: {
+    team: string | null;
+    building: string | null;
+    priorities: string[];
+    hiring: string | null;
+    looking_for: string | null;
+  } | null;
+  phone: string | null;
+  xHandle: string | null;
+  website: string | null;
+  school: string | null;
+  industry: string | null;
 };
 
 /**

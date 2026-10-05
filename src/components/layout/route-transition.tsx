@@ -21,7 +21,16 @@ export function RouteTransition({ children }: { children: React.ReactNode }) {
       exit={{ "people-fwd": "none", "people-back": "none", default: "page-exit" }}
       default="none"
     >
-      <div>{children}</div>
+      {/*
+        A plain block by default, which content-sizes it and so breaks the shell's bounded
+        flex column for every page below it (why /chat and /graph size themselves from the
+        viewport). A page that wants the bounded height marks its root with the
+        data-fill-route attribute, and only then does this wrapper become a flex column
+        that passes the height down. Every other page renders exactly as before.
+      */}
+      <div className="has-[>[data-fill-route]]:flex has-[>[data-fill-route]]:min-h-0 has-[>[data-fill-route]]:flex-1 has-[>[data-fill-route]]:flex-col">
+        {children}
+      </div>
     </ViewTransition>
   );
 }

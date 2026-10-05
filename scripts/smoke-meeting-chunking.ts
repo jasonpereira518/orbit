@@ -75,7 +75,6 @@ check(
   `${maxChunkWavBytes()} >= ${MEETING_CHUNK_MAX_BYTES}`
 );
 check("…and Vercel's 4.5MB body limit", maxChunkWavBytes() < 4.5 * 1024 * 1024);
-check("the chunk cap is under Wispr's six-minute ceiling", MEETING_MAX_CHUNK_MS < 6 * 60_000);
 check("the target is shorter than the hard cut", MEETING_TARGET_CHUNK_MS < MEETING_MAX_CHUNK_MS);
 check("a three-hour meeting is the cap", MAX_MEETING_MS === 3 * 60 * 60_000);
 

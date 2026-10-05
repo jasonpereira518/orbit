@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { getContact } from "@/actions/contacts";
+import { getContactLabel } from "@/actions/contacts";
 import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
@@ -7,7 +7,9 @@ import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
 import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
 import type { CaptureMode } from "@/components/capture/capture-tabs";
 import { requireUserId } from "@/lib/auth";
+import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
+import { RenderStamp } from "@/components/layout/render-stamp";
 
 // Page-level, because it governs the server actions called from this page: summarizing an
 // hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
@@ -44,16 +46,17 @@ export default async function CapturePage({
   let contactId: string | null = null;
   let contactName: string | null = null;
   if (requestedContactId) {
-    const contact = await getContact(requestedContactId);
+    const contact = await getContactLabel(requestedContactId);
     if (contact) {
       contactId = contact.id;
-      contactName = contact.preferredName || contact.fullName;
+      contactName = contact.name;
     }
   }
 
   const settings = await settingsPromise;
   const userId = await userIdPromise;
   const { usage } = await planPromise;
+  const { canUseMeetings, canUseSync } = await getEntitlements(userId);
   const resumableMeeting = await resumablePromise;
   const job = await jobPromise;
   const jobs = await jobsPromise;
@@ -62,13 +65,14 @@ export default async function CapturePage({
   // so it opens on the Meeting tab unless the link asked for something specific.
   const defaultMode: CaptureMode =
     modeParam || (contactId ? "structured" : resumableMeeting ? "meeting" : "messy");
-  // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Wispr, Whisper,
+  // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
   // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
   // BYOK account can summarize but not transcribe.
   const canTranscribe = settings.ai.canTranscribe;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <RenderStamp />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Capture</h1>
         <p className="mt-1 text-muted-foreground">
@@ -86,10 +90,20 @@ export default async function CapturePage({
         hasApiKey={settings.hasApiKey}
         aiReason={settings.ai.reason}
         canTranscribe={canTranscribe}
+        canUseMeetings={canUseMeetings}
+        meetingsDeniedMessage={FEATURE_DENIAL.meetings}
         resumableMeeting={resumableMeeting}
         ignoredCount={ignoredCount}
         quota={{ used: usage.used, limit: usage.limit }}
         userId={userId}
+        canUseSync={canUseSync}
+        drive={{
+          apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
+          appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,
+          // Public (it's in every Google consent URL), read on the server so the browser's
+          // drive.file token comes from the same client as the stored grant — as on /imports.
+          clientId: process.env.GOOGLE_CLIENT_ID?.trim() || null,
+        }}
         // Hidden when logging with one named person: the page is doing one specific thing,
         // and a feed of past captures is not it.
         history={

@@ -6,6 +6,11 @@
  * Every export in this file must be an async function: a single non-async export in a
  * `"use server"` module breaks every export in it, and `tsc` will not tell you.
  *
+ * The `mcp_url` kind is deprecated as of the OAuth connector. Settings no longer offers it —
+ * claude.ai gained OAuth, which was the only reason a credential ever travelled in a URL —
+ * but the kind, the keys already minted under it and `/api/mcp/[token]` all keep working, so
+ * nobody's connector breaks on deploy. Remove all three once the last one goes unused.
+ *
  * These run `requireEntitlement` in full, unlike the request path in `src/lib/api/auth.ts`.
  * That is the right call here and the wrong one there: a person clicking "create key" is
  * exactly the demand signal `gate_events` exists to record, whereas a lapsed subscriber's

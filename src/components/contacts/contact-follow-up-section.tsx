@@ -30,6 +30,7 @@ import {
   scheduleContactFollowUpAt,
   setKeepInTouchCadence,
 } from "@/actions/reminders";
+import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -225,8 +226,12 @@ export function ContactFollowUpSection({
     if (!draft.trim()) return;
     startSend(async () => {
       try {
-        await sendContactFollowUpEmail(contactId, draft);
-        toast.success(`Email sent to ${contactName}`);
+        const res = await sendContactFollowUpEmail(contactId, draft);
+        if (!res.ok) {
+          toast.error(res.message);
+          return;
+        }
+        showUndoSendToast({ sendId: res.sendId, recipientLabel: contactName, onUndone: () => router.refresh() });
         router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "That email didn’t send — try again?"));

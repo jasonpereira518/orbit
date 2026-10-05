@@ -10,7 +10,7 @@ import {
   MIN_RECORDING_MS,
   TARGET_SAMPLE_RATE,
   WAV_HEADER_BYTES,
-  WISPR_MAX_BYTES,
+  WHISPER_MAX_BYTES,
   base64ByteLength,
   bytesToBase64,
   concatInt16,
@@ -190,7 +190,7 @@ check("wavByteLength agrees with the encoder", wavByteLength(1000) === encodeWav
   const raw = wavByteLength(samples);
   const encoded = base64ByteLength(raw);
   check(`a full ${MAX_RECORDING_MS / 60_000}-minute recording is ~${(raw / 1024 / 1024).toFixed(1)} MB`, raw < 12 * 1024 * 1024);
-  check("…which is under Wispr's 25 MB request cap", raw < WISPR_MAX_BYTES, `${raw}`);
+  check("…which is under Whisper's 25 MB request cap", raw < WHISPER_MAX_BYTES, `${raw}`);
   // CAPTURE_MAX_UPLOAD_BYTES is 22 MB and is checked against the RAW file bytes in
   // bulk-notes-panel.tsx, but the server action body carries the base64 form, so both have
   // to clear.

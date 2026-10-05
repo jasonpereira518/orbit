@@ -35,7 +35,7 @@ export type RosterSort =
   | "ai"
   | "email";
 
-export type RosterPlanFilter = "all" | "free" | "orbit" | "lifetime" | "comped";
+export type RosterPlanFilter = "all" | "free" | "orbit" | "max" | "lifetime" | "comped";
 
 export type RosterStateFilter =
   | "all"
@@ -111,12 +111,11 @@ export function isRosterSort(value: unknown): value is RosterSort {
  */
 const PLAN_SQL = `
   CASE
-    WHEN s.comped_plan = 'lifetime' THEN 'lifetime'
-    WHEN s.comped_plan = 'orbit' THEN 'orbit'
+    WHEN s.comped_plan IN ('lifetime', 'max', 'orbit') THEN s.comped_plan
     WHEN s.lifetime_purchased_at IS NOT NULL THEN 'lifetime'
-    WHEN s.subscription_plan = 'orbit'
+    WHEN s.subscription_plan IN ('orbit', 'max')
      AND (s.subscription_status = 'active' OR s.subscription_period_end > now())
-      THEN 'orbit'
+      THEN s.subscription_plan
     ELSE 'free'
   END`;
 
@@ -125,6 +124,7 @@ const HAS_PROVIDER_KEY_SQL = `
   CASE coalesce(s.ai_provider, 'gemini')
     WHEN 'openai' THEN s.openai_api_key_encrypted IS NOT NULL
     WHEN 'anthropic' THEN s.anthropic_api_key_encrypted IS NOT NULL
+    WHEN 'openrouter' THEN s.openrouter_api_key_encrypted IS NOT NULL
     ELSE s.gemini_api_key_encrypted IS NOT NULL
   END`;
 
@@ -141,11 +141,11 @@ type RosterRecord = {
   ai_provider: string | null;
   ai_model: string | null;
   has_provider_key: boolean;
-  comped_plan: "orbit" | "lifetime" | null;
+  comped_plan: "orbit" | "max" | "lifetime" | null;
   comped_note: string | null;
   comped_at: string | Date | null;
   lifetime_purchased_at: string | Date | null;
-  subscription_plan: "orbit" | null;
+  subscription_plan: "orbit" | "max" | null;
   subscription_status: "active" | "past_due" | "canceled" | null;
   subscription_period_end: string | Date | null;
   stripe_customer_id: string | null;

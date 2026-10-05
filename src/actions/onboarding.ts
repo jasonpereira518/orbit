@@ -14,11 +14,11 @@ const VALID_ONBOARDING_STEPS = new Set([
   "contacts",
   "capture",
   "imports",
+  "reminders",
   "chat",
   "graph",
   "dashboard",
   "recruiters",
-  "outreach",
 ]);
 
 async function markOnboardingComplete(userId: string) {

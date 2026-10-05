@@ -14,9 +14,9 @@
  * whole lifecycle against PGlite. Every function takes the user id and scopes by it.
  */
 import { randomUUID } from "node:crypto";
-import { del, put } from "@vercel/blob";
-import { and, asc, eq, inArray, isNull, lt } from "drizzle-orm";
-import { getDb } from "@/db";
+import { del, put } from "@/lib/blob-lazy";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
 import { capturePhotos } from "@/db/schema";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
@@ -181,6 +181,21 @@ export async function discardCapturePhotos(userId: string, ids: string[]) {
 }
 
 /**
+ * Every photo a saved capture owns, rows and Blob objects both — for deleting the capture.
+ * The rows would go with the batch anyway (`ON DELETE CASCADE`), but the Blob objects
+ * would not, so they are read and removed here first.
+ */
+export async function deleteCapturePhotosForBatch(userId: string, batchId: string) {
+  const db = await getDb();
+  const where = and(eq(capturePhotos.userId, userId), eq(capturePhotos.noteBatchId, batchId));
+  const rows = await db.select({ blobUrl: capturePhotos.blobUrl }).from(capturePhotos).where(where);
+  if (!rows.length) return 0;
+  await db.delete(capturePhotos).where(where);
+  await deleteBlobs(rows.map((r) => r.blobUrl));
+  return rows.length;
+}
+
+/**
  * Claim a saved capture's photos. Scoped to the user AND to rows no batch owns yet, so a
  * forged id can neither steal someone else's photo nor move one between captures. Returns
  * how many were claimed.
@@ -251,20 +266,22 @@ export async function pruneUnattachedCapturePhotos(
   limit = PRUNE_BATCH
 ): Promise<number> {
   const db = await getDb();
-  const cutoff = new Date(now.getTime() - UNATTACHED_PHOTO_TTL_MS);
-  const stale = await db
-    .select({ id: capturePhotos.id, blobUrl: capturePhotos.blobUrl })
-    .from(capturePhotos)
-    .where(and(isNull(capturePhotos.noteBatchId), lt(capturePhotos.createdAt, cutoff)))
-    .limit(limit);
-  if (!stale.length) return 0;
-  await db.delete(capturePhotos).where(
-    inArray(
-      capturePhotos.id,
-      stale.map((r) => r.id)
-    )
-  );
-  await deleteBlobs(stale.map((r) => r.blobUrl));
+  const cutoff = new Date(now.getTime() - UNATTACHED_PHOTO_TTL_MS).toISOString();
+  // Pick and delete in one statement, returning only the Blob URL — never the row, whose
+  // `inline_data` may be the photo itself in base64. The outer `note_batch_id IS NULL` is
+  // rechecked against a row a save claimed after the inner pick, so that photo stays.
+  const res = await db.execute(sql`
+    DELETE FROM ${capturePhotos}
+     WHERE ${capturePhotos.noteBatchId} IS NULL
+       AND ${capturePhotos.id} IN (
+         SELECT ${capturePhotos.id} FROM ${capturePhotos}
+          WHERE ${capturePhotos.noteBatchId} IS NULL AND ${capturePhotos.createdAt} < ${cutoff}
+          LIMIT ${limit}
+       )
+    RETURNING ${capturePhotos.blobUrl} AS blob_url
+  `);
+  const stale = rowsOf<{ blob_url: string | null }>(res);
+  await deleteBlobs(stale.map((r) => r.blob_url));
   return stale.length;
 }
 

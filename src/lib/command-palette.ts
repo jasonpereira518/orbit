@@ -100,3 +100,12 @@ export function looksLikeNote(query: string): boolean {
   if (!q || looksLikeQuestion(q)) return false;
   return q.split(/\s+/).length >= 4 || q.length >= 25;
 }
+
+/**
+ * "email maya" / "mail maya": the palette's one typed verb. Returns the name to search for,
+ * or null when the query isn't the verb. The people rows it produces open Compose.
+ */
+export function emailVerbTerm(query: string): string | null {
+  const m = /^\s*(?:e-?mail|mail)\s+(\S.*?)\s*$/i.exec(query);
+  return m ? m[1]!.replace(/\s+/g, " ") : null;
+}

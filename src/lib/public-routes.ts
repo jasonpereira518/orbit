@@ -14,7 +14,15 @@ export const PUBLIC_ROUTES = [
   // The standalone interest-list page. Its form posts to a server action, which is not
   // matched here — actions POST to the page's own URL, so a public page covers them.
   "/interest",
+  // The waitlist's own privacy notice (served at /privacy on the waitlist domain).
+  "/interest/privacy",
+  // A person's referral link, `/waitlist/<slug>`, which next.config rewrites to /interest.
+  // The proxy sees the path as requested, before the rewrite.
+  "/waitlist/(.*)",
   "/privacy",
+  // How to connect an assistant. A setup guide whose whole audience is people deciding
+  // whether to sign up, so it must be readable signed out.
+  "/connect",
   "/terms",
   "/contact",
   "/sign-in(.*)",
@@ -26,9 +34,21 @@ export const PUBLIC_ROUTES = [
   // Clicked from an email, by someone who has never signed in. Authenticated by the
   // opaque token in the query string instead, same pattern as the calendar feed above.
   "/api/interest-list/unsubscribe",
+  // Radar's Monday email's off switch, clicked from a mail client (and called directly by
+  // Gmail's and Yahoo's unsubscribe buttons). Authenticated by the signed token in the query.
+  "/api/radar/digest/unsubscribe",
+  // The credit emails' off switch (80% and 100% of the monthly AI credits): same shape as
+  // Radar's, authenticated by the signed token in the query.
+  "/api/credits/email/unsubscribe",
   // The boarding-pass link preview. Fetched by X, LinkedIn and iMessage, which carry no
   // session; authenticated by nothing, because it reveals only a number and a planet.
   "/api/interest-list/ticket-image",
+  // The referral tracker's poll. The share token in the query is the credential, exactly as
+  // on the pass page; the answer is that pass's own referral count and place.
+  "/api/interest-list/progress",
+  // The feature poll's live tallies: star totals per option and a voter count, nothing about
+  // any one voter.
+  "/api/waitlist-poll/results",
   // Not actually public: these authenticate via requireExtensionUserId, which reads the
   // Clerk state clerkMiddleware populates. They are exempted from auth.protect() only so
   // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302
@@ -43,12 +63,28 @@ export const PUBLIC_ROUTES = [
   "/api/imports/(.*)/continue",
   // The capture job runner's internal kick — same gate, same reasons.
   "/api/capture/jobs/(.*)/run",
+  // The photo encoder — the one function that carries `sharp`. Called by the app's own
+  // `fetch` from other functions, which carry no Clerk session; same CRON_SECRET gate.
+  "/api/avatars/encode",
   "/api/embeddings/backfill",
+  "/api/work-history/research",
+  "/api/work-history/sweep",
   "/api/linkedin/timeline-events/backfill",
+  "/api/relationships/run",
   "/api/ops/sweep",
+  "/api/ops/speech-usage",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
+  // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same
+  // reasons.
+  "/api/radar/run",
+  "/api/radar/feeds/sweep",
+  "/api/radar/digest",
+  // The credit emails, on the ten-minute schedule — same CRON_SECRET gate.
+  "/api/credits/notices",
   "/api/webhooks/outbound/drain",
+  "/api/connectors/outbox/drain",
+  "/api/email/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key
   // (`src/lib/api/auth.ts`), which Clerk knows nothing about. Exempted from
   // auth.protect() only so an unauthenticated call gets a JSON 401 a client can act on
@@ -56,6 +92,11 @@ export const PUBLIC_ROUTES = [
   // The key check is fail-closed and rejects a malformed bearer before any database work.
   "/api/v1(.*)",
   "/api/mcp(.*)",
+  // OAuth discovery for the MCP server. These must be readable by a client that has never
+  // authenticated — discovering how to sign in is the whole point — and they are fetched
+  // before any token exists, so a 302 to /sign-in here stops the connect flow at step one.
+  // They expose two public URLs and no user data (`src/lib/mcp/oauth.ts`).
+  "/.well-known/(.*)",
   // Genuinely public: browsers POST Content-Security-Policy violation reports here with
   // no session. The handler stores nothing but a directive and a URI, throttled.
   "/api/csp-report",

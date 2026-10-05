@@ -20,7 +20,8 @@
  */
 
 import { z } from "zod";
-import { completeJson, parseAiJson, userCanUseAi } from "@/lib/ai";
+import { parseAiJson, userCanUseAi } from "@/lib/ai";
+import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import { untrustedPageBlock } from "@/lib/conversation-starters";
 import type { PageContext, ParsedProfileFields } from "./contract";
 
@@ -90,7 +91,9 @@ export async function parseProfileFields(
 
   let content: string;
   try {
-    content = await completeJson(userId, {
+    // Cached on the exact page text: the panel re-reads a profile every time its tab comes
+    // back into view, and the page has not changed.
+    content = await cachedCompleteJson(userId, {
       operation: "extension.parse",
       system: SYSTEM,
       user: [
@@ -105,6 +108,9 @@ export async function parseProfileFields(
         .join("\n\n"),
       temperature: 0.1,
       maxOutputTokens: 4096,
+    }, {
+      ttlDays: 7,
+      accept: (raw) => profileSchema.safeParse(parseAiJson(raw)).success,
     });
   } catch (error) {
     console.warn("[parse-profile] model call failed", error);

@@ -1,4 +1,7 @@
 import { eq } from "drizzle-orm";
+import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { consumePlanMeter, meterResetsAt } from "@/lib/plan-meters";
+import { recordGateHitThrottled } from "@/lib/gate-events";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -12,8 +15,7 @@ import {
   type NormalizedProspect,
   type OutreachSearchSource,
 } from "@/lib/outreach-types";
-import { getEntitlements } from "@/lib/entitlements";
-import type { IncomingExperience } from "@/lib/contact-profile";
+import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
 
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search";
 const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
@@ -116,39 +118,71 @@ export type LinkedInProfileEnrichment = {
   school: string | null;
   profileImageUrl: string | null;
   linkedinUrl: string | null;
-  /** Empty when Apollo returned no history — never null, so callers need no guard. */
-  experiences: IncomingExperience[];
 };
 
 /** Shown once a user has spent the day's share of Orbit's hosted Apollo key. */
 export const APOLLO_DAILY_LIMIT_MESSAGE =
   "You’ve used today’s Apollo lookups on Orbit’s key — add your own Apollo key in Settings, or try again tomorrow";
 
-async function resolveApolloKey(userId: string): Promise<{ apiKey: string; hosted: boolean } | null> {
-  const db = await getDb();
-  const settings = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
+/** Shown when a plan's monthly enrichments on Orbit's Apollo key are used. */
+export function apolloMonthlyLimitMessage(plan: Plan, limit: number): string {
+  const resets = meterResetsAt().toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+  const upgrade = plan === "orbit" ? ", move to Max for 25 a month," : "";
+  return `You’ve used this month’s ${limit} contact enrichments on Orbit’s key — add your own Apollo key in Settings${upgrade} or wait until ${resets}`;
+}
+
+/** A caller's already-loaded `user_settings` row, so the key check need not re-read it. */
+type LoadedSettingsRow = typeof userSettings.$inferSelect;
+
+async function resolveApolloKey(
+  userId: string,
+  // Optional: a caller already holding the account's row (e.g. `getSettings`) passes it and
+  // skips the re-read. Omitted, this reads the row exactly as before.
+  loadedSettings?: LoadedSettingsRow
+): Promise<{ apiKey: string; hosted: boolean } | null> {
+  const settings =
+    loadedSettings ??
+    (await (await getDb()).query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+    }));
   const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
   if (personal) return { apiKey: personal, hosted: false };
 
-  // Enrichment has no quota anywhere else in the product — unlike sending, which every plan
-  // caps at DAILY_SEND_LIMIT — so Orbit's shared Apollo key is the one cost a one-time
-  // payment cannot fund forever. It stays subscription-only (Lifetime and Free users add
-  // their own key in Settings, which the short-circuit above already prefers), and is now
-  // also capped per day (`spendHostedApollo`).
-  const { canUseHostedEnrichment } = await getEntitlements(userId);
+  // Orbit's shared Apollo key: Pro, Max and Lifetime, capped per month by plan
+  // (`spendHostedApollo`). Free adds its own key in Settings, which the short-circuit above
+  // already prefers on every plan.
+  const { canUseHostedEnrichment } = loadedSettings
+    ? entitlementsFromSettings(userId, loadedSettings)
+    : await getEntitlements(userId);
   if (!canUseHostedEnrichment) return null;
   const hosted = process.env.APOLLO_API_KEY || null;
   return hosted ? { apiKey: hosted, hosted: true } : null;
 }
 
-export async function getApolloApiKey(userId: string): Promise<string | null> {
-  return (await resolveApolloKey(userId))?.apiKey ?? null;
+export async function getApolloApiKey(
+  userId: string,
+  loadedSettings?: LoadedSettingsRow
+): Promise<string | null> {
+  return (await resolveApolloKey(userId, loadedSettings))?.apiKey ?? null;
 }
 
-/** Counts `units` hosted calls against the user's day. A user's own key never gets here. */
+/**
+ * Counts `units` hosted calls. A user's own key never gets here.
+ *
+ * Enrichments are capped per MONTH by plan (`PLAN_CONFIG[plan].hostedEnrichmentsPerMonth`:
+ * Pro 10, Max and Lifetime 25) — the number the pricing page promises. Searches only run in
+ * the unshipped Outreach and Leads surfaces and keep just the daily abuse ceiling, which
+ * also stays under enrichments.
+ */
 async function spendHostedApollo(userId: string, kind: "search" | "enrich", units = 1): Promise<void> {
+  if (kind === "enrich") {
+    const { plan } = await getEntitlements(userId);
+    const limit = PLAN_CONFIG[plan].hostedEnrichmentsPerMonth;
+    if (!(await consumePlanMeter(userId, "hosted_enrichment", units, limit))) {
+      await recordGateHitThrottled({ userId, feature: "hostedEnrichment", plan, context: { monthly: limit } });
+      throw new UserFacingError(apolloMonthlyLimitMessage(plan, limit));
+    }
+  }
   const policy = kind === "search" ? RATE_LIMITS.apolloSearch : RATE_LIMITS.apolloEnrich;
   try {
     for (let i = 0; i < units; i++) {
@@ -160,8 +194,11 @@ async function spendHostedApollo(userId: string, kind: "search" | "enrich", unit
   }
 }
 
-export async function userHasApolloKey(userId: string): Promise<boolean> {
-  return Boolean(await getApolloApiKey(userId));
+export async function userHasApolloKey(
+  userId: string,
+  loadedSettings?: LoadedSettingsRow
+): Promise<boolean> {
+  return Boolean(await getApolloApiKey(userId, loadedSettings));
 }
 
 function personLocation(person: ApolloPerson) {
@@ -198,62 +235,6 @@ function extractSchool(person: ApolloPerson): string | null {
   return null;
 }
 
-/**
- * Apollo dates are ISO-ish strings ("2019-01-01"), often with a placeholder day and
- * sometimes only a year. Split into parts rather than parsed into a `Date`: the day is
- * fabricated, and storing it would claim a precision the source does not have.
- */
-function splitApolloDate(raw: string | null | undefined): {
-  year: number | null;
-  month: number | null;
-} {
-  const value = raw?.trim();
-  if (!value) return { year: null, month: null };
-  const match = value.match(/^(\d{4})(?:-(\d{2}))?/);
-  if (!match) return { year: null, month: null };
-  const year = Number(match[1]);
-  const month = match[2] ? Number(match[2]) : null;
-  return {
-    year: Number.isFinite(year) ? year : null,
-    month: month !== null && month >= 1 && month <= 12 ? month : null,
-  };
-}
-
-/**
- * Apollo folds schooling into `employment_history` and marks it with a degree, a major, or
- * `kind: "education"` — the same test `extractSchool` above already relies on.
- */
-export function apolloEmploymentToExperiences(person: {
-  employment_history?: ApolloEmployment[] | null;
-}): IncomingExperience[] {
-  const history = person.employment_history ?? [];
-  return history
-    .map((job): IncomingExperience | null => {
-      const organization = job.organization_name?.trim();
-      if (!organization) return null;
-      const isEducation =
-        Boolean(job.degree?.trim()) ||
-        Boolean(job.major?.trim()) ||
-        job.kind?.toLowerCase() === "education";
-      const start = splitApolloDate(job.start_date);
-      const end = splitApolloDate(job.end_date);
-      return {
-        kind: isEducation ? "education" : "role",
-        organization,
-        title: (isEducation ? job.degree?.trim() : job.title?.trim()) || null,
-        fieldOfStudy: isEducation ? job.major?.trim() || null : null,
-        location: null,
-        description: null,
-        startYear: start.year,
-        startMonth: start.month,
-        endYear: end.year,
-        endMonth: end.month,
-        isCurrent: Boolean(job.current) && !isEducation,
-      };
-    })
-    .filter((e): e is IncomingExperience => e !== null);
-}
-
 function normalizeLinkedInProfile(
   person: ApolloPerson
 ): LinkedInProfileEnrichment {
@@ -271,7 +252,6 @@ function normalizeLinkedInProfile(
     school: extractSchool(person),
     profileImageUrl: photo,
     linkedinUrl: person.linkedin_url?.trim() || null,
-    experiences: apolloEmploymentToExperiences(person),
   };
 }
 
@@ -334,23 +314,6 @@ function mockCompanyName(filters: AudienceFilters, index: number) {
   return `Demo Company ${index}`;
 }
 
-/**
- * A sample prospect's email domain — ALWAYS under example.com, which is reserved so mail to
- * it can never be delivered. This used to return the real organisation domain from the
- * audience filters (capitalone.com), turning every sample into a plausible stranger.
- */
-/**
- * A sample prospect's email domain — ALWAYS under example.com, which is reserved so mail to
- * it can never be delivered. This used to return the real organisation domain from the
- * audience filters (capitalone.com), turning every sample into a plausible stranger.
- */
-function mockDomain(filters: AudienceFilters, company: string) {
-  const base =
-    filters.organizationDomains?.[0]?.trim().replace(/^www\./, "").split(".")[0] || company;
-  const label = base.toLowerCase().replace(/[^a-z0-9]+/g, "") || "demo";
-  return `${label}.example.com`;
-}
-
 function mockProspects(filters: AudienceFilters, page: number): NormalizedProspect[] {
   const keyword = filters.keywords || filters.titles?.[0] || "recruiter";
   const location = filters.locations?.[0] || "United States";
@@ -392,13 +355,10 @@ function mockProspects(filters: AudienceFilters, page: number): NormalizedProspe
       fullName: `${first} ${last}`,
       title,
       company,
-      // `.invalid` is reserved by RFC 6761 and can never resolve.
-      //
-      // This replaced `mockDomain`, which was worse than it looked: it returned
-      // `<company>.example.com` normally, but the FILTER'S OWN DOMAIN whenever the
-      // audience named one — so searching a target company generated fabricated people
-      // at that company's real email domain. Nothing invented by Orbit may ever carry a
-      // routable address.
+      // `.invalid` is reserved by RFC 6761 and can never resolve. A fixed reserved domain
+      // rather than one derived from the company or the audience filters: nothing Orbit
+      // invents may carry an address that could route, and a domain built from the user's
+      // own search terms is one edit away from being one.
       email: `${first.toLowerCase()}.${last.toLowerCase()}@demo.orbit.invalid`,
       // The reserved 555 range, kept: it is the phone equivalent of `.invalid`.
       phone: n % 3 === 0 ? `+1415555${String(1000 + n).slice(-4)}` : null,

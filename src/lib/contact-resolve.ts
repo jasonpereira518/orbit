@@ -40,7 +40,10 @@ import {
   type DuplicateSubject,
 } from "@/lib/duplicates";
 import { claimIdentities, findIdentityOwners } from "@/lib/contact-identity";
-import { mergeContacts, recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { mergeContacts, recordDuplicateSuggestion, recordDuplicateSuggestions } from "@/lib/contact-merge";
+import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
+import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import {
   createContactForUser,
   updateContactForUser,
@@ -76,6 +79,13 @@ export type ResolveOptions = ContactWriteOptions & {
    * over the whole batch rather than per row.
    */
   skipSuggestions?: boolean;
+  /**
+   * The account's decision engines, when the caller already opened them. A fold on NAME
+   * evidence (not an identifier) is checked with the decision model first; a confident
+   * "different people" creates a new contact and queues the pair instead. Opened here when
+   * absent; pass `NO_ENGINES` to resolve exactly as before.
+   */
+  engines?: Engines;
 };
 
 /**
@@ -164,15 +174,16 @@ async function recordNameSuggestions(
   matches: { contact: { id: string }; reason: string; confidence: number }[]
 ): Promise<ResolveResult["suggestions"]> {
   const unresolved = matches.filter((m) => m.confidence < DUPLICATE_MERGE_CONFIDENCE);
-  for (const match of unresolved) {
-    await recordDuplicateSuggestion(
-      userId,
-      contactId,
-      match.contact.id,
-      match.reason,
-      match.confidence
-    );
-  }
+  // One insert for all of them, not one per match.
+  await recordDuplicateSuggestions(
+    userId,
+    unresolved.map((match) => ({
+      contactIdA: contactId,
+      contactIdB: match.contact.id,
+      reason: match.reason,
+      confidence: match.confidence,
+    }))
+  );
   return unresolved.map((m) => ({
     contactId: m.contact.id,
     reason: m.reason,
@@ -301,7 +312,34 @@ export async function resolveOrCreateContact(
   // duplicate at all, rather than creating one and merging it away. It also keeps a free
   // user's contact cap from being consumed by a row that was never going to survive.
   const nameMatches = await nameMatchesFor(userId, null, input);
-  const confident = nameMatches.find((m) => m.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+  let confident = nameMatches.find((m) => m.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+
+  // Every match here is a NAME match (identifiers were handled above), so it is exactly the
+  // evidence the decision model is asked about before anything folds. A confident "two
+  // different people" keeps them apart: create below, and queue the pair for a person.
+  let heldForReview: typeof confident;
+  if (confident) {
+    const engines = options.engines ?? (await openEngines(userId));
+    const [veto] = await nameMergeVetoes(
+      engines,
+      [[personCard(input), personCard(confident.contact)]],
+      DUPLICATE_TUNING.resolveBudgetMs
+    );
+    if (veto) {
+      heldForReview = confident;
+      confident = undefined;
+    }
+  }
+  const holdForReview = async (createdId: string) => {
+    if (!heldForReview) return;
+    await recordDuplicateSuggestion(
+      userId,
+      createdId,
+      heldForReview.contact.id,
+      `${heldForReview.reason} — held for review`,
+      Math.min(heldForReview.confidence, DUPLICATE_MERGE_CONFIDENCE - 0.01)
+    );
+  };
 
   if (confident) {
     const contactId = confident.contact.id;
@@ -327,6 +365,7 @@ export async function resolveOrCreateContact(
   // `createContactForUser` can throw PaywallError before inserting anything, in which case
   // there is no row to clean up and nothing has been claimed — the error propagates as-is.
   const created = await createContactForUser(userId, input, options);
+  await holdForReview(created.id);
 
   if (!keys.length) {
     // Nothing identifies this person, so no claim can be raced for. The unresolved name

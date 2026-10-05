@@ -1,0 +1,69 @@
+{
+  "label": "candidate-extension",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-20T00:37:15.457Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 2,
+  "candidate": {
+    "thinking": {
+      "capture.parse": "minimal",
+      "capture.parse.identify": "minimal",
+      "capture.parse.details": "minimal",
+      "capture.parse.excerpt-retry": "minimal",
+      "capture.dates": "minimal",
+      "capture.transcribe.page": "minimal",
+      "capture.transcribe.audio": "minimal",
+      "meeting.transcribe": "minimal",
+      "meeting.digest": "minimal",
+      "meeting.digest.map": "minimal",
+      "meeting.digest.reduce": "minimal",
+      "chat.understand": "minimal",
+      "chat.rerank": "minimal",
+      "recruiter.scan": "minimal",
+      "extension.parse": "minimal",
+      "import.enrich": "minimal",
+      "import.linkedin.timeline": "minimal",
+      "events.why": "minimal"
+    },
+    "tiers": {
+      "recruiter.scan": "fast",
+      "extension.parse": "fast",
+      "capture.dates": "fast",
+      "import.enrich": "fast",
+      "meeting.digest.map": "fast"
+    },
+    "model": "gemini-3.8-flash",
+    "visionModels": {
+      "gemini": "gemini-3.8-flash"
+    }
+  },
+  "tasks": {
+    "extension": {
+      "cases": 10,
+      "metrics": {
+        "fieldAccuracy": 1,
+        "nullAccuracy": 1,
+        "forbiddenHits": 0
+      },
+      "misses": [],
+      "p50LatencyMs": 954.5,
+      "costMicros": 3858,
+      "costPerCaseMicros": 385.8,
+      "usage": [
+        {
+          "operation": "extension.parse",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 20,
+          "failures": 0,
+          "inputTokens": 11858,
+          "outputTokens": 3165,
+          "cachedInputTokens": 0,
+          "costMicros": 7716,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

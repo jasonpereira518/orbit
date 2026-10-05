@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Copy, KeyRound, Plug, Trash2 } from "lucide-react";
+import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   createApiKey,
@@ -132,10 +132,9 @@ export function ApiSettings() {
 
   return (
     <SettingsSection
-      title="API and connectors"
-      description="Connect Orbit to Zapier, Make, n8n, or an AI assistant like Claude. Keys act as you, so treat them like a password."
+      title="API keys"
+      description="Connect Orbit to Zapier, Make, n8n or your own scripts. A key acts as you, so treat it like a password."
     >
-
       {/* A new key, shown once. */}
       {created ? (
         <div className="border-primary/40 bg-primary/5 space-y-3 rounded-lg border p-4">
@@ -153,7 +152,7 @@ export function ApiSettings() {
             <Button
               size="sm"
               variant="secondary"
-              aria-label={created.mcpUrl ? "Copy MCP URL" : "Copy key"}
+              aria-label="Copy key"
               onClick={() => copy(created.mcpUrl ?? created.token, "Key")}
             >
               <Copy className="size-4" />
@@ -202,19 +201,10 @@ export function ApiSettings() {
             <KeyRound className="size-4" />
             API key
           </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={pending}
-            onClick={() => onCreate("mcp_url")}
-          >
-            <Plug className="size-4" />
-            Claude connector URL
-          </Button>
         </div>
         <p className="text-muted-foreground text-xs">
-          Use an API key for Zapier, Make, n8n, or Claude Code. Use a connector URL for
-          claude.ai, which has no field for a header.
+          Use an API key for Zapier, Make, n8n or the command line. Claude and ChatGPT don’t
+          need one — set them up under Claude and ChatGPT.
         </p>
       </div>
 

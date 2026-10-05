@@ -6,9 +6,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  *
  * TERMS_VERSION is what `user_settings.terms_version` records at acceptance. Change it (and
  * LEGAL_LAST_UPDATED) in the same commit as any material change to /terms or /privacy.
+ * `scripts/smoke-legal-pages.ts` holds a lock over the two page sources and fails when they
+ * move and these two do not, so the rule above is enforced rather than merely written down.
  */
-export const TERMS_VERSION = "2026-09-16";
-export const LEGAL_LAST_UPDATED = "September 16, 2026";
+export const TERMS_VERSION = "2026-10-04";
+export const LEGAL_LAST_UPDATED = "October 4, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -79,20 +81,26 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your own AI key. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Message bodies are never stored.",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your own AI key. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
     askedWhen: "Connect Gmail on Recruiters, or turn on Confirmation emails on Events",
   },
   {
     scope: GOOGLE_SCOPES.gmailSend,
     permission: "Send email as you (gmail.send)",
-    use: "Sends the recruiter messages you write and press Send on, from your own address, so replies reach your inbox. Orbit never sends a message you did not send.",
-    askedWhen: "Allow Gmail to send, in the recruiter composer",
+    use: "Sends the emails you write and press Send on — from Compose on a contact page, follow-ups, drafts from Chat, recruiter emails, and drafts an assistant prepared that you approved — from your own address, so replies reach your inbox. Each one waits about 10 seconds so you can undo it, or until the time you schedule, and can carry files you attach. Orbit never sends a message you did not send.",
+    askedWhen: "Connect Gmail to send, in Compose, Settings → Email, the recruiter composer, or on a draft in Chat",
   },
   {
     scope: GOOGLE_SCOPES.calendar,
     permission: "See your calendar events (calendar.readonly)",
     use: "Reads recent and upcoming events on your primary calendar and adds meetings with people in your network to their timelines.",
     askedWhen: "Connect Google Calendar on Events",
+  },
+  {
+    scope: GOOGLE_SCOPES.drive,
+    permission: "See and open only the Google Docs and Slides you pick (drive.file)",
+    use: "Lets you pick Google Docs and Slides from the Google Picker to import. Orbit only ever sees files you explicitly select.",
+    askedWhen: "Connect Google on Imports → Google Drive",
   },
 ];
 

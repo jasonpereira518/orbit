@@ -1,7 +1,7 @@
 /**
  * `loadNetworkVocabulary` against a real database.
  *
- * `scripts/smoke-wispr.ts` covers the selection and the caps as pure functions. The part
+ * `scripts/smoke-vocabulary-terms.ts` covers the selection and the caps as pure functions. The part
  * that can only be checked against Postgres is the ORDER BY, and it is the part most
  * likely to be wrong: every engine truncates this list, so if the ordering puts
  * never-contacted rows first, the cap drops exactly the people the user just met. A plain

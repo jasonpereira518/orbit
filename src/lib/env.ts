@@ -12,6 +12,9 @@
  * it must never reach `@/db`. Errors name variables, never values.
  */
 
+// Relative, not `@/`: scripts load this file directly. The policy module is pure (type-only imports).
+import { MANAGED_AI_ENABLED } from "./managed-ai-policy";
+
 export type VercelEnv = "production" | "preview" | "development" | undefined;
 
 export const REQUIRED_IN_PRODUCTION = [
@@ -54,6 +57,16 @@ export const EXPECTED_IN_PRODUCTION = [
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REDIRECT_URI",
+  // Outlook contacts, calendar and mail all ride this one OAuth client.
+  "MICROSOFT_CLIENT_ID",
+  "MICROSOFT_CLIENT_SECRET",
+  "MICROSOFT_REDIRECT_URI",
+  // Unset, every voice note, meeting and dictation falls back to the user's own OpenAI or
+  // Gemini key, and an account with neither cannot transcribe at all.
+  "DEEPGRAM_API_KEY",
+  // Unset, the nightly Deepgram usage reconciliation (/api/ops/speech-usage) cannot call
+  // Deepgram's project-scoped usage API and logs it rather than checking for under-reporting.
+  "DEEPGRAM_PROJECT_ID",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [
@@ -63,15 +76,14 @@ export const REQUIRED_IN_PREVIEW = [
   "ENCRYPTION_SECRET",
 ] as const;
 
-const STRIPE_PRICE_IDS = [
-  "STRIPE_LIFETIME_PRICE_ID",
-  "STRIPE_LIFETIME_STANDARD_PRICE_ID",
-  "STRIPE_PRO_MONTHLY_PRICE_ID",
-  "STRIPE_PRO_ANNUAL_PRICE_ID",
-] as const;
+/**
+ * No price ids: pricing v2 resolves every price by lookup key (`src/lib/stripe-prices.ts`),
+ * created by `scripts/stripe-pricing-v2.ts`. The old STRIPE_*_PRICE_ID variables are
+ * ignored, so leaving them set in Vercel is harmless.
+ */
 
 /**
- * Orbit's managed AI keys, which Lifetime accounts run on when they bring none
+ * Orbit's managed AI keys, which Pro and Max run their included AI on
  * (`src/lib/ai-access.ts`). Checked by presence only, here as everywhere.
  */
 const MANAGED_AI_KEYS = [
@@ -120,6 +132,12 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     if (has(env, "CLERK_SECRET_KEY") && !env.CLERK_SECRET_KEY!.startsWith("sk_live_")) {
       errors.push("CLERK_SECRET_KEY must be a live-instance key (sk_live_) in production");
     }
+    // Optional (it saves a round trip to Clerk per cold instance; src/lib/clerk-jwt-key.ts),
+    // but once set every session is verified against it alone — a pasted secret key or a
+    // truncated value would sign every person out, so a malformed one fails the build.
+    if (has(env, "CLERK_JWT_KEY") && !/-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----/.test(env.CLERK_JWT_KEY!)) {
+      errors.push("CLERK_JWT_KEY must be the instance's PEM public key (-----BEGIN PUBLIC KEY----- … -----END PUBLIC KEY-----)");
+    }
     if (has(env, "ENCRYPTION_SECRET")) {
       const secret = env.ENCRYPTION_SECRET!.trim();
       if (secret.length < 32 || secret === ENCRYPTION_PLACEHOLDER) {
@@ -138,11 +156,34 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       errors.push("APP_BASE_URL must be an https:// URL in production");
     }
 
+    // The waitlist's own domain (src/lib/waitlist-host.ts). Optional — but once it is set,
+    // its mail needs a sender of its own: falling back to the app's sender would put the
+    // app's domain in the From line of the one thing that must never show it.
+    if (has(env, "WAITLIST_HOST")) {
+      // A public mailbox provider (a gmail.com RESEND_FROM_EMAIL, say) is shared by millions
+      // and identifies nothing, so it never counts as the app's domain.
+      const appDomains = [hostOf(env.APP_BASE_URL), emailDomain(env.RESEND_FROM_EMAIL)].filter(
+        (d): d is string => Boolean(d) && !PUBLIC_MAIL_DOMAINS.has(d!)
+      );
+      if (!has(env, "WAITLIST_FROM_EMAIL")) {
+        errors.push("WAITLIST_FROM_EMAIL is required when WAITLIST_HOST is set");
+      }
+      for (const name of ["WAITLIST_FROM_EMAIL", "WAITLIST_REPLY_TO"] as const) {
+        const domain = emailDomain(env[name]);
+        if (domain && appDomains.some((app) => relatedDomains(domain, app))) {
+          errors.push(`${name} must not be on the app's own domain`);
+        }
+      }
+      if (has(env, "WAITLIST_BASE_URL") && !env.WAITLIST_BASE_URL!.startsWith("https://")) {
+        errors.push("WAITLIST_BASE_URL must be an https:// URL in production");
+      }
+    }
+
     if (has(env, "STRIPE_SECRET_KEY")) {
       if (!env.STRIPE_SECRET_KEY!.startsWith("sk_live_")) {
         errors.push("STRIPE_SECRET_KEY must be a live key (sk_live_) in production — test-mode prices fail checkout");
       }
-      for (const name of ["STRIPE_WEBHOOK_SECRET", ...STRIPE_PRICE_IDS]) {
+      for (const name of ["STRIPE_WEBHOOK_SECRET"]) {
         if (!has(env, name)) errors.push(`${name} is required when STRIPE_SECRET_KEY is set`);
       }
     }
@@ -164,16 +205,18 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         missingExpected.push(name);
       }
     }
-    // Lifetime is sold as including AI. Selling it with no managed key means every buyer
-    // without a key of their own is refused — a warning rather than a failed build, since
-    // the ops sweep pages on it (`ai.managed_unconfigured`) and a key must never block a deploy.
+    // Pro and Max are sold with AI included. Selling them with no managed key means every
+    // subscriber without a key of their own is refused — a warning rather than a failed
+    // build, since the ops sweep pages on it (`ai.managed_unconfigured`) and a key must never
+    // block a deploy.
     if (
+      MANAGED_AI_ENABLED &&
       has(env, "STRIPE_SECRET_KEY") &&
       !MANAGED_AI_KEYS.some((name) => has(env, name)) &&
       env.ORBIT_MANAGED_AI?.trim().toLowerCase() !== "off"
     ) {
       warnings.push(
-        "No ORBIT_MANAGED_*_API_KEY is set; Lifetime is on sale but its included AI has no key to run on"
+        "No ORBIT_MANAGED_*_API_KEY is set; Pro and Max are on sale but their included AI has no key to run on"
       );
     }
     return { errors, warnings, missingRequired, missingExpected };
@@ -329,4 +372,39 @@ export function checkDrizzleCommand(
     };
   }
   return { allowed: true, reason: `target ${target} is not the production host` };
+}
+
+/** Mailbox providers anyone can sign up to — never evidence of whose domain it is. */
+const PUBLIC_MAIL_DOMAINS: ReadonlySet<string> = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "icloud.com",
+  "me.com",
+  "yahoo.com",
+  "proton.me",
+  "protonmail.com",
+]);
+
+/** The hostname of a URL, lowercased, or null. */
+function hostOf(url: string | undefined): string | null {
+  if (!url?.trim()) return null;
+  try {
+    return new URL(url.trim()).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** The domain of an address, bare or `Name <addr>`, lowercased, or null. */
+function emailDomain(value: string | undefined): string | null {
+  const match = /@([^>\s]+)>?\s*$/.exec(value?.trim() ?? "");
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** One domain is the other or sits under it — `example.com` vs `app.example.com`. */
+function relatedDomains(a: string, b: string) {
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }

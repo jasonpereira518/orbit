@@ -245,7 +245,7 @@ export async function loadKnowledgeBase(
   };
 
   const entries: KnowledgeEntry[] = [];
-  entryInteractions.forEach((i, index) => {
+  entryInteractions.forEach((i) => {
     const contact = names.get(i.contactId);
     if (!contact) return;
     const text = snippet(i.aiSummary || i.rawNotes);

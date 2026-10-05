@@ -12,23 +12,45 @@ import {
   Bell,
   BookOpen,
   PartyPopper,
+  Radar,
 } from "lucide-react";
 
 export type AppNavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
+  /**
+   * Prefetch the WHOLE route — its data, not just its loading skeleton — while the link is
+   * on screen. A click then renders from the client cache with no skeleton, which is the
+   * only way past React's 300ms Suspense reveal hold on a first visit.
+   *
+   * Applied by the phone nav only, where a tap gives no hover to prefetch on. The desktop
+   * sidebar full-prefetches every link on hover/focus instead (see app-sidebar.tsx).
+   *
+   * It costs a full server render of the destination on every page that shows the link, so
+   * it is reserved for pages that are both visited daily and bounded in cost — Dashboard,
+   * Contacts (paginated) and Reminders — and never for a heavy one (Constellation returns
+   * every engaged contact). See `fullPrefetch` below for how it is applied.
+   */
+  prefetchFull?: boolean;
 };
 
 const DASHBOARD: AppNavItem = {
   href: "/dashboard",
   label: "Dashboard",
   icon: LayoutDashboard,
+  // Excluded at first: heavy accounts' dashboards had hit the function time limit, and a
+  // full prefetch starts that render from every page. Measured since, with
+  // `scripts/dev/dashboard-scale.ts`: bounded rows (Phase B) and the slim closeness read
+  // put a 10,000-contact dashboard at ~0.5 s with 50 ms per statement, 15 statements flat
+  // at every size — the same order as Contacts. So it is prefetched like the other two.
+  prefetchFull: true,
 };
 const CONTACTS: AppNavItem = {
   href: "/contacts",
   label: "Contacts",
   icon: Users,
+  prefetchFull: true,
 };
 const CAPTURE: AppNavItem = {
   href: "/capture",
@@ -51,6 +73,7 @@ const REMINDERS: AppNavItem = {
   href: "/reminders",
   label: "Reminders",
   icon: Bell,
+  prefetchFull: true,
 };
 const CHAT: AppNavItem = {
   href: "/chat",
@@ -67,6 +90,11 @@ const OUTREACH: AppNavItem = {
   label: "Outreach",
   icon: Send,
 };
+const RADAR: AppNavItem = {
+  href: "/radar",
+  label: "Radar",
+  icon: Radar,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -76,6 +104,7 @@ const KNOWLEDGE: AppNavItem = {
 /** Primary sidebar destinations (above the "Coming soon" divider) */
 export const APP_NAV_CORE: AppNavItem[] = [
   DASHBOARD,
+  RADAR,
   CONTACTS,
   CAPTURE,
   REMINDERS,
@@ -85,12 +114,12 @@ export const APP_NAV_CORE: AppNavItem[] = [
 ];
 
 /**
- * Items under the "Coming soon" divider (Settings is rendered separately).
+ * Default-secondary destinations (Settings is rendered separately).
  *
- * The name is stale for Knowledge, which has shipped — it stays in this group rather than
- * moving up to `APP_NAV_CORE` because the divider's label describes Events and Outreach,
- * the two items that actually are coming soon (`comingSoon` in `src/lib/surfaces.ts`), and
- * splitting the group over one released item was a deliberate no per product decision.
+ * The sidebar no longer treats this as "the group under the Coming soon divider": it merges
+ * core and extras, applies the operator's order, and puts whatever is currently marked
+ * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
+ * default order.
  */
 export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
 
@@ -117,6 +146,7 @@ export const MOBILE_BOTTOM_NAV: Array<
 ];
 
 export const MOBILE_MORE_NAV = [
+  RADAR,
   REMINDERS,
   IMPORTS,
   CONSTELLATION,
@@ -124,6 +154,15 @@ export const MOBILE_MORE_NAV = [
   OUTREACH,
   KNOWLEDGE,
 ];
+
+/**
+ * The `prefetch` prop for a nav link: `true` (whole route) for `prefetchFull` items that are
+ * not the page already on screen, otherwise the default (the route down to its
+ * `loading.tsx`). Prefetching the current page would pay for a render nobody can click to.
+ */
+export function fullPrefetch(item: AppNavItem, active: boolean): true | undefined {
+  return item.prefetchFull && !active ? true : undefined;
+}
 
 export function isNavActive(pathname: string, href: string) {
   if (href === "/contacts") {

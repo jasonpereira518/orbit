@@ -6,6 +6,7 @@
  * full account, with Undo.
  */
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { motion } from "motion/react";
 import { ArrowUpRight, Check, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +63,7 @@ export function CaptureSaved({
 
       {single && saved?.contactIdByKey[single.item.key] && (
         <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2">
-          <PlanetBadge index={single.index} size="sm" />
+          <PlanetBadge index={single.index} closeness={single.decision.relationshipScore} size="sm" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{single.decision.edits?.name || single.item.parsed.name}</p>
             <p className="truncate text-xs text-muted-foreground">
@@ -82,11 +83,11 @@ export function CaptureSaved({
             const name = decision.edits?.name || item.parsed.name || "Unnamed";
             return (
               <li key={item.key} className="flex items-center gap-3 rounded-xl bg-card px-3 py-1.5 text-sm">
-                <PlanetBadge index={index} size="xs" />
+                <PlanetBadge index={index} closeness={decision.relationshipScore} size="xs" />
                 {id ? (
-                  <Link href={`/contacts/${id}`} className="min-w-0 flex-1 truncate font-medium text-primary hover:underline">
+                  <IntentLink href={`/contacts/${id}`} className="min-w-0 flex-1 truncate font-medium text-primary hover:underline">
                     {name}
-                  </Link>
+                  </IntentLink>
                 ) : (
                   <span className="min-w-0 flex-1 truncate font-medium">{name}</span>
                 )}
@@ -104,9 +105,9 @@ export function CaptureSaved({
           <Sparkles className="size-4" /> Capture more
         </Button>
         {single && saved?.contactIdByKey[single.item.key] && (
-          <Link href={`/contacts/${saved.contactIdByKey[single.item.key]}`} className={buttonVariants({ variant: "outline" })}>
+          <IntentLink href={`/contacts/${saved.contactIdByKey[single.item.key]}`} className={buttonVariants({ variant: "outline" })}>
             Open contact <ArrowUpRight className="size-3.5" />
-          </Link>
+          </IntentLink>
         )}
         {saved?.batchId && (
           <Link href={`/capture/${saved.batchId}`} className={buttonVariants({ variant: "ghost", className: "text-muted-foreground" })}>
