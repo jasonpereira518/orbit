@@ -38,6 +38,8 @@
   --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-warning-border: var(--warning-border);
   --color-info: var(--info);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -59,8 +61,25 @@
   --color-brand-pro: #599de7;
   --color-landing-button-surface: #eef7f4;
   --color-landing-button-label: #0f2e28;
-  --color-tier-lifetime: var(--tier-lifetime);
+  /* Plan colors (pricing v2): Free neutral teal, Pro blue, Max gold, Lifetime silver.
+     Theme-aware; every value clears 4.5:1 on a card in its theme
+     (`scripts/smoke-tier-contrast.ts`). `--color-night-*` are the fixed values for the
+     always-dark canvases (pricing, upgrade, landing, the celebration). */
+  --color-tier-free: var(--tier-free);
   --color-tier-pro: var(--tier-pro);
+  --color-tier-max: var(--tier-max);
+  --color-tier-lifetime: var(--tier-lifetime);
+  /* Plan-scoped: inside any `[data-plan="…"]` container these follow that plan. */
+  --color-tier-accent: var(--tier-accent);
+  --color-tier-surface: color-mix(in oklab, var(--tier-accent) 8%, transparent);
+  --color-tier-border: color-mix(in oklab, var(--tier-accent) 32%, transparent);
+  --color-tier-sheen-from: var(--tier-sheen-from);
+  --color-tier-sheen-to: var(--tier-sheen-to);
+  --color-tier-sheen-ink: var(--tier-sheen-ink);
+  --color-night-free: #cfdcd8;
+  --color-night-pro: #599de7;
+  --color-night-max: #f2c14e;
+  --color-night-lifetime: #c9d1db;
   --color-ink: var(--ink);
   --color-admin-nav-hover: var(--admin-nav-hover);
   --radius-sm: calc(var(--radius) * 0.6);
@@ -117,8 +136,13 @@
   --success: #047857; /* emerald-700 — 5.0:1 on #ffffff */
   --warning: #b45309; /* amber-700   — 4.8:1 on #ffffff */
   --info: #1d4ed8; /* blue-700    — 7.0:1 on #ffffff */
+  /* The warning callout box (AI-key notice, capture caveats). Light values are
+     the exact amber-50/70 fill and amber-200/80 edge the boxes always used, as
+     oklch literals because Tailwind only emits palette vars that a class uses. */
+  --warning-surface: color-mix(in oklab, oklch(98.7% 0.022 95.277) 70%, transparent);
+  --warning-border: color-mix(in oklab, oklch(92.4% 0.12 95.746) 80%, transparent);
   /* The toast icon chip is its accent at a wash. Light surfaces need less of it
-     than dark ones, where the accent is pale and 12% vanishes into #212c42. */
+     than dark ones, where the accent is pale and 12% vanishes into #292c30. */
   --toast-chip-strength: 12%;
   --border: #e4e7e1;
   --input: #e4e7e1;
@@ -160,13 +184,18 @@
   --interaction-live: #a8375f;
   --interaction-written: #4a63c9;
   --interaction-yours: #6b7380;
-  /* Orbit Pro reads as `--primary` (the product's own color, per the pricing
-     tiers). Orbit Lifetime gets this dedicated gold so paywalled surfaces can
-     name which tier(s) unlock a feature without borrowing a hue that already
-     means something else (chart series, calendar import, etc). Dark enough
-     for 4.5:1 text contrast on a light card, not just icon-level contrast. */
-  --tier-lifetime: #8a6423;
+  /* Plan colors (pricing v2). Each is its own hue so a paywalled surface can name
+     the plan that unlocks it without borrowing a color that already means something
+     else (chart series, calendar import, --primary). Dark enough for 4.5:1 text
+     contrast on a light card, not just icon-level contrast.
+       Free      neutral teal — the product's own quiet voice
+       Pro       blue
+       Max       gold — the exact gold the app has always used for its top tier
+       Lifetime  silver-gray, metallic in badges */
+  --tier-free: #3d5b58;
   --tier-pro: #2f68b0;
+  --tier-max: #8a6423;
+  --tier-lifetime: #56616e;
   /* Emphasised content — names, titles, section headings. This is the value
      `--primary` has always had in light mode, which is why ~90 call sites reach
      for `text-primary` to mean "strong text". It only worked by coincidence:
@@ -204,11 +233,15 @@
   color-scheme: light;
 }
 .dark {
-  /* ── Night sky ──
-   * The app chrome paints the same space the Constellation canvas and the
-   * landing page already live in (see lib/sky-palette.ts), rather than the
-   * neutral gray it used to be. Every neutral carries hue 220-222°, close
-   * enough to the sky's 227° to read as one continuous product.
+  /* ── Blue graphite ──
+   * The neutrals are graphite with a faint cool cast (b > g > r, hue ~215°), at
+   * a fraction of the old navy's chroma. The cast is just enough to sit with the
+   * sky-blue accent (`--primary`). A strong tint competes with the accents (navy
+   * read as too blue, teal as green). The only other colour is the gold ambient
+   * light (the body glow and the glass glint), and gold never becomes a control.
+   * The Constellation canvas and the landing page are still navy deep space
+   * (lib/sky-palette.ts). Moving from the app chrome into /graph is meant to
+   * read as stepping out into space.
    *
    * The surface ladder below is spaced by PERCEPTUAL lightness (L*), not by
    * WCAG contrast ratio: the ratio formula's +0.05 flare term compresses hard
@@ -217,39 +250,44 @@
    * ladder is monotonic — `--muted` used to sit ABOVE `--card`, which is why
    * recessed wells read as raised.
    *
-   *   sidebar     #080d18   L*  3.7
-   *   background  #0e1524   L*  6.8
-   *   muted       #151d2f   L* 10.9
-   *   card        #1a2438   L* 14.2
-   *   popover     #212c42   L* 18.0
-   *   border      #333f5a   L* 26.7
+   *   sidebar     #0c0d0e   L*  3.6
+   *   background  #141517   L*  6.7
+   *   muted       #1c1d20   L* 10.8
+   *   card        #222427   L* 14.1
+   *   popover     #292c30   L* 17.9
+   *   border      #3b3f45   L* 26.5
    */
-  --background: #0e1524;
-  --foreground: #e4ebf6;
-  --card: #1a2438;
-  --card-foreground: #e4ebf6;
-  --popover: #212c42;
-  --popover-foreground: #e4ebf6;
+  --background: #141517;
+  --foreground: #e7ecf1;
+  --card: #222427;
+  --card-foreground: #e7ecf1;
+  --popover: #292c30;
+  --popover-foreground: #e7ecf1;
   --primary: #7cc3e2;
   --primary-foreground: #04121b;
-  --secondary: #212c42;
-  --secondary-foreground: #e4ebf6;
-  --muted: #151d2f;
-  --muted-foreground: #96a8c4;
-  --accent: #20374f;
+  --secondary: #292c30;
+  --secondary-foreground: #e7ecf1;
+  --muted: #1c1d20;
+  --muted-foreground: #99a2aa; /* 6.0:1 on card, 5.4:1 on popover */
+  /* A dim slate-blue: the sky accent's own family, so accent text on it (9.5:1)
+     reads as one piece, but dark enough to sit in the graphite without going navy. */
+  --accent: #242e36;
   --accent-foreground: #aeddf0;
   --destructive: #ff6b6b;
-  /* Inverted for the dark ladder: `--popover` is #212c42 (L* 18), so the accents
+  /* Inverted for the dark ladder: `--popover` is #292c30 (L* 18), so the accents
      go pale — the same 300-weights the app already pairs with the light 700s. */
-  --success: #6ee7b7; /* emerald-300 — 8.9:1 on #212c42 */
-  --warning: #fcd34d; /* amber-300   — 10.3:1 on #212c42 */
-  --info: #93c5fd; /* blue-300    — 8.1:1 on #212c42 */
+  --success: #6ee7b7; /* emerald-300 — 9.2:1 on #292c30 */
+  --warning: #fcd34d; /* amber-300   — 9.7:1 on #292c30 */
+  --info: #93c5fd; /* blue-300    — 7.7:1 on #292c30 */
+  /* amber-500 at a wash, the same fill as the app's other amber notices. */
+  --warning-surface: rgb(245 158 11 / 0.1);
+  --warning-border: rgb(245 158 11 / 0.3);
   --toast-chip-strength: 18%;
-  --border: #333f5a;
+  --border: #3b3f45;
   /* Light enough to clear 3:1 against `--card` — this is a control boundary
-     (WCAG 1.4.11), not decoration. The old #3d3d3d managed 1.22:1, so text
-     fields had effectively no edge. */
-  --input: #626f90;
+     (WCAG 1.4.11), not decoration: 3.4:1 on card, 3.1:1 on popover. The old
+     #3d3d3d managed 1.22:1, so text fields had effectively no edge. */
+  --input: #70767f;
   --ring: #7cc3e2;
   /* Five distinct HUES with staggered lightness, so series stay separable in
      grayscale and under red-green colour blindness. The old dark ramp was five
@@ -277,22 +315,26 @@
   --interaction-live: #f5a3c0;
   --interaction-written: #8aa9f2;
   --interaction-yours: #8f9db2;
-  /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
-     read as near-black here). */
-  --tier-lifetime: #f2c14e;
+  /* Brighter on a dark card so they keep 4.5:1 text contrast (#8a6423 would read
+     as near-black here). Pro stays #599de7: bluer than `--primary` (#7cc3e2, a sky
+     cyan) and far brighter than the blue-cast graphite ground, so it never reads as
+     either. */
+  --tier-free: #a9c3be;
   --tier-pro: #599de7;
-  --ink: #e4ebf6;
+  --tier-max: #f2c14e;
+  --tier-lifetime: #c5ccd6;
+  --ink: #e7ecf1;
   --admin-nav-hover: rgb(124 195 226 / 0.16);
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
-     black — a pure-black shadow over navy reads as a dead hole. */
-  --shadow-color: 218deg 60% 3%;
-  --sidebar: #080d18;
-  --sidebar-foreground: #e4ebf6;
+     black — a pure-black shadow over a tinted ground reads as a dead hole. */
+  --shadow-color: 215deg 20% 3%;
+  --sidebar: #0c0d0e;
+  --sidebar-foreground: #e7ecf1;
   --sidebar-primary: #7cc3e2;
   --sidebar-primary-foreground: #04121b;
-  --sidebar-accent: #1a2438;
+  --sidebar-accent: #222427;
   --sidebar-accent-foreground: #aeddf0;
-  --sidebar-border: #333f5a;
+  --sidebar-border: #3b3f45;
   --sidebar-ring: #7cc3e2;
   color-scheme: dark;
 }

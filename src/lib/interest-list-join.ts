@@ -7,8 +7,9 @@
  * `ok` with a ticket. A real join, a duplicate, an unsubscribed address rejoining, a bot
  * and a rate-limited caller all get the same shape, so which check a submit tripped is
  * not inferable from the response. What IS inferable, by design (see the spec's privacy
- * section): a duplicate gets its real ticket, whose number is below the current total —
- * membership of an address can be probed at ten tries per ten minutes per IP. The
+ * section): a duplicate gets its real ticket, whose number is below the current total, and
+ * `returning: true` so the form can skip the name step — membership of an address can be
+ * probed at ten tries per ten minutes per IP. The
  * address itself is never returned.
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -18,25 +19,32 @@ import { getWaitlistPageUrl } from "@/lib/app-url";
 import { ipLogTag } from "@/lib/log-redaction";
 import type { Attribution } from "@/lib/attribution-parse";
 import {
-  FRONT_WAVE_REFERRALS,
-  MIN_FILL_MS,
+  REFERRAL_TIERS,
+  type ReferralTier,
   buildShareUrl,
   buildTicketUrl,
-  interestListSchema,
-  type InterestListInput,
   type InterestListResult,
+  type InterestNameResult,
   type InterestTicket,
 } from "@/lib/interest-list";
 import {
+  interestListSchema,
+  interestNameSchema,
+  type InterestListInput,
+  type InterestNameInput,
+} from "@/lib/interest-list-schema";
+import {
   buildUnsubscribeUrl,
   generateUnsubscribeToken,
-  sendFrontWaveEmail,
+  sendTierEmail,
   sendInterestListWelcomeEmail,
   type EmailLinks,
 } from "@/lib/interest-list-email";
 import {
   getInterestProof,
   invalidateInterestProof,
+  invalidateProgress,
+  refMatch,
   ticketForRow,
 } from "@/lib/interest-list-ticket";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -48,15 +56,17 @@ export type WelcomeSender = (
   planet: WelcomePlanet,
   links: EmailLinks,
   /** Place in line, or null when it could not be counted. */
-  position: number | null
+  position: number | null,
+  signupEventLabel?: string | null
 ) => Promise<unknown>;
 
-/** Mails a referrer whose friends just carried them into the front wave. */
-export type FrontWaveSender = (
+/** Mails a referrer whose friends just unlocked a referral tier. */
+export type TierSender = (
   email: string,
   unsubscribeUrl: string,
   planet: WelcomePlanet,
-  links: EmailLinks
+  links: EmailLinks,
+  tier: ReferralTier
 ) => Promise<unknown>;
 
 export type JoinContext = {
@@ -66,10 +76,11 @@ export type JoinContext = {
   /** Injected by the smoke test; defaults to the real Resend send. */
   sendWelcome?: WelcomeSender;
   /** Injected by the smoke test; defaults to the real Resend send. */
-  sendFrontWave?: FrontWaveSender;
+  sendTier?: TierSender;
 };
 
 const FORMAT_ERROR = "That address doesn't look right.";
+const NAME_ERROR = "Please add your first and last name.";
 
 /** Same generator as the unsubscribe token; a separate value, never the same one. */
 export function generateShareToken() {
@@ -77,9 +88,9 @@ export function generateShareToken() {
 }
 
 /**
- * What a bot, a too-fast fill or a rate-limited caller sees: the back of the line, the
- * next planet, and a token that exists nowhere. Indistinguishable in shape from a real
- * ticket; resolves to nothing if followed.
+ * What a bot or a rate-limited caller sees: the back of the line, the next planet, and a
+ * token that exists nowhere. Indistinguishable in shape from a real ticket; resolves to
+ * nothing if followed.
  */
 async function plausibleTicket(): Promise<InterestTicket> {
   const proof = await getInterestProof();
@@ -88,10 +99,11 @@ async function plausibleTicket(): Promise<InterestTicket> {
     number,
     position: proof.count + 1,
     referrals: 0,
-    frontWave: false,
     planet: planetForSignupNumber(number),
     joinedAt: new Date().toISOString(),
     shareToken: generateShareToken(),
+    // Shaped like a real one and resolving to no row, like the token beside it.
+    referralSlug: `member-${generateShareToken().slice(0, 6).toLowerCase().replace(/[^a-z0-9]/g, "x")}`,
   };
 }
 
@@ -101,19 +113,16 @@ export async function joinInterestListCore(
 ): Promise<InterestListResult> {
   // 1. Honeypot, before parsing: a filled decoy field is a bot, and a bot gets a ticket.
   if (typeof input.website === "string" && input.website.length > 0) {
-    return { ok: true, ticket: await plausibleTicket() };
+    return { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
   // 2. Validation — the one path with a visible error.
   const parsed = interestListSchema.safeParse(input);
   if (!parsed.success) return { ok: false, message: FORMAT_ERROR };
-  const { elapsedMs, ref } = parsed.data;
+  const { ref } = parsed.data;
   const email = parsed.data.email.trim().toLowerCase();
 
-  // 3. Faster than a person can read the form.
-  if (elapsedMs < MIN_FILL_MS) return { ok: true, ticket: await plausibleTicket() };
-
-  // 4. Rate limit. A limiter that cannot count must not fail open into the write, and must
+  // 3. Rate limit. A limiter that cannot count must not fail open into the write, and must
   //    not break a real person's signup either — so any throw is the fake ticket.
   try {
     await consumeBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
@@ -124,7 +133,7 @@ export async function joinInterestListCore(
     // that a real person was dropped.
     if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ipTag: ipLogTag(ctx.ip) });
     else console.error("[interest-list] limiter failed", err);
-    return { ok: true, ticket: await plausibleTicket() };
+    return { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
   const db = await getDb();
@@ -140,9 +149,10 @@ export async function joinInterestListCore(
             unsubscribedAt: interestListSignups.unsubscribedAt,
             welcomePlanet: interestListSignups.welcomePlanet,
             shareToken: interestListSignups.shareToken,
+            referralSlug: interestListSignups.referralSlug,
           })
           .from(interestListSignups)
-          .where(eq(interestListSignups.shareToken, ref))
+          .where(refMatch(ref))
           .limit(1)
       )[0] ?? null
     : null;
@@ -156,7 +166,7 @@ export async function joinInterestListCore(
 
   let row = existing;
   let welcome = false;
-  /** A fresh row that credited `referrer` — the only event that can complete a front wave. */
+  /** A fresh row that credited `referrer` — the only event that can unlock a referral tier. */
   let credited = false;
 
   if (!existing) {
@@ -225,7 +235,7 @@ export async function joinInterestListCore(
 
   if (!row?.shareToken) {
     // Unreachable: every branch above leaves a row with a token. Fail like a bot would.
-    return { ok: true, ticket: await plausibleTicket() };
+    return { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
   // Counted before the welcome, because the welcome states the place in line. But a throw
@@ -237,6 +247,8 @@ export async function joinInterestListCore(
   try {
     ticket = await ticketForRow({
       id: row.id,
+      email: row.email,
+      referralSlug: row.referralSlug,
       createdAt: row.createdAt,
       welcomePlanet: row.welcomePlanet,
       shareToken: row.shareToken,
@@ -255,35 +267,84 @@ export async function joinInterestListCore(
       asWelcomePlanet(row.welcomePlanet),
       {
         ticketUrl: buildTicketUrl(pageUrl, row.shareToken),
-        shareUrl: buildShareUrl(pageUrl, row.shareToken),
+        // The ticket read claimed the slug; without it the link falls back to the token.
+        shareUrl: buildShareUrl(pageUrl, { referralSlug: ticket?.referralSlug, shareToken: row.shareToken }),
       },
-      ticket?.position ?? null
+      ticket?.position ?? null,
+      row.signupEventLabel
     );
   }
   if (!ticket) throw ticketError;
 
+  if (credited && referrer?.shareToken) invalidateProgress(referrer.shareToken);
   if (credited && referrer && !referrer.unsubscribedAt && referrer.shareToken) {
-    await notifyIfFrontWave(referrer as typeof referrer & { shareToken: string }, ctx);
+    await notifyIfTierUnlocked(referrer as typeof referrer & { shareToken: string }, ctx);
   }
 
-  return { ok: true, ticket };
+  return { ok: true, ticket, returning: Boolean(existing) };
 }
 
 /**
- * The referral that takes someone to exactly `FRONT_WAVE_REFERRALS` still-waiting friends
- * is the moment they reach the front wave, so that is when they hear about it. Exactly,
- * not at-least: the fourth friend is not news. A friend who leaves and a new one who joins
- * can cross the line twice — rare, and a second "you're in" is harmless.
+ * Step two of the join: the name for the pass. The address is already on the list by now,
+ * so the ticket's share token is what says whose row this is.
+ *
+ * WHAT A CALLER LEARNS. A bad name is the one visible error. Everything else — a real save,
+ * a name already on file, a token that matches nothing (a bot's ticket, a stale link, an
+ * address that has since left) — answers `ok`, so the response cannot be used to test tokens.
+ * The write only ever fills an empty name and never replaces one: the share token is also
+ * the public `?ref=` link, so anyone a friend forwarded it to holds it, and a name that could
+ * be overwritten would be a name anyone could change.
+ */
+export async function saveInterestListNameCore(
+  input: InterestNameInput,
+  ctx: Pick<JoinContext, "ip">
+): Promise<InterestNameResult> {
+  const parsed = interestNameSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? NAME_ERROR };
+  }
+  const { shareToken, firstName, lastName } = parsed.data;
+
+  // Same posture as the join: a limiter that cannot count must not fail open into a write,
+  // and must not break a real person's step either — so any throw is a quiet no-op.
+  try {
+    await consumeBucket("interest.name", ctx.ip, RATE_LIMITS.interestName);
+  } catch (err) {
+    if (isRateLimitedError(err)) console.warn("[interest-list] name rate-limited", { ipTag: ipLogTag(ctx.ip) });
+    else console.error("[interest-list] limiter failed", err);
+    return { ok: true };
+  }
+
+  const db = await getDb();
+  await db
+    .update(interestListSignups)
+    .set({ firstName, lastName })
+    .where(
+      and(
+        eq(interestListSignups.shareToken, shareToken),
+        isNull(interestListSignups.unsubscribedAt),
+        isNull(interestListSignups.firstName)
+      )
+    );
+  return { ok: true };
+}
+
+/**
+ * The referral that takes someone to exactly a tier's threshold (1, 3, 5 or 10 still-waiting
+ * friends) is the moment they unlock it, so that is when they hear about it. Exactly, not
+ * at-least: the second friend is not news. A friend who leaves and a new one who joins can
+ * cross a line twice — rare, and a second "you unlocked it" is harmless.
  *
  * Never throws: the join it rides on has already succeeded.
  */
-async function notifyIfFrontWave(
+async function notifyIfTierUnlocked(
   referrer: {
     id: string;
     email: string;
     unsubscribeToken: string;
     welcomePlanet: string | null;
     shareToken: string;
+    referralSlug: string | null;
   },
   ctx: JoinContext
 ) {
@@ -295,19 +356,21 @@ async function notifyIfFrontWave(
       .where(
         and(eq(interestListSignups.referredById, referrer.id), isNull(interestListSignups.unsubscribedAt))
       );
-    if ((count?.n ?? 0) !== FRONT_WAVE_REFERRALS) return;
+    const tier = REFERRAL_TIERS.find((t) => t.at > 0 && t.at === (count?.n ?? 0));
+    if (!tier) return;
     const pageUrl = getWaitlistPageUrl();
-    const send = ctx.sendFrontWave ?? sendFrontWaveEmail;
+    const send = ctx.sendTier ?? sendTierEmail;
     await send(
       referrer.email,
       buildUnsubscribeUrl(referrer.unsubscribeToken),
       asWelcomePlanet(referrer.welcomePlanet),
       {
         ticketUrl: buildTicketUrl(pageUrl, referrer.shareToken),
-        shareUrl: buildShareUrl(pageUrl, referrer.shareToken),
-      }
+        shareUrl: buildShareUrl(pageUrl, referrer),
+      },
+      tier
     );
   } catch (err) {
-    console.error("[interest-list] front-wave notice failed", err);
+    console.error("[interest-list] tier notice failed", err);
   }
 }

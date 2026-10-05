@@ -1,11 +1,9 @@
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports } from "@/db/schema";
 import { failImport } from "@/lib/import-engine";
-import {
-  RESUMABLE_IMPORT_TYPES,
-  runImportJobById,
-} from "@/lib/import-job-dispatch";
+import { RESUMABLE_IMPORT_TYPES } from "@/lib/import-job-dispatch";
+import { internalFetch } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
 
 /**
@@ -28,6 +26,27 @@ export const CRON_STALL_THRESHOLD_MS = 3 * 60 * 1000;
 /** Resumes allowed before giving up. The fourth stall marks the job failed. */
 export const MAX_STALL_RESUMES = 3;
 
+/**
+ * Stalled jobs picked up per sweep, oldest first. The rest wait for the next sweep. A
+ * kick costs one internal request, so this bounds the sweep's time, not the jobs' work.
+ */
+export const STALL_SWEEP_LIMIT = 50;
+
+/**
+ * Resume a job by handing it to its own continuation route, which has a fresh 300s
+ * invocation to work in.
+ *
+ * The backstop used to await the whole job inline. Each resume can take up to the
+ * engine's 4.5-minute budget, inside a 300s route that also runs every hourly housekeeping
+ * task after it. Two stalled imports in the same hour killed the function: the rest of
+ * the housekeeping never ran and the cron_runs row stayed "running". Throws on a non-2xx,
+ * so a refused kick counts as a failed resume rather than a silent success.
+ */
+export async function kickImportContinuation(importId: string): Promise<void> {
+  const res = await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
+  if (!res.ok) throw new Error(`import continuation kick answered ${res.status}`);
+}
+
 export type StallSweepResult = {
   found: number;
   resumed: number;
@@ -40,14 +59,15 @@ export async function resumeStalledImports(
     now?: Date;
     thresholdMs?: number;
     maxResumes?: number;
-    /** Injectable for the smoke test; the real one dispatches by import type. */
+    limit?: number;
+    /** Injectable for the smoke test; the real one kicks the job's continuation route. */
     runner?: (importId: string) => Promise<unknown>;
   } = {},
 ): Promise<StallSweepResult> {
   const now = options.now ?? new Date();
   const threshold = options.thresholdMs ?? CRON_STALL_THRESHOLD_MS;
   const maxResumes = options.maxResumes ?? MAX_STALL_RESUMES;
-  const runner = options.runner ?? runImportJobById;
+  const runner = options.runner ?? kickImportContinuation;
   const db = await getDb();
 
   const stalled = await db.query.imports.findMany({
@@ -59,6 +79,8 @@ export async function resumeStalledImports(
       lt(imports.updatedAt, new Date(now.getTime() - threshold)),
     ),
     columns: { id: true },
+    orderBy: [asc(imports.updatedAt)],
+    limit: options.limit ?? STALL_SWEEP_LIMIT,
   });
 
   const result: StallSweepResult = {

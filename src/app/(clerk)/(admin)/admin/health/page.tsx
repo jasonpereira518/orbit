@@ -13,7 +13,7 @@ import {
 } from "@/components/admin/health-live";
 import { getAdminHealth } from "@/lib/admin-health";
 import { cn } from "@/lib/utils";
-import { loadProviderStatuses } from "@/lib/admin-providers";
+import { isProviderProblem, loadProviderStatuses } from "@/lib/admin-providers";
 import { ProviderRefreshButton } from "@/components/admin/provider-refresh-button";
 import {
   AiOperationsPanel,
@@ -68,7 +68,7 @@ export default async function AdminHealthPage() {
     health.connections.length +
     health.calendars.length +
     health.imports.length +
-    health.missingKeyAccounts.length;
+    health.missingKeyTotal;
 
   const initialLive: HealthLiveData = { health, cron, webhooks, errors, outreach, ops };
 
@@ -97,7 +97,13 @@ export default async function AdminHealthPage() {
         }
       />
 
-      <div className="mb-6">
+      <HealthLiveProvider initial={initialLive}>
+        <HealthLiveBody
+          providerProblems={
+            providers?.filter(isProviderProblem).length ?? 0
+          }
+          providerPanel={
+            <>
         {/* First on the page: this answers "is Orbit itself up", not "is this account
             broken". Deliberately OUTSIDE HealthLiveProvider and server-rendered, the same
             treatment "Known bug signatures" gets below — `loadProviderStatuses` is cached
@@ -128,7 +134,7 @@ export default async function AdminHealthPage() {
                     href={p.href}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="w-24 shrink-0 truncate hover:text-primary"
+                    className="w-36 shrink-0 truncate hover:text-primary"
                   >
                     {p.label}
                   </a>
@@ -156,14 +162,10 @@ export default async function AdminHealthPage() {
             </ul>
           )}
         </AdminPanel>
-      </div>
-
-      <HealthLiveProvider initial={initialLive}>
-        <HealthLiveBody bugsEmbeddingsMissingVector={bugs?.embeddingsMissingVector ?? null} />
-      </HealthLiveProvider>
-
-      {bugs && (
-        <div className="mt-6">
+            </>
+          }
+          bugsPanel={
+            bugs ? (
           <AdminPanel title="Known bug signatures">
             <div className="grid gap-3 sm:grid-cols-3">
               <MetricTile
@@ -190,13 +192,11 @@ export default async function AdminHealthPage() {
               />
             </div>
           </AdminPanel>
-        </div>
-      )}
-
-      {/* Moved here from Growth, which now tracks people rather than machinery. Server-
-          rendered outside the live section for the same reason as the bug signatures:
-          these change over days, and each panel fetches and degrades on its own. */}
-      <div className="mt-6 space-y-6">
+        
+            ) : null
+          }
+          aiDataPanels={
+            <>
         <div className="grid gap-6 lg:grid-cols-2">
           <AiVolumePanel />
           <AiOperationsPanel />
@@ -205,7 +205,10 @@ export default async function AdminHealthPage() {
           <DataQualityPanel />
           <ArtifactsPanel />
         </div>
-      </div>
+            </>
+          }
+        />
+      </HealthLiveProvider>
     </>
   );
 }

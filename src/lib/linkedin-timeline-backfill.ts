@@ -39,8 +39,7 @@
  * but they turn out not to be needed. `resolveConversations` resolves each conversation to
  * one primary participant, so a conversation maps to exactly one contact; where two
  * conversations resolve to the *same* person, one merged thread is a better input to the
- * extractor than two partial ones, and it is already how `enrichContactsFromMessages`
- * (the other post-hoc reader of these same rows) regroups them. Events are therefore keyed
+ * extractor than two partial ones, and it is how the engine regroups the same rows. Events are therefore keyed
  * `li-event:<contactId>:…` rather than `li-event:<conversationId>:…`.
  *
  * That namespace difference is also what keeps this from re-deriving events for threads
@@ -61,7 +60,7 @@
  * still read as `"?"`, so a contact's transcript is labelled only as well as its most recent
  * import — a re-upload of the LinkedIn export is what upgrades it.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { interactions, userSettings } from "@/db/schema";
 import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
@@ -94,9 +93,9 @@ const CLAIM_SIZE = 100;
 /**
  * Messages handed to the extractor per contact, **oldest first**.
  *
- * Ascending, unlike `enrichContactsFromMessages`' descending read of the same rows, and the
- * difference is load-bearing rather than stylistic: that function summarizes a relationship
- * and wants the most *recent* 80 messages, while the first event this extractor emits is
+ * Ascending rather than newest-first, and the
+ * difference is load-bearing rather than stylistic: summarizing a relationship
+ * wants the most *recent* messages, while the first event this extractor emits is
  * the initial reach-out — the earliest message in the thread. Taking the newest 80 of a
  * long thread would stamp a "first reach-out" that is nothing of the sort. 80 matches the
  * extractor's own internal `.slice(0, 80)`, so a lower number here would silently discard
@@ -122,8 +121,7 @@ export const TIME_BUDGET_MS = 4.5 * 60 * 1000;
  * whose messages are all blank would otherwise be claimed, yield nothing, and be claimed
  * again on the next iteration forever.
  *
- * Matched on `interaction_type` alone rather than also on `source`, matching
- * `enrichContactsFromMessages`: `'linkedin_message'` is only ever written by the LinkedIn
+ * Matched on `interaction_type` alone rather than also on `source`: `'linkedin_message'` is only ever written by the LinkedIn
  * messages importer, and the source string differs between the pre-engine rows
  * (`'linkedin_messages_import'`) and the engine's (`'linkedin_messages'`), so filtering on
  * it would quietly exclude every thread imported before Task 14.
@@ -179,7 +177,11 @@ export async function pendingTimelineContactCount(userId: string): Promise<numbe
 
 /**
  * Pending contacts whose thread would cost a model call — what the import card's estimate
- * multiplies. Same predicate as the claim, plus the extractor's own skip rule.
+ * multiplied. Same predicate as the claim, plus the extractor's own skip rule.
+ *
+ * No production reader since `getTimelineBackfillStatus` was deleted (the backfill is
+ * automatic now); kept, like the estimate itself, for smoke-linkedin-timeline-backfill.ts.
+ * See the note in src/lib/timeline-cost.ts.
  */
 export async function pendingTimelineAiContactCount(userId: string): Promise<number> {
   const db = await getDb();
@@ -216,6 +218,87 @@ export async function usersWithPendingTimelineEvents(limit: number): Promise<str
   return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);
 }
 
+/** The columns a LinkedIn thread is rebuilt from, by the timeline backfill. */
+export type LinkedInThreadMessage = {
+  rawNotes: string | null;
+  aiSummary: string | null;
+  direction: "in" | "out" | null;
+  interactionDate: Date;
+};
+
+/**
+ * The first `limit` LinkedIn messages of each contact's thread, in one query.
+ *
+ * Every caller used to read threads one contact at a time — a round trip each on neon-http,
+ * inside loops over a hundred claimed contacts. `row_number() OVER (PARTITION BY contact_id
+ * ORDER BY interaction_date …)` ranks each thread exactly as the per-contact `ORDER BY …
+ * LIMIT` did (same sort key, same direction, so the same NULL placement), and `rn <= limit`
+ * keeps the same rows. `order` is the caller's: this runner reads a thread oldest first,
+ * enrichment newest first (see `MESSAGE_LIMIT` for why that difference is load-bearing).
+ *
+ * Returned per contact in rank order. A contact with no messages is absent from the map,
+ * which callers read as the empty thread the per-contact query returned.
+ */
+export async function loadLinkedInThreads(
+  userId: string,
+  contactIds: string[],
+  opts: { order: "asc" | "desc"; limit: number }
+): Promise<Map<string, LinkedInThreadMessage[]>> {
+  const threads = new Map<string, LinkedInThreadMessage[]>();
+  const ids = [...new Set(contactIds)];
+  if (!ids.length) return threads;
+  const db = await getDb();
+  const direction = opts.order === "asc" ? sql`asc` : sql`desc`;
+  const ranked = db
+    .select({
+      contactId: interactions.contactId,
+      rawNotes: interactions.rawNotes,
+      aiSummary: interactions.aiSummary,
+      direction: interactions.direction,
+      interactionDate: interactions.interactionDate,
+      rn: sql<number>`row_number() over (partition by ${interactions.contactId} order by ${interactions.interactionDate} ${direction})`.as(
+        "rn"
+      ),
+    })
+    .from(interactions)
+    .where(
+      and(
+        eq(interactions.userId, userId),
+        inArray(interactions.contactId, ids),
+        eq(interactions.interactionType, "linkedin_message")
+      )
+    )
+    .as("ranked");
+  const rows = await db
+    .select({
+      contactId: ranked.contactId,
+      rawNotes: ranked.rawNotes,
+      aiSummary: ranked.aiSummary,
+      direction: ranked.direction,
+      interactionDate: ranked.interactionDate,
+    })
+    .from(ranked)
+    .where(lte(ranked.rn, opts.limit))
+    .orderBy(ranked.contactId, ranked.rn);
+  for (const { contactId, ...message } of rows) {
+    let thread = threads.get(contactId);
+    if (!thread) threads.set(contactId, (thread = []));
+    thread.push(message);
+  }
+  return threads;
+}
+
+/** A thread as the extractor reads it. */
+function asTimelineMessages(msgs: LinkedInThreadMessage[]) {
+  return msgs.map((m) => ({
+    // Null for rows imported before `direction` existed; the extractor renders those
+    // as "?" exactly as it did when nothing stored the sender at all.
+    from: m.direction === "out" ? "you" : m.direction === "in" ? "them" : null,
+    content: m.rawNotes || "",
+    parsedDate: m.interactionDate ? new Date(m.interactionDate) : null,
+  }));
+}
+
 /**
  * Writes a contact's derived events. `DO NOTHING` rather than the engine's `DO UPDATE`:
  * unlike a re-imported message row, a re-derived event is a *fresh* model output for text
@@ -231,32 +314,56 @@ export async function writeTimelineEvents(
   contactId: string,
   events: LinkedInTimelineEvent[]
 ): Promise<number> {
-  if (events.length === 0) return 0;
+  return writeTimelineEventsMany(userId, [{ contactId, events }]);
+}
+
+/** Rows per insert: well under Postgres' bind-parameter ceiling at ten values a row. */
+const EVENT_INSERT_CHUNK = 500;
+
+/**
+ * `writeTimelineEvents` for many contacts: one insert (per 500 rows) instead of one per
+ * contact, with the same `DO NOTHING` arbiter. Rows keep the order they are given in, so where
+ * two carry the same `externalId` the first still wins — `DO NOTHING` skips a row that
+ * conflicts with one inserted earlier by the same statement, just as it skipped one inserted
+ * by an earlier statement.
+ */
+export async function writeTimelineEventsMany(
+  userId: string,
+  groups: Array<{ contactId: string; events: LinkedInTimelineEvent[] }>
+): Promise<number> {
+  const values = groups.flatMap(({ contactId, events }) =>
+    events.map((ev) => ({
+      userId,
+      contactId,
+      interactionType: ev.interactionType,
+      interactionDate: ev.interactionDate,
+      source: AI_DERIVED_SOURCE,
+      externalId: ev.externalId,
+      rawNotes: ev.rawNotes,
+      aiSummary: ev.summary,
+      topics: [],
+      sameDayOrder: 0,
+    }))
+  );
+  if (values.length === 0) return 0;
   const db = await getDb();
-  const inserted = await db
-    .insert(interactions)
-    .values(
-      events.map((ev) => ({
-        userId,
-        contactId,
-        interactionType: ev.interactionType,
-        interactionDate: ev.interactionDate,
-        source: AI_DERIVED_SOURCE,
-        externalId: ev.externalId,
-        rawNotes: ev.rawNotes,
-        aiSummary: ev.summary,
-        topics: [],
-        sameDayOrder: 0,
-      }))
-    )
-    // The `where` mirrors the partial unique index's own predicate — Postgres will not
-    // accept the index as an arbiter otherwise.
-    .onConflictDoNothing({
-      target: [interactions.userId, interactions.externalId],
-      where: sql`${interactions.externalId} is not null`,
-    })
-    .returning();
-  return inserted.length;
+  let written = 0;
+  for (let i = 0; i < values.length; i += EVENT_INSERT_CHUNK) {
+    const inserted = await db
+      .insert(interactions)
+      .values(values.slice(i, i + EVENT_INSERT_CHUNK))
+      // The `where` mirrors the partial unique index's own predicate — Postgres will not
+      // accept the index as an arbiter otherwise.
+      .onConflictDoNothing({
+        target: [interactions.userId, interactions.externalId],
+        where: sql`${interactions.externalId} is not null`,
+      })
+      // Bare, as before: an explicit field selector defeats Drizzle's overload resolution
+      // against the union `Db` type (the trap noted in action-items.ts).
+      .returning();
+    written += inserted.length;
+  }
+  return written;
 }
 
 /**
@@ -287,7 +394,12 @@ export async function runLinkedInTimelineBackfill(
   let eventsCreated = 0;
   let capped = false;
 
-  // Opt-in (audit A6): the work costs the user's own AI key, so it never starts unasked.
+  // On by default (schema v108) — the owner decided deriving timeline events should just
+  // happen, so there is no user-facing control any more. This read is now an operator kill
+  // switch: flipping `timeline_backfill_enabled` to 0 directly in the database, for one
+  // account, is the only way to stop the spend. It used to gate an opt-in (audit A6); do
+  // not read the check below as "waiting for permission" — permission was already given by
+  // the default.
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
     columns: { timelineBackfillEnabled: true },
@@ -331,21 +443,16 @@ export async function runLinkedInTimelineBackfill(
 
     if (claimed.length === 0) break;
 
+    // Every claimed thread in one read rather than one per contact. The loop below still
+    // walks them one at a time — budget, allowance and extraction are per contact, exactly
+    // as before — it just no longer waits on the database between them.
+    const threads = await loadLinkedInThreads(userId, claimed, { order: "asc", limit: MESSAGE_LIMIT });
+
     for (const contactId of claimed) {
       if (Date.now() - start >= budgetMs) break;
       attempted.add(contactId);
 
-      const msgs = await db.query.interactions.findMany({
-        where: and(
-          eq(interactions.userId, userId),
-          eq(interactions.contactId, contactId),
-          eq(interactions.interactionType, "linkedin_message")
-        ),
-        // The three fields the thread is rebuilt from below.
-        columns: { rawNotes: true, direction: true, interactionDate: true },
-        orderBy: [asc(interactions.interactionDate)],
-        limit: MESSAGE_LIMIT,
-      });
+      const msgs = threads.get(contactId) ?? [];
       if (msgs.length === 0) continue;
 
       // Only a thread that will reach the model spends from the daily allowance.
@@ -359,16 +466,10 @@ export async function runLinkedInTimelineBackfill(
         }
       }
 
-      const asMessages = msgs.map((m) => ({
-        // Null for rows imported before `direction` existed; the extractor renders those
-        // as "?" exactly as it did when nothing stored the sender at all.
-        from: m.direction === "out" ? "you" : m.direction === "in" ? "them" : null,
-        content: m.rawNotes || "",
-        parsedDate: m.interactionDate ? new Date(m.interactionDate) : null,
-      }));
+      const asMessages = asTimelineMessages(msgs);
 
       // A thread that needs the model is queued for a batch instead of asked one at a time:
-      // half price, and nobody is waiting on an opt-in backfill. Threads that need no model
+      // half price, and nobody is waiting on this backfill interactively. Threads that need no model
       // (a lone reach-out) are finished here and now.
       const prepared = prepareTimelineExtraction(contactId, asMessages);
       if (prepared.prompt) {
@@ -408,7 +509,10 @@ export async function runLinkedInTimelineBackfill(
     );
     const skipped = queued.filter((_, i) => !keep[i]);
     queued = queued.filter((_, i) => keep[i]);
-    for (const q of skipped) eventsCreated += await writeTimelineEvents(userId, q.contactId, q.baseEvents);
+    eventsCreated += await writeTimelineEventsMany(
+      userId,
+      skipped.map((q) => ({ contactId: q.contactId, events: q.baseEvents }))
+    );
   }
 
   // Submit what the claim loop queued. The rule-based events are written as each batch is
@@ -424,31 +528,26 @@ export async function runLinkedInTimelineBackfill(
       { items, contactIds: slice.map((q) => q.contactId) }
     );
     if (jobId) {
-      for (const q of slice) eventsCreated += await writeTimelineEvents(userId, q.contactId, q.baseEvents);
+      eventsCreated += await writeTimelineEventsMany(
+        userId,
+        slice.map((q) => ({ contactId: q.contactId, events: q.baseEvents }))
+      );
       continue;
     }
     // Batching unavailable (no key, allowance spent, provider refused): do it the ordinary
-    // way, one thread at a time, exactly as before.
+    // way, one thread at a time, exactly as before. The threads are read together; the
+    // writes stay per contact, each right after its own model call, so a failure partway
+    // through keeps the answers already paid for.
+    const sliceThreads = await loadLinkedInThreads(
+      userId,
+      slice.map((q) => q.contactId),
+      { order: "asc", limit: MESSAGE_LIMIT }
+    );
     for (const q of slice) {
-      const msgs = await db.query.interactions.findMany({
-        where: and(
-          eq(interactions.userId, userId),
-          eq(interactions.contactId, q.contactId),
-          eq(interactions.interactionType, "linkedin_message")
-        ),
-        // The three fields the thread is rebuilt from below.
-        columns: { rawNotes: true, direction: true, interactionDate: true },
-        orderBy: [asc(interactions.interactionDate)],
-        limit: MESSAGE_LIMIT,
-      });
       const events = await extract(
         userId,
         q.contactId,
-        msgs.map((m) => ({
-          from: m.direction === "out" ? "you" : m.direction === "in" ? "them" : null,
-          content: m.rawNotes || "",
-          parsedDate: m.interactionDate ? new Date(m.interactionDate) : null,
-        })),
+        asTimelineMessages(sliceThreads.get(q.contactId) ?? []),
         // Already gated above, on its way into the queue. Passing the same engines means the
         // second ask is answered from the decision cache rather than billed again.
         { engines }
@@ -470,37 +569,19 @@ export async function runLinkedInTimelineBackfill(
 export type TimelineBatchPayload = { items: Array<{ customId: string; contactId: string }>; contactIds: string[] };
 
 /**
- * Writes one batched answer back, or — when `content` is null, meaning the batch will never
- * answer — the heuristic events the inline path falls back to. The thread is read again and
- * prepared exactly as it was at submit, because an event's date is resolved against the
- * message it came from.
+ * The events one batched answer becomes, or — when `content` is null, meaning the batch will
+ * never answer — the heuristic events the inline path falls back to. Prepared from the thread
+ * exactly as it was at submit, because an event's date is resolved against the message it
+ * came from.
  */
-export async function applyTimelineOutcome(
-  userId: string,
+function timelineOutcomeEvents(
   contactId: string,
+  msgs: LinkedInThreadMessage[],
   content: string | null
-): Promise<number> {
-  const db = await getDb();
-  const msgs = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.contactId, contactId),
-      eq(interactions.interactionType, "linkedin_message")
-    ),
-    orderBy: [asc(interactions.interactionDate)],
-    limit: MESSAGE_LIMIT,
-  });
-  if (msgs.length === 0) return 0;
-
-  const { usable } = prepareTimelineExtraction(
-    contactId,
-    msgs.map((m) => ({
-      from: m.direction === "out" ? "you" : m.direction === "in" ? "them" : null,
-      content: m.rawNotes || "",
-      parsedDate: m.interactionDate ? new Date(m.interactionDate) : null,
-    }))
-  );
-  if (usable.length === 0) return 0;
+): LinkedInTimelineEvent[] {
+  if (msgs.length === 0) return [];
+  const { usable } = prepareTimelineExtraction(contactId, asTimelineMessages(msgs));
+  if (usable.length === 0) return [];
 
   let events: LinkedInTimelineEvent[];
   try {
@@ -509,5 +590,71 @@ export async function applyTimelineOutcome(
     // An answer that is not the shape it promised is worth no more than no answer at all.
     events = heuristicTimelineEvents(contactId, usable);
   }
-  return writeTimelineEvents(userId, contactId, dedupeTimelineEvents(events));
+  return dedupeTimelineEvents(events);
+}
+
+/**
+ * Writes one batched answer back (see `timelineOutcomeEvents`). The thread is read again
+ * rather than carried in the batch payload. The one-contact path, and the fallback when a
+ * group in `applyTimelineOutcomes` fails.
+ */
+export async function applyTimelineOutcome(
+  userId: string,
+  contactId: string,
+  content: string | null
+): Promise<number> {
+  const threads = await loadLinkedInThreads(userId, [contactId], { order: "asc", limit: MESSAGE_LIMIT });
+  const events = timelineOutcomeEvents(contactId, threads.get(contactId) ?? [], content);
+  return writeTimelineEvents(userId, contactId, events);
+}
+
+/** Contacts per group when a finished batch is written back. */
+const APPLY_GROUP_SIZE = 50;
+
+/**
+ * `applyTimelineOutcome` for a whole batch: per group of contacts, one thread read and one
+ * insert instead of two round trips per contact.
+ *
+ * One contact must still not cost the rest: a contact whose events cannot be built is handed
+ * to `onError` and left out of its group's write, and a group whose read or write fails (the
+ * insert is one statement, so nothing of it landed) is retried a contact at a time through
+ * `applyTimelineOutcome`, each failure reported on its own.
+ */
+export async function applyTimelineOutcomes(
+  userId: string,
+  outcomes: Array<{ contactId: string; content: string | null }>,
+  onError: (contactId: string, err: unknown) => void
+): Promise<number> {
+  let written = 0;
+  for (let i = 0; i < outcomes.length; i += APPLY_GROUP_SIZE) {
+    const group = outcomes.slice(i, i + APPLY_GROUP_SIZE);
+    const reported = new Set<string>();
+    try {
+      const threads = await loadLinkedInThreads(
+        userId,
+        group.map((o) => o.contactId),
+        { order: "asc", limit: MESSAGE_LIMIT }
+      );
+      const events: Array<{ contactId: string; events: LinkedInTimelineEvent[] }> = [];
+      for (const { contactId, content } of group) {
+        try {
+          events.push({ contactId, events: timelineOutcomeEvents(contactId, threads.get(contactId) ?? [], content) });
+        } catch (err) {
+          reported.add(contactId);
+          onError(contactId, err);
+        }
+      }
+      written += await writeTimelineEventsMany(userId, events);
+    } catch {
+      for (const { contactId, content } of group) {
+        // Already reported, and would only fail the same way again.
+        if (reported.has(contactId)) continue;
+        written += await applyTimelineOutcome(userId, contactId, content).catch((err) => {
+          onError(contactId, err);
+          return 0;
+        });
+      }
+    }
+  }
+  return written;
 }

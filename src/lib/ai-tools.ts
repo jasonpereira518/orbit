@@ -27,9 +27,14 @@ import type { Content, FunctionDeclaration } from "@google/genai";
 import {
   anthropicClient,
   geminiClient,
-  openaiClient,
+  isOpenAiShaped,
+  openAiShapedClient,
+  reportedCostMicros,
   resolveAiAccess,
   runOnGrant,
+  withOpenRouterRouting,
+  type AiAccess,
+  type OpenAiUsageWithCost,
 } from "@/lib/ai-access";
 import { geminiThinking, translatingProviderErrors } from "@/lib/ai";
 import { modelForOperation } from "@/lib/ai-models";
@@ -92,10 +97,16 @@ type DriverInput = {
   tools: ModelTool[];
   temperature?: number;
   maxOutputTokens?: number;
+  /**
+   * The account already resolved for this request (`/api/chat`'s one settings read). The
+   * grant, and its managed-allowance check, is still minted here for this driver alone.
+   */
+  access?: AiAccess;
 };
 
 export async function createToolDriver(input: DriverInput): Promise<ToolDriver> {
-  const grant = await (await resolveAiAccess(input.userId)).completion(input.operation);
+  const access = input.access?.forUser(input.userId) ?? (await resolveAiAccess(input.userId));
+  const grant = await access.completion(input.operation);
   const { provider, keyOwner } = grant;
   const model = modelForOperation(input.operation, grant);
   const temperature = input.temperature ?? 0.1;
@@ -166,8 +177,8 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     };
   }
 
-  if (provider === "openai") {
-    const client = await openaiClient(grant);
+  if (isOpenAiShaped(provider)) {
+    const client = await openAiShapedClient(grant);
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = input.tools.map((t) => ({
       type: "function",
       function: { name: t.name, description: t.description, parameters: toolParameters(t.inputSchema) },
@@ -180,7 +191,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
       async step(signal) {
         const response = await metered(signal, async (report) => {
           const r = await client.chat.completions.create(
-            {
+            withOpenRouterRouting(provider, {
               model,
               ...openaiCompletionOptions(model, {
                 temperature,
@@ -189,10 +200,10 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
               }),
               tools,
               messages,
-            },
+            }),
             { signal }
           );
-          report(tokensFromOpenAi(r));
+          report({ ...tokensFromOpenAi(r), reportedCostMicros: reportedCostMicros(r as OpenAiUsageWithCost) });
           return r;
         });
         const message = response.choices[0]?.message;

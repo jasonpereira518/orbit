@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { JSON_SYSTEM_SUFFIX } from "@/lib/ai-security";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs } from "@/db/schema";
@@ -15,6 +16,7 @@ import { estimateCostMicros } from "@/lib/ai-pricing";
 import { modelForOperation } from "@/lib/ai-models";
 import { recordUsage, type TokenCounts } from "@/lib/usage-events";
 import { reportError } from "@/lib/report-error";
+import { BATCH_HOLD_TTL_MS, packsUsable, placeHold, releaseHold } from "@/lib/credits/ledger";
 
 /**
  * Background AI work through the providers' Batch APIs, which bill at half price.
@@ -25,8 +27,10 @@ import { reportError } from "@/lib/report-error";
  * that fails hands its work back to the feature's ordinary path rather than retrying itself.
  *
  * Submitting and reading both go through the AI gate for a grant: the key never appears
- * here, and a batch on Orbit's managed key counts against that account's allowance
- * (reserved at its estimate while in flight — see `managedUsageThisMonth`).
+ * here. A batch on Orbit's managed key holds its whole estimate against the account's
+ * credits while in flight (operation `batch:<job id>`), so an account cannot queue batch
+ * after batch past its balance; each result settles at its real cost as it is applied, and
+ * the hold is released when the job is settled.
  */
 
 /** Requests per submitted batch. Small enough that one failure loses little. */
@@ -84,7 +88,7 @@ const geminiAdapter: Adapter = {
           model,
           contents: r.user,
           config: {
-            systemInstruction: `${r.system}\n\nRespond with valid JSON only. No markdown fences.`,
+            systemInstruction: `${r.system}${JSON_SYSTEM_SUFFIX}`,
             temperature: r.temperature ?? DEFAULT_TEMPERATURE,
             maxOutputTokens: r.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
             responseMimeType: "application/json",
@@ -149,7 +153,7 @@ const openaiAdapter: Adapter = {
             }),
             response_format: { type: "json_object" },
             messages: [
-              { role: "system", content: `${r.system}\n\nRespond with valid JSON only. No markdown fences.` },
+              { role: "system", content: `${r.system}${JSON_SYSTEM_SUFFIX}` },
               { role: "user", content: r.user },
             ],
           },
@@ -219,7 +223,7 @@ const anthropicAdapter: Adapter = {
         params: {
           model,
           max_tokens: r.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-          system: `${r.system}\n\nRespond with valid JSON only. No markdown fences.`,
+          system: `${r.system}${JSON_SYSTEM_SUFFIX}`,
           messages: [{ role: "user" as const, content: r.user }],
         },
       })),
@@ -301,24 +305,49 @@ export async function submitAiBatch(
   }
 
   let grant: AiGrant;
+  let plan: Awaited<ReturnType<typeof resolveAiAccess>>["plan"];
   try {
-    grant = await (await resolveAiAccess(userId)).completion(operation);
+    const access = await resolveAiAccess(userId);
+    plan = access.plan;
+    grant = await access.completion(operation);
   } catch {
-    // No key, or the allowance is spent: the ordinary path will report that to the person.
+    // No key, or no credits: the ordinary path will report that to the person.
     return null;
   }
+
+  // No batch adapter exists for OpenRouter yet — nothing calls it until a later task wires
+  // its client. The ordinary (non-batch) completion path handles it instead.
+  if (grant.provider === "openrouter") return null;
 
   // The operation's tier, exactly as the inline path picks it (`completeJson`): a batched
   // recruiter scan ran on the person's full model while the eval measured — and the inline
   // path used — the fast one, so batching at half price still cost more than not batching.
   const model = modelForOperation(operation, grant);
   const estCostMicros = estimateBatchMicros(model, requests);
+  const jobId = crypto.randomUUID();
+  const holdOperation = `batch:${jobId}`;
+  if (grant.keyOwner === "orbit" && grant.source === "managed") {
+    // The whole batch's estimate, held for as long as a batch can take to come back. No room
+    // for it means no batch: the inline path then meets the hard stop the ordinary way.
+    const hold = await placeHold({
+      userId,
+      micros: estCostMicros ?? 0,
+      operation: holdOperation,
+      packs: packsUsable(plan),
+      ttlMs: BATCH_HOLD_TTL_MS,
+      // Room for the WHOLE batch, not merely a positive balance: a batch cannot be stopped
+      // halfway the way one call can.
+      floorMicros: Math.max(0, (estCostMicros ?? 0) - 1),
+    });
+    if (!hold) return null;
+  }
   try {
     const { providerBatchId, meta } = await ADAPTERS[grant.provider].submit(grant, model, operation, requests);
     const db = await getDb();
     const [row] = await db
       .insert(aiBatchJobs)
       .values({
+        id: jobId,
         userId,
         operation,
         provider: grant.provider,
@@ -336,6 +365,7 @@ export async function submitAiBatch(
     // A provider that will not take the batch is not a failure of the work — the caller
     // falls back to one call at a time, which is slower and dearer but always available.
     reportError(err, { where: "job.ai-batch.submit", userId, level: "warning", extra: { operation } });
+    await releaseHold(userId, holdOperation).catch(() => {});
     return null;
   }
 }
@@ -454,6 +484,8 @@ export async function settleBatchJob(
     .update(aiBatchJobs)
     .set({ status, errorMessage, completedAt: new Date(), updatedAt: new Date() })
     .where(eq(aiBatchJobs.id, job.id));
+  // Its results have settled (or never will): the reservation goes.
+  await releaseHold(job.userId, `batch:${job.id}`).catch(() => {});
 }
 
 /**

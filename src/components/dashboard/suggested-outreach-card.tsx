@@ -8,7 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-const PREVIEW_COUNT = 5;
+const PREVIEW_COUNT = 4;
 
 /** Shared by the preview list and its collapsed overflow so both lay out alike. */
 const LIST_CLASS =
@@ -22,6 +22,7 @@ export type SuggestedOutreachItem = {
   contactName: string;
   contactTitle?: string | null;
   contactCompany?: string | null;
+  lastInteractionAt?: Date | string | null;
   tier?: "inner" | "mid" | "outer";
 };
 
@@ -29,7 +30,10 @@ export function SuggestedOutreachCard({
   items,
   networkIsEmpty,
   dueFollowUpCount,
+  replyRate,
 }: {
+  /** The account's reply rate, drawn beside the heading. */
+  replyRate?: React.ReactNode;
   items: SuggestedOutreachItem[];
   /** No contacts at all — the only case where "add contacts" is the right advice. */
   networkIsEmpty: boolean;
@@ -45,7 +49,10 @@ export function SuggestedOutreachCard({
   return (
     <Card className="flex h-full flex-col border-border/70 shadow-none">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-        <CardTitle as="h2" className="text-base">Suggested outreach</CardTitle>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <CardTitle as="h2" className="text-base">Suggested outreach</CardTitle>
+          {replyRate}
+        </div>
         <Link
           href="/capture"
           className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
@@ -91,6 +98,7 @@ export function SuggestedOutreachCard({
                   contactName={s.contactName}
                   contactTitle={s.contactTitle}
                   contactCompany={s.contactCompany}
+                  lastInteractionAt={s.lastInteractionAt}
                   tier={s.tier}
                 />
               ))}
@@ -124,6 +132,7 @@ export function SuggestedOutreachCard({
                           contactName={s.contactName}
                           contactTitle={s.contactTitle}
                           contactCompany={s.contactCompany}
+                  lastInteractionAt={s.lastInteractionAt}
                           tier={s.tier}
                         />
                       ))}

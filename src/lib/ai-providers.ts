@@ -1,5 +1,5 @@
-export type AiProvider = "gemini" | "openai" | "anthropic";
-export type EmbeddingBackend = "gemini" | "openai";
+export type AiProvider = "gemini" | "openai" | "anthropic" | "openrouter";
+export type EmbeddingBackend = "gemini" | "openai" | "openrouter";
 
 export const AI_PROVIDERS: Array<{
   id: AiProvider;
@@ -10,6 +10,15 @@ export const AI_PROVIDERS: Array<{
   keyPageUrl: string;
   /** The link's text: names the console, since "Get a key" reads as Orbit selling one. */
   keyPageLabel: string;
+  /**
+   * Whether a person may PICK this provider in the UI. Defaults to true; only OpenRouter
+   * sets it false. `AI_PROVIDERS` is not just a data table — the Settings provider `<Select>`
+   * and the onboarding provider tiles both render straight off it, so an entry added here is
+   * an option shipped to every account. OpenRouter's plumbing is built (types, key column,
+   * probe, routing, OAuth) but deliberately has no user-facing surface, so every list a
+   * person chooses from renders from `SELECTABLE_AI_PROVIDERS` instead.
+   */
+  selectable?: boolean;
 }> = [
   {
     id: "gemini",
@@ -35,28 +44,90 @@ export const AI_PROVIDERS: Array<{
     keyPageUrl: "https://console.anthropic.com/settings/keys",
     keyPageLabel: "Create a key in the Anthropic console",
   },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    keyPlaceholder: "sk-or-v1-...",
+    envVar: "OPENROUTER_API_KEY",
+    keyPageUrl: "https://openrouter.ai/settings/keys",
+    keyPageLabel: "Create a key on OpenRouter",
+  },
 ];
+
+/**
+ * The providers a person may choose, in display order — the ONLY list a user-facing
+ * provider picker may render. All four today, pinned by `scripts/smoke-ai-providers.ts`
+ * so the membership of this list stays a deliberate decision rather than a side effect.
+ * OpenRouter was held out of it while it was plumbing with no card; the AI page now gives
+ * it one, so it is selectable here. The ONBOARDING wizard still offers only the first-party
+ * three — see `wizard-ai-key.tsx` — because a brand-new account should not be asked to go
+ * and mint a key at a fourth service before it can start.
+ * Lookups by id (labels, placeholders) still use `AI_PROVIDERS`: an account already on a
+ * non-selectable provider must still get its real name in status copy.
+ */
+export const SELECTABLE_AI_PROVIDERS = AI_PROVIDERS.filter((p) => p.selectable !== false);
+
+/** Whether a provider id may appear in a user-facing picker or provider list. */
+export function isSelectableAiProvider(id: AiProvider): boolean {
+  return SELECTABLE_AI_PROVIDERS.some((p) => p.id === id);
+}
+
+export type ModelTier = "cheapest" | "balanced" | "best";
+
+const TIER_ORDER: readonly ModelTier[] = ["cheapest", "balanced", "best"];
 
 export const PROVIDER_MODELS: Record<
   AiProvider,
-  Array<{ value: string; label: string }>
+  Array<{ value: string; label: string; tier?: ModelTier }>
 > = {
+  /**
+   * `gemini-2.5-pro` was dropped here (Task 2): Google 404s it for any key issued since,
+   * same as the two `LEGACY_MODEL_MAP`-remapped 2.5 entries.
+   *
+   * Gemini gets two tiers, not three. There is no `best` because there is nothing to put
+   * there: `gemini-3.5-flash` is not it — the recorded evals
+   * (`docs/ai-evals/2026-09-19-gemini-baseline/` vs `-candidate/`) show 3.8 beating 3.5 on
+   * nearly every metric (recruiter recall 0.56→1.00, digest attendeeRecall 0.33→1.00,
+   * transcribe nameRecall 0.70→1.00, 4x lower WER) while costing HALF as much
+   * ($0.75/$3.75 vs $1.50/$9.00, `ai-pricing.ts`) — so 3.5 cannot be sold as "most
+   * accurate" over 3.8 without lying to the user about both quality and price. And no
+   * *stable* Gemini "pro" text model exists to fill the slot instead: Gemini 3.x's stable
+   * channel ships Flash tiers only. `google/gemini-3.1-pro-preview` does exist on
+   * OpenRouter ($2.00/$12.00) but is a preview id — putting a preview in front of
+   * non-technical users as their top-tier choice is exactly the 404-later risk this pass
+   * exists to avoid, so it is deliberately left untagged and unlisted here. (Also true but
+   * not relevant to tiering: `gemini-3.6-flash` and `gemini-3.7-flash` exist at the same
+   * price as 3.8 — this is not an exhaustive list of every live Gemini id, just the ones
+   * worth a tier.)
+   */
   gemini: [
-    { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
-    { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite (cheapest)" },
-    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", tier: "cheapest" },
+    { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash", tier: "balanced" },
   ],
   openai: [
-    { value: "gpt-4o-mini", label: "GPT-4o mini (cheapest)" },
+    { value: "gpt-4o-mini", label: "GPT-4o mini", tier: "cheapest" },
+    { value: "gpt-4.1-mini", label: "GPT-4.1 mini", tier: "balanced" },
+    { value: "gpt-4.1", label: "GPT-4.1", tier: "best" },
     { value: "gpt-4o", label: "GPT-4o" },
-    { value: "gpt-4.1-mini", label: "GPT-4.1 mini" },
-    { value: "gpt-4.1", label: "GPT-4.1" },
   ],
   anthropic: [
-    { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (cheapest)" },
-    { value: "claude-opus-4-5", label: "Claude Opus 4.5" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", tier: "cheapest" },
+    { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", tier: "balanced" },
+    { value: "claude-opus-4-5", label: "Claude Opus 4.5", tier: "best" },
+  ],
+  /**
+   * Verified against `GET https://openrouter.ai/api/v1/models` on 2026-09-23; every one
+   * advertises `response_format`, `structured_outputs`, `tools` and `tool_choice`. OpenRouter
+   * slugs are NOT Orbit's model ids with a vendor prefix — Anthropic uses dots where Orbit
+   * uses dashes (`anthropic/claude-haiku-4.5` against Orbit's `claude-haiku-4-5`) — so this
+   * list is literal. Do not invent additions or derive it from the other providers' lists.
+   */
+  openrouter: [
+    { value: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+    { value: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite (cheapest)" },
+    { value: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
+    { value: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
+    { value: "openai/gpt-5.4-mini", label: "GPT-5.4 Mini" },
   ],
 };
 
@@ -70,8 +141,9 @@ export const PROVIDER_MODELS: Record<
  */
 export const DEFAULT_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.8-flash",
-  openai: "gpt-4o-mini",
+  openai: "gpt-4.1-mini",
   anthropic: "claude-sonnet-4-5",
+  openrouter: "google/gemini-3.8-flash",
 };
 
 /**
@@ -80,14 +152,36 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
  * The 2.5 entries are not cosmetic: Google answers 404 "no longer available to new users"
  * for those models on a key issued since, so a stored 2.5 id is a broken account until it
  * is remapped. They point at the cheapest current model of the same shape.
+ *
+ * `gemini-2.5-pro` has no same-shape stable replacement — Gemini 3.x's stable channel ships
+ * Flash tiers only, no "pro" text model (a preview, `gemini-3.1-pro-preview`, exists but is
+ * deliberately not a landing target — see the comment on `PROVIDER_MODELS.gemini`). "cheapest
+ * current model of the same shape" is a tie-break WITHIN a shape, not licence to change shape:
+ * someone on Pro at $1.25/$10.00 was buying capability, so this remaps to `gemini-3.8-flash`,
+ * the best stable Gemini model — the same destination `gemini-2.5-flash` already has — rather
+ * than the floor.
  */
-const LEGACY_MODEL_MAP: Record<string, string> = {
+export const LEGACY_MODEL_MAP: Record<string, string> = {
   "gemini-2.5-flash": "gemini-3.8-flash",
   "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
+  "gemini-2.5-pro": "gemini-3.8-flash",
   // Was offered as a preset but was never a valid Anthropic id (the 4.0 alias was
   // claude-opus-4-0, and that snapshot retired June 15 2026). Stored settings migrate on read.
   "claude-opus-4": "claude-opus-4-5",
 };
+
+/**
+ * The three a person actually chooses between, in the order they are shown.
+ *
+ * Tagged on the preset entries rather than kept in a second table: two tables drift, and
+ * the guard against that drift is more work than the tag. Untagged entries stay reachable
+ * from Advanced's custom-model field, so nobody already on one loses it.
+ */
+export function tieredModels(provider: AiProvider) {
+  return TIER_ORDER.map((tier) =>
+    PROVIDER_MODELS[provider].find((m) => m.tier === tier)
+  ).filter((m): m is NonNullable<typeof m> => m !== undefined);
+}
 
 /**
  * Anthropic model families that still accept `temperature`.
@@ -106,14 +200,28 @@ const ANTHROPIC_TEMPERATURE_FAMILIES = [
   "claude-opus-4-6",
 ];
 
+/**
+ * The family id inside a model string, whether it arrived bare or as an OpenRouter
+ * `vendor/model` slug. Two normalisations, both load-bearing for the slug form:
+ * `anthropic/claude-sonnet-5` has to lose its vendor prefix to match at all, and OpenRouter
+ * writes the version with a dot (`claude-haiku-4.5`) where Orbit writes a dash
+ * (`claude-haiku-4-5`). Orbit's own ids never contain a dot, so the replace is a no-op on
+ * them. An id this fails to recognise falls safe — temperature is simply omitted.
+ */
+function anthropicFamilyId(model: string): string {
+  const slash = model.indexOf("/");
+  return (slash === -1 ? model : model.slice(slash + 1)).replace(/\./g, "-");
+}
+
 export function anthropicAcceptsTemperature(model: string): boolean {
+  const id = anthropicFamilyId(model);
   return ANTHROPIC_TEMPERATURE_FAMILIES.some(
-    (family) => model === family || model.startsWith(`${family}-`)
+    (family) => id === family || id.startsWith(`${family}-`)
   );
 }
 
 export function resolveAiProvider(value?: string | null): AiProvider {
-  if (value === "openai" || value === "anthropic" || value === "gemini") {
+  if (value === "openai" || value === "anthropic" || value === "gemini" || value === "openrouter") {
     return value;
   }
   return "gemini";
@@ -127,6 +235,7 @@ function modelBelongsToProvider(provider: AiProvider, model: string) {
     return model.startsWith("gpt-") || model.startsWith("o");
   }
   if (provider === "anthropic") return model.startsWith("claude-");
+  if (provider === "openrouter") return model.includes("/");
   return false;
 }
 

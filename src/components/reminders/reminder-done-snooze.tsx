@@ -3,8 +3,9 @@
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { Check, Clock } from "lucide-react";
+import { Check, Clock, CloudUpload } from "lucide-react";
 import { runToastAction } from "@/lib/toast";
+import { useIsQueuedOffline } from "@/lib/offline-queue-store";
 import {
   markReminderDone,
   reopenReminderAction,
@@ -29,9 +30,21 @@ import { Button } from "@/components/ui/button";
 export function ReminderDoneSnooze({ id }: { id: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Done or snoozed while offline: the row is still here because the server has not heard
+  // yet. Said on the row itself, so it does not read as a click that did nothing.
+  const queued = useIsQueuedOffline(id);
 
   return (
-    <div className="flex gap-1 pointer-coarse:gap-4">
+    <div className="flex items-center gap-1 pointer-coarse:gap-4">
+      {queued && (
+        <span
+          className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+          title="Saved on this device — it syncs when you’re back online"
+        >
+          <CloudUpload className="size-3" aria-hidden />
+          Waiting to sync
+        </span>
+      )}
       <Button
         size="icon-sm"
         variant="ghost"
@@ -47,6 +60,7 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
               failure: "Couldn’t mark that done — try again?",
               refresh: () => router.refresh(),
               undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
+              offline: { kind: "reminder.done", args: [id], subject: id },
             }).then((res) => {
               if (res !== undefined) emitTourEvent("reminder.done");
             })
@@ -70,6 +84,7 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
               failure: "Couldn’t snooze that — try again?",
               refresh: () => router.refresh(),
               undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
+              offline: { kind: "reminder.snooze", args: [id, 7], subject: id },
             }).then(() => undefined)
           )
         }

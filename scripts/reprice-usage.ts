@@ -27,7 +27,6 @@
 import { readFileSync } from "node:fs";
 import { estimateCostMicros, formatCostMicros } from "../src/lib/ai-pricing";
 import { aiOperationLabel } from "../src/lib/ai-operations";
-import { MANAGED_AI_BUDGET } from "../src/lib/managed-ai-policy";
 
 type Row = {
   operation: string;
@@ -138,7 +137,7 @@ function main() {
     const ratio = orbit.repriced / orbit.recorded;
     const sameCallCount = Math.ceil((1_000_000 * ratio) / 250_000) * 250_000;
     console.log(
-      `\nManaged keys were under-metered ${ratio.toFixed(2)}×. Keeping the Sep 16 call count means a cap of about ${usd(sameCallCount)} (currently ${usd(MANAGED_AI_BUDGET.monthlyCostMicros)}) — before thinking tokens, which old Gemini rows never recorded.`
+      `\nManaged keys were under-metered ${ratio.toFixed(2)}×. Keeping the Sep 16 call count means a cap of about ${usd(sameCallCount)} (pricing v2 meters credits instead: Pro 200, Max 500) — before thinking tokens, which old Gemini rows never recorded.`
     );
   }
   process.exit(0);

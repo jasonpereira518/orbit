@@ -15,12 +15,16 @@ import * as adminFeedback from "@/lib/admin-feedback";
 import * as broadcast from "@/lib/broadcasts";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
+import type { Plan } from "@/lib/plans/plan-config";
 import { setCompedPlan } from "@/lib/user-settings";
+import { grantLifetime, previewLifetime, revokeLifetime, type LifetimePreview } from "@/lib/admin-lifetime";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
 import {
   PREVIEW_UNRELEASED_COOKIE,
+  setNavOrder,
+  setSurfaceComingSoon,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
@@ -29,12 +33,15 @@ import {
   type ConstellationConfig,
 } from "@/lib/constellation-config";
 import { setStealth } from "@/lib/site-access";
+import { setManagedAiPaused, type ManagedAiSwitchState } from "@/lib/managed-ai-switch";
+import { setWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   inviteToSite,
   revokeSiteInvite,
   SiteInviteError,
   type SiteInviteResult,
 } from "@/lib/site-invites";
+import { UserFacingError } from "@/lib/errors";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -47,7 +54,7 @@ import {
 
 export type CompResult = {
   ok: true;
-  plan: "free" | "orbit" | "lifetime";
+  plan: Plan;
 };
 
 /**
@@ -61,13 +68,18 @@ export type CompResult = {
  */
 export async function setCompAction(input: {
   targetUserId: string;
-  plan: "orbit" | "lifetime" | null;
+  plan: "orbit" | "max" | null;
   reason: string;
 }): Promise<CompResult> {
   const adminUserId = await requireAdminUserId();
 
   const reason = input.reason.trim();
   if (!reason) throw new Error("A reason is required.");
+  // Lifetime has its own audited path (grantLifetimeAction), which also ends a live
+  // subscription at its period end. A comp is Pro or Max only.
+  if (input.plan !== null && input.plan !== "orbit" && input.plan !== "max") {
+    throw new Error("Comp Pro or Max here; Lifetime has its own Grant action.");
+  }
 
   const db = await getDb();
   const before = await db.query.userSettings.findFirst({
@@ -97,6 +109,47 @@ export async function setCompAction(input: {
   // Resolved from the returned row, NOT from getEntitlements(): that helper is a React
   // cache() memo and may still hold the pre-write value within this same request.
   return { ok: true, plan: resolvePlan(row).plan };
+}
+
+/* ------------------------------------------------------------- Lifetime (admin) ------- */
+// Admin-assigned only (pricing v2). The bodies live in `src/lib/admin-lifetime.ts`.
+
+export type { LifetimePreview } from "@/lib/admin-lifetime";
+
+/** What granting or revoking would do to this account — shown before anything changes. */
+export async function previewLifetimeAction(targetUserId: string): Promise<LifetimePreview> {
+  await requireAdminUserId();
+  return previewLifetime(targetUserId);
+}
+
+/** Grant Lifetime; a live subscription is set to end at its period end. Audited. */
+export async function grantLifetimeAction(input: {
+  targetUserId: string;
+  reason: string;
+}): Promise<{ ok: true; subscription: "scheduled" | "none" | "error" }> {
+  const adminUserId = await requireAdminUserId();
+  const result = await grantLifetime(adminUserId, input);
+  revalidateAccount(input.targetUserId);
+  return result;
+}
+
+/** Revoke a comped Lifetime (and, only when asked, a purchased one). Audited. */
+export async function revokeLifetimeAction(input: {
+  targetUserId: string;
+  reason: string;
+  includePurchase?: boolean;
+}): Promise<CompResult> {
+  const adminUserId = await requireAdminUserId();
+  const result = await revokeLifetime(adminUserId, input);
+  revalidateAccount(input.targetUserId);
+  return result;
+}
+
+function revalidateAccount(targetUserId: string) {
+  revalidatePath("/admin");
+  revalidatePath("/admin/users");
+  revalidatePath(`/admin/users/${targetUserId}`);
+  revalidatePath("/admin/billing");
 }
 
 /**
@@ -278,6 +331,35 @@ export async function setSurfaceHiddenAction(input: {
 }
 
 /**
+ * Mark a page coming soon (or release it) for everyone. Same shape and invalidation as
+ * `setSurfaceHiddenAction`: the app shell builds the sidebar's "Soon" tags from this, and
+ * the dashboard, settings and radar jobs all key off it.
+ */
+export async function setSurfaceComingSoonAction(input: {
+  surfaceKey: string;
+  soon: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/** Save the sidebar order for everyone. See `setNavOrder`. */
+export async function setNavOrderAction(input: { order: string[] }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setNavOrder(adminUserId, input.order);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/**
  * Change the constellation filter for everyone.
  *
  * Same shape as the surface toggle above and the same reasoning about invalidation: the
@@ -446,8 +528,9 @@ export async function unsubscribeInterestListAction(input: {
   const removed = await interestList.unsubscribeInterestListRow(input.id);
   // Throws rather than returning a failure shape: ConfirmActionDialog reports success for
   // any resolved promise and only surfaces a rejection, so a returned {ok:false} would
-  // toast "done" over an operation that did nothing.
-  if (!removed) throw new Error("That signup no longer exists.");
+  // toast "done" over an operation that did nothing. UserFacingError so the message
+  // survives production digests and friendlyError can show it.
+  if (!removed) throw new UserFacingError("That signup no longer exists");
 
   await recordAdminAction({
     adminUserId,
@@ -470,7 +553,7 @@ export async function resubscribeInterestListAction(input: {
   const reason = ops.requireReason(input.reason);
 
   const restored = await interestList.resubscribeInterestListRow(input.id);
-  if (!restored) throw new Error("That signup no longer exists.");
+  if (!restored) throw new UserFacingError("That signup no longer exists");
 
   await recordAdminAction({
     adminUserId,
@@ -485,6 +568,87 @@ export async function resubscribeInterestListAction(input: {
   return { ok: true, email: restored.email };
 }
 
+/** In-person event signup: adds the row, names on the pass, welcome email names the event. */
+export async function addManualInterestListSignupAction(input: {
+  email: string;
+  firstName: string;
+  lastName: string;
+  eventLabel: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const added = await interestList.addManualInterestListSignup({
+    email: input.email,
+    firstName: input.firstName,
+    lastName: input.lastName,
+    eventLabel: input.eventLabel,
+  });
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.manual_add",
+    resourceType: "interest_list_signup",
+    resourceId: added.id,
+    detail: { email: added.email, eventLabel: input.eventLabel.trim() },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: added.email };
+}
+
+/** Spreadsheet paste from an event: many people, one event label, join order preserved. */
+export async function addManualInterestListPasteAction(input: {
+  paste: string;
+  eventLabel: string;
+  reason: string;
+}): Promise<{
+  ok: true;
+  added: number;
+  skipped: number;
+  parseErrors: string[];
+  skippedEmails: Array<{ email: string; reason: string }>;
+}> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const result = await interestList.addManualInterestListSignupsFromPaste({
+    paste: input.paste,
+    eventLabel: input.eventLabel,
+  });
+
+  if (result.added.length === 0 && result.skipped.length === 0) {
+    throw new UserFacingError(
+      result.parseErrors[0] ?? "Paste at least one row: timestamp, name, and email."
+    );
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.manual_add_bulk",
+    resourceType: "interest_list_signup",
+    resourceId: result.added[0]?.id ?? "bulk",
+    detail: {
+      eventLabel: input.eventLabel.trim(),
+      added: result.added.map((a) => a.email),
+      skipped: result.skipped,
+      parseErrors: result.parseErrors,
+    },
+    reason,
+  });
+
+  revalidateInterestList();
+  return {
+    ok: true,
+    added: result.added.length,
+    skipped: result.skipped.length,
+    parseErrors: result.parseErrors,
+    skippedEmails: result.skipped,
+  };
+}
+
 export async function deleteInterestListAction(input: {
   id: string;
   /** Must match the row's address. Guards against deleting whatever was scrolled to. */
@@ -497,13 +661,13 @@ export async function deleteInterestListAction(input: {
   // The audit entry records the address, so it is captured before the row is gone — and
   // checked against what the operator typed, so a stale page cannot delete the wrong row.
   const existing = await interestList.loadInterestListRow(input.id);
-  if (!existing) throw new Error("That signup no longer exists.");
+  if (!existing) throw new UserFacingError("That signup no longer exists");
   if (existing.email.trim().toLowerCase() !== input.confirmEmail.trim().toLowerCase()) {
-    throw new Error("That address does not match this signup.");
+    throw new UserFacingError("That address does not match this signup");
   }
 
   const deleted = await interestList.deleteInterestListRow(input.id);
-  if (!deleted) throw new Error("That signup no longer exists.");
+  if (!deleted) throw new UserFacingError("That signup no longer exists");
 
   await recordAdminAction({
     adminUserId,
@@ -531,10 +695,10 @@ export async function bulkUnsubscribeInterestListAction(input: {
 }): Promise<{ ok: true; count: number }> {
   const adminUserId = await requireAdminUserId();
   const reason = ops.requireReason(input.reason);
-  if (input.ids.length === 0) throw new Error("Nothing selected.");
+  if (input.ids.length === 0) throw new UserFacingError("Nothing selected");
 
   const emails = await interestList.bulkUnsubscribeInterestListRows(input.ids);
-  if (emails.length === 0) throw new Error("None of those signups still exist.");
+  if (emails.length === 0) throw new UserFacingError("None of those signups still exist");
 
   await recordAdminAction({
     adminUserId,
@@ -554,10 +718,10 @@ export async function bulkDeleteInterestListAction(input: {
 }): Promise<{ ok: true; count: number }> {
   const adminUserId = await requireAdminUserId();
   const reason = ops.requireReason(input.reason);
-  if (input.ids.length === 0) throw new Error("Nothing selected.");
+  if (input.ids.length === 0) throw new UserFacingError("Nothing selected");
 
   const emails = await interestList.bulkDeleteInterestListRows(input.ids);
-  if (emails.length === 0) throw new Error("None of those signups still exist.");
+  if (emails.length === 0) throw new UserFacingError("None of those signups still exist");
 
   await recordAdminAction({
     adminUserId,
@@ -866,6 +1030,23 @@ export async function setSiteStealthAction(input: {
 }
 
 /**
+ * Show or hide the waitlist page's "Take it for a spin" product demo. Low stakes and easy to
+ * reverse, so unlike stealth it asks for no reason — the audit log still records who and when.
+ * The public page reads it through a ten-second cache; `/interest` is revalidated so the
+ * instance that made the change shows it at once.
+ */
+export async function setWaitlistDemoAction(input: {
+  enabled: boolean;
+}): Promise<{ ok: true; enabled: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  const enabled = await setWaitlistDemoEnabled(adminUserId, input.enabled === true);
+  revalidatePath("/interest");
+  revalidatePath("/");
+  revalidatePath("/admin/growth/interest-list");
+  return { ok: true, enabled };
+}
+
+/**
  * Invite someone to create an account, stealth or not. Returns the result rather than
  * throwing for a bad address, so the form can say what was wrong in place; Clerk and
  * database failures still throw.
@@ -873,10 +1054,12 @@ export async function setSiteStealthAction(input: {
 export async function inviteToSiteAction(input: {
   email: string;
   notify: boolean;
+  firstName?: string | null;
 }): Promise<SiteInviteResult | { kind: "error"; message: string }> {
   const adminUserId = await requireAdminUserId();
+  const firstName = input.firstName?.trim().slice(0, 60) || null;
   try {
-    const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify });
+    const result = await inviteToSite({ adminUserId, email: input.email, notify: input.notify, firstName });
     revalidateAccess();
     return result;
   } catch (err) {
@@ -894,4 +1077,18 @@ export async function revokeSiteInviteAction(input: {
   const { email } = await revokeSiteInvite({ adminUserId, invitationId: input.invitationId });
   revalidateAccess();
   return { ok: true, email };
+}
+
+/**
+ * Pause or resume included AI on Pro and Max. Audited; takes effect on this instance at once
+ * and on every other within 30 seconds. Free and Lifetime are never affected.
+ */
+export async function setManagedAiPausedAction(input: {
+  paused: boolean;
+  reason: string;
+}): Promise<ManagedAiSwitchState> {
+  const adminUserId = await requireAdminUserId();
+  const state = await setManagedAiPaused(adminUserId, input.paused === true, input.reason);
+  revalidatePath("/admin/billing");
+  return state;
 }

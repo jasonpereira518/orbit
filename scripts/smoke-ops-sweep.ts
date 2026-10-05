@@ -32,7 +32,7 @@ async function reset() {
   const db = await getDb();
   await db
     .delete(cronRuns)
-    .where(inArray(cronRuns.job, ["imports.process-stalled", "ops.sweep", "sync.run", "webhooks.drain", "jobs.feed-sweep"]));
+    .where(inArray(cronRuns.job, ["imports.process-stalled", "ops.sweep", "sync.run", "webhooks.drain", "jobs.feed-sweep", "radar.run", "radar.feeds", "radar.digest", "work-history.sweep"]));
   await db.delete(errorEvents).where(inArray(errorEvents.source, [ERROR_SOURCES.backfillFailed, ERROR_SOURCES.stripeUnattributed]));
   await db.execute(sql`UPDATE contacts SET embedding_stale_at = NULL WHERE embedding_stale_at < now() - interval '6 hours'`);
   await db.execute(sql`UPDATE gmail_connections SET next_sync_at = NULL WHERE next_sync_at < now() - interval '1 hour'`);
@@ -42,6 +42,11 @@ async function reset() {
   // Other scripts' disarmed rows would otherwise add up to a burst.
   await db.execute(sql`UPDATE gmail_connections SET sync_error = NULL WHERE next_sync_at IS NULL AND sync_error IS NOT NULL`);
   await db.execute(sql`DELETE FROM rate_limit_buckets WHERE bucket LIKE 'avatarSource.shared:%' OR bucket LIKE 'apollo.%'`);
+  // Other scripts' Pro and Max accounts: with no managed key in the test environment they
+  // would raise `ai.managed_unconfigured` (Pro and Max sell included AI) — a delivery this
+  // script does not expect. Plan columns only; the throwaway database is shared per suite.
+  await db.execute(sql`UPDATE user_settings SET comped_plan = NULL WHERE comped_plan IN ('orbit', 'max')`);
+  await db.execute(sql`UPDATE user_settings SET subscription_plan = NULL, subscription_status = NULL WHERE subscription_plan IN ('orbit', 'max')`);
   // A healthy run of every OTHER scheduled job, so their own "has stopped running"
   // conditions stay quiet.
   //
@@ -52,7 +57,7 @@ async function reset() {
   // is worth paying.
   const recently = new Date(Date.now() - 5 * 60_000);
   await db.insert(cronRuns).values(
-    (["sync.run", "jobs.feed-sweep"] as const).map((job) => ({
+    (["sync.run", "jobs.feed-sweep", "radar.run", "radar.feeds", "radar.digest", "work-history.sweep"] as const).map((job) => ({
       job,
       status: "ok" as const,
       trigger: "manual" as const,

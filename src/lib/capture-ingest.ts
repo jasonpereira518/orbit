@@ -1,4 +1,5 @@
 import { parseIcsEvents } from "@/lib/calendar-import";
+import { mergeHints } from "@/lib/capture/merge-hints";
 import {
   transcribeAudioWithAI,
   type TranscriptionEngine,
@@ -289,26 +290,6 @@ export function normalizePastedCaptureText(text: string): NormalizedCaptureInput
   return { text: trimmed, hints: {}, sources: ["text"] };
 }
 
-function mergeHints(
-  base: CaptureParseHints,
-  extra: CaptureParseHints
-): CaptureParseHints {
-  const seedPeople = [...(base.seedPeople || []), ...(extra.seedPeople || [])];
-  const seen = new Set<string>();
-  const deduped = seedPeople.filter((p) => {
-    const key = `${(p.email || "").toLowerCase()}|${(p.name || "").toLowerCase()}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return Boolean(p.name || p.email);
-  });
-
-  return {
-    eventDate: base.eventDate || extra.eventDate || null,
-    seedPeople: deduped.length ? deduped : undefined,
-    interactionType: base.interactionType || extra.interactionType || null,
-  };
-}
-
 /**
  * Normalize text + optional media uploads into a single capture corpus.
  * Nothing here stores anything: audio is transcribed and dropped, and photos are kept only
@@ -319,6 +300,8 @@ export async function normalizeCaptureInput(
   input: {
     text?: string;
     files?: CaptureMediaFile[];
+    /** This request's pages' place in the whole note, when it arrives in parts. */
+    pageNumbering?: { offset: number; total: number };
   }
 ): Promise<NormalizedCaptureInput> {
   const files = (input.files || []).map((f) => ({
@@ -421,7 +404,8 @@ export async function normalizeCaptureInput(
           ? img.mimeType
           : "image/jpeg",
         base64: img.base64,
-      }))
+      })),
+      input.pageNumbering
     );
 
     const succeeded = pages.filter((page) => page.ok && page.text.trim()).length;

@@ -1091,7 +1091,8 @@
             "fullName": "Amara Diallo",
             "preferredName": null,
             "title": "Head of Talent",
-            "company": "Bellwether Ventures"
+            "company": "Bellwether Ventures",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1101,7 +1102,8 @@
             "fullName": "Olivia Brooks",
             "preferredName": null,
             "title": "Alumni Relations Lead",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1111,7 +1113,8 @@
             "fullName": "Ben Carter",
             "preferredName": null,
             "title": "Computer Science Student",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1121,7 +1124,8 @@
             "fullName": "Priya Nair",
             "preferredName": null,
             "title": "Founding Engineer",
-            "company": "Notion"
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1131,7 +1135,8 @@
             "fullName": "Marcus Webb",
             "preferredName": null,
             "title": "Engineering Lead",
-            "company": "Linear"
+            "company": "Linear",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1141,7 +1146,8 @@
             "fullName": "Andre Silva",
             "preferredName": null,
             "title": "Head of Platform",
-            "company": "Google"
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1151,7 +1157,8 @@
             "fullName": "Victor Reyes",
             "preferredName": null,
             "title": "Software Engineer",
-            "company": "Anthropic"
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1161,7 +1168,8 @@
             "fullName": "Maya Thompson",
             "preferredName": null,
             "title": "Program Director",
-            "company": "Innovate Carolina"
+            "company": "Innovate Carolina",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1171,7 +1179,8 @@
             "fullName": "Fatima Nasser",
             "preferredName": null,
             "title": "Product Manager",
-            "company": "Stripe"
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1181,7 +1190,8 @@
             "fullName": "David Kim",
             "preferredName": null,
             "title": "Engineering Manager",
-            "company": "OpenAI"
+            "company": "OpenAI",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1191,7 +1201,8 @@
             "fullName": "Daniel Osei",
             "preferredName": null,
             "title": "Founder & CTO",
-            "company": "Northlight Robotics"
+            "company": "Northlight Robotics",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1201,7 +1212,8 @@
             "fullName": "Hassan Ali",
             "preferredName": null,
             "title": "Senior Backend Engineer",
-            "company": "Notion"
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1211,7 +1223,8 @@
             "fullName": "Marcus Lee",
             "preferredName": null,
             "title": "Technical Recruiter",
-            "company": "Stripe"
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1221,7 +1234,8 @@
             "fullName": "Yuki Tanaka",
             "preferredName": null,
             "title": "Research Scientist",
-            "company": "Anthropic"
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1231,7 +1245,8 @@
             "fullName": "Grace Whitfield",
             "preferredName": null,
             "title": "Angel Investor",
-            "company": "Independent"
+            "company": "Independent",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1241,7 +1256,8 @@
             "fullName": "Sarah Chen",
             "preferredName": null,
             "title": "Partnerships Lead",
-            "company": "OpenAI"
+            "company": "OpenAI",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1251,7 +1267,8 @@
             "fullName": "Chris Nowak",
             "preferredName": null,
             "title": "Engineering Manager",
-            "company": "Google"
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1261,7 +1278,8 @@
             "fullName": "Sofia Marchetti",
             "preferredName": null,
             "title": "Design Lead",
-            "company": "Figma"
+            "company": "Figma",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -1271,7 +1289,8 @@
             "fullName": "Leo Fernandez",
             "preferredName": null,
             "title": "Founder",
-            "company": "Tidepool Analytics"
+            "company": "Tidepool Analytics",
+            "lastInteractionAt": "<ts>"
           }
         ]
       ]
@@ -3272,7 +3291,9 @@
         "url": "/contacts/<contacts:Olivia Brooks>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Olivia Brooks>"
+        "contactId": "<contacts:Olivia Brooks>",
+        "contactTitle": "Alumni Relations Lead",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "followup:<contacts:Ben Carter>:<date>",
@@ -3282,7 +3303,9 @@
         "url": "/contacts/<contacts:Ben Carter>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Ben Carter>"
+        "contactId": "<contacts:Ben Carter>",
+        "contactTitle": "Computer Science Student",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "reminder:<reminders:Send Sarah the retrieval write-up>",
@@ -3303,7 +3326,9 @@
         "url": "/contacts/<contacts:Sarah Chen>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Sarah Chen>"
+        "contactId": "<contacts:Sarah Chen>",
+        "contactTitle": "Partnerships Lead",
+        "company": "OpenAI"
       },
       {
         "id": "reminder:<reminders:Send Grace the quarterly update>",
@@ -3324,7 +3349,9 @@
         "url": "/contacts/<contacts:Grace Whitfield>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:Grace Whitfield>"
+        "contactId": "<contacts:Grace Whitfield>",
+        "contactTitle": "Angel Investor",
+        "company": "Independent"
       },
       {
         "id": "reminder:<reminders:Add James to the monthly update>",
@@ -3345,7 +3372,9 @@
         "url": "/contacts/<contacts:James Okafor>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:James Okafor>"
+        "contactId": "<contacts:James Okafor>",
+        "contactTitle": "Partner",
+        "company": "Bellwether Ventures"
       },
       {
         "id": "followup:<contacts:David Kim>:<date>",
@@ -3355,7 +3384,9 @@
         "url": "/contacts/<contacts:David Kim>",
         "dueAt": "<ts>",
         "urgency": "due",
-        "contactId": "<contacts:David Kim>"
+        "contactId": "<contacts:David Kim>",
+        "contactTitle": "Engineering Manager",
+        "company": "OpenAI"
       },
       {
         "id": "reminder:<reminders:Send Maya the showcase one-liner>",
@@ -3398,7 +3429,9 @@
         "url": "/contacts/<contacts:Maya Thompson>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Maya Thompson>"
+        "contactId": "<contacts:Maya Thompson>",
+        "contactTitle": "Program Director",
+        "company": "Innovate Carolina"
       },
       {
         "id": "followup:<contacts:Dr. Elena Vasquez>:<date>",
@@ -3408,7 +3441,9 @@
         "url": "/contacts/<contacts:Dr. Elena Vasquez>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Dr. Elena Vasquez>"
+        "contactId": "<contacts:Dr. Elena Vasquez>",
+        "contactTitle": "Professor of Computer Science",
+        "company": "UNC Chapel Hill"
       },
       {
         "id": "reminder:<reminders:Call Tom about API versioning>",
@@ -3429,7 +3464,9 @@
         "url": "/contacts/<contacts:Fatima Nasser>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Fatima Nasser>"
+        "contactId": "<contacts:Fatima Nasser>",
+        "contactTitle": "Product Manager",
+        "company": "Stripe"
       },
       {
         "id": "followup:<contacts:Marcus Lee>:<date>",
@@ -3439,7 +3476,9 @@
         "url": "/contacts/<contacts:Marcus Lee>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Marcus Lee>"
+        "contactId": "<contacts:Marcus Lee>",
+        "contactTitle": "Technical Recruiter",
+        "company": "Stripe"
       },
       {
         "id": "reminder:<reminders:Book a venue for the Orbit user dinner>",
@@ -3460,7 +3499,9 @@
         "url": "/contacts/<contacts:Victor Reyes>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Victor Reyes>"
+        "contactId": "<contacts:Victor Reyes>",
+        "contactTitle": "Software Engineer",
+        "company": "Anthropic"
       },
       {
         "id": "followup:<contacts:Aisha Rahman>:<date>",
@@ -3470,7 +3511,9 @@
         "url": "/contacts/<contacts:Aisha Rahman>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Aisha Rahman>"
+        "contactId": "<contacts:Aisha Rahman>",
+        "contactTitle": "Senior Product Manager",
+        "company": "Google"
       },
       {
         "id": "followup:<contacts:Priya Nair>:<date>",
@@ -3480,7 +3523,9 @@
         "url": "/contacts/<contacts:Priya Nair>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Priya Nair>"
+        "contactId": "<contacts:Priya Nair>",
+        "contactTitle": "Founding Engineer",
+        "company": "Notion"
       },
       {
         "id": "followup:<contacts:Nina Petrova>:<date>",
@@ -3490,7 +3535,9 @@
         "url": "/contacts/<contacts:Nina Petrova>",
         "dueAt": "<ts>",
         "urgency": "upcoming",
-        "contactId": "<contacts:Nina Petrova>"
+        "contactId": "<contacts:Nina Petrova>",
+        "contactTitle": "Co-founder & CEO",
+        "company": "Lumen Health"
       },
       {
         "id": "suggested_reminder:<suggested_reminders:Send Nina the pricing draft>",
@@ -5047,8 +5094,11 @@
     "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
     "xHandle": null,
     "website": null,
+    "blueskyHandle": null,
+    "mastodonAcct": null,
     "profileImageUrl": null,
     "profileImageCheckedAt": null,
+    "workHistoryDueAt": null,
     "relationshipScore": 4,
     "statedCloseness": 4,
     "priorityLevel": 2,
@@ -5250,7 +5300,10 @@
     "hasLinkedIn": true,
     "email": "sarah.chen@example.com",
     "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
-    "canSendEmail": false
+    "canSendEmail": false,
+    "sendBlock": "not_connected",
+    "sendBlockProvider": null,
+    "outlookAvailable": false
   },
   "action: listRecentMerges": [],
   "action: getSettings": {
@@ -5279,9 +5332,13 @@
       "hasPersonalKey": false,
       "managedConfigured": false,
       "canTranscribe": false,
-      "allowance": null
+      "preference": null,
+      "managedPaused": false,
+      "credits": null
     },
     "hasApolloKey": false,
+    "workHistoryAutoEnabled": true,
+    "radarDigestEnabled": true,
     "hasApiKey": false,
     "providers": [
       {
@@ -5299,6 +5356,12 @@
       {
         "id": "anthropic",
         "label": "Anthropic",
+        "hasPersonalKey": false,
+        "managedAvailable": false
+      },
+      {
+        "id": "openrouter",
+        "label": "OpenRouter",
         "hasPersonalKey": false,
         "managedAvailable": false
       }
@@ -5329,61 +5392,97 @@
     "desktopNotificationsEnabled": null
   },
   "action: getIntegrationStatuses": {
-    "ai": {
-      "state": "off",
-      "detail": "No key yet"
+    "pages": {
+      "ai": {
+        "state": "off",
+        "detail": "Not on yet"
+      },
+      "outreach": {
+        "state": "off",
+        "detail": "Not set up"
+      },
+      "reminders": {
+        "state": "off",
+        "detail": "Off"
+      },
+      "api": {
+        "state": "on",
+        "detail": "1 key"
+      },
+      "webhooks": {
+        "state": "off",
+        "detail": "None"
+      },
+      "google": {
+        "state": "off",
+        "detail": "Unavailable"
+      },
+      "microsoft": {
+        "state": "off",
+        "detail": "Unavailable"
+      },
+      "linkedin": {
+        "state": "on",
+        "detail": "Imported 4 months ago"
+      },
+      "assistants": {
+        "state": "none",
+        "detail": "Works on every plan"
+      }
     },
-    "outreach": {
-      "state": "off",
-      "detail": "Not set up"
+    "accounts": {
+      "google": {
+        "state": "not_configured",
+        "email": null,
+        "capabilities": {}
+      },
+      "microsoft": {
+        "state": "not_configured",
+        "email": null,
+        "capabilities": {}
+      }
     },
-    "calendar": {
-      "state": "off",
-      "detail": "Off"
-    },
-    "api": {
-      "state": "on",
-      "detail": "1 key"
-    },
-    "webhooks": {
-      "state": "off",
-      "detail": "None"
-    },
-    "google": {
-      "state": "off",
-      "detail": "Unavailable"
-    },
-    "gmail": {
-      "state": "off",
-      "detail": "Unavailable"
-    },
-    "outlook": {
-      "state": "off",
-      "detail": "Unavailable"
-    },
-    "linkedin": {
-      "state": "off",
-      "detail": "Upload a CSV export"
-    },
-    "calendar_ics": {
-      "state": "off",
-      "detail": "No feeds"
-    },
-    "luma": {
-      "state": "off",
-      "detail": "Not connected"
-    },
-    "eventbrite": {
-      "state": "off",
-      "detail": "Not connected"
-    },
-    "apollo": {
-      "state": "off",
-      "detail": "No key yet"
-    },
-    "zapier": {
-      "state": "on",
-      "detail": "1 key"
+    "attention": [
+      {
+        "id": "ai-off",
+        "tab": "ai",
+        "message": "AI isn’t on yet, so notes and recruiter search can’t use it.",
+        "action": "Turn on AI"
+      }
+    ],
+    "connectors": {
+      "google": {
+        "state": "off",
+        "detail": "Unavailable"
+      },
+      "outlook": {
+        "state": "off",
+        "detail": "Unavailable"
+      },
+      "linkedin": {
+        "state": "on",
+        "detail": "Imported 4 months ago"
+      },
+      "calendar_ics": {
+        "state": "off",
+        "detail": "No feeds"
+      },
+      "luma": {
+        "state": "off",
+        "detail": "Not connected"
+      },
+      "eventbrite": {
+        "state": "off",
+        "detail": "Not connected"
+      },
+      "apollo": {
+        "state": "off",
+        "detail": "No key yet"
+      },
+      "zapier": {
+        "state": "on",
+        "detail": "1 key"
+      }
     }
   },
   "lib: listContactMentions": {
@@ -5425,7 +5524,8 @@
     "basisInteractionId": "<interactions:Thirty minutes on what a Codex integration would need. She w>",
     "nextStep": null,
     "model": "demo-seed",
-    "inputHash": null
+    "inputHash": null,
+    "goalFit": null
   },
   "v1 me": {
     "status": 200,
@@ -6565,11 +6665,17 @@
         "capabilities": {
           "hasAiKey": false,
           "hasApolloKey": false,
-          "aiProvider": "gemini"
+          "aiProvider": "gemini",
+          "radarCaptureLinkedinActivity": false
         },
         "stats": {
           "contactCount": 25,
           "dueFollowUpCount": 6
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
         }
       }
     }
@@ -6779,8 +6885,11 @@
       "linkedinUrl": "https://www.linkedin.com/in/sarah-chen-demo",
       "xHandle": null,
       "website": null,
+      "blueskyHandle": null,
+      "mastodonAcct": null,
       "profileImageUrl": null,
       "profileImageCheckedAt": null,
+      "workHistoryDueAt": null,
       "relationshipScore": 4,
       "statedCloseness": 4,
       "priorityLevel": 2,
@@ -7258,6 +7367,65 @@
         "contactId": "<contacts:Sarah Chen>",
         "nextFollowUpAt": "<ts>",
         "reminderId": "<reminders:Follow up with Sarah Chen>"
+      }
+    }
+  },
+  "ext save post to radar, capture off (route)": {
+    "status": 400,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "message": "Saving LinkedIn activity is off. Turn it on in Radar’s settings first."
+      }
+    }
+  },
+  "ext save post to radar (route)": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "saved": true,
+        "duplicate": false
+      }
+    }
+  },
+  "ext save post to radar again (route)": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "saved": true,
+        "duplicate": true
+      }
+    }
+  },
+  "ext me, post saving on": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "contractVersion": 1,
+        "user": {
+          "name": "Demo User",
+          "email": "demo@orbit.local",
+          "imageUrl": null
+        },
+        "capabilities": {
+          "hasAiKey": false,
+          "hasApolloKey": false,
+          "aiProvider": "gemini",
+          "radarCaptureLinkedinActivity": true
+        },
+        "stats": {
+          "contactCount": 26,
+          "dueFollowUpCount": 5
+        },
+        "plan": {
+          "id": "free",
+          "label": "Free Plan",
+          "paid": false
+        }
       }
     }
   },
@@ -8381,7 +8549,8 @@
             "fullName": "Rachel Adeyemi",
             "preferredName": null,
             "title": "Director of Talent",
-            "company": "Figma"
+            "company": "Figma",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8391,7 +8560,8 @@
             "fullName": "Nina Petrova",
             "preferredName": null,
             "title": "Co-founder & CEO",
-            "company": "Lumen Health"
+            "company": "Lumen Health",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8401,7 +8571,8 @@
             "fullName": "James Okafor",
             "preferredName": null,
             "title": "Partner",
-            "company": "Bellwether Ventures"
+            "company": "Bellwether Ventures",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8411,7 +8582,8 @@
             "fullName": "Amara Diallo",
             "preferredName": null,
             "title": "Head of Talent",
-            "company": "Bellwether Ventures"
+            "company": "Bellwether Ventures",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8421,7 +8593,8 @@
             "fullName": "Olivia Brooks",
             "preferredName": null,
             "title": "Alumni Relations Lead",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8431,7 +8604,8 @@
             "fullName": "Ben Carter",
             "preferredName": null,
             "title": "Computer Science Student",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8441,7 +8615,8 @@
             "fullName": "Priya Nair",
             "preferredName": null,
             "title": "Founding Engineer",
-            "company": "Notion"
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8451,7 +8626,8 @@
             "fullName": "Marcus Webb",
             "preferredName": null,
             "title": "Engineering Lead",
-            "company": "Linear"
+            "company": "Linear",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8461,7 +8637,8 @@
             "fullName": "Andre Silva",
             "preferredName": null,
             "title": "Head of Platform",
-            "company": "Google"
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8471,7 +8648,8 @@
             "fullName": "Victor Reyes",
             "preferredName": null,
             "title": "Software Engineer",
-            "company": "Anthropic"
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8481,7 +8659,8 @@
             "fullName": "Maya Thompson",
             "preferredName": null,
             "title": "Program Director",
-            "company": "Innovate Carolina"
+            "company": "Innovate Carolina",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8491,7 +8670,8 @@
             "fullName": "Fatima Nasser",
             "preferredName": null,
             "title": "Product Manager",
-            "company": "Stripe"
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8501,7 +8681,8 @@
             "fullName": "David Kim",
             "preferredName": null,
             "title": "Engineering Manager",
-            "company": "OpenAI"
+            "company": "OpenAI",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8511,7 +8692,8 @@
             "fullName": "Daniel Osei",
             "preferredName": null,
             "title": "Founder & CTO",
-            "company": "Northlight Robotics"
+            "company": "Northlight Robotics",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8521,7 +8703,8 @@
             "fullName": "Hassan Ali",
             "preferredName": null,
             "title": "Senior Backend Engineer",
-            "company": "Notion"
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8531,7 +8714,8 @@
             "fullName": "Marcus Lee",
             "preferredName": null,
             "title": "Technical Recruiter",
-            "company": "Stripe"
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8541,7 +8725,8 @@
             "fullName": "Yuki Tanaka",
             "preferredName": null,
             "title": "Research Scientist",
-            "company": "Anthropic"
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8551,7 +8736,8 @@
             "fullName": "Grace Whitfield",
             "preferredName": null,
             "title": "Angel Investor",
-            "company": "Independent"
+            "company": "Independent",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8561,7 +8747,8 @@
             "fullName": "Chris Nowak",
             "preferredName": null,
             "title": "Engineering Manager",
-            "company": "Google"
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8571,7 +8758,8 @@
             "fullName": "Sofia Marchetti",
             "preferredName": null,
             "title": "Design Lead",
-            "company": "Figma"
+            "company": "Figma",
+            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8581,7 +8769,8 @@
             "fullName": "Leo Fernandez",
             "preferredName": null,
             "title": "Founder",
-            "company": "Tidepool Analytics"
+            "company": "Tidepool Analytics",
+            "lastInteractionAt": "<ts>"
           }
         ]
       ]
@@ -10660,7 +10849,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.526255,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -10692,6 +10883,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -10729,7 +10921,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.454951,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -10761,6 +10955,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -10796,7 +10991,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.324546,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -10828,6 +11025,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -10859,14 +11057,16 @@
       "ai_summary": "Ben Carter is Computer Science Student at UNC Chapel Hill. How you met: Hackathon judging at UNC. Built a genuinely good retrieval demo at HackNC in a weekend. Graduating in May and looking for an internship. Worth staying close to.",
       "company_id": "<companies:UNC Chapel Hill>",
       "first_name": "Ben",
-      "search_tsv": "'a':38,46,61,69 'an':54,77 'and':51,74 'at':17C,26,35,43,66 'ben':1A,20 'built':37,60 'carter':2A,21 'chapel':4B,7B,12C,28 'close':58,81 'computer':9B,23 'demo':42,65 'for':53,76 'genuinely':39,62 'good':40,63 'graduating':48,71 'hackathon':15C,33 'hacknc':19C,44,67 'hill':5B,8B,13C,29 'how':30 'in':45,49,68,72 'internship':55,78 'is':22 'judging':16C,34 'looking':52,75 'may':50,73 'met':32 'nc':14C 'retrieval':41,64 'science':10B,24 'staying':57,80 'student':11B,25 'to':59,82 'unc':3B,6B,18C,27,36 'weekend':47,70 'worth':56,79 'you':31",
+      "search_tsv": "'a':38,46,61,69 'an':54,77 'and':51,74 'at':17C,26,35,43,66 'ben':1A,20 'built':37,60 'carter':2A,21 'chapel':4B,7B,12C,28 'close':58,81 'computer':9B,23 'demo':42,65 'for':53,76 'genuinely':39,62 'good':40,63 'graduating':48,71 'hackathon':15C,33 'hacknc':19C,44,67 'hill':5B,8B,13C,29 'how':30 'in':45,49,68,72 'internship':55,78 'is':22 'judging':16C,34 'looking':52,75 'met':32 'nc':14C 'retrieval':41,64 'science':10B,24 'staying':57,80 'student':11B,25 'to':59,82 'unc':3B,6B,18C,27,36 'weekend':47,70 'worth':56,79 'you':31",
       "met_context": "HackNC",
       "orbit_score": 2,
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.49756,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -10898,6 +11098,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -10933,7 +11134,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.27669,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -10965,6 +11168,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11000,7 +11204,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.418147,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11032,6 +11238,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11069,7 +11276,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.40021,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11101,6 +11310,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11139,7 +11349,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.771154,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11171,6 +11383,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11209,7 +11422,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.409512,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11241,6 +11456,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11276,7 +11492,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.255,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11308,6 +11526,7 @@
         "knownWeightShare": 0.15
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11343,7 +11562,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.51086,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11375,6 +11596,7 @@
         "knownWeightShare": 0.7
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11413,7 +11635,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.442721,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11445,6 +11669,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11480,7 +11705,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.37256,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11514,6 +11741,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11553,7 +11781,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.532241,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11585,6 +11815,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11620,7 +11851,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.354222,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11652,6 +11885,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11690,7 +11924,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.586005,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11722,6 +11958,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11760,7 +11997,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.602105,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11795,6 +12034,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11833,7 +12073,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.552619,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11865,6 +12107,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11903,7 +12146,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.74794,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -11935,6 +12180,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -11970,7 +12216,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.28665,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12002,6 +12250,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12040,7 +12289,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.679665,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12075,6 +12326,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12110,7 +12362,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.350052,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12142,6 +12396,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12174,14 +12429,16 @@
       "ai_summary": "Sarah Chen is Partnerships Lead at OpenAI. How you met: <day> · AWS Summit — hallway track after the inference keynote. Runs partnerships for the Codex team. Spent most of our conversation on the cost of inference at scale and why most startups over-provision GPUs. Offered to look at Orbit's retrieval setup if I send her a write-up. Prefers email over LinkedIn. Recent conversations covered: Golden: caught up about the launch.; Thirty minutes on what a Codex integration would need. She wants a one-page architecture and a short demo video before…; Introduced me to David Kim on her team for the evaluation-infrastructure conversation..",
       "company_id": "<companies:OpenAI>",
       "first_name": "Sarah",
-      "search_tsv": "'..':133 '2026':20C,33 'a':80,101,108,114,172 'about':94 'after':14C,38 'and':60,113,152 'architecture':112 'at':26,58,71,150,163 'aws':10C,18C,34 'before':118 'ca':9C 'caught':92 'chen':2A,22 'codex':46,102,138 'conversation':52,132,144 'conversations':89 'cost':55,147 'covered':90 'david':122 'demo':116 'email':85,177 'evaluation':130 'evaluation-infrastructure':129 'for':44,127,136 'francisco':8C 'golden':4B,91 'gpus':67,159 'hallway':12C,36 'her':79,125,171 'how':28 'i':77,169 'if':76,168 'inference':16C,40,57,149 'infrastructure':131 'integration':103 'introduced':119 'is':23 'jul':31 'keynote':17C,41 'kim':123 'launch':96 'lead':25 'linkedin':87,179 'look':70,162 'me':120 'met':30 'minutes':98 'most':49,62,141,154 'need':105 'of':50,56,142,148 'offered':68,160 'on':53,99,124,145 'one':110 'one-page':109 'openai':3B,27 'orbit':72,164 'our':51,143 'over':65,86,157,178 'over-provision':64,156 'page':111 'partnerships':24,43,135 'prefers':84,176 'provision':66,158 'recent':88 'retrieval':74,166 'runs':42,134 's':73,165 'san':7C 'sarah':1A,21 'sarah.chen@example.com':6C 'scale':59,151 'send':78,170 'setup':75,167 'she':106 'short':115 'spent':48,140 'startups':63,155 'summit':11C,19C,35 'team':47,126,139 'the':15C,39,45,54,95,128,137,146 'thirty':97 'title':5B 'to':69,121,161 'track':13C,37 'up':83,93,175 'video':117 'wants':107 'what':100 'why':61,153 'would':104 'write':82,174 'write-up':81,173 'you':29",
+      "search_tsv": "'..':133 '2026':20C,33 'a':80,101,108,114,172 'about':94 'after':14C,38 'and':60,113,152 'architecture':112 'at':26,58,71,150,163 'aws':10C,18C,34 'before':118 'ca':9C 'caught':92 'chen':2A,22 'codex':46,102,138 'conversation':52,132,144 'conversations':89 'cost':55,147 'covered':90 'david':122 'demo':116 'email':85,177 'evaluation':130 'evaluation-infrastructure':129 'for':44,127,136 'francisco':8C 'golden':4B,91 'gpus':67,159 'hallway':12C,36 'her':79,125,171 'how':28 'i':77,169 'if':76,168 'inference':16C,40,57,149 'infrastructure':131 'integration':103 'introduced':119 'is':23 'keynote':17C,41 'kim':123 'launch':96 'lead':25 'linkedin':87,179 'look':70,162 'me':120 'met':30 'minutes':98 'most':49,62,141,154 'need':105 'of':50,56,142,148 'offered':68,160 'on':53,99,124,145 'one':110 'one-page':109 'openai':3B,27 'orbit':72,164 'our':51,143 'over':65,86,157,178 'over-provision':64,156 'page':111 'partnerships':24,43,135 'prefers':84,176 'provision':66,158 'recent':88 'retrieval':74,166 'runs':42,134 's':73,165 'san':7C 'sarah':1A,21 'sarah.chen@example.com':6C 'scale':59,151 'send':78,170 'setup':75,167 'she':106 'short':115 'spent':48,140 'startups':63,155 'summit':11C,19C,35 'team':47,126,139 'the':15C,39,45,54,95,128,137,146 'thirty':97 'title':5B 'to':69,121,161 'track':13C,37 'up':83,93,175 'video':117 'wants':107 'what':100 'why':61,153 'would':104 'write':82,174 'write-up':81,173 'you':29",
       "met_context": "AWS Summit 2026",
       "orbit_score": 5,
       "cadence_days": null,
       "linkedin_url": "https://www.linkedin.com/in/sarah-chen-demo",
       "closeness_raw": 0.914428,
       "linkedin_slug": "sarah-chen-demo",
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12216,6 +12473,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12253,7 +12511,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.562079,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12287,6 +12547,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12324,7 +12585,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.542824,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12358,6 +12621,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12396,7 +12660,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.569512,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12431,6 +12697,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -12466,7 +12733,9 @@
       "linkedin_url": null,
       "closeness_raw": 0.548583,
       "linkedin_slug": null,
+      "mastodon_acct": null,
       "opportunities": [],
+      "bluesky_handle": null,
       "cadence_phrase": null,
       "cadence_set_at": null,
       "cadence_source": null,
@@ -12501,6 +12770,7 @@
         "knownWeightShare": 1
       },
       "last_interaction_at": "<ts>",
+      "work_history_due_at": null,
       "first_interaction_at": "<ts>",
       "closeness_computed_at": "<ts>",
       "profile_image_checked_at": null
@@ -13985,6 +14255,7 @@
       "id": "<action_items:Add James to the monthly investor update>",
       "text": "Add James to the monthly investor update",
       "status": "open",
+      "owed_by": null,
       "user_id": "demo-user",
       "position": 0,
       "item_hash": "c92394f21ae206569b86463d4e8af779585ee9b6fc679640f0eff444f294fb7a",
@@ -13997,6 +14268,7 @@
       "id": "<action_items:Record a 3-minute demo video>",
       "text": "Record a 3-minute demo video",
       "status": "open",
+      "owed_by": null,
       "user_id": "demo-user",
       "position": 1,
       "item_hash": "45d322e5b345d7f59a5d24ffbed09f09f9b4116d0c4bbe836570cbedbfa36b80",
@@ -14009,6 +14281,7 @@
       "id": "<action_items:Reply about the two intern candidates>",
       "text": "Reply about the two intern candidates",
       "status": "open",
+      "owed_by": null,
       "user_id": "demo-user",
       "position": 0,
       "item_hash": "ab8033ac620368f3460e6f1f01082aa0243233249aa4c016a85fb3b83e1df7d4",
@@ -14021,6 +14294,7 @@
       "id": "<action_items:Send Ben the internship brief>",
       "text": "Send Ben the internship brief",
       "status": "open",
+      "owed_by": null,
       "user_id": "demo-user",
       "position": 0,
       "item_hash": "08817b0d40594f173db86a19b97c3abb987473826f0346dde0182969d8081005",
@@ -14033,6 +14307,7 @@
       "id": "<action_items:Send Grace the Q3 update>",
       "text": "Send Grace the Q3 update",
       "status": "open",
+      "owed_by": null,
       "user_id": "demo-user",
       "position": 0,
       "item_hash": "29c779822b2e6e8549757aa47361265504ad76155968e6407289943af5ad495a",
@@ -14045,6 +14320,7 @@
       "id": "<action_items:Send Marcus two engineer referrals>",
       "text": "Send Marcus two engineer referrals",
       "status": "open",
+      "owed_by": null,
       "user_id": "demo-user",
       "position": 0,
       "item_hash": "82f94a2c14947e7e04aa504a710eca7b2ea1dc4800658498d84dae0d57c12bcd",
@@ -14057,6 +14333,7 @@
       "id": "<action_items:Send Maya the showcase one-liner>",
       "text": "Send Maya the showcase one-liner",
       "status": "open",
+      "owed_by": null,
       "user_id": "demo-user",
       "position": 0,
       "item_hash": "c998acfe02eeb41489d00bb3e4712864aa2ab6b218764be178e2b197aeaf6a5b",
@@ -14069,6 +14346,7 @@
       "id": "<action_items:Send the one-page retrieval architecture>",
       "text": "Send the one-page retrieval architecture",
       "status": "open",
+      "owed_by": null,
       "user_id": "demo-user",
       "position": 0,
       "item_hash": "19f5d1670f3647681caec3e4151ebd510a4b862b2296d2d56edec561d2d0475f",

@@ -7,6 +7,8 @@ import { getCurrentUserProfile } from "@/lib/auth";
 import type { MeResponse } from "@/lib/extension/contract";
 import { EXTENSION_CONTRACT_VERSION } from "@/lib/extension/contract";
 import { extensionRoute, preflight } from "@/lib/extension/http";
+import { entitlementsFromSettings } from "@/lib/entitlements";
+import { PLAN_LABELS } from "@/lib/plans/plan-config";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +19,7 @@ export const dynamic = "force-dynamic";
  * heuristic starters, not an error.
  */
 export const GET = extensionRoute<undefined, MeResponse>({
-  handler: async ({ userId }) => {
+  handler: async ({ userId, settings }) => {
     const db = await getDb();
     const now = new Date();
 
@@ -25,7 +27,9 @@ export const GET = extensionRoute<undefined, MeResponse>({
       await Promise.all([
         getCurrentUserProfile(),
         getAiCapability(userId),
-        userHasApolloKey(userId),
+        // The row authentication already read: without it this is two more sequential
+        // reads (the row, then entitlements re-reading it), since `cache()` does nothing here.
+        userHasApolloKey(userId, settings),
         db
           .select({ value: count() })
           .from(contacts)
@@ -55,11 +59,18 @@ export const GET = extensionRoute<undefined, MeResponse>({
         hasAiKey: ai.hasKey,
         hasApolloKey,
         aiProvider: ai.provider,
+        // From the row authentication already read: no extra query.
+        radarCaptureLinkedinActivity: settings.radarCaptureLinkedinActivity === 1,
       },
       stats: {
         contactCount: contactRow?.value ?? 0,
         dueFollowUpCount: dueRow?.value ?? 0,
       },
+      plan: (() => {
+        // Resolved from the row authentication already read: no extra query.
+        const { plan } = entitlementsFromSettings(userId, settings);
+        return { id: plan, label: PLAN_LABELS[plan], paid: plan !== "free" };
+      })(),
     };
   },
 });

@@ -10,14 +10,16 @@
 import "./smoke/_env";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { aiBatchJobs, contacts, interactions, userSettings, usageEvents } from "../src/db/schema";
+import { aiBatchJobs, contacts, interactions, relationshipDigests, relationshipRuns, userSettings, usageEvents } from "../src/db/schema";
 import { isNotNull } from "drizzle-orm";
 import { encrypt } from "../src/lib/crypto";
 import { listPendingBatchJobs, pollAiBatch } from "../src/lib/ai-batch";
 import { runAiBatchSweep } from "../src/lib/ai-batch-apply";
 import { runLinkedInTimelineBackfill } from "../src/lib/linkedin-timeline-backfill";
-import { enrichContactsFromMessagesBatched } from "../src/lib/message-enrichment";
-import { managedUsageThisMonth } from "../src/lib/ai-access";
+import { INLINE_PER_RUN, runRelationshipPass } from "../src/lib/relationship-engine/runner";
+import { ensureAllowance, creditPeriodFor, placeHold, getCreditBalance, BATCH_HOLD_TTL_MS } from "../src/lib/credits/ledger";
+import { settleBatchJob } from "../src/lib/ai-batch";
+import { creditGrants, creditHolds } from "../src/db/schema";
 
 const USER = "smoke-ai-batch-user";
 const MANAGED = "smoke-ai-batch-managed";
@@ -49,13 +51,18 @@ const deleted: string[] = [];
 const TIMELINE_ANSWER = JSON.stringify({
   events: [{ type: "meeting", summary: "Coffee to talk it through", dateHint: "next Tuesday", sourceMessageIndex: 1 }],
 });
-const ENRICH_ANSWER = JSON.stringify({
+const DIGEST_ANSWER_OBJ = {
+  what_they_do: "Runs the platform team at Larkspur",
+  working_on: null,
+  job_change: null,
   summary: "You and Ada have been trading notes about her infra team.",
-  key_facts: ["Runs the platform team at Larkspur"],
-  open_loops: ["She owes you an intro to her CTO"],
-  relationship_score_suggestion: 4,
   topics: ["infrastructure"],
-});
+  facts: [],
+  commitments: [],
+  implied: [],
+  closed: [],
+};
+const ENRICH_ANSWER = JSON.stringify(DIGEST_ANSWER_OBJ);
 const answer = () => (timelineAnswer ? TIMELINE_ANSWER : ENRICH_ANSWER);
 
 const realFetch = globalThis.fetch;
@@ -106,7 +113,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (/\/v1\/(files|batches)/.test(url)) {
     if (/\/files\/.*\/content/.test(url)) {
       const line = JSON.stringify({
-        custom_id: "c0",
+        custom_id: "r0",
         response: { status_code: 200, body: { choices: [{ message: { content: answer() } }], usage: { prompt_tokens: 900, completion_tokens: 60 } } },
       });
       return new Response(line, { headers: { "content-type": "application/jsonl" } });
@@ -131,7 +138,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (/\/v1\/messages\/batches/.test(url)) {
     if (/\/results$/.test(url)) {
       const line = JSON.stringify({
-        custom_id: "c0",
+        custom_id: "r0",
         result: {
           type: "succeeded",
           message: { content: [{ type: "text", text: answer() }], usage: { input_tokens: 800, output_tokens: 60, cache_read_input_tokens: 100, cache_creation_input_tokens: 0 } },
@@ -176,7 +183,7 @@ async function account(userId: string, provider: Provider) {
   });
 }
 
-/** A contact with one LinkedIn thread — what `import.enrich` batches. */
+/** A contact with one LinkedIn thread — what `relationship.digest` batches. */
 async function contactWithThread(userId: string) {
   const db = await getDb();
   const [contact] = await db.insert(contacts).values({ userId, fullName: "Ada Byron", company: "Larkspur" }).returning();
@@ -186,9 +193,25 @@ async function contactWithThread(userId: string) {
     interactionType: "linkedin_message",
     interactionDate: new Date("2026-09-01"),
     direction: "in",
-    rawNotes: "Happy to introduce you to our CTO next week.",
+    source: "linkedin_messages",
+    externalId: `li-msg:${contact.id}:1`,
+    // Long enough that the engine does not skip it as a trivial thread (no model call).
+    rawNotes:
+      "Happy to introduce you to our CTO next week. We are rebuilding the platform team's deployment pipeline at Larkspur and I would value your read on the approach before we commit to it. Let me know when you have an hour to talk it through this month.",
   });
   return contact;
+}
+
+/**
+ * One relationship-engine pass for a user whose run has spent its inline allowance, so
+ * every pending contact goes to the provider's Batch API (the real submit path, stubbed
+ * only at the network). `extract` is the inline fallback when the batch is refused.
+ */
+async function submitRelationshipBatch(userId: string) {
+  const db = await getDb();
+  await db.delete(relationshipRuns).where(eq(relationshipRuns.userId, userId));
+  await db.insert(relationshipRuns).values({ userId, status: "queued", inlineUsed: INLINE_PER_RUN });
+  return runRelationshipPass(userId, { extract: async () => DIGEST_ANSWER_OBJ });
 }
 
 async function main() {
@@ -203,10 +226,10 @@ async function main() {
     submitted = null;
     deleted.length = 0;
 
-    const { submitted: count } = await enrichContactsFromMessagesBatched(USER, [contact.id]);
+    const { submitted: count } = await submitRelationshipBatch(USER);
     check(`${provider}: the thread is sent as one batched request`, count === 1, String(count));
     const [job] = await listPendingBatchJobs();
-    check(`${provider}: a job row is waiting`, job?.status === "submitted" && job.operation === "import.enrich");
+    check(`${provider}: a job row is waiting`, job?.status === "submitted" && job.operation === "relationship.digest");
     check(`${provider}: it reserves an estimate against the allowance`, (job?.estCostMicros ?? 0) > 0, String(job?.estCostMicros));
     const lastSubmit = submitted as { provider: Provider; body: unknown } | null;
     check(`${provider}: the provider got the requests`, lastSubmit?.provider === provider);
@@ -217,15 +240,15 @@ async function main() {
     batchDone = true;
     const applied = await runAiBatchSweep();
     check(`${provider}: a finished batch is applied`, applied.applied === 1, JSON.stringify(applied));
-    const enriched = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
-    check(`${provider}: the answer reached the contact`, Boolean(enriched?.aiSummary?.includes("infra team")), enriched?.aiSummary ?? "");
-    check(`${provider}: and its open loop was kept`, (enriched?.keyFacts ?? []).some((f) => f.startsWith("Open:")));
+    const digest = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, contact.id) });
+    check(`${provider}: the answer reached the contact's digest`, Boolean(digest?.summary?.includes("infra team")), digest?.summary ?? "");
+    check(`${provider}: and the in-flight marker is cleared`, digest?.batchJobId === null);
 
     const settled = await db.query.aiBatchJobs.findFirst({ where: eq(aiBatchJobs.userId, USER) });
     check(`${provider}: the job is settled, not polled forever`, settled?.status === "applied");
     check(`${provider}: the provider's copy is deleted`, deleted.length > 0, String(deleted.length));
 
-    const rows = await db.select().from(usageEvents).where(and(eq(usageEvents.userId, USER), eq(usageEvents.operation, "import.enrich")));
+    const rows = await db.select().from(usageEvents).where(and(eq(usageEvents.userId, USER), eq(usageEvents.operation, "relationship.digest")));
     check(`${provider}: the call is in the ledger`, rows.length === 1, String(rows.length));
     check(`${provider}: priced at the batch rate`, (rows[0]?.estimatedCostMicros ?? 0) > 0);
     if (provider === "gemini") {
@@ -307,20 +330,20 @@ async function main() {
   console.log("\nWhen batching is not available, the work still happens");
   {
     await account(USER, "gemini");
-    const contact = await contactWithThread(USER);
+    await contactWithThread(USER);
     refuseSubmit = true;
     batchDone = false;
-    const result = await enrichContactsFromMessagesBatched(USER, [contact.id]);
-    check("a provider that refuses the batch → nothing queued", result.submitted === 0);
-    check("  and the contact is enriched inline instead", result.inline?.contactsEnriched === 1 || result.inline?.skipped === 1, JSON.stringify(result.inline));
+    const result = await submitRelationshipBatch(USER);
+    check("a provider that refuses the batch → nothing queued", result.submitted === 0, JSON.stringify(result));
+    check("  and the contact is digested inline instead", result.processed === 1, JSON.stringify(result));
     refuseSubmit = false;
   }
 
   console.log("\nA batch nobody can read any more");
   {
     await account(USER, "gemini");
-    const contact = await contactWithThread(USER);
-    await enrichContactsFromMessagesBatched(USER, [contact.id]);
+    await contactWithThread(USER);
+    await submitRelationshipBatch(USER);
     // The key that submitted it is removed, exactly as Settings would.
     await db.update(userSettings).set({ geminiApiKeyEncrypted: null, openaiApiKeyEncrypted: null, anthropicApiKeyEncrypted: null }).where(eq(userSettings.userId, USER));
     const [job] = await listPendingBatchJobs();
@@ -330,20 +353,39 @@ async function main() {
     check("  and the row says why", settled?.status === "failed" && Boolean(settled.errorMessage));
   }
 
-  console.log("\nThe managed allowance counts what is still in flight");
+  console.log("\nA batch on Orbit's key holds its estimate against the credits");
   {
     // A batch on Orbit's key has spent the money but written no usage rows yet — its
-    // results land hours later. Without the reservation an account could submit its way
-    // past the cap and only find out when the bill arrived.
+    // results land hours later. Without the hold an account could submit its way past its
+    // credits and only find out when the bill arrived.
     await db.delete(aiBatchJobs).where(eq(aiBatchJobs.userId, MANAGED));
-    const before = await managedUsageThisMonth(MANAGED);
-    check("nothing in flight, nothing reserved", before.spentMicros === 0 && before.calls === 0);
+    await db.delete(creditGrants).where(eq(creditGrants.userId, MANAGED));
+    await db.delete(creditHolds).where(eq(creditHolds.userId, MANAGED));
+    await db.delete(userSettings).where(eq(userSettings.userId, MANAGED));
+    await db.insert(userSettings).values({ userId: MANAGED, subscriptionPlan: "orbit", subscriptionStatus: "active" });
+    await ensureAllowance(MANAGED, "orbit", creditPeriodFor(null));
+    const before = await getCreditBalance(MANAGED, "orbit", null);
+    check("nothing in flight, nothing held", before.held === 0 && before.spendable === 200 * 10_000, JSON.stringify(before));
+
+    const jobId = crypto.randomUUID();
+    const hold = await placeHold({
+      userId: MANAGED, micros: 40_000, operation: `batch:${jobId}`, packs: true, ttlMs: BATCH_HOLD_TTL_MS, floorMicros: 40_000 - 1,
+    });
+    check("an in-flight batch holds its estimate", Boolean(hold));
+    const during = await getCreditBalance(MANAGED, "orbit", null);
+    check("  and the balance says so", during.held === 40_000 && during.spendable === 200 * 10_000 - 40_000, JSON.stringify(during));
+
+    const tooBig = await placeHold({
+      userId: MANAGED, micros: 5_000_000, operation: "batch:too-big", packs: true, ttlMs: BATCH_HOLD_TTL_MS, floorMicros: 5_000_000 - 1,
+    });
+    check("a batch bigger than what is left is refused outright", tooBig === null);
 
     const [row] = await db
       .insert(aiBatchJobs)
       .values({
+        id: jobId,
         userId: MANAGED,
-        operation: "import.enrich",
+        operation: "relationship.digest",
         provider: "gemini",
         model: "gemini-3.5-flash",
         keyOwner: "orbit",
@@ -353,30 +395,10 @@ async function main() {
         payload: { items: [] },
       })
       .returning();
-    const during = await managedUsageThisMonth(MANAGED);
-    check("an in-flight batch reserves its estimate", during.spentMicros === 40_000, String(during.spentMicros));
-    check("  and its requests count against the call ceiling", during.calls === 2, String(during.calls));
-
-    await db.update(aiBatchJobs).set({ status: "applied" }).where(eq(aiBatchJobs.id, row.id));
-    const after = await managedUsageThisMonth(MANAGED);
-    check("once applied, only the real usage rows count", after.spentMicros === 0 && after.calls === 0, JSON.stringify(after));
-
-    // A batch on the person's OWN key is their spend, never Orbit's allowance.
-    await db
-      .insert(aiBatchJobs)
-      .values({
-        userId: MANAGED,
-        operation: "import.enrich",
-        provider: "gemini",
-        model: "gemini-3.5-flash",
-        keyOwner: "user",
-        providerBatchId: "batches/own-key",
-        requestCount: 5,
-        estCostMicros: 90_000,
-        payload: { items: [] },
-      });
-    const byo = await managedUsageThisMonth(MANAGED);
-    check("a batch on the person's own key is not reserved", byo.spentMicros === 0 && byo.calls === 0, JSON.stringify(byo));
+    await settleBatchJob(row, "applied", null);
+    const after = await getCreditBalance(MANAGED, "orbit", null);
+    check("once settled, the hold is released", after.held === 0, JSON.stringify(after));
+    await db.delete(creditGrants).where(eq(creditGrants.userId, MANAGED));
   }
 
   for (const u of [USER, MANAGED]) {

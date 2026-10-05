@@ -27,7 +27,7 @@
  * ends in a "Resume" banner on the next visit rather than a lost meeting.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, useTransform, type MotionValue } from "motion/react";
@@ -689,10 +689,17 @@ export function MeetingCapturePanel({
     () => Object.values(segments).sort((a, b) => a.seq - b.seq),
     [segments]
   );
-  const failedCount = ordered.filter((s) => s.status === "failed").length;
-  const pendingCount = ordered.filter((s) => s.status !== "done" && s.status !== "failed").length;
-  const heardNothing =
-    ordered.length > 0 && ordered.every((s) => s.silent || (s.status === "done" && !s.text));
+  // Memoized: the panel re-renders on every interim revision and elapsed tick, and a
+  // three-hour meeting is thousands of segments to rescan each time.
+  const { failedCount, pendingCount, heardNothing } = useMemo(
+    () => ({
+      failedCount: ordered.filter((s) => s.status === "failed").length,
+      pendingCount: ordered.filter((s) => s.status !== "done" && s.status !== "failed").length,
+      heardNothing:
+        ordered.length > 0 && ordered.every((s) => s.silent || (s.status === "done" && !s.text)),
+    }),
+    [ordered]
+  );
 
   // ── Review ─────────────────────────────────────────────────────────────────────────
   if (phase === "review" && analysis && sessionId) {
@@ -740,7 +747,7 @@ export function MeetingCapturePanel({
               different number than the one the live path had already spoken for.
             */}
             {analysis.missingSeqs.length > 0 && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
+              <p className="text-xs text-amber-700 dark:text-warning">
                 {analysis.missingSeqs.length} part{analysis.missingSeqs.length === 1 ? "" : "s"} of the
                 transcript didn’t reach Orbit — anything said then may be missing from the summary.
               </p>
@@ -856,7 +863,7 @@ export function MeetingCapturePanel({
                   <span
                     className={cn(
                       "font-mono text-sm tabular-nums",
-                      nearCap ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                      nearCap ? "text-amber-600 dark:text-warning" : "text-muted-foreground"
                     )}
                   >
                     {formatElapsed(elapsed)}
@@ -900,7 +907,7 @@ export function MeetingCapturePanel({
               </p>
             )}
             {quotaWarnMinutes !== null && (
-              <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs text-foreground dark:border-amber-900/50 dark:bg-amber-950/30">
+              <p className="rounded-xl border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground">
                 About {quotaWarnMinutes} minute{quotaWarnMinutes === 1 ? "" : "s"} of meeting
                 transcription left this month — it comes back on {quotaResetLabel}.
               </p>
@@ -912,7 +919,7 @@ export function MeetingCapturePanel({
               </p>
             )}
             {heardNothing && (
-              <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs text-foreground dark:border-amber-900/50 dark:bg-amber-950/30">
+              <p className="rounded-xl border border-warning-border bg-warning-surface px-3 py-2 text-xs text-foreground">
                 Orbit hasn&apos;t heard anything yet. If the call is in progress, the shared tab or screen
                 may not be the one playing it — stop and share the right one.
               </p>
@@ -1020,7 +1027,7 @@ export function MeetingCapturePanel({
             // The gate's verdict first: no key, allowance spent, payment still clearing.
             <AiKeyNotice feature="meeting" reason={aiReason} />
           ) : (
-            <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
+            <div className="rounded-xl border border-warning-border bg-warning-surface px-3 py-3 text-sm">
               <p className="font-medium text-foreground">Add a key that can transcribe audio</p>
               <p className="mt-1 text-muted-foreground">
                 Meeting capture transcribes with OpenAI or Gemini — Anthropic can&apos;t hear
@@ -1228,37 +1235,7 @@ function TranscriptList({
         )}
         aria-live="polite"
       >
-        {segments.map((s) => (
-          <div key={s.seq}>
-            {boundarySet.has(s.seq) && (
-              <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-                Reconnected — speakers renumbered from here.
-              </p>
-            )}
-            <p className="leading-relaxed">
-              <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
-                {formatElapsed(s.startMs)}
-              </span>
-              {s.speaker && (
-                <span className="mr-1.5 font-medium text-foreground">{speakerLabel(s.speaker)}:</span>
-              )}
-              {s.status === "done" ? (
-                s.text ? (
-                  s.text
-                ) : (
-                  <span className="text-muted-foreground italic">(silence)</span>
-                )
-              ) : s.silent && s.status !== "failed" ? (
-                <span className="text-muted-foreground italic">(silence)</span>
-              ) : (
-                <span className={cn("italic", s.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
-                  {STATUS_COPY[s.status]}
-                  {s.detail && s.status !== "uploading" ? ` — ${s.detail}` : ""}
-                </span>
-              )}
-            </p>
-          </div>
-        ))}
+        <SegmentLines segments={segments} boundarySet={boundarySet} />
         {/*
           `aria-hidden`, inside an `aria-live` region on purpose. Deepgram revises the
           in-progress sentence several times a second, and every revision would otherwise be
@@ -1275,6 +1252,55 @@ function TranscriptList({
     </div>
   );
 }
+
+/**
+ * The settled lines, apart from the live one. Memoized so the interim sentence — revised
+ * several times a second — and the elapsed tick re-render one line, not every segment of a
+ * meeting that can run for three hours.
+ */
+const SegmentLines = memo(function SegmentLines({
+  segments,
+  boundarySet,
+}: {
+  segments: SegmentView[];
+  boundarySet: Set<number>;
+}) {
+  return (
+    <>
+      {segments.map((s) => (
+        <div key={s.seq}>
+          {boundarySet.has(s.seq) && (
+            <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+              Reconnected — speakers renumbered from here.
+            </p>
+          )}
+          <p className="leading-relaxed">
+            <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
+              {formatElapsed(s.startMs)}
+            </span>
+            {s.speaker && (
+              <span className="mr-1.5 font-medium text-foreground">{speakerLabel(s.speaker)}:</span>
+            )}
+            {s.status === "done" ? (
+              s.text ? (
+                s.text
+              ) : (
+                <span className="text-muted-foreground italic">(silence)</span>
+              )
+            ) : s.silent && s.status !== "failed" ? (
+              <span className="text-muted-foreground italic">(silence)</span>
+            ) : (
+              <span className={cn("italic", s.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
+                {STATUS_COPY[s.status]}
+                {s.detail && s.status !== "uploading" ? ` — ${s.detail}` : ""}
+              </span>
+            )}
+          </p>
+        </div>
+      ))}
+    </>
+  );
+});
 
 function parseAttendees(text: string): { name: string }[] {
   return text

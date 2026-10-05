@@ -9,7 +9,7 @@
  *
  * Run: npx tsx scripts/smoke-ops-alerts.ts
  */
-import { MANAGED_AI_ALERTS, MANAGED_AI_BUDGET } from "../src/lib/managed-ai-policy";
+import { MANAGED_AI_ALERTS } from "../src/lib/managed-ai-policy";
 import {
   evaluateOpsConditions,
   planTransitions,
@@ -37,6 +37,10 @@ const HEALTHY: OpsSnapshot = {
     syncRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
     drain: { lastStartedAt: hoursAgo(0.2), lastState: "ok" },
     jobFeed: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    radarRun: { lastStartedAt: hoursAgo(10), lastState: "ok" },
+    radarFeeds: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    radarDigest: { lastStartedAt: hoursAgo(30), lastState: "ok" },
+    workHistory: { lastStartedAt: hoursAgo(1), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
@@ -66,10 +70,10 @@ const HEALTHY: OpsSnapshot = {
   managedAi: {
     configured: true,
     switchedOff: false,
-    lifetimeAccounts: 3,
+    includedAccounts: 3,
     spentLast24hMicros: 40_000,
     spentLast30dMicros: 600_000,
-    lifetimeCashCents: 7_500,
+    revenueLast30dCents: 7_500,
     accountsAtCap: 0,
     failingProviders: [],
   },
@@ -82,33 +86,32 @@ function main() {
   console.log("Condition catalogue...");
   check("a healthy snapshot raises nothing", ids(HEALTHY).length === 0, ids(HEALTHY).join(","));
 
-  // Orbit's managed AI keys — the Lifetime cost exposure.
+  // Orbit's managed AI keys — the cost of Pro and Max's included AI.
   const managed = (over: Partial<OpsSnapshot["managedAi"]>): OpsSnapshot => ({
     ...HEALTHY,
     managedAi: { ...HEALTHY.managedAi, ...over },
   });
   check("a refused managed key → critical, per provider",
     find(managed({ failingProviders: ["gemini"] }), "ai.managed_failing:gemini")?.severity === "critical");
-  check("Lifetime accounts but no managed key → warning",
+  check("Pro/Max accounts but no managed key → warning",
     find(managed({ configured: false }), "ai.managed_unconfigured")?.severity === "warning");
   check("…says so differently when the kill switch did it",
     /ORBIT_MANAGED_AI=off/.test(find(managed({ configured: false, switchedOff: true }), "ai.managed_unconfigured")?.detail ?? ""));
-  check("no Lifetime accounts, no key → nothing to say",
-    !find(managed({ configured: false, lifetimeAccounts: 0 }), "ai.managed_unconfigured"));
-  // Five accounts' whole monthly allowance in one day.
-  check("five allowances' worth in a day → ai.managed_spend_spike",
+  check("no Pro/Max accounts, no key → nothing to say",
+    !find(managed({ configured: false, includedAccounts: 0 }), "ai.managed_unconfigured"));
+  check("fifty Pro allowances' worth in a day → ai.managed_spend_spike",
     Boolean(find(managed({ spentLast24hMicros: MANAGED_AI_ALERTS.dailySpikeMicros }), "ai.managed_spend_spike")));
-  check("one account maxing out in a day is not a spike",
-    !find(managed({ spentLast24hMicros: MANAGED_AI_BUDGET.monthlyCostMicros }), "ai.managed_spend_spike"));
-  check("a pace that eats Lifetime revenue in under four years → ai.managed_runway",
-    // $10 in 30 days ≈ $122/yr against $75 booked ≈ 0.6 years.
-    Boolean(find(managed({ spentLast30dMicros: 10_000_000, lifetimeCashCents: 7_500 }), "ai.managed_runway")));
-  check("…a sustainable pace is quiet",
-    // $1.20 in 30 days ≈ $14.60/yr against $750 booked ≈ 51 years.
-    !find(managed({ spentLast30dMicros: 1_200_000, lifetimeCashCents: 75_000 }), "ai.managed_runway"));
-  check("…spend with no Lifetime revenue behind it is flagged",
-    /no Lifetime revenue/.test(find(managed({ spentLast30dMicros: 2_000_000, lifetimeCashCents: 0 }), "ai.managed_runway")?.detail ?? ""));
-  check("accounts at the cap → info (the cap may be too tight)",
+  check("one Max account maxing out in a day is not a spike",
+    !find(managed({ spentLast24hMicros: 5_000_000 }), "ai.managed_spend_spike"));
+  check("AI costing more than half the revenue → ai.managed_runway",
+    // $10 of AI against $15 of revenue in the same 30 days = 67%.
+    Boolean(find(managed({ spentLast30dMicros: 10_000_000, revenueLast30dCents: 1_500 }), "ai.managed_runway")));
+  check("…a healthy margin is quiet",
+    // $1.20 of AI against $750 of revenue.
+    !find(managed({ spentLast30dMicros: 1_200_000, revenueLast30dCents: 75_000 }), "ai.managed_runway"));
+  check("…spend with no revenue behind it is flagged",
+    /no revenue booked/.test(find(managed({ spentLast30dMicros: 2_000_000, revenueLast30dCents: 0 }), "ai.managed_runway")?.detail ?? ""));
+  check("accounts out of credits → info (the allowances may be too tight)",
     find(managed({ accountsAtCap: 2 }), "ai.managed_cap_hit")?.severity === "info");
 
   check("cron never ran → cron.missed (warning)",
@@ -180,6 +183,65 @@ function main() {
   check("  and none of it is critical",
     find(jobFeed({ lastStartedAt: null, lastState: null }), "jobfeed.schedule_missed")?.severity === "warning");
 
+  // Radar's nightly pass. Never-ran is deliberately NOT an alert: the first run is up to a
+  // day after the deploy that adds it.
+  const radar = (over: OpsSnapshot["cron"]["radarRun"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, radarRun: over },
+  });
+  check("radar never ran → no alert",
+    !find(radar({ lastStartedAt: null, lastState: null }), "radar.schedule_missed"));
+  check("radar silent for 32h → radar.schedule_missed",
+    find(radar({ lastStartedAt: hoursAgo(32), lastState: "ok" }), "radar.schedule_missed")?.severity === "warning");
+  check("  but 26h is within tolerance",
+    !find(radar({ lastStartedAt: hoursAgo(26), lastState: "ok" }), "radar.schedule_missed"));
+  const feeds = (over: OpsSnapshot["cron"]["radarFeeds"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, radarFeeds: over },
+  });
+  check("radar news sweep never ran → no alert",
+    !find(feeds({ lastStartedAt: null, lastState: null }), "radarfeeds.schedule_missed"));
+  check("radar news sweep silent for 8h → radarfeeds.schedule_missed",
+    find(feeds({ lastStartedAt: hoursAgo(8), lastState: "ok" }), "radarfeeds.schedule_missed")?.severity === "warning");
+  check("radar news sweep failed → radarfeeds.run_failed",
+    Boolean(find(feeds({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "radarfeeds.run_failed")));
+  check("  a partial sweep is not an alert",
+    !find(feeds({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "radarfeeds.run_failed"));
+
+  const digest = (over: OpsSnapshot["cron"]["radarDigest"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, radarDigest: over },
+  });
+  check("radar digest never ran → no alert",
+    !find(digest({ lastStartedAt: null, lastState: null }), "radardigest.schedule_missed"));
+  check("radar digest's ordinary five-day gap → no alert",
+    !find(digest({ lastStartedAt: hoursAgo(5 * 24 + 1), lastState: "ok" }), "radardigest.schedule_missed"));
+  check("radar digest silent for a week → radardigest.schedule_missed",
+    find(digest({ lastStartedAt: hoursAgo(7 * 24), lastState: "ok" }), "radardigest.schedule_missed")?.severity === "warning");
+  check("radar digest failed → radardigest.run_failed",
+    Boolean(find(digest({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "radardigest.run_failed")));
+  check("radar digest partial (a refused send, retried next hour) → no alert",
+    !find(digest({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "radardigest.run_failed"));
+  check("radar run failed → radar.run_failed",
+    Boolean(find(radar({ lastStartedAt: hoursAgo(3), lastState: "failed" }), "radar.run_failed")));
+  check("  a partial run is not an alert",
+    !find(radar({ lastStartedAt: hoursAgo(3), lastState: "partial" }), "radar.run_failed"));
+
+  const workHistory = (over: OpsSnapshot["cron"]["workHistory"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, workHistory: over },
+  });
+  check("the work-history sweep never ran → workhistory.schedule_missed",
+    Boolean(find(workHistory({ lastStartedAt: null, lastState: null }), "workhistory.schedule_missed")));
+  check("  silent for 8h → workhistory.schedule_missed",
+    Boolean(find(workHistory({ lastStartedAt: hoursAgo(8), lastState: "ok" }), "workhistory.schedule_missed")));
+  check("  a failed run → workhistory.run_failed",
+    Boolean(find(workHistory({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "workhistory.run_failed")));
+  check("  a partial run (claims handed back at the deadline) is not an alert",
+    !find(workHistory({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "workhistory.run_failed"));
+  check("  healthy → silent",
+    !find(HEALTHY, "workhistory.schedule_missed") && !find(HEALTHY, "workhistory.run_failed"));
+
   check("three invalid Clerk deliveries in a row → critical",
     find({ ...HEALTHY, webhooks: { ...HEALTHY.webhooks, clerk: ["invalid", "invalid", "invalid"] } }, "webhook.invalid_streak:clerk")?.severity === "critical");
   check("three invalid Stripe deliveries → critical",
@@ -197,6 +259,13 @@ function main() {
     find({ ...HEALTHY, resendRejectedLastHour: 1 }, "resend.rejected")?.severity === "warning");
   check("…whose detail names the usual cause",
     Boolean(find({ ...HEALTHY, resendRejectedLastHour: 3 }, "resend.rejected")?.detail.includes("RESEND_FROM_EMAIL")));
+  check("AI guardrails quiet → no ai.security condition", !find(HEALTHY, "ai.security"));
+  check("a few AI security events is below the threshold",
+    !find({ ...HEALTHY, aiSecurityLastHour: { events: 4, accounts: 1 } }, "ai.security"));
+  check("five AI security events from one account → ai.security (warning)",
+    find({ ...HEALTHY, aiSecurityLastHour: { events: 5, accounts: 1 } }, "ai.security")?.severity === "warning");
+  check("AI security events across three accounts → critical (a poisoned shared source)",
+    find({ ...HEALTHY, aiSecurityLastHour: { events: 6, accounts: 3 } }, "ai.security")?.severity === "critical");
   check("a wedged import → warning", find({ ...HEALTHY, wedgedImports: 1 }, "import.wedged")?.severity === "warning");
   check("three failed imports in 24h → import.failed_burst", Boolean(find({ ...HEALTHY, failedImportsLast24h: 3 }, "import.failed_burst")));
   check("two failed imports is not a burst", !find({ ...HEALTHY, failedImportsLast24h: 2 }, "import.failed_burst"));

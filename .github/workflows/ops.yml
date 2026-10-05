@@ -1,11 +1,12 @@
 # The scheduler for everything Orbit runs on a clock — the only one.
 #
 # Vercel Hobby runs crons at most once a day, so this workflow drives everything that needs
-# to happen more often: the known-condition ops sweep and the webhook drain (every ten
-# minutes), the process-stalled job (hourly, so a lost import continuation stalls for an
-# hour, not a day), the connector sync (every fifteen minutes) and the job-feed sweep
-# (hourly). vercel.json schedules nothing; when Vercel Pro lands, move them all there and
-# delete them here in one change.
+# to happen more often: the known-condition ops sweep, the webhook drain and the email
+# outbox drain (every ten minutes), the process-stalled job (hourly, so a lost import continuation stalls for an
+# hour, not a day), the connector sync (every fifteen minutes), the job-feed sweep
+# (hourly), the work-history sweep (hourly), Radar's news sweep (hourly), the Deepgram usage
+# reconciliation (daily) and Radar's nightly pass (daily). vercel.json schedules nothing;
+# when Vercel Pro lands, move them all there and delete them here in one change.
 # It also tells the ops sweep where `main` is, so production pinned to an old deploy by a
 # failed build shows up as `deploy.drift`.
 #
@@ -22,7 +23,7 @@
 # The same caveats make `next_sync_at` a floor rather than a promise for the connector sync
 # below: nothing may assume a fixed interval between runs.
 #
-# Secrets: APP_URL (https://orbit.jasonpereira.live), CRON_SECRET (the same value as the
+# Secrets: APP_URL (https://myorbitnetwork.com), CRON_SECRET (the same value as the
 # Vercel env var), SLACK_OPS_CRITICAL_WEBHOOK_URL (for the "app is down" fallback).
 name: ops
 
@@ -34,13 +35,30 @@ on:
     # Offset from the :07 import backstop so the two long-running hourly jobs are never in
     # flight together.
     - cron: "23 * * * *"
+    # The work-history sweep: offset from :07 and :23 so no two long hourly jobs overlap.
+    - cron: "37 * * * *"
+    # Radar's news sweep: public feeds into the global news tables. :53, clear of every
+    # other hourly job above.
+    - cron: "53 * * * *"
+    # Radar's Monday email: every hour of Sunday AND Monday UTC, because Auckland's Monday
+    # morning is Sunday evening in UTC. The route sends only to people whose own Monday
+    # 06:00–09:00 it is. :13, clear of every hourly job above.
+    - cron: "13 * * * 0,1"
     # Once a day: the Deepgram usage reconciliation. An arbitrary quiet hour, offset from
     # the hourly jobs above so it never runs alongside them.
     - cron: "41 5 * * *"
+    # Once a day: Radar's nightly pass. Accounts aim at 04:00 UTC (radar_next_at), and :17
+    # sits clear of the hourly :07 and :23 jobs and of the Deepgram reconciliation above.
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
+# One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
+# pending run per group and cancels the older pending one, so a shared group meant a
+# five-minute sync or feed run silently dropped the ten-minute ops sweep and drains queued
+# behind it. The alerting path losing runs exactly when the system is busiest is the worst
+# trade available. Per schedule, a slow run can still only delay its own next tick.
 concurrency:
-  group: ops
+  group: ops-${{ github.event.schedule || github.event_name }}
   cancel-in-progress: false
 
 permissions:
@@ -49,12 +67,56 @@ permissions:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Above the longest step's own ceiling (curl --max-time 300) plus checkout and the health
+    # probe. At 5 minutes a slow-but-healthy sync or feed sweep was killed and reported as a
+    # failure before its own timeout could answer.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
           ref: main
+
+      # THE BUG THIS EXISTS FOR: this workflow reported green for days while doing nothing
+      # at all. A scan of 60 scheduled runs (2026-09-14 to 2026-09-17) found not one gated
+      # step executing — no ops sweep, no webhook drain, no connector sync, no job-feed
+      # sweep — and every one of those runs is a green tick in the Actions tab.
+      #
+      # The cause is that the repository has no Actions secrets configured. `APP_URL` is
+      # empty, so the probe below curls "/api/health" with no host, fails to connect, and
+      # reports `HTTP 000000` (curl's own `-w` output and the `|| echo` fallback, run
+      # together). Every step downstream is gated on `steps.health.outcome == 'success'`,
+      # so all of them skip — correctly, and silently.
+      #
+      # The alert that exists for precisely this moment could not fire either:
+      # `SLACK_OPS_CRITICAL_WEBHOOK_URL` is also unset, and that step exits 0 when it is. So
+      # the one path designed to say "production is unreachable" was disabled by the same
+      # missing configuration, and said nothing.
+      #
+      # Hence this step. A scheduler that cannot reach the thing it schedules is BROKEN, not
+      # idle, and it must go red. Failing every ten minutes until somebody sets a secret is
+      # the intended behaviour: noisy is the point, and the alternative is what happened
+      # here — an unconfigured cron reporting success for as long as nobody looked.
+      - name: Check this workflow is configured at all
+        run: |
+          echo "event=[${{ github.event_name }}] schedule=[${{ github.event.schedule }}]"
+          missing=""
+          [ -n "$APP_URL" ] || missing="$missing APP_URL"
+          [ -n "$CRON_SECRET" ] || missing="$missing CRON_SECRET"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing - every scheduled step below will skip. Set them in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          # A warning, not an error: without it a down probe cannot page anyone, but the
+          # sweeps still work, and refusing to sweep because the alerting is unconfigured
+          # would be the tail wagging the dog.
+          if [ -z "$SLACK_OPS_CRITICAL_WEBHOOK_URL" ]; then
+            echo "::warning::SLACK_OPS_CRITICAL_WEBHOOK_URL is unset - a failed health probe will be recorded here but will not page anyone."
+          fi
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SLACK_OPS_CRITICAL_WEBHOOK_URL: ${{ secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL }}
 
       - name: Health probe
         id: health
@@ -63,6 +125,12 @@ jobs:
           code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "health: HTTP $code"; cat /tmp/health.json 2>/dev/null; echo
+          # Surfaced as an annotation because `continue-on-error: true` makes this step's own
+          # conclusion always `success`. A red probe is otherwise invisible in the run
+          # summary, and every gated step below skips with nothing on screen to explain why.
+          if [ "$code" != "200" ]; then
+            echo "::error::health probe returned $code - every scheduled step below will skip"
+          fi
           test "$code" = "200"
         env:
           APP_URL: ${{ secrets.APP_URL }}
@@ -132,6 +200,19 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
+      # Person-to-person email. after() sends interactive mail once its undo window lapses;
+      # this catches the rest: retries, lapsed leases, and anything a recycled function
+      # dropped. Same ten-minute schedule and gate as the connector outbox above.
+      - name: Drain the email outbox
+        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 55 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/email/drain"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
       # Continuous connector sync (Google Calendar today). Its own schedule rather than a
       # rider on the ten-minute sweep: that sweep is the alerting path and is already budgeted
       # to 55s, and a provider call of unpredictable latency must not make the alert cadence
@@ -139,6 +220,19 @@ jobs:
       #
       # Gated on the schedule only. A `secrets.*` reference in an `if:` is not permitted and
       # fails the whole workflow at parse time — see commit e9bc98e.
+      # The credit emails at 80% and 100% of the monthly AI credits. Rides the ten-minute
+      # schedule like the drains above: a notice can wait ten minutes, and its own route keeps
+      # its latency off the sweep. Every send is claimed first, so an overlapping run is a no-op.
+      - name: Send the credit emails
+        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 120 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/credits/notices"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
       - name: Run the connector sync (every 15 minutes)
         if: github.event.schedule == '*/15 * * * *' && steps.health.outcome == 'success'
         run: |
@@ -163,6 +257,57 @@ jobs:
           curl -sS --fail-with-body --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/jobs/feed/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Contacts' work history, re-checked by web search on each account's own AI key when
+      # due (inner orbit monthly, the long tail twice a year, staggered), logging job moves.
+      # Hourly and on its own line for the same reason as the feed above. 300s to match the
+      # route; it stops starting checks at 150s and hands the rest to the next run.
+      - name: Run the work-history sweep (hourly)
+        if: github.event.schedule == '37 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/work-history/sweep"
+
+      # Radar's nightly pass (daily). Its own line and its own route, for the same reason as
+      # the job feed: model calls on people's own keys must never make the alerting path's
+      # cadence hostage to a provider being slow. 300s to match the route's own ceiling; the
+      # route self-continues when more accounts are waiting.
+      - name: Run the Radar nightly pass (daily)
+        if: github.event.schedule == '17 4 * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/radar/run"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Radar's news sweep (hourly). Reads whole public feeds into the global news tables;
+      # no account is read here. Its own line for the job feed's reason. 300s matches the
+      # route; the sweep stops starting sources at 120s.
+      - name: Run the Radar news sweep (hourly)
+        if: github.event.schedule == '53 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/radar/feeds/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Radar's Monday email. Sends to the people whose local Monday morning it is; the week
+      # claim makes every other run a no-op for them. 300s matches the route, which stops
+      # starting sends at 240s and continues itself once.
+      - name: Send Radar's Monday email (Sunday and Monday, hourly)
+        if: github.event.schedule == '13 * * * 0,1' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/radar/digest"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

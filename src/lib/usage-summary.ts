@@ -5,6 +5,61 @@ import { usageOperationLabel, type UsageSummary } from "@/lib/usage-summary-type
 
 export const USAGE_SUMMARY_DAYS = 30;
 
+/** Shape the grouped SQL query returns, one row per `operation`. Numeric fields may come
+ * back as strings on neon-http (bigint sums), which `summarizeUsageRows` normalizes. */
+export type GroupedUsageRow = {
+  operation: string;
+  calls: number | string;
+  failures: number | string;
+  inputTokens: number | string;
+  outputTokens: number | string;
+  costMicros: number | string;
+  unpricedCalls: number | string;
+  /**
+   * `bool_or(cost_source = 'estimated')` within the group. Typed nullable even though the
+   * column is NOT NULL today: a future nullable column or a `filter (where …)` rewrite of
+   * this aggregate should not be able to silently flip an unknown row to "reported", the
+   * one direction this task exists to avoid overstating.
+   */
+  hasEstimatedRow: boolean | null;
+};
+
+/**
+ * The real row-mapping function: grouped SQL rows in, a finished `UsageSummary` out. Kept
+ * pure and exported so a test can drive it directly instead of a parallel copy of the logic.
+ *
+ * An empty window is not evidence a number would have been exact, so `costIsEstimated`
+ * defaults to true when there are no rows at all.
+ */
+export function summarizeUsageRows(
+  rows: GroupedUsageRow[],
+  since: Date,
+  days: number
+): UsageSummary {
+  const mapped = rows.map((r) => ({
+    operation: r.operation,
+    label: usageOperationLabel(r.operation),
+    calls: Number(r.calls),
+    failures: Number(r.failures),
+    inputTokens: Number(r.inputTokens),
+    outputTokens: Number(r.outputTokens),
+    costMicros: Number(r.costMicros),
+    unpricedCalls: Number(r.unpricedCalls),
+  }));
+
+  const costIsEstimated = rows.length === 0 || rows.some((r) => r.hasEstimatedRow ?? true);
+
+  return {
+    since: since.toISOString(),
+    days,
+    rows: mapped,
+    totalCalls: mapped.reduce((n, r) => n + r.calls, 0),
+    totalCostMicros: mapped.reduce((n, r) => n + r.costMicros, 0),
+    unpricedCalls: mapped.reduce((n, r) => n + r.unpricedCalls, 0),
+    costIsEstimated,
+  };
+}
+
 /**
  * One grouped statement over `usage_events_user_created_idx` (user_id, created_at). Costs
  * are the estimates stored per row at write time, so a price-table change never rewrites
@@ -33,6 +88,7 @@ export async function loadUsageSummary(
       outputTokens: sql<number>`coalesce(sum(${usageEvents.outputTokens}), 0)::float8`,
       costMicros: cost,
       unpricedCalls: sql<number>`(count(*) filter (where ${usageEvents.estimatedCostMicros} is null and ${usageEvents.success} = 1))::int`,
+      hasEstimatedRow: sql<boolean>`bool_or(${usageEvents.costSource} = 'estimated')`,
     })
     .from(usageEvents)
     .where(
@@ -46,23 +102,5 @@ export async function loadUsageSummary(
     .groupBy(usageEvents.operation)
     .orderBy(desc(cost));
 
-  const mapped = rows.map((r) => ({
-    operation: r.operation,
-    label: usageOperationLabel(r.operation),
-    calls: Number(r.calls),
-    failures: Number(r.failures),
-    inputTokens: Number(r.inputTokens),
-    outputTokens: Number(r.outputTokens),
-    costMicros: Number(r.costMicros),
-    unpricedCalls: Number(r.unpricedCalls),
-  }));
-
-  return {
-    since: since.toISOString(),
-    days,
-    rows: mapped,
-    totalCalls: mapped.reduce((n, r) => n + r.calls, 0),
-    totalCostMicros: mapped.reduce((n, r) => n + r.costMicros, 0),
-    unpricedCalls: mapped.reduce((n, r) => n + r.unpricedCalls, 0),
-  };
+  return summarizeUsageRows(rows, since, days);
 }

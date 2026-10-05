@@ -15,8 +15,11 @@ import type { PlanPrice } from "@/lib/plan-copy";
  * another, it *raises* the number. Every character keeps its own slot and only the
  * characters that actually differ move — glyphs travel up when the price rises and down
  * when it falls, smeared with a little blur so the travel reads as speed rather than as
- * a crossfade. `$5` -> `$50` therefore reads as the price gaining a digit, with the `$5`
- * sitting perfectly still.
+ * a crossfade. `$8.99` -> `$89.99` therefore reads as the price gaining a digit, with the
+ * `$` and the `.99` sitting perfectly still.
+ *
+ * There is no struck-through "was" price: the no-fake-urgency rule forbids one, and the
+ * annual saving is stated plainly in the footnote instead.
  *
  * Two constraints shape this:
  *
@@ -65,9 +68,7 @@ export function PlanPriceDisplay({ price }: { price: PlanPrice }) {
   return (
     <div>
       <p className="sr-only">
-        {price.compareAt
-          ? `${price.amount} ${price.cadence}, reduced from ${price.compareAt}`
-          : `${price.amount} ${price.cadence}`}
+        {`${price.amount} ${price.cadence}`}
         {price.footnote ? `. ${price.footnote}` : ""}
       </p>
 
@@ -101,23 +102,6 @@ export function PlanPriceDisplay({ price }: { price: PlanPrice }) {
             ))}
           </AnimatePresence>
         </span>
-
-        {/* The price it is reduced FROM. Sits between the number and the cadence so the
-            eye reads "$25 — was $75 — once" in one pass, and carries `layout` so it
-            slides rather than jumps when the amount beside it gains a digit.
-
-            Deliberately not animated on entry: it is present from the first paint or not
-            at all, and a discount that fades in reads as a sales tactic rather than a
-            fact. */}
-        {price.compareAt && (
-          <motion.span
-            layout="position"
-            transition={ARRIVE}
-            className="relative text-lg leading-none tabular-nums text-[#9aada8]/70 line-through decoration-[#9aada8]/60"
-          >
-            {price.compareAt}
-          </motion.span>
-        )}
 
         {/* Position-only layout animation: the label slides across as the number gains or
             loses a digit, without motion scaling the text to do it. */}

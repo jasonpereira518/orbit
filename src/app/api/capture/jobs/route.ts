@@ -4,13 +4,17 @@ import { discardCapturePhotos, storeCapturePhotos, type StoredCapturePhoto } fro
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
 import {
   appendIngestedBlocks,
+  appendSourceFileHashes,
   createCaptureJob,
+  createCaptureJobWithId,
   failCaptureJob,
   markCaptureJobTranscribed,
   queueCaptureJobRow,
   toCaptureJobView,
   getCaptureJobRow,
+  setIngestingHints,
 } from "@/lib/capture-jobs";
+import { mergeHints } from "@/lib/capture/merge-hints";
 import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import type { CaptureJobSource } from "@/lib/capture/types";
@@ -47,6 +51,11 @@ const SOURCE_KINDS: CaptureJobSource[] = ["messy", "voice", "scan"];
  *     sourceLabel  optional — the original filename, for the queue row
  *     mentionPicks optional — JSON [{id,name}] the person picked with `@`
  *     autoQueue    optional — "1" to queue and start extraction in this same request
+ *     fileHashes   optional — JSON ["<sha256 hex>", ...] of the ORIGINAL files this note is
+ *                  read from, hashed in the browser before preparation. Stored on the job
+ *                  (appended, on a later part) so the same file dropped again is recognised.
+ *     jobId        optional — a uuid the browser minted for the job this request creates, so
+ *                  Stop can discard it before the response has named it. First part only.
  *   x-orbit-capture: 1
  *
  * A route rather than a server action for the same two reasons the meeting chunk route
@@ -89,6 +98,18 @@ export async function POST(request: Request) {
   const batchGroupId = typeof form.get("batchGroupId") === "string" ? String(form.get("batchGroupId")).trim().slice(0, 64) : "";
   const sourceLabel = typeof form.get("sourceLabel") === "string" ? String(form.get("sourceLabel")).trim().slice(0, 200) : "";
   const autoQueue = String(form.get("autoQueue") ?? "") === "1";
+  // A capture too big for one request arrives in parts (`planUploadBatches`). The first
+  // part creates the job and leaves it `ingesting`; each later part names it, and only the
+  // part marked final moves it to `transcribed`. A lone request is first and final at once,
+  // which is every caller that never heard of parts.
+  const continueJobId = typeof form.get("continueJobId") === "string" ? String(form.get("continueJobId")).trim() : "";
+  const isFinalPart = String(form.get("final") ?? "1") !== "0";
+  const pageOffset = Number(form.get("pageOffset") ?? 0);
+  const pageTotal = Number(form.get("pageTotal") ?? 0);
+  const pageNumbering =
+    Number.isInteger(pageOffset) && pageOffset > 0 && Number.isInteger(pageTotal) && pageTotal > 0
+      ? { offset: pageOffset, total: pageTotal }
+      : undefined;
   // A date read off the filename or the file's mtime. Offered as a HINT, never as the
   // anchor itself: `runCaptureParse` only falls back to `hints.eventDate` when the notes
   // carry no date of their own, so what the model reads in the file still wins.
@@ -105,6 +126,19 @@ export async function POST(request: Request) {
       mentionPicks = [];
     }
   }
+  // Malformed hashes cost the upload nothing: they are a convenience for next time, and
+  // `cleanFileHashes` drops anything that is not a real one before it reaches the row.
+  let fileHashes: unknown[] = [];
+  if (typeof form.get("fileHashes") === "string") {
+    try {
+      const parsed: unknown = JSON.parse(String(form.get("fileHashes")));
+      fileHashes = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      fileHashes = [];
+    }
+  }
+  const clientJobIdRaw = typeof form.get("jobId") === "string" ? String(form.get("jobId")).trim().toLowerCase() : "";
+  const clientJobId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(clientJobIdRaw) ? clientJobIdRaw : "";
   const uploads = form.getAll("files").filter((f): f is File => f instanceof File);
   if (!uploads.length) {
     return NextResponse.json({ error: "Add a file first" }, { status: 400 });
@@ -122,8 +156,17 @@ export async function POST(request: Request) {
     );
   }
 
+  // A later part must extend a job this user started, of the same kind, that is still
+  // collecting. Anything else is a stale or forged id, and appending to it would put one
+  // note's pages into another.
+  const continued = continueJobId ? await getCaptureJobRow(userId, continueJobId) : null;
+  if (continueJobId && (!continued || continued.status !== "ingesting" || continued.sourceKind !== sourceKind)) {
+    return NextResponse.json({ error: "That upload was interrupted — try it again" }, { status: 409 });
+  }
+
   try {
-    await consumeBucket("capture", userId, RATE_LIMITS.capture);
+    if (continued) await consumeBucket("captureParts", userId, RATE_LIMITS.captureParts);
+    else await consumeBucket("capture", userId, RATE_LIMITS.capture);
   } catch (err) {
     if (isRateLimitedError(err)) {
       return NextResponse.json(
@@ -143,14 +186,25 @@ export async function POST(request: Request) {
     });
   }
 
-  const job = await createCaptureJob(userId, {
+  const jobInput = {
     sourceKind,
-    status: "ingesting",
+    status: "ingesting" as const,
     inputText: text,
     batchGroupId: batchGroupId || null,
     sourceLabel: sourceLabel || null,
     mentionPicks,
-  });
+    sourceFileHashes: fileHashes,
+  };
+  const job =
+    continued ??
+    (clientJobId ? await createCaptureJobWithId(userId, clientJobId, jobInput) : await createCaptureJob(userId, jobInput));
+  if (!job) {
+    // The id is taken — almost always by the tombstone a Stop left because it beat this
+    // insert (see `discardCaptureJobRow`). Nobody is waiting on this answer: the tab that
+    // sent it has already aborted. Refusing before transcription is what saves the model call.
+    return NextResponse.json({ error: "That upload was stopped" }, { status: 409 });
+  }
+  if (continued && fileHashes.length) await appendSourceFileHashes(continued.id, fileHashes);
 
   // Photos are kept (shrunk, stripped of metadata) so the capture history can show the page
   // next to what was pulled out of it — the same lifecycle `ingestCaptureMedia` gives them:
@@ -158,7 +212,7 @@ export async function POST(request: Request) {
   // transcription failure can still discard what was stored.
   const images = captureImageFiles(files);
   const [normalizedResult, storedResult] = await Promise.allSettled([
-    normalizeCaptureInput(userId, { files }),
+    normalizeCaptureInput(userId, { files, pageNumbering }),
     storeCapturePhotos(userId, images.map((img) => ({ filename: img.filename, base64: img.base64 }))),
   ]);
   const photos: StoredCapturePhoto[] = storedResult.status === "fulfilled" ? storedResult.value : [];
@@ -173,7 +227,10 @@ export async function POST(request: Request) {
       normalized.text.trim() ? [{ text: normalized.text.trim(), source: normalized.sources.join(", ") || sourceKind }] : [],
       { sources: normalized.sources, transcriptionEngine: normalized.transcriptionEngine ?? null, photoIds: photos.map((p) => p.id) }
     );
-    await markCaptureJobTranscribed(job.id);
+    // The whole note's hints so far: earlier parts' (kept on the row) plus this one's.
+    const noteHints = mergeHints(continued?.inputHints ?? {}, normalized.hints);
+    if (isFinalPart) await markCaptureJobTranscribed(job.id);
+    else await setIngestingHints(job.id, noteHints);
 
     // `autoQueue` collapses upload+Extract into one request, and it exists for arithmetic
     // rather than tidiness. Every file otherwise costs TWO `RATE_LIMITS.capture` tokens —
@@ -186,10 +243,10 @@ export async function POST(request: Request) {
     // step in between, because nobody is going to hand-edit twelve transcripts before
     // pressing Extract. The single-capture flow still queues separately, so its edit step
     // survives. `after` is valid in a Route Handler and inherits this route's maxDuration.
-    if (autoQueue) {
-      const hints = anchorDate && !normalized.hints.eventDate
-        ? { ...normalized.hints, eventDate: anchorDate }
-        : normalized.hints;
+    if (autoQueue && isFinalPart) {
+      const hints = anchorDate && !noteHints.eventDate
+        ? { ...noteHints, eventDate: anchorDate }
+        : noteHints;
       const queued = await queueCaptureJobRow(userId, job.id, { inputText: null, inputHints: hints });
       if (queued) after(() => runCaptureJobById(job.id).catch(() => null));
     }

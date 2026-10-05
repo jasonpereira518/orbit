@@ -11,6 +11,10 @@ import { sql } from "drizzle-orm";
 
   const EXPECTED_TABLES = [
   "user_settings",
+  "credit_grants",
+  "credit_accounts",
+  "credit_holds",
+  "plan_meter_usage",
   "stripe_processed_events",
   "data_purge_runs",
   "companies",
@@ -47,10 +51,18 @@ import { sql } from "drizzle-orm";
   "error_events",
   "app_surface_flags",
   "interest_list_signups",
+  "waitlist_poll_votes",
   "feedback",
   "feedback_screenshots",
   "broadcasts",
   "broadcast_recipients",
+  "recommendations",
+  "radar_runs",
+  "recommendation_feedback",
+  "contact_signals",
+  "external_sources",
+  "external_items",
+  "external_item_companies",
 ] as const;
 
 async function main() {

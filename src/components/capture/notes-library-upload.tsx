@@ -27,6 +27,7 @@ import {
   type DroppedFile,
 } from "@/lib/capture/file-drop";
 import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
+import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -52,12 +53,16 @@ export function NotesLibraryUpload({
   panelId,
   tabId,
   onQueued,
+  drive = null,
+  canUseSync = false,
 }: {
   hasApiKey: boolean;
   panelId: string;
   tabId: string;
   /** The jobs this drop created, once every bin has settled. */
   onQueued: (jobIds: string[]) => void;
+  drive?: DriveCaptureConfig | null;
+  canUseSync?: boolean;
 }) {
   const filePickerRef = useRef<HTMLInputElement>(null);
   const folderPickerRef = useRef<HTMLInputElement>(null);
@@ -67,8 +72,7 @@ export function NotesLibraryUpload({
   const [sorterOpen, setSorterOpen] = useState(false);
 
   const fanout = useCaptureFanout({ onSettled: onQueued });
-  const { entries, summary, running } = fanout;
-  const busy = running || !hasApiKey;
+  const busy = fanout.running || !hasApiKey;
 
   const stage = useCallback((files: DroppedFile[]) => {
     if (!files.length) return;
@@ -184,6 +188,7 @@ export function NotesLibraryUpload({
             <FolderOpen className="size-4" />
             Choose a folder
           </Button>
+          <DriveCaptureButton drive={drive} canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
         </div>
 
         {reading && (
@@ -217,60 +222,70 @@ export function NotesLibraryUpload({
         />
       )}
 
-      {entries.length > 0 && (
-        <div className="space-y-3 rounded-2xl border border-border/70 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-medium text-foreground">
-              {entries.length} {entries.length === 1 ? "note" : "notes"}
-              {running && (
-                <span className="ml-2 font-normal text-muted-foreground">
-                  {summary.queued} read · {summary.inFlight + summary.waiting} in flight ·{" "}
-                  {summary.pending} waiting
-                </span>
-              )}
-            </p>
-            <div className="flex gap-2">
-              {running ? (
-                <Button type="button" variant="ghost" size="sm" onClick={fanout.cancelPending}>
-                  Stop
-                </Button>
-              ) : (
-                <Button type="button" variant="ghost" size="sm" onClick={fanout.reset}>
-                  Clear
-                </Button>
-              )}
-            </div>
-          </div>
+      <NotesFanoutList fanout={fanout} />
+    </div>
+  );
+}
 
-          <ul className="space-y-2">
-            {entries.map((e) => (
-              <li
-                key={e.id}
-                className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card p-2.5"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-foreground">{e.label}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {e.fileCount} {e.fileCount === 1 ? "file" : "files"} · {sizeLabel(e.bytes)}
-                    {e.anchorIso ? ` · ${e.anchorIso}` : ""} · {STATUS_COPY[e.status]}
-                    {e.error ? ` — ${e.error}` : ""}
-                  </span>
-                  {/* A note that went up short still went up, so this is not styled as a
-                      failure — but it is never left unsaid. */}
-                  {e.notice && (
-                    <span className="mt-0.5 block text-xs text-amber-600 dark:text-amber-500">
-                      {e.notice}
-                    </span>
-                  )}
-                </span>
-                {e.status === "uploading" && (
-                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                )}
-              </li>
-            ))}
-          </ul>
+/**
+ * Progress for a sorted drop, one row per note. Shared with Messy Notes, which hands a
+ * multi-file pick to the same sorter and the same fan-out.
+ */
+export function NotesFanoutList({ fanout }: { fanout: ReturnType<typeof useCaptureFanout> }) {
+  const { entries, summary, running } = fanout;
+  if (!entries.length) return null;
+  return (
+    <div className="space-y-3 rounded-2xl border border-border/70 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-foreground">
+          {entries.length} {entries.length === 1 ? "note" : "notes"}
+          {running && (
+            <span className="ml-2 font-normal text-muted-foreground">
+              {summary.queued} read · {summary.inFlight + summary.waiting} in flight ·{" "}
+              {summary.pending} waiting
+            </span>
+          )}
+        </p>
+        <div className="flex gap-2">
+          {running ? (
+            <Button type="button" variant="ghost" size="sm" onClick={fanout.cancelPending}>
+              Stop
+            </Button>
+          ) : (
+            <Button type="button" variant="ghost" size="sm" onClick={fanout.reset}>
+              Clear
+            </Button>
+          )}
         </div>
-      )}
+      </div>
+
+      <ul className="space-y-2">
+        {entries.map((e) => (
+          <li
+            key={e.id}
+            className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card p-2.5"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-foreground">{e.label}</span>
+              <span className="text-xs text-muted-foreground">
+                {e.fileCount} {e.fileCount === 1 ? "file" : "files"} · {sizeLabel(e.bytes)}
+                {e.anchorIso ? ` · ${e.anchorIso}` : ""} · {STATUS_COPY[e.status]}
+                {e.error ? ` — ${e.error}` : ""}
+              </span>
+              {/* A note that went up short still went up, so this is not styled as a
+                  failure — but it is never left unsaid. */}
+              {e.notice && (
+                <span className="mt-0.5 block text-xs text-amber-600 dark:text-warning">
+                  {e.notice}
+                </span>
+              )}
+            </span>
+            {e.status === "uploading" && (
+              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

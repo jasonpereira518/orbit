@@ -62,6 +62,7 @@ import {
   updateAttendeeForUser,
   deleteAttendeeForUser,
   upsertEventAttendees,
+  type CreateEventInput,
   type EventListRow,
   type UpdateAttendeeResult,
 } from "@/lib/events/store";
@@ -251,7 +252,7 @@ export async function enrichEventFromUrl(
 ): Promise<{ ok: boolean; error?: string }> {
   const userId = await requireUserForSurface(SURFACE);
   try {
-    await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
+    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: error.message };
@@ -262,6 +263,49 @@ export async function enrichEventFromUrl(
   if (result.restamped > 0) revalidatePath("/contacts");
   revalidateEvents(eventId);
   return result;
+}
+
+const EVENT_TEXT_MAX = 10_000;
+const EVENT_ATTENDANCE_MODES = ["offline", "online", "mixed"] as const;
+const EVENT_ROLES = ["attended", "hosted"] as const;
+
+/**
+ * The fields an edit may change, copied one by one and type-checked.
+ *
+ * Never spread the argument: this is a public POST endpoint, and `updateEventForUser`'s
+ * `.set()` writes any key that names a real column — `userId` included, which moved an
+ * event (with a phishing link or a tracking cover) into someone else's account.
+ */
+function pickEventEdits(patch: Record<string, unknown>) {
+  const text = (key: string, nullable = true): string | null | undefined => {
+    const value = patch[key];
+    if (value === undefined) return undefined;
+    if (value === null && nullable) return null;
+    if (typeof value !== "string") throw new UserFacingError(`Invalid ${key}`);
+    return value.slice(0, EVENT_TEXT_MAX);
+  };
+  const out: Partial<Record<string, unknown>> = {};
+  const title = text("title", false);
+  if (title !== undefined) out.title = title;
+  for (const key of ["venue", "city", "description", "organizerName", "organizerUrl", "notes"]) {
+    const value = text(key);
+    if (value !== undefined) out[key] = value;
+  }
+  if (patch.attendanceMode !== undefined) {
+    const mode = patch.attendanceMode;
+    if (mode !== null && !EVENT_ATTENDANCE_MODES.includes(mode as never)) {
+      throw new UserFacingError("Invalid attendance mode");
+    }
+    out.attendanceMode = mode;
+  }
+  if (patch.role !== undefined) {
+    if (!EVENT_ROLES.includes(patch.role as never)) throw new UserFacingError("Invalid role");
+    out.role = patch.role;
+  }
+  return out as Pick<
+    CreateEventInput,
+    "title" | "venue" | "city" | "description" | "organizerName" | "organizerUrl" | "notes" | "attendanceMode" | "role"
+  >;
 }
 
 /**
@@ -305,7 +349,7 @@ export async function updateEvent(
     value === undefined ? undefined : value ? new Date(value) : null;
 
   await updateEventForUser(userId, eventId, {
-    ...patch,
+    ...pickEventEdits(patch as Record<string, unknown>),
     ...(url === undefined ? {} : { url: url || null }),
     startsAt: asDate(patch.startsAt),
     endsAt: asDate(patch.endsAt),
@@ -329,7 +373,7 @@ export async function previewResync(
   if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
 
   try {
-    await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
+    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
@@ -366,7 +410,7 @@ export async function resyncEvent(eventId: string): Promise<{ ok: boolean; error
   if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
 
   try {
-    await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
+    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
@@ -638,7 +682,7 @@ export async function explainAttendee(
   }
 
   try {
-    await consumeBucket(userId, "eventWhy", RATE_LIMITS.eventWhy);
+    await consumeBucket("eventWhy", userId, RATE_LIMITS.eventWhy);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: "That's a lot of suggestions — try again in a bit." };

@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process";
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { gmailConnections, imports, outlookConnections, userSettings } from "../src/db/schema";
-import type { IntegrationStatuses } from "../src/actions/integrations";
+import type { IntegrationStatuses } from "../src/lib/integration-status";
 import { DEMO_WORKSPACE_EMAILS, isDemoWorkspace, isDemoWorkspaceEmail } from "../src/lib/demo-workspace";
 import {
   demoGmailConnectionStatus,
@@ -70,21 +70,37 @@ async function main() {
   check("Outlook is connected with every scope", outlook.connected && outlook.hasContactsScope && outlook.hasCalendarScope && outlook.hasMailScope);
 
   const real: IntegrationStatuses = {
-    ai: { state: "on", detail: "Anthropic key saved" },
-    api: { state: "on", detail: "3 keys" },
-    webhooks: { state: "off", detail: "None" },
-    google: { state: "off", detail: "Not connected" },
-    outlook: "unknown",
+    pages: {
+      ai: { state: "on", detail: "Anthropic key saved" },
+      api: { state: "on", detail: "3 keys" },
+      webhooks: { state: "off", detail: "None" },
+      google: { state: "off", detail: "Not connected" },
+      microsoft: "unknown",
+    },
+    accounts: {},
+    attention: [],
+    connectors: {
+      google: { state: "off", detail: "Not connected" },
+      outlook: "unknown",
+      zapier: { state: "on", detail: "3 keys" },
+    },
   };
   const lifted = withDemoIntegrationStatuses(real);
-  const every = ["google", "gmail", "outlook", "linkedin", "outreach", "apollo", "webhooks", "calendar", "calendar_ics", "luma", "eventbrite", "api", "zapier"] as const;
-  const off = every.filter((k) => {
-    const s = lifted[k];
-    return !s || s === "unknown" || s.state !== "on";
-  });
+  const everyPage = ["google", "microsoft", "linkedin", "outreach", "webhooks", "reminders", "api"] as const;
+  const everyConnector = ["google", "outlook", "linkedin", "calendar_ics", "luma", "eventbrite", "apollo", "zapier"] as const;
+  const off = [
+    ...everyPage.filter((k) => {
+      const s = lifted.pages[k];
+      return !s || s === "unknown" || s.state !== "on";
+    }),
+    ...everyConnector.filter((k) => {
+      const s = lifted.connectors[k];
+      return !s || s === "unknown" || s.state !== "on";
+    }),
+  ];
   check("every integration reads on", off.length === 0, off.join(", "));
-  check("a real status keeps its own line", lifted.api !== "unknown" && lifted.api?.detail === "3 keys");
-  check("the AI key line is untouched", lifted.ai !== "unknown" && lifted.ai?.detail === "Anthropic key saved");
+  check("a real status keeps its own line", lifted.pages.api !== "unknown" && lifted.pages.api?.detail === "3 keys");
+  check("the AI key line is untouched", lifted.pages.ai !== "unknown" && lifted.pages.ai?.detail === "Anthropic key saved");
 
   console.log("\nprovider actions record an outcome instead of calling out");
   const scanId = await recordDemoRecruiterScan(DEMO, "gmail_recruiter_scan", DEMO_EMAIL);

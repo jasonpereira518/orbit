@@ -4,6 +4,7 @@ import { PUBLIC_ROUTES } from "@/lib/public-routes";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { API_SIGNED_OUT_BODY, API_SIGNED_OUT_STATUS, isApiPath } from "@/lib/api-signed-out";
 import { isLocalhost } from "@/lib/demo-account";
+import { clerkJwtKey } from "@/lib/clerk-jwt-key";
 import { STEALTH_ROBOTS, isWaitlistHostHeader, stealthGate } from "@/lib/waitlist-host";
 import { readStealthForProxy } from "@/lib/site-mode-proxy";
 import {
@@ -42,6 +43,14 @@ const extensionOrigins = (process.env.EXTENSION_ORIGIN ?? "")
 
 const authorizedParties =
   extensionOrigins.length > 0 ? [...extensionOrigins, getAppBaseUrl()] : [];
+
+// Networkless session verification when CLERK_JWT_KEY is set — see `@/lib/clerk-jwt-key`.
+const jwtKey = clerkJwtKey();
+
+const clerkOptions = {
+  ...(authorizedParties.length > 0 ? { authorizedParties } : {}),
+  ...(jwtKey ? { jwtKey } : {}),
+};
 
 function withPathname(req: Request, options: { noindex?: boolean } = {}) {
   const requestHeaders = new Headers(req.headers);
@@ -160,7 +169,7 @@ const appProxy = configured
         }
         return withPathname(req, { noindex: stealth });
       },
-      authorizedParties.length > 0 ? { authorizedParties } : undefined
+      Object.keys(clerkOptions).length > 0 ? clerkOptions : undefined
     )
   : async function middleware(req: Request) {
       if (process.env.NODE_ENV === "production") {

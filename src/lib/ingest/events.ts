@@ -51,7 +51,7 @@ import {
   type ContactInput,
 } from "@/lib/contact-writes";
 import { createCompanyResolver, type CompanyResolver } from "@/lib/companies";
-import { recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { recordDuplicateSuggestions, type DuplicateSuggestionPair } from "@/lib/contact-merge";
 import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
@@ -142,6 +142,16 @@ export type IngestOptions = {
    */
   metContext?: string;
   howMet?: (event: NetworkEvent) => string | null;
+  /**
+   * Tags attached to contacts this run CREATES (never to matched ones).
+   *
+   * The batch import adapters tag everyone they create (`google-contacts`, `address-book`),
+   * and a tag is an intent signal in `constellationEligibility` — which is what puts an
+   * imported network on the default sky. A synced address book has to land the same way, or
+   * connecting Google would leave `/graph` empty while a one-time import of the same people
+   * would not.
+   */
+  tagNames?: string[];
 };
 
 export type IngestStats = {
@@ -255,21 +265,28 @@ export async function openIngestContext(
 ): Promise<IngestContext> {
   const db = await getDb();
 
-  // The same seven narrow columns the import engine reads. Deliberately not `select *`:
-  // `DuplicateSubject` is kept small so a batch never drags notes and summaries across the
-  // wire for people it is not going to touch.
-  const existing = (await db.query.contacts.findMany({
-    where: (c, { eq }) => eq(c.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      xHandle: true,
-      company: true,
-      title: true,
-    },
-  })) as DuplicateSubject[];
+  // None of the four reads depends on another, so they go out together: one round trip
+  // deep instead of four (more, since the headroom check is two of its own).
+  const [existing, companyResolve, headroom, engines] = await Promise.all([
+    // The same seven narrow columns the import engine reads. Deliberately not `select *`:
+    // `DuplicateSubject` is kept small so a batch never drags notes and summaries across the
+    // wire for people it is not going to touch.
+    db.query.contacts.findMany({
+      where: (c, { eq }) => eq(c.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        xHandle: true,
+        company: true,
+        title: true,
+      },
+    }) as Promise<DuplicateSubject[]>,
+    createCompanyResolver(userId),
+    options.createsContacts ? contactHeadroomForUser(userId) : null,
+    openEngines(userId),
+  ]);
 
   return {
     userId,
@@ -280,10 +297,10 @@ export async function openIngestContext(
       createsContacts: options.createsContacts,
     },
     index: buildDuplicateIndex(existing),
-    companyResolve: await createCompanyResolver(userId),
-    headroom: options.createsContacts ? await contactHeadroomForUser(userId) : null,
+    companyResolve,
+    headroom,
     touchedContactIds: new Set(),
-    engines: await openEngines(userId),
+    engines,
   };
 }
 
@@ -479,7 +496,7 @@ export async function ingestEvents(
       }
     );
     stats.contactsCreated = created.length;
-    const suggestions: Array<[string, string, string, number]> = [];
+    const suggestions: DuplicateSuggestionPair[] = [];
     created.forEach((contact, i) => {
       // Fold new contacts into the index so a LATER batch matches them rather than creating
       // the person again. Within this batch, `createIndexByKey` already did that job.
@@ -489,13 +506,17 @@ export async function ingestEvents(
       }
       const lookalike = toCreate[i]?.lookalike;
       if (lookalike) {
-        suggestions.push([contact.id, lookalike.contactId, lookalike.reason, lookalike.confidence]);
+        suggestions.push({
+          contactIdA: contact.id,
+          contactIdB: lookalike.contactId,
+          reason: lookalike.reason,
+          confidence: lookalike.confidence,
+        });
       }
     });
     // After the insert, so both ids exist: the suggestion has foreign keys to each side.
-    for (const [a, b, reason, confidence] of suggestions) {
-      await recordDuplicateSuggestion(ctx.userId, a, b, reason, confidence);
-    }
+    // 0-1 statements: one insert for every lookalike in the batch, none when there are none.
+    await recordDuplicateSuggestions(ctx.userId, suggestions);
     if (ctx.headroom !== null) ctx.headroom -= created.length;
     // Fewer created than asked for means the cap bit part-way through the batch.
     stats.blockedByPlan += toCreate.length - created.length;
@@ -613,10 +634,30 @@ export async function ingestEvents(
  * dirty rather than recalculated — `process-stalled` drains stale cohorts in batches, which
  * is the existing debounce and stops a sync storm from triggering a recalibration storm.
  */
-export async function finalizeIngest(ctx: IngestContext): Promise<void> {
+export async function finalizeIngest(
+  ctx: IngestContext,
+  options: {
+    /**
+     * Recompute the whole closeness distribution now instead of leaving it to the debounce.
+     *
+     * For the run that COMPLETES a source's first full read only. That is the "after a bulk
+     * import" case `recalibrateCloseness` exists for, and the one moment a person is watching:
+     * without it their new network shows default scores until the hourly drain catches up.
+     * Every later delta run stays on the debounce, which is what stops a sync storm from
+     * becoming a recalibration storm.
+     */
+    recalibrate?: boolean;
+  } = {}
+): Promise<void> {
   if (ctx.touchedContactIds.size === 0) return;
   const { markCohortDirty } = await import("@/lib/closeness-materialize");
   const { kickEmbeddingBackfill } = await import("@/lib/embedding-backfill");
   await markCohortDirty(ctx.userId).catch(reportAndContinue({ where: "job.ingest.cohort-dirty", userId: ctx.userId }, null));
+  if (options.recalibrate) {
+    const { recalibrateCloseness } = await import("@/lib/closeness-cohort");
+    await recalibrateCloseness(ctx.userId).catch(
+      reportAndContinue({ where: "job.ingest.recalibrate", userId: ctx.userId }, null)
+    );
+  }
   await kickEmbeddingBackfill(ctx.userId).catch(reportAndContinue({ where: "job.ingest.embedding-kick", userId: ctx.userId }, null));
 }

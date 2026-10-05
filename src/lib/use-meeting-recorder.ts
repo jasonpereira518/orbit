@@ -466,6 +466,8 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
     () => () => {
       finish("user");
       teardown();
+      // And a start still waiting on the share picker or mic prompt stops what it is handed.
+      sessionRef.current++;
     },
     [finish, teardown]
   );

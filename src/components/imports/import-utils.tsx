@@ -92,6 +92,8 @@ export function ImportFilePicker({
   disabled,
   fileName,
   onFile,
+  onFiles,
+  multiple = false,
   emptyLabel = "No file chosen",
   buttonLabel = "Choose file",
   className,
@@ -99,7 +101,10 @@ export function ImportFilePicker({
   accept: string;
   disabled?: boolean;
   fileName?: string | null;
-  onFile: (file: File) => void;
+  onFile?: (file: File) => void;
+  /** With `multiple`, every picked file at once (the chat card takes several exports). */
+  onFiles?: (files: File[]) => void;
+  multiple?: boolean;
   emptyLabel?: string;
   buttonLabel?: string;
   className?: string;
@@ -112,12 +117,14 @@ export function ImportFilePicker({
         ref={inputRef}
         type="file"
         accept={accept}
+        multiple={multiple}
         disabled={disabled}
         className="sr-only"
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          onFile(file);
+          const files = [...(e.target.files ?? [])];
+          if (!files.length) return;
+          if (onFiles) onFiles(files);
+          else onFile?.(files[0]);
           e.target.value = "";
         }}
       />
@@ -278,7 +285,7 @@ export function ImportWarningBanner({
   if (!warnings.length) return null;
 
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+    <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-warning">
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <ul className="min-w-0 flex-1 space-y-1">
         {warnings.map((w, i) => (
@@ -290,7 +297,7 @@ export function ImportWarningBanner({
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="shrink-0 text-amber-700 hover:text-amber-900 dark:text-amber-400"
+          className="shrink-0 text-amber-700 hover:text-amber-900 dark:text-warning"
           onClick={onDismiss}
           aria-label="Dismiss warning"
         >

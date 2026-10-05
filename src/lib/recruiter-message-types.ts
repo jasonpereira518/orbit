@@ -10,11 +10,12 @@ import { RECRUITER_INTENTS, type RecruiterIntent } from "@/lib/recruiter-drafts"
  */
 
 /**
- * Well under Gmail's own ceiling (500/day consumer, 2000 Workspace). The binding
- * constraint is not the quota but sender reputation: a burst of similar AI-written mail
- * from one address is what gets an address flagged.
+ * The most recruiter drafts one batch may generate (and so send). Sending itself is bounded
+ * by the shared daily email cap (`EMAIL_SEND_DAILY_CAP`); this keeps a single batch of
+ * similar AI-written mail small, since a burst of those from one address is what gets an
+ * address flagged.
  */
-export const DAILY_RECRUITER_SEND_LIMIT = 25;
+export const RECRUITER_BATCH_LIMIT = 25;
 
 export const RECRUITER_INTENT_OPTIONS = Object.entries(RECRUITER_INTENTS).map(
   ([value, meta]) => ({ value: value as RecruiterIntent, label: meta.label })

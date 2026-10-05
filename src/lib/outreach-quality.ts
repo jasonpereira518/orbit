@@ -60,9 +60,14 @@ export type QualityIssue = {
     | "duplicate_body"
     | "missing_name"
     | "too_generic"
-    | "demo_prospect";
+    | "demo_prospect"
+    | "contains_link";
   message: string;
 };
+
+/** A URL, a bare domain path, or an email address — anything a click or a reply could go to. */
+const LINK_OR_ADDRESS =
+  /\b(?:https?:\/\/|www\.)[^\s<>"')\]]+|\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b|\b[a-z0-9-]+\.(?:com|io|co|net|org|ai|app|dev|xyz|ly|me)\/[^\s<>"')\]]*/i;
 
 function normalizeBody(body: string) {
   return body.trim().toLowerCase().replace(/\s+/g, " ");
@@ -136,6 +141,25 @@ export function assessOutreachQuality(rows: QualityGateRow[]): {
         prospectName: row.prospectName,
         code: "too_generic",
         message: "Draft looks generic — add a specific hook",
+      });
+    }
+  }
+
+  for (const row of rows) {
+    // Drafts are model output over third-party data — a prospect's enrichment, prior notes —
+    // and a link or address in one is the payload an injection would plant: the user's own
+    // mailbox sending a stranger's URL. Not blocking (plenty of real outreach links a
+    // calendar), but a warning the bulk send must be explicitly told to ignore, and first in
+    // line so it is the one the confirm shows.
+    const text = `${row.subject ?? ""}\n${row.body ?? ""}`;
+    const link = LINK_OR_ADDRESS.exec(text)?.[0];
+    if (link) {
+      issues.unshift({
+        messageId: row.messageId,
+        prospectId: row.prospectId,
+        prospectName: row.prospectName,
+        code: "contains_link",
+        message: `Draft contains a link or address (${link.slice(0, 60)}) — check it before sending`,
       });
     }
   }

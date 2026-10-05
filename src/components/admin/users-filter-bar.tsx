@@ -10,6 +10,7 @@ const PLANS = [
   { value: "all", label: "All plans" },
   { value: "free", label: "Free" },
   { value: "orbit", label: "Orbit Pro" },
+  { value: "max", label: "Orbit Max" },
   { value: "lifetime", label: "Lifetime" },
   { value: "comped", label: "Comped" },
 ];

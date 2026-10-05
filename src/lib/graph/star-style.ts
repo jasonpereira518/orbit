@@ -71,11 +71,38 @@ export type StarVisual = {
  * cluster's brand colour; scatter stars stay white and quiet until emphasized. Glow is
  * deliberately soft — the sky should read as a chart, not a light show.
  */
-export function starVisual(data: GraphNodeData, selected: boolean): StarVisual {
+/**
+ * A cluster colour's two star tints. Memoized because the canvas renderer asks for them
+ * per visible star per frame of a gesture, and each `mixWithWhite` is a handful of
+ * throwaway strings. Keys are the sky's cluster palette, so this stays small; the bound is
+ * only a backstop.
+ */
+const tints = new Map<string, { fill: string; core: string }>();
+const TINTS_MAX = 1024;
+
+function tintsFor(tint: string) {
+  let hit = tints.get(tint);
+  if (!hit) {
+    if (tints.size >= TINTS_MAX) tints.clear();
+    hit = { fill: mixWithWhite(tint, 0.35), core: mixWithWhite(tint, 0.85) };
+    tints.set(tint, hit);
+  }
+  return hit;
+}
+
+/**
+ * `spotlight` overrides `data.spotlight`, so a renderer applying live search emphasis can
+ * pass it without copying the whole node data per star per frame.
+ */
+export function starVisual(
+  data: GraphNodeData,
+  selected: boolean,
+  spotlightOverride?: boolean
+): StarVisual {
   const score = data.score || 2;
   const size = starSize(score);
   const isScatter = data.figureRole === "scatter";
-  const spotlight = Boolean(data.spotlight);
+  const spotlight = spotlightOverride ?? Boolean(data.spotlight);
   const dimmedScatter = isScatter && !selected && !spotlight;
 
   const tint = !isScatter ? data.clusterColor : undefined;
@@ -92,8 +119,8 @@ export function starVisual(data: GraphNodeData, selected: boolean): StarVisual {
     // blooming at once merged the cluster into one white mass and buried the names.
     spotlightBoost: spotlight ? (data.spotlightSolo ? 1.9 : 1.3) : 1,
     alphaScale: dimmedScatter ? 0.55 : 1,
-    fill: tint ? mixWithWhite(tint, 0.35) : "#ffffff",
-    core: tint ? mixWithWhite(tint, 0.85) : "#ffffff",
+    fill: tint ? tintsFor(tint).fill : "#ffffff",
+    core: tint ? tintsFor(tint).core : "#ffffff",
     subtitle: starSubtitle(data),
   };
 }

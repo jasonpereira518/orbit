@@ -40,7 +40,23 @@ function read(importKey: string): Set<string> {
   }
 }
 
-function write(importKey: string, ids: Set<string>) {
+/**
+ * Writes coalesced to one per quarter second. A pointer sweeping a freshly imported list
+ * marks a row per hover, and each write serializes the whole set (up to `MAX_IDS`, ~80KB)
+ * synchronously on the main thread. A write lost to a closing tab only brings a mark back.
+ */
+const WRITE_DELAY_MS = 250;
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleWrite() {
+  if (writeTimer !== null) return;
+  writeTimer = setTimeout(() => {
+    writeTimer = null;
+    if (current) write(current.importKey, current.ids);
+  }, WRITE_DELAY_MS);
+}
+
+function write(importKey: string, ids: ReadonlySet<string>) {
   try {
     const stored: Stored = { importKey, ids: [...ids].slice(-MAX_IDS) };
     window.localStorage.setItem(KEY, JSON.stringify(stored));
@@ -71,7 +87,7 @@ export function markImportPersonSeen(importKey: string, contactId: string) {
   const next = new Set(seen);
   next.add(contactId);
   current = { importKey, ids: next };
-  write(importKey, next);
+  scheduleWrite();
   for (const listener of listeners) listener();
 }
 

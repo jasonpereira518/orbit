@@ -1,5 +1,6 @@
 "use server";
 
+import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { cookies } from "next/headers";
@@ -12,7 +13,8 @@ import { outlookConnections, imports } from "@/db/schema";
 import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { requireUserId } from "@/lib/auth";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
-import { requireConnectUser, requireSyncUser } from "@/lib/plan-guards";
+import { pauseSync, resumeSync } from "@/lib/provider-connections";
+import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
@@ -29,8 +31,14 @@ import {
   hasCalendarScope,
   hasContactsScope,
   hasMailScope,
+  hasSendScope,
 } from "@/lib/outlook";
-import { isMicrosoftPurpose, type MicrosoftPurpose } from "@/lib/microsoft-scopes";
+import {
+  isMicrosoftPurpose,
+  parseMicrosoftPurposes,
+  serializeMicrosoftPurposes,
+  type MicrosoftPurpose,
+} from "@/lib/microsoft-scopes";
 
 const OAUTH_STATE_COOKIE = "orbit_outlook_oauth_state";
 
@@ -48,6 +56,10 @@ export type OutlookConnectionStatus = {
   hasCalendarScope: boolean;
   /** False until the person allows mail access for the recruiter scan. */
   hasMailScope: boolean;
+  /** False until the person allows Orbit to send as them (Mail.Send). */
+  canSend: boolean;
+  /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
+  syncPaused: boolean;
   /** Null when there is no connection row. See `deriveConnectionHealth`. */
   status: ConnectionHealth | null;
   /** The scheduler's last error, verbatim — never rendered as-is (`calendarPauseLine`). */
@@ -72,6 +84,8 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
       hasContactsScope: false,
       hasCalendarScope: false,
       hasMailScope: false,
+      canSend: false,
+      syncPaused: false,
       status: null,
       syncError: null,
       nextSyncAt: null,
@@ -92,11 +106,14 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
     hasContactsScope: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
     hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
     hasMailScope: Boolean(conn && conn.status === "active" && hasMailScope(conn.scopes)),
+    canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
+    syncPaused: Boolean(conn && conn.syncStatus === "paused"),
     status: conn
       ? deriveConnectionHealth({
           status: conn.status,
           nextSyncAt: conn.nextSyncAt,
           syncError: conn.syncError,
+          syncStatus: conn.syncStatus,
           calendarScopeGranted: hasCalendarScope(conn.scopes),
         })
       : null,
@@ -107,11 +124,23 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
 }
 
 export async function startOutlookOAuth(input: {
-  purpose: MicrosoftPurpose;
+  /** One purpose — the way every feature button asks. */
+  purpose?: MicrosoftPurpose;
+  /** Several at once — what Connect sends (`MICROSOFT_CONNECT_PURPOSES`). */
+  purposes?: readonly MicrosoftPurpose[];
   returnTo?: string;
 }): Promise<{ url: string }> {
-  if (!isMicrosoftPurpose(input.purpose)) throw new Error("Unknown Microsoft connection purpose");
-  const userId = await requireConnectUser(input.purpose);
+  const purposes = input.purposes ?? (input.purpose ? [input.purpose] : []);
+  if (purposes.length === 0 || !purposes.every(isMicrosoftPurpose)) {
+    throw new Error("Unknown Microsoft connection purpose");
+  }
+  // Connecting Microsoft is free for the Free Plan's ONE Google or Microsoft account; a
+  // second provider needs a paid plan (`connection-limits.ts`). Paid features that use the
+  // connection (the recruiter inbox scan) are gated where they run.
+  const userId = await requireUserId();
+  if (!(await canConnect(userId, "microsoft"))) {
+    return { url: refusedConnectUrl(safeReturnPath(input.returnTo) ?? "", "microsoft") };
+  }
   const summary = getOutlookOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError ? ` (${summary.redirectUriError})` : "";
@@ -122,9 +151,9 @@ export async function startOutlookOAuth(input: {
 
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo = safeReturnPath(input.returnTo) ?? "";
-  // The purpose rides in the state so the callback can check that Microsoft granted the one
-  // scope this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
-  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${input.purpose}`;
+  // The purposes ride in the state so the callback can check that Microsoft granted the
+  // scopes this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
+  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${serializeMicrosoftPurposes(purposes)}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
@@ -143,7 +172,39 @@ export async function startOutlookOAuth(input: {
     columns: { scopes: true },
   });
 
-  return { url: buildMicrosoftAuthUrl(state, input.purpose, existing?.scopes) };
+  return { url: buildMicrosoftAuthUrl(state, purposes, existing?.scopes) };
+}
+
+/**
+ * The Meetings switch on the Microsoft account page. Off leaves the grant alone.
+ *
+ * Answers rather than throws, for the same reason as the Google twin: the switch shows the
+ * refusal below verbatim, and a thrown Server Action message becomes a digest in production.
+ */
+export async function setCalendarSync(enabled: boolean): Promise<ActionResult<void>> {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    if (enabled) {
+      // Same guard as the Google twin: `resumeSync` arms the row whatever the grant covers, and
+      // arming one without Calendars.Read only gets it claimed, disarmed for the missing scope,
+      // and reported as paused to someone who never asked for calendar. `hasCalendarScope`
+      // normalizes Graph's several spellings, so a real grant is never read as none.
+      const db = await getDb();
+      const conn = await db.query.outlookConnections.findFirst({
+        where: eq(outlookConnections.userId, userId),
+        columns: { scopes: true },
+      });
+      if (!hasCalendarScope(conn?.scopes)) {
+        throw new UserFacingError(
+          "Allow Orbit to see your calendar first — reconnect Outlook and accept calendar access"
+        );
+      }
+      await resumeSync("microsoft", userId);
+    } else {
+      await pauseSync("microsoft", userId);
+    }
+    revalidatePath("/settings");
+  });
 }
 
 /**
@@ -168,11 +229,12 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   }
   revalidatePath("/settings");
   revalidatePath("/recruiters");
+  revalidatePath("/imports");
 }
 
 export async function consumeOutlookOAuthState(
   state: string | null
-): Promise<{ userId: string; returnTo: string | null; purpose: MicrosoftPurpose | null }> {
+): Promise<{ userId: string; returnTo: string | null; purposes: MicrosoftPurpose[] }> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
@@ -185,7 +247,7 @@ export async function consumeOutlookOAuthState(
   return {
     userId,
     returnTo: safeReturnPath(returnTo),
-    purpose: isMicrosoftPurpose(rawPurpose) ? rawPurpose : null,
+    purposes: parseMicrosoftPurposes(rawPurpose),
   };
 }
 
@@ -227,7 +289,7 @@ function toScanStatus(row: typeof imports.$inferSelect): OutlookScanStatus {
  */
 export async function startOutlookRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
   return asActionResult(async () => {
-    const userId = await requireSyncUser();
+    const userId = await requireRecruitersUser();
     const demoEmail = await demoWorkspaceEmail(userId);
     if (demoEmail) {
       return { importId: await recordDemoRecruiterScan(userId, OUTLOOK_SCAN_IMPORT_TYPE, demoEmail) };
@@ -311,7 +373,7 @@ export async function getOutlookScanStatus(
 }
 
 export async function cancelOutlookRecruiterScan(importId: string) {
-  const userId = await requireSyncUser();
+  const userId = await requireRecruitersUser();
   const db = await getDb();
   // The runner re-reads status every iteration, so flipping the row is the cancel.
   await db

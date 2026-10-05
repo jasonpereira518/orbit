@@ -37,12 +37,16 @@ export default async function AdminContactDetailPage({
   const decoded = decodeURIComponent(userId);
 
   const adminUserId = await requireAdminUserId();
-  await recordAccountView(adminUserId, decoded);
 
   const detail = await getAdminContactDetail(decoded, contactId);
   if (!detail) notFound();
-  // After notFound(), so a mistyped id is never logged as a view of a real person.
-  await recordContactView(adminUserId, decoded, contactId);
+  // After notFound(), so a mistyped id is never logged as a view of a real person — the
+  // account view included, the same rule the account page applies. Neither write depends
+  // on the other, and both never throw.
+  await Promise.all([
+    recordAccountView(adminUserId, decoded),
+    recordContactView(adminUserId, decoded, contactId),
+  ]);
 
   const { contact, interactions } = detail;
   const fields = contact.detail;

@@ -1,11 +1,14 @@
 import { eq, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getCreditBalance } from "@/lib/credits/ledger";
+import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { getDb, rowsOf } from "@/db";
 import { notTourExample } from "@/lib/onboarding-examples/sql";
 import { tourRailVisible } from "@/lib/tour/tour-state";
 import {
   appleConnections,
   calendarSubscriptions,
   contacts,
+  emailSends,
   gmailConnections,
   imports,
   outlookConnections,
@@ -25,7 +28,7 @@ import {
   type ConnectionFacts,
   type HealthInput,
 } from "@/lib/account-alerts";
-import { getEntitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings, type Entitlements } from "@/lib/entitlements";
 import { deriveConnectionHealth } from "@/lib/connection-status";
 import { getGmailOAuthConfigSummary, hasCalendarScope } from "@/lib/gmail";
 import {
@@ -41,18 +44,18 @@ import { ensureUserSettings } from "@/lib/user-settings";
  *
  * COST. This runs on the notifications panel's 120-second poll, so every fact it needs is
  * either already in hand or folded into one statement. Provider, key presence, onboarding,
- * subscription state, plan and `contactLimit` come from `ensureUserSettings` and
- * `getEntitlements`, which are React `cache()` memos — `getEntitlements` reads nothing of
- * its own, and the panel's `Promise.all` awaits both anyway. Surface visibility is a third
- * memo the app shell already uses. Everything else is scalar subqueries in a SINGLE
+ * subscription state, plan and `contactLimit` come from the settings row — the caller's
+ * (`AccountHealthContext`), or else `ensureUserSettings`, a React `cache()` memo — and
+ * `entitlementsFromSettings` on that same row, which reads nothing. Surface visibility is a
+ * second memo the app shell already uses. Everything else is scalar subqueries in a SINGLE
  * `select`, the pattern `admin-user-detail.ts` uses and for the reason it gives there: on
  * Neon HTTP every separate query is its own round trip, and one statement the planner runs
  * as a handful of index lookups is the same work at a fraction of the latency.
  *
- * Measured (`scripts/smoke-account-alerts.ts`, case 19): 4 statements called standalone
- * with no request context, where the `cache()` memos cannot help. Inside a request that
- * has already resolved settings and surface visibility, the marginal cost is the one
- * combined select. A paid account never pays for the contact count.
+ * Measured (`scripts/smoke-account-alerts.ts`, case 19): at most 4 statements called
+ * standalone with no request context, where the `cache()` memos cannot help. Inside a
+ * request that has already resolved settings and surface visibility (or passes the row in),
+ * the marginal cost is the one combined select. A paid account never pays for the contact count.
  *
  * FRESHNESS. Alerts clear on the next poll, on panel open, or after any panel mutation —
  * so the bell's dot can outlive the fix by up to 120 seconds. That is deliberate and is
@@ -176,15 +179,29 @@ function appleCalendarFacts(
   };
 }
 
+/**
+ * The account's settings row and entitlements, for a caller that already holds them.
+ *
+ * Optional everywhere it is accepted. The app pulse is a Server Action, where `cache()` is a
+ * pass-through: without this, `ensureUserSettings` and `getEntitlements` would each re-read
+ * the row `requireAuthenticatedUser()` had just read, on a 90-second poll per tab.
+ */
+export type AccountHealthContext = {
+  settings: typeof userSettings.$inferSelect;
+  /** Resolved from `settings` when omitted — the same computation `getEntitlements` runs. */
+  entitlements?: Entitlements;
+};
+
 export async function loadAccountHealthInput(
   userId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  context?: AccountHealthContext
 ): Promise<HealthInput | null> {
-  const [settings, entitlements] = await Promise.all([
-    ensureUserSettings(userId),
-    getEntitlements(userId),
-  ]);
+  // `getEntitlements(userId)` is exactly `entitlementsFromSettings(userId, ensureUserSettings(userId))`,
+  // so resolving from the row in hand is the same answer without a second read of it.
+  const settings = context?.settings ?? (await ensureUserSettings(userId));
   if (!settings) return null;
+  const entitlements = context?.entitlements ?? entitlementsFromSettings(userId, settings);
 
   const provider = resolveAiProvider(settings.aiProvider);
   const stalledBefore = new Date(now.getTime() - STALLED_IMPORT_MS);
@@ -309,6 +326,14 @@ export async function loadAccountHealthInput(
           AND ${imports.updatedAt} > ${importWindowStart}
         ORDER BY ${imports.updatedAt} DESC LIMIT 1)`,
 
+      // Windowed like imports: a failure is history, and an unwindowed one would be a
+      // permanent badge on a device that never dismissed it.
+      emailSendFailedCount: sql<number>`(
+        SELECT count(*)::int FROM ${emailSends}
+        WHERE ${emailSends.userId} = ${userId} AND ${emailSends.status} = 'failed'
+          AND ${emailSends.dismissedAt} IS NULL
+          AND ${emailSends.updatedAt} > ${importWindowStart})`,
+
       contactCount: needContacts
         ? sql<number>`(
             SELECT count(*)::int FROM ${contacts}
@@ -369,6 +394,7 @@ export async function loadAccountHealthInput(
     importStalledLabel: text(row.importStalledLabel),
     importStalledRows: row.importStalledRows == null ? null : num(row.importStalledRows),
     importStalledTotal: row.importStalledTotal == null ? null : num(row.importStalledTotal),
+    emailSendFailedCount: num(row.emailSendFailedCount),
 
     plan: entitlements.plan,
     planSource: entitlements.source,
@@ -376,7 +402,60 @@ export async function loadAccountHealthInput(
     subscriptionPeriodEnd: toDate(settings.subscriptionPeriodEnd),
     contactLimit: entitlements.contactLimit,
     contactCount: needContacts ? num(row.contactCount) : null,
+    credits: await creditFacts(userId, entitlements.plan, settings, now),
+    pausedApiItems: entitlements.canUseApi ? 0 : await pausedApiItems(userId),
   };
+}
+
+/** REST API keys and webhook endpoints this account still holds, live, without the API. */
+async function pausedApiItems(userId: string): Promise<number> {
+  try {
+    const db = await getDb();
+    const result = await db.execute(sql`
+      SELECT
+        (SELECT count(*) FROM api_keys WHERE user_id = ${userId} AND kind = 'api' AND revoked_at IS NULL)::int
+        + (SELECT count(*) FROM webhook_endpoints WHERE user_id = ${userId} AND status <> 'disabled')::int AS n
+    `);
+    return rowsOf<{ n: number }>(result)[0]?.n ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** The credit balance for the 80% / 100% notices — Pro and Max on included AI only. */
+async function creditFacts(
+  userId: string,
+  plan: Plan,
+  settings: Parameters<typeof getCreditBalance>[2],
+  now: Date
+): Promise<HealthInput["credits"]> {
+  if (!PLAN_CONFIG[plan].features.hostedAi) return null;
+  // Running on the account's own key (the default whenever one is saved, unless it chose
+  // included AI first): credits are not what its AI runs on, so no credit notices.
+  const row = settings as {
+    aiKeyPreference?: string | null;
+    geminiApiKeyEncrypted?: string | null;
+    openaiApiKeyEncrypted?: string | null;
+    anthropicApiKeyEncrypted?: string | null;
+    openrouterApiKeyEncrypted?: string | null;
+  } | null;
+  const ownKey = Boolean(
+    row?.geminiApiKeyEncrypted || row?.openaiApiKeyEncrypted || row?.anthropicApiKeyEncrypted || row?.openrouterApiKeyEncrypted
+  );
+  if (ownKey && row?.aiKeyPreference !== "included") return null;
+  try {
+    const balance = await getCreditBalance(userId, plan, settings, now, { ensure: false });
+    if (!balance.allowance && balance.packRemaining === 0) return null;
+    return {
+      allowanceGranted: balance.allowance?.granted ?? 0,
+      allowanceRemaining: balance.allowance?.remaining ?? 0,
+      packRemaining: balance.packRemaining,
+      spendable: balance.spendable,
+      resetsAt: balance.allowance?.periodEnd ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -388,10 +467,11 @@ export async function loadAccountHealthInput(
  */
 export async function getAccountAlerts(
   userId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  context?: AccountHealthContext
 ): Promise<AccountAlert[]> {
   try {
-    const input = await loadAccountHealthInput(userId, now);
+    const input = await loadAccountHealthInput(userId, now, context);
     if (!input) return [];
 
     const alerts = sortAccountAlerts(toAccountAlerts(evaluateAccountHealth(input, now)));

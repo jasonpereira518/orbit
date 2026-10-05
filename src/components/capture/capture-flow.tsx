@@ -27,8 +27,9 @@ import { CaptureSummary, choicesFromSuggestions, suggestionsFromChoices } from "
 import type { OpportunityReviewItem } from "@/lib/capture/types";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
 import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
+import type { DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { CaptureQueuePanel } from "@/components/capture/capture-queue-panel";
-import { discardCaptureBatch, getActiveCaptureJobs } from "@/actions/capture-jobs";
+import { discardCaptureBatch, getActiveCaptureJobs, mergeCaptureBatch } from "@/actions/capture-jobs";
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
 import { MeetingCaptureTab } from "@/components/capture/meeting-capture-tab";
@@ -41,7 +42,7 @@ import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import { clearCaptureJob, refreshCaptureJob, seedCaptureJob, useCaptureJob } from "@/lib/capture/job-store";
-import { acceptedPeople, choicesFromOpportunities, countDecisions, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
+import { acceptedPeople, choicesFromOpportunities, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
@@ -81,6 +82,8 @@ export function CaptureFlow({
   quota,
   userId = null,
   history = null,
+  canUseSync = false,
+  drive = null,
 }: {
   initialJob: CaptureJobView | null;
   /** Every reachable job, so a multi-file drop can render its queue. */
@@ -92,7 +95,7 @@ export function CaptureFlow({
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
   aiReason?: AiAccessDenial | null;
   canTranscribe?: boolean;
-  /** Meeting recording is Orbit Pro and Lifetime only. False shows an upgrade prompt instead of the recorder. */
+  /** Meeting recording is on Orbit Pro, Max and Lifetime. False shows an upgrade prompt instead of the recorder. */
   canUseMeetings?: boolean;
   /** `FEATURE_DENIAL.meetings`, read on the server — this file is a client component and cannot import `@/lib/entitlements` (it reaches the database). */
   meetingsDeniedMessage: string;
@@ -103,6 +106,10 @@ export function CaptureFlow({
   userId?: string | null;
   /** The capture history feed, shown under the input UI only. */
   history?: React.ReactNode;
+  /** Drive import is part of sync; with no plan for it the Drive button is not shown. */
+  canUseSync?: boolean;
+  /** Google Picker config, from the server's env. Any gap hides the Drive button. */
+  drive?: DriveCaptureConfig | null;
 }) {
   const router = useRouter();
   const { job: storeJob } = useCaptureJob();
@@ -129,6 +136,13 @@ export function CaptureFlow({
    * only one job.
    */
   const [queue, setQueue] = useState<CaptureJobView[]>(initialJobs);
+  /** After a sorted multi-note upload settles: pull its jobs into the queue panel. */
+  const refreshQueue = useCallback(() => {
+    void getActiveCaptureJobs()
+      .then(setQueue)
+      .catch(() => null);
+    router.refresh();
+  }, [router]);
   /**
    * ONE upload's jobs, not every job that is still open.
    *
@@ -167,6 +181,40 @@ export function CaptureFlow({
       clearInterval(t);
     };
   }, [batchJobs.length, queueBusy]);
+
+  // Every file read: fold the upload into one review. The server claims the ready files, so
+  // a second tab or a repeat of this effect gets null and does nothing. The combined job
+  // becomes the page's job, which lands on "N people ready to review".
+  const batchReadyCount = batchJobs.filter((j) => j.status === "ready").length;
+  const mergingRef = useRef<string | null>(null);
+  // Read inside the effect, not a dependency: the page's job changing must not re-fire it.
+  const jobRef = useRef(job);
+  useEffect(() => {
+    jobRef.current = job;
+  }, [job]);
+  useEffect(() => {
+    if (!activeBatchId || queueBusy || batchReadyCount === 0) return;
+    if (mergingRef.current === activeBatchId) return;
+    mergingRef.current = activeBatchId;
+    const batchId = activeBatchId;
+    void mergeCaptureBatch(batchId)
+      .then((res) => {
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        // Never over the top of a single capture someone is in the middle of reviewing;
+        // the combined job waits in the queue and resumes once that one is done.
+        const current = jobRef.current;
+        const midReview = current && !current.batchGroupId && ["ready", "reviewing", "saving"].includes(current.status);
+        if (res.job && !midReview) seedCaptureJob(res.job, { force: true });
+        return getActiveCaptureJobs().then(setQueue);
+      })
+      .catch(() => null)
+      .finally(() => {
+        if (mergingRef.current === batchId) mergingRef.current = null;
+      });
+  }, [activeBatchId, queueBusy, batchReadyCount]);
 
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [pendingStart, setPendingStart] = useState(false);
@@ -232,9 +280,23 @@ export function CaptureFlow({
   }, [job?.meetingSessionId, job?.status, meetingAnalysis]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────────────
+  /**
+   * Stop pressed while Extract's own request was still out — there is no job id to discard
+   * yet. Remembered here and honoured the moment the id arrives (see `startExtraction`).
+   *
+   * By attempt number rather than a boolean: Stop and then Extract again before the first
+   * request returns is two attempts in flight, and a flag the second one reset would let the
+   * first one's job survive the Stop that was meant for it.
+   */
+  const extractAttemptRef = useRef(0);
+  const stoppedAttemptRef = useRef(0);
+  type ExtractionInput = { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null; mentionPicks?: MentionPick[]; force?: boolean };
+  /** The duplicate toast's "Extract again" calls back in through this; synced below. */
+  const startExtractionRef = useRef<((input: ExtractionInput) => Promise<void>) | null>(null);
   const startExtraction = useCallback(
-    async (input: { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null; mentionPicks?: MentionPick[] }) => {
+    async (input: ExtractionInput) => {
       if (!input.text.trim() && !input.jobId) return;
+      const attempt = ++extractAttemptRef.current;
       setPendingStart(true);
       setReviewOpened(false);
       const res = await queueCaptureJob({
@@ -249,7 +311,23 @@ export function CaptureFlow({
         // a name the user typed and then deleted is still in it — and sending that would
         // link a note to somebody they took back out on purpose.
         mentionPicks: activePicks(input.text, input.mentionPicks ?? []),
+        force: input.force,
       });
+      if (stoppedAttemptRef.current === attempt) {
+        // Stopped before the job had an id. It has one now; discard it, and say nothing —
+        // the page already went back to the notes when Stop was pressed.
+        if (res.ok) void discardCaptureJob(res.job.id);
+        return;
+      }
+      if (!res.ok && "duplicate" in res) {
+        setPendingStart(false);
+        const when = new Date(res.duplicate.capturedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        toast.message(res.error, {
+          description: `First extracted on ${when}`,
+          action: { label: "Extract again", onClick: () => void startExtractionRef.current?.({ ...input, force: true }) },
+        });
+        return;
+      }
       if (!res.ok) {
         setPendingStart(false);
         const denial = aiDenialFromMessage(res.error);
@@ -275,6 +353,27 @@ export function CaptureFlow({
     },
     [initialContactId, messy, voice, userId]
   );
+  useEffect(() => {
+    startExtractionRef.current = startExtraction;
+  }, [startExtraction]);
+
+  /**
+   * Stop on the reading stage: discard the job and go back to the input — with the notes
+   * still in the box. Unlike Start over, nothing the person wrote is reset; Stop cancels the
+   * reading, not the note. The runner notices at its next heartbeat and stops before its
+   * next model pass (`claimWatch` in capture-job-runner.ts).
+   */
+  const stopExtraction = useCallback(() => {
+    if (pendingStart) {
+      stoppedAttemptRef.current = extractAttemptRef.current;
+      setPendingStart(false);
+      return;
+    }
+    const id = job?.id;
+    clearCaptureJob();
+    setReviewOpened(false);
+    if (id) void discardCaptureJob(id);
+  }, [pendingStart, job?.id]);
 
   const save = useCallback(async (jobId: string) => {
     const res = await saveCaptureJob(jobId);
@@ -299,16 +398,12 @@ export function CaptureFlow({
           void refreshCaptureJob();
           return;
         }
+        // No auto-save, even for a one-person capture: the summary after the last card is
+        // where suggested reminders and opportunities are chosen, and saving straight from
+        // Keep skipped it — the page jumped to "Saved" before the person could look.
         seedCaptureJob(res.job, { force: true });
-        // One person, kept: accept is the save.
-        const items = res.job.result?.items ?? [];
-        const counts = countDecisions(items, res.job.decisions);
-        if (decision?.decision === "accept" && items.length === 1 && counts.pending === 0 && counts.accepted === 1) {
-          void save(res.job.id);
-        }
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [job]
   );
 
@@ -387,6 +482,9 @@ export function CaptureFlow({
                 tabId={captureTabId("messy")}
                 draftKey={userId ? captureDraftKey(userId, initialContactId) : null}
                 acceptsHandoff={!initialContactId}
+                onQueued={refreshQueue}
+                drive={drive}
+                canUseSync={canUseSync}
                 onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy", mentionPicks: messy.mentionPicks })}
               />
             )}
@@ -439,12 +537,9 @@ export function CaptureFlow({
                 hasApiKey={hasApiKey}
                 panelId={capturePanelId("library")}
                 tabId={captureTabId("library")}
-                onQueued={() => {
-                  void getActiveCaptureJobs()
-                    .then(setQueue)
-                    .catch(() => null);
-                  router.refresh();
-                }}
+                onQueued={refreshQueue}
+                drive={drive}
+                canUseSync={canUseSync}
               />
             )}
             {mode === "structured" && (
@@ -461,6 +556,7 @@ export function CaptureFlow({
             phase={foundHold ? "found" : "reading"}
             foundCount={items.length}
             meta={sourceMeta(job, messy.fileName ?? voice.fileName)}
+            onStop={stopExtraction}
           />
         )}
 
@@ -677,7 +773,7 @@ function MeetingHeader({ job, analysis, readOnly }: { job: CaptureJobView; analy
         sessionId={job.meetingSessionId ?? undefined}
       />
       {analysis.missingSeqs.length > 0 && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">
+        <p className="text-xs text-amber-700 dark:text-warning">
           {analysis.missingSeqs.length} minute{analysis.missingSeqs.length === 1 ? "" : "s"} of this meeting never reached Orbit, so they are not in the summary.
         </p>
       )}

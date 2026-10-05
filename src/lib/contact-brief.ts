@@ -1,17 +1,21 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { contactBriefs, contactOpportunities, contacts, interactions, reminders } from "@/db/schema";
+import { contactBriefs, contactOpportunities, contacts, interactions, relationshipDigests, reminders } from "@/db/schema";
 import { completeJson, getAiConfig } from "@/lib/ai";
 import { gateSkips, gateText } from "@/lib/decisions/gates";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { formatHowMetSummary, metContextLabel } from "@/lib/met-context";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { listOpenActionItems } from "@/lib/action-items";
+import { getCareerLines } from "@/lib/contact-profile";
+import { getRecentMoveLines } from "@/lib/job-changes";
 import { OPEN_OPPORTUNITY_STATUSES, opportunityKindLabel } from "@/lib/opportunity-kinds";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { reportUnlessQuiet } from "@/lib/report-error";
+import { fenceUntrusted } from "@/lib/ai-security";
+import { listActiveGoalsForUser } from "@/lib/user-goals";
 
 /** Never reject a good summary over an overlong standing paragraph — truncate instead. */
 export function clampStanding(s: string) {
@@ -33,10 +37,67 @@ const contactBriefSchema = z.object({
       const t = v?.replace(/\s+/g, " ").trim();
       return t ? t.slice(0, 160) : null;
     }),
+  /**
+   * Only asked for when the user has goals (`GOAL_FIT_SYSTEM`). `.catch(null)` on purpose: a
+   * malformed goal_fit must cost the goal fit, never the summary the same response carries.
+   * Ids are checked against the goals actually shown in `sanitizeGoalFit`, not here.
+   */
+  goal_fit: z
+    .array(z.object({ goal_id: z.string(), why: z.string() }))
+    .nullish()
+    .catch(null),
 });
 
 /** How many open items of each kind reach the prompt. Enough to choose from, not a list. */
 const OPEN_ITEM_LIMIT = 8;
+
+/** How many of the user's newest active goals reach the prompt, and so can be judged. */
+export const GOAL_FIT_GOAL_LIMIT = 8;
+
+/**
+ * Appended to `BRIEF_SYSTEM` only when the user has active goals, so an account with none
+ * neither pays for the extra output nor sees its brief hashes change when this ships.
+ */
+const GOAL_FIT_SYSTEM = `
+Also return "goal_fit": [{ "goal_id": string, "why": string }].
+goal_fit — the user's active goals are listed with ids under "Active goals". Include ONLY goals this person genuinely bears on, judged from what you were given: their role, company, career, notes, discussions or open items. "why" is ONE sentence, second person, under 30 words, naming the concrete link ("Runs infra at Stripe, where you want an intro"). Use goal_id exactly as listed. An empty array is the right answer when nothing fits, and usually the common one — never stretch a weak or generic link to fill the list.`;
+
+export type GoalFit = NonNullable<ContactBrief["goalFit"]>;
+
+/**
+ * The model's goal_fit reduced to what can be trusted: only goals that were actually in the
+ * prompt (so it cannot cite a goal that does not exist, or someone else's), each once, with a
+ * non-empty one-line reason. Anything else is dropped rather than repaired.
+ */
+export function sanitizeGoalFit(
+  raw: { goal_id: string; why: string }[] | null | undefined,
+  goals: readonly { id: string }[]
+): GoalFit["items"] {
+  const shown = new Set(goals.map((g) => g.id));
+  const seen = new Set<string>();
+  const items: GoalFit["items"] = [];
+  for (const r of raw ?? []) {
+    const goalId = r.goal_id.trim();
+    const why = r.why.replace(/\s+/g, " ").trim().slice(0, 220);
+    if (!shown.has(goalId) || seen.has(goalId) || !why) continue;
+    seen.add(goalId);
+    items.push({ goalId, why });
+  }
+  return items;
+}
+
+/**
+ * Whether a stored fit predates a goal the user has since added. A goal deleted since is not
+ * "out of date" — readers drop items whose goal is gone — and no goals means nothing to judge.
+ */
+export function goalFitOutOfDate(
+  goals: readonly { id: string }[],
+  goalFit: ContactBrief["goalFit"]
+): boolean {
+  if (goals.length === 0) return false;
+  const judged = new Set(goalFit?.judged ?? []);
+  return goals.some((g) => !judged.has(g.id));
+}
 
 const BRIEF_SYSTEM = `You write concise relationship memory for a personal networking CRM called Orbit.
 Return strict JSON: { "summary": string, "standing": string, "next_step": string|null }
@@ -64,8 +125,8 @@ Rules:
  * part of the hash, so editing it invalidates every brief; the model is not, so switching
  * models in Settings does not.
  */
-export function briefInputHash(user: string): string {
-  return createHash("sha256").update(BRIEF_SYSTEM).update("\0").update(user).digest("hex");
+export function briefInputHash(user: string, system: string = BRIEF_SYSTEM): string {
+  return createHash("sha256").update(system).update("\0").update(user).digest("hex");
 }
 
 export type ContactBrief = typeof contactBriefs.$inferSelect;
@@ -259,26 +320,46 @@ export async function generateAndStoreContactBrief(
   });
   if (!contact) return null;
 
+  // The conversation digest stands in for the raw message threads it already covers.
+  const digest = await db.query.relationshipDigests.findFirst({
+    where: and(eq(relationshipDigests.contactId, contactId), eq(relationshipDigests.userId, userId)),
+  });
+  const hasDigest = Boolean(digest?.summary || digest?.whatTheyDo);
+
+  const recentColumns = {
+    id: true,
+    interactionDate: true,
+    interactionType: true,
+    aiSummary: true,
+    rawNotes: true,
+  } as const;
+  // Unfiltered: drives the stored recent discussions and the basis interaction, as before.
   const recent = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.contactId, contactId)
-    ),
-    columns: {
-      id: true,
-      interactionDate: true,
-      interactionType: true,
-      aiSummary: true,
-      rawNotes: true,
-    },
+    where: and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)),
+    columns: recentColumns,
     orderBy: [desc(interactions.interactionDate)],
     limit: 20,
   });
+  // The prompt's transcript only: with a digest, raw chat messages are left out. Excluded in
+  // SQL, not after the limit, so dozens of messages cannot push a meeting out of the newest
+  // 20. coalesce keeps NULL-source rows (NOT over NULL would drop them).
+  const promptInteractions = hasDigest
+    ? await db.query.interactions.findMany({
+        where: and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, contactId),
+          sql`NOT (${interactions.interactionType} = 'linkedin_message' OR (${interactions.interactionType} = 'message' AND coalesce(${interactions.source}, '') IN ('whatsapp', 'imessage')))`
+        ),
+        columns: recentColumns,
+        orderBy: [desc(interactions.interactionDate)],
+        limit: 20,
+      })
+    : recent;
 
   // What the brief could never see before: the things this relationship actually owes.
   // Loaded in parallel and each guarded, because a brief that fails because one side query
   // failed is strictly worse than a brief written without that side.
-  const [openOpportunities, pendingReminders, openItems] = await Promise.all([
+  const [openOpportunities, pendingReminders, openItems, careerLines, moveLines, goals] = await Promise.all([
     db
       .select({
         kind: contactOpportunities.kind,
@@ -311,7 +392,16 @@ export async function generateAndStoreContactBrief(
       .limit(OPEN_ITEM_LIMIT)
       .catch(() => []),
     listOpenActionItems(userId, contactId).catch(() => []),
+    // The one-line work history ("Stripe, ex-Google · MIT") stored from LinkedIn, so the
+    // brief can place someone by their career, not only by their current title.
+    getCareerLines(userId, [contactId]).catch(() => new Map<string, string>()),
+    getRecentMoveLines(userId, [contactId]).catch(() => new Map<string, string>()),
+    // Newest first, bounded: what the fit is judged against. A failed read costs the goal
+    // fit, not the brief.
+    listActiveGoalsForUser(userId, { limit: GOAL_FIT_GOAL_LIMIT }).catch(() => []),
   ]);
+  const career = careerLines.get(contactId) ?? null;
+  const moves = moveLines.get(contactId) ?? null;
 
   const opportunityLines = openOpportunities.map((o) =>
     [
@@ -327,7 +417,7 @@ export async function generateAndStoreContactBrief(
     ...openItems.slice(0, OPEN_ITEM_LIMIT).map((i) => `- ${i.text}`),
   ];
 
-  const interactionSnippets = recent
+  const interactionSnippets = promptInteractions
     .map((i) => {
       const text = (i.aiSummary || i.rawNotes || "").trim();
       if (!text) return null;
@@ -342,7 +432,8 @@ export async function generateAndStoreContactBrief(
     Boolean(contact.howMet?.trim()) ||
     Boolean(contact.metContext) ||
     Boolean(contact.notes?.trim()) ||
-    Boolean(contact.title || contact.company) ||
+    Boolean(contact.title || contact.company || career) ||
+    hasDigest ||
     interactionSnippets.length > 0;
 
   if (!hasSignal && !options?.force) {
@@ -354,6 +445,8 @@ export async function generateAndStoreContactBrief(
     contact.preferredName ? `Preferred name: ${contact.preferredName}` : null,
     contact.title ? `Role: ${contact.title}` : null,
     contact.company ? `Company: ${contact.company}` : null,
+    career ? `Career: ${career}` : null,
+    moves ? `Recent moves: ${moves}` : null,
     contact.location ? `Location: ${contact.location}` : null,
     contact.industry ? `Industry: ${contact.industry}` : null,
     formatHowMetSummary({
@@ -387,11 +480,27 @@ export async function generateAndStoreContactBrief(
     `Profile:\n${profileBlock}`,
     opportunityLines.length ? `Open opportunities:\n${opportunityLines.join("\n")}` : null,
     commitmentLines.length ? `Open commitments:\n${commitmentLines.join("\n")}` : null,
+    hasDigest
+      ? [
+          "Conversation digest:",
+          digest!.whatTheyDo ? `What they do: ${digest!.whatTheyDo}` : null,
+          digest!.workingOn ? `Working on: ${digest!.workingOn}` : null,
+          digest!.summary ? `Summary: ${digest!.summary}` : null,
+          digest!.topics.length ? `Topics: ${digest!.topics.map((t) => t.label).join(", ")}` : null,
+          digest!.openThreads.length ? `Open threads: ${digest!.openThreads.map((t) => t.text).join("; ")}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : null,
+    goals.length
+      ? `Active goals (id — goal):\n${goals.map((g) => `- ${g.id} — ${g.text}`).join("\n")}`
+      : null,
     `Interactions (newest first):\n${transcript}`,
   ]
     .filter(Boolean)
     .join("\n\n");
-  const inputHash = briefInputHash(userPrompt);
+  const system = goals.length ? BRIEF_SYSTEM + GOAL_FIT_SYSTEM : BRIEF_SYSTEM;
+  const inputHash = briefInputHash(userPrompt, system);
 
   if (!options?.force) {
     const onFile = await getContactBrief(userId, contactId);
@@ -410,7 +519,10 @@ export async function generateAndStoreContactBrief(
     // keeps the brief on file and marks it current against the new input. Without one, or
     // on any less certain answer, it regenerates exactly as it always has. `force` (the
     // Regenerate button) never reaches this.
-    if (onFile && contact.aiSummary) {
+    // A goal added since the fit was judged is new information the gate cannot see: the
+    // brief text itself may be unchanged while the person now bears on a new goal.
+    const goalsUnjudged = goalFitOutOfDate(goals, onFile?.goalFit ?? null);
+    if (onFile && contact.aiSummary && !goalsUnjudged) {
       const engines = options?.engines ?? (await openEngines(userId));
       const skip = await gateSkips(engines, "brief", {
         current_brief: [contact.aiSummary, onFile.standing, onFile.nextStep].filter(Boolean).join(" "),
@@ -430,20 +542,27 @@ export async function generateAndStoreContactBrief(
   let standing: string | null = null;
   let nextStep: string | null = null;
   let model: string | null = null;
+  let goalFit: GoalFit | null = null;
 
   try {
     const config = await getAiConfig(userId, "contact.brief");
     const content = await completeJson(userId, {
       operation: "contact.brief",
       temperature: 0.3,
-      user: userPrompt,
-      system: BRIEF_SYSTEM,
+      // Fenced for the model only: `inputHash` and the skip gate stay on the plain input, so
+      // adding the fence did not make every brief on file look stale.
+      user: fenceUntrusted("RECORDS", userPrompt),
+      system,
     });
     const parsed = contactBriefSchema.parse(JSON.parse(content));
     summary = parsed.summary.trim();
     standing = parsed.standing;
     nextStep = parsed.next_step;
     model = config.model;
+    // Null, not empty, when there were no goals to judge: nothing was looked at.
+    goalFit = goals.length
+      ? { judged: goals.map((g) => g.id), items: sanitizeGoalFit(parsed.goal_fit, goals) }
+      : null;
   } catch (err) {
     // The deterministic summary is a fine fallback, but a brief that silently never uses
     // the model is a fault worth seeing — unless the cause is the person's own key setup.
@@ -467,6 +586,7 @@ export async function generateAndStoreContactBrief(
     // whole change exists to fix.
     nextStep = deterministicNextStep(opportunityLines, commitmentLines);
     model = null;
+    goalFit = null;
   }
 
   if (!summary?.trim()) return { summary: contact.aiSummary, standing: null };
@@ -504,6 +624,7 @@ export async function generateAndStoreContactBrief(
       basisInteractionId,
       model,
       inputHash: briefHash,
+      goalFit,
     })
     .onConflictDoUpdate({
       target: contactBriefs.contactId,
@@ -515,6 +636,7 @@ export async function generateAndStoreContactBrief(
         basisInteractionId,
         model,
         inputHash: briefHash,
+        goalFit,
       },
     });
 

@@ -28,11 +28,14 @@ export function FollowUpDraftSheetLazy({
   onOpenChange,
   contactId,
   contactName,
+  initialDraft,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contactId: string;
   contactName: string;
+  /** A draft already written (Radar's pre-drafted Today cards). Shown without a model call. */
+  initialDraft?: string | null;
 }) {
   return (
     <FollowUpDraftSheet
@@ -40,6 +43,7 @@ export function FollowUpDraftSheetLazy({
       onOpenChange={onOpenChange}
       contactId={contactId}
       contactName={contactName}
+      initialDraft={initialDraft}
     />
   );
 }

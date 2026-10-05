@@ -12,7 +12,7 @@ import {
   type ReminderActionKind,
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
-import { requireUserId, getDisplayProfile } from "@/lib/auth";
+import { requireAuthenticatedUser, requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -36,8 +36,10 @@ import {
 } from "@/lib/reminder-lists";
 import { resolveTimeZone, TZ_COOKIE } from "@/lib/reminder-due-bucket";
 import {
+  assertReminderContactOwned,
   createReminderForUser,
   scheduleContactFollowUpForUser,
+  clearContactFollowUpForUser,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import { settle, unwrap } from "@/lib/settled";
@@ -331,7 +333,10 @@ export async function updateReminder(
   if (input.dueDate !== undefined) {
     patch.dueDate = input.dueDate ? new Date(input.dueDate) : null;
   }
-  if (input.contactId !== undefined) patch.contactId = input.contactId;
+  if (input.contactId !== undefined) {
+    await assertReminderContactOwned(userId, input.contactId);
+    patch.contactId = input.contactId;
+  }
   if (input.listId !== undefined) {
     if (input.listId) {
       const list = await findReminderListForUser(userId, input.listId);
@@ -643,35 +648,12 @@ export async function scheduleContactFollowUpAt(
 
 export async function clearContactFollowUp(contactId: string) {
   const userId = await requireUserId();
-  const db = await getDb();
-
-  await db
-    .update(contacts)
-    .set({
-      nextFollowUpAt: null,
-      followUpStatus: "none",
-      updatedAt: new Date(),
-    })
-    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
-
-  const open = await db.query.reminders.findMany({
-    where: and(
-      eq(reminders.userId, userId),
-      eq(reminders.contactId, contactId),
-      eq(reminders.status, "pending")
-    ),
-  });
-  for (const r of open) {
-    await completeReminder(userId, r.id);
-  }
-
-  revalidateReminderPaths(contactId);
-  revalidatePathIfRequestScoped("/contacts");
+  const { remindersClosed } = await clearContactFollowUpForUser(userId, contactId);
   // The count is load-bearing, not telemetry: clearing a follow-up also marks every
   // pending reminder for the contact done (and completes their linked action items),
   // which the caller has to be able to say out loud. It used to return a bare
   // `{ ok: true }` and the UI said only "Follow-up cleared".
-  return { ok: true, remindersClosed: open.length };
+  return { ok: true, remindersClosed };
 }
 
 export type FollowUpTouchChannel = "email" | "linkedin_message" | "note";
@@ -1022,12 +1004,16 @@ export async function undoBulkReminderAction(snapshot: BulkReminderSnapshot) {
 
 /** Full inbox for the in-app notifications panel. */
 export async function listNotificationPanel() {
-  const userId = await requireUserId();
+  // The gate's row is handed on: in a Server Action `cache()` is a pass-through, so the
+  // panel's entitlements and alerts would otherwise each read it again.
+  const { userId, settings } = await requireAuthenticatedUser();
   const { isAdminUser } = await import("@/lib/admin");
-  const { isViewingAsUser } = await import("@/lib/surface-visibility");
+  const { isSurfaceLive, isViewingAsUser } = await import("@/lib/surface-visibility");
 
   const panel = await loadNotificationPanel(userId, new Date(), {
     withAlerts: true,
+    settings,
+    radar: await isSurfaceLive(userId, "page.radar"),
   });
 
   return {
@@ -1051,10 +1037,10 @@ export async function listNotificationPanel() {
 /** Lightweight payload for browser/desktop notification polling. */
 export async function listDueNotificationItems() {
   const { getDesktopNotifiedIds } = await import("@/actions/notifications");
-  const userId = await requireUserId();
+  const { userId, settings } = await requireAuthenticatedUser();
   const [notifiedIds, panel] = await Promise.all([
     getDesktopNotifiedIds(),
-    loadNotificationPanel(userId, new Date(), { withAlerts: false }),
+    loadNotificationPanel(userId, new Date(), { withAlerts: false, settings }),
   ]);
   const notified = new Set(notifiedIds);
 

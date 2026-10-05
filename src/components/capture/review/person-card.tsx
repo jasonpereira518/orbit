@@ -10,7 +10,8 @@ import { ClosenessControl } from "@/components/capture/review/closeness-control"
 import { PersonFields, type PersonFieldValues } from "@/components/capture/review/person-fields";
 import { PlanetBadge } from "@/components/capture/review/planet-badge";
 import { SaveTargetChoice } from "@/components/capture/review/save-target-choice";
-import type { ClosenessLevel } from "@/lib/capture/closeness";
+import { closenessLabel, type ClosenessLevel } from "@/lib/capture/closeness";
+import { planetForCloseness } from "@/lib/capture/planets";
 import type { BulkNotePersonPreview } from "@/lib/capture/types";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +34,7 @@ export function PersonCardBody({
   idPrefix,
 }: {
   item: BulkNotePersonPreview;
-  /** Card position — also the planet. */
+  /** Card position — picks the planet within the person's orbit ring. */
   index: number;
   total: number;
   draft: PersonDraft;
@@ -71,6 +72,12 @@ export function PersonCardBody({
                   Already in your network
                 </Badge>
               )}
+              {/* A combined upload has a card per person per note — say which note. */}
+              {item.noteLabel && (
+                <Badge variant="outline" className="max-w-full truncate text-[10px] font-normal">
+                  From {item.noteLabel}
+                </Badge>
+              )}
               {item.sharedNoteTexts.length > 0 && (
                 <Badge variant="secondary" className="text-[10px]">
                   Includes shared note
@@ -82,8 +89,9 @@ export function PersonCardBody({
         </div>
         <PlanetBadge
           index={index}
+          closeness={draft.closeness}
           size={compact ? "sm" : "md"}
-          title={`Card ${index + 1} of ${total}`}
+          title={`${planetForCloseness(draft.closeness, index).label} · ${closenessLabel(draft.closeness)}`}
           className={cn("absolute -top-2 right-4 drop-shadow-md sm:right-5", compact && "top-3")}
         />
         {handleProps && (
@@ -99,6 +107,7 @@ export function PersonCardBody({
         topics={item.parsed.topics}
         sharedNoteTexts={item.sharedNoteTexts}
         sourceText={item.notes}
+        connections={item.parsed.connections ?? []}
         compact={compact}
       />
 

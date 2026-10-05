@@ -54,6 +54,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     lastNightly,
     lastSyncRun,
     lastJobFeedRun,
+    lastRadarRun,
+    lastRadarFeeds,
+    lastRadarDigest,
+    lastWorkHistoryRun,
     webhooks,
     issues,
     outreach,
@@ -68,6 +72,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     disarmedRes,
     budgetAgg,
     managedAi,
+    [stuckPurgeRow],
+    statementTimeout,
+    syncOldestDueAgeMs,
+    [aiSecurityRow],
   ] = await Promise.all([
       db
         .select()
@@ -85,6 +93,30 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "jobs.feed-sweep"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "radar.run"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "radar.feeds"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "radar.digest"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "work-history.sweep"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       recentWebhookOutcomes(5, now),
@@ -150,19 +182,37 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
           )
         ),
       loadManagedAiOpsFacts(now),
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(dataPurgeRuns)
+        .where(eq(dataPurgeRuns.status, "failed")),
+      // Production only: PGlite and preview branches report Postgres's default of 0, which
+      // would open this condition in every local sweep and smoke run.
+      process.env.VERCEL_ENV === "production" ? probeStatementTimeout().catch(() => null) : null,
+      oldestDueAgeMs("google", now).catch(() => null),
+      // `ai.security` events and the accounts they span — see AI_SECURITY_ALERT_EVENTS.
+      db
+        .select({
+          events: sql<number>`count(*)::int`,
+          accounts: sql<number>`count(distinct ${errorEvents.userId})::int`,
+        })
+        .from(errorEvents)
+        .where(and(eq(errorEvents.source, ERROR_SOURCES.aiSecurity), gt(errorEvents.createdAt, hourAgo))),
     ]);
-
-  const [stuckPurgeRow] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(dataPurgeRuns)
-    .where(eq(dataPurgeRuns.status, "failed"));
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
   const perfSlow = bySource.get(ERROR_SOURCES.perfSlow) ?? 0;
   const stripeCheckout = bySource.get(ERROR_SOURCES.stripeCheckout) ?? 0;
   const resendRejected = bySource.get(ERROR_SOURCES.resendRejected) ?? 0;
   const otherErrors = [...bySource.entries()]
-    .filter(([source]) => source !== ERROR_SOURCES.perfSlow && source !== ERROR_SOURCES.backfillFailed)
+    // `ai.security` has a condition of its own (below); counting it here too would open the
+    // generic error-rate alert for what is a guard doing its job.
+    .filter(
+      ([source]) =>
+        source !== ERROR_SOURCES.perfSlow &&
+        source !== ERROR_SOURCES.backfillFailed &&
+        source !== ERROR_SOURCES.aiSecurity
+    )
     .reduce((sum, [, n]) => sum + n, 0);
 
   const outages = new Map<string, { provider: string | null; errorKind: string; accounts: number }>();
@@ -175,18 +225,16 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     }
   }
 
-  // Production only: PGlite and preview branches report Postgres's default of 0, which would
-  // open this condition in every local sweep and smoke run.
-  const statementTimeout =
-    process.env.VERCEL_ENV === "production" ? await probeStatementTimeout().catch(() => null) : null;
-  const syncOldestDueAgeMs = await oldestDueAgeMs("google", now).catch(() => null);
-
   const refusals = rowsOf<{ unembeddable: number; quota_accounts: number }>(refusalRes)[0];
 
   const nightly = lastNightly[0];
   const syncRun = lastSyncRun[0];
   const drainRun = lastDrain[0];
   const jobFeedRun = lastJobFeedRun[0];
+  const radarRun = lastRadarRun[0];
+  const radarFeeds = lastRadarFeeds[0];
+  const radarDigest = lastRadarDigest[0];
+  const workHistoryRun = lastWorkHistoryRun[0];
   return {
     cron: {
       processStalled: {
@@ -205,6 +253,22 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         lastStartedAt: jobFeedRun?.startedAt ?? null,
         lastState: jobFeedRun ? deriveCronRunState(jobFeedRun, now) : null,
       },
+      radarRun: {
+        lastStartedAt: radarRun?.startedAt ?? null,
+        lastState: radarRun ? deriveCronRunState(radarRun, now) : null,
+      },
+      radarFeeds: {
+        lastStartedAt: radarFeeds?.startedAt ?? null,
+        lastState: radarFeeds ? deriveCronRunState(radarFeeds, now) : null,
+      },
+      radarDigest: {
+        lastStartedAt: radarDigest?.startedAt ?? null,
+        lastState: radarDigest ? deriveCronRunState(radarDigest, now) : null,
+      },
+      workHistory: {
+        lastStartedAt: workHistoryRun?.startedAt ?? null,
+        lastState: workHistoryRun ? deriveCronRunState(workHistoryRun, now) : null,
+      },
     },
     processStalledRecent: lastNightly.map((r) => deriveCronRunState(r, now)),
     backfillFailures24h: {
@@ -222,6 +286,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     webhooks,
     stripeCheckoutErrorsLastHour: stripeCheckout,
     resendRejectedLastHour: resendRejected,
+    aiSecurityLastHour: { events: aiSecurityRow?.events ?? 0, accounts: aiSecurityRow?.accounts ?? 0 },
     wedgedImports: issues.wedged,
     failedImportsLast24h: failedImports[0]?.n ?? 0,
     outreach: { overdue: outreach.overdue, oldestOverdueDays: outreach.oldestOverdueDays },
@@ -349,13 +414,16 @@ export async function runOpsSweep(options: {
   };
 
   try {
-    let snapshot = await loadOpsSnapshot(now, options.deploy ?? null);
-    if (options.snapshotOverride) snapshot = options.snapshotOverride(snapshot);
+    // Independent reads: nothing between them writes `ops_alert_state`.
+    const [loaded, previous] = await Promise.all([
+      loadOpsSnapshot(now, options.deploy ?? null),
+      loadPreviousRows(),
+    ]);
+    const snapshot = options.snapshotOverride ? options.snapshotOverride(loaded) : loaded;
     const conditions = evaluateOpsConditions(snapshot, now);
     result.evaluated = conditions.length;
     result.active = conditions.map((c) => c.id);
 
-    const previous = await loadPreviousRows();
     const plan = planTransitions(previous, conditions, now);
 
     const prevById = new Map(previous.map((r) => [r.id, r]));

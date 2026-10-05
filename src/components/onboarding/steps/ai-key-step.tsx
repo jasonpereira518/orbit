@@ -5,14 +5,14 @@ import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { saveAiSettings } from "@/actions/settings";
-import { AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
+import { AI_PROVIDERS, SELECTABLE_AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 import { integrationHref } from "@/components/settings/sections";
-import { useLifetimeIncludesAi } from "@/components/lifetime-ai-offer";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { PROVIDER_BRAND, ProviderLogo } from "@/components/onboarding/provider-logo";
 
 /**
@@ -30,7 +30,8 @@ export function AiKeyStep({ onSaved, onSkip }: { onSaved: () => void; onSkip: ()
   const [apiKey, setApiKey] = useState("");
   const [pending, start] = useTransition();
   const meta = AI_PROVIDERS.find((p) => p.id === provider) ?? AI_PROVIDERS[0];
-  const lifetimeIncludesAi = useLifetimeIncludesAi();
+  const { plan, includedAiAvailable } = useViewerPlan();
+  const offerIncludedAi = plan === "free" && includedAiAvailable;
 
   function save() {
     const key = apiKey.trim();
@@ -53,21 +54,23 @@ export function AiKeyStep({ onSaved, onSkip }: { onSaved: () => void; onSkip: ()
   return (
     <div className="space-y-5">
       <p className="text-sm text-muted-foreground">
-        Orbit’s AI runs on a key you own. You pay your provider directly, at cost, and nothing
-        is marked up or shared. Pick a provider, create a key, and paste it here.
-        {lifetimeIncludesAi && (
+        On the Free Plan, Orbit’s AI runs on a key you own. You pay your provider directly, and
+        the key is never shared. Pick a provider, create a key, and paste it here.
+        {offerIncludedAi && (
           <>
-            {" "}With{" "}
+            {" "}Or skip the key:{" "}
             <Link href="/pricing" className="font-medium text-primary underline-offset-2 hover:underline">
-              Orbit Lifetime
-            </Link>
-            , AI is included and no key is needed.
+              Orbit Pro and Orbit Max
+            </Link>{" "}
+            include AI.
           </>
         )}
       </p>
 
       <div className="grid gap-2 sm:grid-cols-3">
-        {AI_PROVIDERS.map((p) => {
+        {/* The first-party three only: OpenRouter is chosen in Settings, by someone who
+            already runs on it, not minted as a fourth account before a new user can start. */}
+        {SELECTABLE_AI_PROVIDERS.filter((p) => p.id !== "openrouter").map((p) => {
           const selected = provider === p.id;
           const { brand, brandDark } = PROVIDER_BRAND[p.id];
           return (

@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { motion } from "motion/react";
 import { Loader2, Upload } from "lucide-react";
 import { VoiceRecorder } from "@/components/capture/voice-recorder";
-import { IngestMeta, MissingKeyNotice } from "@/components/capture/messy-notes-capture";
+import { IngestMeta, MissingKeyNotice, StopReadingButton } from "@/components/capture/messy-notes-capture";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -64,7 +64,7 @@ export function VoiceCapture({
     <div id={panelId} role="tabpanel" aria-labelledby={tabId} className="space-y-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6">
       {!ingest.hasApiKey && <MissingKeyNotice reason={ingest.aiReason} />}
       {!canTranscribe && ingest.hasApiKey && (
-        <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
+        <div className="rounded-xl border border-warning-border bg-warning-surface px-3 py-3 text-sm">
           <p className="font-medium text-foreground">Add a key that can transcribe audio</p>
           <p className="mt-1 text-muted-foreground">Voice notes transcribe with OpenAI or Gemini — Anthropic can’t hear audio.</p>
         </div>
@@ -98,11 +98,16 @@ export function VoiceCapture({
       </motion.div>
 
       {ingest.busy && !hasTranscript && (
-        <div className="space-y-2" aria-hidden>
-          <Skeleton className="h-4 w-11/12" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-9/12" />
-          <Skeleton className="h-4 w-4/12" />
+        <div className="space-y-2">
+          <div className="space-y-2" aria-hidden>
+            <Skeleton className="h-4 w-11/12" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-9/12" />
+            <Skeleton className="h-4 w-4/12" />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Transcribing… <StopReadingButton onStop={ingest.cancel} />
+          </p>
         </div>
       )}
 
@@ -127,6 +132,7 @@ export function VoiceCapture({
             {ingest.busy && (
               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" /> Transcribing…
+                <StopReadingButton onStop={ingest.cancel} />
               </span>
             )}
             <IngestMeta fileName={ingest.fileName} sources={ingest.sources} />

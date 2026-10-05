@@ -49,6 +49,23 @@ export const KEY_PROBES: Record<AiProvider, KeyProbe> = {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     await new Anthropic({ apiKey, maxRetries: 0 }).models.list({ limit: 1 }, { signal });
   },
+  // OpenRouter has no SDK, so this is the one probe that speaks raw HTTP — `/api/v1/key`
+  // is metadata about the caller's own key, authenticated the same way every other
+  // OpenRouter request is. `smoke-ai-access.ts`'s source guard treats this exact path (and
+  // the OAuth pieces in `openrouter-oauth.ts` / the callback route) as the narrow exception
+  // to "only the gate reaches a provider host" — every other OpenRouter path still routes
+  // through `openrouterClient`.
+  openrouter: async (apiKey, signal) => {
+    const res = await fetch("https://openrouter.ai/api/v1/key", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal,
+    });
+    if (!res.ok) {
+      throw Object.assign(new Error(`OpenRouter key check failed (${res.status})`), {
+        status: res.status,
+      });
+    }
+  },
 };
 
 export function isKeyRejection(err: unknown): boolean {

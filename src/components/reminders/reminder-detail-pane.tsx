@@ -122,7 +122,7 @@ export function ReminderDetailPane({
           <p
             className={cn(
               "text-xs font-medium",
-              due.bucket === "overdue" ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground"
+              due.bucket === "overdue" ? "text-amber-700 dark:text-warning" : "text-muted-foreground"
             )}
           >
             {due.bucket === "overdue" || due.bucket === "today" || due.bucket === "tomorrow"

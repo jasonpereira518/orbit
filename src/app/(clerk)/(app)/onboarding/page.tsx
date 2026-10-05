@@ -10,6 +10,7 @@ import { hasLinkedInImport } from "@/lib/linkedin-reminder";
 import { connectAccountFromGmail, connectAccountFromOutlook } from "@/lib/onboarding-connect";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { tourInProgress } from "@/lib/tour/tour-state";
+import { claimSiteInviteGrant } from "@/lib/site-invites";
 import { ensureUserSettings } from "@/lib/user-settings";
 
 export default async function OnboardingPage() {
@@ -27,6 +28,11 @@ export default async function OnboardingPage() {
   if (tourInProgress(settings)) {
     redirect("/dashboard");
   }
+
+  // Every invited sign-up passes through here first (`/sign-up` forces this redirect), so
+  // this is where a missed `user.created` webhook is made up for: an invited account gets its
+  // founding-pricing eligibility before it ever sees a price.
+  if (!settings.foundingEligible) await claimSiteInviteGrant(userId);
 
   const [aiSettings, entitlements, visibility, gmail, outlook, linkedinImported] =
     await Promise.all([

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { getContact } from "@/actions/contacts";
+import { getContactLabel } from "@/actions/contacts";
 import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
@@ -46,17 +46,17 @@ export default async function CapturePage({
   let contactId: string | null = null;
   let contactName: string | null = null;
   if (requestedContactId) {
-    const contact = await getContact(requestedContactId);
+    const contact = await getContactLabel(requestedContactId);
     if (contact) {
       contactId = contact.id;
-      contactName = contact.preferredName || contact.fullName;
+      contactName = contact.name;
     }
   }
 
   const settings = await settingsPromise;
   const userId = await userIdPromise;
   const { usage } = await planPromise;
-  const { canUseMeetings } = await getEntitlements(userId);
+  const { canUseMeetings, canUseSync } = await getEntitlements(userId);
   const resumableMeeting = await resumablePromise;
   const job = await jobPromise;
   const jobs = await jobsPromise;
@@ -96,6 +96,14 @@ export default async function CapturePage({
         ignoredCount={ignoredCount}
         quota={{ used: usage.used, limit: usage.limit }}
         userId={userId}
+        canUseSync={canUseSync}
+        drive={{
+          apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
+          appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,
+          // Public (it's in every Google consent URL), read on the server so the browser's
+          // drive.file token comes from the same client as the stored grant — as on /imports.
+          clientId: process.env.GOOGLE_CLIENT_ID?.trim() || null,
+        }}
         // Hidden when logging with one named person: the page is doing one specific thing,
         // and a feed of past captures is not it.
         history={

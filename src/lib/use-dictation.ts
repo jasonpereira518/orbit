@@ -687,83 +687,95 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
       // frames flow either way.
       if (ctx.state === "suspended") void ctx.resume().catch(() => {});
 
+      // Nothing below is in a ref until the very end, so `teardownDeepgram` cannot reach
+      // it: every exit before then — abandoned, or a throw from the worklet, the socket's
+      // handshake timeout, or the graph — must hand back the mic, the context and the
+      // socket itself. A leaked track keeps the browser's recording indicator lit, and the
+      // browser-engine fallback then opens a second capture on top of it.
+      let handle: LiveHandle | null = null;
+      let released = false;
+      const stale = () =>
+        released || sessionIdRef.current !== sessionId || dgGenerationRef.current !== generation;
+      const release = () => {
+        // First, so the socket's own `onclose` reads as ours rather than a dropped line.
+        released = true;
+        handle?.close();
+        for (const track of stream.getTracks()) track.stop();
+        void ctx.close().catch(() => {});
+      };
       try {
         await ctx.audioWorklet.addModule(DEEPGRAM_WORKLET_URL);
+        if (abandoned()) {
+          release();
+          return;
+        }
+
+        handle = await openDeepgramLive({
+          token: token.accessToken,
+          // Tagged, so the nightly reconciliation job can see this connection at all: the
+          // seconds below are self-reported by a beacon that a crashed tab never sends.
+          params: listenParams({ live: true, keyterms: token.keyterms, tag: token.tag }),
+          onResult: (result) => {
+            if (stale()) return;
+            handleDeepgramResult(result);
+          },
+          // A live-session close/error is a dropped connection, not a start-up failure. The
+          // browser engine's `onerror` is always followed by its own `onend` — a Web Speech
+          // API guarantee — which is what drives `restart-recognition` and the storm-retry
+          // logic in the reducer. Deepgram's socket has no equivalent second event, so both
+          // handlers supply it themselves: `error` first (flips `networkRetried`, or on the
+          // second drop goes straight to `state: "error"`), then `end` (runs the restart —
+          // or, once already in `state: "error"`, is a no-op). Without the `end`, the first
+          // drop would flip `networkRetried` and then just sit in "listening" forever, since
+          // nothing else ends this session for a dropped socket.
+          // Neither fires at all if we are the ones who closed it (`stop-recognition` /
+          // `abort-recognition` / a reconnect already set `dgSuppressCloseRef` first).
+          onClose: () => {
+            if (stale() || dgSuppressCloseRef.current) return;
+            dispatchRef.current({ t: "error", code: "network", now: Date.now() });
+            dispatchRef.current({ t: "end", now: Date.now() });
+          },
+          onError: () => {
+            if (stale() || dgSuppressCloseRef.current) return;
+            dispatchRef.current({ t: "error", code: "network", now: Date.now() });
+            dispatchRef.current({ t: "end", now: Date.now() });
+          },
+        });
+
+        if (abandoned()) {
+          release();
+          return;
+        }
+        const live = handle;
+
+        const node = new AudioWorkletNode(ctx, DEEPGRAM_WORKLET_NAME, {
+          numberOfInputs: 1,
+          numberOfOutputs: 0,
+          channelCount: 1,
+        });
+        const source = ctx.createMediaStreamSource(stream);
+        source.connect(node);
+        // Deliberately NOT connected to `ctx.destination` — same reasoning as the recorder.
+
+        const downsample = createDownsampler(ctx.sampleRate);
+        node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+          if (stale()) return;
+          const frame = event.data;
+          if (!frame || frame.length === 0) return;
+          const pcm = downsample(frame);
+          if (pcm.length) live.send(pcm);
+        };
+
+        setEngine("deepgram");
+        dgHandleRef.current = live;
+        dgStreamRef.current = stream;
+        dgCtxRef.current = ctx;
+        dgNodeRef.current = node;
+        dgSourceRef.current = source;
       } catch (err) {
-        for (const track of stream.getTracks()) track.stop();
-        void ctx.close().catch(() => {});
+        release();
         throw err;
       }
-      if (abandoned()) {
-        for (const track of stream.getTracks()) track.stop();
-        void ctx.close().catch(() => {});
-        return;
-      }
-
-      const stale = () => sessionIdRef.current !== sessionId || dgGenerationRef.current !== generation;
-      const handle = await openDeepgramLive({
-        token: token.accessToken,
-        // Tagged, so the nightly reconciliation job can see this connection at all: the
-        // seconds below are self-reported by a beacon that a crashed tab never sends.
-        params: listenParams({ live: true, keyterms: token.keyterms, tag: token.tag }),
-        onResult: (result) => {
-          if (stale()) return;
-          handleDeepgramResult(result);
-        },
-        // A live-session close/error is a dropped connection, not a start-up failure. The
-        // browser engine's `onerror` is always followed by its own `onend` — a Web Speech
-        // API guarantee — which is what drives `restart-recognition` and the storm-retry
-        // logic in the reducer. Deepgram's socket has no equivalent second event, so both
-        // handlers supply it themselves: `error` first (flips `networkRetried`, or on the
-        // second drop goes straight to `state: "error"`), then `end` (runs the restart —
-        // or, once already in `state: "error"`, is a no-op). Without the `end`, the first
-        // drop would flip `networkRetried` and then just sit in "listening" forever, since
-        // nothing else ends this session for a dropped socket.
-        // Neither fires at all if we are the ones who closed it (`stop-recognition` /
-        // `abort-recognition` / a reconnect already set `dgSuppressCloseRef` first).
-        onClose: () => {
-          if (stale() || dgSuppressCloseRef.current) return;
-          dispatchRef.current({ t: "error", code: "network", now: Date.now() });
-          dispatchRef.current({ t: "end", now: Date.now() });
-        },
-        onError: () => {
-          if (stale() || dgSuppressCloseRef.current) return;
-          dispatchRef.current({ t: "error", code: "network", now: Date.now() });
-          dispatchRef.current({ t: "end", now: Date.now() });
-        },
-      });
-
-      if (abandoned()) {
-        handle.close();
-        for (const track of stream.getTracks()) track.stop();
-        void ctx.close().catch(() => {});
-        return;
-      }
-
-      const node = new AudioWorkletNode(ctx, DEEPGRAM_WORKLET_NAME, {
-        numberOfInputs: 1,
-        numberOfOutputs: 0,
-        channelCount: 1,
-      });
-      const source = ctx.createMediaStreamSource(stream);
-      source.connect(node);
-      // Deliberately NOT connected to `ctx.destination` — same reasoning as the recorder.
-
-      const downsample = createDownsampler(ctx.sampleRate);
-      node.port.onmessage = (event: MessageEvent<Float32Array>) => {
-        if (stale()) return;
-        const frame = event.data;
-        if (!frame || frame.length === 0) return;
-        const pcm = downsample(frame);
-        if (pcm.length) handle.send(pcm);
-      };
-
-      setEngine("deepgram");
-      dgHandleRef.current = handle;
-      dgStreamRef.current = stream;
-      dgCtxRef.current = ctx;
-      dgNodeRef.current = node;
-      dgSourceRef.current = source;
 
       dispatchRef.current({ t: "audiostart" });
       startEnergyLoop();

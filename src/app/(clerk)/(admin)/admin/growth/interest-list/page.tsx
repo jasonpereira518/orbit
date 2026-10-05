@@ -11,14 +11,19 @@ import {
   TrendBars,
 } from "@/components/admin/primitives";
 import { Pager } from "@/components/admin/pager";
+import { WaitlistDemoSwitch } from "@/components/admin/waitlist-demo-switch";
+import { getWaitlistDemoEnabled } from "@/lib/waitlist-demo";
 import {
   InterestListTable,
   type InterestListTableRow,
 } from "@/components/admin/interest-list-table";
+import { InterestListManualAddForm } from "@/components/admin/interest-list-manual-add";
 import { cn } from "@/lib/utils";
+import { REFERRAL_TIERS, SPOTS_PER_REFERRAL } from "@/lib/interest-list";
 import {
   getInterestListSummary,
   INTEREST_LIST_PAGE_SIZE,
+  interestListDisplayName,
   interestListSources,
   interestListTrend,
   isInterestListFilter,
@@ -33,14 +38,16 @@ export const metadata = { title: "Admin · Waitlist" };
 const FILTERS: Array<{ value: InterestListFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Waiting" },
-  { value: "front-wave", label: "Front wave" },
+  { value: "priority-beta", label: "Priority beta" },
+  { value: "early-access", label: "Early access" },
+  { value: "founding", label: "Founding" },
   { value: "converted", label: "Converted" },
   { value: "unsubscribed", label: "Left" },
 ];
 
-/** Who gets in first is the question for the waiting views; who just joined, for the rest. */
+/** Who gets in first is the question for the waiting and tier views; who just joined, for the rest. */
 function defaultSort(filter: InterestListFilter): InterestListSort {
-  return filter === "active" || filter === "front-wave" ? "position" : "newest";
+  return filter === "all" || filter === "converted" || filter === "unsubscribed" ? "newest" : "position";
 }
 
 /** Absolute date, spelled out. The relative label rides alongside it, not instead of it. */
@@ -77,11 +84,12 @@ export default async function AdminInterestListPage({
     ? params.filter
     : "all";
   const sort: InterestListSort =
-    params.sort === "position" || params.sort === "newest" ? params.sort : defaultSort(filter);
+    params.sort === "position" || params.sort === "newest" || params.sort === "oldest"
+      ? params.sort : defaultSort(filter);
   const q = (params.q ?? "").trim();
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
 
-  const [summary, listing, trend, sources] = await Promise.all([
+  const [summary, listing, trend, sources, demoEnabled] = await Promise.all([
     getInterestListSummary(),
     loadInterestList({
       page: Number.isFinite(requestedPage) ? requestedPage : 1,
@@ -91,6 +99,8 @@ export default async function AdminInterestListPage({
     }),
     interestListTrend("week", 12),
     interestListSources(),
+    // Fresh: the console must show what is stored, not a ten-second-old copy.
+    getWaitlistDemoEnabled({ fresh: true }).catch(() => true),
   ]);
 
   const query = (over: Record<string, string | number>) => {
@@ -106,13 +116,17 @@ export default async function AdminInterestListPage({
   const rows: InterestListTableRow[] = listing.rows.map((row) => ({
     id: row.id,
     email: row.email,
+    displayName: interestListDisplayName(row),
     createdAtIso: row.createdAt.toISOString(),
     createdAtLabel: absolute(row.createdAt),
     source: sourceLabel(row),
     status: row.unsubscribedAt ? "unsubscribed" : row.converted ? "converted" : "active",
     position: row.position,
+    joinRank: row.joinRank,
     referrals: row.referrals,
-    frontWave: row.frontWave,
+    passCheckCount: row.passCheckCount,
+    passLastCheckedAtIso: row.passLastCheckedAt?.toISOString() ?? null,
+    tierLabel: row.tier && row.tier !== "joined" ? (REFERRAL_TIERS.find((t) => t.id === row.tier)?.label ?? null) : null,
     planet: row.welcomePlanet,
   }));
 
@@ -122,7 +136,8 @@ export default async function AdminInterestListPage({
         title="Waitlist"
         subtitle={
           <>
-            Everyone waiting for early access. The front wave goes first, then join order.{" "}
+            Everyone waiting for early access. The line is join order, less {SPOTS_PER_REFERRAL} spots per
+            referral; “Newest” and “Oldest” show plain join order.{" "}
             <Link
               href="/admin/growth"
               className="underline underline-offset-2 hover:text-foreground"
@@ -170,9 +185,9 @@ export default async function AdminInterestListPage({
           tone="accent"
         />
         <MetricTile
-          label="Front wave"
-          value={summary.frontWave}
-          hint="Brought in enough friends to go first"
+          label="Early access"
+          value={summary.earlyAccess}
+          hint="Brought in 5+ friends"
           icon={Rocket}
         />
         <MetricTile
@@ -189,6 +204,14 @@ export default async function AdminInterestListPage({
           tone={summary.unsubscribed > 0 ? "danger" : "muted"}
         />
       </div>
+
+      <AdminPanel title="Product demo" className="mb-6 p-4">
+        <WaitlistDemoSwitch enabled={demoEnabled} />
+      </AdminPanel>
+
+      <AdminPanel title="Add from event" className="mb-6 p-4">
+        <InterestListManualAddForm />
+      </AdminPanel>
 
       <div className="mb-6 grid gap-6 lg:grid-cols-2">
         <AdminPanel title="Signups by week">
@@ -280,7 +303,7 @@ export default async function AdminInterestListPage({
             </nav>
 
             <nav className="flex items-center gap-1" aria-label="Sort">
-              {(["position", "newest"] as const).map((value) => {
+              {(["position", "newest", "oldest"] as const).map((value) => {
                 const active = value === sort;
                 const sp = new URLSearchParams();
                 if (filter !== "all") sp.set("filter", filter);
@@ -299,7 +322,7 @@ export default async function AdminInterestListPage({
                         : "text-muted-foreground hover:text-foreground"
                     )}
                   >
-                    {value === "position" ? "In line" : "Newest"}
+                    {value === "position" ? "In line" : value === "newest" ? "Newest" : "Oldest"}
                   </Link>
                 );
               })}
@@ -317,7 +340,7 @@ export default async function AdminInterestListPage({
           </EmptyState>
         ) : (
           <>
-            <InterestListTable rows={rows} />
+            <InterestListTable rows={rows} showInLine={sort === "position"} />
             <Pager
               page={listing.page}
               pageCount={listing.pageCount}

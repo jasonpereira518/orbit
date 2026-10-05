@@ -1,6 +1,7 @@
-import { count, isNotNull, lt } from "drizzle-orm";
+import { isNotNull, sql } from "drizzle-orm";
+import { sweepExpiredHolds } from "@/lib/credits/ledger";
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { pruneAiResultCache } from "@/lib/ai-result-cache";
 import { runAiBatchSweep } from "@/lib/ai-batch-apply";
@@ -9,11 +10,13 @@ import { resumeStrandedPurges } from "@/lib/user-data";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
 import { isClerkConfigured } from "@/lib/demo-account";
 import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
+import { sweepAbandonedStaging } from "@/lib/chat-import-preview";
 import { sweepExpiredHandoffs } from "@/lib/scan-handoff";
 import { clerkClient } from "@clerk/nextjs/server";
-import { resumeStalledCaptureJobs } from "@/lib/capture-jobs";
-import { runCaptureJobById } from "@/lib/capture-job-runner";
+import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
+import { hasBlobStorage } from "@/lib/contact-avatar";
+import { sweepEmailAttachments } from "@/lib/email/attachments";
 import {
   finishCronRun,
   startCronRun,
@@ -30,6 +33,9 @@ import {
 import { backfillEmbeddingVectors, neonClient } from "@/db";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
+import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
+import { usersWithPendingRelationshipWork } from "@/lib/relationship-engine/pending";
+import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 
 export const maxDuration = 300;
 
@@ -44,6 +50,14 @@ const USAGE_EVENT_RETENTION_DAYS = 180;
 
 /** Networks recalibrated per run. Bounded so one huge orbit cannot eat the invocation. */
 const RECALIBRATE_BATCH = 25;
+
+/**
+ * Wall-clock ceiling on the recalibration loop. A count alone cannot bound it: one
+ * recalibration rewrites every contact of that user, so 25 users at 50k contacts each can
+ * outlast the route on their own. Users past the budget are still stale and come back
+ * next run.
+ */
+const RECALIBRATE_BUDGET_MS = 60 * 1000;
 
 /** Users listed per run for the embedding backstop — see the try block below. */
 const EMBED_BACKFILL_USERS = 25;
@@ -82,26 +96,57 @@ const EMBED_SWEEP_BUDGET_MS = 90 * 1000;
  */
 const ERROR_EVENT_RETENTION_DAYS = 30;
 
+/** Rows deleted per statement by `pruneOlderThan`. */
+const PRUNE_BATCH = 5_000;
+
+/**
+ * Wall-clock ceiling on pruning one table. A backlog still there when it runs out is the
+ * next hour's; the resumption work below is what this route exists for.
+ */
+const PRUNE_BUDGET_MS = 20 * 1000;
+
+/**
+ * Deletes rows past the retention window in bounded batches, the way `prunePageViews`
+ * does and for its reasons: one unbounded DELETE over a neglected table holds its locks
+ * for as long as it takes inside a function with a timeout.
+ *
+ * Each batch counts itself (`RETURNING 1` into `count(*)`) rather than trusting a
+ * driver-specific `rowCount` — neon-http and pglite disagree about the shape of a delete
+ * result — so there is no separate count scan, and no deleted row leaves Postgres. Both
+ * tables are indexed on created_at.
+ */
 async function pruneOlderThan(
   table: typeof usageEvents | typeof errorEvents,
   days: number
 ): Promise<number> {
   const db = await getDb();
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  // Count first rather than trusting a driver-specific `rowCount` — neon-http and pglite
-  // disagree about the shape of a delete result. Both tables are indexed on created_at.
-  const [row] = await db
-    .select({ value: count() })
-    .from(table)
-    .where(lt(table.createdAt, cutoff));
-  await db.delete(table).where(lt(table.createdAt, cutoff));
-  return row?.value ?? 0;
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const deadline = deadlineAfter(PRUNE_BUDGET_MS);
+  let pruned = 0;
+  for (;;) {
+    const res = await db.execute(sql`
+      WITH d AS (
+        DELETE FROM ${table} WHERE ${table.id} IN (
+          SELECT ${table.id} FROM ${table} WHERE ${table.createdAt} < ${cutoff} LIMIT ${PRUNE_BATCH}
+        )
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM d
+    `);
+    const n = Number(rowsOf<{ n: number }>(res)[0]?.n ?? 0);
+    pruned += n;
+    if (n < PRUNE_BATCH || deadlineReached(deadline)) return pruned;
+  }
 }
 
 /**
  * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
  * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
  * resumption path is still each job's own self-continuation; this is the last resort.
+ *
+ * Resuming means KICKING each job's own internal route, never running it here. A job
+ * can take minutes, and running them inline let two stalled imports kill this 300s route
+ * before any of the housekeeping below it ran.
  *
  * Housekeeping rides along and every run is recorded in `cron_runs`. A job that loses
  * self-continuation can sit stalled for up to an hour.
@@ -128,14 +173,21 @@ export async function GET(request: Request) {
     captureResumed: 0,
     captureGaveUp: 0,
     captureSwept: 0,
+    /** Uploads sent in parts whose last part never arrived, closed as failed. */
+    captureAbandoned: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
+    /** Email attachment blobs deleted: settled sends past ATTACHMENT_RETENTION_MS, and uploads never sent. */
+    emailAttachmentsSwept: 0,
     /** Meetings nobody finished, past `ABANDONED_SESSION_TTL_DAYS`. */
     meetingSessionsSwept: 0,
     /** Phone-scan grants past their expiry. */
     handoffsSwept: 0,
+    /** Chat uploads whose last chunk never arrived, deleted after 24 h in `staging`. */
+    chatStagingSwept: 0,
+    creditHoldsSwept: 0,
     /** Background AI sent to a provider's Batch API: what came back this sweep. */
     aiBatchesApplied: 0,
     aiBatchesPending: 0,
@@ -147,6 +199,8 @@ export async function GET(request: Request) {
     embeddingBackfillsKicked: 0,
     /** Users handed to the self-continuing LinkedIn timeline-event backfill route. */
     timelineBackfillsKicked: 0,
+    /** Users handed to the relationship engine runner (the cron backstop). */
+    relationshipKicks: 0,
     /** Deletion runs picked up, finished, still failing, and given up after 5 attempts. */
     purgesFound: 0,
     purgesFinished: 0,
@@ -169,11 +223,12 @@ export async function GET(request: Request) {
     stats.resumeGaveUp = sweep.gaveUp;
 
     try {
-      const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: runCaptureJobById });
+      const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: kickCaptureJob });
       stats.captureStalledFound = captures.found;
       stats.captureResumed = captures.resumed;
       stats.captureGaveUp = captures.gaveUp;
       stats.captureSwept = captures.swept;
+      stats.captureAbandoned = captures.abandoned;
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.captures" });
@@ -198,17 +253,36 @@ export async function GET(request: Request) {
       // history only lists saved captures — so keeping them would be holding pictures of
       // someone's notes for no one.
       stats.capturePhotosPruned = await pruneUnattachedCapturePhotos();
+      // Email attachments: kept a week after the send settles (for a retry), and uploads the
+      // composer never sent.
+      if (hasBlobStorage()) {
+        const swept = await sweepEmailAttachments();
+        stats.emailAttachmentsSwept = swept.settled + swept.orphans;
+      }
       // Abandoned meeting transcripts. The per-user sweep only runs when that user records
       // again; without this, one recording never finished is kept forever.
       stats.meetingSessionsSwept = await sweepAbandonedMeetingSessions();
       // Expired scan grants. Minting sweeps too, but only when someone mints.
       stats.handoffsSwept = await sweepExpiredHandoffs();
+      // Credit holds whose call died without settling. They stopped counting when they
+      // expired; this only keeps the table small.
+      stats.creditHoldsSwept = await sweepExpiredHolds();
     } catch (err) {
       // Housekeeping must never fail the job-resumption backstop this route exists for,
       // but a silent failure here is how a table grows unbounded — so it downgrades the
       // run instead of vanishing, and says why.
       status = "partial";
       reportError(err, { where: "job.process-stalled.housekeeping" });
+    }
+
+    try {
+      // A chat import is uploaded in chunks and sits in `staging` until the last one lands.
+      // One whose tab closed mid-upload is invisible everywhere (history, engine, this
+      // route's own resume sweep), so without this its rows would be kept forever.
+      stats.chatStagingSwept = await sweepAbandonedStaging();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.chat-staging" });
     }
 
     try {
@@ -253,7 +327,9 @@ export async function GET(request: Request) {
       // full-network scan that materializing closeness exists to remove. This is what
       // eventually settles it. Bounded per run so one enormous orbit cannot use up the
       // whole invocation.
+      const recalibrateDeadline = Date.now() + RECALIBRATE_BUDGET_MS;
       for (const staleUserId of await findStaleCohorts(RECALIBRATE_BATCH)) {
+        if (Date.now() > recalibrateDeadline) break;
         await recalibrateCloseness(staleUserId).catch(
           reportAndContinue({ where: "job.process-stalled.recalibrate-user", userId: staleUserId }, null)
         );
@@ -279,17 +355,19 @@ export async function GET(request: Request) {
     try {
       // Backstop only — imports kick the backfill directly on completion. This catches
       // users whose kick was lost along with the invocation that sent it.
-      const staleContactUsers = await db
-        .selectDistinct({ userId: contacts.userId })
-        .from(contacts)
-        .where(isNotNull(contacts.embeddingStaleAt))
-        .limit(EMBED_BACKFILL_USERS);
-      // Stale contacts used to be the only way onto this list, so an account whose only
-      // outstanding work was passages of its notes — every existing account, the day those
-      // shipped — would never have been swept unless it happened to import something.
-      const memoryUsers = await usersWithPendingMemoryWork(EMBED_BACKFILL_USERS, accountCanEmbed).catch(
-        reportAndContinue({ where: "job.process-stalled.memory-users" }, [] as string[])
-      );
+      const [staleContactUsers, memoryUsers] = await Promise.all([
+        db
+          .selectDistinct({ userId: contacts.userId })
+          .from(contacts)
+          .where(isNotNull(contacts.embeddingStaleAt))
+          .limit(EMBED_BACKFILL_USERS),
+        // Stale contacts used to be the only way onto this list, so an account whose only
+        // outstanding work was passages of its notes — every existing account, the day those
+        // shipped — would never have been swept unless it happened to import something.
+        usersWithPendingMemoryWork(EMBED_BACKFILL_USERS, accountCanEmbed).catch(
+          reportAndContinue({ where: "job.process-stalled.memory-users" }, [] as string[])
+        ),
+      ]);
       const staleUsers = [
         ...new Set([...staleContactUsers.map((u) => u.userId), ...memoryUsers]),
       ]
@@ -336,6 +414,18 @@ export async function GET(request: Request) {
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.timeline-kicks" });
+    }
+
+    try {
+      // Backstop only — import finalize and the batch applier kick the runner directly. This
+      // catches lost kicks, expired leases, and runs parked in waiting_key whose key came back.
+      for (const pendingUser of await usersWithPendingRelationshipWork(TIMELINE_BACKFILL_USERS)) {
+        await kickRelationshipRun(pendingUser);
+        stats.relationshipKicks += 1;
+      }
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.relationship-kicks" });
     }
 
     if (stats.resumeFailed > 0) status = "partial";

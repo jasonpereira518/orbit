@@ -43,9 +43,11 @@ import {
   listChatThreads,
   switchChatVersion,
   updateChatThreadContext,
+  type ChatThreadPage,
 } from "@/actions/chat";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
+import { readRailOpen, writeRailOpen } from "@/lib/chat-rail-pref";
 import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
@@ -127,6 +129,22 @@ export type ThreadSummary = {
   updatedAt: Date | string;
 };
 
+/**
+ * A page of the history list read from the server, in place of the list on screen — except
+ * for the thread that is open. The server list carries titled threads only, so a chat just
+ * started (untitled until its first answer lands) is only in the panel's own list, and the
+ * rail promises the open thread stays visible however empty it is.
+ */
+function withOpenThread(
+  server: readonly ThreadSummary[],
+  onScreen: readonly ThreadSummary[],
+  openId: string | null
+): ThreadSummary[] {
+  if (!openId || server.some((t) => t.id === openId)) return [...server];
+  const open = onScreen.find((t) => t.id === openId);
+  return open ? [open, ...server] : [...server];
+}
+
 type UserMessage = {
   id: string;
   role: "user";
@@ -206,20 +224,6 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/** Whether the history rail is open is a per-browser preference, kept across visits. */
-const RAIL_OPEN_KEY = "orbit:chat-rail-open";
-
-function readRailOpen(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    // Open unless it was explicitly closed: a first visit, or storage that cannot be read,
-    // gets the rail — the default that shows the feature exists.
-    return window.localStorage.getItem(RAIL_OPEN_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
 function formatSentAt(iso: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -247,19 +251,40 @@ export function ChatPanel({
   initialThreads = null,
 }: {
   /**
-   * The history list as the page read it on the server, so the rail paints with it rather
-   * than fetching after mount. `null` when the page could not read it: the panel then loads
-   * it itself, as it always did, and shows a placeholder list until that settles.
+   * The history list's first page as the page read it on the server, so the rail paints with
+   * it rather than fetching after mount. `null` when the page could not read it: the panel
+   * then loads it itself, as it always did, and shows a placeholder list until that settles.
    */
-  initialThreads?: ThreadSummary[] | null;
+  initialThreads?: ChatThreadPage | null;
 } = {}) {
-  const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads ?? []);
+  const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads?.threads ?? []);
   /**
    * Whether the history list has been read at least once. Until then an empty list means
    * "not known yet", not "none" — the rail shows a placeholder, never "no saved chats".
    */
   const [threadsLoaded, setThreadsLoaded] = useState(initialThreads !== null);
+  /** Where the next (older) page of history starts; null when everything has been read. */
+  const [olderCursor, setOlderCursor] = useState<string | null>(
+    () => initialThreads?.nextCursor ?? null
+  );
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
+  /**
+   * A NEW server list — the page re-rendered (`FreshOnArrival` refreshing a copy that came
+   * out of the router cache, or any other `router.refresh()`) — replaces the one on screen.
+   * This is what lets the mount below skip its own read: a page old enough to be stale is
+   * refreshed on arrival, and its fresh list lands here. Adjusted during render (React's
+   * "storing information from previous renders"), so there is no frame showing the old list.
+   */
+  const [adoptedInitial, setAdoptedInitial] = useState(initialThreads);
+  if (initialThreads !== adoptedInitial) {
+    setAdoptedInitial(initialThreads);
+    if (initialThreads) {
+      setThreads((prev) => withOpenThread(initialThreads.threads, prev, threadId));
+      setOlderCursor(initialThreads.nextCursor);
+      setThreadsLoaded(true);
+    }
+  }
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
   /** Every version of the current thread's LAST turn, oldest first. One entry is the normal case. */
   const [versions, setVersions] = useState<VersionRow[]>([]);
@@ -293,11 +318,7 @@ export function ChatPanel({
   const toggleRail = useCallback(() => {
     setRailOpen((open) => {
       const next = !open;
-      try {
-        window.localStorage.setItem(RAIL_OPEN_KEY, next ? "1" : "0");
-      } catch {
-        // Private mode or blocked storage: the toggle still works, it just is not remembered.
-      }
+      writeRailOpen(next);
       return next;
     });
   }, []);
@@ -534,10 +555,17 @@ export function ChatPanel({
     setAttached([]);
   }, [resetQuestion]);
 
+  /** The open thread, readable from async work (the history list and the prefetcher check it). */
+  const threadIdRef = useRef(threadId);
+  useLayoutEffect(() => {
+    threadIdRef.current = threadId;
+  });
+
   const refreshThreads = useCallback(async () => {
     try {
-      const rows = await listChatThreads();
-      setThreads(rows);
+      const page = await listChatThreads();
+      setThreads((prev) => withOpenThread(page.threads, prev, threadIdRef.current));
+      setOlderCursor(page.nextCursor);
     } catch {
       // History is non-blocking on first paint
     } finally {
@@ -547,14 +575,34 @@ export function ChatPanel({
     }
   }, []);
 
-  // Still read on mount even when the page handed a list down. That list can come out of the
-  // router's cache of this page (`staleTimes.dynamic`), so coming back within its window would
-  // otherwise show the history as it was on the last visit — missing the chat just started,
-  // or still listing one just deleted. Showing it first and replacing it is safe; trusting it
-  // is not.
+  // Read on mount only when the page could not hand a list down. It used to read again even
+  // when it had, because that list could come out of the router's cache of this page
+  // (`staleTimes.dynamic`) and show history as it was on the last visit. The page renders a
+  // `RenderStamp`, so a copy that old is refreshed on arrival, and the refreshed list is
+  // adopted above — the second read of every visit was a duplicate of the page's own.
+  const hadInitialThreads = useRef(initialThreads !== null);
   useEffect(() => {
+    if (hadInitialThreads.current) return;
     void refreshThreads();
   }, [refreshThreads]);
+
+  /** The next page of history, appended below what is on screen. */
+  const loadOlderThreads = useCallback(async () => {
+    if (!olderCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const page = await listChatThreads(olderCursor);
+      setThreads((prev) => {
+        const have = new Set(prev.map((t) => t.id));
+        return [...prev, ...page.threads.filter((t) => !have.has(t.id))];
+      });
+      setOlderCursor(page.nextCursor);
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t load older chats — try again?"));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [olderCursor, loadingOlder]);
 
   // The other half of `initialQuestionFromUrl`: take `q` back out of the address bar, so a
   // reload or a shared link does not re-seed a question that was already dealt with.
@@ -632,10 +680,6 @@ export function ChatPanel({
     threadPrefetch.forget(threadId);
     prevThreadIdRef.current = threadId;
   }, [threadId, threadPrefetch]);
-  const threadIdRef = useRef(threadId);
-  useLayoutEffect(() => {
-    threadIdRef.current = threadId;
-  });
   const prefetchHandlers = useMemo(
     () => ({
       // Never the open thread: it is the one thing on screen that can change under an entry.
@@ -1345,6 +1389,9 @@ export function ChatPanel({
           onToggle={toggleRail}
           threads={threads}
           loading={!threadsLoaded}
+          hasMore={olderCursor !== null}
+          loadingMore={loadingOlder}
+          onLoadMore={loadOlderThreads}
           activeId={threadId}
           busy={busy}
           onSelect={selectThread}
@@ -1425,6 +1472,17 @@ export function ChatPanel({
                   </DropdownMenuItem>
                 ))
               )}
+              {olderCursor !== null && threads.length > 0 && (
+                <DropdownMenuItem
+                  // Stays open: the older chats land in this same list.
+                  closeOnClick={false}
+                  disabled={loadingOlder}
+                  className="justify-center py-2 text-xs text-muted-foreground"
+                  onClick={() => void loadOlderThreads()}
+                >
+                  {loadingOlder ? "Loading…" : "Show older chats"}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -1489,7 +1547,7 @@ export function ChatPanel({
                   {messages.length === 0 && !busy && (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
-                        Ask your network
+                        Ask your <span className="gold-shimmer-text">network</span>
                       </p>
                       <p className="max-w-md text-sm text-muted-foreground">
                         Who can help, who to follow up with, or who knows what —
@@ -2218,6 +2276,7 @@ const RecommendationCard = memo(function RecommendationCard({
           name={rec.name}
           body={sendBody}
           onSent={(at, maybe) => setSent({ at, maybe })}
+          onUndone={() => setSent(null)}
         />
       )}
       {canRemind && (

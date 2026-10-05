@@ -31,8 +31,8 @@ import {
   tags,
   type Interaction,
 } from "@/db/schema";
-import { PaywallError, getEntitlements } from "@/lib/entitlements";
-import { recordGateHit } from "@/lib/gate-events";
+import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
+import { recordGateHit, recordGateHitThrottled } from "@/lib/gate-events";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -43,6 +43,7 @@ import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import { claimIdentities, syncIdentitiesForContact } from "@/lib/contact-identity";
 import { identityKeysFor } from "@/lib/duplicates";
+import { normalizeBlueskyHandle, normalizeMastodonAcct } from "@/lib/social-handles";
 import {
   rebuildContactEmbedding,
   rebuildContactEmbeddingsBatch,
@@ -69,6 +70,13 @@ export type ContactWriteOptions = {
    * to re-derive a number that has not changed since the previous chunk.
    */
   headroom?: number | null;
+  /**
+   * The account's entitlements, for a caller that already resolved them (from the settings
+   * row it holds, via `entitlementsFromSettings`). In a Server Action or route handler
+   * `getEntitlements` is not deduplicated by `cache()`, so omitting this costs a read of the
+   * settings row the caller may already have. Omitted, they are read as before.
+   */
+  entitlements?: Entitlements;
 };
 
 export type ContactInput = {
@@ -85,6 +93,9 @@ export type ContactInput = {
   linkedinUrl?: string;
   xHandle?: string;
   website?: string;
+  /** Public Bluesky handle / Mastodon account, for Radar's post signals. Normalized here. */
+  blueskyHandle?: string | null;
+  mastodonAcct?: string | null;
   profileImageUrl?: string | null;
   relationshipScore?: number;
   /**
@@ -330,6 +341,8 @@ function contactInsertValues(
     linkedinUrl: input.linkedinUrl,
     xHandle: input.xHandle,
     website: input.website,
+    blueskyHandle: normalizeBlueskyHandle(input.blueskyHandle),
+    mastodonAcct: normalizeMastodonAcct(input.mastodonAcct),
     profileImageUrl: input.profileImageUrl ?? null,
     relationshipScore: input.relationshipScore ?? 2,
     // Deliberately NOT `input.statedCloseness ?? input.relationshipScore` —
@@ -366,8 +379,12 @@ function contactInsertValues(
  * gated, so a lapsed subscriber sitting above the cap keeps full access to everything
  * already in their orbit — nothing is ever hidden behind the paywall.
  */
-export async function contactHeadroomForUser(userId: string) {
-  const { contactLimit } = await getEntitlements(userId);
+export async function contactHeadroomForUser(
+  userId: string,
+  // Optional: a caller already holding the account's entitlements skips re-reading them.
+  entitlements?: Entitlements
+) {
+  const { contactLimit } = entitlements ?? (await getEntitlements(userId));
   if (contactLimit === null) return null;
 
   const db = await getDb();
@@ -402,9 +419,11 @@ export async function createContactForUser(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
-  const headroom = await contactHeadroomForUser(userId);
+  // Resolved once for both the headroom check and the paywall below; each used to read it.
+  const entitlements = options?.entitlements ?? (await getEntitlements(userId));
+  const headroom = await contactHeadroomForUser(userId, entitlements);
   if (headroom !== null && headroom < 1) {
-    const { plan, contactLimit } = await getEntitlements(userId);
+    const { plan, contactLimit } = entitlements;
     // The cap is the most direct pricing lever Orbit has, and until now hitting it left no
     // trace — so "does the 100-contact limit convert, or just annoy?" had no evidence
     // behind it either way.
@@ -581,9 +600,20 @@ export async function createContactsBulkForUser(
     options?.headroom !== undefined
       ? options.headroom
       : await contactHeadroomForUser(userId);
-  if (headroom !== null && headroom < 1) return [];
   const admitted =
-    headroom === null ? inputs : inputs.slice(0, headroom);
+    headroom === null ? inputs : inputs.slice(0, Math.max(0, headroom));
+  if (admitted.length < inputs.length) {
+    // The cap truncated an import. Throttled: a large import runs as many batches, and
+    // each one would otherwise record the same wall.
+    const { plan } = await getEntitlements(userId);
+    await recordGateHitThrottled({
+      userId,
+      feature: "contacts",
+      plan,
+      context: { bulk: true, refused: inputs.length - admitted.length },
+    });
+  }
+  if (admitted.length === 0) return [];
 
   const db = await getDb();
   const now = new Date();
@@ -674,6 +704,40 @@ export async function createContactsBulkForUser(
 }
 
 /**
+ * One merge per contact. `UPDATE ... FROM (VALUES ...)` applies only ONE arbitrary tuple when
+ * a contact id repeats (a long chat is staged as several rows per person), so several merges
+ * for one contact are folded first: the interaction window widens across all of them, and
+ * every other field takes the first defined value, in order.
+ */
+export function foldMergesByContact(
+  merges: Array<{ contactId: string; input: Partial<ContactInput> }>
+): Array<{ contactId: string; input: Partial<ContactInput> }> {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const m of merges) {
+    const acc = byId.get(m.contactId);
+    if (!acc) {
+      byId.set(m.contactId, { ...m.input });
+      continue;
+    }
+    for (const [k, v] of Object.entries(m.input)) {
+      if (v === undefined || v === null) continue;
+      if (k === "firstInteractionAt" || k === "lastInteractionAt") {
+        const next = safeTimestamp(v as string | Date);
+        const cur = safeTimestamp(acc[k] as string | Date | null | undefined);
+        if (!next) continue;
+        if (!cur || (k === "firstInteractionAt" ? next < cur : next > cur)) acc[k] = next;
+      } else if (acc[k] === undefined || acc[k] === null) {
+        acc[k] = v;
+      }
+    }
+  }
+  return [...byId].map(([contactId, input]) => ({
+    contactId,
+    input: input as Partial<ContactInput>,
+  }));
+}
+
+/**
  * Apply a column patch to many existing contacts in one statement.
  *
  * The import merge path used to call `updateContactForUser` per row, which re-resolved the
@@ -728,6 +792,7 @@ export async function bulkMergeContactsForUser(
   companyResolve: CompanyResolver
 ) {
   if (merges.length === 0) return;
+  merges = foldMergesByContact(merges);
   const db = await getDb();
   const now = new Date();
 
@@ -833,6 +898,9 @@ export async function updateContactForUser(
         : {}),
       ...(input.xHandle !== undefined ? { xHandle: input.xHandle } : {}),
       ...(input.website !== undefined ? { website: input.website } : {}),
+      // Normalized, and cleared by an empty or unrecognizable value rather than stored raw.
+      ...(input.blueskyHandle !== undefined ? { blueskyHandle: normalizeBlueskyHandle(input.blueskyHandle) } : {}),
+      ...(input.mastodonAcct !== undefined ? { mastodonAcct: normalizeMastodonAcct(input.mastodonAcct) } : {}),
       ...(input.profileImageUrl !== undefined
         ? { profileImageUrl: input.profileImageUrl }
         : {}),

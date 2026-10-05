@@ -9,10 +9,22 @@
  * place here and not only in chat: extraction otherwise works out who a note is about from
  * the prose, and a guess is exactly what you do not want for the person whose name you were
  * about to type anyway. A pick skips the guessing — see `resolveMentionsWithPicks`.
+ *
+ * Two or more files at once open the notes sorter first, as the Notes Library tab does, and
+ * whatever it confirms — one note or twelve — is read as background jobs that join the
+ * upload's queue. Only a SINGLE file lands in the box. The sorter used to send a one-note
+ * sort to the box too, but that path fired one upload per file kind ("merge" for text,
+ * "replace" for pages) without awaiting either, so which one won the box was a race.
+ *
+ * A single file is checked against what was already captured (by content hash) before it
+ * is read, and Reading… carries a Stop.
  */
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { findCapturedFiles } from "@/actions/capture-jobs";
+import { hashFilesSequentially } from "@/lib/capture/file-hash";
+import { toast } from "@/lib/toast";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { clearCaptureDraft, readCaptureDraft, writeCaptureDraft } from "@/lib/capture-draft";
 import { CAPTURE_HANDOFF_EVENT, appendHandoff, takeCaptureHandoff } from "@/lib/capture-handoff";
@@ -27,6 +39,24 @@ import {
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { extractLinkedInProfileRefs, isLinkedInOnlyPaste } from "@/lib/linkedin-paste";
 import type { CaptureIngest } from "@/lib/capture/use-capture-ingest";
+import { isIgnorableFile } from "@/lib/capture/file-drop";
+import { useCaptureFanout } from "@/lib/capture/use-capture-fanout";
+import {
+  emptyState,
+  oversizedUploads,
+  planUploads,
+  separateTray,
+  stageFiles,
+  type PlannedUpload,
+  type StagedFile,
+} from "@/lib/capture/bins";
+import { anchorForFile } from "@/lib/capture/file-date";
+import { estimatePreparedBytes } from "@/lib/capture/prepare-upload";
+import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
+import { UploadFilesDialog } from "@/components/capture/upload-files-dialog";
+import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
+import { NotesFanoutList } from "@/components/capture/notes-library-upload";
+import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { cn } from "@/lib/utils";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
@@ -42,6 +72,9 @@ export function MessyNotesCapture({
   tabId,
   draftKey,
   acceptsHandoff = false,
+  onQueued,
+  drive = null,
+  canUseSync = false,
 }: {
   ingest: CaptureIngest;
   onExtract: () => void;
@@ -53,8 +86,20 @@ export function MessyNotesCapture({
   draftKey?: string | null;
   /** The command palette's "Capture this" text lands here. Off when logging with one person. */
   acceptsHandoff?: boolean;
+  /** The jobs a multi-note sort created, once every note has settled. */
+  onQueued?: (jobIds: string[]) => void;
+  /** Google Picker config; the Drive button hides itself when this is incomplete. */
+  drive?: DriveCaptureConfig | null;
+  canUseSync?: boolean;
 }) {
-  const busy = ingest.busy || extracting;
+  const fanout = useCaptureFanout({ onSettled: onQueued });
+  const [incoming, setIncoming] = useState<{ file: File; path: string }[]>([]);
+  /** Hashing, checking and decoding a single file before its upload starts. */
+  const [preparing, setPreparing] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  /** Set once a single uploaded file has been read into the box; the effect below then extracts. */
+  const extractWhenRead = useRef(false);
+  const busy = ingest.busy || extracting || fanout.running || preparing;
   const { notes, setNotes, mentionPicks, setMentionPicks } = ingest;
   // A paste of nothing but profile URLs is looked up directly, with no model pass — so it
   // has to stay available when there is no AI key, which is exactly when it matters most.
@@ -112,8 +157,15 @@ export function MessyNotesCapture({
   useEffect(() => {
     if (!draftKey || loadedKeyRef.current !== draftKey) return;
     const draft = { notes, sources: ingest.sources, photoIds: [] as string[], mentionPicks };
-    const timer = window.setTimeout(() => writeCaptureDraft(window.localStorage, draftKey, draft), DRAFT_SAVE_DELAY_MS);
     const flush = () => writeCaptureDraft(window.localStorage, draftKey, draft);
+    // Emptying the box removes the draft on the spot. Debouncing that write let a quick
+    // navigation cancel it (`pagehide` does not fire on an in-app route change), so the text
+    // the person had just deleted came back on the next visit.
+    if (!notes.trim()) {
+      flush();
+      return;
+    }
+    const timer = window.setTimeout(flush, DRAFT_SAVE_DELAY_MS);
     window.addEventListener("pagehide", flush);
     return () => {
       window.clearTimeout(timer);
@@ -127,10 +179,138 @@ export function MessyNotesCapture({
   });
 
   async function acceptDropped(files: File[]) {
+    if (files.length > 1) return openSorter(files);
+    await ingestIntoBox(files);
+  }
+
+  /**
+   * The single-file path: whatever the file says lands in the box, ready to extract.
+   *
+   * Hashed and checked first. A file this person already captured is not read again
+   * unless they say so — the toast's action re-enters here with `force` — because reading
+   * it would bill the same pages twice and, once extracted, file the same meeting on the
+   * same timeline twice. A failed check is not a refusal: the file is read as it always was.
+   */
+  async function ingestIntoBox(files: File[], opts: { force?: boolean } = {}) {
     if (!files.length) return;
-    const { pages, raw } = await sortAndNormalizeScanFiles(files);
-    if (raw.length) ingest.handleFilesSelected(raw);
-    if (pages.length) ingest.ingestScanPages(pages);
+    setPreparing(true);
+    try {
+      const fileHashes = (await hashFilesSequentially(files)).filter(Boolean);
+      if (!opts.force && fileHashes.length) {
+        const res = await findCapturedFiles(fileHashes).catch(() => null);
+        const match = res?.ok ? res.matches[0] : null;
+        if (match) {
+          const when = new Date(match.capturedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+          toast.message(
+            files.length === 1 ? `You already captured ${files[0]!.name} on ${when}` : `You already captured these on ${when}`,
+            {
+              description: "Nothing new was read",
+              action: { label: "Read it again", onClick: () => void ingestIntoBox(files, { force: true }) },
+            }
+          );
+          return;
+        }
+      }
+      const { pages, raw } = await sortAndNormalizeScanFiles(files);
+      // One file makes one of these, never both, so the two uploads cannot race for the box.
+      if (raw.length) ingest.handleFilesSelected(raw, { fileHashes });
+      if (pages.length) ingest.ingestScanPages(pages, { fileHashes });
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  /**
+   * Extract people from the upload pop-up. It does what pressing Extract on the box does, for
+   * the files: one file is read into the box and extracted from there; several are each their
+   * own note, read as background jobs in this upload's queue — the sorter's "separate" layout,
+   * without stopping to ask, since the person has just said what they want done.
+   */
+  async function extractUploaded(files: File[]) {
+    const kept = files.filter((f) => !isIgnorableFile(f.name));
+    if (!kept.length) return;
+    if (kept.length === 1) {
+      await ingestIntoBox(kept);
+      extractWhenRead.current = true;
+      return;
+    }
+    setPreparing(true);
+    try {
+      const hashes = await hashFilesSequentially(kept);
+      const byId = new Map<string, File>();
+      const staged: StagedFile[] = kept.map((file, i) => {
+        const id = crypto.randomUUID();
+        byId.set(id, file);
+        return {
+          id,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+          path: "",
+          hash: hashes[i] ?? "",
+        };
+      });
+      let state = separateTray(
+        stageFiles(emptyState(), staged).state,
+        () => crypto.randomUUID(),
+        (file) => {
+          const guess = anchorForFile({ name: file.name, lastModified: file.lastModified });
+          return { name: file.name.replace(/\.[^.]+$/, "").trim() || file.name, anchorIso: guess.iso };
+        }
+      );
+      // A file captured before is left out, as the sorter does by default — reading it again
+      // would bill the same pages twice.
+      const known = new Set<string>();
+      const res = await findCapturedFiles(state.files.map((f) => f.hash).filter(Boolean)).catch(() => null);
+      if (res?.ok) for (const m of res.matches) known.add(m.hash);
+      const skipped = state.files.filter((f) => f.hash && known.has(f.hash));
+      if (skipped.length) {
+        state = { ...state, excludedIds: skipped.map((f) => f.id) };
+        toast.message(
+          skipped.length === 1
+            ? `Skipped ${skipped[0]!.name} — you already captured it`
+            : `Skipped ${skipped.length} files you already captured`
+        );
+      }
+      const plans = planUploads(
+        state,
+        (file) => {
+          const guess = anchorForFile({ name: file.name, lastModified: file.lastModified });
+          return { name: file.name.replace(/\.[^.]+$/, "").trim() || file.name, anchorIso: guess.iso };
+        },
+        estimatePreparedBytes
+      );
+      if (!plans.length) return;
+      const oversized = oversizedUploads(plans, CAPTURE_MAX_UPLOAD_BYTES);
+      if (oversized.length) {
+        toast.error(`${oversized[0]!.label} is over ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} — remove it and try again`);
+        return;
+      }
+      fanout.start(plans, (id) => byId.get(id));
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  // Extract once the single uploaded file has finished reading into the box. Waits on `busy`
+  // rather than the read's own promise so the click handler sees the notes it just produced.
+  useEffect(() => {
+    if (!extractWhenRead.current || busy) return;
+    extractWhenRead.current = false;
+    if (ingest.notes.trim() && (ingest.hasApiKey || linkedInOnly)) onExtract();
+  }, [busy, ingest.notes, ingest.hasApiKey, linkedInOnly, onExtract]);
+
+  function openSorter(files: File[]) {
+    const kept = files.filter((f) => !isIgnorableFile(f.name));
+    if (kept.length === 1) return void ingestIntoBox(kept);
+    if (kept.length) setIncoming(kept.map((file) => ({ file, path: "" })));
+  }
+
+  /** Every note the sorter confirms is its own job — even when there is only one. */
+  function onSorted(plans: PlannedUpload[], resolve: (fileId: string) => File | undefined) {
+    setIncoming([]);
+    fanout.start(plans, resolve);
   }
 
   return (
@@ -199,9 +379,8 @@ export function MessyNotesCapture({
           />
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Type <span className="font-medium text-foreground">@</span> to name someone already
-          in your orbit — the note links to them instead of the name being guessed at. A
-          LinkedIn profile URL on its own is enough to log someone.
+          Type <span className="font-medium text-foreground">@</span> to name someone already in
+          your orbit, or a LinkedIn profile URL on its own is enough to log someone.
         </p>
       </div>
 
@@ -211,12 +390,23 @@ export function MessyNotesCapture({
           disabled={busy}
           onRawFiles={ingest.handleFilesSelected}
           onPages={ingest.ingestScanPages}
+          onFiles={(files) => void acceptDropped(files)}
+          onUploadClick={() => setUploadOpen(true)}
           onTranscript={(text, sources, jobId) => ingest.onPhoneTranscript(text, sources, jobId ?? null)}
         />
         <div className="flex flex-wrap items-center gap-2">
-          {ingest.busy && (
+          {/* Each picked doc becomes its own job in this upload's queue, never box text —
+              the same rule as a multi-file drop. */}
+          <DriveCaptureButton
+            drive={drive}
+            canUseSync={canUseSync}
+            disabled={busy || !ingest.hasApiKey}
+            onQueued={(ids) => onQueued?.(ids)}
+          />
+          {(ingest.busy || preparing) && (
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" /> Reading…
+              {ingest.busy && <StopReadingButton onStop={ingest.cancel} />}
             </span>
           )}
           <IngestMeta fileName={ingest.fileName} sources={ingest.sources} />
@@ -239,6 +429,19 @@ export function MessyNotesCapture({
             ? "Reading…"
             : "Extract people"}
       </Button>
+
+      <UploadFilesDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        onExtract={(files) => void extractUploaded(files)}
+        busy={busy}
+        canExtract={ingest.hasApiKey}
+      />
+      {/* Mounted only while open: closing unmounts it, which is what revokes its previews. */}
+      {incoming.length > 0 && (
+        <NotesSorterDialog incoming={incoming} onCancel={() => setIncoming([])} onConfirm={onSorted} />
+      )}
+      <NotesFanoutList fanout={fanout} />
     </div>
   );
 }
@@ -246,6 +449,23 @@ export function MessyNotesCapture({
 /** Capture's "AI can't run" notice — the shared one, worded for the gate's `reason`. */
 export function MissingKeyNotice({ reason }: { reason?: AiAccessDenial | null }) {
   return <AiKeyNotice feature="capture" reason={reason} />;
+}
+
+/**
+ * Stop, beside a "Reading…" / "Transcribing…" indicator. Shared with the voice tab. Small and
+ * quiet on purpose: it sits in a status line, and a loud button there would read as the
+ * thing to press next.
+ */
+export function StopReadingButton({ onStop }: { onStop: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onStop}
+      className="ml-1 rounded font-medium text-foreground underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+    >
+      Stop
+    </button>
+  );
 }
 
 /** Filename and provenance for whatever was last ingested — "note.jpg · via photos:2". */

@@ -3,6 +3,9 @@
  * review deck can be exercised without an AI key. Refuses to run against a remote database.
  *
  * Run (dev server stopped): DATABASE_URL="" npx tsx scripts/dev-seed-capture-job.ts
+ *
+ * `--batch` seeds the same people as two already-read files of one upload instead (Ada in
+ * both), so /capture folds them into one combined review on load.
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
@@ -14,6 +17,7 @@ if (process.env.DATABASE_URL) {
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "";
 process.env.CLERK_SECRET_KEY = "";
 
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { captureJobs, contacts } from "../src/db/schema";
@@ -47,7 +51,7 @@ async function main() {
 
   const result: CaptureJobResult = {
     items: [
-      { key: "0-Ada Lovelace", notes: "Met Ada Lovelace (Analytical Engines, founder) — building a compiler for looms, wants an intro to our infra team next week.", parsed: parsed({ name: "Ada Lovelace", company: "Analytical Engines", role: "Founder", summary: "Building a compiler for looms; wants an intro to the infra team next week.", action_items: ["Intro Ada to the infra team"], follow_up_recommendation: "Intro her to the infra team", follow_up_days: 7, relationship_score_suggestion: 4, relevance: 5, tags: ["founder", "compilers"], low_confidence_fields: ["role"] }), duplicates: [{ id: dupId, fullName: "Ada Lovelace", company: "Analytical Engines", title: "Founder", reason: "Same name + company", confidence: 0.9 }], suggestedMergeId: dupId, sharedNoteTexts: ["Demo day afterparty."], interactionDate: "2026-09-10", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
+      { key: "0-Ada Lovelace", notes: "Met Ada Lovelace (Analytical Engines, founder) — building a compiler for looms, wants an intro to our infra team next week.", parsed: parsed({ name: "Ada Lovelace", company: "Analytical Engines", role: "Founder", summary: "Building a compiler for looms; wants an intro to the infra team next week.", action_items: ["Intro Ada to the infra team"], follow_up_recommendation: "Intro her to the infra team", follow_up_days: 7, relationship_score_suggestion: 4, relevance: 5, tags: ["founder", "compilers"], low_confidence_fields: ["role"], takeaways: ["Building a compiler that turns loom patterns into programs", "Thinks the infra team could cut her build times in half", "Wants the intro before her demo next Thursday"], personal_details: ["Daughter of Lord Byron", "Loves mathematics and poetry"], work: { team: "Founding team", building: "A loom-pattern compiler", priorities: ["Faster builds"], hiring: "A second compiler engineer", looking_for: "An intro to infra" }, phone: "+44 20 7946 0958", x_handle: "adalovelace", website: "https://analytical.engines", school: null, industry: "Computing", connections: [{ name: "Charles Babbage", relation: "her collaborator", source_excerpt: "Charles Babbage came up a lot — Ada's collaborator." }], promises: [] }), duplicates: [{ id: dupId, fullName: "Ada Lovelace", company: "Analytical Engines", title: "Founder", reason: "Same name + company", confidence: 0.9 }], suggestedMergeId: dupId, sharedNoteTexts: ["Demo day afterparty."], interactionDate: "2026-09-10", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
       { key: "1-Grace Hopper", notes: "Grace Hopper from the Navy: COBOL veteran, strong mentor energy, said to call her before the 20th.", parsed: parsed({ name: "Grace Hopper", company: "US Navy", role: "Rear Admiral", summary: "COBOL veteran with mentor energy. Said to call before the 20th.", relationship_score_suggestion: 5, relevance: 4, tags: ["mentor"], key_facts: ["Invented the compiler"], low_confidence_fields: ["company", "role"] }), duplicates: [], suggestedMergeId: null, sharedNoteTexts: ["Demo day afterparty."], interactionDate: "2026-09-10", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
       { key: "2-Alan Turing", notes: "Alan Turing was there briefly, cryptography at Bletchley, quiet but sharp.", parsed: parsed({ name: "Alan Turing", company: "Bletchley Park", role: "Cryptographer", summary: "Quiet but sharp. Brief chat about cryptography.", relationship_score_suggestion: 2, relevance: 2 }), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-10", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
     ],
@@ -64,6 +68,23 @@ async function main() {
     mentions: [{ text: "Charles Babbage", context: "Ada's collaborator", nearPerson: "Ada Lovelace", contactId: null, confidence: 0, matchedBy: null }],
     mentionedOnly: [],
   };
+
+  if (process.argv.includes("--batch")) {
+    const batchGroupId = randomUUID();
+    const [ada, grace, alan] = result.items;
+    const files = [
+      { label: "demo-day.txt", text: NOTE, items: [ada!, grace!] },
+      { label: "follow-up-call.txt", text: "Follow-up call with Ada and Alan.", items: [{ ...ada!, key: "0-Ada Lovelace", notes: "Follow-up call with Ada." }, { ...alan!, key: "1-Alan Turing" }] },
+    ];
+    for (const f of files) {
+      await db.insert(captureJobs).values({
+        userId: USER, sourceKind: "messy", status: "ready", inputText: f.text, sourceText: f.text, sourceHash: hashSourceNote(f.text),
+        batchGroupId, sourceLabel: f.label, result: { ...result, items: f.items, suggestedReminders: [] },
+      });
+    }
+    console.log(`seeded an upload of 2 read files (batch ${batchGroupId}) for ${USER}`);
+    return;
+  }
 
   const [job] = await db
     .insert(captureJobs)

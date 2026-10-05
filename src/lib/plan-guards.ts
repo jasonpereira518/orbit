@@ -57,17 +57,6 @@ export async function requireSyncUser() {
   return userId;
 }
 
-/**
- * Starting a Google or Microsoft sign-in. Connecting to bring in contacts is free on every
- * plan (onboarding walks everyone through it); the other purposes — calendar sync, sending,
- * reading the inbox — are what the sync entitlement pays for.
- */
-export async function requireConnectUser(purpose: string) {
-  const userId = await requireUserId();
-  if (purpose !== "contacts") await requireEntitlement(userId, "sync");
-  return userId;
-}
-
 export async function requireMeetingsUser() {
   const userId = await requireUserId();
   await requireEntitlement(userId, "meetings");

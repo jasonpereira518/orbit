@@ -106,7 +106,9 @@ export function ScanControls({
   disabled = false,
   onRawFiles,
   onPages,
+  onFiles,
   onTranscript,
+  onUploadClick,
   compact = false,
 }: {
   /** The host's accept string, for the general picker. */
@@ -121,6 +123,20 @@ export function ScanControls({
   onRawFiles: (files: File[]) => void;
   /** Images and PDF pages, already downscaled and re-encoded to JPEG. */
   onPages: (pages: ScanPage[]) => void;
+  /**
+   * Every picked or pasted set of files, untouched — for a host that decides for itself
+   * what happens next (Messy Notes sorts two or more into notes, and checks a single file
+   * against what was already captured, before anything is read). Absent, files go through
+   * `onRawFiles`/`onPages`. The webcam's pages always go to `onPages`: they are photographs
+   * taken just now, so there is nothing to sort and nothing that could have been read before.
+   */
+  onFiles?: (files: File[]) => void;
+  /**
+   * Desktop only: what the Upload button does instead of opening the file picker — a host
+   * that stages files in its own pop-up first. The phone tile still opens the picker, since
+   * a touch screen has nothing to drag.
+   */
+  onUploadClick?: () => void;
   /** The phone handoff returns text the server already transcribed, and the job it sits on. */
   onTranscript: (text: string, sources: string[], captureJobId?: string) => void;
 }) {
@@ -132,6 +148,10 @@ export function ScanControls({
   const acceptFiles = useCallback(
     async (files: File[]) => {
       if (!files.length) return;
+      if (onFiles) {
+        onFiles(files);
+        return;
+      }
       setNormalizing(true);
       try {
         const { pages, raw } = await sortAndNormalizeScanFiles(files);
@@ -142,7 +162,7 @@ export function ScanControls({
         setNormalizing(false);
       }
     },
-    [onPages, onRawFiles]
+    [onFiles, onPages, onRawFiles]
   );
 
   // Paste a screenshot straight in. A screenshot of a conference badge or a LinkedIn
@@ -220,7 +240,7 @@ export function ScanControls({
         )}
       >
         <Button type="button" variant="outline" disabled={busy} className={compactButton}
-          onClick={() => fileRef.current?.click()}>
+          onClick={() => (onUploadClick ? onUploadClick() : fileRef.current?.click())}>
           <Upload className={iconSize} />
           Upload notes / media
         </Button>

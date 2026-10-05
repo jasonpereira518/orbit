@@ -5,16 +5,26 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
-import { and, eq, gte, ne, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
+import { siteSettings, usageEvents, userSettings } from "@/db/schema";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
-import { resolvePlan } from "@/lib/entitlements";
+import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
-import type { SessionRetriever } from "@/lib/lifetime-checkout";
-import type { Plan } from "@/lib/plan-limits";
+import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { AI_OPERATIONS } from "@/lib/ai-operations";
+import {
+  creditPeriodFor,
+  ensureAllowance,
+  getCreditBalance,
+  packsUsable,
+  placeHold,
+  type CreditBalance,
+} from "@/lib/credits/ledger";
+import { creditsToMicros } from "@/lib/credits/grants";
 import {
   AI_PROVIDERS,
   resolveAiModel,
@@ -35,21 +45,20 @@ import {
   chooseCompletionKey,
   chooseEmbeddingKey,
   aiReadyFromFacts,
-  managedCallAllowed,
+  holdEstimateMicros,
   managedEligibility,
   managedModel,
-  managedWindow,
   nothingUsable,
-  MANAGED_AI_BUDGET,
+  BACKGROUND_FLOOR_SHARE,
+  BACKGROUND_OPERATIONS,
   MANAGED_AI_ENABLED,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
   type AiAccessDenial,
+  type AiKeyPreference,
   type AiKeySource,
   type KeyFacts,
-  type ManagedAllowance,
   type ManagedEligibility,
-  type ManagedUsage,
 } from "@/lib/managed-ai-policy";
 
 /**
@@ -73,8 +82,6 @@ import {
  *     every background job.
  *  2. The managed allowance (`usage_events` for this account, `key_owner = 'orbit'`, this
  *     month), checked before any managed grant is minted.
- *  3. A just-paid Lifetime checkout the webhook has not confirmed yet — see
- *     `lifetime-checkout.ts`. Asked about only when the account would otherwise be refused.
  *
  * Refusals are `AiAccessError`s with a typed `reason` and copy from `ai-access-copy.ts`.
  * Nothing here ever substitutes Orbit's key for a user who is not entitled to it; there is
@@ -105,6 +112,9 @@ const MANAGED_ENV: Record<AiProvider, string> = {
   gemini: "ORBIT_MANAGED_GEMINI_API_KEY",
   openai: "ORBIT_MANAGED_OPENAI_API_KEY",
   anthropic: "ORBIT_MANAGED_ANTHROPIC_API_KEY",
+  // Never read: MANAGED_PROVIDER_ORDER excludes openrouter, so managedKey() never looks this
+  // name up. Present only to satisfy the Record — Orbit holds no OpenRouter key.
+  openrouter: "ORBIT_MANAGED_OPENROUTER_API_KEY",
 };
 
 /**
@@ -117,6 +127,9 @@ const LOCAL_ENV: Record<AiProvider, string> = {
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  // Never read as a MANAGED key, for the same reason as MANAGED_ENV.openrouter above — but
+  // named to match anyway, in case something outside the gate ever reads it directly.
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 /**
@@ -135,19 +148,50 @@ export function jevSwitchedOff(): boolean {
 }
 
 /**
- * `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK.
- * Always on while `MANAGED_AI_ENABLED` is false: managed AI has not shipped.
+ * `ORBIT_MANAGED_AI=off` — the env emergency stop. Pro and Max fall back to "add your own
+ * key". Wins over the admin console's runtime switch below.
  */
 export function managedAiSwitchedOff(): boolean {
   if (!MANAGED_AI_ENABLED) return true;
   return process.env.ORBIT_MANAGED_AI?.trim().toLowerCase() === "off";
 }
 
-function managedKey(provider: AiProvider): string | null {
-  // Managed AI off: the local-dev names are the only ones read, and only on a dev server.
-  if (!MANAGED_AI_ENABLED) {
-    return localDevAiEnabled() ? process.env[LOCAL_ENV[provider]]?.trim() || null : null;
+/**
+ * The admin console's runtime switch (`site_settings.managed_ai_paused`), cached for 30s per
+ * server instance so it costs one read per instance, not per call. Unset reads as PAUSED on
+ * production — managed AI must not run before the legal text describing it ships — and as
+ * running everywhere else. A read failure keeps the last answer, or pauses if there is none.
+ */
+const PAUSE_TTL_MS = 30_000;
+let pauseCache: { paused: boolean; at: number } | null = null;
+
+export function managedAiPausedDefault(): boolean {
+  return process.env.VERCEL_ENV === "production";
+}
+
+export async function managedAiPaused(now = Date.now()): Promise<boolean> {
+  if (pauseCache && now - pauseCache.at < PAUSE_TTL_MS) return pauseCache.paused;
+  try {
+    const db = await getDb();
+    const [row] = await db
+      .select({ paused: siteSettings.managedAiPaused })
+      .from(siteSettings)
+      .where(eq(siteSettings.id, 1))
+      .limit(1);
+    const paused = row?.paused ?? managedAiPausedDefault();
+    pauseCache = { paused, at: now };
+    return paused;
+  } catch {
+    return pauseCache?.paused ?? true;
   }
+}
+
+/** For the admin switch: forget the cached answer so this instance sees the change at once. */
+export function forgetManagedAiPause() {
+  pauseCache = null;
+}
+
+function managedKey(provider: AiProvider): string | null {
   if (managedAiSwitchedOff()) return null;
   const explicit = process.env[MANAGED_ENV[provider]]?.trim();
   if (explicit) return explicit;
@@ -161,6 +205,8 @@ export function managedKeysConfigured(): Record<AiProvider, boolean> {
     gemini: Boolean(managedKey("gemini")),
     openai: Boolean(managedKey("openai")),
     anthropic: Boolean(managedKey("anthropic")),
+    // Orbit holds no OpenRouter key — never a managed provider (managed-ai-policy.ts).
+    openrouter: false,
   };
 }
 
@@ -171,33 +217,23 @@ export function managedEnvVar(provider: AiProvider): string {
 
 /**
  * LOCALHOST ONLY — `next dev` runs AI on the keys in the developer's own `.env.local`, the
- * way local development always worked, so a fresh clone can capture a note without pasting a
- * key into Settings first. It is the only path left to a key the account did not save.
- *
- * Three conditions, all required, and none of them settable by a deployment: managed AI is
- * off (with it on, these names are Orbit's own managed keys and the plan rule applies), the
- * process is not a Vercel runtime, and `NODE_ENV` is development — which `next build` and
- * every deployment are not. `ORBIT_DEMO_MANAGED_AI=off` still turns it off, which is how the
- * production BYOK states are seen on a laptop.
+ * way local development always worked, unmetered. Two conditions, neither settable by a
+ * deployment: the process is not a Vercel runtime, and `NODE_ENV` is development — which
+ * `next build` and every deployment are not. `ORBIT_DEMO_MANAGED_AI=off` turns it off, which
+ * is how the production BYOK and credit states are seen on a laptop.
  */
 function localDevAiEnabled(): boolean {
-  if (MANAGED_AI_ENABLED) return false;
   if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
   return !process.env.VERCEL && isLocalhost();
 }
 
 /**
- * Demo accounts count as Lifetime (see `managed-ai-policy.ts`).
- * `ORBIT_DEMO_MANAGED_AI=off` switches that off, so the BYOK states can be seen on `next dev`
- * — the same shape as `ORBIT_DEMO_DATA=off` for onboarding.
- *
- * With managed AI off this narrows to the localhost case: the showcase account
- * (`DEMO_ACCOUNT_USER_ID`) is a deployed account, and no deployment pays for AI.
+ * Demo accounts on a dev server run on the developer's keys, unmetered. A DEPLOYED demo
+ * account (the showcase, `DEMO_ACCOUNT_USER_ID`) is not exempt: it follows the plan it holds,
+ * so it can never spend Orbit's money outside the credit ledger.
  */
 function demoCountsAsManaged(userId: string): boolean {
-  if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
-  if (!MANAGED_AI_ENABLED) return localDevAiEnabled() && isDemoAccount(userId);
-  return isDemoAccount(userId);
+  return localDevAiEnabled() && isDemoAccount(userId);
 }
 
 /* ------------------------------------------------------------------------ grants ----- */
@@ -262,6 +298,62 @@ export async function anthropicClient(grant: AiGrant<AiProvider>): Promise<Anthr
   const apiKey = keyFor(grant, "anthropic");
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
   return new Anthropic({ apiKey });
+}
+
+/**
+ * OpenRouter is the OpenAI SDK pointed somewhere else. `keyFor` keeps the invariant that a
+ * grant minted for one provider cannot build another's client.
+ */
+export async function openrouterClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  const apiKey = keyFor(grant, "openrouter");
+  const { default: OpenAI } = await import("openai");
+  return new OpenAI({
+    apiKey,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": getAppBaseUrl(),
+      "X-Title": "Orbit",
+    },
+  });
+}
+
+/** Providers that speak the OpenAI wire format, so `ai.ts` can share one code path. */
+export function isOpenAiShaped(provider: AiProvider): boolean {
+  return provider === "openai" || provider === "openrouter";
+}
+
+export function openAiShapedClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
+  return grant.provider === "openrouter" ? openrouterClient(grant) : openaiClient(grant);
+}
+
+/**
+ * OpenRouter puts a `cost` field (USD, not micros) on the `usage` object of every response,
+ * with no extra request parameter needed — direct OpenAI's `usage` never carries it. The
+ * OpenAI SDK's own `usage` type has no such field, so this narrow shape exists to read it
+ * without an `as any`.
+ */
+export type OpenAiUsageWithCost = { usage?: { cost?: number } };
+
+/**
+ * USD × 1e6, or `null` when the response carried no `usage.cost` — always true for direct
+ * OpenAI, never true for OpenRouter.
+ */
+export function reportedCostMicros(response: OpenAiUsageWithCost): number | null {
+  const cost = response.usage?.cost;
+  return typeof cost === "number" ? Math.round(cost * 1_000_000) : null;
+}
+
+/**
+ * Orbit's payloads are private relationship notes, so every OpenRouter request constrains
+ * the upstream pool to providers that do not retain or train on what is sent.
+ *
+ * A helper rather than a spread at each call site on purpose: a privacy guarantee that
+ * depends on remembering to spread is one forgotten spread away from being off, and
+ * `smoke-provider-exhaustive` asserts no OpenRouter `.create(` bypasses this.
+ */
+export function withOpenRouterRouting<T extends object>(provider: AiProvider, params: T): T {
+  if (provider !== "openrouter") return params;
+  return { ...params, provider: { data_collection: "deny" } } as T;
 }
 
 /**
@@ -339,12 +431,6 @@ async function loadAccount(userId: string): Promise<AccountRow | undefined> {
   return db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) });
 }
 
-function hasAnyPersonalKey(row: AccountRow | undefined): boolean {
-  return Boolean(
-    row?.geminiApiKeyEncrypted || row?.openaiApiKeyEncrypted || row?.anthropicApiKeyEncrypted,
-  );
-}
-
 /**
  * What one `usage_events` row costs the managed allowance, in micros. Unpriced successful
  * calls are charged their pessimistic stand-in (UNPRICED_CALL_MICROS); a failed call with
@@ -362,71 +448,14 @@ export function managedCostSql() {
     ELSE 0 END)`;
 }
 
-/**
- * This month's managed spend for one account — an index scan on `(user_id, created_at)`,
- * plus what batches still in flight are expected to cost.
- *
- * The reservation matters: a submitted batch has spent the money but written no usage rows
- * yet (they land when its results do, hours later). Without counting it, an account could
- * submit batch after batch and only discover the cap when the bill arrived.
- */
-export async function managedUsageThisMonth(userId: string, now = new Date()): Promise<ManagedUsage> {
-  const { start } = managedWindow(now);
-  const db = await getDb();
-  const [row] = await db
-    .select({
-      spent: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
-      calls: sql<number>`count(*)::int`,
-    })
-    .from(usageEvents)
-    .where(
-      and(
-        eq(usageEvents.userId, userId),
-        eq(usageEvents.keyOwner, "orbit"),
-        gte(usageEvents.createdAt, start),
-        // Deepgram rows carry keyOwner "orbit" too — it's Orbit's own key, but it is a hosted
-        // service metered by `speech_usage`, not an LLM call against the managed allowance.
-        // Without this exclusion, `UNPRICED_CALL_MICROS.transcription` (managedCostSql's
-        // fallback for a null-cost transcription row, which Deepgram rows always are — see
-        // the note in ai.ts) would charge every voice note against the same monthly cap that
-        // gates a Lifetime account's chat and capture calls, so recording a few voice notes
-        // could throttle that account out of its own AI completions.
-        ne(usageEvents.provider, "deepgram"),
-      ),
-    );
-  const [reserved] = await db
-    .select({
-      micros: sql<string>`coalesce(sum(${aiBatchJobs.estCostMicros}), 0)::bigint`,
-      calls: sql<string>`coalesce(sum(${aiBatchJobs.requestCount}), 0)::bigint`,
-    })
-    .from(aiBatchJobs)
-    .where(
-      and(
-        eq(aiBatchJobs.userId, userId),
-        eq(aiBatchJobs.keyOwner, "orbit"),
-        eq(aiBatchJobs.status, "submitted"),
-        gte(aiBatchJobs.createdAt, start),
-      ),
-    );
-  return {
-    spentMicros: Number(row?.spent ?? 0) + Number(reserved?.micros ?? 0),
-    calls: Number(row?.calls ?? 0) + Number(reserved?.calls ?? 0),
-  };
-}
-
-export function allowanceFrom(usage: ManagedUsage, now = new Date()): ManagedAllowance {
-  return {
-    ...usage,
-    limitMicros: MANAGED_AI_BUDGET.monthlyCostMicros,
-    callLimit: MANAGED_AI_BUDGET.monthlyCalls,
-    resetsAt: managedWindow(now).resetsAt.toISOString(),
-  };
-}
-
 /* -------------------------------------------------------------------- the gate ------- */
 
 /**
- * One account's AI access, resolved once per AI call.
+ * One account's AI access: the settings read, plan and keys, resolved once per AI call — or
+ * once per request, when a request that makes several calls opens it once and passes it
+ * down (`/api/chat`; see `forUser`). Only the account READ is shared that way: credits are
+ * held in `grant()`, so every `completion()` / `embedding()` on a shared access places its
+ * own hold against the live balance.
  *
  * Built by `resolveAiAccess`. Decrypts only what exists and holds the plaintext privately;
  * callers only ever see grants.
@@ -438,8 +467,8 @@ export class AiAccess {
     readonly settings: AccountRow | undefined,
     readonly plan: Plan,
     readonly eligibility: ManagedEligibility,
-    /** A paid Lifetime checkout Stripe says has not cleared yet. */
-    readonly upgradePending: boolean,
+    /** Which key runs first when the account could use either. */
+    readonly preference: AiKeyPreference,
     private readonly personal: Partial<Record<AiProvider, string>>,
     private readonly managed: Partial<Record<AiProvider, string>>,
     /** The decision model's key: the account's own, or on `next dev` the developer's. */
@@ -447,36 +476,18 @@ export class AiAccess {
   ) {}
 
   static async open(userId: string, opts: AiAccessOptions = {}): Promise<AiAccess> {
-    let row = await loadAccount(userId);
-    let plan = resolvePlan(row).plan;
-    let upgradePending = false;
-
-    // Only an account about to be refused is worth a Stripe round trip: not on Lifetime,
-    // no key of its own, and a Lifetime checkout opened recently.
-    if (
-      MANAGED_AI_ENABLED &&
-      plan !== "lifetime" &&
-      row?.lifetimeCheckoutSessionId &&
-      !hasAnyPersonalKey(row) &&
-      !demoCountsAsManaged(userId)
-    ) {
-      // Imported here, not at the top: it pulls in the Stripe SDK, which every other AI
-      // call has no use for.
-      const { checkPendingLifetime } = await import("@/lib/lifetime-checkout");
-      const pending = await checkPendingLifetime(userId, row, new Date(), opts.retrieveSession);
-      if (pending === "granted") {
-        row = await loadAccount(userId);
-        plan = resolvePlan(row).plan;
-      } else if (pending === "processing") {
-        upgradePending = true;
-      }
+    if (opts.row && opts.row.userId !== userId) {
+      throw new Error("AiAccess.open was handed another account's settings row");
     }
+    const row = opts.row !== undefined ? (opts.row ?? undefined) : await loadAccount(userId);
+    const plan = resolvePlan(row).plan;
 
     const personal: Partial<Record<AiProvider, string>> = {};
     const decrypted = {
       gemini: decryptOrNull(row?.geminiApiKeyEncrypted),
       openai: decryptOrNull(row?.openaiApiKeyEncrypted),
       anthropic: decryptOrNull(row?.anthropicApiKeyEncrypted),
+      openrouter: decryptOrNull(row?.openrouterApiKeyEncrypted),
     };
     for (const [provider, key] of Object.entries(decrypted)) {
       if (key) personal[provider as AiProvider] = key;
@@ -484,7 +495,10 @@ export class AiAccess {
 
     const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
     const managed: Partial<Record<AiProvider, string>> = {};
-    if (eligibility) {
+    // The admin pause stops Orbit-paid AI for Pro and Max; a dev server's own keys are not
+    // Orbit's, so a localhost demo account is unaffected.
+    const paused = eligibility === "plan" ? await managedAiPaused() : false;
+    if (eligibility && !paused) {
       for (const provider of MANAGED_PROVIDER_ORDER) {
         const key = managedKey(provider);
         if (key) managed[provider] = key;
@@ -492,8 +506,8 @@ export class AiAccess {
     }
 
     // BYOK only. The one exception is the dev server's own `.env.local`, on the same terms
-    // as every other provider there (a localhost demo account, managed AI off) — so it can
-    // never become an Orbit-paid key, even the day managed AI ships.
+    // as every other provider there (a localhost demo account) — so it can never become an
+    // Orbit-paid key.
     const ownDecisionKey = decryptOrNull(row?.typesafeApiKeyEncrypted);
     const devDecisionKey =
       eligibility === "demo" && localDevAiEnabled()
@@ -505,7 +519,18 @@ export class AiAccess {
         ? { key: devDecisionKey, source: "managed" as const }
         : null;
 
-    return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed, decisionKey);
+    const preference = (row?.aiKeyPreference ?? null) as AiKeyPreference;
+    return new AiAccess(userId, row, plan, eligibility, preference, personal, managed, decisionKey);
+  }
+
+  /**
+   * This access, for a call made on behalf of `userId` — the idiom every `access?` parameter
+   * uses: `access?.forUser(userId) ?? (await resolveAiAccess(userId))`. An access opened for
+   * another account is a programming error, never something to bill: it throws.
+   */
+  forUser(userId: string): AiAccess {
+    if (this.userId !== userId) throw new Error("AiAccess was opened for another account");
+    return this;
   }
 
   get selectedProvider(): AiProvider {
@@ -519,29 +544,26 @@ export class AiAccess {
   facts(): KeyFacts {
     return {
       eligibility: this.eligibility,
+      preference: this.preference,
       selectedProvider: this.selectedProvider,
       selectedModel: this.selectedModel,
       personal: {
         gemini: Boolean(this.personal.gemini),
         openai: Boolean(this.personal.openai),
         anthropic: Boolean(this.personal.anthropic),
+        openrouter: Boolean(this.personal.openrouter),
       },
       managed: {
         gemini: Boolean(this.managed.gemini),
         openai: Boolean(this.managed.openai),
         anthropic: Boolean(this.managed.anthropic),
+        // Orbit holds no OpenRouter key — never a managed provider (managed-ai-policy.ts).
+        openrouter: false,
       },
     };
   }
 
-  /**
-   * The refusal for `reason`. A `key_required` for an account whose Lifetime payment is
-   * still clearing is reported as that instead: a key is not what they are missing.
-   */
   refusal(reason: AiAccessDenial, message?: string): AiAccessError {
-    if (reason === "key_required" && this.upgradePending) {
-      return new AiAccessError("upgrade_pending");
-    }
     return new AiAccessError(reason, message);
   }
 
@@ -554,13 +576,27 @@ export class AiAccess {
     const key = source === "personal" ? this.personal[provider] : this.managed[provider];
     // Unreachable when the policy and the maps agree; a refusal beats a crash if they don't.
     if (!key) throw this.refusal(nothingUsable(this.eligibility).reason);
-    // The allowance is Orbit's spend ceiling. On a dev server the "managed" key is the
-    // developer's own, so there is nothing to ration and no usage query to pay for.
-    if (source === "managed" && MANAGED_AI_ENABLED) {
-      const usage = await managedUsageThisMonth(this.userId);
-      if (!managedCallAllowed(usage, operation)) throw this.refusal("managed_limit");
-    }
+    // Credits are Orbit's spend ceiling: hold this call's estimate against the live balance,
+    // or refuse — the hard stop. On a dev server the "managed" key is the developer's own
+    // (eligibility "demo"), so there is nothing to meter.
+    if (source === "managed" && this.eligibility === "plan") await this.holdCredits(operation);
     return mint(provider, model, source, key, operation);
+  }
+
+  private async holdCredits(operation: string): Promise<void> {
+    await ensureAllowance(this.userId, this.plan, creditPeriodFor(this.settings));
+    const tier = (AI_OPERATIONS as Record<string, { tier?: string }>)[operation]?.tier;
+    const monthly = PLAN_CONFIG[this.plan].monthlyCredits ?? 0;
+    const hold = await placeHold({
+      userId: this.userId,
+      micros: holdEstimateMicros(tier),
+      operation,
+      packs: packsUsable(this.plan),
+      floorMicros: BACKGROUND_OPERATIONS.has(operation)
+        ? creditsToMicros(monthly * BACKGROUND_FLOOR_SHARE)
+        : 0,
+    });
+    if (!hold) throw this.refusal("managed_limit");
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */
@@ -642,10 +678,12 @@ export class AiAccess {
 
 export type AiAccessOptions = {
   /**
-   * How a pending Lifetime checkout is looked up. Production always asks Stripe; the smoke
-   * test passes a stand-in so the "just paid" states can be exercised without it.
+   * The account's whole `user_settings` row, when the caller already holds it — the one
+   * `requireAuthenticatedUser()` returns is the same full-row read. Skips the gate's own
+   * read; `null` means "no row". Only pass a row read in the same request: the plan is
+   * resolved from it, so that read is always what the grants are built from.
    */
-  retrieveSession?: SessionRetriever;
+  row?: AccountRow | null;
 };
 
 /** The one entry point. Every AI call in `ai.ts` starts here. */
@@ -673,8 +711,12 @@ export type AiAccessStatus = {
   managedConfigured: boolean;
   /** Voice and meeting capture have an engine — Deepgram's quota or `AiAccess.canTranscribe()`. */
   canTranscribe: boolean;
-  /** This month's managed allowance — eligible accounts only. */
-  allowance: ManagedAllowance | null;
+  /** Which key runs first when the account has both (`null` = the saved key). */
+  preference: AiKeyPreference;
+  /** Orbit-paid AI is paused by the admin switch or the env kill switch. */
+  managedPaused: boolean;
+  /** The credit balance — Pro and Max only. */
+  credits: (CreditBalance & { monthlyCredits: number }) | null;
 };
 
 /**
@@ -690,22 +732,24 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   const choice = chooseCompletionKey(facts);
   const now = new Date();
 
-  const allowance =
-    access.eligibility && MANAGED_AI_ENABLED
-      ? allowanceFrom(await managedUsageThisMonth(userId, now), now)
-      : null;
-
-  let reason: AiAccessDenial | null = null;
-  if (!choice.ok) {
-    reason = choice.reason === "key_required" && access.upgradePending ? "upgrade_pending" : choice.reason;
-  } else if (choice.source === "managed" && allowance && !managedCallAllowed(allowance, "status")) {
-    reason = "managed_limit";
-  }
-
   // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
   // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
   // callers rely on.
-  const deepgram = deepgramEnabled() ? !(await speechAllowance(userId, "shortform")).exhausted : false;
+  const monthlyCredits = PLAN_CONFIG[access.plan].monthlyCredits;
+  const [balance, speech, paused] = await Promise.all([
+    monthlyCredits ? getCreditBalance(userId, access.plan, access.settings, now) : null,
+    deepgramEnabled() ? speechAllowance(userId, "shortform") : null,
+    access.eligibility === "plan" ? managedAiPaused() : Promise.resolve(false),
+  ]);
+
+  let reason: AiAccessDenial | null = null;
+  if (!choice.ok) {
+    reason = choice.reason;
+  } else if (choice.source === "managed" && access.eligibility === "plan" && balance && balance.spendable <= 0) {
+    reason = "managed_limit";
+  }
+
+  const deepgram = speech ? !speech.exhausted : false;
 
   return {
     ready: reason === null,
@@ -719,13 +763,15 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
     hasPersonalKey: facts.personal[facts.selectedProvider],
     managedConfigured: Object.values(managedKeysConfigured()).some(Boolean),
     canTranscribe: deepgram || access.canTranscribe(),
-    allowance,
+    preference: access.preference,
+    managedPaused: managedAiSwitchedOff() || paused,
+    credits: balance && monthlyCredits ? { ...balance, monthlyCredits } : null,
   };
 }
 
 /**
  * The presence-only answer, for the notifications panel's 120-second poll: no decryption,
- * no allowance query, no Stripe. Same policy function as the gate, so the "add your API
+ * no credit query, no Stripe. Same policy function as the gate, so the "add your API
  * key" alert and the gate cannot disagree about who needs a key.
  */
 export function aiReadyFromSettings(
@@ -733,15 +779,12 @@ export function aiReadyFromSettings(
   row: {
     aiProvider?: string | null;
     aiModel?: string | null;
+    aiKeyPreference?: string | null;
     geminiApiKeyEncrypted?: string | null;
     openaiApiKeyEncrypted?: string | null;
     anthropicApiKeyEncrypted?: string | null;
-    compedPlan?: "orbit" | "lifetime" | null;
-    lifetimePurchasedAt?: Date | null;
-    subscriptionPlan?: "orbit" | null;
-    subscriptionStatus?: "active" | "past_due" | "canceled" | null;
-    subscriptionPeriodEnd?: Date | null;
-  } | null,
+    openrouterApiKeyEncrypted?: string | null;
+  } & BillingColumns | null,
 ): boolean {
   const selectedProvider = resolveAiProvider(row?.aiProvider);
   const { plan } = resolvePlan(row);
@@ -754,6 +797,7 @@ export function aiReadyFromSettings(
       gemini: Boolean(row?.geminiApiKeyEncrypted),
       openai: Boolean(row?.openaiApiKeyEncrypted),
       anthropic: Boolean(row?.anthropicApiKeyEncrypted),
+      openrouter: Boolean(row?.openrouterApiKeyEncrypted),
     },
     managed: configured,
   });

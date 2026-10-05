@@ -4,6 +4,8 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { companyBrandColor } from "@/lib/company-brand";
 import { runToastAction, toast } from "@/lib/toast";
 import {
   acceptScoreBump,
@@ -23,6 +25,14 @@ const REASON_LABELS: Record<string, string> = {
   score_bump: "Score bump",
 };
 
+/** One line on what acting on each kind of suggestion does, under the reason pill. */
+const NEXT_STEP: Record<string, string> = {
+  dormant_high_value: "A quick check-in keeps this relationship warm.",
+  linkedin_thread_quiet: "Pick the LinkedIn conversation back up.",
+  post_event: "Follow up while the introduction is still fresh.",
+  score_bump: "Orbit thinks this relationship has grown closer.",
+};
+
 const REASON_STYLES: Record<string, string> = {
   dormant_high_value: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
   linkedin_thread_quiet: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
@@ -38,6 +48,7 @@ export function SuggestionRow({
   contactName,
   contactTitle,
   contactCompany,
+  lastInteractionAt,
   tier,
 }: {
   id: string;
@@ -47,6 +58,7 @@ export function SuggestionRow({
   contactName: string;
   contactTitle?: string | null;
   contactCompany?: string | null;
+  lastInteractionAt?: Date | string | null;
   tier?: "inner" | "mid" | "outer";
 }) {
   const router = useRouter();
@@ -54,14 +66,19 @@ export function SuggestionRow({
 
   const reasonLabel = REASON_LABELS[suggestionType] ?? "Suggestion";
   const isScoreBump = suggestionType === "score_bump";
-  const subtitle = [contactTitle, contactCompany].filter(Boolean).join(" · ");
+  // Dormant and quiet-thread descriptions already state how long it has been.
+  const lastTouch =
+    lastInteractionAt && !/last (touch|activity)/i.test(description ?? "")
+    ? formatDistanceToNow(new Date(lastInteractionAt), { addSuffix: true })
+    : null;
+  const nextStep = NEXT_STEP[suggestionType];
+  const companyColor = companyBrandColor(contactCompany);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {tier && <ClosenessTierBadge tier={tier} dotOnly />}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {contactId ? (
               <IntentLink
                 href={`/contacts/${contactId}`}
@@ -72,6 +89,7 @@ export function SuggestionRow({
             ) : (
               <p className="font-medium text-ink">{contactName}</p>
             )}
+            {tier && <ClosenessTierBadge tier={tier} />}
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
@@ -81,11 +99,33 @@ export function SuggestionRow({
               {reasonLabel}
             </span>
           </div>
-          {subtitle && (
-            <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
+          {(contactTitle || contactCompany) && (
+            <p className="mt-0.5 text-sm">
+              {contactCompany && (
+                <span
+                  className="font-semibold"
+                  style={companyColor ? { color: companyColor } : undefined}
+                >
+                  {contactCompany}
+                </span>
+              )}
+              {contactTitle && contactCompany ? (
+                <span className="text-muted-foreground"> · </span>
+              ) : null}
+              {contactTitle && (
+                <span className="text-xs text-muted-foreground">{contactTitle}</span>
+              )}
+            </p>
           )}
           {description && (
-            <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+            <p className="mt-1.5 text-sm text-ink/80">{description}</p>
+          )}
+          {(nextStep || lastTouch) && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {nextStep}
+              {nextStep && lastTouch ? " " : ""}
+              {lastTouch ? `Last touch ${lastTouch}.` : ""}
+            </p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {isScoreBump ? (

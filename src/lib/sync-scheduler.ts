@@ -20,6 +20,7 @@
  * error that becomes a number in `cron_runs.stats` is visible; one that aborts the loop is a
  * silent outage for every user after it in the queue.
  */
+import { extraConnectionPaused } from "@/lib/connection-limits";
 import {
   CalendarSyncTokenExpiredError,
   advanceCursor as advanceGoogleCalendarCursor,
@@ -43,6 +44,7 @@ import {
 } from "@/lib/gmail";
 import {
   hasCalendarScope as hasMicrosoftCalendarScope,
+  hasContactsScope as hasMicrosoftContactsScope,
   getValidAccessToken as getValidOutlookAccessToken,
 } from "@/lib/outlook";
 import {
@@ -67,11 +69,22 @@ import { connectorById } from "@/lib/connectors/registry";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import { ingestPeople } from "@/lib/ingest/people";
 import {
+  initialBlockedCount,
+  startCursorForCap,
+  withBlockedCount,
+} from "@/lib/sync-contact-cap";
+import {
   advanceContactsCursor,
   fetchContactsPage,
   PeopleSyncTokenExpiredError,
   type ContactsSyncCursor,
 } from "@/lib/connectors/google-contacts";
+import {
+  advanceContactsCursor as advanceMicrosoftContactsCursor,
+  ContactsFilterRejectedError,
+  fetchContactsPage as fetchMicrosoftContactsPage,
+  type MicrosoftContactsCursor,
+} from "@/lib/connectors/microsoft-contacts";
 import type { CalendarSyncCursor, ProviderSyncCursor } from "@/db/schema";
 import {
   claimDueCalendarSubscriptions,
@@ -152,6 +165,8 @@ export type SyncDeps = {
    */
   getMicrosoftAccessToken?: typeof getValidOutlookAccessToken;
   fetchMicrosoftPage?: typeof fetchMicrosoftCalendarPage;
+  /** How a Microsoft contacts page is read; defaulted for the same reason as the pair above. */
+  fetchMicrosoftContactsPage?: typeof fetchMicrosoftContactsPage;
   /**
    * The Apple half. No token minter — a CalDAV app-specific password is decrypted straight
    * from `apple_connections`, not refreshed like an OAuth token — so only the fetch itself is
@@ -203,6 +218,8 @@ export type SyncRunStats = {
   synced: number;
   failed: number;
   skippedNoScope: number;
+  /** A Free account's later Google/Microsoft connection, rescheduled untouched. */
+  skippedExtraConnection?: number;
   eventsIngested: number;
   /** Calendar events the decision model (Jev) skipped or kept against the rules' call. */
   calendarSkippedByDecision: number;
@@ -239,6 +256,14 @@ export type SyncRunStats = {
   enrichFetched: number;
   enrichFailed: number;
   budgetExhausted: boolean;
+  /**
+   * Some claim came back FULL (it hit its per-run cap), so more work is probably still due.
+   *
+   * Without this, a run that claimed exactly its cap and finished it quickly never asked
+   * for a continuation, since only a spent time budget did. Throughput was then fixed at
+   * one claim per provider per scheduled tick (~80 syncs an hour), however much sat due.
+   */
+  claimFull: boolean;
   /** How overdue the oldest due connection was when the run started; null when none. */
   oldestDueAgeMs: number | null;
 };
@@ -275,6 +300,7 @@ function emptyRunStats(): SyncRunStats {
     enrichFetched: 0,
     enrichFailed: 0,
     budgetExhausted: false,
+    claimFull: false,
     oldestDueAgeMs: null,
   };
 }
@@ -435,9 +461,14 @@ async function syncGoogleContacts(
     // calendar phase makes, and the opposite of the one-shot file import, which is a review
     // screen precisely because a file is somebody else's list.
     createsContacts: true,
+    // Same tag the one-shot Google import gives, so synced people reach the default sky.
+    tagNames: ["google-contacts"],
   });
 
-  let cursor = startCursor;
+  // People held back by the plan cap last time: if there is room now, read the whole book again.
+  const from = startCursorForCap(startCursor, ctx.headroom);
+  let cursor = from;
+  let blocked = initialBlockedCount(from);
 
   for (;;) {
     let page;
@@ -449,6 +480,7 @@ async function syncGoogleContacts(
         // Drop the cursor and read the book again; explicitly NOT a failure, because counting
         // it would walk a healthy connection up the backoff ladder and eventually disarm it.
         cursor = null;
+        blocked = 0;
         continue;
       }
       throw err;
@@ -462,9 +494,10 @@ async function syncGoogleContacts(
       stats.contactsCreated += ingested.created;
       stats.addressBookMatched += ingested.matched;
       stats.addressBookBlockedByPlan += ingested.blockedByPlan;
+      blocked += ingested.blockedByPlan;
     }
 
-    cursor = advanceContactsCursor(cursor, page);
+    cursor = withBlockedCount(advanceContactsCursor(cursor, page), blocked);
 
     // No more pages: `cursor` now holds the fresh syncToken and the next run is a delta.
     if (!page.nextPageToken) break;
@@ -477,7 +510,9 @@ async function syncGoogleContacts(
     }
   }
 
-  await finalizeIngest(ctx);
+  // Recalibrate closeness only for the run that finishes an initial read (no delta token was
+  // held when it started), and only with budget to spare — the hourly drain is the backstop.
+  await finalizeIngest(ctx, { recalibrate: !from?.syncToken && !deadlineReached(deadline) });
   return { cursor, exhausted: false };
 }
 
@@ -537,18 +572,13 @@ async function syncMicrosoftCalendar(
   conn: ClaimedConnection,
   stats: SyncRunStats,
   now: Date,
-  deps: SyncDeps
-): Promise<void> {
+  deps: SyncDeps,
+  deadline: number
+): Promise<{ exhausted: boolean }> {
   await seedCalendarSources(conn.userId);
   const source = (await enabledSourcesFor(conn.id))[0];
-  if (!source) {
-    await markSyncResult(conn.provider, conn.id, {
-      ok: true,
-      cursor: conn.syncCursor,
-      nextSyncAt: new Date(now.getTime() + SYNC_INTERVAL_MS),
-    });
-    return;
-  }
+  // No calendar enabled: nothing to do here, and not an error. The caller records the result.
+  if (!source) return { exhausted: false };
 
   const accessToken = await (deps.getMicrosoftAccessToken ?? getValidOutlookAccessToken)(conn.userId);
   const ctx = await openIngestContext(conn.userId, {
@@ -558,7 +588,6 @@ async function syncMicrosoftCalendar(
   });
 
   let cursor = source.syncCursor ?? conn.syncCursor?.calendar ?? null;
-  const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
 
   for (;;) {
     let page;
@@ -601,21 +630,135 @@ async function syncMicrosoftCalendar(
     if (deadlineReached(deadline)) {
       await finalizeIngest(ctx);
       await saveSourceCursor(source.id, cursor, now);
-      await markSyncResult(conn.provider, conn.id, {
-        ok: true,
-        cursor: conn.syncCursor,
-        nextSyncAt: now,
-      });
-      return;
+      return { exhausted: true };
     }
   }
 
   await finalizeIngest(ctx);
   await saveSourceCursor(source.id, cursor, now);
+  return { exhausted: false };
+}
+
+/**
+ * Sync one Microsoft connection's address book. Mirrors `syncGoogleContacts`: same context,
+ * same paging loop, same budget check between pages, same tag the one-shot import gives.
+ *
+ * A first read of a large book resumes across passes through `pageToken`; the watermark for
+ * later incremental runs is adopted only when every page has been read (see
+ * `connectors/microsoft-contacts.ts`).
+ */
+async function syncMicrosoftContacts(
+  conn: ClaimedConnection,
+  stats: SyncRunStats,
+  now: Date,
+  deps: SyncDeps,
+  startCursor: MicrosoftContactsCursor | null,
+  deadline: number
+): Promise<{ cursor: MicrosoftContactsCursor | null; exhausted: boolean }> {
+  const accessToken = await (deps.getMicrosoftAccessToken ?? getValidOutlookAccessToken)(conn.userId);
+  const ctx = await openIngestContext(conn.userId, {
+    source: "microsoft_contacts",
+    // Someone in the user's own address book is someone they know — the same judgement the
+    // Google contacts phase and the calendar phase make.
+    createsContacts: true,
+    // Same tag the one-shot Outlook import gives, so synced people reach the default sky.
+    tagNames: ["outlook-contacts"],
+  });
+
+  // People held back by the plan cap last time: if there is room now, read the whole book again.
+  const from = startCursorForCap(startCursor, ctx.headroom);
+  let cursor = from;
+  let blocked = initialBlockedCount(from);
+
+  for (;;) {
+    let page;
+    try {
+      page = await (deps.fetchMicrosoftContactsPage ?? fetchMicrosoftContactsPage)({ accessToken, cursor });
+    } catch (err) {
+      if (err instanceof ContactsFilterRejectedError) {
+        // Graph would not take the incremental filter: read the whole book instead. Slower
+        // every run, never wrong — and not a failure, or a healthy connection would walk up
+        // the backoff ladder for something the person cannot fix.
+        cursor = null;
+        blocked = 0;
+        continue;
+      }
+      throw err;
+    }
+
+    stats.addressBookNameless += page.nameless;
+    if (page.people.length > 0) {
+      const ingested = await ingestPeople(ctx, page.people);
+      stats.addressBookSeen += ingested.seen;
+      stats.contactsCreated += ingested.created;
+      stats.addressBookMatched += ingested.matched;
+      stats.addressBookBlockedByPlan += ingested.blockedByPlan;
+      blocked += ingested.blockedByPlan;
+    }
+
+    cursor = withBlockedCount(advanceMicrosoftContactsCursor(cursor, page, now), blocked);
+
+    if (!page.nextPageToken) break;
+
+    // Out of time mid-book. `pageToken` is kept, so the next run resumes here.
+    if (deadlineReached(deadline)) {
+      await finalizeIngest(ctx);
+      return { cursor, exhausted: true };
+    }
+  }
+
+  // Same rule as Google's contacts phase: recalibrate only when an initial read just finished.
+  await finalizeIngest(ctx, { recalibrate: !from?.syncToken && !deadlineReached(deadline) });
+  return { cursor, exhausted: false };
+}
+
+/**
+ * Sync everything one Microsoft connection is entitled to, then record the result ONCE.
+ *
+ * The same single-write rule as `syncGoogleConnection`, for the same reason: `sync_cursor` is
+ * one jsonb object and each phase used to write its own copy of it. Calendar runs first
+ * because meetings are the stronger signal and the budget is shared.
+ *
+ * A contacts failure does NOT fail the connection. Calendar sync is the established, proven
+ * half; letting the newer contacts phase walk the whole connection up the backoff ladder
+ * would put meetings at risk for a fault in something else. A dead grant
+ * (`ReauthRequiredError`) is the exception — it kills both phases, so it propagates.
+ */
+async function syncMicrosoftConnection(
+  conn: ClaimedConnection,
+  stats: SyncRunStats,
+  now: Date,
+  deps: SyncDeps,
+  caps: { wantsCalendar: boolean; wantsContacts: boolean }
+): Promise<void> {
+  const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
+  let cursor: ProviderSyncCursor = { ...(conn.syncCursor ?? {}) };
+  let exhausted = false;
+
+  if (caps.wantsCalendar) {
+    exhausted = (await syncMicrosoftCalendar(conn, stats, now, deps, deadline)).exhausted;
+  }
+
+  if (caps.wantsContacts && !exhausted) {
+    try {
+      const result = await syncMicrosoftContacts(conn, stats, now, deps, cursor.contacts ?? null, deadline);
+      cursor = { ...cursor, contacts: result.cursor };
+      exhausted = result.exhausted;
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
+      reportError(err, {
+        where: "job.sync.outlook-contacts",
+        userId: conn.userId,
+        level: "warning",
+        extra: { connectionId: conn.id },
+      });
+    }
+  }
+
   await markSyncResult(conn.provider, conn.id, {
     ok: true,
-    cursor: conn.syncCursor,
-    nextSyncAt: new Date(now.getTime() + SYNC_INTERVAL_MS),
+    cursor,
+    nextSyncAt: exhausted ? now : new Date(now.getTime() + SYNC_INTERVAL_MS),
   });
 }
 
@@ -817,6 +960,32 @@ async function syncAppleCalendar(
  * way this rejects is if claiming itself fails, which means the database is unreachable and
  * there is nothing to record anyway.
  */
+/** How long a paused extra connection waits before the pass looks at it again. */
+const EXTRA_CONNECTION_RECHECK_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * A Free account that had both Google and Microsoft connected before pricing v2 keeps its
+ * EARLIER one syncing (`connection-limits.ts`). The later one is rescheduled, untouched —
+ * never disarmed, which would take a reconnect to undo — so it simply resumes on the next
+ * check after the account moves to a paid plan.
+ */
+async function skipExtraConnection(
+  conn: ClaimedConnection,
+  now: Date,
+  stats: SyncRunStats
+): Promise<boolean> {
+  const provider = conn.provider === "microsoft" ? "microsoft" : "google";
+  const paused = await extraConnectionPaused(conn.userId, provider).catch(() => false);
+  if (!paused) return false;
+  stats.skippedExtraConnection = (stats.skippedExtraConnection ?? 0) + 1;
+  await markSyncResult(conn.provider, conn.id, {
+    ok: true,
+    cursor: conn.syncCursor,
+    nextSyncAt: new Date(now.getTime() + EXTRA_CONNECTION_RECHECK_MS),
+  }).catch(() => null);
+  return true;
+}
+
 export async function runSyncPass(
   options: { now?: Date; budgetMs?: number; deps?: SyncDeps } = {}
 ): Promise<SyncRunStats> {
@@ -840,6 +1009,7 @@ export async function runSyncPass(
       ? null
       : Math.max(googleLagMs ?? 0, microsoftLagMs ?? 0, appleLagMs ?? 0);
   const claimed = await claimDueConnections("google", CONNECTIONS_PER_RUN, now);
+  if (claimed.length >= CONNECTIONS_PER_RUN) stats.claimFull = true;
   stats.claimed = claimed.length;
 
   // A connection may START only while a full per-connection budget remains, so four lanes
@@ -860,6 +1030,8 @@ export async function runSyncPass(
       }).catch(() => null);
       return;
     }
+
+    if (await skipExtraConnection(conn, now, stats)) return;
 
     // A token minted before a scope shipped keeps working for the scopes it does hold, but
     // every call needing the missing one returns 403. Disarm only when the connection can do
@@ -904,6 +1076,7 @@ export async function runSyncPass(
   // Claimed after the Google pool drains, so `startCutoff` (not the claim) is what keeps the
   // combined run inside the function ceiling.
   const claimedMicrosoft = await claimDueConnections("microsoft", CONNECTIONS_PER_RUN, now);
+  if (claimedMicrosoft.length >= CONNECTIONS_PER_RUN) stats.claimFull = true;
   stats.claimed += claimedMicrosoft.length;
 
   await runSettledPool(claimedMicrosoft, SYNC_CONCURRENCY, async (conn) => {
@@ -917,22 +1090,27 @@ export async function runSyncPass(
       return;
     }
 
+    if (await skipExtraConnection(conn, now, stats)) return;
+
     // Same reasoning as the Google branch: a token minted before the calendar scope
     // shipped is still valid for Outlook Contacts and will keep working, but every
-    // Calendar call it makes returns 403.
-    if (!hasMicrosoftCalendarScope(conn.scopes)) {
+    // Calendar call it makes returns 403. Disarm only when the connection can do NOTHING
+    // for us — a contacts-only grant is still a working connection.
+    const wantsCalendar = hasMicrosoftCalendarScope(conn.scopes);
+    const wantsContacts = hasMicrosoftContactsScope(conn.scopes);
+    if (!wantsCalendar && !wantsContacts) {
       stats.skippedNoScope++;
       await disarmSync(
         conn.provider,
         conn.id,
-        "Calendar access not granted — reconnect Outlook to enable calendar sync",
+        "Calendar and contacts access not granted — reconnect Outlook to enable sync",
         now
       ).catch(() => null);
       return;
     }
 
     try {
-      await syncMicrosoftCalendar(conn, stats, now, deps);
+      await syncMicrosoftConnection(conn, stats, now, deps, { wantsCalendar, wantsContacts });
       stats.synced++;
     } catch (err) {
       stats.failed++;
@@ -952,6 +1130,7 @@ export async function runSyncPass(
   // grants no scopes for a CalDAV app-specific password, so there is nothing to gate on before
   // calling the sync itself (see `apple_connections.scopes`'s own comment).
   const claimedApple = await claimDueConnections("apple", CONNECTIONS_PER_RUN, now);
+  if (claimedApple.length >= CONNECTIONS_PER_RUN) stats.claimFull = true;
   stats.claimed += claimedApple.length;
 
   await runSettledPool(claimedApple, SYNC_CONCURRENCY, async (conn) => {
@@ -1000,6 +1179,7 @@ export async function runSyncPass(
       reportAndContinue({ where: "job.sync.ics-claim" }, [] as Awaited<ReturnType<typeof claimDueCalendarSubscriptions>>)
     );
     stats.icsClaimed = subs.length;
+    if (subs.length >= ICS_SUBSCRIPTIONS_PER_RUN) stats.claimFull = true;
     for (const sub of subs) {
       if (deadlineReached(deadline)) {
         stats.budgetExhausted = true;
@@ -1054,6 +1234,7 @@ export async function runSyncPass(
       )
     );
     stats.connectorClaimed = connections.length;
+    if (connections.length >= CONNECTIONS_PER_RUN) stats.claimFull = true;
     await runSettledPool(connections, SYNC_CONCURRENCY, async (conn) => {
       if (deadlineReached(deadline - PER_CONNECTION_BUDGET_MS)) {
         stats.budgetExhausted = true;

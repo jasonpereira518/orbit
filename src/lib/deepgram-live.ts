@@ -33,6 +33,9 @@ type DeepgramMessage = {
   };
 };
 
+/** About a minute of 16 kHz 16-bit mono. See `send`. */
+const MAX_BUFFERED_BYTES = 2_000_000;
+
 export async function openDeepgramLive(opts: {
   token: string;
   params: URLSearchParams;
@@ -140,7 +143,12 @@ export async function openDeepgramLive(opts: {
   return {
     openedAt: Date.now(),
     send(pcm: Int16Array) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(pcm.buffer as ArrayBuffer);
+      if (socket.readyState !== WebSocket.OPEN) return;
+      // A half-open connection accepts sends until TCP gives up, and the browser holds every
+      // byte meanwhile (32KB a second). A minute of backlog is a line that is not coming
+      // back: drop frames rather than grow without bound until the close finally arrives.
+      if (socket.bufferedAmount > MAX_BUFFERED_BYTES) return;
+      socket.send(pcm.buffer as ArrayBuffer);
     },
     finish() {
       if (!finishPromise) {

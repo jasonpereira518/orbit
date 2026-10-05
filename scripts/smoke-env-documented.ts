@@ -54,7 +54,7 @@ check("every REQUIRED/EXPECTED production variable is documented", contract.leng
 const scripts = Object.keys(
   (JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> }).scripts
 );
-for (const doc of ["README.md", "docs/RUNBOOK.md", "docs/performance.md"]) {
+for (const doc of ["README.md", "docs/DEVELOPMENT.md", "docs/RUNBOOK.md", "docs/performance.md"]) {
   const missing = [...readFileSync(doc, "utf8").matchAll(/npm run ([A-Za-z][\w:-]*\w)/g)]
     .map((m) => m[1])
     .filter((name) => !scripts.includes(name));

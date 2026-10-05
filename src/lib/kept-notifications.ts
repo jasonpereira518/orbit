@@ -96,6 +96,34 @@ function prune() {
 }
 
 /**
+ * Two entries that say the same thing are one problem, not two: a flaky network
+ * fires the same "Couldn’t save" toast every retry, and a list of identical rows
+ * buries whatever else went wrong. Ids are unique per toast, so repeats are
+ * matched on what the row would show.
+ */
+function sameThing(a: KeptNotification, b: KeptNotification) {
+  return (
+    a.tone === b.tone &&
+    a.title === b.title &&
+    (a.description ?? "") === (b.description ?? "")
+  );
+}
+
+/** Drop every entry that repeats another, keeping the newest of each. */
+function collapseRepeats() {
+  const byNewest = Array.from(entries.values()).sort((a, b) => b.at - a.at);
+  const kept: KeptNotification[] = [];
+  for (const entry of byNewest) {
+    if (kept.some((k) => sameThing(k, entry))) {
+      entries.delete(entry.id);
+      liveActions.delete(entry.id);
+    } else {
+      kept.push(entry);
+    }
+  }
+}
+
+/**
  * Read the mirror once, on the first client subscription rather than at module
  * scope: touching localStorage during render would make the server and client
  * snapshots disagree and trip hydration.
@@ -120,6 +148,7 @@ function hydrate() {
         entries.set(entry.id, entry);
       }
     }
+    collapseRepeats();
     prune();
     recompute();
   } catch {
@@ -137,7 +166,19 @@ export function keepNotification(
   hydrate();
   if (entries.has(entry.id)) return;
   const { onAction, ...rest } = entry;
-  entries.set(entry.id, { ...rest, at: entry.at ?? Date.now(), read: false });
+  const next: KeptNotification = {
+    ...rest,
+    at: entry.at ?? Date.now(),
+    read: false,
+  };
+  // A repeat replaces the earlier row (fresh time, fresh action) instead of stacking.
+  for (const [id, existing] of entries) {
+    if (sameThing(existing, next)) {
+      entries.delete(id);
+      liveActions.delete(id);
+    }
+  }
+  entries.set(entry.id, next);
   if (onAction) liveActions.set(entry.id, onAction);
   prune();
   emit();
@@ -177,21 +218,33 @@ export function runKeptAction(id: string) {
   liveActions.get(id)?.();
 }
 
+/**
+ * A second tab writing the mirror should not silently diverge from this one. One listener
+ * for the store, not one per subscriber: each would re-read the mirror and notify every
+ * subscriber, so N mounted readers did N² work per write.
+ */
+function onStorage(event: StorageEvent) {
+  if (event.key !== STORAGE_KEY) return;
+  hydrated = false;
+  entries.clear();
+  hydrate();
+  // Undo closures for entries the other tab removed would otherwise be held forever:
+  // `prune` only walks `entries`, so it can never find them.
+  for (const id of liveActions.keys()) {
+    if (!entries.has(id)) liveActions.delete(id);
+  }
+  // `hydrate` returns early when the other tab removed the key outright.
+  recompute();
+  for (const l of listeners) l();
+}
+
 function subscribe(listener: () => void) {
   hydrate();
+  if (listeners.size === 0) window.addEventListener("storage", onStorage);
   listeners.add(listener);
-  // A second tab writing the mirror should not silently diverge from this one.
-  const onStorage = (event: StorageEvent) => {
-    if (event.key !== STORAGE_KEY) return;
-    hydrated = false;
-    entries.clear();
-    hydrate();
-    for (const l of listeners) l();
-  };
-  window.addEventListener("storage", onStorage);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener("storage", onStorage);
+    if (listeners.size === 0) window.removeEventListener("storage", onStorage);
   };
 }
 

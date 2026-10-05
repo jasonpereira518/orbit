@@ -82,5 +82,14 @@
     "attendeeRecall": { "maxDrop": 0.05 },
     "attendeePrecision": { "maxDrop": 0.05 },
     "actionItemRecall": { "maxDrop": 0.05 }
+  },
+  "relationship": {
+    "factRecall": { "maxDrop": 0.05 },
+    "commitmentRecall": { "maxDrop": 0.05 },
+    "commitmentPrecision": { "maxDrop": 0.05 },
+    "dateAccuracy": { "maxDrop": 0 },
+    "inventedItems": { "maxRise": 0 },
+    "silentOnTrivial": { "maxDrop": 0 },
+    "planAccuracy": { "maxDrop": 0.05 }
   }
 }

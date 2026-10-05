@@ -6,12 +6,15 @@ import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
-import { LifetimeAiOfferProvider } from "@/components/lifetime-ai-offer";
+import { ViewerPlanProvider } from "@/components/viewer-plan";
 import { managedKeysConfigured } from "@/lib/ai-access";
-import { MANAGED_AI_ENABLED } from "@/lib/managed-ai-policy";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
+import { LearnedBrandColors } from "@/components/layout/learned-brand-colors";
+import { registerLearnedBrands } from "@/lib/brand-colors";
+import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
+import { OfflineSync } from "@/components/layout/offline-sync";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
@@ -130,29 +133,42 @@ export default async function AppLayout({
   // `linkedinReminder` arms the once-per-account "Is your LinkedIn export ready?" screen.
   // It is free on nearly every request: the settings row above answers it unless the
   // account is 24h–14d old and has not been shown it yet — only then is `imports` read.
-  const [{ plan }, visibility, linkedinReminder] = await Promise.all([
+  // `brandColors` is the brand color Orbit has learned for each of the viewer's companies and
+  // schools that the curated table does not know, plus which ones it has not looked up yet.
+  // Those are learned after the response is sent, so a newly added company shows its own
+  // color from the next page load on. A failed read costs only the colors, never the page.
+  const [{ plan }, visibility, linkedinReminder, brandColors] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
     getLinkedInReminderState(userId, settings),
+    loadOrgBrandColors(userId).catch(() => ({ learned: [], missing: [] })),
   ]);
+  // The server-component realm has its own copy of the registry; the client component below
+  // fills the SSR and browser ones.
+  registerLearnedBrands(brandColors.learned);
+  if (brandColors.missing.length) {
+    after(() => learnOrgBrandColors(userId, brandColors.missing).catch(() => {}));
+  }
 
-  // Whether "Lifetime includes AI" is true on this deployment — see LifetimeAiOfferProvider.
-  // False while managed AI is off, even on a dev server holding its own local keys: those
-  // pay for localhost, not for Lifetime.
-  const lifetimeIncludesAi =
-    MANAGED_AI_ENABLED && Object.values(managedKeysConfigured()).some(Boolean);
+  // Whether included AI can run on this deployment at all — see ViewerPlanProvider.
+  const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean);
 
   return (
-    <LifetimeAiOfferProvider value={lifetimeIncludesAi}>
+    <ViewerPlanProvider value={{ plan, includedAiAvailable }}>
+      {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
+          color the shell and the page ask for is registered by then. */}
+      <LearnedBrandColors brands={brandColors.learned} />
       <AppShell
+      userId={userId}
       clerkOn={clerkOn}
       demoMode={demoMode}
       theme={theme}
       plan={plan}
       hidden={[...visibility.hidden]}
       hiddenForUsers={[...visibility.hiddenForUsers]}
+      comingSoon={[...visibility.comingSoonMarked]}
+      navOrder={visibility.navOrder}
       viewingAsUser={visibility.viewingAsUser}
-      previewingUnreleased={visibility.previewingUnreleased}
       linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
       tour={{
         active: tourRailVisible(settings),
@@ -164,6 +180,11 @@ export default async function AppLayout({
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}
       <PresenceHeartbeat />
+
+      {/* Renders nothing either. Sends changes queued while offline once the connection
+          is back, and re-renders a page that sat through a long outage. Here rather than
+          in AppShell so onboarding gets it too, and so it is handed this account's id. */}
+      <OfflineSync userId={userId} />
 
       {/* Also renders nothing. Glows whatever `#id` the URL names, so any link that points
           at a card — every account alert does — lands with that card called out. Mounted
@@ -186,6 +207,6 @@ export default async function AppLayout({
       {!visibility.hidden.has(FEEDBACK_SURFACE_KEY) && (
         <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
       )}
-    </LifetimeAiOfferProvider>
+    </ViewerPlanProvider>
   );
 }

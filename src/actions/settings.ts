@@ -2,6 +2,7 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
 import {
@@ -11,7 +12,11 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
+import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
+import { loadEmailSettings, saveDefaultSendProvider, saveEmailSignature } from "@/lib/email/settings";
+import { getSendCapability, type SendCapability } from "@/lib/email/sender";
+import { requireUserForSurface } from "@/lib/plan-guards";
 import {
   DATA_CATEGORY_IDS,
   deletionOutcome,
@@ -34,12 +39,12 @@ import {
 } from "@/lib/ai";
 import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-check";
 import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
+import { demoAccountReason } from "@/lib/demo-account";
 import {
-  chooseEmbeddingKey,
-  managedEligibility,
-  type ManagedEligibility,
-} from "@/lib/managed-ai-policy";
-import { demoAccountReason, isDemoAccount } from "@/lib/demo-account";
+  applyAiKeyChange,
+  embeddingBackendFor,
+  managedEligibilityFor,
+} from "@/lib/ai-settings-write";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -91,9 +96,15 @@ export async function getSettings() {
      * "add your key" or "Orbit covers AI" renders from this, never from key presence alone.
      */
     ai,
-    // Whether "Fill from Apollo" on the contact page has anything to call — computed via
-    // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
+    // Whether an Apollo key is configured, via the same resolver the Apollo calls use.
     hasApolloKey,
+    /**
+     * Whether the hourly sweep keeps contacts' work history current with web searches on
+     * this account's AI key. On unless switched off; see the column in schema.ts.
+     */
+    workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
+    /** Radar's Monday email. On unless switched off (Settings, or its one-click link). */
+    radarDigestEnabled: (settings?.radarDigestEnabled ?? 1) !== 0,
     /**
      * Whether AI features will run — NOT whether a key is saved. A Lifetime account on
      * Orbit's managed key is `true` with no key at all; a Lifetime account that has used its
@@ -110,7 +121,9 @@ export async function getSettings() {
           ? Boolean(settings?.geminiApiKeyEncrypted)
           : p.id === "openai"
             ? Boolean(settings?.openaiApiKeyEncrypted)
-            : Boolean(settings?.anthropicApiKeyEncrypted),
+            : p.id === "anthropic"
+              ? Boolean(settings?.anthropicApiKeyEncrypted)
+              : Boolean(settings?.openrouterApiKeyEncrypted),
       /** Orbit holds a managed key for this provider AND this account may use it. */
       managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id],
     })),
@@ -173,38 +186,18 @@ export async function saveThemePreference(theme: ThemePreference) {
     });
 }
 
-/**
- * Which embedding backend a given key state would land on — the same policy function the
- * gate runs (`chooseEmbeddingKey`), so a provider switch that moves search onto a different
- * embedding space (including onto or off Orbit's managed key) is detected and the stale
- * vectors cleared.
- */
-function embeddingBackendFor(
-  provider: AiProvider,
-  settings: {
-    geminiApiKeyEncrypted: string | null;
-    openaiApiKeyEncrypted: string | null;
-    anthropicApiKeyEncrypted: string | null;
-  } | null,
-  eligibility: ManagedEligibility
-) {
-  const choice = chooseEmbeddingKey({
-    eligibility,
-    selectedProvider: provider,
-    selectedModel: "",
-    personal: {
-      gemini: Boolean(settings?.geminiApiKeyEncrypted),
-      openai: Boolean(settings?.openaiApiKeyEncrypted),
-      anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
-    },
-    managed: managedKeysConfigured(),
-  });
-  return choice.ok ? choice.provider : null;
-}
-
-async function managedEligibilityFor(userId: string): Promise<ManagedEligibility> {
-  const { plan } = await getEntitlements(userId);
-  return managedEligibility(plan, isDemoAccount(userId));
+/** The "Keep work history current" switch on the AI settings page. */
+export async function saveWorkHistoryAutoEnabled(enabled: boolean) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const value = enabled ? 1 : 0;
+  await db
+    .insert(userSettings)
+    .values({ userId, workHistoryAutoEnabled: value })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { workHistoryAutoEnabled: value, updatedAt: new Date() },
+    });
 }
 
 export async function saveAiSettings(input: {
@@ -213,13 +206,8 @@ export async function saveAiSettings(input: {
   apiKey?: string;
 }) {
   const userId = await requireUserId();
-  const db = await getDb();
-  const existing = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
 
   const provider = resolveAiProvider(input.provider);
-  const aiModel = resolveAiModel(provider, input.model);
   // Only a NEWLY entered key is checked; saving a model change with the key left blank
   // costs no provider call.
   const newKey = input.apiKey?.trim() || null;
@@ -232,64 +220,21 @@ export async function saveAiSettings(input: {
   }
   const encrypted = newKey ? encrypt(newKey) : null;
 
-  const eligibility = await managedEligibilityFor(userId);
-  const previousBackend = existing
-    ? embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing, eligibility)
-    : null;
+  const { embeddingReset } = await applyAiKeyChange({
+    userId,
+    provider,
+    model: input.model,
+    encryptedKey: encrypted,
+  });
 
-  const nextKeyState = {
-    geminiApiKeyEncrypted:
-      provider === "gemini" && encrypted
-        ? encrypted
-        : (existing?.geminiApiKeyEncrypted ?? null),
-    openaiApiKeyEncrypted:
-      provider === "openai" && encrypted
-        ? encrypted
-        : (existing?.openaiApiKeyEncrypted ?? null),
-    anthropicApiKeyEncrypted:
-      provider === "anthropic" && encrypted
-        ? encrypted
-        : (existing?.anthropicApiKeyEncrypted ?? null),
-  };
-
-  if (existing) {
-    await db
-      .update(userSettings)
-      .set({
-        aiProvider: provider,
-        aiModel,
-        // They have now seen the model they are on and chosen: the notice is spent.
-        aiModelMigratedFrom: null,
-        ...nextKeyState,
-        updatedAt: new Date(),
-      })
-      .where(eq(userSettings.userId, userId));
-  } else {
-    await db.insert(userSettings).values({
-      userId,
-      aiProvider: provider,
-      aiModel,
-      ...nextKeyState,
-    });
-  }
-
-  const nextBackend = embeddingBackendFor(provider, nextKeyState, eligibility);
-  if (
-    previousBackend &&
-    nextBackend &&
-    previousBackend !== nextBackend
-  ) {
-    // Different embedding spaces can't be compared — clear stale vectors.
-    await db
-      .delete(contactEmbeddings)
-      .where(eq(contactEmbeddings.userId, userId));
-  }
+  // A run parked in waiting_key resumes as soon as AI can run again.
+  if (newKey) after(() => kickRelationshipRun(userId));
 
   revalidatePath("/settings");
   revalidatePath("/chat");
   return {
     ok: true as const,
-    embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend),
+    embeddingReset,
     keyNote,
   };
 }
@@ -307,7 +252,9 @@ export async function clearApiKey(provider?: AiProvider) {
       ? { geminiApiKeyEncrypted: null }
       : active === "openai"
         ? { openaiApiKeyEncrypted: null }
-        : { anthropicApiKeyEncrypted: null };
+        : active === "anthropic"
+          ? { anthropicApiKeyEncrypted: null }
+          : { openrouterApiKeyEncrypted: null };
 
   await db
     .update(userSettings)
@@ -350,6 +297,26 @@ export async function saveWritingInstructions(text: string) {
   if (typeof text !== "string") throw new Error("Invalid writing instructions");
   const stored = await saveWritingInstructionsFor(userId, text);
   return { ok: true as const, text: stored };
+}
+
+/** The Email settings section: signature, and the mailbox Orbit sends from. */
+export async function getEmailSettings(): Promise<{ signature: string | null; capability: SendCapability }> {
+  const userId = await requireUserForSurface("settings.email");
+  const [{ signature }, capability] = await Promise.all([loadEmailSettings(userId), getSendCapability(userId)]);
+  return { signature, capability };
+}
+
+/** Which connected mailbox sends by default when more than one can. Null = automatic. */
+export async function saveDefaultSendProviderAction(provider: "gmail" | "outlook" | null): Promise<SendCapability> {
+  const userId = await requireUserForSurface("settings.email");
+  await saveDefaultSendProvider(userId, provider === "gmail" || provider === "outlook" ? provider : null);
+  return getSendCapability(userId);
+}
+
+export async function saveEmailSignatureAction(text: string): Promise<{ ok: true; signature: string | null }> {
+  const userId = await requireUserForSurface("settings.email");
+  if (typeof text !== "string") throw new Error("Invalid signature");
+  return { ok: true, signature: await saveEmailSignature(userId, text) };
 }
 
 /**

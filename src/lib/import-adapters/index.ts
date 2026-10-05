@@ -21,6 +21,11 @@ import {
   linkedinMessagesAdapter,
 } from "@/lib/import-adapters/linkedin-messages";
 import {
+  IMESSAGE_CHAT_IMPORT_TYPE,
+  WHATSAPP_CHAT_IMPORT_TYPE,
+  chatAdapter,
+} from "@/lib/import-adapters/chat";
+import {
   CALENDAR_CSV_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   calendarAdapter,
@@ -44,6 +49,8 @@ const ADAPTERS: Record<string, ImportAdapter<ImportJobRowPayload>> = {
   [OUTLOOK_CONTACTS_IMPORT_TYPE]: outlookContactsAdapter,
   [CONTACTS_FILE_IMPORT_TYPE]: contactsFileAdapter,
   [LINKEDIN_MESSAGES_IMPORT_TYPE]: linkedinMessagesAdapter,
+  [WHATSAPP_CHAT_IMPORT_TYPE]: chatAdapter("whatsapp"),
+  [IMESSAGE_CHAT_IMPORT_TYPE]: chatAdapter("imessage"),
   [CALENDAR_ICS_IMPORT_TYPE]: calendarAdapter,
   [CALENDAR_CSV_IMPORT_TYPE]: calendarAdapter,
 };

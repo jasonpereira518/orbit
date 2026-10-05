@@ -18,7 +18,7 @@ import {
   rejectAgentSend,
   type AgentSendSummary,
 } from "@/lib/agent-sends";
-import { requireUserId } from "@/lib/auth";
+import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 
 export async function listAgentDrafts(): Promise<AgentSendSummary[]> {
@@ -28,11 +28,18 @@ export async function listAgentDrafts(): Promise<AgentSendSummary[]> {
 
 export async function approveAgentDraft(
   draftId: string,
-  edits?: { subject?: string; body?: string }
+  edits?: { subject?: string; body?: string; confirmRecipient?: boolean }
 ) {
   return asActionResult(async () => {
     const userId = await requireUserId();
-    const result = await approveAgentSend(userId, draftId, edits ?? {});
+    const profile = await getCurrentUserProfile().catch(() => null);
+    // Only the three known keys cross from the client, typed; anything else is dropped.
+    const result = await approveAgentSend(userId, draftId, {
+      subject: typeof edits?.subject === "string" ? edits.subject : undefined,
+      body: typeof edits?.body === "string" ? edits.body : undefined,
+      confirmRecipient: edits?.confirmRecipient === true,
+      fromName: profile?.name?.trim() || null,
+    });
     revalidatePath("/dashboard");
     return result;
   });

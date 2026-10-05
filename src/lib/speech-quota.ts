@@ -7,6 +7,7 @@
  * browser that dies mid-meeting therefore still counts the audio it used, and a retried
  * segment batch never double-charges. Voice notes get their own row each.
  */
+import { cache } from "react";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { speechUsage } from "@/db/schema";
@@ -22,7 +23,18 @@ export type SpeechAllowance = {
   exhausted: boolean;
 };
 
-export async function speechAllowance(userId: string, kind: SpeechKind): Promise<SpeechAllowance> {
+/**
+ * This month's allowance for one meter.
+ *
+ * `cache()`d per render: /settings asks for the short-form meter twice (once itself, once
+ * inside `getAiAccessStatus`), and both arguments are primitives, so the two share one
+ * read. In Server Actions and route handlers — the only places speech is recorded —
+ * `cache()` is a pass-through, so a check made after a write there always reads fresh.
+ */
+export const speechAllowance = cache(async function speechAllowance(
+  userId: string,
+  kind: SpeechKind
+): Promise<SpeechAllowance> {
   const [db, entitlements] = await Promise.all([getDb(), getEntitlements(userId)]);
   const { start, resetsAt } = monthWindow(new Date());
   const rows = await db
@@ -38,7 +50,7 @@ export async function speechAllowance(userId: string, kind: SpeechKind): Promise
   const used = Number(rows[0]?.used ?? 0);
   const limit = limitFor(kind, entitlements.plan);
   return { limit, used, resetsAt, ...quotaState(used, limit) };
-}
+});
 
 export async function recordSpeechSeconds(input: {
   userId: string;

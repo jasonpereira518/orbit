@@ -29,13 +29,24 @@
  * name it, so the failure mode of forgetting to update this file is under-exposure. That is
  * the direction a mistake should fall.
  */
-import type { ZodRawShape } from "zod";
+import { z, type ZodRawShape } from "zod";
 import type { ApiKeyScope } from "@/lib/api/keys";
 
 /** Where a tool call came from. Not cosmetic — see the file comment. */
 export type ToolSurface = "mcp" | "chat";
 
-export type ToolContext = { surface: ToolSurface };
+export type ToolContext = {
+  surface: ToolSurface;
+  /**
+   * The scopes the caller actually holds. When present, `runTool` refuses a tool outside
+   * them — the same rule `toolsFor` applies when LISTING tools, applied again at the moment
+   * of EXECUTION, so a caller that names a tool it was never offered still gets nothing.
+   * Absent means "whatever the surface allows", which on chat is read-only regardless.
+   */
+  scopes?: readonly ApiKeyScope[];
+  /** Told when a call is refused, so the surface can record it for the audit trail. */
+  onRefused?: (tool: string, reason: ToolRefusal) => void;
+};
 
 /**
  * An error a tool returns rather than throws — "no such contact", a paywall refusal.
@@ -132,7 +143,59 @@ export function project<T>(value: T, allow: readonly string[] | undefined): unkn
 }
 
 /**
- * Run a tool for one surface: the tool's own answer, then the surface's allowlist.
+ * Surfaces that may never execute a `write` tool, whatever a definition says.
+ *
+ * Orbit's own chat has attacker-written text (notes, LinkedIn Abouts, email bodies) in its
+ * prompt on every turn, so a write reachable from its tool loop would be one poisoned note
+ * away from happening. Every write tool is `MCP_ONLY` today; this is the backstop for the
+ * day one is not — a definition mistake must fail closed here, not ship.
+ */
+const READ_ONLY_SURFACES: ReadonlySet<ToolSurface> = new Set(["chat"]);
+
+/**
+ * Why `runTool` refused, as a stable machine code — for the security audit trail, never
+ * shown to a model (the model gets the `ToolError` message).
+ */
+export type ToolRefusal = "surface" | "scope" | "read_only_surface" | "invalid_args";
+
+/**
+ * The checks every execution passes, whatever surface it came from — schema, surface, scope.
+ *
+ * WHY HERE AS WELL AS AT THE CALLER. The MCP SDK validates arguments against `inputSchema`,
+ * and chat's executor validates before calling. Both are true today and both are one
+ * refactor away from not being: `tool.run` is typed `args: never` precisely because the
+ * registry cannot see the caller's parsing. Model output is untrusted input, so the one
+ * function every surface funnels through is where "the arguments match the schema and the
+ * caller may call this tool" is enforced — in application code, not in the prompt.
+ */
+export function checkToolCall(
+  tool: OrbitTool,
+  args: unknown,
+  ctx: ToolContext
+): { ok: true; args: unknown } | { ok: false; reason: ToolRefusal; error: ToolError } {
+  if (!tool.surfaces.includes(ctx.surface)) {
+    return { ok: false, reason: "surface", error: toolError(`${tool.name} is not available here.`) };
+  }
+  if (tool.scope === "write" && READ_ONLY_SURFACES.has(ctx.surface)) {
+    return { ok: false, reason: "read_only_surface", error: toolError(`${tool.name} is not available here.`) };
+  }
+  if (ctx.scopes && !ctx.scopes.includes(tool.scope)) {
+    return { ok: false, reason: "scope", error: toolError(`${tool.name} needs the ${tool.scope} scope.`) };
+  }
+  const parsed = z.object(tool.inputSchema).safeParse(args ?? {});
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .slice(0, 5)
+      .map((i) => `${i.path.join(".") || "input"} ${i.message}`)
+      .join("; ");
+    return { ok: false, reason: "invalid_args", error: toolError(`Invalid arguments: ${detail}`) };
+  }
+  return { ok: true, args: parsed.data };
+}
+
+/**
+ * Run a tool for one surface: the checks above, the tool's own answer, then the surface's
+ * allowlist.
  *
  * An error envelope skips the projection — it is this code's own message, and projecting it
  * would turn "no such contact" into an empty object.
@@ -143,7 +206,12 @@ export async function runTool(
   args: unknown,
   ctx: ToolContext
 ): Promise<unknown> {
-  const result = await tool.run(userId, args as never, ctx);
+  const checked = checkToolCall(tool, args, ctx);
+  if (!checked.ok) {
+    ctx.onRefused?.(tool.name, checked.reason);
+    return checked.error;
+  }
+  const result = await tool.run(userId, checked.args as never, ctx);
   if (isToolError(result)) return result;
   return project(result, tool.fields?.[ctx.surface]);
 }

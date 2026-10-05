@@ -171,7 +171,7 @@ export function ReminderCard({
               className={cn(
                 "mt-1 text-xs",
                 due.overdue
-                  ? "font-medium text-amber-700 dark:text-amber-300"
+                  ? "font-medium text-amber-700 dark:text-warning"
                   : "text-muted-foreground"
               )}
             >

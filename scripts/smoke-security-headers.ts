@@ -25,8 +25,8 @@ const header = (headers: Array<{ key: string; value: string }>, key: string) =>
 function main() {
   console.log("Clerk frontend API host...");
   // A publishable key is `pk_<env>_` + base64("<frontend-api-host>$").
-  const pk = "pk_live_" + Buffer.from("clerk.orbit.jasonpereira.live$").toString("base64");
-  check("derived from a live publishable key", clerkFrontendApiHost(pk) === "clerk.orbit.jasonpereira.live");
+  const pk = "pk_live_" + Buffer.from("clerk.myorbitnetwork.com$").toString("base64");
+  check("derived from a live publishable key", clerkFrontendApiHost(pk) === "clerk.myorbitnetwork.com");
   check("a test key resolves its accounts.dev host",
     clerkFrontendApiHost("pk_test_" + Buffer.from("amazing-fox-12.clerk.accounts.dev$").toString("base64")) === "amazing-fox-12.clerk.accounts.dev");
   check("garbage yields null", clerkFrontendApiHost("nope") === null && clerkFrontendApiHost(undefined) === null);
@@ -43,14 +43,14 @@ function main() {
   const csp = header(prod, "Content-Security-Policy-Report-Only");
   check("CSP is report-only by default", Boolean(csp) && header(prod, "Content-Security-Policy") === null);
   check("script-src allows self, inline, Clerk and Turnstile",
-    /script-src[^;]*'self'/.test(csp ?? "") && /script-src[^;]*'unsafe-inline'/.test(csp ?? "") && /script-src[^;]*https:\/\/clerk\.orbit\.jasonpereira\.live/.test(csp ?? "") && /script-src[^;]*challenges\.cloudflare\.com/.test(csp ?? ""), csp ?? "");
+    /script-src[^;]*'self'/.test(csp ?? "") && /script-src[^;]*'unsafe-inline'/.test(csp ?? "") && /script-src[^;]*https:\/\/clerk\.myorbitnetwork\.com/.test(csp ?? "") && /script-src[^;]*challenges\.cloudflare\.com/.test(csp ?? ""), csp ?? "");
   check("script-src does not allow eval in production", !/script-src[^;]*unsafe-eval/.test(csp ?? ""));
   check("connect-src allows Clerk, Sentry ingest and Vercel Analytics",
-    /connect-src[^;]*clerk\.orbit\.jasonpereira\.live/.test(csp ?? "") && /connect-src[^;]*\*\.ingest\.(us\.)?sentry\.io/.test(csp ?? "") && /connect-src[^;]*va\.vercel-scripts\.com/.test(csp ?? ""), csp ?? "");
+    /connect-src[^;]*clerk\.myorbitnetwork\.com/.test(csp ?? "") && /connect-src[^;]*\*\.ingest\.(us\.)?sentry\.io/.test(csp ?? "") && /connect-src[^;]*va\.vercel-scripts\.com/.test(csp ?? ""), csp ?? "");
   check("img-src allows https, data and blob (avatars come from anywhere)", /img-src[^;]*https:/.test(csp ?? "") && /img-src[^;]*data:/.test(csp ?? "") && /img-src[^;]*blob:/.test(csp ?? ""));
   check("frame-ancestors none, object-src none, base-uri self", /frame-ancestors 'none'/.test(csp ?? "") && /object-src 'none'/.test(csp ?? "") && /base-uri 'self'/.test(csp ?? ""));
   check("reports go to /api/csp-report", /report-uri \/api\/csp-report/.test(csp ?? ""));
-  check("frame-src allows Clerk and Turnstile", /frame-src[^;]*clerk\.orbit\.jasonpereira\.live/.test(csp ?? "") && /frame-src[^;]*challenges\.cloudflare\.com/.test(csp ?? ""));
+  check("frame-src allows Clerk and Turnstile", /frame-src[^;]*clerk\.myorbitnetwork\.com/.test(csp ?? "") && /frame-src[^;]*challenges\.cloudflare\.com/.test(csp ?? ""));
   check("script-src allows Google's Picker loader", /script-src[^;]*https:\/\/apis\.google\.com/.test(csp ?? ""), csp ?? "");
   check("frame-src allows Docs and Drive (the Picker's own frames)", /frame-src[^;]*https:\/\/docs\.google\.com/.test(csp ?? "") && /frame-src[^;]*https:\/\/drive\.google\.com/.test(csp ?? ""), csp ?? "");
   // The Picker's drive.file-only token comes from Google Identity Services in the browser.

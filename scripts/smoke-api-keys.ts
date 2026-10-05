@@ -39,13 +39,14 @@ async function insertKey(opts: {
   scopes?: Array<"read" | "write">;
   revoked?: boolean;
   userId?: string;
+  kind?: "api" | "mcp_url";
 }): Promise<string> {
   const db = await getDb();
-  const key = generateApiKey();
+  const key = generateApiKey(opts.kind ?? "api");
   await db.execute(sql`
     INSERT INTO api_keys (user_id, name, kind, prefix, key_hash, scopes, revoked_at)
     VALUES (
-      ${opts.userId ?? USER}, 'smoke key', 'api', ${key.prefix}, ${key.keyHash},
+      ${opts.userId ?? USER}, 'smoke key', ${opts.kind ?? "api"}, ${key.prefix}, ${key.keyHash},
       ${JSON.stringify(opts.scopes ?? ["read", "write"])}::jsonb,
       ${opts.revoked ? new Date() : null}
     )
@@ -127,13 +128,36 @@ run(async () => {
 
   // --- The paywall applies to a perfectly valid key ----------------------------------------
   // Checked BEFORE comping the account, so the free-plan refusal is exercised for real rather
-  // than assumed. `gate_events` is deliberately not written on this path — see auth.ts.
+  // than assumed. `gate_events` is written on this path only through the hourly throttle —
+  // see auth.ts.
   check(
     "a valid key on a free plan is refused for payment",
     (await reason(token)) === "payment_required"
   );
+  // Pricing v2: the REST API is Max and Lifetime only. A Pro account's key is refused the
+  // same way — the key itself is left alone, so it works again the moment they move to Max.
   await db.execute(sql`
     UPDATE user_settings SET comped_plan = 'orbit', comped_at = now() WHERE user_id = ${USER}
+  `);
+  check(
+    "a valid key on Pro is refused for payment",
+    (await reason(token)) === "payment_required"
+  );
+  // A polling integration hits this wall every few minutes; it is recorded once an hour.
+  await reason(token);
+  const apiHits = rowsOf<{ n: number; unlock: string | null }>(
+    await db.execute(sql`
+      SELECT count(*)::int AS n, max(unlock_plan) AS unlock
+        FROM gate_events WHERE user_id = ${USER} AND feature = 'api'
+    `)
+  )[0];
+  check(
+    "repeated API refusals record one throttled gate hit, unlocking on Max",
+    apiHits?.n === 1 && apiHits.unlock === "max",
+    JSON.stringify(apiHits)
+  );
+  await db.execute(sql`
+    UPDATE user_settings SET comped_plan = 'max', comped_at = now() WHERE user_id = ${USER}
   `);
 
   // --- Verification ---------------------------------------------------------------------------
@@ -148,6 +172,14 @@ run(async () => {
   const caller = await requireApiCaller(req(token), { scope: "read" });
   check("the caller resolves to the owning user", caller.userId === USER, caller.userId);
   check("the caller carries the key id for attribution", Boolean(caller.keyId));
+
+  // --- A connector key lives in a URL, so it is good for MCP and nothing else ---------------------
+  const connector = await insertKey({ kind: "mcp_url" });
+  check("an MCP connector key is refused by the REST API", (await reason(connector)) === "unknown");
+  const viaMcp = await requireApiCaller(req(null), { scope: "read", token: connector, surface: "mcp" })
+    .then(() => "allowed")
+    .catch((err) => (err instanceof ApiAuthError ? err.reason : String(err)));
+  check("but it works on the MCP surface", viaMcp === "allowed", viaMcp);
 
   // --- Revocation is immediate -------------------------------------------------------------------
   const revoked = await insertKey({ revoked: true });
@@ -204,7 +236,7 @@ run(async () => {
   check("a free plan gets a structured refusal, not a throw", refusal.ok === false, JSON.stringify(refusal));
   check(
     "the refusal carries a message the UI can show",
-    refusal.ok === false && refusal.message.toLowerCase().includes("orbit pro"),
+    refusal.ok === false && refusal.message.toLowerCase().includes("orbit max"),
     refusal.ok === false ? refusal.message : ""
   );
   const gateRows = rowsOf<{ n: number }>(
@@ -221,6 +253,10 @@ run(async () => {
   await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${free}`);
 
   await db.execute(sql`DELETE FROM api_keys WHERE user_id LIKE 'api-key-smoke%'`);
+  // The comped Max row would read as a Pro/Max account with no managed key to the ops sweep
+  // that runs later in the same suite (one shared PGlite).
+  await db.execute(sql`DELETE FROM gate_events WHERE user_id = ${USER}`);
+  await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${USER}`);
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

@@ -94,7 +94,7 @@ function startOfDay(d: Date) {
  * A resolved date already in the past is discarded — but only the date. See the module
  * header: the opportunity survives its own stale deadline.
  */
-function resolveDuePhrase(phrase: string, opts: { today: Date; anchor: Date }): Date | null {
+export function resolveDuePhrase(phrase: string, opts: { today: Date; anchor: Date }): Date | null {
   const md = deriveMonthDay(phrase);
   if (md) {
     if (md.month < 0 || md.month > 11 || md.day < 1 || md.day > 31) return null;

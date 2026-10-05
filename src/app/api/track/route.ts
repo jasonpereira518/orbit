@@ -4,6 +4,7 @@ import { isDemoMode } from "@/lib/auth";
 import { isInternalUser } from "@/lib/analytics-internal";
 import { reportError } from "@/lib/report-error";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { clerkJwtKey } from "@/lib/clerk-jwt-key";
 import { attributionFromUrl } from "@/lib/attribution-parse";
 import { isBotUserAgent } from "@/lib/analytics-bots";
 import { isTrackedPath, normalizeRoute } from "@/lib/analytics-routes";
@@ -174,8 +175,10 @@ async function userFromStaleSession(request: Request): Promise<string | null> {
   const token = /(?:^|;\s*)__session=([^;]+)/.exec(cookie)?.[1];
   if (!token) return null;
   try {
+    const jwtKey = clerkJwtKey();
     const claims = await verifyToken(decodeURIComponent(token), {
       secretKey,
+      ...(jwtKey ? { jwtKey } : {}),
       clockSkewInMs: STALE_SESSION_GRACE_MS,
     });
     return typeof claims.sub === "string" ? claims.sub : null;

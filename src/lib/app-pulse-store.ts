@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { getAppPulse } from "@/actions/app-pulse";
 import type { AppPulse } from "@/lib/app-pulse";
+import { isOffline, reportRequestError, reportRequestOk } from "@/lib/connectivity-store";
 
 /**
  * One poll for the whole app, shared by everything that used to poll on its own.
@@ -40,10 +41,13 @@ export function refreshPulse(force = false): Promise<void> {
   set({ loading: true });
   const run = getAppPulse()
     .then((pulse) => {
+      reportRequestOk();
       if (id === latest) set({ pulse });
     })
-    .catch(() => {
-      // Network / auth blips: the next tick or the next page load gets it.
+    .catch((err) => {
+      // Network / auth blips: the next tick, the next page load, or `OfflineSync` on
+      // reconnect gets it. The last good pulse stays on screen meanwhile.
+      reportRequestError(err);
     })
     .finally(() => {
       if (id !== latest) return;
@@ -58,7 +62,7 @@ function subscribe(listener: () => void) {
   listeners.add(listener);
   if (listeners.size === 1 && timer === null) {
     timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refreshPulse();
+      if (document.visibilityState === "visible" && !isOffline()) void refreshPulse();
     }, PULSE_MS);
     document.addEventListener("visibilitychange", onVisible);
   }
@@ -78,7 +82,7 @@ function subscribe(listener: () => void) {
 }
 
 function onVisible() {
-  if (document.visibilityState === "visible") void refreshPulse();
+  if (document.visibilityState === "visible" && !isOffline()) void refreshPulse();
 }
 
 const getSnapshot = () => snapshot;

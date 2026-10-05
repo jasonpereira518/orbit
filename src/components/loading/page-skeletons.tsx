@@ -2,6 +2,7 @@ import {
   ConstellationLoading,
   CONSTELLATION_STAGE_HEIGHT,
 } from "@/components/graph/constellation-loading";
+import { ChatRailPlaceholder } from "@/components/chat/chat-rail-placeholder";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -349,10 +350,12 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/70",
+        "flex min-h-0 flex-row overflow-hidden rounded-2xl border border-border/70",
         className,
       )}
     >
+      <ChatRailPlaceholder />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3">
         <Skeleton className="h-8 w-20" />
         <div className="min-w-0 flex-1 space-y-1.5">
@@ -389,6 +392,7 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
             <Skeleton className="h-8 w-56 shrink-0 rounded-full" />
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -1007,6 +1011,26 @@ export function DuplicatesListSkeleton() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** `/radar` below its static header: the status row, then a column of cards and the stats card. */
+export function RadarPageSkeleton() {
+  return (
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <div className="space-y-3">
+        {/* A first visit builds the list while this shows, so it says what it is reading. */}
+        <p className="text-sm text-muted-foreground" role="status">
+          Reading your meetings, messages, follow-ups and news…
+        </p>
+        <Skeleton className="h-8 w-full rounded-lg" />
+        <Skeleton className="h-6 w-24 rounded-md" />
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-40 w-full rounded-xl" />
+        ))}
+      </div>
+      <Skeleton className="hidden h-64 w-full rounded-2xl lg:block" />
     </div>
   );
 }

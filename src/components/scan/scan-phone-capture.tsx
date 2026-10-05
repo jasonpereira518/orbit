@@ -12,6 +12,8 @@ import { SPRING_PILL } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { movePage, releaseScanPage, type ScanPage } from "@/lib/scan-page";
 import { MAX_SCAN_PAGES, ScanError, classifyScanFile } from "@/lib/scan-image";
+import { CAPTURE_BASE64_REQUEST_FILE_BYTES } from "@/lib/capture-limits";
+import { base64DecodedBytes, planUploadBatches } from "@/lib/capture/upload-batches";
 
 /**
  * The phone half of the handoff: photograph pages, put them in order, send them to the
@@ -100,26 +102,45 @@ export function ScanPhoneCapture({ token }: { token: string }) {
   async function send() {
     if (!pages.length || busy) return;
     setBusy(true);
+    // In batches under one request's limit: Vercel refuses a body over 4.5MB before the
+    // route runs, and a handful of phone photos is more than that once base64'd. The
+    // handoff already adds each batch to the same note, so this only changes how many
+    // requests carry it. A batch that lands leaves the tray at once, so a failure part-way
+    // leaves exactly the unsent pages to retry.
+    const { batches, oversized } = planUploadBatches(pages, (p) => base64DecodedBytes(p.base64), CAPTURE_BASE64_REQUEST_FILE_BYTES);
+    // A page past the limit on its own still goes, alone and last, so the person hears why
+    // (the 413 below) instead of it sitting in the tray unexplained.
+    const requests = [...batches, ...oversized.map((p) => [p])];
+    let remainingPages = pages.length;
     try {
-      const res = await fetch(`/api/scan/${encodeURIComponent(token)}/pages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          files: pages.map((p) => ({ filename: p.filename, mimeType: p.mimeType, base64: p.base64 })),
-        }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        toast.error(
-          body.error ??
-            (res.status === 404
-              ? "This link has expired — make a new QR code on your computer"
-              : "Those pages didn’t send — try again?")
-        );
-        return;
+      for (const batch of requests) {
+        const res = await fetch(`/api/scan/${encodeURIComponent(token)}/pages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            files: batch.map((p) => ({ filename: p.filename, mimeType: p.mimeType, base64: p.base64 })),
+            // Pages still to come in this send, this batch included, so the server can
+            // number them within the note ("page 5 of 12") rather than within the request.
+            remainingPages,
+          }),
+        });
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          toast.error(
+            body.error ??
+              (res.status === 404
+                ? "This link has expired — make a new QR code on your computer"
+                : res.status === 413
+                  ? "That photo is too large to send — try retaking it"
+                  : "Those pages didn’t send — try again?")
+          );
+          return;
+        }
+        remainingPages -= batch.length;
+        for (const page of batch) releaseScanPage(page);
+        const sent = new Set(batch.map((p) => p.id));
+        setPages((prev) => prev.filter((p) => !sent.has(p.id)));
       }
-      for (const page of pages) releaseScanPage(page);
-      setPages([]);
       setSentBatches((n) => n + 1);
     } catch (err) {
       // A throw from `fetch` is a connection that never reached Orbit, which #150 already

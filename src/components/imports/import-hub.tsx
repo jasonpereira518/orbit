@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   HardDrive,
   Loader2,
+  MessageCircle,
   MessageSquare,
 } from "lucide-react";
 import {
@@ -25,6 +26,7 @@ import {
 } from "@/components/imports/import-history";
 import { ImportDropOverlay } from "@/components/imports/import-drop-overlay";
 import { ImportDropzone } from "@/components/imports/import-dropzone";
+import { FolderTriageCard } from "@/components/imports/folder-triage-card";
 import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import { ImportQueueCard } from "@/components/imports/import-queue-card";
 import { DriveImportCard } from "@/components/imports/drive-import-card";
@@ -44,7 +46,8 @@ import {
   useWindowFileDrop,
   useWindowFilePaste,
 } from "@/lib/use-window-file-drop";
-import { detectImportFiles } from "@/lib/imports/detect-import-file";
+import { handOffChatFiles } from "@/lib/imports/chat-handoff";
+import { detectImportFiles, type DetectionResult } from "@/lib/imports/detect-import-file";
 import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import {
@@ -225,6 +228,13 @@ const LinkedInMessagesImport = dynamic(
     })),
   { loading: () => <PanelSkeleton /> },
 );
+const ChatMessagesImport = dynamic(
+  () =>
+    import("@/components/imports/chat-messages-import").then((m) => ({
+      default: m.ChatMessagesImport,
+    })),
+  { loading: () => <PanelSkeleton /> },
+);
 const CalendarImportSection = dynamic(
   () =>
     import("@/components/imports/calendar-import-section").then((m) => ({
@@ -236,6 +246,7 @@ const CalendarImportSection = dynamic(
 type RowId =
   | "import-panel-connections"
   | "import-panel-messages"
+  | "import-panel-chats"
   | "import-contacts-file"
   | "import-google-contacts"
   | "import-outlook-contacts"
@@ -253,6 +264,7 @@ const ROW_FOR_ANCHOR: Record<string, RowId | undefined> = {
   "import-google-contacts": "import-google-contacts",
   "import-outlook-contacts": "import-outlook-contacts",
   "import-panel-messages": "import-panel-messages",
+  "import-panel-chats": "import-panel-chats",
   "import-panel-calendar": "import-panel-calendar",
 };
 
@@ -278,6 +290,8 @@ function rowForImportJobKind(kind: ImportJobKind): RowId | null {
       return "import-calendar-file";
     case "drive_docs":
       return null;
+    case "chat":
+      return "import-panel-chats";
   }
 }
 
@@ -293,12 +307,15 @@ export function ImportHub({
   outlook,
   drive,
   latestFinish,
+  chatImports = false,
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
   /**
-   * Continuous calendar sync is paid. A one-time calendar FILE is not: it only logs meetings
-   * onto people already in the network and never creates anyone, so it is a safe taste.
+   * What is paid on this tab: pasting a calendar’s own link and keeping it in sync.
+   * Connecting Google or Outlook — and the meetings and people that come with it — is free
+   * on every plan now, so is LinkedIn import, and so is a one-time calendar FILE: it only
+   * logs meetings onto people already in the network and never creates anyone.
    */
   canUseSync?: boolean;
   google?: ProviderCalendarInput | null;
@@ -306,6 +323,8 @@ export function ImportHub({
   drive?: DriveImportInput;
   /** The most recent completed import, drawn as the done card when nothing is running. */
   latestFinish?: LatestFinishedImport | null;
+  /** `feature.chat-imports` is live for this viewer; the WhatsApp/iMessage row exists only then. */
+  chatImports?: boolean;
 }) {
   const job = useImportJob();
   const queue = useImportQueue();
@@ -401,12 +420,60 @@ export function ImportHub({
    */
   const refreshAfterUndo = useCallback(() => router.refresh(), [router]);
 
-  const handleFiles = useCallback(async (files: DroppedFile[]) => {
-    const result = await detectImportFiles(files, {
-      maxBytes: MAX_CONTACTS_FILE_BYTES,
-    });
-    await stageDrop(result);
-  }, []);
+  /** A folder's importable files, waiting for the person to confirm which. */
+  const [triage, setTriage] = useState<DetectionResult | null>(null);
+  /** Reading a pick's files to work out what they are. Folders can be thousands deep. */
+  const [scanning, setScanning] = useState(false);
+
+  const handleFiles = useCallback(
+    async (files: DroppedFile[]) => {
+      const capped = files.length > IMPORT_DROP_LIMITS.maxFiles;
+      const kept = capped ? files.slice(0, IMPORT_DROP_LIMITS.maxFiles) : files;
+      setScanning(true);
+      try {
+        const result = await detectImportFiles(kept, {
+          maxBytes: MAX_CONTACTS_FILE_BYTES,
+          truncated: capped,
+          chatImports,
+        });
+        if (result.chatFiles.length) {
+          // Open the row first: the card mounts with it and picks the files up on mount.
+          setOpen("import-panel-chats");
+          handOffChatFiles(result.chatFiles);
+          requestAnimationFrame(() =>
+            document
+              .getElementById("import-panel-chats")
+              ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+          );
+        }
+        // A chat-only drop stages nothing; skipping avoids flashing an empty "done" queue.
+        if (
+          result.chatFiles.length &&
+          !result.staged.length &&
+          !result.ignored.length &&
+          !result.skipped.length
+        ) {
+          return;
+        }
+        // A folder with more than one file Orbit reads is a choice, not a guess: rank them and
+        // let the person confirm. Loose files were hand-picked, and one candidate has no choice
+        // to make, so both go straight to the review as before.
+        const fromFolder = kept.some((f) => f.path !== "");
+        if (fromFolder && result.candidates.length >= 2) {
+          setTriage(result);
+          return;
+        }
+        setTriage(null);
+        await stageDrop(result);
+        if (capped) {
+          toast.message(`That folder has ${files.length.toLocaleString()} files — checked the first ${IMPORT_DROP_LIMITS.maxFiles}`);
+        }
+      } finally {
+        setScanning(false);
+      }
+    },
+    [chatImports, setOpen],
+  );
 
   /**
    * A LinkedIn profile link dragged in from another tab (or pasted onto the page) adds that
@@ -554,7 +621,8 @@ export function ImportHub({
 
       <ImportDropzone
         onFiles={(files) => void handleFiles(files)}
-        busy={reading}
+        chatImports={chatImports}
+        busy={reading || scanning}
         extraAction={
           driveConfigured ? (
             <Button
@@ -593,6 +661,17 @@ export function ImportHub({
           step={job?.step}
           cancelling={Boolean(job?.cancelling)}
           onCancel={cancelImportJob}
+        />
+      ) : null}
+
+      {triage ? (
+        <FolderTriageCard
+          result={triage}
+          onCancel={() => setTriage(null)}
+          onConfirm={(chosen) => {
+            setTriage(null);
+            void stageDrop(chosen);
+          }}
         />
       ) : null}
 
@@ -648,6 +727,18 @@ export function ImportHub({
           >
             <LinkedInMessagesImport />
           </ImportSourceRow>
+
+          {chatImports ? (
+            <ImportSourceRow
+              {...row("import-panel-chats")}
+              icon={MessageCircle}
+              accent={MESSAGES_ACCENT}
+              title="Chat messages"
+              status="WhatsApp and iMessage exports, read on your device"
+            >
+              <ChatMessagesImport />
+            </ImportSourceRow>
+          ) : null}
 
           <ImportSourceRow
             {...row("import-contacts-file")}
@@ -717,14 +808,14 @@ export function ImportHub({
             ) : (
               <LockedFeature
                 title="Calendar sync"
-                description="Point Orbit at your calendar and it turns meetings into logged interactions, so your follow-ups stay current without any typing."
+                description="Connecting Google or Outlook is free and brings in your own calendar. This keeps every calendar syncing — paste a calendar’s private link and Orbit polls it, so networking events and the people in them stay up to date."
                 highlights={[
-                  "Connect Google or Outlook, or paste a calendar link",
+                  "Subscribe to a calendar once and keep it in sync",
+                  "Any calendar you can get a private link to, not only your own",
                   "Networking meetings become logged interactions",
                   "New people from invites land in your contacts",
-                  "Follow-up reminders created automatically",
                 ]}
-                note="Uploading a calendar file, and every LinkedIn import, stay free on every plan."
+                note="Connecting Google and Outlook is free on every plan, and so are LinkedIn imports and one-off calendar files."
               />
             )}
           </ImportSourceRow>

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ExternalLink } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { clearDecisionKey, getSettings, saveDecisionKey } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
+import { SettingsSection } from "@/components/settings/settings-section";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -41,28 +42,30 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
   return (
     <SettingsSection
       title="Decision model (optional)"
-      description="Add a TypeSafe key and Orbit hands its yes-or-no and ranking steps to Jev, TypeSafe’s decision model: spotting recruiters during a mail scan, choosing which contacts a chat answer draws on, telling two people apart before merging them, working out which calendar events were real meetings, and skipping the bigger model on notes and messages that have nothing in them. It answers in a fraction of a second, costs far less than a chat model, and runs on your own TypeSafe account. Keys are encrypted at rest and only used for your account."
+      description="Jev is TypeSafe’s decision model — it handles small yes-or-no and ranking steps Orbit would otherwise do on your chat model. It’s optional, and nothing changes until you add a key below."
     >
       <p className="text-sm text-muted-foreground" role="status">
         Status: {status}
       </p>
 
-      <SettingsRow title="What Jev reads">
-        <p className="text-sm text-muted-foreground">
-          The same material the step itself works from, and nothing more. During a recruiter scan,
-          each sender’s name, address, subject lines and message text. When chat answers, your
-          question and a short card for each candidate contact: name, title, company, school, tags
-          and summary. When two records might be one person, those same two cards. For a calendar
-          event, its title, description, and the domains of the organiser and guests — not their
-          addresses. For a captured note, the note itself, so it can tell a tag it already knows
-          from a new one and a real introduction offer from a turn of phrase. And in front of the
-          slower steps, a yes-or-no on whether there is anything there at all: a note with no
-          dates in it, a LinkedIn thread that is only “thanks for connecting”.
-        </p>
-      </SettingsRow>
-
       <div className="space-y-1.5">
-        <Label htmlFor="typesafe-key">TypeSafe API key</Label>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <Label htmlFor="typesafe-key">TypeSafe API key</Label>
+          {/*
+            TypeSafe's own console, the host its homepage signs people in at. Linked at the
+            root rather than a keys page: what sits behind that sign-in cannot be checked from
+            here, and a deep link that has moved is worse than one more click.
+          */}
+          <a
+            href="https://console.typesafe.ai/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 py-1 text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            Get a key
+            <ExternalLink className="size-3.5" aria-hidden />
+          </a>
+        </div>
         <Input
           id="typesafe-key"
           type="password"

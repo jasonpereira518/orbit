@@ -1,4 +1,5 @@
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
@@ -17,9 +18,10 @@ import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
 import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
-import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
+import { formatReplyRate } from "@/lib/outreach-metrics";
 import { buttonVariants } from "@/components/ui/button";
 import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
+import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
@@ -33,6 +35,8 @@ import { aiReadyFromSettings } from "@/lib/ai-access";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import { countTourExamples } from "@/lib/onboarding-examples/status";
 import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
+import { MorningBriefing } from "@/components/radar/morning-briefing";
+import type { RadarBriefing } from "@/lib/radar/page-data";
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
@@ -58,6 +62,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
       name: "Unknown contact",
       title: null as string | null,
       company: null as string | null,
+      lastInteractionAt: null as Date | null,
     };
   }
   const c = data.contactById.get(contactId);
@@ -65,6 +70,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
     name: data.contactNameById.get(contactId) || c?.fullName || "Contact",
     title: c?.title ?? null,
     company: c?.company ?? null,
+    lastInteractionAt: c?.lastInteractionAt ?? null,
   };
 }
 
@@ -291,11 +297,57 @@ export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
   );
 }
 
+/**
+ * Radar's morning briefing, the dashboard's hero for viewers who can open Radar. Renders
+ * nothing until their first run: that account keeps the legacy suggestions card below.
+ */
+export async function MorningBriefingSection({ briefing }: { briefing: Promise<RadarBriefing> }) {
+  const b = await briefing.catch(() => null);
+  if (!b?.hasRun) return null;
+  return (
+    <div className="reveal-mount min-w-0" style={revealDelay(0)}>
+      <MorningBriefing
+        total={b.total}
+        today={b.today}
+        drafts={b.drafts}
+        changes={b.changes}
+        paused={b.paused}
+        items={b.top.map((r) => ({
+          id: r.id,
+          contactId: r.contactId,
+          kind: r.kind,
+          reasons: r.reasons,
+          evidence: r.evidence,
+          aiNote: r.aiNote,
+          aiAngle: r.aiAngle,
+          draft: r.draft,
+          contactName: r.contactName,
+          title: r.title,
+          company: r.company,
+          tier: r.tier,
+          avatarUrl: r.avatarUrl,
+        }))}
+      />
+    </div>
+  );
+}
+
 export async function SuggestedOutreachSection({
   bundle,
+  radar,
+  outreach,
 }: {
   bundle: DashboardBundle;
+  /** Streams on its own; when it is absent (or the account has never sent) there is no rate to show. */
+  outreach?: OutreachSummary | null;
+  /**
+   * Started by the page only for viewers who can see Radar. Once Radar has run for them, the
+   * morning briefing above replaces this card; until then, and for everyone else, it stays.
+   */
+  radar?: Promise<RadarBriefing> | null;
 }) {
+  const briefing = radar ? await radar.catch(() => null) : null;
+  if (briefing?.hasRun) return null;
   const { data } = await bundle;
   return (
     <div
@@ -303,6 +355,15 @@ export async function SuggestedOutreachSection({
       style={revealDelay(0)}
     >
       <SuggestedOutreachCard
+        replyRate={
+          outreach ? (
+            // Its own boundary: the rate is a separate query, and the suggestions must not
+            // wait on it.
+            <Suspense fallback={null}>
+              <OutreachReplyRate summary={outreach} />
+            </Suspense>
+          ) : null
+        }
         networkIsEmpty={data.stats.totalContacts === 0}
         dueFollowUpCount={data.stats.dueFollowUps}
         items={data.suggestions.map((s) => {
@@ -316,6 +377,7 @@ export async function SuggestedOutreachSection({
             contactName: meta.name,
             contactTitle: meta.title,
             contactCompany: meta.company,
+            lastInteractionAt: meta.lastInteractionAt,
             tier: contactId ? tierForContact(data, contactId) : undefined,
           };
         })}
@@ -324,36 +386,32 @@ export async function SuggestedOutreachSection({
   );
 }
 
-export async function OutreachPerformanceSection({
-  summary,
-}: {
-  summary: OutreachSummary;
-}) {
-  const outreachPerformance = await summary;
-  // Nothing sent and nothing built: the card renders "—", "0 positive / 0 sent" and an
-  // invitation into a paid surface. That is a hole on the dashboard for every account that
-  // has never run a campaign, which is most of them and all new ones. It reappears the
-  // moment there is a campaign to report on.
-  if (
-    outreachPerformance.accountMetrics.sentCount === 0 &&
-    outreachPerformance.accountMetrics.campaignCount === 0
-  ) {
-    return null;
-  }
+/**
+ * The account's reply rate, as a small link beside the Suggested outreach heading.
+ *
+ * It used to be a card of its own beside that one, which halved the suggestions for the
+ * accounts that had ever sent anything. Renders nothing when nothing has been sent and nothing
+ * built: "—" and "0 / 0" is a hole for the many accounts that have never run a campaign.
+ */
+async function OutreachReplyRate({ summary }: { summary: OutreachSummary }) {
+  const { accountMetrics } = await summary;
+  if (accountMetrics.sentCount === 0 && accountMetrics.campaignCount === 0) return null;
   return (
-    <div
-      className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
-      style={revealDelay(0)}
+    <Link
+      href="/outreach"
+      title={`${accountMetrics.positiveReplyCount} positive replies from ${accountMetrics.sentCount} sent`}
+      className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted"
     >
-      <OutreachPerformanceCard
-        accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
-        sentCount={outreachPerformance.accountMetrics.sentCount}
-        positiveReplyCount={outreachPerformance.accountMetrics.positiveReplyCount}
-        campaigns={outreachPerformance.topCampaigns}
-      />
-    </div>
+      Reply rate
+      <span className="font-semibold text-ink">
+        {formatReplyRate(accountMetrics.successfulReplyRate)}
+      </span>
+    </Link>
   );
 }
+
+/** Rows shown in the Due follow-ups card; the rest sit behind "See more". */
+const DUE_FOLLOW_UPS_PREVIEW = 6;
 
 export async function RemindersAndFollowUpsSection({
   bundle,
@@ -407,7 +465,7 @@ export async function RemindersAndFollowUpsSection({
                 <GenerateFollowUpsButton limit={8} label="Generate follow-ups" />
               </div>
             ) : (
-              data.dueFollowUps.map((c) => (
+              data.dueFollowUps.slice(0, DUE_FOLLOW_UPS_PREVIEW).map((c) => (
                 <DueFollowUpRow
                   key={c.id}
                   id={c.id}
@@ -419,6 +477,21 @@ export async function RemindersAndFollowUpsSection({
                   lastInteractionAt={c.lastInteractionAt}
                 />
               ))
+            )}
+            {Math.max(data.stats.dueFollowUps, data.dueFollowUps.length) >
+              DUE_FOLLOW_UPS_PREVIEW && (
+              <Link
+                href="/contacts?followUp=due"
+                className={cn(
+                  buttonVariants({ variant: "ghost", size: "sm" }),
+                  "w-full text-muted-foreground"
+                )}
+              >
+                {`See more (${
+                  Math.max(data.stats.dueFollowUps, data.dueFollowUps.length) -
+                  DUE_FOLLOW_UPS_PREVIEW
+                })`}
+              </Link>
             )}
           </CardContent>
         </Card>
@@ -487,8 +560,19 @@ export async function RecentlyUpdatedSection({
                     <div className="min-w-0">
                       <p className="font-medium">{c.fullName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {c.company || "No company"}
+                        {c.company ? (
+                          <span
+                            className="font-medium"
+                            style={{ color: companyBrandColor(c.company) ?? undefined }}
+                          >
+                            {c.company}
+                          </span>
+                        ) : (
+                          "No company"
+                        )}
+                        {c.title ? ` · ${c.title}` : ""}
                       </p>
+                      <p className="mt-0.5 text-xs text-ink/70">{describeUpdate(c)}</p>
                     </div>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
@@ -503,6 +587,29 @@ export async function RecentlyUpdatedSection({
       </Card>
     </div>
   );
+}
+
+/**
+ * What a recent update was, as far as the row itself can tell. Orbit keeps no per-field edit
+ * history, so this reads the timestamps the contact does carry: created and updated within a
+ * minute of each other is a new contact; a last-interaction stamp that lands with the update is
+ * a logged interaction; anything else is an edit to the details. It names the kind of change,
+ * never a field it cannot know.
+ */
+function describeUpdate(c: {
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  lastInteractionAt: Date | string | null;
+}): string {
+  const updated = new Date(c.updatedAt).getTime();
+  if (updated - new Date(c.createdAt).getTime() < 60_000) return "Added to your orbit";
+  if (
+    c.lastInteractionAt &&
+    Math.abs(updated - new Date(c.lastInteractionAt).getTime()) < 120_000
+  ) {
+    return "Interaction logged";
+  }
+  return "Details updated";
 }
 
 export async function TailSection({ bundle }: { bundle: DashboardBundle }) {

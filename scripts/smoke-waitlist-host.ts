@@ -22,8 +22,10 @@ import {
   stealthWaitlistUrl,
   waitlistHost,
   waitlistOrigin,
+  waitlistReferralRewrites,
   waitlistRedirects,
   waitlistRewrites,
+  waitlistSlugFromPath,
   waitlistServesPath,
   type ConfigRedirect,
   type ConfigRewrite,
@@ -124,6 +126,15 @@ for (const path of [
   check(`${path} redirects to /`, show(onWaitlist(path)) === show({ kind: "redirect", to: "/" }), show(onWaitlist(path)));
 }
 check("the pure allowlist agrees with the config", ["/", "/privacy", "/api/track", "/landing/planets/earth.png"].every(waitlistServesPath) && !waitlistServesPath("/pricing") && !waitlistServesPath("/landing/earth.png"));
+check(
+  "the poll's live-results read is served on the waitlist host",
+  waitlistServesPath("/api/waitlist-poll/results") && !waitlistServesPath("/api/waitlist-poll/anything-else")
+);
+check(
+  "the phone demo stills are served as files, never read as a referral slug",
+  waitlistServesPath("/waitlist/tour/suggestion-420.webp") &&
+    waitlistSlugFromPath("/waitlist/tour/suggestion-420.webp") === null
+);
 
 console.log("\nStealth on the app host:");
 check("app pages are untouched by the waitlist rules", onApp("/pricing").kind === "serve" && onApp("/").kind === "serve");
@@ -160,6 +171,37 @@ check("…and signed-out pages go there", gate("/pricing", false, NO_HOST) === J
 check("…and it stays open, so there is no loop", gate("/interest", false, NO_HOST) === pass && gate("/interest/privacy", false, NO_HOST) === pass);
 check("stealth hides the API schema", (STEALTH_HIDDEN_API as readonly string[]).includes("/api/v1/openapi.json"));
 check("every waitlist redirect is temporary, so launch undoes it", redirects.every((r) => !r.permanent));
+
+console.log("\nReferral links, /waitlist/<slug>:");
+const withSlugs = [...rewrites, ...waitlistReferralRewrites()];
+const slugOn = (host: string, url: string) => route(host, url, redirects, withSlugs);
+for (const host of [WAITLIST, APP]) {
+  check(
+    `${host}: a slug renders the page as an invitation from it`,
+    show(slugOn(host, "/waitlist/ada.lovelace")) === show({ kind: "rewrite", to: "/interest?ref=:slug" }),
+    show(slugOn(host, "/waitlist/ada.lovelace"))
+  );
+}
+check("a slug with a suffix and an underscore matches", slugOn(WAITLIST, "/waitlist/sam_smith-2").kind === "rewrite");
+check("the waitlist icon is still just a file", show(slugOn(WAITLIST, "/waitlist/icon.png")) === show({ kind: "serve", path: "/waitlist/icon.png" }));
+check(
+  "the email starfield is a file, not a referral slug",
+  show(slugOn(WAITLIST, "/waitlist/starfield.gif")) === show({ kind: "serve", path: "/waitlist/starfield.gif" }) &&
+    waitlistSlugFromPath("/waitlist/starfield.gif") === null
+);
+check("the dev privacy preview is not a person", slugOn(WAITLIST, "/waitlist/privacy").kind === "serve");
+check("a nested path is not a slug", slugOn(WAITLIST, "/waitlist/ada/extra").kind !== "rewrite");
+check("waitlistSlugFromPath agrees", waitlistSlugFromPath("/waitlist/ada") === "ada" && waitlistSlugFromPath("/waitlist/icon.png") === null && waitlistSlugFromPath("/waitlist") === null && waitlistSlugFromPath("/waitlist/a/b") === null);
+check(
+  "a referral link on the app host survives stealth, slug and all",
+  gate("/waitlist/ada", false) === JSON.stringify({ kind: "redirect", to: "https://join.example/waitlist/ada" }),
+  gate("/waitlist/ada", false)
+);
+check(
+  "…for someone signed in too",
+  gate("/waitlist/ada", true) === JSON.stringify({ kind: "redirect", to: "https://join.example/waitlist/ada" })
+);
+check("with no waitlist host it just opens", gate("/waitlist/ada", false, { SITE_STEALTH: "1" }) === pass);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

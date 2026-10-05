@@ -16,7 +16,7 @@
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contactTags, contacts, tags } from "@/db/schema";
-import { getRankedContacts } from "@/actions/search";
+import { rankContacts } from "@/lib/contact-ranking";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { importIdsFrom } from "@/lib/imports/import-ids";
 import {
@@ -74,7 +74,7 @@ export async function listContactsPage(
     // whose stored role is "Software Engineer" at Google, full time). Request the max
     // hybridSearchContacts will give (80) rather than its default 12, since this list
     // also drives relevance ordering, not just widening the match.
-    const ranked = q.length >= 3 ? await getRankedContacts(userId, q, 80) : [];
+    const ranked = q.length >= 3 ? await rankContacts(userId, q, 80) : [];
     semanticIds = ranked.map((r) => r.id);
     matchReasons = matchReasonsFor(ranked);
     conditions.push(

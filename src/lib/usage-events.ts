@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { usageEvents } from "@/db/schema";
 import { estimateCostMicros } from "@/lib/ai-pricing";
 import { classifyAiError } from "@/lib/errors";
+import { settleManagedUsage } from "@/lib/credits/ledger";
 import type { AiProvider } from "@/lib/ai-providers";
 
 export type UsageKind =
@@ -34,6 +35,13 @@ export type TokenCounts = {
    */
   cacheWriteTokens?: number | null;
   audioInputTokens?: number | null;
+  /**
+   * The provider's own figure for what this call cost, in USD × 1e6. Null or undefined
+   * means it did not report one. Zero is a real answer and must not be treated as missing.
+   * Lives here rather than only on `UsageRecord` because it travels the same `report(...)`
+   * path as the token counts above — OpenRouter puts it on the same `usage` object.
+   */
+  reportedCostMicros?: number | null;
 };
 
 /**
@@ -50,8 +58,8 @@ export type UsageMeta = {
   model: string;
   kind: UsageKind;
   /**
-   * Whose API key paid. "orbit" = a managed key the AI gate issued (Lifetime or demo
-   * accounts only) — and the meter the managed allowance reads. Always `grant.keyOwner`.
+   * Whose API key paid. "orbit" = a managed key the AI gate issued (Pro and Max, or a
+   * localhost demo account) — and what settles the credit ledger. Always `grant.keyOwner`.
    */
   keyOwner: "user" | "orbit";
   /**
@@ -61,12 +69,51 @@ export type UsageMeta = {
   batch?: boolean;
 };
 
-type UsageRecord = UsageMeta &
+export type UsageRecord = UsageMeta &
   TokenCounts & {
     success: boolean;
     errorKind?: string | null;
     durationMs?: number | null;
   };
+
+/**
+ * Builds the row `recordUsage` inserts, as a pure function so a smoke test can assert on the
+ * real mapping rather than a copy of it.
+ *
+ * A reported cost (OpenRouter's `usage.cost`) wins over Orbit's own estimate from
+ * `ai-pricing.ts` — that table has no OpenRouter slugs at all and is ~5x low for the
+ * providers it does cover. `costSource` records which figure ended up in the column, since
+ * blending the two without a source would make that gap invisible.
+ */
+export function usageRow(rec: UsageRecord) {
+  const reported = rec.reportedCostMicros ?? null;
+  return {
+    userId: rec.userId,
+    operation: rec.operation,
+    provider: rec.provider,
+    model: rec.model,
+    kind: rec.kind,
+    keyOwner: rec.keyOwner,
+    inputTokens: rec.inputTokens ?? null,
+    outputTokens: rec.outputTokens ?? null,
+    cachedInputTokens: rec.cachedInputTokens ?? null,
+    estimatedCostMicros:
+      reported ??
+      estimateCostMicros({
+        model: rec.model,
+        inputTokens: rec.inputTokens,
+        outputTokens: rec.outputTokens,
+        cachedInputTokens: rec.cachedInputTokens,
+        cacheWriteTokens: rec.cacheWriteTokens,
+        audioInputTokens: rec.audioInputTokens,
+        batch: rec.batch,
+      }),
+    costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
+    success: rec.success ? 1 : 0,
+    errorKind: rec.errorKind ?? null,
+    durationMs: rec.durationMs ?? null,
+  };
+}
 
 /**
  * Fire-and-forget write. Never throws, never blocks the response.
@@ -76,33 +123,19 @@ type UsageRecord = UsageMeta &
  */
 export function recordUsage(rec: UsageRecord): void {
   const write = async () => {
+    const row = usageRow(rec);
     try {
       const db = await getDb();
-      await db.insert(usageEvents).values({
-        userId: rec.userId,
-        operation: rec.operation,
-        provider: rec.provider,
-        model: rec.model,
-        kind: rec.kind,
-        keyOwner: rec.keyOwner,
-        inputTokens: rec.inputTokens ?? null,
-        outputTokens: rec.outputTokens ?? null,
-        cachedInputTokens: rec.cachedInputTokens ?? null,
-        estimatedCostMicros: estimateCostMicros({
-          model: rec.model,
-          inputTokens: rec.inputTokens,
-          outputTokens: rec.outputTokens,
-          cachedInputTokens: rec.cachedInputTokens,
-          cacheWriteTokens: rec.cacheWriteTokens,
-          audioInputTokens: rec.audioInputTokens,
-          batch: rec.batch,
-        }),
-        success: rec.success ? 1 : 0,
-        errorKind: rec.errorKind ?? null,
-        durationMs: rec.durationMs ?? null,
-      });
+      await db.insert(usageEvents).values(row);
     } catch {
       // Telemetry must never surface as a user-visible failure.
+    }
+    // A call on Orbit's key spends credits (pricing v2). Separate from the insert on
+    // purpose: a lost telemetry row must not also lose the charge, and vice versa.
+    try {
+      await settleManagedUsage(row);
+    } catch (err) {
+      console.error("[credits] settling a managed call did not complete", err);
     }
   };
 

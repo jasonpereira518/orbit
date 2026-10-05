@@ -1,49 +1,56 @@
 import { Check, Minus } from "lucide-react";
 import {
-  FREE_CONTACT_LIMIT,
+  PLAN_CONFIG,
   PLAN_LABELS,
-  type Plan,
-} from "@/lib/plan-limits";
+  type PurchasablePlan,
+} from "@/lib/plans/plan-config";
 import { cn } from "@/lib/utils";
 
 type Cell = boolean | string;
+type Column = "free" | PurchasablePlan;
 
-const COLUMNS: Plan[] = ["free", "orbit", "lifetime"];
+/** The plans on sale. Lifetime is granted, never sold, so it has no column. */
+const COLUMNS: Column[] = ["free", "orbit", "max"];
 
 /** Mirrors the tier cards, so a column and its card read as the same thing. */
-const COLUMN_ACCENT: Record<Plan, { heading: string; tick: string; tint?: string }> = {
+const COLUMN_ACCENT: Record<Column, { heading: string; tick: string; tint?: string }> = {
   free: { heading: "text-[#e8f3f1]", tick: "text-[#6f8b84]" },
   orbit: {
-    heading: "text-brand-pro",
-    tick: "text-brand-pro",
-    tint: "bg-brand-pro/5",
+    heading: "text-night-pro",
+    tick: "text-night-pro",
+    tint: "bg-night-pro/5",
   },
-  lifetime: { heading: "text-[#f2c14e]", tick: "text-[#f2c14e]" },
+  max: { heading: "text-night-max", tick: "text-night-max", tint: "bg-night-max/5" },
 };
 
+const hours = (seconds: number) =>
+  seconds === 0 ? false : `${seconds / 3600} hour${seconds === 3600 ? "" : "s"} a month`;
+const each = <T,>(fn: (plan: Column) => T): [T, T, T] => [fn("free"), fn("orbit"), fn("max")];
+const feature = (key: keyof (typeof PLAN_CONFIG)["free"]["features"]) =>
+  each((plan) => PLAN_CONFIG[plan].features[key]);
+
 /**
- * Every row here is checked against `entitlements.ts`, which is the only place a gate is
- * decided — not against what the tiers *say*. Worth knowing before editing:
+ * Every cell is read from `PLAN_CONFIG` — the same object the gates enforce — so the table
+ * cannot promise what a gate refuses. Only SHIPPED features appear: Outreach, Events and the
+ * Chrome extension stay behind their coming-soon gates and out of this table until they ship.
  *
- *  - The first block is ungated in code. Capture, chat, the map, LinkedIn import,
- *    reminders, the knowledge base, and export never consult entitlements at all, so they
- *    are true on every plan and stay grouped together.
- *  - `canUseOutreach`, `canUseRecruiters`, `canUseSync`, `canUseExtension`, and
- *    `canUseHostedSending` are all plain `plan !== "free"`, so Lifetime matches Pro on
- *    each of them. Sending included: it is capped at `DAILY_SEND_LIMIT` a day on every
- *    plan, so it is a bounded cost a one-time payment can carry.
- *  - `canUseHostedEnrichment` is the ONLY entitlement that separates the two paid tiers,
- *    so "Contact enrichment" must stay the only row whose Pro and Lifetime cells differ.
- *    It gates Orbit's *own* Apollo key, never a key the user supplied — see the
- *    personal-key short-circuit at the top of `getApolloApiKey`. That is why enrichment
- *    reads "Your own key" on Free and Lifetime rather than a cross: anyone who pastes an
- *    Apollo key into Settings gets it.
+ * The first block is ungated in code on every plan (capture, chat, the map, LinkedIn import,
+ * reminders, the knowledge base, export, and the Claude/ChatGPT connector). On the Free Plan,
+ * the AI parts of it run on the person's own key.
  */
 const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   {
     label: "Contacts",
-    cells: [`Up to ${FREE_CONTACT_LIMIT}`, "Unlimited", "Unlimited"],
+    cells: each((plan) => (PLAN_CONFIG[plan].contactLimit === null ? "Unlimited" : `Up to ${PLAN_CONFIG[plan].contactLimit}`)),
   },
+  {
+    label: "AI for capture, chat and summaries",
+    cells: each((plan) => {
+      const credits = PLAN_CONFIG[plan].monthlyCredits;
+      return credits ? `Included: ${credits} credits a month` : "Your own key";
+    }),
+  },
+  { label: "Credit packs ($5 = 250 credits)", cells: feature("creditPacks") },
   { label: "Capture with AI extraction", cells: [true, true, true] },
   { label: "Chat with your network", cells: [true, true, true] },
   { label: "Constellation map", cells: [true, true, true] },
@@ -51,28 +58,27 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Reminders and follow-up feed", cells: [true, true, true] },
   { label: "Knowledge base", cells: [true, true, true] },
   { label: "Export your data", cells: [true, true, true] },
-  // Free on every plan, and the only connector that is. It is how most people will first
-  // see what Orbit is for — a paywall in front of it would be a paywall in front of the
-  // demonstration. See `canUseMcp` in entitlements.ts.
+  // Free on every plan: it is how most people will first see what Orbit is for.
   { label: "Use from Claude and ChatGPT", cells: [true, true, true] },
-  { label: "Recruiter tracking", cells: [false, true, true] },
-  { label: "Gmail, Outlook, calendar sync", cells: [false, true, true] },
-  { label: "Chrome extension", cells: [false, true, true] },
-  { label: "Outreach campaigns", cells: [false, true, true] },
-  { label: "Email and SMS sending", cells: [false, true, true] },
-  { label: "API and webhooks", cells: [false, true, true] },
+  {
+    label: "Google and Microsoft accounts (mail, contacts, calendar)",
+    cells: each((plan) => (PLAN_CONFIG[plan].googleMicrosoftConnections === 1 ? "One" : "Both")),
+  },
+  { label: "Recruiter tracking", cells: feature("recruiters") },
+  { label: "Calendar subscriptions", cells: feature("sync") },
+  { label: "Meeting transcription", cells: each((plan) => hours(PLAN_CONFIG[plan].speech.meetingSeconds)) },
+  { label: "Voice notes and chat mic", cells: each((plan) => hours(PLAN_CONFIG[plan].speech.shortformSeconds)) },
   {
     label: "Contact enrichment",
-    cells: ["Your own key", "Orbit's credits", "Your own key"],
+    cells: each((plan) => {
+      const n = PLAN_CONFIG[plan].hostedEnrichmentsPerMonth;
+      return n > 0 ? `${n} a month` : "Your own Apollo key";
+    }),
   },
-  { label: "AI provider key", cells: ["Yours", "Yours", "Yours"] },
-  {
-    label: "Meeting transcription",
-    cells: ["—", "5 hours a month", "10 hours a month"],
-  },
+  { label: "REST API and webhooks", cells: feature("api") },
 ];
 
-function CellValue({ value, plan }: { value: Cell; plan: Plan }) {
+function CellValue({ value, plan }: { value: Cell; plan: Column }) {
   if (typeof value === "string") {
     return <span className="text-sm text-[#cfdcd8]">{value}</span>;
   }

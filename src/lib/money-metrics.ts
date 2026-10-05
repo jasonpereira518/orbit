@@ -4,6 +4,7 @@ import { billingEvents, usageEvents, userSettings } from "@/db/schema";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
 import { series, type Grain } from "@/lib/admin-trends";
 import { mrrMovement, type MrrMovement } from "@/lib/billing-events";
+import { FEATURE_KEYS, PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { monthlyCostSeries, type MonthlyCosts } from "@/lib/money-costs";
 
 /**
@@ -92,8 +93,10 @@ export async function cashFlowSeries(
   months = 6,
   now = new Date()
 ): Promise<CashFlowPoint[]> {
-  const costs = await monthlyCostSeries(months);
-  const movements = await mrrMovementSeries("month", months, now);
+  const [costs, movements] = await Promise.all([
+    monthlyCostSeries(months),
+    mrrMovementSeries("month", months, now),
+  ]);
 
   return costs.map((cost, i) => {
     const movement = movements[i];
@@ -126,8 +129,8 @@ export type CostToRunPoint = {
 /**
  * What Orbit costs the people who use it, as a DISTRIBUTION rather than an average.
  *
- * Mostly the users' money, not Orbit's (BYOK on every plan but Lifetime; managed Lifetime
- * spend is the costs page's "On Orbit's AI keys" tile) — but it is the
+ * Partly the users' money and partly Orbit's (own keys on Free and Lifetime; included AI
+ * on Pro and Max is the costs page's "On Orbit's AI keys" tile) — but it is the
  * number that decides whether BYOK stays viable, and a mean hides the only interesting
  * case. One power user at fifty times the median is the whole story, and an average
  * reports it as a mild uptick.
@@ -339,23 +342,33 @@ export async function gateDemand(days = 30): Promise<GateDemandRow[]> {
  *
  * The screen currently reports comps as a headcount, which makes a deliberate decision
  * look free. It is not free — it is revenue chosen not to collect, and pricing it is the
- * only way that choice can be reviewed rather than merely accumulated.
+ * only way that choice can be reviewed rather than merely accumulated. Each comp is priced
+ * at its own plan's list price; a comped Lifetime has no monthly price and is counted only.
  */
-export async function compedForegoneCents(monthlyCents: number): Promise<{
+export async function compedForegoneCents(): Promise<{
   comped: number;
   foregoneMonthlyCents: number;
 }> {
   const db = await getDb();
   const rows = await db
-    .select({ n: sql<string>`count(*)` })
+    .select({ plan: userSettings.compedPlan, n: sql<string>`count(*)` })
     .from(userSettings)
-    .where(sql`${userSettings.compedPlan} = 'orbit'`);
+    .where(sql`${userSettings.compedPlan} IS NOT NULL`)
+    .groupBy(userSettings.compedPlan);
 
-  const comped = num(rows[0]?.n);
-  return { comped, foregoneMonthlyCents: comped * monthlyCents };
+  let comped = 0;
+  let foregoneMonthlyCents = 0;
+  for (const row of rows) {
+    const n = num(row.n);
+    comped += n;
+    if (row.plan === "orbit" || row.plan === "max") {
+      foregoneMonthlyCents += n * (PLAN_CONFIG[row.plan].monthlyPriceCents ?? 0);
+    }
+  }
+  return { comped, foregoneMonthlyCents };
 }
 
-/** Recurring revenue currently at risk: past-due and pending cancellations, in money. */
+/** Recurring revenue currently at risk (Pro and Max): past-due and pending cancellations, in money. */
 export async function revenueAtRiskCents(now = new Date()): Promise<{
   pastDueCents: number;
   cancellingCents: number;
@@ -372,7 +385,7 @@ export async function revenueAtRiskCents(now = new Date()): Promise<{
     .from(userSettings)
     .where(
       and(
-        sql`${userSettings.subscriptionPlan} = 'orbit'`,
+        sql`${userSettings.subscriptionPlan} IN ('orbit', 'max')`,
         sql`${userSettings.compedPlan} IS NULL`
       )
     );
@@ -380,7 +393,8 @@ export async function revenueAtRiskCents(now = new Date()): Promise<{
   let pastDueCents = 0;
   let cancellingCents = 0;
   for (const row of rows) {
-    const value = row.monthlyCents ?? 500;
+    // Null is a row written before the column existed: a legacy $5 Pro subscription.
+    const value = row.monthlyCents ?? (row.plan === "max" ? (PLAN_CONFIG.max.monthlyPriceCents ?? 0) : 500);
     if (row.status === "past_due") pastDueCents += value;
     if (
       row.status === "canceled" &&
@@ -433,12 +447,4 @@ export async function recentMovements(limit = 25) {
 }
 
 /** Gate features that exist in the product, so an unhit wall shows as an empty row. */
-export const KNOWN_GATES = [
-  "contacts",
-  "outreach",
-  "hostedSending",
-  "hostedEnrichment",
-  "recruiters",
-  "sync",
-  "extension",
-] as const;
+export const KNOWN_GATES = ["contacts", ...FEATURE_KEYS] as const;

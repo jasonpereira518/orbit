@@ -15,10 +15,11 @@
  */
 import "./smoke/_env";
 
-import { like } from "drizzle-orm";
+import { eq, inArray, like, or } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { interestListSignups, userSettings } from "../src/db/schema";
+import { interestListSignups, userSettings, waitlistPollVotes } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
+import { parseEventSignupPaste } from "../src/lib/interest-list";
 
 const PREFIX = "smoke-il-";
 
@@ -79,6 +80,7 @@ function textOf(node: unknown, out: string[] = []): string[] {
         // The row-action controls are a client component, so its props are all this walk
         // can see — which is the right server-side contract to assert on anyway.
         key === "email" ||
+        key === "displayName" ||
         key === "unsubscribed"
       ) {
         textOf(value, out);
@@ -110,11 +112,53 @@ function findRows(node: unknown): RowProp[] {
 
 async function cleanup() {
   const db = await getDb();
+  const prior = await db
+    .select({ id: interestListSignups.id })
+    .from(interestListSignups)
+    .where(like(interestListSignups.email, `${PREFIX}%`));
+  if (prior.length > 0) {
+    const ids = prior.map((r) => r.id);
+    const keys = ids.map((id) => `signup:${id}`);
+    await db
+      .delete(waitlistPollVotes)
+      .where(or(inArray(waitlistPollVotes.signupId, ids), inArray(waitlistPollVotes.voterKey, keys)));
+  }
   await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
   await db.delete(userSettings).where(like(userSettings.email, `${PREFIX}%`));
 }
 
 async function main() {
+  // Spreadsheet paste from an event form — order and Eastern wall times matter for join order.
+  {
+    const sample = [
+      "9/9/2026 17:40:43\tLuke Allen\tapl1@unc.edu",
+      "9/9/2026 17:32:18\tSai Nagamalla\tshreyas.nagamalla@gmail.com",
+      "9/9/2026 17:45:22\tCaitlin Estrada\tCaitlin.Estrada@unc.edu",
+    ].join("\n");
+    const { rows, errors } = parseEventSignupPaste(sample);
+    check("parses event spreadsheet paste", rows.length === 3 && errors.length === 0);
+    check(
+      "keeps paste order when timestamps present",
+      rows[0]?.email === "apl1@unc.edu" && rows[1]?.email === "shreyas.nagamalla@gmail.com"
+    );
+    const byEventTime = [...rows].sort(
+      (a, b) => a.signedAt!.getTime() - b.signedAt!.getTime() || a.line - b.line
+    );
+    check(
+      "event-time order puts earliest signup first",
+      byEventTime[0]?.email === "shreyas.nagamalla@gmail.com" &&
+        byEventTime[1]?.email === "apl1@unc.edu"
+    );
+    check(
+      "reads Eastern wall time as UTC",
+      rows[1]?.signedAt?.toISOString() === "2026-09-09T21:32:18.000Z"
+    );
+    check(
+      "lowercases emails from paste",
+      rows[2]?.email === "caitlin.estrada@unc.edu"
+    );
+  }
+
   await cleanup();
   const db = await getDb();
 
@@ -127,6 +171,8 @@ async function main() {
 
   await db.insert(interestListSignups).values([
     mk(`${PREFIX}active@example.test`, {
+      firstName: "Ada",
+      lastName: "Lovelace",
       utmSource: "reddit",
       utmMedium: "social",
       createdAt: new Date("2026-08-10T09:00:00Z"),
@@ -152,10 +198,11 @@ async function main() {
   // --- unfiltered
   const all = textOf(await Page({ searchParams: Promise.resolve({}) })).join(" ");
   check("renders every seeded signup", ["active", "unsubbed", "converted"].every((n) => all.includes(`${PREFIX}${n}@example.test`)));
+  check("shows the signup's full name above the email", all.includes("Ada Lovelace"));
   check("shows an absolute signup date", all.includes("10 Aug 2026"), all.slice(0, 400));
   check("labels the converted row", all.includes("Converted"));
   check("labels the rows that left", all.includes("Left"));
-  check("counts the front wave", all.includes("Front wave"));
+  check("counts early access", all.includes("Early access"));
   check("surfaces the source from utm", all.includes("reddit · social"));
   check("renders the signup trend panel", all.includes("Signups by week"));
   check("renders the source rollup panel", all.includes("Where they come from"));
@@ -163,9 +210,16 @@ async function main() {
   check("links to the broadcast composer", all.includes("Broadcasts"));
   check("links to the email preview", all.includes("Preview emails"));
   check("shows the stored planet", all.toLowerCase().includes("jupiter"));
-  check("offers the filter tabs", ["All", "Waiting", "Front wave", "Converted", "Left"].every((f) => all.includes(f)));
-  check("offers both orders", all.includes("In line") && all.includes("Newest"));
+  check("offers the filter tabs", ["All", "Waiting", "Priority beta", "Early access", "Founding", "Converted", "Left"].every((f) => all.includes(f)));
+  check("offers every order", all.includes("In line") && all.includes("Newest") && all.includes("Oldest"));
   check("never mentions the retired day-3 follow-up", !/day-3|follow-up/i.test(all));
+
+  const allRows = findRows(await Page({ searchParams: Promise.resolve({}) }));
+  check(
+    "rows carry pass check counts",
+    allRows.length > 0 && allRows.every((r) => typeof (r as { passCheckCount?: unknown }).passCheckCount === "number"),
+    JSON.stringify(allRows[0])
+  );
 
   // --- filtered
   const active = textOf(
@@ -269,6 +323,14 @@ async function main() {
   const rowsInLine = findRows(await Page({ searchParams: Promise.resolve({ filter: "active" }) })) as Array<
     RowProp & { position?: number | null }
   >;
+  const mine = rowsInLine.find((r) => r.email === target.email) as
+    | (RowProp & { joinRank?: number | null; position?: number | null })
+    | undefined;
+  check(
+    "the table is handed each row's join rank beside its place",
+    typeof mine?.joinRank === "number" && mine.joinRank === mine.position,
+    JSON.stringify(mine)
+  );
   check(
     "the table is handed each row's place",
     rowsInLine.some((r) => r.email === target.email && r.position === placeBefore),
@@ -287,6 +349,68 @@ async function main() {
     (await readStandings()).get(target.id)?.position === placeBefore
   );
   await unsubscribeInterestListRow(target.id);
+
+  // --- hard delete: erase the row and clear referral / poll leftovers
+  const { deleteInterestListRow } = await import("../src/lib/admin-interest-list");
+  const [doomed] = await db
+    .insert(interestListSignups)
+    .values(
+      mk(`${PREFIX}doomed@example.test`, {
+        shareToken: `smoke-doomed-${generateUnsubscribeToken().slice(0, 8)}`,
+        createdAt: new Date("2026-08-09T09:00:00Z"),
+      })
+    )
+    .returning();
+  const [friendOfDoomed] = await db
+    .insert(interestListSignups)
+    .values(
+      mk(`${PREFIX}doomed-friend@example.test`, {
+        referredById: doomed.id,
+        createdAt: new Date("2026-08-09T10:00:00Z"),
+      })
+    )
+    .returning();
+  await db.insert(waitlistPollVotes).values({
+    optionId: "reminders",
+    voterKey: `signup:${doomed.id}`,
+    signupId: doomed.id,
+  });
+  const erased = await deleteInterestListRow(doomed.id);
+  check("hard delete returns the address", erased?.email === `${PREFIX}doomed@example.test`);
+  check(
+    "hard delete erases the row",
+    (await db.select().from(interestListSignups).where(eq(interestListSignups.id, doomed.id))).length === 0
+  );
+  const [friendAfter] = await db
+    .select()
+    .from(interestListSignups)
+    .where(eq(interestListSignups.id, friendOfDoomed.id));
+  check("hard delete clears referred_by on friends", friendAfter?.referredById == null);
+  check(
+    "hard delete clears the signup's poll vote",
+    (
+      await db
+        .select()
+        .from(waitlistPollVotes)
+        .where(eq(waitlistPollVotes.voterKey, `signup:${doomed.id}`))
+    ).length === 0
+  );
+  // Friend row is cleaned by the final cleanup(); leave it so the rest of the script still
+  // sees a stable set of seeded addresses for search / sort checks.
+
+  // Join-time orders never look at referrals: oldest and newest are exact mirrors.
+  type Dated = RowProp & { createdAtIso: string };
+  const oldest = findRows(await Page({ searchParams: Promise.resolve({ sort: "oldest" }) })) as Dated[];
+  const newest = findRows(await Page({ searchParams: Promise.resolve({ sort: "newest" }) })) as Dated[];
+  check(
+    "oldest is join order, oldest first",
+    oldest.length > 1 && oldest.every((r, i) => i === 0 || oldest[i - 1]!.createdAtIso <= r.createdAtIso),
+    oldest.map((r) => r.createdAtIso).join(",")
+  );
+  check(
+    "newest is join order, newest first",
+    newest.length > 1 && newest.every((r, i) => i === 0 || newest[i - 1]!.createdAtIso >= r.createdAtIso)
+  );
 
   const searched = textOf(
     await Page({ searchParams: Promise.resolve({ q: "unsubbed" }) })

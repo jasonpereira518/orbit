@@ -15,7 +15,12 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { auth } from "@clerk/nextjs/server";
-import { bootstrapAuthenticatedUser, isClerkConfigured } from "@/lib/auth";
+import {
+  bootstrapAuthenticatedUser,
+  isClerkConfigured,
+  type AuthenticatedUser,
+} from "@/lib/auth";
+import { isHeldByStealth } from "@/lib/site-access";
 
 export class ExtensionUnauthorizedError extends Error {
   constructor(message = "Not signed in to Orbit") {
@@ -60,10 +65,22 @@ function devUserId(req: Request): string | null {
 }
 
 export async function requireExtensionUserId(req: Request): Promise<string> {
+  return (await requireExtensionUser(req)).userId;
+}
+
+/**
+ * `requireExtensionUserId`, also handing back the `user_settings` row the bootstrap read.
+ *
+ * Route handlers are where `cache()` is a pass-through, so a handler that then calls
+ * `ensureUserSettings` / `getEntitlements` / `userHasApolloKey(userId)` reads that row again.
+ * `extensionRoute` puts it on the handler's context as `settings` for that reason.
+ */
+export async function requireExtensionUser(
+  req: Request
+): Promise<{ userId: string; settings: AuthenticatedUser["settings"] }> {
   const devId = devUserId(req);
   if (devId) {
-    await bootstrapAuthenticatedUser(devId);
-    return devId;
+    return { userId: devId, settings: await bootstrapAuthenticatedUser(devId) };
   }
 
   if (!isClerkConfigured()) {
@@ -82,6 +99,14 @@ export async function requireExtensionUserId(req: Request): Promise<string> {
 
   if (!userId) throw new ExtensionUnauthorizedError();
 
-  await bootstrapAuthenticatedUser(userId);
-  return userId;
+  // The same two account gates `requireUserId` applies. Without them a suspended account, or
+  // one stealth is holding, kept full read/write access through the extension.
+  const settings = await bootstrapAuthenticatedUser(userId);
+  if (settings.suspendedAt) {
+    throw new ExtensionUnauthorizedError("This Orbit account is suspended.");
+  }
+  if (await isHeldByStealth(userId, settings)) {
+    throw new ExtensionUnauthorizedError("This account is waiting for an invitation.");
+  }
+  return { userId, settings };
 }

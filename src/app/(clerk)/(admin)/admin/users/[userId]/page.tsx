@@ -13,6 +13,7 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
+import { LifetimeButton } from "@/components/admin/lifetime-dialog";
 import { SignInLinkButton } from "@/components/admin/sign-in-link-dialog";
 import { CopyId } from "@/components/admin/copy-id";
 import { ContactsFilterBar } from "@/components/admin/contacts-filter-bar";
@@ -175,6 +176,7 @@ export default async function AdminUserDetailPage({
             compedNote={billing.compedNote}
             variant="button"
           />
+          <LifetimeButton targetUserId={identity.userId} hasLifetime={billing.plan === "lifetime"} />
         </div>
       </div>
 
@@ -694,6 +696,9 @@ export default async function AdminUserDetailPage({
                 </DefinitionRow>
                 <DefinitionRow label="Anthropic key">
                   <SecretState present={configuration.keys.anthropic} />
+                </DefinitionRow>
+                <DefinitionRow label="OpenRouter key">
+                  <SecretState present={configuration.keys.openrouter} />
                 </DefinitionRow>
                 <DefinitionRow label="Apollo key">
                   <SecretState present={configuration.keys.apollo} />

@@ -31,13 +31,16 @@
  * be run again.
  */
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { after } from "next/server";
 import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
 import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
+import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import { scheduleEmbeddingRebuild } from "@/lib/contact-writes";
+import { rebuildContactEmbeddingsBatch } from "@/lib/search";
 
 /**
  * Child tables that move to the winner with a plain UPDATE.
@@ -81,6 +84,12 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   // `contact_ids` array it also carries is rewritten separately (step 4c-2), because an
   // array rewrite is not reversible from a list of ids alone.
   { table: "memory_chunks", column: "contact_id", scoped: true },
+  // What the person did with Radar about this contact: a "not for this person" must still
+  // hold for the merged contact. No unique index at all, so nothing can collide.
+  { table: "recommendation_feedback", column: "contact_id", scoped: true },
+  // Radar's outside-world facts (job changes, headlines, posts) are about the person, so they
+  // follow the winner. Unique on (user_id, dedupe_hash), which a repoint does not change.
+  { table: "contact_signals", column: "contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */
@@ -289,6 +298,35 @@ export async function mergeContacts(
       )
     );
 
+    // 4b'. contact_career_moves: unique on (user_id, contact_id, dedupe_key), so a move both
+    //      contacts logged (the same person, researched twice) collides. Same shape as
+    //      contact_tags: move what does not collide, archive-and-drop the duplicate.
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "contact_career_moves",
+        sql`UPDATE contact_career_moves j SET contact_id = ${winnerId}::uuid
+             WHERE j.contact_id = ${loserId}::uuid AND j.user_id = ${userId}
+               AND NOT EXISTS (
+                 SELECT 1 FROM contact_career_moves w
+                  WHERE w.user_id = ${userId}
+                    AND w.contact_id = ${winnerId}::uuid
+                    AND w.dedupe_key = j.dedupe_key)
+         RETURNING id`
+      )
+    );
+    statements.push(
+      recordDeleted(
+        tx,
+        mergeId,
+        "contact_career_moves",
+        sql`DELETE FROM contact_career_moves
+             WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
+         RETURNING to_jsonb(contact_career_moves) AS row`
+      )
+    );
+
     // 4c. interaction_mentions: unique on (interaction_id, contact_id). The interactions
     //     repoint above may have just produced pairs that now collide.
     statements.push(
@@ -385,6 +423,18 @@ export async function mergeContacts(
       )
     );
 
+    // relationship_digests: the loser's row cascades with the loser. The winner's watermark
+    // describes only the winner's old thread, so it is cleared: the next pass re-reads the
+    // merged history from the start. Not archived: unmerge leaves both contacts pending,
+    // which re-derives exactly this.
+    statements.push(
+      tx.execute(sql`
+        UPDATE relationship_digests
+           SET watermark_at = NULL, watermark_interaction_id = NULL, attempts = 0
+         WHERE user_id = ${userId} AND contact_id = ${winnerId}::uuid
+      `)
+    );
+
     // contact_profiles is unique on (user_id, contact_id) and only one may survive. Move
     // the loser's only if the winner has none; otherwise the winner's stands.
     statements.push(
@@ -408,6 +458,21 @@ export async function mergeContacts(
         sql`DELETE FROM contact_profiles
              WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
          RETURNING to_jsonb(contact_profiles) AS row`
+      )
+    );
+
+    // recommendations: at most one LIVE row per (user, contact, kind), so the loser's live
+    // cards could collide with the winner's. They are archived rather than moved, and the
+    // next run raises whatever is still true about the merged person. Unmerge restores them
+    // from the archive like any other deleted row.
+    statements.push(
+      recordDeleted(
+        tx,
+        mergeId,
+        "recommendations",
+        sql`DELETE FROM recommendations
+             WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
+         RETURNING to_jsonb(recommendations) AS row`
       )
     );
 
@@ -501,6 +566,70 @@ export async function invalidateAfterMerge(userId: string, winnerId: string) {
   // Without the rescore the winner reads as never-scored, which triggers a full-network
   // recalibration on the user's next page view rather than a one-contact update.
   await rescoreContact(userId, winnerId);
+}
+
+/**
+ * Up to this many survivors are rescored one by one against the stored distribution; past it,
+ * the whole network is recalibrated once instead. A rescore is two dependent round trips per
+ * contact, a recalibration a fixed handful plus one write per 500 contacts — so for a bulk
+ * sweep the recalibration is cheaper, and for the usual one or two merges on a page render it
+ * is not.
+ */
+const RESCORE_ONE_BY_ONE_MAX = 5;
+
+/**
+ * `invalidateAfterMerge` for many survivors at once, for bulk callers that deferred it
+ * (`mergeConfidentDuplicates`). The same three effects in a bounded number of statements
+ * rather than a handful per survivor: one UPDATE marks every embedding stale and ONE batched
+ * rebuild is deferred past the response, the cohort is marked dirty once, and closeness is
+ * either rescored per survivor (few) or recalibrated for the network (many).
+ *
+ * The deferred rebuild does not clear `embedding_stale_at`: it cannot tell a provider failure
+ * from success. The backfill clears the marker without an API call once the stored vector's
+ * hash matches, and re-embeds the row if the rebuild never landed.
+ *
+ * Best-effort per step like the loop it replaces: a failed rescore of one survivor does not
+ * skip the others. Recalibration is last and rethrows, after the dirty mark is down, so the
+ * cron still drains a cohort a failed recalibration left behind.
+ */
+export async function invalidateAfterMerges(userId: string, winnerIds: Iterable<string>) {
+  const ids = [...new Set(winnerIds)];
+  if (ids.length === 0) return;
+  if (ids.length === 1) return invalidateAfterMerge(userId, ids[0]);
+
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ embeddingStaleAt: new Date() })
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, ids)));
+  deferEmbeddingRebuilds(userId, ids);
+  await markCohortDirty(userId);
+
+  if (ids.length <= RESCORE_ONE_BY_ONE_MAX) {
+    for (const id of ids) await rescoreContact(userId, id).catch(() => false);
+  } else {
+    await recalibrateCloseness(userId);
+  }
+}
+
+/**
+ * One batched embedding rebuild after the response. Same `after()`-or-macrotask shape as
+ * `deferEmbeddingRebuild` in `contact-writes.ts`, and for the same reasons: `after()` throws
+ * outside a request scope, and a bare call would race the caller's own writes.
+ */
+function deferEmbeddingRebuilds(userId: string, contactIds: string[]) {
+  const task = async () => {
+    try {
+      await rebuildContactEmbeddingsBatch(userId, contactIds);
+    } catch {
+      // Left stale on purpose; the backfill picks it up.
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
 }
 
 /**
@@ -669,6 +798,7 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
     }
     for (const table of [
       "contact_tags",
+      "contact_career_moves",
       "interaction_mentions",
       "contact_profiles",
       "contact_embeddings",
@@ -798,6 +928,52 @@ export async function recordDuplicateSuggestion(
         duplicateSuggestions.contactBId,
       ],
     });
+}
+
+export type DuplicateSuggestionPair = {
+  contactIdA: string;
+  contactIdB: string;
+  reason: string;
+  confidence: number;
+};
+
+/** Rows per insert: five parameters each, far under Postgres's 65,535-parameter ceiling. */
+const SUGGESTION_INSERT_CHUNK = 500;
+
+/**
+ * `recordDuplicateSuggestion` for many pairs in one INSERT per chunk rather than one per pair.
+ * Same canonical ordering, same self-pair skip, same DO NOTHING on the pair key. A pair named
+ * twice keeps its FIRST reason and confidence — what calling the single function in order
+ * would have left, since the second insert would have hit the conflict.
+ */
+export async function recordDuplicateSuggestions(
+  userId: string,
+  pairs: ReadonlyArray<DuplicateSuggestionPair>
+) {
+  const rows = new Map<string, typeof duplicateSuggestions.$inferInsert>();
+  for (const { contactIdA, contactIdB, reason, confidence } of pairs) {
+    if (contactIdA === contactIdB) continue;
+    const [a, b] = contactIdA < contactIdB ? [contactIdA, contactIdB] : [contactIdB, contactIdA];
+    const key = `${a}:${b}`;
+    if (!rows.has(key)) rows.set(key, { userId, contactAId: a, contactBId: b, reason, confidence });
+  }
+  if (rows.size === 0) return;
+
+  const values = [...rows.values()];
+  const db = await getDb();
+  for (let i = 0; i < values.length; i += SUGGESTION_INSERT_CHUNK) {
+    await db
+      .insert(duplicateSuggestions)
+      .values(values.slice(i, i + SUGGESTION_INSERT_CHUNK))
+      // See `recordDuplicateSuggestion`: a dismissed pair stays dismissed.
+      .onConflictDoNothing({
+        target: [
+          duplicateSuggestions.userId,
+          duplicateSuggestions.contactAId,
+          duplicateSuggestions.contactBId,
+        ],
+      });
+  }
 }
 
 /**

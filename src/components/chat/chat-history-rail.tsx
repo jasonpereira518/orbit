@@ -37,6 +37,15 @@ export type ChatHistoryRailProps<T extends ThreadLike> = {
    * placeholder rows instead of claiming there are no conversations.
    */
   loading?: boolean;
+  /**
+   * The list is a page: older threads exist past it. The server reads history a page at a
+   * time (`listChatThreads`), so the end of the list is not the end of the history.
+   */
+  hasMore?: boolean;
+  /** The next page is being read. */
+  loadingMore?: boolean;
+  /** Read the next (older) page and append it. */
+  onLoadMore?: () => void;
   activeId: string | null;
   /** Locked while an answer is streaming — switching threads mid-answer would orphan it. */
   busy: boolean;
@@ -60,6 +69,9 @@ export type ChatHistoryRailProps<T extends ThreadLike> = {
 function ChatHistoryRailImpl<T extends ThreadLike>({
   threads,
   loading = false,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
   activeId,
   busy,
   open,
@@ -78,6 +90,10 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
   // a stop during retrieval, an abandoned "New chat" — and listing each one buried the real
   // conversations under a column of identical "New chat" entries. The one you are in stays
   // visible however empty it is, since it is where you are.
+  //
+  // `listChatThreads` already leaves untitled threads out in SQL, so what this still catches
+  // is the panel's own additions (a chat just started) and a title JavaScript's `trim()`
+  // empties but Postgres's `btrim()` does not (tabs, no-break spaces).
   const groups = useMemo(
     () => groupThreadsByDay(threads.filter((t) => t.title?.trim() || t.id === activeId)),
     [threads, activeId]
@@ -188,6 +204,18 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
                   </ul>
                 </section>
               ))
+            )}
+            {hasMore && onLoadMore && groups.length > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-1 w-full text-xs text-muted-foreground"
+                onClick={onLoadMore}
+                disabled={loadingMore}
+              >
+                {loadingMore ? "Loading…" : "Show older chats"}
+              </Button>
             )}
           </div>
         </div>

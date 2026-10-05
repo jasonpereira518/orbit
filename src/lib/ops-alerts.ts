@@ -49,6 +49,13 @@ export type OpsSnapshot = {
      * a feed that stopped being read is indistinguishable from a quiet hiring season.
      */
     jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's nightly pass (`/api/radar/run`), once a day at 04:17 UTC. */
+    radarRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's news sweep (`/api/radar/feeds/sweep`), hourly at :53. */
+    radarFeeds: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** Radar's Monday email (`/api/radar/digest`), hourly at :13 through Sunday and Monday UTC. */
+    radarDigest: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    workHistory: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
   processStalledRecent: CronRunState[];
@@ -59,6 +66,11 @@ export type OpsSnapshot = {
   stripeCheckoutErrorsLastHour: number;
   /** `error_events` rows from `resend.rejected` in the last hour. */
   resendRejectedLastHour: number;
+  /**
+   * `error_events` rows from `ai.security` in the last hour, and how many accounts they span.
+   * Optional so a snapshot built before this existed still evaluates.
+   */
+  aiSecurityLastHour?: { events: number; accounts: number };
   wedgedImports: number;
   failedImportsLast24h: number;
   outreach: { overdue: number; oldestOverdueDays: number | null };
@@ -99,13 +111,13 @@ export type ManagedAiOpsFacts = {
   /** At least one managed key is set and `ORBIT_MANAGED_AI` is not "off". */
   configured: boolean;
   switchedOff: boolean;
-  /** Accounts that resolve to Lifetime (purchase or comp). */
-  lifetimeAccounts: number;
+  /** Accounts on a plan with included AI (Pro and Max, purchased or comped). */
+  includedAccounts: number;
   spentLast24hMicros: number;
   spentLast30dMicros: number;
-  /** Every Lifetime dollar ever booked (`billing_events.kind = 'lifetime'`), gross. */
-  lifetimeCashCents: number;
-  /** Accounts that have used their whole allowance this month. */
+  /** Subscription payments and credit packs booked in the last 30 days, gross. */
+  revenueLast30dCents: number;
+  /** Included-AI accounts with nothing spendable left: allowance used and no pack credits. */
   accountsAtCap: number;
   /** Providers whose managed key was refused or throttled in the last hour. */
   failingProviders: string[];
@@ -120,6 +132,13 @@ export const REMIND_AFTER_MS: Record<OpsSeverity, number | null> = {
 
 const WEBHOOK_STREAK = 3;
 export const PARTIAL_STREAK = 3;
+
+/**
+ * `ai.security` rows in an hour that open the condition. Each row is already throttled to one
+ * per (kind, account) per ten minutes, so five is five distinct episodes — a single agent
+ * tripping one wire once is noise; several in an hour is someone probing.
+ */
+export const AI_SECURITY_ALERT_EVENTS = 5;
 const FAILED_IMPORT_BURST = 3;
 const ERROR_BURST = 5;
 const PERF_SLOW_BURST = 3;
@@ -162,6 +181,37 @@ export const CALENDAR_DISARM_BURST = 5;
  * `warning`, never `critical`: nobody is paged because an internship notification is late.
  */
 const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Radar's nightly pass: daily, so a day and a quarter plus GitHub's lag.
+ *
+ * Unlike the job feed, a pass that has NEVER run is not an alert. The first run is up to a
+ * day after the deploy that adds it, and a condition that opens on every deploy and closes
+ * the next morning trains whoever reads these to ignore them. A pass that ran and then went
+ * quiet is the failure worth a message. `warning`: a late list of people to write to is not
+ * an outage.
+ */
+const RADAR_SILENT_MS = 30 * 60 * 60 * 1000;
+
+/**
+ * Radar's news sweep: hourly, so six hours is five missed runs. As with the nightly pass, a
+ * sweep that has never run is not an alert (it stands down until someone opens Radar, and a
+ * stand-down still records a run). `warning`: a headline noticed late costs nothing.
+ */
+const RADAR_FEEDS_SILENT_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Radar's Monday email runs every hour of Sunday and Monday UTC and not at all in between,
+ * so a normal gap is five days (Monday night to Sunday morning). Six days of silence means a
+ * whole Sunday passed without a run. As with the others, never having run is not an alert.
+ */
+const RADAR_DIGEST_SILENT_MS = 6 * 24 * 60 * 60 * 1000;
+
+/**
+ * The work-history sweep runs hourly (ops.yml, :37); six hours of silence is five missed
+ * runs, not GitHub's ordinary lag. `warning`: a job move noticed a day late costs nothing.
+ */
+const WORK_HISTORY_SILENT_MS = 6 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -245,6 +295,19 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: unattributed.fulfilments > 0 ? "critical" : "warning",
       title: unattributed.fulfilments > 0 ? "Someone paid and has no plan" : "Stripe events match no account",
       detail: `${unattributed.fulfilments} checkout fulfilment(s) and ${unattributed.other} other Stripe event(s) in the last day matched no Orbit account. error_events (source stripe.unattributed) holds each event id.`,
+      href: "/admin/health",
+    });
+  }
+
+  const aiSec = s.aiSecurityLastHour;
+  if (aiSec && aiSec.events >= AI_SECURITY_ALERT_EVENTS) {
+    out.push({
+      id: "ai.security",
+      // Critical when it is not one account: several accounts tripping guards in the same hour
+      // looks like a poisoned shared source (a recruiter row, an event page) or a campaign.
+      severity: aiSec.accounts >= 3 ? "critical" : "warning",
+      title: "AI guardrails are tripping",
+      detail: `${aiSec.events} AI security event(s) across ${aiSec.accounts} account(s) in the last hour — refused tool calls, oversized MCP batches, draft floods or scrubbed answers. error_events (source ai.security) holds the kind and account of each.`,
       href: "/admin/health",
     });
   }
@@ -348,6 +411,91 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Job feed sweep ${jobFeed.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${jobFeed.lastStartedAt?.toISOString() ?? "unknown"} ended ${jobFeed.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  const radarRun = s.cron.radarRun;
+  if (radarRun.lastStartedAt && now.getTime() - radarRun.lastStartedAt.getTime() > RADAR_SILENT_MS) {
+    out.push({
+      id: "radar.schedule_missed",
+      severity: "warning",
+      title: "Radar's nightly pass has stopped running",
+      detail: `Last started ${radarRun.lastStartedAt.toISOString()}; nobody's Radar list is being refreshed overnight.`,
+      href: "/admin/health",
+    });
+  } else if (radarRun.lastState === "failed" || radarRun.lastState === "stale") {
+    out.push({
+      id: "radar.run_failed",
+      severity: "warning",
+      title: `Radar's nightly pass ${radarRun.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarRun.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarRun.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  const radarFeeds = s.cron.radarFeeds;
+  if (radarFeeds.lastStartedAt && now.getTime() - radarFeeds.lastStartedAt.getTime() > RADAR_FEEDS_SILENT_MS) {
+    out.push({
+      id: "radarfeeds.schedule_missed",
+      severity: "warning",
+      title: "Radar's news sweep has stopped running",
+      detail: `Last started ${radarFeeds.lastStartedAt.toISOString()}; headlines about people's companies are not arriving.`,
+      href: "/admin/health",
+    });
+  } else if (radarFeeds.lastState === "failed" || radarFeeds.lastState === "stale") {
+    out.push({
+      id: "radarfeeds.run_failed",
+      severity: "warning",
+      title: `Radar's news sweep ${radarFeeds.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarFeeds.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarFeeds.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // `partial` is a run where Resend refused someone; they are retried the next hour, and the
+  // error log carries the reason. Only a run that failed outright, or went quiet, is news.
+  const radarDigest = s.cron.radarDigest;
+  if (radarDigest.lastStartedAt && now.getTime() - radarDigest.lastStartedAt.getTime() > RADAR_DIGEST_SILENT_MS) {
+    out.push({
+      id: "radardigest.schedule_missed",
+      severity: "warning",
+      title: "Radar's Monday email has stopped running",
+      detail: `Last started ${radarDigest.lastStartedAt.toISOString()}; nobody is getting their weekly list by email.`,
+      href: "/admin/health",
+    });
+  } else if (radarDigest.lastState === "failed" || radarDigest.lastState === "stale") {
+    out.push({
+      id: "radardigest.run_failed",
+      severity: "warning",
+      title: `Radar's Monday email ${radarDigest.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${radarDigest.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarDigest.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // And the same pair for the work-history sweep. `partial` is its ordinary shape too — a
+  // run that handed unstarted claims back when its time ran out.
+  const workHistory = s.cron.workHistory;
+  const workHistorySilentFor = workHistory.lastStartedAt
+    ? now.getTime() - workHistory.lastStartedAt.getTime()
+    : null;
+  if (workHistorySilentFor === null || workHistorySilentFor > WORK_HISTORY_SILENT_MS) {
+    out.push({
+      id: "workhistory.schedule_missed",
+      severity: "warning",
+      title: "Work-history sweep has stopped running",
+      detail: workHistory.lastStartedAt
+        ? `Last started ${workHistory.lastStartedAt.toISOString()}; contacts' job moves are not being noticed.`
+        : "No run has ever been recorded; contacts' job moves are not being noticed.",
+      href: "/admin/health",
+    });
+  } else if (workHistory.lastState === "failed" || workHistory.lastState === "stale") {
+    out.push({
+      id: "workhistory.run_failed",
+      severity: "warning",
+      title: `Work-history sweep ${workHistory.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${workHistory.lastStartedAt?.toISOString() ?? "unknown"} ended ${workHistory.lastState}.`,
       href: "/admin/health",
     });
   }
@@ -573,19 +721,19 @@ function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
       id: `ai.managed_failing:${provider}`,
       severity: "critical",
       title: `Orbit's managed ${provider} key is being refused`,
-      detail: `The provider rejected or throttled Orbit's own ${provider} key in the last hour — every Lifetime account without a key of its own has lost AI. Check the key and its quota.`,
+      detail: `The provider rejected or throttled Orbit's own ${provider} key in the last hour — every Pro and Max account on included AI has lost it. Check the key and its quota.`,
       href: "/admin/health",
     });
   }
 
-  if (m.lifetimeAccounts > 0 && !m.configured) {
+  if (m.includedAccounts > 0 && !m.configured) {
     out.push({
       id: "ai.managed_unconfigured",
       severity: "warning",
       title: m.switchedOff ? "Managed AI is switched off" : "No managed AI key is configured",
       detail: m.switchedOff
-        ? `ORBIT_MANAGED_AI=off, so ${m.lifetimeAccounts} Lifetime account(s) can only use AI with a key of their own.`
-        : `${m.lifetimeAccounts} Lifetime account(s) were promised AI on Orbit's keys, but no ORBIT_MANAGED_*_API_KEY is set.`,
+        ? `ORBIT_MANAGED_AI=off, so ${m.includedAccounts} Pro and Max account(s) can only use AI with a key of their own.`
+        : `${m.includedAccounts} Pro and Max account(s) pay for included AI, but no ORBIT_MANAGED_*_API_KEY is set.`,
     });
   }
 
@@ -600,17 +748,17 @@ function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
   }
 
   if (m.spentLast30dMicros >= MANAGED_AI_ALERTS.runwayMinSpendMicros) {
-    const annualMicros = (m.spentLast30dMicros * 365) / 30;
-    const years = (m.lifetimeCashCents * 10_000) / annualMicros;
-    if (years < MANAGED_AI_ALERTS.runwayYears) {
+    const revenueMicros = m.revenueLast30dCents * 10_000;
+    const share = revenueMicros > 0 ? m.spentLast30dMicros / revenueMicros : Infinity;
+    if (share > MANAGED_AI_ALERTS.maxCostShare) {
       out.push({
         id: "ai.managed_runway",
         severity: "warning",
-        title: "Managed AI is outpacing Lifetime revenue",
+        title: "Managed AI is outpacing revenue",
         detail:
-          m.lifetimeCashCents > 0
-            ? `At the last 30 days' pace (${usd(m.spentLast30dMicros)}), managed AI costs ${usd(annualMicros)} a year — every Lifetime dollar booked so far covers ${years.toFixed(1)} year(s) of it. Revisit the cap or the price.`
-            : `${usd(m.spentLast30dMicros)} of managed AI in the last 30 days with no Lifetime revenue booked behind it (comps or demo accounts).`,
+          m.revenueLast30dCents > 0
+            ? `Managed AI cost ${usd(m.spentLast30dMicros)} in the last 30 days — ${Math.round(share * 100)}% of the ${usd(revenueMicros)} of subscription and pack revenue booked in the same window (alarm above ${Math.round(MANAGED_AI_ALERTS.maxCostShare * 100)}%). Revisit the allowances or the prices.`
+            : `${usd(m.spentLast30dMicros)} of managed AI in the last 30 days with no revenue booked behind it (comps only).`,
         href: "/admin/billing/costs",
       });
     }
@@ -620,8 +768,8 @@ function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
     out.push({
       id: "ai.managed_cap_hit",
       severity: "info",
-      title: "Lifetime accounts are hitting the AI cap",
-      detail: `${m.accountsAtCap} account(s) have used this month's whole managed-AI allowance and are back to bring-your-own-key until the 1st. A rising count says the cap is too tight for real use.`,
+      title: "Accounts are running out of AI credits",
+      detail: `${m.accountsAtCap} Pro or Max account(s) have used their whole allowance and hold no pack credits, so their included AI is paused until renewal. A rising count says the allowances are too tight for real use.`,
       href: "/admin/billing/costs",
     });
   }

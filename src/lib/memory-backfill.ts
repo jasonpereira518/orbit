@@ -18,6 +18,8 @@ import {
   memorySourceHash,
   memorySourceHashSql,
   syncMemoryChunks,
+  syncMemoryChunksMany,
+  type MemoryChunkDraft,
 } from "@/lib/memory-chunks";
 
 /**
@@ -56,8 +58,21 @@ function staleInteractions(userId?: string) {
   `;
 }
 
-/** Interactions per pass. Each one is a delete-then-insert, so this is the real write cost. */
+/** Interactions per pass. Each one is a delete-then-insert (written in groups, below), so this is the real write cost. */
 const CLAIM_SIZE = 200;
+
+/**
+ * Interactions per write group. Each group is two round trips (the carry-over read and one
+ * atomic delete+insert) however many rows it holds, which is what the sweep's cost is on
+ * neon-http; small enough that a failed group's one-row retry stays well inside the budget.
+ */
+const SYNC_GROUP_SIZE = 50;
+
+/**
+ * Chunks per write group. A carried-over embedding travels in the insert, so this is what
+ * bounds one request's size when a group is full of long, edited notes.
+ */
+const SYNC_GROUP_MAX_CHUNKS = 200;
 
 /** Leaves room inside a 60s route or a cron slot for whatever else the caller is doing. */
 const TIME_BUDGET_MS = 20_000;
@@ -106,9 +121,9 @@ const INDEXABLE_COLUMNS = (userId: string) => sql`
  * `interactions` row maps onto it, and it lives in one place so the sweep and the write-path
  * re-index cannot drift into indexing the same note two different ways.
  *
- * Returns the number of chunks written, or 0 for a row with nothing to index.
+ * Pure: the write is the caller's, one source at a time or a group at once.
  */
-async function indexClaimedInteraction(userId: string, row: IndexableInteraction): Promise<number> {
+function prepareClaimedInteraction(row: IndexableInteraction) {
   const occurredAt = row.interaction_date ? new Date(row.interaction_date) : null;
   const text = row.raw_notes || row.ai_summary;
   const drafts = buildMemoryChunks({
@@ -119,17 +134,24 @@ async function indexClaimedInteraction(userId: string, row: IndexableInteraction
     contactName: row.contact_name,
     contactIds: row.mention_ids ?? [],
   });
+  const sourceHash = memorySourceHash({
+    text,
+    occurredAt,
+    interactionType: row.interaction_type,
+    contactId: row.contact_id,
+  });
+  return { drafts, sourceHash };
+}
+
+/** Index one claimed row. Returns the number of chunks written, or 0 for a row with nothing to index. */
+async function indexClaimedInteraction(userId: string, row: IndexableInteraction): Promise<number> {
+  const { drafts, sourceHash } = prepareClaimedInteraction(row);
   if (!drafts.length) return 0;
   const result = await syncMemoryChunks(userId, {
     sourceKind: "interaction",
     sourceId: row.id,
     drafts,
-    sourceHash: memorySourceHash({
-      text,
-      occurredAt,
-      interactionType: row.interaction_type,
-      contactId: row.contact_id,
-    }),
+    sourceHash,
   });
   return result.written;
 }
@@ -190,19 +212,73 @@ export async function backfillMemoryChunks(
   let indexed = 0;
   let chunks = 0;
 
-  const rows = await claim(limit);
-  for (const row of rows) {
-    if (Date.now() - started > budget) break;
+  /** The original one-row path, kept as the fallback when a group write fails. */
+  const indexOne = async (row: IndexableInteraction) => {
     scanned++;
     try {
       const written = await indexClaimedInteraction(userId, row);
-      if (!written) continue;
+      if (!written) return;
       indexed++;
       chunks += written;
     } catch (err) {
       // One bad row must not stop the sweep — the next pass will try it again, and a row
       // that fails forever is one unindexed note rather than an unindexed account.
       console.warn("[memory-backfill] could not index interaction", row.id, err);
+    }
+  };
+
+  const rows = await claim(limit);
+  let next = 0;
+  while (next < rows.length) {
+    if (Date.now() - started > budget) break;
+
+    // Chunked in memory first (pure), then written a group at a time: one carry-over read
+    // and one atomic delete+insert per group instead of two round trips per interaction.
+    const group: Array<{ row: IndexableInteraction; drafts: MemoryChunkDraft[]; sourceHash: string }> = [];
+    let groupChunks = 0;
+    while (next < rows.length && group.length < SYNC_GROUP_SIZE) {
+      const row = rows[next];
+      let prepared: ReturnType<typeof prepareClaimedInteraction>;
+      try {
+        prepared = prepareClaimedInteraction(row);
+      } catch (err) {
+        next++;
+        scanned++;
+        console.warn("[memory-backfill] could not index interaction", row.id, err);
+        continue;
+      }
+      if (group.length && groupChunks + prepared.drafts.length > SYNC_GROUP_MAX_CHUNKS) break;
+      next++;
+      if (!prepared.drafts.length) {
+        // Nothing to index, and — exactly as one row at a time — nothing written for it.
+        scanned++;
+        continue;
+      }
+      group.push({ row, ...prepared });
+      groupChunks += prepared.drafts.length;
+    }
+    if (!group.length) continue;
+
+    try {
+      const counts = await syncMemoryChunksMany(
+        userId,
+        "interaction",
+        group.map((g) => ({ sourceId: g.row.id, drafts: g.drafts, sourceHash: g.sourceHash }))
+      );
+      scanned += group.length;
+      for (const { written } of counts) {
+        if (!written) continue;
+        indexed++;
+        chunks += written;
+      }
+    } catch (err) {
+      // The group is one atomic write, so nothing of it landed. Retry it a row at a time,
+      // under the same budget, so one row that cannot be written costs only itself.
+      console.warn("[memory-backfill] group write failed; retrying one at a time", err);
+      for (const { row } of group) {
+        if (Date.now() - started > budget) break;
+        await indexOne(row);
+      }
     }
   }
 

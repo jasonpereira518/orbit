@@ -143,7 +143,7 @@ function AlertRow({
     "flex items-center rounded-lg border text-sm transition-colors",
     isError
       ? "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/15"
-      : "border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-400"
+      : "border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-warning"
   );
   const body = cn(
     "flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2.5 text-left",

@@ -12,7 +12,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ReactFlow,
-  Background,
   ReactFlowProvider,
   useReactFlow,
   applyNodeChanges,
@@ -106,8 +105,11 @@ function DefaultViewFitter({
    */
   onSettled?: () => void;
 }) {
-  const { setCenter, getNodes } = useReactFlow();
+  const { setCenter } = useReactFlow();
   const storeApi = useStoreApi();
+  // React Flow's own nodes, not the ones it was handed: those no longer carry the measured
+  // boxes this framing reads (see `Measurements`); React Flow's copies always do.
+  const liveNodes = () => [...storeApi.getState().nodeLookup.values()];
   const layoutRef = useRef(layoutNodes);
   const onSettledRef = useRef(onSettled);
   layoutRef.current = layoutNodes;
@@ -132,7 +134,7 @@ function DefaultViewFitter({
         return;
       }
 
-      const { maxAbsX, maxAbsY } = computeSunExtents(layoutRef.current, getNodes());
+      const { maxAbsX, maxAbsY } = computeSunExtents(layoutRef.current, liveNodes());
       const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, width, height);
       const duration = animate ? CAMERA_MS.move : 0;
 
@@ -162,7 +164,7 @@ function DefaultViewFitter({
             onSettledRef.current?.();
             return;
           }
-          const extents = computeSunExtents(layoutRef.current, getNodes());
+          const extents = computeSunExtents(layoutRef.current, liveNodes());
           const z = zoomToFitSunCentered(
             extents.maxAbsX,
             extents.maxAbsY,
@@ -209,7 +211,12 @@ const edgeTypes: EdgeTypes = {
   straight: LabeledEdge,
 };
 
-// Module constants rather than inline literals, so <ReactFlow> sees the same props each render.
+/*
+ * Module constants, not inline literals: React Flow copies these props into its store whenever
+ * their identity changes (its StoreUpdater compares by reference), and every store write runs
+ * every drawn node's, edge's and handle's selector. Inline, each re-render of the chart — one a
+ * frame while stars mount during a zoom — made such writes for nothing.
+ */
 const NODE_ORIGIN: NodeOrigin = [0.5, 0.5];
 const PRO_OPTIONS: ProOptions = { hideAttribution: true };
 const DEFAULT_EDGE_OPTIONS: DefaultEdgeOptions = {
@@ -299,6 +306,9 @@ function viewportWorldRect(
   const y = -ty / k;
   return { x0: x - w * grow, y0: y - h * grow, x1: x + w * (1 + grow), y1: y + h * (1 + grow), zoom: k };
 }
+
+/** How long after the camera stops before it counts as stopped — see `setMoving`. */
+const MOVE_SETTLE_MS = 120;
 
 /** A refresh or filter that brings in more people than this skips the entrance animation. */
 const ENTRANCE_MAX = 400;
@@ -587,9 +597,14 @@ function shallowEqualData(a: unknown, b: unknown): boolean {
  * the nodes already on screen: a node whose type, position and data are unchanged keeps its
  * object — and with it React Flow's measured size and the memoised component — so a batch that
  * touched eight people re-renders eight stars, not all of them. A changed node still inherits
- * its predecessor's `measured` box, which React Flow otherwise forgets and re-measures.
+ * its predecessor's measured box (from `measured`, see `Measurements`), which React Flow
+ * otherwise forgets and re-measures.
  */
-function buildStructuralNodes(layoutNodes: LayoutNodes, previous: Node[] | null): Node[] {
+function buildStructuralNodes(
+  layoutNodes: LayoutNodes,
+  previous: Node[] | null,
+  measured: Measurements
+): Node[] {
   const prevById = previous ? new Map(previous.map((n) => [n.id, n])) : null;
   return layoutNodes.map((n) => {
     const prev = prevById?.get(n.id);
@@ -605,9 +620,73 @@ function buildStructuralNodes(layoutNodes: LayoutNodes, previous: Node[] | null)
     return {
       ...n,
       draggable: false,
-      ...(prev && prev.type === n.type && prev.measured ? { measured: prev.measured } : null),
+      ...(prev && prev.type === n.type ? measuredOf(measured, n.id) : null),
     } as Node;
   });
+}
+
+/**
+ * React Flow's measured size of each node, kept beside the nodes rather than in them.
+ *
+ * React Flow keeps a node's measured box itself for as long as it is handed the same node
+ * object, and reports each new measurement through `onNodesChange`. Applying those reports to
+ * the sky's own nodes (as this did) made every measurement a state update that rebuilt every
+ * node and edge: each batch of stars mounting on the way in from the whole sky cost two full
+ * commits a frame — one to mount them, one when they were measured — and every cluster name
+ * resizing at a zoom step cost one more. Kept here instead, a measurement changes nothing React
+ * renders; a node object that IS rebuilt (its emphasis changed) carries its box from here, so
+ * React Flow never forgets it and never re-measures.
+ */
+type Measurements = Map<string, { width: number; height: number }>;
+
+function measuredOf(measured: Measurements, id: string) {
+  const box = measured.get(id);
+  return box ? { measured: box } : null;
+}
+
+/**
+ * `list`, or the previous array when every element is the same object in the same order.
+ *
+ * React Flow stores `nodes` and `edges` whenever the array's identity changes, and each store
+ * write runs every drawn node's and edge's selector. The memos that build them rebuild on inputs
+ * that often leave the result unchanged — every mount batch recomputes the edges, most of which
+ * add no line — and a new array with the same elements was still a write.
+ */
+function useSameArrayIfUnchanged<T>(list: T[]): T[] {
+  const [kept, setKept] = useState(list);
+  if (kept === list) return kept;
+  if (kept.length === list.length && kept.every((item, i) => item === list[i])) return kept;
+  setKept(list);
+  return list;
+}
+
+/**
+ * The nodes to hand React Flow: `nodes`, plus whatever just left it, kept one more commit as
+ * `hidden`.
+ *
+ * React Flow drops a removed node from its store the moment it receives the new list, but the
+ * node's wrapper is still mounted and subscribed until React unmounts it, and the wrapper's
+ * selector reads `nodeLookup.get(id).internals` — a TypeError for every removed node on every
+ * store update in between. React catches each one, but an exception captures a stack: entering
+ * the summary view (hundreds of stars leaving over a few frames) threw ~600 of them and cost
+ * frames of 30–250ms. A hidden node is still in the store, so its wrapper unmounts cleanly
+ * (hidden nodes are not visible ones); it is dropped at the next change, by which time nothing
+ * is subscribed to it. Nothing is drawn differently: a hidden node renders nothing.
+ */
+function useHiddenBeforeRemoved(nodes: Node[]): Node[] {
+  const [handed, setHanded] = useState<{ from: Node[]; out: Node[] }>(() => ({
+    from: nodes,
+    out: nodes,
+  }));
+  if (handed.from === nodes) return handed.out;
+  const staying = new Set(nodes.map((n) => n.id));
+  const leaving = handed.from.filter((n) => !staying.has(n.id) && !n.hidden);
+  const out =
+    leaving.length === 0
+      ? nodes
+      : [...nodes, ...leaving.map((n) => ({ ...n, hidden: true }))];
+  setHanded({ from: nodes, out });
+  return out;
 }
 
 type SkyState = {
@@ -693,13 +772,16 @@ function GraphCanvasInner({
   const prevClusterZoomKey = useRef("");
   const prevPeekZoomKey = useRef("");
 
+  // Mutable on purpose, and never a render input — see `Measurements`.
+  const [measured] = useState<Measurements>(() => new Map());
+
   const [sky, setSky] = useState<SkyState>(() => {
     const ids = contactIds(layout.nodes);
     return {
       layout,
       layoutKey,
       epoch: 0,
-      nodes: buildStructuralNodes(layout.nodes, null),
+      nodes: buildStructuralNodes(layout.nodes, null, measured),
       entering: ids.length <= ENTRANCE_MAX ? new Set(ids) : NO_IDS,
     };
   });
@@ -713,7 +795,7 @@ function GraphCanvasInner({
       layout,
       layoutKey,
       epoch: sky.layoutKey === layoutKey ? sky.epoch : sky.epoch + 1,
-      nodes: buildStructuralNodes(layout.nodes, sky.nodes),
+      nodes: buildStructuralNodes(layout.nodes, sky.nodes, measured),
       entering:
         added.length > 0 && added.length <= ENTRANCE_MAX ? new Set(added) : NO_IDS,
     });
@@ -769,8 +851,20 @@ function GraphCanvasInner({
       setSummaryWanted((was) =>
         was ? zoom < SUMMARY_EXIT_ZOOM : zoom < SUMMARY_ENTER_ZOOM
       );
-    check(storeApi.getState().transform[2]);
-    return storeApi.subscribe((s) => check(s.transform[2]));
+    // The answer can only change where the zoom crosses one of the two thresholds, so only a
+    // crossing asks. Calling the setter on every camera update — every wheel event of a pinch —
+    // re-ran this whole component each time just to find nothing had changed.
+    let last = storeApi.getState().transform[2];
+    check(last);
+    return storeApi.subscribe((s) => {
+      const zoom = s.transform[2];
+      if (zoom === last) return;
+      const crossed =
+        zoom < SUMMARY_ENTER_ZOOM !== last < SUMMARY_ENTER_ZOOM ||
+        zoom < SUMMARY_EXIT_ZOOM !== last < SUMMARY_EXIT_ZOOM;
+      last = zoom;
+      if (crossed) check(zoom);
+    });
   }, [summaryAllowed, viewportReady, storeApi]);
   const summary = summaryAllowed && summaryWanted;
 
@@ -819,7 +913,7 @@ function GraphCanvasInner({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const movingRef = useRef(false);
   const placeWindowRef = useRef<(() => void) | null>(null);
-  const setMoving = useCallback((moving: boolean) => {
+  const applyMoving = useCallback((moving: boolean) => {
     stageRef.current?.classList.toggle("constellation-moving", moving);
     movingRef.current = moving;
     setCameraMoving(moving);
@@ -829,6 +923,122 @@ function GraphCanvasInner({
     // Stopped: choose the window for where the camera actually landed.
     if (!moving) placeWindowRef.current?.();
   }, []);
+
+  /**
+   * Moving starts at once and stops MOVE_SETTLE_MS after the camera last stopped.
+   *
+   * Every stop demotes the sky's compositor layer (re-rastering all of it), redraws the dust and
+   * wash canvases and re-places the star window, and every start promotes the layer again. A
+   * mouse wheel stops between notches and a trackpad between strokes, so a zoom made of several
+   * paid all of that at each pause. Waiting a beat for the next stroke pays it once, at the end.
+   */
+  const stopTimerRef = useRef<number | undefined>(undefined);
+  const setMoving = useCallback(
+    (moving: boolean) => {
+      if (stopTimerRef.current !== undefined) {
+        window.clearTimeout(stopTimerRef.current);
+        stopTimerRef.current = undefined;
+      }
+      if (moving) {
+        if (!movingRef.current) applyMoving(true);
+        return;
+      }
+      stopTimerRef.current = window.setTimeout(() => {
+        stopTimerRef.current = undefined;
+        applyMoving(false);
+      }, MOVE_SETTLE_MS);
+    },
+    [applyMoving]
+  );
+  /**
+   * At most one zoom a frame.
+   *
+   * A trackpad pinch or a fast scroll delivers wheel events faster than frames — two or more a
+   * frame on a 60Hz screen — and each one is a React Flow store update, which runs every drawn
+   * node's store selector and commits. That per-event cost, not the zoom itself, was most of a
+   * pinch frame. So the first wheel event of a frame goes through untouched; any more in the same
+   * frame are held, summed, and delivered as one event at the start of the next. The camera ends
+   * where it would have: a wheel zoom multiplies the scale by 2^(k·delta), so one event carrying
+   * the summed delta lands on the same zoom as the events it replaces. Events of different kinds
+   * (a pinch against a scroll, different delta units) are never merged.
+   */
+  useEffect(() => {
+    const root = stageRef.current;
+    if (!root) return;
+    const forwarded = new WeakSet<Event>();
+    let frame = 0;
+    let held: {
+      target: EventTarget;
+      init: WheelEventInit;
+    } | null = null;
+    const release = () => {
+      const h = held;
+      held = null;
+      if (!h) return false;
+      const event = new WheelEvent("wheel", h.init);
+      forwarded.add(event);
+      // A star under the pointer may have left the DOM since; the pane still zooms.
+      const target =
+        h.target instanceof Node && h.target.isConnected
+          ? h.target
+          : (root.querySelector(".react-flow__pane") ?? root);
+      target.dispatchEvent(event);
+      return true;
+    };
+    const onFrame = () => {
+      // Delivering held events is this frame's zoom; with nothing held, the next event may pass.
+      frame = release() ? requestAnimationFrame(onFrame) : 0;
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (forwarded.has(e)) return;
+      if (
+        held &&
+        (held.init.ctrlKey !== e.ctrlKey || held.init.deltaMode !== e.deltaMode)
+      ) {
+        release();
+      }
+      if (!frame) {
+        frame = requestAnimationFrame(onFrame);
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const init: WheelEventInit = held?.init ?? {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        deltaX: 0,
+        deltaY: 0,
+        deltaZ: 0,
+        deltaMode: e.deltaMode,
+        ctrlKey: e.ctrlKey,
+      };
+      init.deltaX = (init.deltaX ?? 0) + e.deltaX;
+      init.deltaY = (init.deltaY ?? 0) + e.deltaY;
+      init.clientX = e.clientX;
+      init.clientY = e.clientY;
+      init.screenX = e.screenX;
+      init.screenY = e.screenY;
+      init.shiftKey = e.shiftKey;
+      init.altKey = e.altKey;
+      init.metaKey = e.metaKey;
+      held = { target: e.target ?? root, init };
+    };
+    root.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    return () => {
+      root.removeEventListener("wheel", onWheel, { capture: true });
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  // Leaving mid-move must not leave the shared camera flag (camera-motion.ts) stuck on.
+  useEffect(
+    () => () => {
+      if (stopTimerRef.current !== undefined) window.clearTimeout(stopTimerRef.current);
+      setCameraMoving(false);
+    },
+    []
+  );
 
   const windowing = summaryAllowed && !summary;
   const [starWindow, setStarWindow] = useState<WorldRect | null>(null);
@@ -840,30 +1050,38 @@ function GraphCanvasInner({
   }
   useEffect(() => {
     if (!windowing || !viewportReady) return;
-    const place = () => {
+    // The window this effect last placed. Kept here so a camera update that leaves it where it
+    // is — nearly all of them — sets no state: handing React an updater that returns the same
+    // window still re-ran this whole component to find that out, on every wheel event.
+    let current: WorldRect | null = null;
+    const next = (prev: WorldRect | null): WorldRect | null => {
       const { transform, width, height } = storeApi.getState();
-      if (width < 2 || height < 2) return;
-      setStarWindow((prev) => {
-        if (prev) {
-          const inner = viewportWorldRect(transform, width, height, 0);
-          const slackX = (inner.x1 - inner.x0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
-          const zoomed = Math.abs(Math.log2(transform[2] / prev.zoom));
-          // Mid-zoom, keep the stars that are up rather than choosing a new set every step.
-          // `setMoving` places the window again the moment the camera stops.
-          if (movingRef.current && zoomed > 0.01) return prev;
-          const slackY = (inner.y1 - inner.y0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
-          if (
-            zoomed < 0.25 &&
-            inner.x0 >= prev.x0 + slackX &&
-            inner.y0 >= prev.y0 + slackY &&
-            inner.x1 <= prev.x1 - slackX &&
-            inner.y1 <= prev.y1 - slackY
-          ) {
-            return prev;
-          }
+      if (width < 2 || height < 2) return prev;
+      if (prev) {
+        const inner = viewportWorldRect(transform, width, height, 0);
+        const slackX = (inner.x1 - inner.x0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
+        const zoomed = Math.abs(Math.log2(transform[2] / prev.zoom));
+        // Mid-zoom, keep the stars that are up rather than choosing a new set every step.
+        // `setMoving` places the window again the moment the camera stops.
+        if (movingRef.current && zoomed > 0.01) return prev;
+        const slackY = (inner.y1 - inner.y0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
+        if (
+          zoomed < 0.25 &&
+          inner.x0 >= prev.x0 + slackX &&
+          inner.y0 >= prev.y0 + slackY &&
+          inner.x1 <= prev.x1 - slackX &&
+          inner.y1 <= prev.y1 - slackY
+        ) {
+          return prev;
         }
-        return viewportWorldRect(transform, width, height, STAR_WINDOW_MARGIN);
-      });
+      }
+      return viewportWorldRect(transform, width, height, STAR_WINDOW_MARGIN);
+    };
+    const place = () => {
+      const placed = next(current);
+      if (placed === current) return;
+      current = placed;
+      setStarWindow(placed);
     };
     placeWindowRef.current = place;
     place();
@@ -1252,6 +1470,10 @@ function GraphCanvasInner({
    * Rebuilt only when the sky or the emphasis changes — a pan, a zoom or a hover leaves it
    * alone, so the canvas is not asked to redraw for any of them.
    */
+  // A cluster's wash dims only while a search narrows the sky (`clusterEmphasis`), so outside one
+  // the focused company changes nothing here. Keyed on it anyway, hovering a star rebuilt and
+  // redrew the whole wash — every cluster's gradients — on every hover.
+  const washFocusCompany = searchDimActive ? focusCompany : null;
   const nebulaWash = useMemo((): NebulaWashData | null => {
     const clusters: NebulaWashCluster[] = [];
     let minX = Infinity;
@@ -1267,7 +1489,7 @@ function GraphCanvasInner({
         x: n.position.x,
         y: n.position.y,
         radius: d.radius,
-        opacity: clusterEmphasis(d.company, focusCompany, company, searchDimActive),
+        opacity: clusterEmphasis(d.company, washFocusCompany, company, searchDimActive),
       });
       // The same box the wash used to have its own element for: four radii across, so the
       // cloud dissolves well before the canvas ends and no cluster is clipped at the edge.
@@ -1286,7 +1508,7 @@ function GraphCanvasInner({
       width: maxX - minX,
       height: maxY - minY,
     };
-  }, [skyLayoutNodes, focusCompany, company, searchDimActive]);
+  }, [skyLayoutNodes, washFocusCompany, company, searchDimActive]);
 
   /** One node, carrying its own `measured` box for the same reason the dust node does. */
   const nebulaWashNode = useMemo((): Node | null => {
@@ -1313,19 +1535,72 @@ function GraphCanvasInner({
     };
   }, [nebulaWash]);
 
+  /**
+   * Where each node sits in `orbitNodes`, so the pass below can visit only the stars that can
+   * be drawn and still hand React Flow its nodes in the sky's order (which is their stacking
+   * order in the DOM).
+   */
+  const orbitOrder = useMemo(() => {
+    const contactIndex = new Map<string, number>();
+    const otherIndexes: number[] = [];
+    orbitNodes.forEach((n, i) => {
+      if (n.type === "contact") contactIndex.set(n.id, i);
+      else otherIndexes.push(i);
+    });
+    return { contactIndex, otherIndexes };
+  }, [orbitNodes]);
+
   const nodes = useMemo(() => {
     const out: Node[] = [];
     if (starDustNode) out.push(starDustNode);
     if (nebulaWashNode) out.push(nebulaWashNode);
 
-    for (const n of orbitNodes) {
+    /**
+     * In a large sky only a few hundred of the stars are drawn, so the pass visits those rather
+     * than every contact: this runs on every frame a batch of stars mounts, and on every hover,
+     * and walking thousands of contacts to skip them was most of its cost. The candidates are
+     * exactly the stars the skip test below can let through — mounted, hovered, selected, the
+     * peek, and the search hits it will mount — in the sky's order, so nothing it produces
+     * changes.
+     */
+    let visit: Node[] = orbitNodes;
+    if (summaryAllowed) {
+      const indexes = [...orbitOrder.otherIndexes];
+      const add = (id: string | null | undefined) => {
+        const i = id ? orbitOrder.contactIndex.get(id) : undefined;
+        if (i !== undefined) indexes.push(i);
+      };
+      for (const id of mounted) add(id);
+      add(hoveredId);
+      add(focusState.selectedContactId);
+      add(peekPersonId);
+      if (focusState.searchDimActive && searchHitIds.size <= SUMMARY_MOUNT_HITS_MAX) {
+        for (const id of searchHitIds) add(id);
+      }
+      indexes.sort((a, b) => a - b);
+      visit = [];
+      let last = -1;
+      for (const i of indexes) {
+        if (i === last) continue;
+        last = i;
+        visit.push(orbitNodes[i]);
+      }
+    }
+
+    for (const n of visit) {
       if (n.type === "orbitRings") {
         out.push(n);
         continue;
       }
       if (n.type === "user") {
         const selected = selection?.type === "user";
-        out.push(withEmphasis(n, selected ? "sel" : "", () => ({ ...n, selected }) as Node));
+        out.push(
+          withEmphasis(
+            n,
+            selected ? "sel" : "",
+            () => ({ ...n, ...measuredOf(measured, n.id), selected }) as Node
+          )
+        );
         continue;
       }
       // The washes are drawn on `nebulaWashNode` above, not one box each.
@@ -1350,6 +1625,7 @@ function GraphCanvasInner({
             () =>
               ({
                 ...n,
+                ...measuredOf(measured, n.id),
                 hidden: nameHidden,
                 ...(nameRaised ? { zIndex: 60 } : null),
                 // Placed by the name's anchor: the cluster-sized box around it when the name
@@ -1414,6 +1690,7 @@ function GraphCanvasInner({
           () =>
             ({
               ...n,
+              ...measuredOf(measured, n.id),
               selected: emphasis.selected,
               hidden: false,
               data: {
@@ -1456,6 +1733,8 @@ function GraphCanvasInner({
     searchHitIds,
     summaryAllowed,
     mounted,
+    orbitOrder,
+    measured,
   ]);
 
   const drawnIds = useMemo(() => {
@@ -1783,7 +2062,8 @@ function GraphCanvasInner({
     onHover(null);
   }, [onHover]);
 
-  // Carries React Flow's measurements (and selection) into the nodes it is handed next. Only
+  // `onNodesChange` (below) carries selection into the nodes React Flow is handed next, and
+  // keeps measurements aside in `measured` (see `Measurements`). Only
   // changes that land on a stored node count: the star-dust node is derived, never stored, and
   // a no-op must not hand back a new array — that re-derives every node and re-renders the sky.
   /**
@@ -1808,26 +2088,39 @@ function GraphCanvasInner({
     [clusterAt, compact, onFocusCluster, onSelect]
   );
 
-  const onNodesChange: OnNodesChange = useCallback((changes) => {
-    setSky((s) => {
-      const ids = new Set(s.nodes.map((n) => n.id));
-      const relevant = changes.filter((c) => "id" in c && ids.has(c.id));
-      if (relevant.length === 0) return s;
-      return { ...s, nodes: applyNodeChanges(relevant, s.nodes) };
-    });
-  }, []);
+  const onNodesChange: OnNodesChange = useCallback(
+    (changes) => {
+      // Measurements go to `measured`, not into the nodes (see `Measurements`); anything else —
+      // selection — still updates the sky.
+      const rest = changes.filter((c) => {
+        if (c.type !== "dimensions") return true;
+        if (c.dimensions) measured.set(c.id, c.dimensions);
+        return false;
+      });
+      if (rest.length === 0) return;
+      setSky((s) => {
+        const ids = new Set(s.nodes.map((n) => n.id));
+        const relevant = rest.filter((c) => "id" in c && ids.has(c.id));
+        if (relevant.length === 0) return s;
+        return { ...s, nodes: applyNodeChanges(relevant, s.nodes) };
+      });
+    },
+    [measured]
+  );
 
   // ReactFlow calls these with (event, viewport); both are ignored, as before.
   const onMoveStart = useCallback(() => setMoving(true), [setMoving]);
   const onMoveEnd = useCallback(() => setMoving(false), [setMoving]);
 
   const isEmpty = filteredContacts.length === 0;
+  const flowNodes = useHiddenBeforeRemoved(useSameArrayIfUnchanged(nodes));
+  const flowEdges = useSameArrayIfUnchanged(isEmpty ? NO_EDGES : edges);
 
   return (
     <>
       <ReactFlow
-        nodes={nodes}
-        edges={isEmpty ? NO_EDGES : edges}
+        nodes={flowNodes}
+        edges={flowEdges}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
@@ -1877,12 +2170,11 @@ function GraphCanvasInner({
           layoutNodes={layout.nodes}
           onSettled={() => setViewportReady(true)}
         />
-        <Background
-          gap={48}
-          color="rgba(255, 255, 255, 0.03)"
-          size={1}
-          style={{ background: "transparent" }}
-        />
+        {/*
+          No <Background>. Its dot grid (3% white, radius zoom/2 on a 48·zoom grid) was invisible at
+          every zoom, but it re-rendered on every camera frame and repainted a full-pane SVG pattern
+          outside the chart's composited layer — a cost on each frame of a zoom or pan for nothing.
+        */}
       </ReactFlow>
 
       {/*

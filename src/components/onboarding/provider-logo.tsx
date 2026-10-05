@@ -12,6 +12,8 @@ export const PROVIDER_BRAND: Record<AiProvider, { brand: string; brandDark: stri
   gemini: { brand: "#1a73e8", brandDark: "#8ab4f8" },
   openai: { brand: "#0d0d0d", brandDark: "#ffffff" },
   anthropic: { brand: "#c96442", brandDark: "#d97757" },
+  // Never offered on the onboarding grid (Settings only); here so the table stays total.
+  openrouter: { brand: "#6467f2", brandDark: "#9496ff" },
 };
 
 export function ProviderLogo({ provider, className }: { provider: AiProvider; className?: string }) {

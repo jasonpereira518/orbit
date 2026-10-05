@@ -279,6 +279,7 @@ export async function loadAdminUserRows(
           hasGemini: sql<boolean>`${userSettings.geminiApiKeyEncrypted} is not null`,
           hasOpenai: sql<boolean>`${userSettings.openaiApiKeyEncrypted} is not null`,
           hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
+          hasOpenrouter: sql<boolean>`${userSettings.openrouterApiKeyEncrypted} is not null`,
           suspendedAt: userSettings.suspendedAt,
           compedPlan: userSettings.compedPlan,
           compedNote: userSettings.compedNote,
@@ -328,7 +329,9 @@ export async function loadAdminUserRows(
         ? row.hasOpenai
         : provider === "anthropic"
           ? row.hasAnthropic
-          : row.hasGemini;
+          : provider === "openrouter"
+            ? row.hasOpenrouter
+            : row.hasGemini;
 
     return {
       userId: row.userId,
@@ -453,17 +456,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 /**
  * Whether AI will run for this account: its own key for the selected provider, or Orbit's
- * managed key on Lifetime (`src/lib/managed-ai-policy.ts`). `hasProviderKey` alone is the
+ * included AI on Pro and Max (`src/lib/managed-ai-policy.ts`). `hasProviderKey` alone is the
  * displayable fact; this is the question the alerts are really asking.
  */
 function aiWillRun(row: Pick<AdminUserRow, "hasProviderKey" | "plan">, managedAi: boolean) {
-  return row.hasProviderKey || (row.plan === "lifetime" && managedAi);
+  return row.hasProviderKey || ((row.plan === "orbit" || row.plan === "max") && managedAi);
 }
 
 export function buildAlerts(
   rows: AdminUserRow[],
   now = new Date(),
-  /** Whether this deployment holds a managed AI key, so Lifetime accounts run without one. */
+  /** Whether this deployment holds a managed AI key, so Pro and Max accounts run without one. */
   managedAi = Object.values(managedKeysConfigured()).some(Boolean)
 ): AdminAlert[] {
   const alerts: AdminAlert[] = [];
@@ -494,7 +497,7 @@ export function buildAlerts(
       });
     }
 
-    // The highest-value signal in the console. AI is BYOK on every plan but Lifetime, so an
+    // The highest-value signal in the console. AI is BYOK on Free and Lifetime, so an
     // account with no key for its selected provider — and no managed key to fall back on —
     // hits a hard error on its first capture. This is a conversion bug, surfaced as a metric.
     if (!aiWillRun(row, managedAi) && isOnboarded(row)) {

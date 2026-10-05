@@ -104,6 +104,12 @@ function toBlobAsync(
   );
 }
 
+/** Hand a canvas's backing store back now rather than whenever GC gets to it. */
+function releaseCanvas(canvas: HTMLCanvasElement) {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 function drawScaled(
   source: CanvasImageSource,
   width: number,
@@ -147,25 +153,38 @@ async function encodePage(
   filename: string
 ): Promise<ScanPage> {
   let fallback: { blob: Blob; width: number; height: number } | null = null;
+  // One canvas per edge, not per attempt: quality does not change the pixels. Each is up to
+  // ~16MB that only GC would otherwise reclaim, and iOS fails every canvas once their total
+  // passes its cap — which a multi-page PDF walking the ladder could reach.
+  let canvas: HTMLCanvasElement | null = null;
+  let canvasEdge: number | null = null;
 
-  for (const { edge, quality } of scanEncodeAttempts()) {
-    const { width, height } = fitEdge(naturalWidth, naturalHeight, edge);
-    const canvas = drawScaled(source, width, height);
-    const blob = await toBlobAsync(canvas, quality);
-    if (!blob) continue;
-    if (blob.size <= SCAN_TARGET_BYTES) {
-      return {
-        id: nextPageId(),
-        filename,
-        mimeType: SCAN_OUTPUT_MIME,
-        base64: await blobToBase64(blob),
-        previewUrl: URL.createObjectURL(blob),
-        width,
-        height,
-        bytes: blob.size,
-      };
+  try {
+    for (const { edge, quality } of scanEncodeAttempts()) {
+      const { width, height } = fitEdge(naturalWidth, naturalHeight, edge);
+      if (!canvas || canvasEdge !== edge) {
+        if (canvas) releaseCanvas(canvas);
+        canvas = drawScaled(source, width, height);
+        canvasEdge = edge;
+      }
+      const blob = await toBlobAsync(canvas, quality);
+      if (!blob) continue;
+      if (blob.size <= SCAN_TARGET_BYTES) {
+        return {
+          id: nextPageId(),
+          filename,
+          mimeType: SCAN_OUTPUT_MIME,
+          base64: await blobToBase64(blob),
+          previewUrl: URL.createObjectURL(blob),
+          width,
+          height,
+          bytes: blob.size,
+        };
+      }
+      fallback = { blob, width, height };
     }
-    fallback = { blob, width, height };
+  } finally {
+    if (canvas) releaseCanvas(canvas);
   }
 
   if (!fallback) throw new ScanError("encode-failed");
@@ -295,14 +314,18 @@ export async function rasterizePdf(
       await page.render({ canvas, canvasContext: ctx, viewport }).promise;
       page.cleanup();
 
-      pages.push(
-        await encodePage(
-          canvas,
-          canvas.width,
-          canvas.height,
-          `${file.name.replace(/\.pdf$/i, "")}-p${n}.jpg`
-        )
-      );
+      try {
+        pages.push(
+          await encodePage(
+            canvas,
+            canvas.width,
+            canvas.height,
+            `${file.name.replace(/\.pdf$/i, "")}-p${n}.jpg`
+          )
+        );
+      } finally {
+        releaseCanvas(canvas);
+      }
     }
     return { pages, dropped };
   } finally {

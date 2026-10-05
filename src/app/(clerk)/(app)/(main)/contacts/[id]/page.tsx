@@ -1,7 +1,10 @@
 import { Suspense } from "react";
+import { listContactPendingSendsAction } from "@/actions/email-compose";
+import { PendingSends } from "@/components/email/pending-sends";
+import type { PendingSend } from "@/lib/email/compose";
 import { after } from "next/server";
 import {
-  getContact,
+  getContactForProfile,
   getContactFollowUpSendOptions,
   listRelatedContacts,
 } from "@/actions/contacts";
@@ -36,6 +39,7 @@ import { listContactMentions } from "@/lib/contact-mentions";
 import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
 import { listJobMatchesForContact } from "@/lib/jobs/contact-matches";
 import { getContactProfile } from "@/lib/contact-profile";
+import { getWorkHistoryTracking } from "@/lib/job-changes";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
@@ -43,6 +47,13 @@ import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { RenderStamp } from "@/components/layout/render-stamp";
+
+/**
+ * Above the (main) layout's 60: "Find work history" runs a web search inside its server
+ * action, and a searched answer can take up to two minutes. Server actions take the page's
+ * limit, not the layout's.
+ */
+export const maxDuration = 300;
 
 export default async function ContactDetailPage({
   params,
@@ -52,14 +63,15 @@ export default async function ContactDetailPage({
   const { id } = await params;
 
   // Every side query needs only the route param — start them all before the
-  // first await so nothing serializes behind getContact. The .catch wrappers
+  // first await so nothing serializes behind getContactForProfile. The .catch wrappers
   // keep an eagerly-started promise from surfacing an unhandled rejection
   // (or racing notFound() into the error boundary on a bogus id); on
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
+  const pendingSendsPromise = listContactPendingSendsAction(id).catch((): PendingSend[] => []);
   // Guarded like the others: an unhandled getSettings() rejection would take the whole
   // page down for a section that only decides whether the add-notes card and the
-  // experience section's "Fill from Apollo" button are enabled.
+  // experience section's "Find work history" button are enabled.
   const settingsPromise = getSettings().catch(() => ({
     hasApiKey: false,
     hasApolloKey: false,
@@ -102,11 +114,14 @@ export default async function ContactDetailPage({
   const profilePromise = userIdPromise
     .then((u) => getContactProfile(u, id))
     .catch(() => null);
+  const trackingPromise = userIdPromise
+    .then((u) => getWorkHistoryTracking(u, id))
+    .catch(() => ({ moves: [], nextCheckAt: null }));
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
   const [contact, closenessCohort, constellationConfig] = await Promise.all([
-    getContact(id),
+    getContactForProfile(id),
     cohortPromise,
     getConstellationConfig(),
   ]);
@@ -140,6 +155,19 @@ export default async function ContactDetailPage({
     after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
   }
 
+  // The contact arrives with its newest page of interactions. `interactionHistory` is null
+  // when that page is the whole history — then everything below is derived from the rows,
+  // exactly as it always was — and otherwise carries the whole-history aggregates, so none
+  // of these facts changes for a contact whose older rows were left on the server.
+  const history = contact.interactionHistory;
+  // Same distinction the closeness model already makes: `lastInteractionAt` is stamped on
+  // every create/import, so only an actual interactions row proves a touch happened.
+  // AI-derived timeline events restate messages that are rows of their own, so they are
+  // not touches here either.
+  const hasLoggedInteraction = history
+    ? history.loggedCount > 0
+    : contact.interactions.some(isLoggedTouch);
+
   const closeness =
     closenessCohort.byId.get(contact.id) ??
     // Only reachable if the contact was created after the cohort query ran.
@@ -147,7 +175,7 @@ export default async function ContactDetailPage({
     // This is a deliberately approximate fallback, not a second scoring path
     // pretending to be the real one. `statedCloseness`, `firstInteractionAt`
     // and `dateMet` are per-contact columns already sitting on `contact`
-    // (getContact() has no `columns` restriction), so they're passed straight
+    // (getContactForProfile() has no `columns` restriction), so they're passed straight
     // through — no reason to score a rated contact as if unrated just because
     // it missed the cohort by a race.
     //
@@ -167,11 +195,11 @@ export default async function ContactDetailPage({
         relationshipScore: contact.relationshipScore,
         statedCloseness: contact.statedCloseness,
         lastInteractionAt: contact.lastInteractionAt,
-        // `getContact` loads this contact's interaction rows unfiltered, so
-        // skipping AI-derived rows gives the same has-ever-interacted fact the
+        // From the interaction rows (or, past the first page, the whole-history
+        // aggregate), skipping AI-derived rows: the same has-ever-interacted fact the
         // cohort builder derives from the interactions table — not the
         // `lastInteractionAt` stamp, which every create path writes.
-        hasLoggedInteraction: contact.interactions.some(isLoggedTouch),
+        hasLoggedInteraction,
         firstInteractionAt: contact.firstInteractionAt,
         dateMet: contact.dateMet,
         createdAt: contact.createdAt,
@@ -198,17 +226,18 @@ export default async function ContactDetailPage({
   });
 
   const displayName = contact.preferredName || contact.fullName;
+  // The rows are the newest first, so a logged touch among them is the newest one overall;
+  // only when every loaded row is AI-derived does the answer lie in the older history.
   const latestInteraction = latestLoggedTouch(contact.interactions);
   const lastTouchAt =
-    latestInteraction?.interactionDate || contact.lastInteractionAt;
-  // Same distinction the closeness model already makes: `lastInteractionAt` is stamped on
-  // every create/import, so only an actual interactions row proves a touch happened.
-  // AI-derived timeline events restate messages that are rows of their own, so they are
-  // not touches here either.
-  const hasLoggedInteraction = contact.interactions.some(isLoggedTouch);
+    latestInteraction?.interactionDate ||
+    history?.latestLoggedAt ||
+    contact.lastInteractionAt;
 
   const frequencyLabel = formatInteractionFrequency(
-    contact.interactions.filter(isLoggedTouch).map((i) => i.interactionDate)
+    history
+      ? history.recentLoggedTimes.map((t) => new Date(t))
+      : contact.interactions.filter(isLoggedTouch).map((i) => i.interactionDate)
   );
 
   // Awaited once here rather than inline: both the brief card's next-steps list and the
@@ -231,6 +260,8 @@ export default async function ContactDetailPage({
     phone: contact.phone || "",
     linkedinUrl: contact.linkedinUrl || "",
     website: contact.website || "",
+    blueskyHandle: contact.blueskyHandle || "",
+    mastodonAcct: contact.mastodonAcct || "",
     notes: contact.notes || "",
     industry: contact.industry || "",
     sharedInterests: contact.sharedInterests || [],
@@ -352,6 +383,7 @@ export default async function ContactDetailPage({
       <Suspense fallback={null}>
         <StreamedExperience
           data={profilePromise}
+          tracking={trackingPromise}
           settings={settingsPromise}
           contactId={contact.id}
           linkedinUrl={contact.linkedinUrl}
@@ -365,6 +397,16 @@ export default async function ContactDetailPage({
           contactName={displayName}
           nextFollowUpAt={contact.nextFollowUpAt}
           phone={contact.phone}
+        />
+      </Suspense>
+
+      {/* Emails to this person still on their way, or that didn't make it — the outbox rows
+          the timeline won't show until they send. Renders nothing when there are none. */}
+      <Suspense fallback={null}>
+        <StreamedPendingSends
+          contactId={contact.id}
+          contactName={displayName}
+          sends={pendingSendsPromise}
         />
       </Suspense>
 
@@ -384,6 +426,11 @@ export default async function ContactDetailPage({
             notesPreview: i.notesPreview,
             aiSummary: i.aiSummary,
           }))}
+          // Only past the first page: without it the timeline has the whole history and
+          // derives its counts from the rows, as it always has.
+          {...(history
+            ? { totalCount: history.total, typeCounts: history.typeCounts }
+            : {})}
           openActionItems={nextSteps.map((item) => ({
             id: item.id,
             interactionId: item.interactionId,
@@ -458,6 +505,18 @@ async function StreamedFollowUp({
   );
 }
 
+async function StreamedPendingSends({
+  contactId,
+  contactName,
+  sends,
+}: {
+  contactId: string;
+  contactName: string;
+  sends: Promise<PendingSend[]>;
+}) {
+  return <PendingSends contactId={contactId} contactName={contactName} sends={await sends} />;
+}
+
 async function StreamedTimeline({
   settings,
   ...rest
@@ -466,6 +525,8 @@ async function StreamedTimeline({
   contactId: string;
   contactName: string;
   interactions: React.ComponentProps<typeof ContactTimeline>["interactions"];
+  totalCount?: number;
+  typeCounts?: Record<string, number>;
   openActionItems: React.ComponentProps<
     typeof ContactTimeline
   >["openActionItems"];
@@ -480,27 +541,39 @@ async function StreamedTimeline({
 
 async function StreamedExperience({
   data,
+  tracking,
   settings,
   contactId,
   linkedinUrl,
 }: {
   data: Promise<Awaited<ReturnType<typeof getContactProfile>>>;
+  tracking: Promise<Awaited<ReturnType<typeof getWorkHistoryTracking>>>;
   // Consumed here rather than awaited in the parent (unlike the brief's original
   // sketch): `settingsPromise` is meant to stream — StreamedAddNotes below awaits
   // the same promise inside its own Suspense boundary for the same reason — so
   // awaiting it in the page body above this component's JSX would block everything
   // that follows on the settings read finishing first.
-  settings: Promise<{ hasApolloKey: boolean }>;
+  settings: Promise<{ hasApiKey: boolean }>;
   contactId: string;
   linkedinUrl: string | null;
 }) {
-  const [profile, { hasApolloKey }] = await Promise.all([data, settings]);
+  const [profile, { moves, nextCheckAt }, { hasApiKey }] = await Promise.all([data, tracking, settings]);
   return (
     <div className="reveal-mount">
       <ContactExperienceSection
         contactId={contactId}
         linkedinUrl={linkedinUrl}
-        canUseApollo={hasApolloKey}
+        canSearchWeb={hasApiKey}
+        moves={moves.map((m) => ({
+          id: m.id,
+          kind: m.kind,
+          fromOrg: m.fromOrg,
+          fromTitle: m.fromTitle,
+          toOrg: m.toOrg,
+          toTitle: m.toTitle,
+          detectedAt: m.detectedAt.toISOString(),
+        }))}
+        nextCheckAt={nextCheckAt ? nextCheckAt.toISOString() : null}
         profile={
           profile && {
             source: profile.source,

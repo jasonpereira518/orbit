@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { imports, type ImportJobRowPayload, type ImportStats } from "@/db/schema";
-import { deleteContactForUser } from "@/lib/contact-delete";
+import { deleteContactsForUser } from "@/lib/contact-delete";
 import { getAdapter } from "@/lib/import-adapters";
 import { fingerprintContact } from "@/lib/imports/import-provenance";
 import {
@@ -46,12 +46,19 @@ export { UNDO_WINDOW_DAYS };
 export const MAX_UNDO_CANDIDATES = 200;
 
 /**
- * Wall-clock ceiling on one `performUndo` invocation. Each removal is its own atomic write
- * (`deleteContactForUser` touches six tables), so a large import cannot finish inside one
- * server action. Stopping cleanly and reporting `done: false` is safe because the operation
- * is idempotent: the people already gone are simply no longer candidates next time.
+ * Wall-clock ceiling on one `performUndo` invocation. Removals go out a chunk at a time, each
+ * chunk its own atomic write (`deleteContactsForUser` touches seven tables), so a large import
+ * cannot finish inside one server action. Stopping cleanly and reporting `done: false` is safe
+ * because the operation is idempotent: the people already gone are simply no longer
+ * candidates next time.
  */
 const UNDO_BUDGET_MS = 20_000;
+
+/**
+ * People removed per atomic write. Three round trips per chunk instead of three per person;
+ * small enough that one chunk is well inside the budget, which is checked between chunks.
+ */
+const UNDO_CHUNK = 100;
 
 export type UndoCandidate = {
   contactId: string;
@@ -176,7 +183,14 @@ async function candidateRows(
                 FROM contact_tags ct
                 JOIN tags t ON t.id = ct.tag_id AND t.user_id = ${userId}
                WHERE ct.contact_id = c.id) AS tag_names,
-             (SELECT count(*) FROM reminders rm WHERE rm.contact_id = c.id AND rm.user_id = ${userId})::int AS reminder_count,
+             (SELECT count(*) FROM reminders rm
+               WHERE rm.contact_id = c.id AND rm.user_id = ${userId}
+                 -- The relationship engine's reminders are the import's own consequence, not a
+                 -- user touch; counting them would make every analyzed person un-undoable.
+                 AND NOT COALESCE(rm.created_by = 'ai' AND rm.note_batch_id IN (
+                   SELECT rr.note_batch_id FROM relationship_runs rr
+                    WHERE rr.user_id = ${userId} AND rr.note_batch_id IS NOT NULL
+                 ), false))::int AS reminder_count,
              (SELECT count(*) FROM interactions i
                 WHERE i.contact_id = c.id AND i.user_id = ${userId}
                   AND (i.external_id IS NULL OR i.created_at > ${runEndedIso}::timestamptz))::int AS interaction_count,
@@ -322,10 +336,17 @@ export async function performUndo(
   const startedAt = Date.now();
   let removed = 0;
   let index = 0;
-  for (; index < targets.length; index++) {
+  // `index` only advances past a chunk once its write has landed, so `remaining` and a
+  // resumed run see exactly the people still standing.
+  while (index < targets.length) {
     if (Date.now() - startedAt >= budgetMs) break;
-    const { deleted } = await deleteContactForUser(userId, targets[index].contactId);
-    if (deleted) removed += 1;
+    const chunk = targets.slice(index, index + UNDO_CHUNK);
+    const { deletedIds } = await deleteContactsForUser(
+      userId,
+      chunk.map((t) => t.contactId),
+    );
+    removed += deletedIds.length;
+    index += chunk.length;
   }
   const done = index >= targets.length;
 

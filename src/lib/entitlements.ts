@@ -3,15 +3,27 @@ import { isDemoAccount } from "@/lib/demo-account";
 import { recordGateHit } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
 import {
+  FEATURE_KEYS,
+  EXTRA_CONNECTION_DENIAL,
   FREE_CONTACT_LIMIT,
+  PLAN_CONFIG,
   PLAN_LABELS,
+  unlockPlanFor,
+  type FeatureKey,
   type Plan,
   type PlanSource,
-} from "@/lib/plan-limits";
+} from "@/lib/plans/plan-config";
 
 // Re-exported so server code keeps importing plan identity from this module, while
-// client components can reach `plan-limits` directly without pulling in the database.
-export { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan, type PlanSource };
+// client components can reach `plans/plan-config` directly without pulling in the database.
+export {
+  FEATURE_KEYS,
+  FREE_CONTACT_LIMIT,
+  PLAN_LABELS,
+  type FeatureKey,
+  type Plan,
+  type PlanSource,
+};
 
 export type Entitlements = {
   plan: Plan;
@@ -27,27 +39,24 @@ export type Entitlements = {
    */
   canUseHostedSending: boolean;
   /**
-   * Whether Orbit's own Apollo key may be used for contact enrichment. Orbit Pro only.
-   * Enrichment has no quota anywhere in the product, so it is the single genuinely
-   * open-ended per-user cost, and the one thing a one-time payment cannot fund forever.
-   * Lifetime users add their own Apollo key in Settings, which `getApolloApiKey` prefers
-   * over Orbit's on every plan.
-   *
-   * This is the only entitlement that separates Orbit Pro from Orbit Lifetime.
+   * Whether Orbit's own Apollo key may be used for contact enrichment. Capped per month by
+   * `PLAN_CONFIG[plan].hostedEnrichmentsPerMonth` (Pro 10, Max and Lifetime 25). A user's own
+   * Apollo key, saved in Settings, is preferred over Orbit's on every plan and is uncapped.
    */
   canUseHostedEnrichment: boolean;
   canUseRecruiters: boolean;
   canUseSync: boolean;
   canUseExtension: boolean;
   /**
-   * The public API, outbound webhooks and the MCP server.
+   * The public REST API and outbound webhooks. Max and Lifetime only. (MCP is separate —
+   * see `canUseMcp` — and free on every plan.)
    *
    * A key of its own rather than folding into `canUseSync`, for two reasons. The denial copy
-   * for sync says "Mailbox and calendar sync are available on…", which is simply wrong on an
-   * API 402. More importantly `gate_events` is the only place demand for a gated feature is
-   * observable, and the pricing question depends entirely on it — conflating "someone wanted
-   * to connect Zapier" with "someone wanted mailbox sync" destroys exactly the signal that
-   * table exists to collect.
+   * for sync says "Calendar subscriptions and event sources are available on…", which is
+   * simply wrong on an API 402. More importantly `gate_events` is the only place demand for a
+   * gated feature is observable, and the pricing question depends entirely on it — conflating
+   * "someone wanted to connect Zapier" with "someone wanted a calendar subscription" destroys
+   * exactly the signal that table exists to collect.
    */
   canUseApi: boolean;
   /**
@@ -73,30 +82,14 @@ export type Entitlements = {
    * starting, resuming, ending and analyzing a NEW recording cost money.
    */
   canUseMeetings: boolean;
+  /** AI on Orbit's provider keys, metered in credits. Pro and Max only. */
+  canUseHostedAi: boolean;
+  /** Buying a $5 top-up pack of credits. Pro and Max only. */
+  canBuyCreditPacks: boolean;
+  /** A second Google or Microsoft account. Free keeps its first connection. */
+  canUseExtraConnections: boolean;
 };
 
-/**
- * Feature keys that `requireEntitlement` can gate on.
- *
- * A runtime array with the type derived from it, rather than a bare type: a cross-module
- * guard ("every connector manifest names an entitlement this layer knows",
- * `scripts/smoke-connector-registry.ts`) needs a list it can actually read at runtime, and a
- * hand-copied second copy of these strings is exactly the drift such a guard is supposed to
- * catch. `FEATURE_DENIAL` and `FEATURE_FLAG` below are `Record<FeatureKey, …>`, so adding a
- * key here without wiring it up is a type error.
- */
-export const FEATURE_KEYS = [
-  "outreach",
-  "hostedSending",
-  "hostedEnrichment",
-  "recruiters",
-  "sync",
-  "extension",
-  "api",
-  "meetings",
-] as const;
-
-export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
@@ -123,9 +116,9 @@ export function isPaywallError(err: unknown): err is PaywallError {
 }
 
 export type BillingColumns = {
-  compedPlan?: "orbit" | "lifetime" | null;
+  compedPlan?: "orbit" | "max" | "lifetime" | null;
   lifetimePurchasedAt?: Date | null;
-  subscriptionPlan?: "orbit" | null;
+  subscriptionPlan?: "orbit" | "max" | null;
   subscriptionStatus?: "active" | "past_due" | "canceled" | null;
   subscriptionPeriodEnd?: Date | null;
 };
@@ -136,7 +129,7 @@ export type BillingColumns = {
  * on a transient card failure is the wrong response for a tool holding personal data.
  */
 function subscriptionIsLive(row: BillingColumns, now: Date) {
-  if (row.subscriptionPlan !== "orbit") return false;
+  if (row.subscriptionPlan !== "orbit" && row.subscriptionPlan !== "max") return false;
   if (row.subscriptionStatus === "active") return true;
   if (!row.subscriptionPeriodEnd) return false;
   return row.subscriptionPeriodEnd.getTime() > now.getTime();
@@ -146,9 +139,9 @@ function subscriptionIsLive(row: BillingColumns, now: Date) {
  * Precedence: comp > lifetime > subscription > free.
  *
  * Comp wins outright so a manually granted account is never downgraded by stale billing
- * state. Lifetime outranks subscription: an account holds one plan at a time, and buying
- * Lifetime ends Pro, so a subscription row left behind (canceled but not yet past its
- * period end) must never outrank the Lifetime that replaced it.
+ * state. Lifetime outranks subscription: an account holds one plan at a time, and an admin
+ * granting Lifetime to a subscriber sets their subscription to end at the period end, so
+ * the subscription row still live until then must never outrank the Lifetime granted over it.
  */
 export function resolvePlan(
   row: BillingColumns | null | undefined,
@@ -156,42 +149,41 @@ export function resolvePlan(
 ): { plan: Plan; source: PlanSource } {
   if (!row) return { plan: "free", source: "free" };
   if (row.compedPlan === "lifetime") return { plan: "lifetime", source: "comp" };
+  if (row.compedPlan === "max") return { plan: "max", source: "comp" };
   if (row.compedPlan === "orbit") return { plan: "orbit", source: "comp" };
   if (row.lifetimePurchasedAt) return { plan: "lifetime", source: "lifetime" };
   if (subscriptionIsLive(row, now)) {
-    return { plan: "orbit", source: "subscription" };
+    return { plan: row.subscriptionPlan === "max" ? "max" : "orbit", source: "subscription" };
   }
   return { plan: "free", source: "free" };
 }
 
-export function entitlementsForPlan(
-  plan: Plan,
-  source: PlanSource,
-  opts: { hostedEnrichment?: boolean } = {}
-): Entitlements {
-  const paid = plan !== "free";
+/** Every flag and limit comes from `PLAN_CONFIG`; this only reshapes it for the gates. */
+export function entitlementsForPlan(plan: Plan, source: PlanSource): Entitlements {
+  const config = PLAN_CONFIG[plan];
+  const f = config.features;
   return {
     plan,
     source,
-    contactLimit: paid ? null : FREE_CONTACT_LIMIT,
-    canUseOutreach: paid,
-    canUseHostedSending: paid,
-    canUseHostedEnrichment: opts.hostedEnrichment ?? plan === "orbit",
-    canUseRecruiters: paid,
-    canUseSync: paid,
-    canUseExtension: paid,
-    canUseApi: paid,
+    contactLimit: config.contactLimit,
+    canUseOutreach: f.outreach,
+    canUseHostedSending: f.hostedSending,
+    canUseHostedEnrichment: f.hostedEnrichment,
+    canUseRecruiters: f.recruiters,
+    canUseSync: f.sync,
+    canUseExtension: f.extension,
+    canUseApi: f.api,
     canUseMcp: true,
-    canUseMeetings: paid,
+    canUseMeetings: f.meetings,
+    canUseHostedAi: f.hostedAi,
+    canBuyCreditPacks: f.creditPacks,
+    canUseExtraConnections: f.extraConnections,
   };
 }
 
 /** Every flag on and no contact cap, under whatever plan the account actually holds. */
 function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements {
-  return {
-    ...entitlementsForPlan("orbit", source, { hostedEnrichment: true }),
-    plan,
-  };
+  return { ...entitlementsForPlan("max", source), plan };
 }
 
 /**
@@ -224,24 +216,27 @@ export function entitlementsFromSettings(userId: string, row: BillingColumns): E
   // what was bought. Only the gates are lifted.
   if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
   // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
-  // even while a Pro subscription is still winding down. Buying Lifetime cancels Pro on
-  // the spot (`endProForLifetime`), so the two are never meant to overlap; the resolver
-  // no longer unions a lingering subscription's enrichment back in.
-  const hostedEnrichment = plan === "orbit";
-  return entitlementsForPlan(plan, source, { hostedEnrichment });
+  // even while a subscription is still winding down to its period end.
+  return entitlementsForPlan(plan, source);
+}
+
+/** "on Orbit Pro and Orbit Max" or "on Orbit Max" — never Lifetime, which is not sold. */
+function availableOn(feature: FeatureKey) {
+  return unlockPlanFor(feature) === "orbit" ? "Orbit Pro and Orbit Max" : "Orbit Max";
 }
 
 export const FEATURE_DENIAL: Record<FeatureKey, string> = {
-  outreach: "Outreach is available on Orbit Pro and Orbit Lifetime.",
-  hostedSending:
-    "Sending email and SMS on Orbit's credits is available on Orbit Pro and Orbit Lifetime.",
-  hostedEnrichment:
-    "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
-  recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
-  api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
-  sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
-  extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
-  meetings: "Meeting transcription is available on Orbit Pro and Orbit Lifetime.",
+  outreach: `Outreach is available on ${availableOn("outreach")}.`,
+  hostedSending: `Sending email and SMS on Orbit's credits is available on ${availableOn("hostedSending")}.`,
+  hostedEnrichment: `Contact enrichment on Orbit's Apollo key is available on ${availableOn("hostedEnrichment")}. On the Free Plan, add your own Apollo key in Settings.`,
+  recruiters: `Recruiter tracking is available on ${availableOn("recruiters")}.`,
+  api: `The Orbit API and webhooks are available on ${availableOn("api")}. Claude and ChatGPT connect on any plan, with no key.`,
+  sync: `Calendar subscriptions and event sources are available on ${availableOn("sync")}.`,
+  extension: `The Orbit extension is available on ${availableOn("extension")}.`,
+  meetings: `Meeting transcription is available on ${availableOn("meetings")}.`,
+  hostedAi: `AI on Orbit's keys is included on ${availableOn("hostedAi")}. On the Free Plan, add your own AI key in Settings.`,
+  creditPacks: `Credit packs are available on ${availableOn("creditPacks")}.`,
+  extraConnections: EXTRA_CONNECTION_DENIAL,
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
@@ -253,6 +248,9 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   extension: "canUseExtension",
   api: "canUseApi",
   meetings: "canUseMeetings",
+  hostedAi: "canUseHostedAi",
+  creditPacks: "canBuyCreditPacks",
+  extraConnections: "canUseExtraConnections",
 };
 
 /**

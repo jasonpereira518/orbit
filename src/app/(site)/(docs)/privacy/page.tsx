@@ -26,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key", body: "AI features are opt-in and you choose the provider. Every call, on every plan, bills to a key you supply. Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key", body: "You choose the provider and supply the key. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on that same key. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -54,7 +54,7 @@ const TOC: readonly TocItem[] = [
 /** Every service that receives personal data, verified against the code on 2026-09-23. */
 const PROCESSORS = [
   { name: "Clerk", badge: "Required", body: "Sign-in, sessions and account lifecycle. Holds your sign-in identity and records when you accepted these terms." },
-  { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos and feedback screenshots. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed." },
+  { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed." },
   { name: "Neon", badge: "Required", body: "The Postgres database that holds your Orbit data." },
   { name: "Sentry", badge: "Required", body: "Error reports: the error, where in the code it happened, the page and browser. Configured not to attach IP addresses or cookies, and with session replay off." },
   { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names and error messages. An error message can occasionally include a value it was processing." },
@@ -63,16 +63,16 @@ const PROCESSORS = [
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
-  { name: "Stripe", badge: "Optional", body: "Orbit Pro and Orbit Lifetime payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider and key you choose in Settings." },
+  { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or — for included AI on Orbit Pro and Orbit Max — on Orbit's account with that provider." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
-  { name: "Microsoft", badge: "Optional", body: "Outlook, read-only, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, and your mail only for the recruiter scan you start. See The recruiter scan." },
+  { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address. See What Orbit collects and The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
-  { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your Apollo key, or Orbit's on Pro." },
-  { name: "Resend", badge: "Optional", body: "Email Orbit sends: the waitlist confirmation, messages you send through the contact page, and outreach you send from Orbit." },
+  { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your Apollo key, or Orbit's on Pro, Max and Lifetime (up to your plan's monthly enrichments)." },
+  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
 ] as const;
 
@@ -131,14 +131,24 @@ export default function PrivacyPage() {
             <li>
               <strong>Connected accounts</strong> — if you connect Google, Orbit reads only what the
               feature you turned on needs (see <a href="#google">Google user data</a>). If you connect
-              Microsoft, Orbit asks for one read-only permission per feature you turn on: your
-              Outlook contacts, so you can pick who to import; your calendar, to add meetings with
-              people you know to their timelines; and your mail, only for the recruiter scan you
-              start. Each connection also asks for your Microsoft sign-in identity and email
-              address, to show which account is connected. Orbit cannot send mail or change
-              anything in your Microsoft account. Disconnecting deletes the tokens Orbit holds; to
+              Microsoft, Orbit asks for one permission per feature you turn on: your Outlook
+              contacts, so you can pick who to import; your calendar, to add meetings with people
+              you know to their timelines; your mail, for the recruiter scan you start, to find
+              your latest message with a contact when you reply in that conversation (its
+              Message-ID, subject and date only), and to check your Sent Items so a retried send is
+              never delivered twice; and permission to send mail (Mail.Send), only for email you
+              write and press Send on. Each connection also asks for your Microsoft sign-in
+              identity and email address, to show which account is connected. Orbit cannot read,
+              change or delete anything else in your Microsoft account. Disconnecting deletes the tokens Orbit holds; to
               also revoke the grant on Microsoft&rsquo;s side, remove Orbit from your Microsoft
               account&rsquo;s app permissions.
+            </li>
+            <li>
+              <strong>Email you send</strong> — when you send email from Orbit through your Gmail or
+              Outlook, Orbit keeps a record of each message (sender, recipients, subject, body, when
+              it was sent, and any files attached) so it can deliver it after the undo window or at
+              the time you scheduled, retry it safely, and log it on the contacts it went to. Orbit
+              never sends a message you did not send.
             </li>
             <li>
               <strong>The browser extension</strong> — when you open its panel on a LinkedIn profile,
@@ -228,8 +238,8 @@ export default function PrivacyPage() {
             In practice: Orbit uses Google data only to provide the features in the table, shown to
             you inside Orbit. It does not sell it, does not use it for advertising, and does not use
             it to develop or train AI models. Where a feature uses AI (the recruiter scan), the text
-            involved goes to the AI provider you chose, on your own key, only to produce the result
-            you asked for. A person at Orbit reads Google data only with your permission for a
+            involved goes to the AI provider you chose — on your own key, or on Pro and Max on
+            Orbit&rsquo;s account with that provider — only to produce the result you asked for. A person at Orbit reads Google data only with your permission for a
             support request you raise, to investigate abuse or a security problem, or where the law
             requires it.
           </p>
@@ -325,10 +335,14 @@ export default function PrivacyPage() {
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
             photos of pages you scan, recruiter emails when you run the scan — is sent to the
-            provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On every plan, every
-            call runs on an API key you supply, so the request lands on your own account with that
-            provider and is governed by the retention settings you have agreed with them. Orbit never
-            runs AI on its own provider accounts.
+            provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On the Free Plan and
+            Orbit Lifetime, every call runs on an API key you supply, so the request lands on your own
+            account with that provider and is governed by the retention settings you have agreed with
+            them. On Orbit Pro and Orbit Max, AI is included: calls run on Orbit&rsquo;s own accounts
+            with those providers, under Orbit&rsquo;s agreements with them, which do not allow your
+            content to be used to train their models. Providers may keep requests for a limited period
+            for abuse monitoring under those agreements. If you choose your own key on Pro or Max,
+            those calls run on your account instead.
           </p>
           <p>
             Voice notes, the chat microphone and meetings are transcribed by Deepgram instead, on
@@ -354,10 +368,11 @@ export default function PrivacyPage() {
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
             the people you talked with most. Deriving timeline events from imported LinkedIn
-            conversations is off until you turn it on, shows an estimated cost first, skips threads
-            with a single message, and processes at most {TIMELINE_DAILY_CONTACT_CAP} conversations
-            a day. Settings → Integrations → AI provider shows every call from the last 30 days and
-            its estimated cost.
+            conversations happens automatically, on your own AI key: a thread with a single message
+            gets a rule-based note and no AI call, and the cap of {TIMELINE_DAILY_CONTACT_CAP} conversations
+            a day only counts the conversations that reach the model. Without an AI key connected,
+            Orbit falls back to simple keyword matching instead. Settings → Integrations → AI
+            provider shows every call from the last 30 days and its estimated cost.
           </p>
           <p>
             <strong>
@@ -370,13 +385,13 @@ export default function PrivacyPage() {
 
         <DocSection id="payments" index={8} title="Payments">
           <p>
-            The Free Plan needs no payment details. Orbit Pro and Orbit Lifetime are sold through
-            Stripe.
+            The Free Plan needs no payment details. Orbit Pro, Orbit Max and credit packs are sold
+            through Stripe. Orbit Lifetime is no longer sold.
           </p>
           <p>
             <strong>Orbit never sees your card.</strong> Orbit stores a Stripe customer reference, your
-            plan and subscription status, and a record of each charge, refund and dispute for its
-            accounts. When you delete your account, that accounting record is kept with your account
+            plan and subscription status, a record of each charge, refund and dispute, and of the
+            credits your plan and packs granted and used, for its accounts. When you delete your account, that accounting record is kept with your account
             id removed. Pricing is on the <Link href="/pricing">pricing page</Link>.
           </p>
         </DocSection>
@@ -456,8 +471,8 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Delete your account.</strong> This erases all of your Orbit data and settings,
-              including saved API keys and connected accounts, cancels an active Orbit Pro
-              subscription, and removes your sign-in. It cannot be undone.
+              including saved API keys and connected accounts, cancels an active Orbit Pro or
+              Orbit Max subscription, and removes your sign-in. It cannot be undone.
             </li>
           </ul>
           <p>
@@ -471,19 +486,22 @@ export default function PrivacyPage() {
           <p>
             Your Orbit data is kept while your account is active, until you delete it with the
             controls above. Downgrading never deletes anything: contacts added while you were
-            subscribed stay visible and exportable on the Free Plan.
+            subscribed stay visible and exportable on the Free Plan, and unused pack credits are kept
+            while you&rsquo;re on a plan that can&rsquo;t use them, and come back if you resubscribe.
           </p>
           <p>
             Capture photos stay with the capture they belong to until you delete it; photos from a
-            capture you never save are deleted after 24 hours. Audio is never kept. Page views are
+            capture you never save are deleted after 24 hours. Files attached to an email are deleted 7
+            days after it is sent or canceled, and files you uploaded but never sent after 2 days.
+            Audio is never kept. Page views are
             deleted after 180 days; deleting your data or your account unlinks the ones made while
             you were signed in, keeping only the anonymous count.
           </p>
           <p>
             When you delete your account, every table holding your data is cleared, including your
             settings, keys and tokens. What remains: Stripe&rsquo;s own records of your payments,
-            held by Stripe; Orbit&rsquo;s accounting record of charges and refunds, with your
-            account id removed; the operator&rsquo;s audit log of actions taken on your account,
+            held by Stripe; Orbit&rsquo;s accounting record of charges, refunds and credit packs, with
+            your account id removed; the operator&rsquo;s audit log of actions taken on your account,
             which refers to an account id that no longer exists; and a few operational counters
             keyed by that same id. Encrypted database backups are kept for 90 days, so deleted data
             leaves the last backup within 90 days.

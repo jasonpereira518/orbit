@@ -11,11 +11,12 @@
  */
 import "./smoke/_env";
 
-import { like } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { interestListSignups } from "../src/db/schema";
+import { interestListSignups, waitlistPollVotes } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 import { invalidateInterestProof } from "../src/lib/interest-list-ticket";
+import { BASE_STARS, POLL_OPTIONS } from "../src/lib/waitlist-poll";
 
 const PREFIX = "smoke-page-";
 const TOKEN = "smoke-page-token";
@@ -41,6 +42,33 @@ function findProp(node: unknown, name: string): unknown {
   for (const value of Object.values(el.props)) {
     const hit = findProp(value, name);
     if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * The poll's `initial` prop. `findProp` cannot reach it: the hero's `initial` comes first and
+ * a plain-object prop has no `.props` to descend into, so find the element whose `initial`
+ * carries an `allocation` key (the visitor's stars).
+ */
+function pollInitial(
+  node: unknown
+): { results?: { counts?: unknown; voters?: unknown }; allocation?: Record<string, number>; budget?: number } | undefined {
+  if (node == null || typeof node !== "object") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = pollInitial(child);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  const props = (node as { props?: Record<string, unknown> }).props;
+  if (!props) return undefined;
+  const init = props.initial as Record<string, unknown> | null | undefined;
+  if (init && typeof init === "object" && "allocation" in init) return init;
+  for (const value of Object.values(props)) {
+    const hit = pollInitial(value);
+    if (hit) return hit;
   }
   return undefined;
 }
@@ -84,6 +112,13 @@ function hrefsOf(node: unknown, out: string[] = []): string[] {
 
 async function cleanup() {
   const db = await getDb();
+  const stale = await db
+    .select({ id: interestListSignups.id })
+    .from(interestListSignups)
+    .where(like(interestListSignups.email, `${PREFIX}%`));
+  for (const { id } of stale) {
+    await db.delete(waitlistPollVotes).where(eq(waitlistPollVotes.signupId, id));
+  }
   await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}%`));
   invalidateInterestProof();
 }
@@ -91,12 +126,19 @@ async function cleanup() {
 async function main() {
   await cleanup();
   const db = await getDb();
-  await db.insert(interestListSignups).values({
-    email: `${PREFIX}a@example.test`,
-    unsubscribeToken: generateUnsubscribeToken(),
-    shareToken: TOKEN,
-    welcomePlanet: "saturn",
-  });
+  const [seeded] = await db
+    .insert(interestListSignups)
+    .values({
+      email: `${PREFIX}a@example.test`,
+      unsubscribeToken: generateUnsubscribeToken(),
+      shareToken: TOKEN,
+      welcomePlanet: "saturn",
+    })
+    .returning();
+  const pollPick = POLL_OPTIONS[1].id;
+  await db
+    .insert(waitlistPollVotes)
+    .values({ optionId: pollPick, voterKey: `signup:${seeded.id}`, signupId: seeded.id });
 
   const mod = await import("../src/app/(site)/interest/page");
   const Page = mod.default;
@@ -112,8 +154,12 @@ async function main() {
   // it sees the hero's props (asserted above) and the server-rendered sections below it.
   const formText = textOf(form).join(" ");
   check("the FAQ keeps the product under wraps", formText.includes("under wraps"));
-  check("the front wave is explained", formText.includes("How do I get into the front wave?"));
-  check("the page never names the product", !/orbit/i.test(formText), formText.match(/.{0,40}orbit.{0,40}/i)?.[0]);
+  check("moving up the line is explained", formText.includes("How do I move up the line?"));
+  check("the tracker section is on the page", formText.includes("Bring friends, move up."));
+  // Its one sanctioned mark is the "Orbit" header; nothing else names it.
+  const unmarked = formText.replace("Orbit", "");
+  check("the header carries the product mark", formText.includes("Orbit"));
+  check("nothing else names the product", !/orbit/i.test(unmarked), unmarked.match(/.{0,40}orbit.{0,40}/i)?.[0]);
   check(
     "nothing says it is live, free or open for sign-up",
     !/\b(live|sign up|sign-up|start free|free for)\b/i.test(formText),
@@ -126,6 +172,26 @@ async function main() {
     hrefs.join(", ")
   );
   check("the hero gets the waitlist page URL, not the app's", String(findProp(form, "pageUrl")).endsWith("/interest"));
+
+  // The poll lives in a client component this walk cannot enter; its props are the contract.
+  check("the poll carries a tally", typeof pollInitial(form)?.results?.counts === "object");
+  // The tally is not per-viewer: the seeded signup's vote must show up for a no-pass visitor.
+  const tally = pollInitial(form)?.results?.counts as Record<string, number> | undefined;
+  check("…that counts the seeded (pre-stars) vote as the whole base budget", (tally?.[pollPick] ?? 0) >= BASE_STARS, JSON.stringify(tally));
+  check("…and counts its voter", Number(pollInitial(form)?.results?.voters) >= 1);
+  check(
+    "a visitor with no pass or cookie has spent no stars, with the base budget",
+    Object.keys(pollInitial(form)?.allocation ?? { x: 1 }).length === 0 && pollInitial(form)?.budget === BASE_STARS
+  );
+  check("…and hands the poll no pass token", findProp(form, "me") === null);
+
+  const passed = await Page(sp({ me: TOKEN }));
+  check(
+    "a pass that has voted opens on its stars (a pre-stars vote reads as the whole budget on its pick)",
+    pollInitial(passed)?.allocation?.[pollPick] === BASE_STARS,
+    JSON.stringify(pollInitial(passed)?.allocation)
+  );
+  check("…and hands the poll its pass token", findProp(passed, "me") === TOKEN);
 
   // --- invited
   const invited = await Page(sp({ ref: TOKEN }));
@@ -179,6 +245,26 @@ async function main() {
   const plain = await mod.generateMetadata(sp({}));
   check("plain metadata is the default", plain.title === "Early access — the future of networking");
   check("plain metadata still previews with the generic card", JSON.stringify(plain.openGraph ?? "").includes("ticket-image"));
+
+  // --- the admin's switch for the product demo
+  const demo = await import("../src/lib/waitlist-demo");
+  const { siteSettings } = await import("../src/db/schema");
+  const { eq } = await import("drizzle-orm");
+  const shows = (tree: unknown) => textOf(tree).join(" ").includes("Take it for a spin");
+  check("the demo shows by default (never set reads as on)", shows(form) && (await demo.getWaitlistDemoEnabled({ fresh: true })) === true);
+  await demo.setWaitlistDemoEnabled("smoke-admin", false);
+  check("turning it off hides the section", !shows(await Page(sp({}))));
+  // A heading written in the page itself: the journey section's title is a client component
+  // now (it follows the live pass), so its words are not in this tree.
+  check("…and the rest of the page is untouched", textOf(await Page(sp({}))).join(" ").includes("Bring friends, move up."));
+  await demo.setWaitlistDemoEnabled("smoke-admin", true);
+  check("turning it back on shows it again", shows(await Page(sp({}))));
+  const [row] = await (await getDb()).select().from(siteSettings).where(eq(siteSettings.id, 1));
+  check("the switch leaves the stealth switch alone", row?.stealthEnabled === null && row?.stealthSince === null, JSON.stringify(row));
+  const { adminAuditLog } = await import("../src/db/schema");
+  const audited = await (await getDb()).select().from(adminAuditLog).where(like(adminAuditLog.action, "site.waitlist_demo.%"));
+  check("every flip is in the audit log", audited.length === 2 && audited.every((a) => a.adminUserId === "smoke-admin"), String(audited.length));
+  await (await getDb()).delete(adminAuditLog).where(like(adminAuditLog.action, "site.waitlist_demo.%"));
 
   // --- the privacy notice
   const privacy = await (await import("../src/app/(site)/interest/privacy/page")).default();

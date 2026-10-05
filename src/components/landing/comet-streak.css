@@ -1,0 +1,35 @@
+/* Comet streak: one GPU layer for the scrubbed wrapper; sparks flicker via
+ * CSS so scroll doesn’t drive per-particle MotionValues (was janky). */
+.comet-streak {
+  will-change: transform, opacity;
+}
+
+@keyframes comet-spark-flicker {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: translate(0, 0) scale(0.9);
+  }
+  40% {
+    opacity: 1;
+    transform: translate(1px, -1.5px) scale(1.15);
+  }
+  70% {
+    opacity: 0.7;
+    transform: translate(-1px, 1px) scale(1);
+  }
+}
+
+.comet-spark {
+  animation: comet-spark-flicker 0.9s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comet-streak {
+    will-change: auto;
+  }
+
+  .comet-spark {
+    animation: none;
+  }
+}

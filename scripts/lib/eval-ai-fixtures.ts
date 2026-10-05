@@ -27,6 +27,20 @@ export type CaptureEvalFixture = {
         email?: string;
         /** Opportunity kinds that must appear on this person (e.g. "referral"). */
         opportunityKinds?: string[];
+        /** At least this many takeaways. */
+        minTakeaways?: number;
+        /** Each must appear (substring, case-insensitive) in some personal detail. */
+        personal?: string[];
+        /** Each must appear in the work block (team, building, priorities, hiring or looking_for). */
+        work?: string[];
+        /** Handles and background the notes state outright. Scored like the fields above. */
+        phone?: string;
+        xHandle?: string;
+        school?: string;
+        /** Names this person is linked to in the notes. */
+        connections?: string[];
+        /** Promises that must come back, by direction and a substring of their text. */
+        promises?: Array<{ direction: "you_owe" | "they_owe"; contains: string }>;
       }>;
       /** Named in the notes but NOT talked to: must never come back as a review card. */
       notParticipants?: string[];
@@ -236,5 +250,32 @@ export type SkipGatesEvalFixture = {
     state: Record<string, string>;
     skip: boolean;
     why?: string;
+  }>;
+};
+
+export type RelationshipEvalFixture = {
+  cases: Array<{
+    id: string;
+    contactName: string;
+    /** ISO "now" the rules run at. */
+    now: string;
+    /**
+     * Chat-import case: the messages are session transcripts (as a chat-import row holds them),
+     * so the window speaker is "Chat" and the source a chat app, not a named person.
+     */
+    chat?: boolean;
+    /** Phrases no fact, `whatTheyDo` or `workingOn` may mention (someone else's detail). */
+    forbiddenFacts?: string[];
+    messages: Array<{ at: string; from: "me" | "them"; text: string }>;
+    expect: {
+      /** Phrases that must appear in some fact. */
+      facts: string[];
+      commitments: Array<{ phrase: string; owedBy: "me" | "them"; dueIso?: string }>;
+      /** Reminders the rules must plan. */
+      reminders: number;
+      openThreads: number;
+      /** Must produce nothing at all (no model call). */
+      trivial?: boolean;
+    };
   }>;
 };

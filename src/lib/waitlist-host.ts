@@ -97,10 +97,11 @@ export function hostMatchValue(host: string) {
  * - `privacy` (exactly): the notice, reached through the rewrite below. `/interest` and
  *   `/interest/privacy` are NOT here — they redirect to `/` and `/privacy` first.
  * - `_next/`: the page's own chunks and fonts. The server action POSTs to `/`.
- * - `api/interest-list/unsubscribe` and `/ticket-image`: the email's leave link and the
- *   share image. `api/track`: the page-view beacon. `api/csp-report`: the waitlist
+ * - `api/interest-list/unsubscribe`, `/ticket-image` and `/progress`: the email's leave
+ *   link, the share image and the referral tracker's poll. `api/track`: the page-view beacon. `api/csp-report`: the waitlist
  *   CSP's report target. `_vercel/`: Vercel's analytics.
- * - `landing/planets/` and `waitlist/`: the planet art and the waitlist's favicon.
+ * - `landing/planets/` and `waitlist/`: the planet art, the waitlist favicon / logo mark,
+ *   and the email starfield GIF.
  * - `favicon.ico`, `icon.png`, `apple-icon.png`: the root layout's file-based icons, which
  *   every page links. They are rewritten to the waitlist's icon below.
  * - `monitoring`: Sentry's tunnel, if one is ever configured. `__nextjs`: the dev overlay.
@@ -113,6 +114,8 @@ export const WAITLIST_ALLOWED_PATHS = [
   "_next/",
   "api/interest-list/unsubscribe$",
   "api/interest-list/ticket-image$",
+  "api/interest-list/progress$",
+  "api/waitlist-poll/results$",
   "api/track$",
   "api/csp-report$",
   "_vercel/",
@@ -124,6 +127,31 @@ export const WAITLIST_ALLOWED_PATHS = [
   "monitoring$",
   "__nextjs",
 ] as const;
+
+/**
+ * Segments of `/waitlist/<slug>` that are something else: the waitlist's favicon file lives
+ * at `/waitlist/icon.png` (see `WAITLIST_ALLOWED_PATHS`), the page header's logo mark lives at
+ * `/waitlist/logo.png`, the welcome email's starfield at `/waitlist/starfield.gif`, and
+ * `/waitlist/privacy` is the local-development preview of the notice.
+ * A person's referral slug is never one of these (`slugFromEmail` swaps them for a neutral name).
+ */
+export const RESERVED_WAITLIST_SLUGS = [
+  "privacy",
+  "icon.png",
+  "logo.png",
+  "starfield.gif",
+  "favicon.ico",
+  "apple-icon.png",
+] as const;
+
+/** The path-to-regexp pattern of a referral slug: one URL-safe segment, not a reserved one. */
+const SLUG_PATTERN = `(?!${RESERVED_WAITLIST_SLUGS.map((s) => `${escapeRegex(s)}$`).join("|")})[A-Za-z0-9][A-Za-z0-9._-]*`;
+
+/** The slug in a `/waitlist/<slug>` pathname, or null when it is any other path. */
+export function waitlistSlugFromPath(pathname: string): string | null {
+  const match = new RegExp(`^/waitlist/(${SLUG_PATTERN})$`).exec(pathname);
+  return match ? match[1]! : null;
+}
 
 /**
  * The one catch-all source: any non-empty path that is not allowed above. `.+` rather
@@ -168,6 +196,19 @@ export function waitlistRewrites(env: Env = process.env): ConfigRewrite[] {
     { source: "/icon.png", destination: "/waitlist/icon.png", has },
     { source: "/apple-icon.png", destination: "/waitlist/icon.png", has },
   ];
+}
+
+/**
+ * `beforeFiles` rewrite for referral links, on EVERY host: `/waitlist/<slug>` renders the
+ * waitlist page as an invitation from that slug's owner. It is `/interest?ref=<slug>` under
+ * the hood — the page already treats `ref` as "who sent you" — so the URL a person shares
+ * can name them without the page, the join or the email links learning a second concept.
+ *
+ * Not host-conditional, because the link is built on whichever origin serves the waitlist:
+ * the waitlist host in production, the app's own origin before it has one.
+ */
+export function waitlistReferralRewrites(): ConfigRewrite[] {
+  return [{ source: `/waitlist/:slug(${SLUG_PATTERN})`, destination: "/interest?ref=:slug" }];
 }
 
 /**
@@ -247,6 +288,11 @@ export function stealthGate(
   // share links (`?me=`, `?ref=`) ride along. With no waitlist host, `/interest` IS the
   // waitlist, so it stays open.
   const origin = waitlistOrigin(env);
+  // Referral links live at the same path on both hosts, so an old one on the app host moves
+  // across, slug intact — without this, stealth would send it to `/` and drop the referrer.
+  if (waitlistSlugFromPath(pathname)) {
+    return origin ? { kind: "redirect", to: `${origin}${pathname}${search}` } : { kind: "pass" };
+  }
   if (pathname === "/interest" || pathname === "/interest/privacy") {
     if (!origin) return { kind: "pass" };
     return { kind: "redirect", to: `${origin}${pathname === "/interest" ? "/" : "/privacy"}${search}` };

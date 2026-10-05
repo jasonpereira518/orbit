@@ -28,8 +28,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safe-links";
 import { formatHowMetSummary } from "@/lib/met-context";
-import { closenessTierChipClass } from "@/lib/closeness";
+import { closenessPercentChipClass, closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
 import type { UserSocialLinks } from "@/actions/graph";
 import { friendlyError } from "@/lib/errors";
@@ -73,7 +74,11 @@ function formatMaybeRelative(value: string | null | undefined) {
   }
 }
 
-function closenessChipClass(tier: "inner" | "mid" | "outer" | undefined) {
+function closenessChipClass(
+  closeness: number | undefined,
+  tier: "inner" | "mid" | "outer" | undefined
+) {
+  if (typeof closeness === "number") return closenessPercentChipClass(closeness);
   if (!tier) return "bg-muted text-muted-foreground";
   return closenessTierChipClass(tier);
 }
@@ -472,7 +477,7 @@ function ContactPanelBody({
           <span
             className={cn(
               "rounded-full px-2.5 py-1 text-xs font-medium",
-              closenessChipClass(data.closenessTier)
+              closenessChipClass(data.closeness, data.closenessTier)
             )}
           >
             {RING_LABELS[data.score || 2] || "Orbit"}
@@ -556,9 +561,9 @@ function ContactPanelBody({
                 Call
               </a>
             )}
-            {data.linkedinUrl && (
+            {safeHttpUrl(data.linkedinUrl) && (
               <a
-                href={data.linkedinUrl}
+                href={safeHttpUrl(data.linkedinUrl)!}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
@@ -566,9 +571,9 @@ function ContactPanelBody({
                 LinkedIn
               </a>
             )}
-            {data.website && (
+            {safeHttpUrl(data.website) && (
               <a
-                href={data.website}
+                href={safeHttpUrl(data.website)!}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(buttonVariants({ variant: "outline", size: "sm" }))}

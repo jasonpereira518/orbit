@@ -1,5 +1,6 @@
-# The gate `main` never had: typecheck, lint, a production build, the smoke suite, and the
-# Playwright browser flows.
+# The PR gate: typecheck, lint, a production build, the smoke suite, and the Playwright
+# browser flows. The Chrome extension has its own workflow (extension.yml) that runs only
+# when a PR touches it.
 #
 # Nothing here needs a secret. The build runs without Clerk or database keys (the app
 # fails closed at runtime, not at build), `check:env` only gates VERCEL builds via
@@ -10,17 +11,20 @@
 # and `smoke` status checks before merging.
 name: ci
 
-# CI skips runs that cannot tell you anything, so a result means something and the runners
-# stay free for the runs that do:
+# CI runs where a result can change a decision, and nowhere else:
 #
+# - Pull requests, plus every push to `main`. The `main` run is not a repeat of the PR's:
+#   parallel PRs each pass against their own base, and only `main` sees them together.
+#   It is also the only run whose caches (node_modules, .next/cache) every PR can restore;
+#   GitHub scopes a PR's caches to that PR, so without it each PR's first run starts cold.
 # - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
 #   ready for review, and on every push after that. A ready PR gets every job.
-# - `paths-ignore` skips the run for changes no job reads: docs, agent skills, and the two
-#   workflows that only schedule ops calls. docs/RUNBOOK.md is re-included because
-#   scripts/smoke-schedules.ts parses it. There are no required status checks on main
-#   (Protected Main Branch only blocks deletion and force-pushes); if `check`/`smoke` are
-#   ever made required, drop `paths-ignore` from `pull_request`, or a docs-only PR waits
-#   forever on checks that never start.
+# - `paths-ignore` skips the run for changes no job reads: docs, agent skills, the
+#   extension (extension.yml covers it), and the workflows that do not touch the app.
+#   docs/RUNBOOK.md is re-included because scripts/smoke-schedules.ts parses it. There are
+#   no required status checks on main (Protected Main Branch only blocks deletion and
+#   force-pushes); if `check`/`smoke` are ever made required, drop `paths-ignore`, or a
+#   docs-only PR waits forever on checks that never start.
 #
 # The repository is public, so hosted runners are free. This workflow is written to stay
 # safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
@@ -36,12 +40,15 @@ on:
       - "!docs/RUNBOOK.md"
       - ".agents/**"
       - ".claude/**"
+      - "extension/**"
       - ".github/workflows/ops.yml"
       - ".github/workflows/backup.yml"
+      - ".github/workflows/extension.yml"
       - "LICENSE"
   push:
     branches: [main]
     paths-ignore: *ignore
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -50,6 +57,10 @@ concurrency:
 permissions:
   contents: read
 
+# Every job restores node_modules from a cache keyed on the lockfile and Node version and
+# runs `npm ci` only on a miss: the install was ~30s of every job, repeated on every push.
+# The root package has no install scripts, so a restored node_modules is exactly what
+# `npm ci` would have produced.
 jobs:
   check:
     name: typecheck · lint · build
@@ -61,10 +72,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm run typecheck
-      - run: npm run lint
+      - id: deps
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      # Independent and both CPU-bound on a 4-core runner, so they run side by side; `wait`
+      # on each pid so either one failing fails the step.
+      - name: typecheck + lint
+        run: |
+          npm run typecheck & tsc=$!
+          npm run lint & lint=$!
+          wait $tsc && wait $lint
       - name: Cache the Next.js compiler output
         uses: actions/cache@v4
         with:
@@ -77,47 +98,37 @@ jobs:
           # Keep the Sentry build plugin quiet and source-map upload off in CI.
           SENTRY_AUTH_TOKEN: ""
 
-  # The smoke suite is ~380 scripts run one after another (PGlite is single-writer), about
-  # twelve minutes and by far the slowest job. Splitting it over four machines runs exactly
-  # the same scripts (scripts/run-smoke.ts --shard i/n covers each one once) but the wait
-  # drops to the slowest shard. Each shard has its own PGlite directory, so the
-  # single-writer rule holds. `fail-fast: false` so one shard failing still reports the rest.
+  # The smoke suite is ~400 scripts run one after another (PGlite is single-writer), about
+  # ten minutes serially and by far the slowest job. Three machines run exactly the same
+  # scripts (scripts/run-smoke.ts --shard i/n covers each one once), each with its own
+  # PGlite directory, so the single-writer rule holds. Three rather than four: with the
+  # install cached, three shards finish alongside the build, and a fourth only added a check.
+  # `fail-fast: false` so one shard failing still reports the rest.
   #
-  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/4` …; if a
-  # required status check is ever added, require all four names.
+  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/3` …; if a
+  # required status check is ever added, require all three names.
   smoke:
-    name: smoke suite (PGlite) ${{ matrix.shard }}/4
+    name: smoke suite (PGlite) ${{ matrix.shard }}/3
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm test -- --shard ${{ matrix.shard }}/4
-
-  extension:
-    name: extension typecheck · build
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - id: deps
+        uses: actions/cache@v4
         with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
-      - run: npm --prefix extension ci --no-audit --no-fund
-      - run: npm --prefix extension run typecheck
-      - run: npm --prefix extension run build
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - run: npm test -- --shard ${{ matrix.shard }}/3
 
   e2e:
     name: browser flows (Playwright)
@@ -129,8 +140,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci --no-audit --no-fund
+      - id: deps
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
         env:

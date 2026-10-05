@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { AdminForbiddenError, requireAdminUserId } from "@/lib/admin";
+import { REFERRAL_TIERS } from "@/lib/interest-list";
 import {
   asWelcomePlanet,
-  buildFrontWaveEmail,
   buildInterestListWelcomeEmail,
+  buildTierEmail,
 } from "@/lib/interest-list-email";
 import { buildBroadcastEmail, loadBroadcast } from "@/lib/broadcasts";
+import { buildSiteInviteEmail } from "@/lib/site-invite-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,7 +28,7 @@ export const runtime = "nodejs";
  * it to the list.
  */
 
-const TEMPLATES = ["welcome", "front-wave", "broadcast"] as const;
+const TEMPLATES = ["welcome", "tier", "broadcast", "site-invite"] as const;
 type Template = (typeof TEMPLATES)[number];
 
 function isTemplate(value: string | null): value is Template {
@@ -37,7 +39,8 @@ function isTemplate(value: string | null): value is Template {
 const SAMPLE_UNSUBSCRIBE = "https://example.invalid/unsubscribe?token=preview";
 const SAMPLE_LINKS = {
   ticketUrl: "https://waitlist.example/?me=sample-token",
-  shareUrl: "https://waitlist.example/?ref=sample-token",
+  // Same shape as production: `/waitlist/<email local part>`.
+  shareUrl: "https://waitlist.example/waitlist/maya",
 };
 
 export async function GET(request: NextRequest) {
@@ -58,7 +61,20 @@ export async function GET(request: NextRequest) {
 
   let message: { subject: string; html: string; text: string };
 
-  if (template === "broadcast") {
+  if (template === "site-invite") {
+    // `&kind=existing-account` for the sign-in variant; `&name=` to preview the greeting.
+    const existing = url.searchParams.get("kind") === "existing-account";
+    message = buildSiteInviteEmail({
+      email: "maya@example.com",
+      url: existing
+        ? "https://example.invalid/sign-in"
+        : "https://example.invalid/sign-up?__clerk_ticket=preview",
+      kind: existing ? "existing-account" : "invite",
+      planet: url.searchParams.get("planet") ? planet : "earth",
+      firstName: url.searchParams.get("name") ?? "Maya",
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+  } else if (template === "broadcast") {
     // A real draft when one is named, so the preview shows what would actually go out.
     const id = url.searchParams.get("id");
     const draft = id ? await loadBroadcast(id) : null;
@@ -66,21 +82,28 @@ export async function GET(request: NextRequest) {
       subject: draft?.subject ?? "A sample subject line",
       body:
         draft?.body ??
-        "This is what a broadcast looks like.\n\nThe first paragraph is set larger, as the opening line. Everything after it is body copy.\n\nWrite plain prose — the shell, the planet and the leave-the-waitlist footer are added for you.",
+        "This is what a broadcast looks like.\n\nThe first paragraph is set larger, as the opening line. Everything after it is body copy.\n\nWrite plain prose. The letter, the sign-off and the leave-the-waitlist footer are added for you.",
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
     });
-  } else if (template === "front-wave") {
-    message = buildFrontWaveEmail({
+  } else if (template === "tier") {
+    // `&tier=founding` picks the tier; the first-friend note is the default.
+    const wanted = url.searchParams.get("tier");
+    const tier =
+      REFERRAL_TIERS.find((t) => t.at > 0 && t.id === wanted) ?? REFERRAL_TIERS.find((t) => t.at > 0)!;
+    message = buildTierEmail({
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
       planet,
       links: SAMPLE_LINKS,
+      tier,
     });
   } else {
+    const event = url.searchParams.get("event")?.trim();
     message = buildInterestListWelcomeEmail({
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
       planet,
       links: SAMPLE_LINKS,
       position: 1285,
+      signupEventLabel: event || null,
     });
   }
 

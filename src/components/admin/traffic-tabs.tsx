@@ -10,12 +10,14 @@ import { SectionTabs } from "@/components/admin/section-tabs";
  * here that mixes traffic with accounts and money — three populations that need their
  * own explanation, and that would otherwise be read as one continuous chain. Engagement
  * is a fourth population again: signed-in accounts using specific features, not visitors
- * or conversions.
+ * or conversions. Radar is one feature measured on its own terms: cards shown, what people
+ * did with them, and whether the AI rerank earns its keep.
  */
 const TABS = [
   { href: "/admin/analytics", label: "Traffic" },
   { href: "/admin/analytics/funnel", label: "Conversion" },
   { href: "/admin/analytics/engagement", label: "Engagement" },
+  { href: "/admin/analytics/radar", label: "Radar" },
 ];
 
 export function TrafficTabs() {
