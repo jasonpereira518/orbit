@@ -82,7 +82,7 @@
     "@types/three": "^0.185.4",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.3.6",
     "linkedom": "^0.18.13",
     "shadcn": "^4.13.0",
