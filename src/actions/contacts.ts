@@ -654,15 +654,39 @@ export async function createContact(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
+  const { contact } = await createContactDetailed(input, options);
+  return contact;
+}
+
+/**
+ * `createContact`, but it also tells you what actually happened.
+ *
+ * `resolveOrCreateContact` has always returned an `outcome` and `createContact` has
+ * always thrown it away, so the form toasted "Contact created" even when the submission
+ * had been folded into an existing person — silently replacing their company and role,
+ * with the contact count unchanged and no way back. A caller with a human in front of it
+ * needs to be able to say which of the two happened.
+ *
+ * Separate from `createContact` rather than a changed return type, so the importer and
+ * outreach paths that only want the row keep working unchanged.
+ */
+export async function createContactDetailed(
+  input: ContactInput,
+  options?: ContactWriteOptions
+) {
   const userId = await requireUserId();
-  const { contactId } = await resolveOrCreateContact(userId, input, options);
+  const { contactId, outcome, reason } = await resolveOrCreateContact(
+    userId,
+    input,
+    options
+  );
   const db = await getDb();
   const [contact] = await db
     .select()
     .from(contacts)
     .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
     .limit(1);
-  return contact;
+  return { contact, outcome, reason: reason ?? null };
 }
 
 /**
@@ -1136,9 +1160,21 @@ export async function backfillContactAvatars(
         resolveApollo,
         sourcesUnavailable,
         save: async (contactId, photoUrl) => {
+          // `updatedAt` deliberately left alone, for the reason spelled out on
+          // `setConstellationPin` below: the dashboard and /knowledge both order by
+          // `desc(updated_at)`, and a background photo fetch is an invisible operation. A
+          // fresh LinkedIn import would otherwise shove every contact it created to the top
+          // of "recently updated" purely because their avatars downloaded.
+          //
+          // It is also load-bearing for revertible imports. `revertImport` asks "has the
+          // user edited this contact since the import" by comparing `created_at` against
+          // `updated_at`, and this ran on every page load against exactly the contacts an
+          // import had just created — so an undo found them all "edited", deleted nothing,
+          // and said so. The revert commit claimed this had been verified; the embedding
+          // backfill had been, this had not.
           await db
             .update(contacts)
-            .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+            .set({ profileImageUrl: photoUrl })
             .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
         },
         markChecked: async (contactId) => {

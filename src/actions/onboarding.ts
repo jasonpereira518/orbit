@@ -101,6 +101,9 @@ export async function resetOnboarding(opts: { path?: OnboardingPath } = {}) {
     .update(userSettings)
     .set({
       onboardingCompletedAt: null,
+      // "welcome" marks onboarding as in progress, which is what keeps `needsOnboarding`'s
+      // backfill from re-completing it on the next page view — with null here, a replay
+      // lasted exactly one navigation.
       onboardingStep: "welcome",
       onboardingPath: opts.path ?? null,
       tourStartedAt: null,

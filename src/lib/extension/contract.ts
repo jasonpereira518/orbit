@@ -26,6 +26,8 @@ export type ExtensionErrorCode =
   | "duplicate"
   | "limit_exceeded"
   | "payload_too_large"
+  /** The account's plan does not include the extension. */
+  | "payment_required"
   | "server_error";
 
 export type ExtensionError = {

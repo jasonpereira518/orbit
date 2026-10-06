@@ -28,6 +28,13 @@ import {
   toNetworkEventsDecided,
   type CalendarFetchResult,
 } from "@/lib/connectors/google-calendar";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { gmailConnections, userSettings } from "@/db/schema";
+import {
+  emailActivitySince,
+  syncEmailActivity,
+} from "@/lib/email-activity-server";
 import {
   advanceCursor as advanceMicrosoftCalendarCursor,
   fetchCalendarPage as fetchMicrosoftCalendarPage,
@@ -38,6 +45,7 @@ import {
 } from "@/lib/connectors/apple-calendar";
 import { appleCredentials } from "@/lib/apple";
 import {
+  hasMailReadScope,
   hasContactsScope as hasGoogleContactsScope,
   hasCalendarScope as hasGoogleCalendarScope,
   getValidAccessToken as getValidGoogleAccessToken,
@@ -255,6 +263,10 @@ export type SyncRunStats = {
   /** Background reads of discovered events' public pages. */
   enrichFetched: number;
   enrichFailed: number;
+  /** Email activity: mailboxes read, and interactions those reads produced. */
+  mailboxesSynced: number;
+  mailboxesSkipped: number;
+  emailInteractionsLogged: number;
   budgetExhausted: boolean;
   /**
    * Some claim came back FULL (it hit its per-run cap), so more work is probably still due.
@@ -299,6 +311,9 @@ function emptyRunStats(): SyncRunStats {
     discoverySuppressed: 0,
     enrichFetched: 0,
     enrichFailed: 0,
+    mailboxesSynced: 0,
+    mailboxesSkipped: 0,
+    emailInteractionsLogged: 0,
     budgetExhausted: false,
     claimFull: false,
     oldestDueAgeMs: null,
@@ -953,13 +968,6 @@ async function syncAppleCalendar(
   });
 }
 
-/**
- * One scheduler pass.
- *
- * Returns stats rather than throwing, so a caller can always record a ledger row. The only
- * way this rejects is if claiming itself fails, which means the database is unreachable and
- * there is nothing to record anyway.
- */
 /** How long a paused extra connection waits before the pass looks at it again. */
 const EXTRA_CONNECTION_RECHECK_MS = 6 * 60 * 60 * 1000;
 
@@ -986,6 +994,56 @@ async function skipExtraConnection(
   return true;
 }
 
+/**
+ * Read one connection's mailbox for relationship activity, if the user asked for it.
+ *
+ * Three gates, all of which must pass, and each one is a different kind of "no": the user has
+ * to have opted in (`email_activity_sync`), the token has to carry the read scope, and the
+ * connection has to know which address is the user's own — without that last one every
+ * message looks inbound and the "waiting on a reply" queue fills with the user's own
+ * outbox.
+ */
+async function syncMailboxActivity(
+  conn: ClaimedConnection,
+  stats: SyncRunStats
+): Promise<void> {
+  if (!hasMailReadScope(conn.scopes)) {
+    stats.mailboxesSkipped++;
+    return;
+  }
+
+  const db = await getDb();
+  const [settings, connection] = await Promise.all([
+    db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, conn.userId),
+      columns: { emailActivitySync: true },
+    }),
+    db.query.gmailConnections.findFirst({
+      where: eq(gmailConnections.userId, conn.userId),
+      columns: { emailAddress: true },
+    }),
+  ]);
+
+  if (!settings?.emailActivitySync || !connection?.emailAddress) {
+    stats.mailboxesSkipped++;
+    return;
+  }
+
+  const result = await syncEmailActivity(conn.userId, {
+    selfEmail: connection.emailAddress,
+    since: await emailActivitySince(conn.userId),
+  });
+  stats.mailboxesSynced++;
+  stats.emailInteractionsLogged += result.interactionsLogged;
+}
+
+/**
+ * One scheduler pass.
+ *
+ * Returns stats rather than throwing, so a caller can always record a ledger row. The only
+ * way this rejects is if claiming itself fails, which means the database is unreachable and
+ * there is nothing to record anyway.
+ */
 export async function runSyncPass(
   options: { now?: Date; budgetMs?: number; deps?: SyncDeps } = {}
 ): Promise<SyncRunStats> {
@@ -1053,6 +1111,11 @@ export async function runSyncPass(
     try {
       await syncGoogleConnection(conn, stats, now, deps, { wantsCalendar, wantsContacts });
       stats.synced++;
+      // Best-effort and deliberately after the calendar: a mailbox pass that throws must not
+      // cost the connection its calendar sync, and the two answer different questions.
+      await syncMailboxActivity(conn, stats).catch(() => {
+        stats.mailboxesSkipped++;
+      });
     } catch (err) {
       stats.failed++;
       // A dead grant is permanent until the user reconnects; anything else is worth retrying.

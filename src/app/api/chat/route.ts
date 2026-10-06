@@ -7,7 +7,7 @@ import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
-import { persistAssistantTurn } from "@/lib/chat-persist";
+import { discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
@@ -133,6 +133,8 @@ export async function POST(request: Request) {
     async start(controller) {
       const send = (event: ChatStreamEvent) => controller.enqueue(encoder.encode(formatSse(event)));
       const steps = createStepEmitter((step) => send({ type: "step", step }));
+      // Hoisted out of the try so the failure path can clear a question nothing answered.
+      let persistedUserMessageId: string | null = null;
       try {
         // The account's AI access, resolved ONCE for the whole question from the row the
         // auth gate already read — the decider, query embedding, parse, rerank, writing
@@ -163,7 +165,6 @@ export async function POST(request: Request) {
           excludeSlot: versionTarget?.slot ?? null,
           access,
         });
-        let persistedUserMessageId: string | null = null;
         if (threadId) {
           const db = await getDb();
           const [userRow] = await db
@@ -314,6 +315,9 @@ export async function POST(request: Request) {
         // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
         // an error of ours either — the provider call was aborted on purpose.
         if (request.signal.aborted) return;
+        // The question was written before the model ran (it carries the attached people and,
+        // on a regenerate, the slot). Nothing answered it, so it does not stay.
+        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
         // The status line is already sent, so this reaches the client as an event. Report it:
         // a mid-stream failure used to leave no trace outside the person's screen.
         send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });

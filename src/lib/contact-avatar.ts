@@ -12,9 +12,11 @@ import {
 } from "@/lib/contact-avatar-url";
 
 export {
+  hasFreshNoPhotoMarker,
   isDurableAvatarUrl,
   isUnfetchableImageUrl,
   isUnusableAvatarUrl,
+  noPhotoMarker,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
 

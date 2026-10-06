@@ -169,8 +169,11 @@ export type ContactsListFilters = {
   company?: string;
   minScore?: number;
   followUp?: "due";
+  /** Days since the last logged interaction — see `parseQuietDays`. */
+  quiet?: number;
   sort?: ContactSort;
   letter?: string;
+  tag?: string;
   /** Narrows the list to one import's people — see `/contacts/page.tsx`'s banner. */
   importId?: string;
 };
@@ -365,6 +368,8 @@ export function ContactsList({
     if (filters.company) params.set("company", filters.company);
     if (filters.minScore) params.set("minScore", String(filters.minScore));
     if (filters.followUp) params.set("followUp", filters.followUp);
+    if (filters.tag) params.set("tag", filters.tag);
+    if (filters.quiet) params.set("quiet", String(filters.quiet));
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
     if (filters.importId) params.set("importId", filters.importId);
     params.set("letter", letter);
@@ -510,6 +515,10 @@ export function ContactsList({
           contactName={draftContact?.name ?? ""}
         />
 
+        {/* Hidden under a non-name sort: jumping to "M" is meaningless in a list ordered
+            by closeness or recency, and the rail would scroll to a letter that is not
+            where the rows actually are. */}
+        {(!filters.sort || filters.sort === "name") && (
         <AlphabetScrubber
           available={availableLetters}
           activeLetter={activeLetter}
@@ -521,6 +530,7 @@ export function ContactsList({
             setActiveLetter(null);
           }}
         />
+        )}
 
         <Dialog
           open={confirmId !== null}
@@ -530,7 +540,14 @@ export function ContactsList({
         >
           <DialogContent showCloseButton={false} className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Delete {confirmContact?.fullName}?</DialogTitle>
+              {/* Clamped: the name is interpolated straight into the title, and a
+                  10,000-character one pushed this dialog's own Cancel and Delete buttons
+                  to x=116,705px — the record became undeletable through the UI, and the
+                  only way out was to rename it shorter first. Phase 0 caps new input at
+                  200 characters, but rows written before that still have to render. */}
+              <DialogTitle className="line-clamp-2 break-words">
+                Delete {confirmContact?.fullName}?
+              </DialogTitle>
               <DialogDescription>
                 {CONTACT_DELETE_EXPLAINER}
               </DialogDescription>

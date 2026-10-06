@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
-import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
+import { getDb, rowsOf, runAtomicWrite, type AtomicStatement } from "@/db";
+import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
 import {
   actionItems,
   aiSuggestions,
@@ -46,6 +47,7 @@ const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
   "post_event",
   "linkedin_thread_quiet",
+  "awaiting_reply",
 ] as const;
 
 const MAX_AUTO_SUGGESTIONS = 12;
@@ -69,6 +71,11 @@ const REMINDER_CAP = 20;
 const SUGGESTION_CAP = 40;
 
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
+  // Above post_event: an unanswered message names a specific thing the user did and a
+  // specific decision to make about it, where the others describe a state of the
+  // relationship. It is also the only one with a closing window — past 30 days
+  // `dormant_high_value` says something more useful.
+  awaiting_reply: 4,
   post_event: 3,
   linkedin_thread_quiet: 2,
   dormant_high_value: 1,
@@ -216,6 +223,46 @@ async function buildOutreachSuggestions(userId: string) {
     ) {
       candidateByContact.set(contactId, candidate);
     }
+  }
+
+  // Who is waiting on an answer.
+  //
+  // `DISTINCT ON` gives the single most recent interaction per contact in one indexed pass,
+  // rather than loading every interaction and reducing in JS — this runs on the dashboard.
+  // The ORDER BY must lead with `contact_id` for DISTINCT ON, and the `id` tiebreak keeps
+  // the result stable when two rows share a timestamp (a bulk note paste does exactly that).
+  const lastTouches = rowsOf<{
+    contact_id: string;
+    direction: "in" | "out" | null;
+    interaction_date: string | Date | null;
+  }>(
+    await db.execute(sql`
+      SELECT DISTINCT ON (contact_id)
+        contact_id, direction, interaction_date
+      FROM interactions
+      WHERE user_id = ${userId}
+      ORDER BY contact_id, interaction_date DESC, id DESC
+    `)
+  );
+  const byId = new Map(all.map((c) => [c.id, c]));
+  for (const { contactId, daysWaiting } of awaitingReplies(
+    lastTouches.map((r) => ({
+      contactId: r.contact_id,
+      direction: r.direction,
+      interactionDate: r.interaction_date,
+    }))
+  )) {
+    const c = byId.get(contactId);
+    // `isDiscoveryEligible` still applies: a contact with a follow-up already scheduled is
+    // covered, and one pinned off the constellation has been told to leave them alone.
+    if (!c || !isDiscoveryEligible(c)) continue;
+    upsertCandidate(c.id, {
+      suggestionType: "awaiting_reply",
+      title: `Nudge ${contactDisplayName(c)}`,
+      description: awaitingReplyDescription(daysWaiting),
+      relatedContactIds: [c.id],
+      confidenceScore: 85,
+    });
   }
 
   const dormantHighValue = all.filter(
@@ -408,22 +455,46 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
         inArray(reminders.contactId, candidateIds),
         eq(reminders.status, "pending")
       ),
-      columns: { id: true, contactId: true },
+      // `createdBy` is projected because the guard below turns on it. Without it every
+      // existing reminder looks system-generated and hand-written ones get overwritten.
+      columns: { id: true, contactId: true, createdBy: true },
     });
-    const reminderIdByContact = new Map(
-      existingReminders.map((r) => [r.contactId, r.id])
+    const existingByContact = new Map(
+      existingReminders.map((r) => [r.contactId, r])
     );
 
     const rowsToInsert: (typeof reminders.$inferInsert)[] = [];
     const reminderRetitles: SQL[] = [];
+    // Contacts this pass actually acted on. Not `candidateIds`: the guard below skips anyone
+    // whose reminder a person wrote, and stamping `next_follow_up_at` on them would move a
+    // date the user set from a queue that decided not to touch them.
+    const actedOn: string[] = [];
 
     for (const contact of candidates) {
       const name = contact.preferredName || contact.fullName;
       const title = `Follow up with ${name}`;
-      const existingReminderId = reminderIdByContact.get(contact.id);
+      const existing = existingByContact.get(contact.id);
 
-      if (existingReminderId) {
-        reminderRetitles.push(sql`(${existingReminderId}::uuid, ${title}::text)`);
+      if (existing) {
+        // Never rewrite what a person wrote.
+        //
+        // The UPDATE below sets title, due_date, reminder_type, action_kind AND
+        // created_by on every row it touches, so pressing "Generate more" turned a
+        // hand-written "Send the intro deck", due 30 Oct, into "Follow up with X" due now
+        // — and relabelled it `system`, destroying the evidence it was ever user-authored.
+        // No undo, no confirmation, no toast.
+        //
+        // A user-authored reminder means this contact is already handled, so skip them
+        // entirely rather than bringing the date forward: the queue exists to surface
+        // people with nothing planned, and the user has plainly planned something.
+        //
+        // Restored for the second time here. This guard was added on this branch, lost to
+        // main's first bulk rewrite of this loop, restored in that merge, and lost again to
+        // the retitle rewrite. If it goes a third time, `smoke-no-silent-data-loss.ts` is
+        // the test that catches it.
+        if (existing.createdBy !== "system") continue;
+        reminderRetitles.push(sql`(${existing.id}::uuid, ${title}::text)`);
+        actedOn.push(contact.id);
       } else {
         rowsToInsert.push({
           userId,
@@ -436,6 +507,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
           createdBy: "system",
           status: "pending",
         });
+        actedOn.push(contact.id);
       }
     }
 
@@ -465,9 +537,9 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
         followUpStatus: "pending",
         updatedAt: now,
       })
-      .where(and(inArray(contacts.id, candidateIds), eq(contacts.userId, userId)));
+      .where(and(inArray(contacts.id, actedOn), eq(contacts.userId, userId)));
 
-    created = candidates.length;
+    created = actedOn.length;
   }
 
   await refreshOutreachSuggestions(userId);

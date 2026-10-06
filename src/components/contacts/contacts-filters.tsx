@@ -18,6 +18,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  CONTACT_SORTS,
+  QUIET_OPTIONS,
+  type ContactSort,
+} from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -35,6 +40,8 @@ type FilterState = {
   company: string;
   minScore: string;
   followUp: string;
+  sort: string;
+  quiet: string;
 };
 
 export function ContactsFilters({
@@ -42,6 +49,10 @@ export function ContactsFilters({
   initialCompany,
   initialMinScore,
   initialFollowUp,
+  initialSort,
+  initialQuiet,
+  initialTag,
+  initialLetter,
   importId,
   children,
 }: {
@@ -49,6 +60,14 @@ export function ContactsFilters({
   initialCompany: string;
   initialMinScore: string;
   initialFollowUp?: string;
+  initialSort?: string;
+  initialQuiet?: string;
+  /**
+   * Not editable here, but carried through every `apply()` — see the note there. Changing
+   * the company filter used to silently drop the active tag and the A-Z letter.
+   */
+  initialTag?: string;
+  initialLetter?: string;
   /**
    * The active `/contacts?importId=…` scope, if any. Not a control this component offers —
    * only the page's banner sets or clears it — but every filter change here rebuilds the URL
@@ -65,6 +84,8 @@ export function ContactsFilters({
   const [companyOpen, setCompanyOpen] = useState(false);
   const [minScore, setMinScore] = useState(initialMinScore || "any");
   const [followUp, setFollowUp] = useState(initialFollowUp || "");
+  const [sort, setSort] = useState(initialSort || "name");
+  const [quiet, setQuiet] = useState(initialQuiet || "");
   const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -79,10 +100,20 @@ export function ContactsFilters({
     const cc = (next?.company ?? company).trim();
     const ms = next?.minScore ?? minScore;
     const fu = next?.followUp ?? followUp;
+    const so = next?.sort ?? sort;
+    const qt = next?.quiet ?? quiet;
     if (qq) params.set("q", qq);
     if (cc) params.set("company", cc);
     if (ms && ms !== "any") params.set("minScore", ms);
     if (fu === "due") params.set("followUp", "due");
+    if (so && so !== "name") params.set("sort", so);
+    if (qt) params.set("quiet", qt);
+    // Neither is editable from this component, but both live in the same URL. Rebuilding
+    // the query string from scratch without them meant that touching any filter here threw
+    // away the active tag and the A-Z letter — the list jumped back to "everyone, from A"
+    // and nothing said why.
+    if (initialTag) params.set("tag", initialTag);
+    if (initialLetter) params.set("letter", initialLetter);
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
@@ -105,6 +136,11 @@ export function ContactsFilters({
 
   const closenessLabel =
     CLOSENESS_OPTIONS.find((o) => o.value === minScore)?.label ?? "Any";
+  const sortLabel =
+    CONTACT_SORTS.find((o) => o.value === (sort as ContactSort))?.label ?? "Name";
+  const quietActive = Boolean(quiet);
+  const quietLabel =
+    QUIET_OPTIONS.find((o) => String(o.value) === quiet)?.label ?? "";
   const companyActive = Boolean(company.trim());
   const closenessActive = minScore !== "any";
 
@@ -170,6 +206,80 @@ export function ContactsFilters({
             apply({ minScore: val });
           }}
         />
+      </div>
+
+      {/* Ordering and "gone quiet" sit outside the search pill on purpose: the pill answers
+          "which people", these answer "in what order" and "how stale". The sorts existed for
+          a while with no control at all — they could only be reached by typing ?sort= into
+          the address bar. */}
+      <div className="mx-auto flex w-full max-w-xl flex-wrap items-center justify-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+              />
+            }
+          >
+            Sort:{" "}
+            <span className="font-medium text-foreground">{sortLabel}</span>
+            <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {CONTACT_SORTS.map((option) => (
+              <DropdownMenuItem
+                key={option.value}
+                onClick={() => {
+                  setSort(option.value);
+                  apply({ sort: option.value });
+                }}
+              >
+                {option.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                variant={quietActive ? "default" : "outline"}
+                size="sm"
+                className="h-8 gap-1.5"
+              />
+            }
+          >
+            {quietActive ? `Quiet ${quietLabel}` : "Gone quiet"}
+            <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem
+              onClick={() => {
+                setQuiet("");
+                apply({ quiet: "" });
+              }}
+            >
+              Any
+            </DropdownMenuItem>
+            {QUIET_OPTIONS.map((option) => (
+              <DropdownMenuItem
+                key={option.value}
+                onClick={() => {
+                  const next = String(option.value);
+                  setQuiet(next);
+                  apply({ quiet: next });
+                }}
+              >
+                {option.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
@@ -314,7 +424,10 @@ function SearchPill({
           )}
         >
           <span className="truncate">
-            {closenessActive ? closenessLabel : "Strength"}
+            {/* The control filters on `minScore`, which is CLOSENESS — the blended
+                score — not the 1-5 rating the profile calls "Your rating". Labelling it
+                "Strength" made three different numbers share two names. */}
+            {closenessActive ? closenessLabel : "Closeness"}
           </span>
           <ChevronDown className="size-3 opacity-60" />
         </DropdownMenuTrigger>
