@@ -13,6 +13,7 @@ export const TOUR_ANCHORS = {
   "contacts.row": "contacts.row",
   "contact.log-interaction": "contact.log-interaction",
   "capture.notes": "capture.notes",
+  "capture.extract": "capture.extract",
   "capture.keep": "capture.keep",
   "reminders.row-done": "reminders.row-done",
   "reminders.rail-today": "reminders.rail-today",
@@ -21,6 +22,7 @@ export const TOUR_ANCHORS = {
   "graph.stage": "graph.stage",
   "graph.show-all": "graph.show-all",
   "imports.connections": "imports.connections",
+  "imports.dropzone": "imports.dropzone",
 } as const;
 
 export type TourAnchorId = keyof typeof TOUR_ANCHORS;

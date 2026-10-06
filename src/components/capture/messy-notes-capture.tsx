@@ -318,6 +318,7 @@ export function MessyNotesCapture({
       id={panelId}
       role="tabpanel"
       aria-labelledby={tabId}
+      {...tourAnchor("capture.notes")}
       {...dropProps}
       className={cn(
         "space-y-4 rounded-2xl border border-border/70 bg-card p-5 transition-colors sm:p-6",
@@ -337,7 +338,7 @@ export function MessyNotesCapture({
           Logging with <span className="font-medium text-foreground">{preferredContactName}</span> preferred for merge when they appear in the notes.
         </p>
       )}
-      <div {...tourAnchor("capture.notes")}>
+      <div>
         <div className="flex items-baseline justify-between gap-2">
           <Label htmlFor="capture-notes">Your notes</Label>
           {restored && notes.trim() && (
@@ -415,6 +416,7 @@ export function MessyNotesCapture({
       </div>
 
       <Button
+        {...tourAnchor("capture.extract")}
         disabled={busy || !ingest.notes.trim() || (!ingest.hasApiKey && !linkedInOnly)}
         className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
         onClick={onExtract}

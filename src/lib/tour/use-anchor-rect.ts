@@ -20,8 +20,8 @@ const DEADLINE_MS = 4000;
 /** How long an anchor must stay gone, once found, before the rail says it is not on screen. */
 const GONE_GRACE_MS = 700;
 
-function firstVisible(id: TourAnchorId): HTMLElement | null {
-  const nodes = document.querySelectorAll<HTMLElement>(tourAnchorSelector(id));
+function firstVisible(selector: string): HTMLElement | null {
+  const nodes = document.querySelectorAll<HTMLElement>(selector);
   for (const el of nodes) {
     const shown =
       typeof el.checkVisibility === "function" ? el.checkVisibility() : el.getClientRects().length > 0;
@@ -50,6 +50,14 @@ function same(a: AnchorRect | null, b: AnchorRect) {
  * `null` id means "this stop points at nothing".
  */
 export function useAnchorRect(id: TourAnchorId | null, resetKey: string): AnchorState {
+  return useSelectorRect(id ? tourAnchorSelector(id) : null, resetKey);
+}
+
+/**
+ * The same tracking for any CSS selector — the guide cursor's precise target inside a
+ * spotlighted area (the Due follow-ups card in the stats, the text box in the composer).
+ */
+export function useSelectorRect(id: string | null, resetKey: string): AnchorState {
   // Keyed, so a new stop starts at `measuring` in the same render that asks for it, rather
   // than inheriting the last stop's `missing` until something re-measures.
   const key = `${id ?? ""}|${resetKey}`;

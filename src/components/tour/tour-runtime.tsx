@@ -26,7 +26,11 @@ import {
   type TourStopId,
 } from "@/lib/tour/tour-stops";
 import { RAIL_CARD_HEIGHT, RAIL_CARD_WIDTH, RAIL_EDGE, placeRail } from "@/lib/tour/rail-placement";
-import { useAnchorRect } from "@/lib/tour/use-anchor-rect";
+import { useAnchorRect, useSelectorRect } from "@/lib/tour/use-anchor-rect";
+import { tourAnchorSelector } from "@/lib/tour/tour-anchors";
+import { examplePerson } from "@/lib/onboarding-examples/cast";
+
+const TOUR_MAYA_NAME = examplePerson("maya").fullName;
 import { useMediaQuery } from "@/lib/use-media-query";
 
 export type TourSeed = {
@@ -296,6 +300,22 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
   }, []);
 
   const anchor = useAnchorRect(onRoute && !closed ? stop.anchor : null, stop.id);
+  // "Open a person" is about the example Maya. If her row isn't in the list (the search stop
+  // was skipped and the list starts at A), search for her, once per visit, so there is
+  // something to open and to point at.
+  const searchedFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (stop.id !== "contacts.open" || !onRoute || alreadyDone || searchedFor.current === entry) return;
+    const t = window.setTimeout(() => {
+      if (document.querySelector(tourAnchorSelector("contacts.row"))) return;
+      searchedFor.current = entry;
+      router.replace(`/contacts?q=${encodeURIComponent(TOUR_MAYA_NAME)}`);
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [alreadyDone, entry, onRoute, router, stop.id]);
+
+  // What the guide cursor points at, when the stop names something narrower than the spotlight.
+  const cursorEl = useSelectorRect(onRoute && !closed ? (stop.cursorTarget ?? null) : null, `${stop.id}:cursor`);
   const missing = onRoute && stop.anchor != null && anchor.status === "missing";
 
   // Focus the control when the stop asks for it, and bring it into view, once per stop.
@@ -451,21 +471,31 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
   }, [isFinish, navRoute, offRoute, pathname]);
 
   const spotlightVisible = onRoute && !dialogUp && !isFinish && anchor.status === "found";
+  // A stop that wants typing (search, the notes box, the chat composer) gets a text cursor,
+  // placed just inside the field where the caret would be; anything else is pointed at its
+  // middle. The precise target wins when the stop names one and it is on screen.
+  const TEXT_FIELD = 'input:not([type="file"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"]';
+  const pointEl = cursorEl.status === "found" ? cursorEl : anchor;
+  const cursorTyping =
+    !offRoute && !!pointEl.el && pointEl.el.matches(TEXT_FIELD);
   const onStopTarget: CursorPoint | null =
-    spotlightVisible && anchor.rect
-      ? {
-          x: anchor.rect.left + Math.min(anchor.rect.width / 2, 56),
-          y: anchor.rect.top + Math.min(anchor.rect.height / 2, 28),
-        }
+    spotlightVisible && pointEl.rect
+      ? cursorTyping
+        ? { x: pointEl.rect.left + 18, y: pointEl.rect.top + Math.min(pointEl.rect.height / 2, 20) }
+        : // The precise target, or — when the stop named one that isn't on screen (a
+          // constellation label the chart didn't draw) — the middle of the spotlight rather
+          // than its corner, where the toolbar sits. Otherwise near the start of a wide row.
+          cursorEl.status === "found" || stop.cursorTarget
+          ? { x: pointEl.rect.left + pointEl.rect.width / 2, y: pointEl.rect.top + pointEl.rect.height / 2 }
+          : {
+              x: pointEl.rect.left + Math.min(pointEl.rect.width / 2, 56),
+              y: pointEl.rect.top + Math.min(pointEl.rect.height / 2, 28),
+            }
       : null;
   const cursorOff = closed || isFinish || dialogUp;
   const cursorTarget = cursorOff ? null : offRoute ? navLink : onStopTarget;
   const stopDone = done || alreadyDone;
   const cursorMode = offRoute ? "demo-click" : stopDone ? "point" : (stop.cursor ?? "point");
-  // A stop that wants typing (search, the notes box, the chat composer) gets a text cursor.
-  const TEXT_FIELD = "input, textarea, [contenteditable]";
-  const cursorTyping =
-    !offRoute && !!anchor.el && (anchor.el.matches(TEXT_FIELD) || anchor.el.querySelector(TEXT_FIELD) != null);
   const cursorClick = useCallback(() => {
     const el = anchor.el;
     if (!el?.isConnected) return;

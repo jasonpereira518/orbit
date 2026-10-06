@@ -33,7 +33,7 @@ import { SetupChecklistCard, type SetupChecklistItem } from "@/components/dashbo
 import { integrationHref } from "@/components/settings/sections";
 import { aiReadyFromSettings } from "@/lib/ai-access";
 import { contactUsageForUser } from "@/lib/contact-writes";
-import { countTourExamples } from "@/lib/onboarding-examples/status";
+import { countTourExamples, hasOwnInteraction } from "@/lib/onboarding-examples/status";
 import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
 import { MorningBriefing } from "@/components/radar/morning-briefing";
 import type { RadarBriefing } from "@/lib/radar/page-data";
@@ -115,12 +115,13 @@ export async function SetupChecklistSection() {
   const settings = await ensureUserSettings(userId);
   if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
 
-  const [gmail, outlook, usage, linkedinImported, examples] = await Promise.all([
+  const [gmail, outlook, usage, linkedinImported, examples, logged] = await Promise.all([
     getGmailConnectionStatus(),
     getOutlookConnectionStatus(),
     contactUsageForUser(userId),
     hasLinkedInImport(userId),
     countTourExamples(userId),
+    hasOwnInteraction(userId),
   ]);
 
   const items: SetupChecklistItem[] = [];
@@ -130,6 +131,16 @@ export async function SetupChecklistSection() {
       label: "Add your AI key",
       detail: "Capture from notes, Chat and profile briefs run on it.",
       href: integrationHref("ai"),
+    });
+  }
+  // What onboarding set up, in its order: the AI key, the LinkedIn export, Google/Microsoft,
+  // then the things the tour practised. Each item leaves as soon as it is done.
+  if (!settings.linkedinExportRequestedAt && !linkedinImported) {
+    items.push({
+      id: "linkedin-request",
+      label: "Start your LinkedIn export",
+      detail: "LinkedIn takes about a day to package it, so start it now.",
+      href: "/imports#import-panel-connections",
     });
   }
   if (settings.linkedinExportRequestedAt && !linkedinImported) {
@@ -143,12 +154,14 @@ export async function SetupChecklistSection() {
   const anyConfigured = gmail.configured || outlook.configured;
   const connected = gmail.connected || outlook.connected;
   if (anyConfigured && !connected) {
-    // Free on every plan: the sign-in asks only for contacts.
+    // Free for one account on every plan. Names only what this deployment can offer.
+    const which =
+      gmail.configured && outlook.configured ? "Google or Microsoft" : gmail.configured ? "Google" : "Microsoft";
     items.push({
       id: "connect",
-      label: "Connect Google or Microsoft",
-      detail: "Bring in the people you already email.",
-      href: "/imports",
+      label: `Connect ${which}`,
+      detail: "Bring in your contacts and keep your meetings in sync.",
+      href: gmail.configured ? "/imports#import-google-contacts" : "/imports#import-outlook-contacts",
     });
   }
   if (usage.used === 0) {
@@ -157,6 +170,14 @@ export async function SetupChecklistSection() {
       label: "Add your first people",
       detail: "From notes, by hand, or the LinkedIn ZIP.",
       href: "/capture",
+    });
+  }
+  if (usage.used > 0 && !logged) {
+    items.push({
+      id: "log",
+      label: "Log your first interaction",
+      detail: "Open someone and press Log interaction; their timeline and follow-up start there.",
+      href: "/contacts",
     });
   }
   if (tourResumable(settings)) {

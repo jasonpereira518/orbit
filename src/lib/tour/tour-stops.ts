@@ -62,6 +62,12 @@ export type TourStop = {
   surfaceKey?: string;
   /** Move keyboard focus into the anchor on arrival (search box, textarea). */
   focusAnchor?: boolean;
+  /**
+   * A CSS selector for exactly what the guide cursor points at, when that is narrower than
+   * the spotlighted area (the Due follow-ups card inside the stats, the text box inside the
+   * composer). The spotlight's anchor when omitted.
+   */
+  cursorTarget?: string;
   /** The guide cursor's gesture here; "point" when omitted. */
   cursor?: TourCursorMode;
   /** Side effect to run just before navigating to the stop's route. */
@@ -114,6 +120,7 @@ const daniel = examplePerson("daniel");
 export const TOUR_STOPS: readonly TourStop[] = [
   {
     id: "dashboard.home",
+    cursorTarget: '[data-tour="dashboard.stats"] a[href="/contacts?followUp=due"]',
     route: "/dashboard",
     anchor: "dashboard.stats",
     title: "Your dashboard",
@@ -141,6 +148,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "contacts.open",
+    cursorTarget: '[data-tour="contacts.row"] p.text-ink',
     cursor: "click",
     route: "/contacts",
     anchor: "contacts.row",
@@ -171,6 +179,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "capture.extract",
+    cursorTarget: '[data-tour="capture.extract"]',
     cursor: "demo-click",
     route: "/capture",
     anchor: "capture.notes",
@@ -206,6 +215,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "capture.linkedin",
+    cursorTarget: '[data-tour="capture.notes"] textarea',
     route: "/capture",
     anchor: "capture.notes",
     title: "Capture, with or without a key",
@@ -235,6 +245,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "chat.ask",
+    cursorTarget: '[data-tour="chat.composer"] textarea',
     cursor: "demo-click",
     route: "/chat",
     anchor: "chat.composer",
@@ -251,6 +262,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "chat.preview",
+    cursorTarget: '[data-tour="chat.composer"] textarea',
     route: "/chat",
     anchor: "chat.composer",
     title: "Ask your network",
@@ -264,12 +276,14 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "graph.star",
+    // The stars are painted on a canvas; the constellation's name is the nearest real thing.
+    cursorTarget: `[aria-label^="${EXAMPLE_COMPANY},"], [aria-label="Zoom to ${EXAMPLE_COMPANY}"]`,
     route: "/graph",
     anchor: "graph.stage",
     chipAnchor: "graph.show-all",
     title: "Your network as a sky",
     body: `You’re the sun. Companies and schools form constellations around you, each traced by its own people; the three at ${EXAMPLE_COMPANY} make one.`,
-    tryThis: "Pick a star to see who it is.",
+    tryThis: `Pick one of the ${EXAMPLE_COMPANY} stars to see who it is.`,
     chip: "Pick a star",
     doneWhen: "graph.star-selected",
     doneLabel: { pending: "Done when you pick a star", done: "Found" },
@@ -279,11 +293,11 @@ export const TOUR_STOPS: readonly TourStop[] = [
   {
     id: "imports.linkedin",
     route: "/imports",
-    anchor: "imports.connections",
+    anchor: "imports.dropzone",
     title: "When your LinkedIn export lands",
-    body: "LinkedIn emails a ZIP, usually within a day. Press Choose file and pick it as it arrived, no unzipping needed, and every connection comes in at once. Google and Outlook contacts sit further down this page.",
+    body: "LinkedIn emails a ZIP, usually within a day. Drop it on this page as it arrived, no unzipping, and Orbit works out what it is and brings everyone in. Contacts files, calendars and profile links work the same way; Google and Outlook are in the list below.",
     tryThis: "Nothing to do yet; come back with the ZIP.",
-    chip: "Upload the ZIP here",
+    chip: "Drop the ZIP here",
     doneWhen: null,
     surfaceKey: "page.imports",
     seconds: 10,
@@ -309,8 +323,8 @@ export type TourContext = {
 /** The Imports stop for someone who never started the export on the LinkedIn step. */
 const IMPORTS_NOT_REQUESTED: Pick<TourStop, "title" | "body" | "tryThis"> = {
   title: "Bring in everyone you know",
-  body: "LinkedIn packages your connections as a ZIP and emails it within a day. Choose it on this card when it lands. Google and Outlook contacts sit further down this page.",
-  tryThis: "Press How to export on this card whenever you’re ready.",
+  body: "Drop anything here and Orbit works out what it is: LinkedIn’s export ZIP, a contacts file, a calendar, a profile link. Google and Outlook are in the list below.",
+  tryThis: "Open LinkedIn connections below for how to get your export.",
 };
 
 /** The stops this account walks, in order. Never empty: the finish card is unconditional. */
