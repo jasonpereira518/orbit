@@ -217,6 +217,26 @@ export const userSettings = pgTable("user_settings", {
   lastName: text("last_name"),
   profileImageUrl: text("profile_image_url"),
   /**
+   * How the user describes themselves, in their own words — role, what they are working on,
+   * what they are looking for. Fed to every message Orbit drafts on their behalf.
+   *
+   * Free text rather than title/company columns on purpose: the useful version of this is a
+   * sentence ("backend engineer moving into platform work, looking for a staff role"), and
+   * structured fields would collect a job title nobody needed while missing the part that
+   * makes an ask land. NULL means never written, and every prompt omits the block entirely
+   * rather than saying "unknown" — a model told the sender is unknown writes around it.
+   */
+  senderBio: text("sender_bio"),
+  /**
+   * Whether a connected mailbox may be read for relationship activity. 0 by default.
+   *
+   * Opt-in rather than implied by the Gmail connection, which users make to import contacts,
+   * sync a calendar or send a follow-up. Quietly turning that into "Orbit now reads who you
+   * email and when" would be a surprise, and the fact that only metadata is stored is not a
+   * reason to skip asking.
+   */
+  emailActivitySync: integer("email_activity_sync").notNull().default(0),
+  /**
    * How this account arrived — captured on FIRST touch of a marketing page and persisted
    * on the first authenticated request. Write-once: a user who lands via a Reddit link,
    * browses for a week and finally signs up after a direct visit was acquired by Reddit,
@@ -643,7 +663,14 @@ export const contacts = pgTable(
     lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
     nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
     followUpStatus: text("follow_up_status").default("none"),
-
+    /*
+     * `keep_in_touch_days` was built on this branch for exactly the job the four columns
+     * below already do, and is dropped rather than merged alongside them. Main's model is
+     * strictly richer — it records the phrase the user or a note used, when it was stated,
+     * and (in `cadence_source`) WHICH of the two said it, a distinction this branch had no
+     * way to express. Two columns meaning "how often should I speak to this person" is how
+     * one of them silently stops being read.
+     */
     /**
      * A recurring rhythm the notes actually stated — "check in monthly", "ping me every two
      * weeks". Written by the capture save when the model found the phrase and
@@ -664,7 +691,6 @@ export const contacts = pgTable(
     cadenceSource: text("cadence_source").$type<"note" | "user">(),
     /** When it was last stated, so a newer note supersedes an older one rather than racing it. */
     cadenceSetAt: timestamp("cadence_set_at", { withTimezone: true }),
-
     aiSummary: text("ai_summary"),
     notes: text("notes"),
 
@@ -739,6 +765,11 @@ export const contacts = pgTable(
     index("contacts_user_updated_idx").on(t.userId, t.updatedAt),
     index("contacts_user_closeness_idx").on(t.userId, t.closeness.desc(), t.id.desc()),
     index("contacts_user_recent_idx").on(t.userId, t.updatedAt.desc(), t.id.desc()),
+    index("contacts_user_last_touch_idx").on(
+      t.userId,
+      t.lastInteractionAt.desc().nullsLast(),
+      t.id.desc()
+    ),
     index("contacts_company_id_idx").on(t.companyId),
     // The browser extension resolves a profile to a contact on every panel open;
     // without these, each lookup is a full per-user scan.
@@ -897,7 +928,6 @@ export const duplicateSuggestions = pgTable(
   ]
 );
 
-
 /**
  * The per-user closeness distribution that `contacts.closeness*` was applied against.
  *
@@ -967,6 +997,23 @@ export const interactions = pgTable(
     source: text("source"),
     externalId: text("external_id"),
     noteBatchId: uuid("note_batch_id"),
+    /**
+     * The import job that INSERTED this row, or NULL for anything a person logged directly.
+     *
+     * This is what makes an import revertible without guesswork: the undo deletes exactly
+     * the rows carrying its own id and nothing else. It is set in the insert VALUES and
+     * deliberately NOT in the engine's `onConflictDoUpdate` set clause, so a row that
+     * already existed keeps whatever provenance it had — a re-import that merely refreshes
+     * a manually-logged interaction does not thereby claim it, and reverting that import
+     * will not delete a note the user wrote by hand.
+     *
+     * A bare uuid rather than a declared foreign key, matching `noteBatchId` directly above
+     * it: `interactions` is created before `imports` in the bootstrap DDL template, so a
+     * REFERENCES clause in its CREATE TABLE would name a table that does not exist yet. A
+     * dangling id costs nothing here — it is only ever compared for equality, and a purged
+     * import simply stops matching.
+     */
+    importId: uuid("import_id"),
     rawNotes: text("raw_notes"),
     aiSummary: text("ai_summary"),
     topics: jsonb("topics").$type<string[]>().default([]),
@@ -1065,6 +1112,13 @@ export const reminders = pgTable(
     createdBy: text("created_by").default("user").notNull(),
     /** Set when the reminder came out of a note paste; links to the results page and drives "From notes". */
     noteBatchId: uuid("note_batch_id"),
+    /**
+     * The import job that created this reminder, or NULL for one a person wrote. Only the
+     * calendar adapter produces these (post-meeting follow-ups); reverting that import
+     * deletes exactly the rows it made. See the same column on `interactions`, including
+     * why this is a bare uuid rather than a declared foreign key.
+     */
+    importId: uuid("import_id"),
     sourceInteractionId: uuid("source_interaction_id").references(() => interactions.id, { onDelete: "set null" }),
     actionItemId: uuid("action_item_id"),
     sourceExcerpt: text("source_excerpt"),
@@ -1721,6 +1775,7 @@ export const contactProfiles = pgTable(
  * month, and a synthesized `2019-01-01` would claim a precision the source does not have —
  * which any future overlap comparison would silently inherit.
  */
+
 export const contactExperiences = pgTable(
   "contact_experiences",
   {
@@ -1941,9 +1996,53 @@ export const imports = pgTable("imports", {
    */
   stallResumes: integer("stall_resumes").default(0).notNull(),
   stats: jsonb("stats").$type<ImportStats>().default({}),
+  /**
+   * Set once `revertImport` has run. Non-null is the whole "this import has been undone"
+   * flag: the history row renders as reverted, and a second revert is refused rather than
+   * re-running against rows whose contacts are already gone.
+   *
+   * Deliberately not a `status` value. `status` describes how the *job* ended (done,
+   * failed, cancelled) and the stall backstop, the resume path and the progress UI all
+   * branch on it; a reverted import is still a job that completed, and overloading the
+   * column would have every one of those readers treat an unknown status as a stall.
+   */
+  revertedAt: timestamp("reverted_at", { withTimezone: true }),
+  /** What the revert actually managed to undo — see `ImportRevertStats`. */
+  revertStats: jsonb("revert_stats").$type<ImportRevertStats>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * The outcome of a revert, recorded because a revert is never unconditionally total and the
+ * user has to be told what it left behind.
+ *
+ * `contactsKept` and `mergesKept` are the honest half: a contact the user has edited since
+ * the import is NOT deleted and a merge they have edited over is NOT rolled back, because
+ * undoing the import must not destroy work done after it — which is the entire defect class
+ * the revert exists to serve in the first place.
+ */
+export type ImportRevertStats = {
+  /** Contacts the import created and the revert deleted. */
+  contactsDeleted?: number;
+  /** Contacts the import created that were edited afterwards, so they were left in place. */
+  contactsKept?: number;
+  /** Contacts the import merged into, restored to their pre-import column values. */
+  mergesReverted?: number;
+  /** Merged-into contacts edited after the import, left exactly as they are. */
+  mergesKept?: number;
+  /** Interactions the import inserted and the revert deleted. */
+  interactionsDeleted?: number;
+  /** Reminders the import inserted and the revert deleted. */
+  remindersDeleted?: number;
+  /**
+   * Rows written before the `outcome` column existed (schema v34). Their contact id is
+   * known but not whether the import created that person or folded into someone who was
+   * already there, so they are counted and skipped — deleting a merged-into contact is
+   * exactly the harm this feature exists to avoid.
+   */
+  rowsUnknown?: number;
+};
 
 /** One row of a LinkedIn connections CSV. Rows written before the payload became a
  *  union carry no `kind`, so it stays optional and absence means LinkedIn. */
@@ -2189,6 +2288,23 @@ export const importJobRows = pgTable(
     payload: jsonb("payload").$type<ImportJobRowPayload>().notNull(),
     status: text("status").default("pending").notNull(),
     contactId: uuid("contact_id"),
+    /**
+     * Whether this row's `contactId` names someone the import CREATED or someone who was
+     * already in the network and the import MERGED into. Both statuses are `done` and both
+     * carry a contact id, so without this column the two are indistinguishable — and that
+     * is precisely the distinction an undo turns on. Deleting a merged-into contact would
+     * destroy a person the user had before the import ever ran.
+     *
+     * NULL on every row written before schema v34, and on rows that never reached a
+     * contact (pending, skipped, failed). `revertImport` counts a NULL on a done row as
+     * unknown and leaves that contact alone rather than guessing.
+     */
+    outcome: text("outcome").$type<ImportRowOutcome>(),
+    /**
+     * For `outcome: "merged"` rows only: what the contact's merge-affected columns held
+     * immediately BEFORE this import overwrote them. See `ImportRevertSnapshot`.
+     */
+    revertSnapshot: jsonb("revert_snapshot").$type<ImportRevertSnapshot>(),
     errorMessage: text("error_message"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -2197,6 +2313,42 @@ export const importJobRows = pgTable(
     index("import_job_rows_import_status_idx").on(t.importId, t.status),
   ]
 );
+
+/** What an import did with a row: made a new person, or folded into an existing one. */
+export type ImportRowOutcome = "created" | "merged";
+
+/**
+ * The pre-merge value of every column `bulkMergeContactsForUser` can write, plus the stamp
+ * that says whether restoring them is still safe.
+ *
+ * Exactly the sixteen columns in that function's `SET` clause and no others — a snapshot
+ * wider than the write would restore fields the import never touched, which is its own kind
+ * of data loss. Keep the two in step: a column added to the merge must be added here, or a
+ * revert will silently leave that column at its imported value.
+ *
+ * `mergedAt` is the `updated_at` the merge itself stamped. At revert time it is compared
+ * against the contact's current `updated_at`: if they differ, someone has edited this person
+ * since the import, and the snapshot is NOT applied. An undo that overwrites work done after
+ * the thing being undone is not an undo.
+ */
+export type ImportRevertSnapshot = {
+  mergedAt: string;
+  company: string | null;
+  companyId: string | null;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  profileImageUrl: string | null;
+  source: string | null;
+  howMet: string | null;
+  metContext: string | null;
+  dateMet: string | null;
+  firstInteractionAt: string | null;
+  lastInteractionAt: string | null;
+};
 
 export const calendarSubscriptions = pgTable(
   "calendar_subscriptions",
@@ -5016,7 +5168,6 @@ export const extensionUsage = pgTable("extension_usage", {
   aiCount: integer("ai_count").default(0).notNull(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
 });
-
 
 /* ==================================================================================
  * Events — conferences, meetups and parties you attended.

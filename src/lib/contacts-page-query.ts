@@ -30,6 +30,7 @@ import { contactsListSelection } from "@/lib/contact-avatar-sql";
 import type { RankedContact } from "@/lib/hybrid-search";
 import {
   CONTACTS_PAGE_SIZE,
+  parseQuietDays,
   type ContactSort,
   type ContactsPage,
   type ContactsPageFilters,
@@ -95,6 +96,36 @@ export async function listContactsPage(
 
   if (filters?.minScore) {
     conditions.push(sql`${contacts.relationshipScore} >= ${filters.minScore}`);
+  }
+
+  // Tags had a write path, a search index and no read surface at all: you could set them,
+  // find them via free-text search, and never see them again. This is the read surface —
+  // `?tag=` narrows the list. Rows do not draw their tags; `ContactListRow.tags` is carried
+  // for callers that do.
+  const tag = filters?.tag?.trim();
+  if (tag) {
+    conditions.push(sql`exists (
+      select 1 from contact_tags ct
+      join tags t on t.id = ct.tag_id
+      where ct.contact_id = ${contacts.id}
+        and t.user_id = ${userId}
+        and lower(trim(t.name)) = ${tag.toLowerCase()}
+    )`);
+  }
+
+  // "Gone quiet": nothing logged for at least this many days. A contact with no interaction
+  // at all qualifies — `last_interaction_at` is stamped at create, so NULL here means the
+  // column predates that or an import left it empty, and either way "never" is quieter than
+  // any threshold. Inlined rather than bound because an interval built from a parameter is
+  // awkward in Postgres; `parseQuietDays` has already reduced it to one of three integers,
+  // so there is no user string anywhere near this.
+  const quiet = parseQuietDays(filters?.quiet);
+  if (quiet !== null) {
+    conditions.push(
+      sql`(${contacts.lastInteractionAt} is null or ${contacts.lastInteractionAt} <= now() - ${sql.raw(
+        `interval '${quiet} days'`
+      )})`
+    );
   }
 
   if (filters?.followUp === "due") {

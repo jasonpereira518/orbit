@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   HardDrive,
   Loader2,
+  MailCheck,
   MessageCircle,
   MessageSquare,
 } from "lucide-react";
@@ -207,6 +208,14 @@ const ContactsFileImport = dynamic(
     })),
   { loading: () => <PanelSkeleton /> },
 );
+
+const EmailActivityPanelLoader = dynamic(
+  () =>
+    import("@/components/imports/email-activity-loader").then((m) => ({
+      default: m.EmailActivityPanelLoader,
+    })),
+  { loading: () => <PanelSkeleton /> },
+);
 const GoogleContactsImport = dynamic(
   () =>
     import("@/components/imports/google-contacts-import").then((m) => ({
@@ -249,6 +258,7 @@ type RowId =
   | "import-panel-chats"
   | "import-contacts-file"
   | "import-google-contacts"
+  | "import-email-activity"
   | "import-outlook-contacts"
   | "import-panel-calendar"
   | "import-calendar-file";
@@ -762,6 +772,22 @@ export function ImportHub({
             }
           >
             <GoogleContactsImport />
+          </ImportSourceRow>
+
+          {/* Directly under the Google connection, because it reads the mailbox connected
+              there and the opt-in should not be somewhere the user has to go looking. */}
+          <ImportSourceRow
+            {...row("import-email-activity")}
+            icon={MailCheck}
+            accent={CONNECTIONS_ACCENT}
+            title="Email activity"
+            status={
+              google?.connected
+                ? "Log who you email, without storing messages"
+                : "Needs a connected Google account"
+            }
+          >
+            <EmailActivityPanelLoader />
           </ImportSourceRow>
 
           <ImportSourceRow

@@ -117,3 +117,17 @@ export const DEFAULT_SEQUENCE_STEPS: SequenceStep[] = [
   { delayDays: 3, intent: "Polite follow-up referencing the first note" },
   { delayDays: 7, intent: "Final short bump with a clear opt-out" },
 ];
+
+/**
+ * Addresses that must never be mailed, whatever the caller believes.
+ *
+ * `example.com` / `.example` / `.invalid` / `.test` / `.localhost` are reserved by RFC
+ * 2606 and RFC 6761 precisely so they cannot resolve — every message to one is a
+ * guaranteed hard bounce, and enough of those cost a shared sending domain its
+ * reputation. Orbit's own demo prospects use them.
+ */
+export function isUnmailableAddress(email: string) {
+  const domain = email.trim().toLowerCase().split("@")[1] ?? "";
+  if (!domain) return true;
+  return /(^|\.)(example\.(com|net|org)|example|invalid|test|localhost)$/.test(domain);
+}

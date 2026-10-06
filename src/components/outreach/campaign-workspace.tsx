@@ -7,6 +7,7 @@ import {
   BulkActionBar,
 } from "@/components/outreach/bulk-action-bar";
 import { AudienceFiltersEditor } from "@/components/outreach/audience-filters-editor";
+import type { WarmPath } from "@/lib/warm-paths";
 import { CampaignInsights } from "@/components/outreach/campaign-insights";
 import { CampaignKpiStrip } from "@/components/outreach/campaign-kpi-strip";
 import { PipelineFilters } from "@/components/outreach/pipeline-filters";
@@ -40,6 +41,8 @@ export function CampaignWorkspace({
 }: {
   campaign: {
     id: string;
+    /** Normalised company key -> people the user already knows there; see `getCampaign`. */
+    warmPaths?: Record<string, WarmPath[]>;
     name: string;
     audienceQuery: string | null;
     messageIntent: string | null;
@@ -334,6 +337,7 @@ export function CampaignWorkspace({
       <ProspectTable
         campaignId={campaign.id}
         prospects={filtered}
+        warmPaths={campaign.warmPaths}
         defaultChannel={defaultChannel}
         onUpdated={refresh}
       />

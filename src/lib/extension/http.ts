@@ -20,6 +20,7 @@ import {
   ExtensionUnauthorizedError,
   requireExtensionUser,
 } from "./auth";
+import { isPaywallError } from "@/lib/entitlements";
 
 /** Rolling one-minute budgets, per user. */
 const REQUEST_LIMIT_PER_MINUTE = 60;
@@ -47,6 +48,7 @@ const STATUS_BY_CODE: Record<ExtensionErrorCode, number> = {
   not_found: 404,
   duplicate: 409,
   limit_exceeded: 402,
+  payment_required: 402,
   payload_too_large: 413,
   server_error: 500,
 };
@@ -218,6 +220,11 @@ function toErrorResponse(error: unknown) {
       message: error.message,
       retryAfterSeconds: error.retryAfterSeconds,
     });
+  }
+  // Re-applied after a main merge dropped it: without this arm a plan refusal left the
+  // extension with a 500 and "Something went wrong" instead of a reason it could act on.
+  if (isPaywallError(error)) {
+    return jsonError({ code: "payment_required", message: error.message });
   }
   if (error instanceof PayloadTooLargeError) {
     return jsonError({ code: "payload_too_large", message: error.message });

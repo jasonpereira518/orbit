@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EditableFactList } from "@/components/contacts/editable-fact-list";
 import type { ClosenessBreakdown } from "@/lib/closeness";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -29,6 +30,7 @@ export function ContactProfileOverview({
   hasLoggedInteraction,
   frequencyLabel,
   howMetSummary,
+  isRated,
 }: {
   contactId: string;
   aiSummary: string | null;
@@ -41,6 +43,16 @@ export function ContactProfileOverview({
   hasLoggedInteraction: boolean;
   frequencyLabel: string;
   howMetSummary: string | null;
+  /**
+   * Whether a human has actually rated this person 1-5.
+   *
+   * `strengthComponent` substitutes NEUTRAL_STRENGTH (0.5) when nobody has, and
+   * `lib/closeness.ts` says in as many words that this is "for display" and that an
+   * unrated contact's weight is redistributed rather than filled in with a guess. The
+   * card rendered that 0.5 as a flat "Strength 50%", which reads as a measurement of the
+   * relationship rather than the absence of one.
+   */
+  isRated: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -94,35 +106,33 @@ export function ContactProfileOverview({
         </CardContent>
       </Card>
 
-      {keyFacts.length > 0 ? (
-        <Card className="border-border/70 shadow-none">
-          <CardHeader>
-            <CardTitle as="h2">Key facts</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
-              {keyFacts.map((f) => (
-                <li key={f}>{f}</li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      ) : null}
+      {/* Rendered even when empty, unlike before. These are the fields the AI fills in, and
+          a card that only appears once something already exists gives the user no way to
+          add the first entry — or to discover that Orbit tracks this at all.
 
-      {sharedInterests.length > 0 ? (
-        <Card className="border-border/70 shadow-none">
-          <CardHeader>
-            <CardTitle as="h2">Shared interests</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
-              {sharedInterests.map((interest) => (
-                <li key={interest}>{interest}</li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      ) : null}
+          Opportunities are NOT edited here. This branch added a third card for them, before
+          main's meeting-notes work made `contacts.opportunities` a derived mirror of the
+          `contact_opportunities` table — so an edit written straight to the column would be
+          silently overwritten the next time that mirror was rebuilt. They have their own
+          typed section on this page now (`contact-opportunities-section.tsx`). */}
+      <EditableFactList
+        contactId={contactId}
+        field="keyFacts"
+        title="Key facts"
+        addLabel="Add fact"
+        emptyHint="Nothing yet. Log an interaction and Orbit will pull these out — or add what matters yourself."
+        items={keyFacts}
+      />
+
+      <EditableFactList
+        contactId={contactId}
+        field="sharedInterests"
+        title="Shared interests"
+        addLabel="Add interest"
+        emptyHint="Nothing yet. These are what you have in common — useful openers when you next reach out."
+        items={sharedInterests}
+      />
+
 
       {industry?.trim() ? (
         <Card className="border-border/70 shadow-none">
@@ -150,10 +160,20 @@ export function ContactProfileOverview({
               </div>
               <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-muted-foreground">Strength</p>
-                  <p className="mt-0.5 text-lg font-medium text-ink">
-                    {Math.round(closeness.strength * 100)}%
-                  </p>
+                  {/* "Your rating", not "Strength": this is the 1-5 the user set, which
+                      is one weighted component of the closeness score shown in the header
+                      pill. Two different numbers under two labels that both read as
+                      "how close are we" was the confusion. */}
+                  <p className="text-xs text-muted-foreground">Your rating</p>
+                  {isRated ? (
+                    <p className="mt-0.5 text-lg font-medium text-ink">
+                      {Math.round(closeness.strength * 100)}%
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      Not rated yet
+                    </p>
+                  )}
                 </div>
                 <div>
                   {/* Both lines feed the score: recency and cadence are
