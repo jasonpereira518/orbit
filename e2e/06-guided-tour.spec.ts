@@ -55,7 +55,7 @@ test("the guided tour walks the real pages with example people, then removes the
   await expect(rail).toContainText("Open a person", { timeout: 15_000 });
 
   // Stop 3: opening a person is the predicate.
-  await page.locator('li[role="link"]').first().click();
+  await page.locator('[data-tour="contacts.row"]').click();
   await expect(page).toHaveURL(/\/contacts\/[^/]+$/, { timeout: 60_000 });
   await expect(rail).toContainText("Log what happened", { timeout: 15_000 });
   await expect(page.getByText("Example", { exact: true }).first()).toBeVisible();

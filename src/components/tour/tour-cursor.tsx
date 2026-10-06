@@ -30,6 +30,7 @@ export function TourCursor({
   stopKey,
   origin,
   reduced,
+  typing = false,
   onClick,
 }: {
   /** Where the tip should be; null hides the cursor. */
@@ -40,6 +41,8 @@ export function TourCursor({
   /** Where it first appears (the coach card), so it visibly comes out of the rail. */
   origin: CursorPoint;
   reduced: boolean;
+  /** The target is a text field: show an I-beam, centred on the point, instead of the arrow. */
+  typing?: boolean;
   onClick?: () => void;
 }) {
   const x = useMotionValue(origin.x);
@@ -161,6 +164,16 @@ export function TourCursor({
         ))}
       </AnimatePresence>
       <motion.div style={{ scale, x: nudge, y: nudge, transformOrigin: "0 0" }} transition={SPRING_TAP}>
+        {typing ? (
+          <svg
+            viewBox="0 0 24 24"
+            className="-mt-[11px] -ml-[6px] size-[18px] drop-shadow-[0_2px_4px_rgb(0_0_0/0.25)] md:size-[22px]"
+          >
+            {/* An I-beam: white halo first so it reads on any field, then the brand stroke. */}
+            <path d="M8 3h8M8 21h8M12 3v18" className="stroke-white" strokeWidth={5} strokeLinecap="round" fill="none" />
+            <path d="M8 3h8M8 21h8M12 3v18" className="stroke-primary" strokeWidth={2.2} strokeLinecap="round" fill="none" />
+          </svg>
+        ) : (
         <svg
           viewBox="0 0 24 24"
           className="size-[18px] drop-shadow-[0_2px_4px_rgb(0_0_0/0.25)] md:size-[22px]"
@@ -174,6 +187,7 @@ export function TourCursor({
             transform="translate(-0.4 -0.4)"
           />
         </svg>
+        )}
         <span className="absolute top-4 left-4 rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap text-primary-foreground shadow-sm md:top-5 md:left-5">
           Orbit
         </span>

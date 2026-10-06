@@ -247,7 +247,8 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
         break;
       default:
         satisfied = events.seq > armedSeq.current && events.last?.name === stop.doneWhen;
-        if (!satisfied && stop.id === "contacts.search" && isContactDetailPath(pathname) && offProfileSinceEntry.current) {
+        // Opening the example Maya from the search stop does "open a person" too.
+        if (!satisfied && stop.id === "contacts.search" && events.seq > armedSeq.current && events.last?.name === "contacts.opened-example") {
           const open = stops.find((s) => s.id === "contacts.open");
           const log = stops.find((s) => s.id === "contact.log");
           if (open && log) skipTo = log.id;
@@ -461,6 +462,10 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
   const cursorTarget = cursorOff ? null : offRoute ? navLink : onStopTarget;
   const stopDone = done || alreadyDone;
   const cursorMode = offRoute ? "demo-click" : stopDone ? "point" : (stop.cursor ?? "point");
+  // A stop that wants typing (search, the notes box, the chat composer) gets a text cursor.
+  const TEXT_FIELD = "input, textarea, [contenteditable]";
+  const cursorTyping =
+    !offRoute && !!anchor.el && (anchor.el.matches(TEXT_FIELD) || anchor.el.querySelector(TEXT_FIELD) != null);
   const cursorClick = useCallback(() => {
     const el = anchor.el;
     if (!el?.isConnected) return;
@@ -479,6 +484,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
         stopKey={`${stop.id}:${entry}`}
         origin={{ x: cardLeft + 48, y: typeof window === "undefined" ? 600 : window.innerHeight - 260 }}
         reduced={Boolean(reduced)}
+        typing={cursorTyping}
         onClick={cursorMode === "click" ? cursorClick : undefined}
       />
       <CoachRail

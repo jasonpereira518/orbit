@@ -1,6 +1,8 @@
 "use client";
 
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { emitTourEvent } from "@/lib/tour/tour-events";
+import { examplePerson } from "@/lib/onboarding-examples/cast";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -597,6 +599,8 @@ function rowMetaFor(c: ContactListItem): ContactRowMeta {
   return meta;
 }
 
+const TOUR_MAYA_NAME = examplePerson("maya").fullName;
+
 const ContactRow = memo(function ContactRow({
   c,
   meta,
@@ -619,6 +623,9 @@ const ContactRow = memo(function ContactRow({
   onOpenDraft: (contact: { id: string; name: string }) => void;
   onRequestDelete: (id: string) => void;
 }) {
+  // The guided tour's "open a person" stop is about its example Maya, and only her row is
+  // highlighted and only opening her moves the tour on — a real Maya Thompson is not her.
+  const isTourMaya = isTourExampleSource(c.source) && c.fullName === TOUR_MAYA_NAME;
   const { overdue, scheduledLabel, overdueText, lastTouch, details } = meta;
 
   function seeMarked() {
@@ -627,6 +634,7 @@ const ContactRow = memo(function ContactRow({
 
   function openContact() {
     if (exiting) return;
+    if (isTourMaya) emitTourEvent("contacts.opened-example");
     seeMarked();
     onOpen(c.id);
   }
@@ -647,7 +655,7 @@ const ContactRow = memo(function ContactRow({
     <li
       role="link"
       tabIndex={0}
-      {...tourAnchor("contacts.row")}
+      {...(isTourMaya ? tourAnchor("contacts.row") : {})}
       onClick={openContact}
       onKeyDown={onRowKeyDown}
       // Hover or keyboard focus counts as having seen them: the mark fades.

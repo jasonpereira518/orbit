@@ -14,6 +14,8 @@ import { useSyncExternalStore } from "react";
 
 export const TOUR_EVENTS = {
   "contacts.searched": "contacts.searched",
+  /** The tour's own example Maya was opened from the list (not just any profile). */
+  "contacts.opened-example": "contacts.opened-example",
   "interaction.logged": "interaction.logged",
   "reminder.done": "reminder.done",
   "chat.answered": "chat.answered",
