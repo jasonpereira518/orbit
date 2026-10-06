@@ -19,6 +19,7 @@
  * A single file is checked against what was already captured (by content hash) before it
  * is read, and Reading… carries a Stop.
  */
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { findCapturedFiles } from "@/actions/capture-jobs";
@@ -317,6 +318,7 @@ export function MessyNotesCapture({
       id={panelId}
       role="tabpanel"
       aria-labelledby={tabId}
+      {...tourAnchor("capture.notes")}
       {...dropProps}
       className={cn(
         "space-y-4 rounded-2xl border border-border/70 bg-card p-5 transition-colors sm:p-6",
@@ -414,6 +416,7 @@ export function MessyNotesCapture({
       </div>
 
       <Button
+        {...tourAnchor("capture.extract")}
         disabled={busy || !ingest.notes.trim() || (!ingest.hasApiKey && !linkedInOnly)}
         className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
         onClick={onExtract}

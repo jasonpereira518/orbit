@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { series, type Grain } from "@/lib/admin-trends";
 import { num, toDate } from "@/lib/admin-metrics";
@@ -639,7 +640,7 @@ export async function acquisitionFunnel(
     flagged AS (
       SELECT s.mature,
              (s.onboarding_completed_at IS NOT NULL
-               OR EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id)
+               OR EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE})
                OR EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id)) AS activated,
              ((s.lifetime_purchased_at IS NOT NULL OR coalesce(m.bought, false))
                AND NOT (coalesce(m.cash_in, 0) > 0 AND coalesce(m.refunded, 0) >= m.cash_in)) AS paid

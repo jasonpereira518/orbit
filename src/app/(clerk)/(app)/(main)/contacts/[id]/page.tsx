@@ -304,6 +304,7 @@ export default async function ContactDetailPage({
               : contact.profileImageUrl
           }
           linkedinUrl={contact.linkedinUrl}
+          source={contact.source}
           channels={channels}
           formInitial={formInitial}
         />

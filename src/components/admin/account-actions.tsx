@@ -65,11 +65,11 @@ export function AccountDangerZone({
               Reset onboarding
             </button>
           }
-          title="Reset onboarding and the wizard?"
+          title="Reset onboarding and setup?"
           // Said out loud because otherwise the operator runs it, sees nothing change, and
           // runs it again: needsOnboarding() treats any contact or import as onboarded
           // regardless of the timestamp, and backfills the column afterwards.
-          description="Clears the onboarding and wizard timestamps so setup runs again. Note this is a no-op on an account that already has contacts or imports — Orbit treats those as onboarded whatever the column says, and re-backfills it. Useful only for accounts that stalled early."
+          description="Clears the onboarding, setup and tour timestamps so the first run happens again. Note the gate is a no-op on an account that already has a real contact or import — Orbit treats those as onboarded whatever the column says, and re-backfills it. Useful only for accounts that stalled early; anyone else can replay from Settings → Help."
           confirmLabel="Reset onboarding"
           onConfirm={(reason) =>
             resetOnboardingAction({ targetUserId, scope: "both", reason })

@@ -5,6 +5,7 @@ import { FolderOpen, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { pathFromRelative, type DroppedFile } from "@/lib/capture/file-drop";
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { cn } from "@/lib/utils";
 
 /**
@@ -50,6 +51,7 @@ export function ImportDropzone({
 
   return (
     <section
+      {...tourAnchor("imports.dropzone")}
       // A convenience target for pointers, not a control: the two buttons inside are the
       // accessible way in, and they stay the only tab stops. Giving this a role and a
       // tabindex would add a third stop that does exactly what the first one already does.

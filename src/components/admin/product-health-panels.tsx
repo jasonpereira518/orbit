@@ -202,17 +202,29 @@ export async function FunnelParkingPanel() {
     <AdminPanel title="Where incomplete accounts are parked">
       {!parking ? (
         <EmptyState>Onboarding progress is unavailable.</EmptyState>
-      ) : parking.onboardingParking.length === 0 && parking.wizardParking.length === 0 ? (
+      ) : parking.onboardingParking.length === 0 &&
+        parking.tourParking.length === 0 &&
+        parking.wizardParking.length === 0 ? (
         <EmptyState>Nobody is mid-onboarding.</EmptyState>
       ) : (
         <>
           {parking.onboardingParking.length > 0 && (
             <MiniBars
               rows={parking.onboardingParking.map((x) => ({
-                label: `tour · ${x.step}`,
+                label: `setup · ${x.step}`,
                 count: x.count,
               }))}
             />
+          )}
+          {parking.tourParking.length > 0 && (
+            <div className="mt-3">
+              <MiniBars
+                rows={parking.tourParking.map((x) => ({
+                  label: `tour · ${x.step}`,
+                  count: x.count,
+                }))}
+              />
+            </div>
           )}
           {parking.wizardParking.length > 0 && (
             <div className="mt-3">
@@ -227,9 +239,9 @@ export async function FunnelParkingPanel() {
         </>
       )}
       <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-        The tour auto-advances every 7 seconds, so its step records where the tab was closed
-        rather than what held attention. Wizard steps are validated on write, so those
-        reflect a real choice — the branch taken is the signal worth acting on.
+        Every onboarding step is self-paced and validated on write, so each row reflects a
+        real choice — the step people stall on is the signal worth acting on. Wizard rows
+        are legacy from the old setup wizard; nothing writes them any more.
       </p>
     </AdminPanel>
   );

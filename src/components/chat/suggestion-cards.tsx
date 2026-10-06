@@ -13,6 +13,7 @@
  * A tooltip keeps the reason and gives the height back.
  */
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
@@ -150,6 +151,7 @@ function Scroller({ children }: { children: React.ReactNode }) {
       ref={ref}
       onScroll={measure}
       data-slot="chat-suggestions"
+      {...tourAnchor("chat.suggestions")}
       className={cn(
         "-mx-1 flex items-center gap-2 overflow-x-auto overflow-y-hidden touch-pan-x px-1 pb-0.5",
         "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",

@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ComponentType } from "react";
 import {
@@ -343,6 +344,7 @@ function RailButton({
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
+      {...(label === "Today" ? tourAnchor("reminders.rail-today") : {})}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors duration-fast",
         "outline-none focus-visible:ring-2 focus-visible:ring-ring/40",

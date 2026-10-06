@@ -1,5 +1,6 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
 import { usePathname, useRouter } from "next/navigation";
 import {
   useCallback,
@@ -392,6 +393,7 @@ export function RemindersStage({
           offline: { kind: "reminder.done", args: [id], subject: id },
         });
         refresh();
+        if (res !== undefined) emitTourEvent("reminder.done");
         // Queued offline counts as done here: the row stays gone, and the sync on
         // reconnect makes it true.
         return res !== undefined || isQueuedOffline(id);

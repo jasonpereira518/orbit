@@ -25,6 +25,8 @@ import {
   type SettingsSectionId,
 } from "@/components/settings/sections";
 import { requireUserId } from "@/lib/auth";
+import { tourResumable } from "@/lib/tour/tour-state";
+import { ensureUserSettings } from "@/lib/user-settings";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { speechAllowance } from "@/lib/speech-quota";
@@ -102,6 +104,7 @@ export default async function SettingsPage() {
     visibility,
     targetCompanies,
     schools,
+    settingsRow,
     meetingAllowance,
     shortformAllowance,
     emailSettings,
@@ -113,6 +116,7 @@ export default async function SettingsPage() {
     resolveSurfaceVisibility(userId),
     getTargetCompanies(),
     getSchools(),
+    ensureUserSettings(userId),
     speechAllowance(userId, "meeting"),
     speechAllowance(userId, "shortform"),
     // Loaded here, not by the section on mount: this page replaceStates on mount (OAuth
@@ -237,7 +241,10 @@ export default async function SettingsPage() {
         >
           {shows("settings-knowledge") ? <KnowledgeSettings /> : null}
           {shows("settings-help") ? (
-            <HelpSettings feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)} />
+            <HelpSettings
+              feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)}
+              tourResumable={tourResumable(settingsRow)}
+            />
           ) : null}
           <CreditsSettings />
         </SettingsSection>

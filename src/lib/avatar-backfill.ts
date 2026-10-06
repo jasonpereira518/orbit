@@ -1,4 +1,5 @@
 import { and, asc, eq, notInArray, or, sql } from "drizzle-orm";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
 import type { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { AvatarSourceRateLimitError, AvatarStorageError } from "@/lib/contact-avatar";
@@ -60,7 +61,8 @@ function needsWorkPredicate(userId: string, skipIds: string[]) {
       sql`(${hasLinkedIn} OR ${hasEmail})
         AND ${storedKind} IN ('none', 'unusable')
         AND (${contacts.profileImageCheckedAt} IS NULL
-             OR ${contacts.profileImageCheckedAt} < now() - ${sql.raw(`interval '${AVATAR_RECHECK_DAYS} days'`)})`,
+             OR ${contacts.profileImageCheckedAt} < now() - ${sql.raw(`interval '${AVATAR_RECHECK_DAYS} days'`)})
+        AND ${notTourExample(contacts.source)}`,
       // A usable remote photo that is not yet in durable storage. Always worth a go:
       // it costs no third-party quota, just a fetch we already know the URL for.
       sql`${storedKind} = 'remote'`

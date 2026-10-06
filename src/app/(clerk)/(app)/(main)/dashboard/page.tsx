@@ -5,9 +5,11 @@ import { AgentDraftsCard } from "@/components/dashboard/agent-drafts-card";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
+  LinkedInExportNudgeSection,
   MorningBriefingSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
+  SetupChecklistSection,
   StatsSection,
   SuggestedOutreachSection,
   TailSection,
@@ -37,14 +39,16 @@ export default async function DashboardPage() {
   // Unhandled until a section awaits it; an early rejection must not crash the render.
   bundle.catch(() => {});
 
-  const { hidden, comingSoon } = await resolveSurfaceVisibility(await requireUserId());
+  const { hidden, comingSoonMarked } = await resolveSurfaceVisibility(await requireUserId());
   const show = (key: string) => !hidden.has(key);
 
   // Radar's morning briefing leads the page for viewers who can open Radar, and takes over
   // from the suggestions card once their first run exists. Started only for them, so
-  // everyone else pays nothing, and never awaited ahead of the bundle.
+  // everyone else pays nothing, and never awaited ahead of the bundle. While Radar is marked
+  // coming soon the widget stays off for everyone — an admin previewing unreleased pages can
+  // still open /radar itself, but the dashboard doesn't advertise what hasn't shipped.
   const radarBriefing =
-    !hidden.has("page.radar") && !comingSoon.has("page.radar") ? fetchRadarBriefing() : null;
+    !hidden.has("page.radar") && !comingSoonMarked.has("page.radar") ? fetchRadarBriefing() : null;
   radarBriefing?.catch(() => {});
 
   // The outreach summary streams independently, and is not started at all when its card
@@ -62,6 +66,10 @@ export default async function DashboardPage() {
       <RenderStamp />
       <DashboardHeader />
 
+      {/* Streams in on its own and renders nothing unless a LinkedIn export is outstanding. */}
+      <Suspense fallback={null}>
+        <LinkedInExportNudgeSection />
+      </Suspense>
       {radarBriefing && (
         <Suspense fallback={<DashboardCardSkeleton className="h-48" />}>
           <MorningBriefingSection briefing={radarBriefing} />
@@ -73,6 +81,12 @@ export default async function DashboardPage() {
           than attention, and it expires. It renders nothing when there is none. */}
       <Suspense fallback={null}>
         <AgentDraftsSection />
+      </Suspense>
+
+      {/* What onboarding left open. Nothing while the guided tour is running, nothing once
+          every item is done or the person dismissed it on this device. */}
+      <Suspense fallback={null}>
+        <SetupChecklistSection />
       </Suspense>
 
       {show("dashboard.stats") && (

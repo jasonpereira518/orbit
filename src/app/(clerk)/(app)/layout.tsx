@@ -22,6 +22,9 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { aiReadyFromSettings } from "@/lib/ai-access";
+import { getLinkedInReminderState } from "@/lib/linkedin-reminder";
+import { tourRailVisible } from "@/lib/tour/tour-state";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
@@ -127,13 +130,17 @@ export default async function AppLayout({
   // cannot read the database themselves. `hiddenForUsers` rides along so an exempt operator
   // can be shown a "Hidden" tag on items their users are not getting — see `AppSidebar`.
   //
+  // `linkedinReminder` arms the once-per-account "Is your LinkedIn export ready?" screen.
+  // It is free on nearly every request: the settings row above answers it unless the
+  // account is 24h–14d old and has not been shown it yet — only then is `imports` read.
   // `brandColors` is the brand color Orbit has learned for each of the viewer's companies and
   // schools that the curated table does not know, plus which ones it has not looked up yet.
   // Those are learned after the response is sent, so a newly added company shows its own
   // color from the next page load on. A failed read costs only the colors, never the page.
-  const [{ plan }, visibility, brandColors] = await Promise.all([
+  const [{ plan }, visibility, linkedinReminder, brandColors] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
+    getLinkedInReminderState(userId, settings),
     loadOrgBrandColors(userId).catch(() => ({ learned: [], missing: [] })),
   ]);
   // The server-component realm has its own copy of the registry; the client component below
@@ -162,6 +169,13 @@ export default async function AppLayout({
       comingSoon={[...visibility.comingSoonMarked]}
       navOrder={visibility.navOrder}
       viewingAsUser={visibility.viewingAsUser}
+      linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
+      tour={{
+        active: tourRailVisible(settings),
+        stop: settings.tourStop,
+        hasApiKey: aiReadyFromSettings(userId, settings),
+        linkedinRequested: settings.linkedinExportRequestedAt != null,
+      }}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}

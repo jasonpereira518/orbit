@@ -135,6 +135,7 @@
      icon glyph. */
   --success: #047857; /* emerald-700 — 5.0:1 on #ffffff */
   --warning: #b45309; /* amber-700   — 4.8:1 on #ffffff */
+  --tour-scrim: color-mix(in oklab, var(--background) 55%, transparent); /* guided tour dim */
   --info: #1d4ed8; /* blue-700    — 7.0:1 on #ffffff */
   /* The warning callout box (AI-key notice, capture caveats). Light values are
      the exact amber-50/70 fill and amber-200/80 edge the boxes always used, as
@@ -278,6 +279,7 @@
      go pale — the same 300-weights the app already pairs with the light 700s. */
   --success: #6ee7b7; /* emerald-300 — 9.2:1 on #292c30 */
   --warning: #fcd34d; /* amber-300   — 9.7:1 on #292c30 */
+  --tour-scrim: rgb(2 6 23 / 0.6); /* guided tour dim */
   --info: #93c5fd; /* blue-300    — 7.7:1 on #292c30 */
   /* amber-500 at a wash, the same fill as the app's other amber notices. */
   --warning-surface: rgb(245 158 11 / 0.1);

@@ -15,6 +15,7 @@ import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb, rowsOf } from "@/db";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
 import {
   buildMemoryChunks,
   deleteMemoryChunks,
@@ -409,7 +410,7 @@ export async function contactHeadroomForUser(
   const [row] = await db
     .select({ value: count() })
     .from(contacts)
-    .where(eq(contacts.userId, userId));
+    .where(and(eq(contacts.userId, userId), notTourExample(contacts.source)));
 
   return Math.max(0, contactLimit - (row?.value ?? 0));
 }
@@ -421,7 +422,7 @@ export async function contactUsageForUser(userId: string) {
   const [row] = await db
     .select({ value: count() })
     .from(contacts)
-    .where(eq(contacts.userId, userId));
+    .where(and(eq(contacts.userId, userId), notTourExample(contacts.source)));
 
   const used = row?.value ?? 0;
   return {

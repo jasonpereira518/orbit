@@ -1,5 +1,8 @@
 "use client";
 
+import { ExampleTag } from "@/components/onboarding/example-tag";
+import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
+
 import { ComposeButton } from "@/components/email/compose-button";
 import {
   useEffect,
@@ -222,11 +225,14 @@ export function ContactProfileHero({
   linkedinUrl,
   channels,
   formInitial,
+  source,
 }: {
   contactId: string;
   displayName: string;
   fullName: string;
   preferredName?: string | null;
+  /** `contacts.source`; only read for the guided tour's "Example" chip. */
+  source?: string | null;
   firstName?: string | null;
   title?: string | null;
   company?: string | null;
@@ -409,8 +415,9 @@ export function ContactProfileHero({
             <div ref={sentinelRef} className="h-px w-px" aria-hidden />
             {/* `break-words` so a pasted URL or an over-long name wraps instead of
                 running off the right edge, past the Edit button and out of the card. */}
-            <h1 className="font-[family-name:var(--font-display)] text-3xl break-words text-ink sm:text-4xl">
+            <h1 className="flex flex-wrap items-center gap-x-2 font-[family-name:var(--font-display)] text-3xl break-words text-ink sm:text-4xl">
               {displayName}
+              {isTourExampleSource(source) && <ExampleTag className="align-middle" />}
             </h1>
             {preferredName && preferredName !== fullName ? (
               <p className="mt-0.5 text-sm text-muted-foreground">{fullName}</p>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { acceptTerms } from "@/actions/onboarding-wizard";
+import { acceptTerms } from "@/actions/onboarding";
 import { buttonVariants } from "@/components/ui/button";
 import { friendlyError } from "@/lib/errors";
 import { TERMS_NOTICE_COPY } from "@/lib/legal";

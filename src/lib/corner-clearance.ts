@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type RefObject } from "react";
+import { useEffect, useId, type RefObject } from "react";
 
 /**
  * Raising the shared bottom-right corner.
@@ -16,24 +16,39 @@ import { useEffect, type RefObject } from "react";
  * portalled to `<body>`, so it is not a descendant of anything a page could
  * scope a variable to.
  *
- * Both hooks write the same single `--orbit-corner-lift` slot, so two
- * simultaneous claimants would fight. Today's two — Capture's review step and
- * the constellation's full screen — cannot co-occur. If a third appears, this
- * should become a small ref-counted store taking `Math.max` of live claims.
+ * Claims are ref-counted and the corner takes the MAX of the live ones. Capture's
+ * review step and the constellation's full screen never co-occur, but the guided
+ * tour's coach rail can sit on the same screen as either, which is the third
+ * claimant this store was always going to need.
  */
 
 const LIFT_VAR = "--orbit-corner-lift";
 
+const claims = new Map<string, number>();
+
+function apply() {
+  const root = document.documentElement;
+  let max = 0;
+  for (const px of claims.values()) if (px > max) max = px;
+  if (max > 0) root.style.setProperty(LIFT_VAR, `${max}px`);
+  else root.style.removeProperty(LIFT_VAR);
+}
+
+/** Set (or clear, with null) one claimant's lift. Safe to call every measurement. */
+export function claimCornerLift(id: string, px: number | null) {
+  if (px == null || px <= 0) claims.delete(id);
+  else claims.set(id, px);
+  apply();
+}
+
 /** Raise the corner by a fixed amount for as long as `px` is non-null. */
 export function useCornerClearance(px: number | null) {
+  const id = useId();
   useEffect(() => {
     if (px == null) return;
-    const root = document.documentElement;
-    root.style.setProperty(LIFT_VAR, `${px}px`);
-    return () => {
-      root.style.removeProperty(LIFT_VAR);
-    };
-  }, [px]);
+    claimCornerLift(id, px);
+    return () => claimCornerLift(id, null);
+  }, [id, px]);
 }
 
 /**
@@ -50,10 +65,10 @@ export function useCornerClearanceAbove(
   enabled: boolean,
   gap = 8
 ) {
+  const id = useId();
   useEffect(() => {
-    const root = document.documentElement;
     if (!enabled) {
-      root.style.removeProperty(LIFT_VAR);
+      claimCornerLift(id, null);
       return;
     }
 
@@ -67,7 +82,7 @@ export function useCornerClearanceAbove(
         0,
         window.innerHeight - el.getBoundingClientRect().top + gap
       );
-      root.style.setProperty(LIFT_VAR, `${lift}px`);
+      claimCornerLift(id, lift);
     };
 
     measure();
@@ -83,7 +98,7 @@ export function useCornerClearanceAbove(
       observer.disconnect();
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
-      root.style.removeProperty(LIFT_VAR);
+      claimCornerLift(id, null);
     };
-  }, [ref, enabled, gap]);
+  }, [id, ref, enabled, gap]);
 }

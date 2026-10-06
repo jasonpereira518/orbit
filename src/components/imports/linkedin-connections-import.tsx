@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useState, useTransition } from "react";
 import { FileSpreadsheet } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -64,7 +65,10 @@ export function LinkedInConnectionsImport() {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6">
+    <section
+      className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6"
+      {...tourAnchor("imports.connections")}
+    >
       {/*
         The export guide shares the title's row, not the whole header's. Beside the full
         text block it took ~120px from a column already sharing a phone with the icon, and
@@ -82,8 +86,9 @@ export function LinkedInConnectionsImport() {
             <LinkedInExportGuide variant="connections" />
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Upload your Connections CSV, review everyone, then import into your
-            orbit. Imports keep running if you leave this page.
+            Upload LinkedIn&apos;s ZIP or the Connections.csv inside it, review
+            everyone, then import into your orbit. Imports keep running if you
+            leave this page.
           </p>
         </div>
       </div>
@@ -123,7 +128,7 @@ export function LinkedInConnectionsImport() {
         }}
       />
 
-      {pending ? <BusyHint>Reading CSV…</BusyHint> : null}
+      {pending ? <BusyHint>Reading file…</BusyHint> : null}
 
       <div className="flex flex-wrap gap-2">
         <Button
