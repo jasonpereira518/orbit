@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -203,6 +203,12 @@ function RailBody({
   const last = index === total - 1;
   const predicate = stop.doneWhen != null;
 
+  // The confirm takes the card's place rather than sitting over it: a translucent overlay let
+  // the stop's text show through, and it read as a smudge rather than a question.
+  if (confirmExit) {
+    return <ExitConfirm pending={pending} onExit={onExit} onCancel={() => setConfirmExit(false)} />;
+  }
+
   return (
     <div className="relative flex flex-col gap-3">
       {!compact && (
@@ -345,37 +351,6 @@ function RailBody({
         </button>
       )}
 
-      {confirmExit && (
-        <div
-          role="alertdialog"
-          aria-label="Exit the tour?"
-          className="absolute inset-0 z-10 flex flex-col justify-center gap-3 rounded-xl bg-card/95 p-3 text-sm backdrop-blur-sm"
-        >
-          <p className="text-foreground">
-            Exit for now? The example people are removed; resume any time from
-            your dashboard.
-          </p>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={pending}
-              onClick={onExit}
-            >
-              Exit tour
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => setConfirmExit(false)}
-            >
-              Keep going
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -397,5 +372,67 @@ function Pips({ index, total }: { index: number; total: number }) {
         />
       ))}
     </ol>
+  );
+}
+
+/**
+ * "Exit for now?" in the rail's own frame: a heading, what leaving costs and how to come back,
+ * and the safe choice first and focused, so Enter keeps the tour and Esc does too.
+ */
+function ExitConfirm({
+  pending,
+  onExit,
+  onCancel,
+}: {
+  pending: boolean;
+  onExit: () => void;
+  onCancel: () => void;
+}) {
+  const keepRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    keepRef.current?.focus({ preventScroll: true });
+  }, []);
+  return (
+    <div
+      role="alertdialog"
+      aria-labelledby="tour-exit-title"
+      aria-describedby="tour-exit-body"
+      className="flex flex-col gap-3"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+    >
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Leaving the tour
+      </p>
+      <h2
+        id="tour-exit-title"
+        className="font-[family-name:var(--font-display)] text-xl leading-tight text-ink"
+      >
+        Exit for now?
+      </h2>
+      <p id="tour-exit-body" className="text-sm text-muted-foreground text-pretty">
+        The six example people leave with it; your own entries stay. Pick up where you left
+        off from Finish setting up on your dashboard.
+      </p>
+      <div className="mt-1 flex gap-2">
+        <Button ref={keepRef} type="button" size="sm" className="flex-1" onClick={onCancel}>
+          Keep going
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="flex-1 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          disabled={pending}
+          onClick={onExit}
+        >
+          {pending ? "Exiting…" : "Exit tour"}
+        </Button>
+      </div>
+    </div>
   );
 }
