@@ -35,7 +35,11 @@ import {
   completeReminder,
   reopenReminder,
 } from "../src/lib/reminders";
-import { discardEmptyThread, persistAssistantTurn } from "../src/lib/chat-persist";
+import {
+  discardEmptyThread,
+  discardUnansweredQuestion,
+  persistAssistantTurn,
+} from "../src/lib/chat-persist";
 
 const USER = "smoke-data-loss-user";
 
@@ -214,6 +218,17 @@ async function main() {
   });
   check("an empty auto-created thread is discarded", !threadAfterFailure);
 
+  // The question itself is written BEFORE the model runs — it carries the people attached
+  // to it, and a regenerate has to write it into the slot being versioned — so the failure
+  // path has to clear it rather than never having written it. An unanswered question left
+  // in the thread reads as a question the assistant ignored, and `prepareChatContext` feeds
+  // the last eight messages back to the model, so it also poisons the next real answer.
+  const [failedThread] = await db.insert(chatThreads).values({ userId: USER }).returning();
+  const [asked] = await db
+    .insert(chatMessages)
+    .values({ threadId: failedThread.id, userId: USER, role: "user", content: "Who do I know at AWS?" })
+    .returning();
+  await discardUnansweredQuestion(USER, failedThread.id, asked.id);
   const orphans = await db.query.chatMessages.findMany({
     where: eq(chatMessages.userId, USER),
   });
@@ -223,15 +238,21 @@ async function main() {
     `found ${orphans.length}`
   );
 
-  // The success path writes BOTH halves together.
+  // The success path keeps both halves — and the question is NOT discarded once an answer
+  // sits under it, whatever happened on an earlier attempt.
   const [liveThread] = await db
     .insert(chatThreads)
     .values({ userId: USER })
+    .returning();
+  const [answered] = await db
+    .insert(chatMessages)
+    .values({ threadId: liveThread.id, userId: USER, role: "user", content: "Who do I know at AWS?" })
     .returning();
   await persistAssistantTurn(USER, liveThread.id, null, "Who do I know at AWS?", {
     answer: "Two people.",
     recommendations: [],
   });
+  await discardUnansweredQuestion(USER, liveThread.id, answered.id);
   const persisted = await db.query.chatMessages.findMany({
     where: eq(chatMessages.threadId, liveThread.id),
   });

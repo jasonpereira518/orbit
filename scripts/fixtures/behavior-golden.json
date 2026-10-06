@@ -250,6 +250,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -273,6 +274,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -296,6 +298,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -319,6 +322,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -342,6 +346,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -365,6 +370,7 @@
         "actionKind": "task",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -388,6 +394,7 @@
         "actionKind": "call",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -411,6 +418,7 @@
         "actionKind": "task",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -921,40 +929,16 @@
     "contactNameById": {
       "__map": [
         [
-          "<contacts:Tom Bennett>",
-          "Tom Bennett"
-        ],
-        [
-          "<contacts:Dr. Elena Vasquez>",
-          "Dr. Elena Vasquez"
-        ],
-        [
-          "<contacts:Aisha Rahman>",
-          "Aisha Rahman"
-        ],
-        [
-          "<contacts:Rachel Adeyemi>",
-          "Rachel Adeyemi"
-        ],
-        [
           "<contacts:Nina Petrova>",
           "Nina Petrova"
         ],
         [
-          "<contacts:James Okafor>",
-          "James Okafor"
+          "<contacts:Sarah Chen>",
+          "Sarah Chen"
         ],
         [
-          "<contacts:Amara Diallo>",
-          "Amara Diallo"
-        ],
-        [
-          "<contacts:Olivia Brooks>",
-          "Olivia Brooks"
-        ],
-        [
-          "<contacts:Ben Carter>",
-          "Ben Carter"
+          "<contacts:Dr. Elena Vasquez>",
+          "Dr. Elena Vasquez"
         ],
         [
           "<contacts:Priya Nair>",
@@ -965,105 +949,89 @@
           "Marcus Webb"
         ],
         [
-          "<contacts:Andre Silva>",
-          "Andre Silva"
+          "<contacts:Maya Thompson>",
+          "Maya Thompson"
         ],
         [
           "<contacts:Victor Reyes>",
           "Victor Reyes"
         ],
         [
-          "<contacts:Maya Thompson>",
-          "Maya Thompson"
-        ],
-        [
           "<contacts:Fatima Nasser>",
           "Fatima Nasser"
-        ],
-        [
-          "<contacts:David Kim>",
-          "David Kim"
-        ],
-        [
-          "<contacts:Daniel Osei>",
-          "Daniel Osei"
-        ],
-        [
-          "<contacts:Hassan Ali>",
-          "Hassan Ali"
         ],
         [
           "<contacts:Marcus Lee>",
           "Marcus Lee"
         ],
         [
-          "<contacts:Yuki Tanaka>",
-          "Yuki Tanaka"
+          "<contacts:David Kim>",
+          "David Kim"
+        ],
+        [
+          "<contacts:Ben Carter>",
+          "Ben Carter"
+        ],
+        [
+          "<contacts:James Okafor>",
+          "James Okafor"
         ],
         [
           "<contacts:Grace Whitfield>",
           "Grace Whitfield"
         ],
         [
-          "<contacts:Sarah Chen>",
-          "Sarah Chen"
+          "<contacts:Aisha Rahman>",
+          "Aisha Rahman"
         ],
         [
-          "<contacts:Chris Nowak>",
-          "Chris Nowak"
+          "<contacts:Hassan Ali>",
+          "Hassan Ali"
+        ],
+        [
+          "<contacts:Daniel Osei>",
+          "Daniel Osei"
         ],
         [
           "<contacts:Sofia Marchetti>",
           "Sofia Marchetti"
         ],
         [
+          "<contacts:Amara Diallo>",
+          "Amara Diallo"
+        ],
+        [
+          "<contacts:Yuki Tanaka>",
+          "Yuki Tanaka"
+        ],
+        [
+          "<contacts:Tom Bennett>",
+          "Tom Bennett"
+        ],
+        [
           "<contacts:Leo Fernandez>",
           "Leo Fernandez"
+        ],
+        [
+          "<contacts:Rachel Adeyemi>",
+          "Rachel Adeyemi"
+        ],
+        [
+          "<contacts:Olivia Brooks>",
+          "Olivia Brooks"
+        ],
+        [
+          "<contacts:Chris Nowak>",
+          "Chris Nowak"
+        ],
+        [
+          "<contacts:Andre Silva>",
+          "Andre Silva"
         ]
       ]
     },
     "contactById": {
       "__map": [
-        [
-          "<contacts:Tom Bennett>",
-          {
-            "id": "<contacts:Tom Bennett>",
-            "fullName": "Tom Bennett",
-            "preferredName": null,
-            "title": "Staff Software Engineer",
-            "company": "Stripe"
-          }
-        ],
-        [
-          "<contacts:Dr. Elena Vasquez>",
-          {
-            "id": "<contacts:Dr. Elena Vasquez>",
-            "fullName": "Dr. Elena Vasquez",
-            "preferredName": null,
-            "title": "Professor of Computer Science",
-            "company": "UNC Chapel Hill"
-          }
-        ],
-        [
-          "<contacts:Aisha Rahman>",
-          {
-            "id": "<contacts:Aisha Rahman>",
-            "fullName": "Aisha Rahman",
-            "preferredName": null,
-            "title": "Senior Product Manager",
-            "company": "Google"
-          }
-        ],
-        [
-          "<contacts:Rachel Adeyemi>",
-          {
-            "id": "<contacts:Rachel Adeyemi>",
-            "fullName": "Rachel Adeyemi",
-            "preferredName": null,
-            "title": "Director of Talent",
-            "company": "Figma"
-          }
-        ],
         [
           "<contacts:Nina Petrova>",
           {
@@ -1075,46 +1043,24 @@
           }
         ],
         [
-          "<contacts:James Okafor>",
+          "<contacts:Sarah Chen>",
           {
-            "id": "<contacts:James Okafor>",
-            "fullName": "James Okafor",
+            "id": "<contacts:Sarah Chen>",
+            "fullName": "Sarah Chen",
             "preferredName": null,
-            "title": "Partner",
-            "company": "Bellwether Ventures"
-          }
-        ],
-        [
-          "<contacts:Amara Diallo>",
-          {
-            "id": "<contacts:Amara Diallo>",
-            "fullName": "Amara Diallo",
-            "preferredName": null,
-            "title": "Head of Talent",
-            "company": "Bellwether Ventures",
+            "title": "Partnerships Lead",
+            "company": "OpenAI",
             "lastInteractionAt": "<ts>"
           }
         ],
         [
-          "<contacts:Olivia Brooks>",
+          "<contacts:Dr. Elena Vasquez>",
           {
-            "id": "<contacts:Olivia Brooks>",
-            "fullName": "Olivia Brooks",
+            "id": "<contacts:Dr. Elena Vasquez>",
+            "fullName": "Dr. Elena Vasquez",
             "preferredName": null,
-            "title": "Alumni Relations Lead",
-            "company": "UNC Chapel Hill",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
-          "<contacts:Ben Carter>",
-          {
-            "id": "<contacts:Ben Carter>",
-            "fullName": "Ben Carter",
-            "preferredName": null,
-            "title": "Computer Science Student",
-            "company": "UNC Chapel Hill",
-            "lastInteractionAt": "<ts>"
+            "title": "Professor of Computer Science",
+            "company": "UNC Chapel Hill"
           }
         ],
         [
@@ -1140,13 +1086,13 @@
           }
         ],
         [
-          "<contacts:Andre Silva>",
+          "<contacts:Maya Thompson>",
           {
-            "id": "<contacts:Andre Silva>",
-            "fullName": "Andre Silva",
+            "id": "<contacts:Maya Thompson>",
+            "fullName": "Maya Thompson",
             "preferredName": null,
-            "title": "Head of Platform",
-            "company": "Google",
+            "title": "Program Director",
+            "company": "Innovate Carolina",
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -1162,23 +1108,23 @@
           }
         ],
         [
-          "<contacts:Maya Thompson>",
-          {
-            "id": "<contacts:Maya Thompson>",
-            "fullName": "Maya Thompson",
-            "preferredName": null,
-            "title": "Program Director",
-            "company": "Innovate Carolina",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
           "<contacts:Fatima Nasser>",
           {
             "id": "<contacts:Fatima Nasser>",
             "fullName": "Fatima Nasser",
             "preferredName": null,
             "title": "Product Manager",
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Marcus Lee>",
+          {
+            "id": "<contacts:Marcus Lee>",
+            "fullName": "Marcus Lee",
+            "preferredName": null,
+            "title": "Technical Recruiter",
             "company": "Stripe",
             "lastInteractionAt": "<ts>"
           }
@@ -1195,47 +1141,24 @@
           }
         ],
         [
-          "<contacts:Daniel Osei>",
+          "<contacts:Ben Carter>",
           {
-            "id": "<contacts:Daniel Osei>",
-            "fullName": "Daniel Osei",
+            "id": "<contacts:Ben Carter>",
+            "fullName": "Ben Carter",
             "preferredName": null,
-            "title": "Founder & CTO",
-            "company": "Northlight Robotics",
+            "title": "Computer Science Student",
+            "company": "UNC Chapel Hill",
             "lastInteractionAt": "<ts>"
           }
         ],
         [
-          "<contacts:Hassan Ali>",
+          "<contacts:James Okafor>",
           {
-            "id": "<contacts:Hassan Ali>",
-            "fullName": "Hassan Ali",
+            "id": "<contacts:James Okafor>",
+            "fullName": "James Okafor",
             "preferredName": null,
-            "title": "Senior Backend Engineer",
-            "company": "Notion",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
-          "<contacts:Marcus Lee>",
-          {
-            "id": "<contacts:Marcus Lee>",
-            "fullName": "Marcus Lee",
-            "preferredName": null,
-            "title": "Technical Recruiter",
-            "company": "Stripe",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
-          "<contacts:Yuki Tanaka>",
-          {
-            "id": "<contacts:Yuki Tanaka>",
-            "fullName": "Yuki Tanaka",
-            "preferredName": null,
-            "title": "Research Scientist",
-            "company": "Anthropic",
-            "lastInteractionAt": "<ts>"
+            "title": "Partner",
+            "company": "Bellwether Ventures"
           }
         ],
         [
@@ -1250,24 +1173,34 @@
           }
         ],
         [
-          "<contacts:Sarah Chen>",
+          "<contacts:Aisha Rahman>",
           {
-            "id": "<contacts:Sarah Chen>",
-            "fullName": "Sarah Chen",
+            "id": "<contacts:Aisha Rahman>",
+            "fullName": "Aisha Rahman",
             "preferredName": null,
-            "title": "Partnerships Lead",
-            "company": "OpenAI",
+            "title": "Senior Product Manager",
+            "company": "Google"
+          }
+        ],
+        [
+          "<contacts:Hassan Ali>",
+          {
+            "id": "<contacts:Hassan Ali>",
+            "fullName": "Hassan Ali",
+            "preferredName": null,
+            "title": "Senior Backend Engineer",
+            "company": "Notion",
             "lastInteractionAt": "<ts>"
           }
         ],
         [
-          "<contacts:Chris Nowak>",
+          "<contacts:Daniel Osei>",
           {
-            "id": "<contacts:Chris Nowak>",
-            "fullName": "Chris Nowak",
+            "id": "<contacts:Daniel Osei>",
+            "fullName": "Daniel Osei",
             "preferredName": null,
-            "title": "Engineering Manager",
-            "company": "Google",
+            "title": "Founder & CTO",
+            "company": "Northlight Robotics",
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -1283,6 +1216,38 @@
           }
         ],
         [
+          "<contacts:Amara Diallo>",
+          {
+            "id": "<contacts:Amara Diallo>",
+            "fullName": "Amara Diallo",
+            "preferredName": null,
+            "title": "Head of Talent",
+            "company": "Bellwether Ventures",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Yuki Tanaka>",
+          {
+            "id": "<contacts:Yuki Tanaka>",
+            "fullName": "Yuki Tanaka",
+            "preferredName": null,
+            "title": "Research Scientist",
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Tom Bennett>",
+          {
+            "id": "<contacts:Tom Bennett>",
+            "fullName": "Tom Bennett",
+            "preferredName": null,
+            "title": "Staff Software Engineer",
+            "company": "Stripe"
+          }
+        ],
+        [
           "<contacts:Leo Fernandez>",
           {
             "id": "<contacts:Leo Fernandez>",
@@ -1290,6 +1255,49 @@
             "preferredName": null,
             "title": "Founder",
             "company": "Tidepool Analytics",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Rachel Adeyemi>",
+          {
+            "id": "<contacts:Rachel Adeyemi>",
+            "fullName": "Rachel Adeyemi",
+            "preferredName": null,
+            "title": "Director of Talent",
+            "company": "Figma"
+          }
+        ],
+        [
+          "<contacts:Olivia Brooks>",
+          {
+            "id": "<contacts:Olivia Brooks>",
+            "fullName": "Olivia Brooks",
+            "preferredName": null,
+            "title": "Alumni Relations Lead",
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Chris Nowak>",
+          {
+            "id": "<contacts:Chris Nowak>",
+            "fullName": "Chris Nowak",
+            "preferredName": null,
+            "title": "Engineering Manager",
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Andre Silva>",
+          {
+            "id": "<contacts:Andre Silva>",
+            "fullName": "Andre Silva",
+            "preferredName": null,
+            "title": "Head of Platform",
+            "company": "Google",
             "lastInteractionAt": "<ts>"
           }
         ]
@@ -2085,66 +2093,6 @@
           "contactIds": [
             "<contacts:David Kim>",
             "<contacts:Sarah Chen>"
-          ]
-        },
-        {
-          "id": "company:independent",
-          "name": "Independent",
-          "company": "Independent",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Grace Whitfield>"
-          ]
-        },
-        {
-          "id": "company:linear",
-          "name": "Linear",
-          "company": "Linear",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Marcus Webb>"
-          ]
-        },
-        {
-          "id": "company:lumen health",
-          "name": "Lumen Health",
-          "company": "Lumen Health",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Nina Petrova>"
-          ]
-        },
-        {
-          "id": "company:northlight robotics",
-          "name": "Northlight Robotics",
-          "company": "Northlight Robotics",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Daniel Osei>"
-          ]
-        },
-        {
-          "id": "company:tidepool analytics",
-          "name": "Tidepool Analytics",
-          "company": "Tidepool Analytics",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Leo Fernandez>"
-          ]
-        },
-        {
-          "id": "school:unc chapel hill",
-          "name": "UNC Chapel Hill",
-          "company": "UNC Chapel Hill",
-          "kind": "school",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Maya Thompson>"
           ]
         }
       ],
@@ -3177,66 +3125,6 @@
           "<contacts:Sarah Chen>",
           "<contacts:David Kim>"
         ]
-      },
-      {
-        "id": "company:independent",
-        "name": "Independent",
-        "company": "Independent",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Grace Whitfield>"
-        ]
-      },
-      {
-        "id": "company:linear",
-        "name": "Linear",
-        "company": "Linear",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Marcus Webb>"
-        ]
-      },
-      {
-        "id": "company:lumen health",
-        "name": "Lumen Health",
-        "company": "Lumen Health",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Nina Petrova>"
-        ]
-      },
-      {
-        "id": "company:northlight robotics",
-        "name": "Northlight Robotics",
-        "company": "Northlight Robotics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Daniel Osei>"
-        ]
-      },
-      {
-        "id": "company:tidepool analytics",
-        "name": "Tidepool Analytics",
-        "company": "Tidepool Analytics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Leo Fernandez>"
-        ]
-      },
-      {
-        "id": "school:unc chapel hill",
-        "name": "UNC Chapel Hill",
-        "company": "UNC Chapel Hill",
-        "kind": "school",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Maya Thompson>"
-        ]
       }
     ],
     "userId": "demo-user",
@@ -3308,7 +3196,7 @@
         "company": "UNC Chapel Hill"
       },
       {
-        "id": "reminder:<reminders:Send Sarah the retrieval write-up>",
+        "id": "reminder:<reminders:Send Sarah the retrieval write-up>:<date>",
         "kind": "reminder",
         "title": "Send Sarah the retrieval write-up",
         "body": "She asked for a one-pager after the AWS Summit conversation.",
@@ -3331,7 +3219,7 @@
         "company": "OpenAI"
       },
       {
-        "id": "reminder:<reminders:Send Grace the quarterly update>",
+        "id": "reminder:<reminders:Send Grace the quarterly update>:<date>",
         "kind": "reminder",
         "title": "Send Grace the quarterly update",
         "body": "She decides fast and asked for a short update every quarter.",
@@ -3354,7 +3242,7 @@
         "company": "Independent"
       },
       {
-        "id": "reminder:<reminders:Add James to the monthly update>",
+        "id": "reminder:<reminders:Add James to the monthly update>:<date>",
         "kind": "reminder",
         "title": "Add James to the monthly update",
         "body": "He asked to be on the list at the UNC founders dinner.",
@@ -3389,7 +3277,7 @@
         "company": "OpenAI"
       },
       {
-        "id": "reminder:<reminders:Send Maya the showcase one-liner>",
+        "id": "reminder:<reminders:Send Maya the showcase one-liner>:<date>",
         "kind": "reminder",
         "title": "Send Maya the showcase one-liner",
         "body": "She needs the description for the programme by Friday.",
@@ -3400,7 +3288,7 @@
         "contactId": "<contacts:Maya Thompson>"
       },
       {
-        "id": "reminder:<reminders:Reply to Elena about the two students>",
+        "id": "reminder:<reminders:Reply to Elena about the two students>:<date>",
         "kind": "reminder",
         "title": "Reply to Elena about the two students",
         "body": "She sent names for a possible internship.",
@@ -3411,7 +3299,7 @@
         "contactId": "<contacts:Dr. Elena Vasquez>"
       },
       {
-        "id": "reminder:<reminders:Draft the October investor update>",
+        "id": "reminder:<reminders:Draft the October investor update>:<date>",
         "kind": "reminder",
         "title": "Draft the October investor update",
         "body": "Traction, the Codex partnership conversation, and the founding-engineer search.",
@@ -3446,7 +3334,7 @@
         "company": "UNC Chapel Hill"
       },
       {
-        "id": "reminder:<reminders:Call Tom about API versioning>",
+        "id": "reminder:<reminders:Call Tom about API versioning>:<date>",
         "kind": "reminder",
         "title": "Call Tom about API versioning",
         "body": "He offered to review the public API design.",
@@ -3481,7 +3369,7 @@
         "company": "Stripe"
       },
       {
-        "id": "reminder:<reminders:Book a venue for the Orbit user dinner>",
+        "id": "reminder:<reminders:Book a venue for the Orbit user dinner>:<date>",
         "kind": "reminder",
         "title": "Book a venue for the Orbit user dinner",
         "body": null,
@@ -3576,7 +3464,8 @@
       "meetings": 13,
       "withSummary": 25,
       "withKeyFacts": 17,
-      "embeddings": 0
+      "embeddings": 0,
+      "entriesTotal": 136
     },
     "entries": [
       {
@@ -5240,6 +5129,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -5383,6 +5273,7 @@
       "canUseSync": true,
       "canUseExtension": true
     },
+    "senderBio": "",
     "socialLinks": {
       "linkedin": "",
       "twitter": "",
@@ -6966,6 +6857,7 @@
           "source": "demo-seed",
           "externalId": null,
           "noteBatchId": null,
+          "importId": null,
           "rawNotes": "Thirty minutes on what a Codex integration would need. She wants a one-page architecture and a short demo video before their partner review.",
           "aiSummary": null,
           "topics": [
@@ -6990,6 +6882,7 @@
           "source": "demo-seed",
           "externalId": null,
           "noteBatchId": null,
+          "importId": null,
           "rawNotes": "Introduced me to David Kim on her team for the evaluation-infrastructure conversation.",
           "aiSummary": null,
           "topics": [
@@ -7010,6 +6903,7 @@
           "source": "demo-seed",
           "externalId": null,
           "noteBatchId": null,
+          "importId": null,
           "rawNotes": "Sent a first draft of the write-up. She replied same day, said she'd share it with her team and to ping her after their planning cycle.",
           "aiSummary": null,
           "topics": [
@@ -7031,6 +6925,7 @@
           "source": "demo-seed",
           "externalId": null,
           "noteBatchId": null,
+          "importId": null,
           "rawNotes": "She replied asking for the retrieval write-up by email rather than here.",
           "aiSummary": null,
           "topics": [],
@@ -7049,6 +6944,7 @@
           "source": "demo-seed",
           "externalId": null,
           "noteBatchId": null,
+          "importId": null,
           "rawNotes": "Connected on LinkedIn and thanked her for the conversation about inference costs.",
           "aiSummary": null,
           "topics": [],
@@ -7072,6 +6968,7 @@
           "actionKind": "follow_up",
           "createdBy": "user",
           "noteBatchId": null,
+          "importId": null,
           "sourceInteractionId": null,
           "actionItemId": null,
           "sourceExcerpt": null,
@@ -7797,6 +7694,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -7820,6 +7718,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -7843,6 +7742,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -7866,6 +7766,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -7889,6 +7790,7 @@
         "actionKind": "task",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -7912,6 +7814,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -7935,6 +7838,7 @@
         "actionKind": "follow_up",
         "createdBy": "extension",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -7958,6 +7862,7 @@
         "actionKind": "call",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -7981,6 +7886,7 @@
         "actionKind": "task",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -8004,6 +7910,7 @@
         "actionKind": "follow_up",
         "createdBy": "extension",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -8027,6 +7934,7 @@
         "actionKind": "follow_up",
         "createdBy": "user",
         "noteBatchId": null,
+        "importId": null,
         "sourceInteractionId": null,
         "actionItemId": null,
         "sourceExcerpt": null,
@@ -8371,52 +8279,24 @@
     "contactNameById": {
       "__map": [
         [
-          "<contacts:Sarah Chen>",
-          "Sarah Chen"
-        ],
-        [
           "<contacts:Golden Mcpperson>",
           "Golden Mcpperson"
+        ],
+        [
+          "<contacts:Sarah Chen>",
+          "Sarah Chen"
         ],
         [
           "<contacts:Golden Newperson>",
           "Golden Newperson"
         ],
         [
-          "<contacts:Tom Bennett>",
-          "Tom Bennett"
-        ],
-        [
-          "<contacts:Dr. Elena Vasquez>",
-          "Dr. Elena Vasquez"
-        ],
-        [
-          "<contacts:Aisha Rahman>",
-          "Aisha Rahman"
-        ],
-        [
-          "<contacts:Rachel Adeyemi>",
-          "Rachel Adeyemi"
-        ],
-        [
           "<contacts:Nina Petrova>",
           "Nina Petrova"
         ],
         [
-          "<contacts:James Okafor>",
-          "James Okafor"
-        ],
-        [
-          "<contacts:Amara Diallo>",
-          "Amara Diallo"
-        ],
-        [
-          "<contacts:Olivia Brooks>",
-          "Olivia Brooks"
-        ],
-        [
-          "<contacts:Ben Carter>",
-          "Ben Carter"
+          "<contacts:Dr. Elena Vasquez>",
+          "Dr. Elena Vasquez"
         ],
         [
           "<contacts:Priya Nair>",
@@ -8427,71 +8307,89 @@
           "Marcus Webb"
         ],
         [
-          "<contacts:Andre Silva>",
-          "Andre Silva"
+          "<contacts:Maya Thompson>",
+          "Maya Thompson"
         ],
         [
           "<contacts:Victor Reyes>",
           "Victor Reyes"
         ],
         [
-          "<contacts:Maya Thompson>",
-          "Maya Thompson"
-        ],
-        [
           "<contacts:Fatima Nasser>",
           "Fatima Nasser"
-        ],
-        [
-          "<contacts:David Kim>",
-          "David Kim"
-        ],
-        [
-          "<contacts:Daniel Osei>",
-          "Daniel Osei"
-        ],
-        [
-          "<contacts:Hassan Ali>",
-          "Hassan Ali"
         ],
         [
           "<contacts:Marcus Lee>",
           "Marcus Lee"
         ],
         [
-          "<contacts:Yuki Tanaka>",
-          "Yuki Tanaka"
+          "<contacts:David Kim>",
+          "David Kim"
+        ],
+        [
+          "<contacts:Ben Carter>",
+          "Ben Carter"
+        ],
+        [
+          "<contacts:James Okafor>",
+          "James Okafor"
         ],
         [
           "<contacts:Grace Whitfield>",
           "Grace Whitfield"
         ],
         [
-          "<contacts:Chris Nowak>",
-          "Chris Nowak"
+          "<contacts:Aisha Rahman>",
+          "Aisha Rahman"
+        ],
+        [
+          "<contacts:Hassan Ali>",
+          "Hassan Ali"
+        ],
+        [
+          "<contacts:Daniel Osei>",
+          "Daniel Osei"
         ],
         [
           "<contacts:Sofia Marchetti>",
           "Sofia Marchetti"
         ],
         [
+          "<contacts:Amara Diallo>",
+          "Amara Diallo"
+        ],
+        [
+          "<contacts:Yuki Tanaka>",
+          "Yuki Tanaka"
+        ],
+        [
+          "<contacts:Tom Bennett>",
+          "Tom Bennett"
+        ],
+        [
           "<contacts:Leo Fernandez>",
           "Leo Fernandez"
+        ],
+        [
+          "<contacts:Rachel Adeyemi>",
+          "Rachel Adeyemi"
+        ],
+        [
+          "<contacts:Olivia Brooks>",
+          "Olivia Brooks"
+        ],
+        [
+          "<contacts:Chris Nowak>",
+          "Chris Nowak"
+        ],
+        [
+          "<contacts:Andre Silva>",
+          "Andre Silva"
         ]
       ]
     },
     "contactById": {
       "__map": [
-        [
-          "<contacts:Sarah Chen>",
-          {
-            "id": "<contacts:Sarah Chen>",
-            "fullName": "Sarah Chen",
-            "preferredName": null,
-            "title": "Golden Title",
-            "company": "OpenAI"
-          }
-        ],
         [
           "<contacts:Golden Mcpperson>",
           {
@@ -8503,6 +8401,16 @@
           }
         ],
         [
+          "<contacts:Sarah Chen>",
+          {
+            "id": "<contacts:Sarah Chen>",
+            "fullName": "Sarah Chen",
+            "preferredName": null,
+            "title": "Golden Title",
+            "company": "OpenAI"
+          }
+        ],
+        [
           "<contacts:Golden Newperson>",
           {
             "id": "<contacts:Golden Newperson>",
@@ -8510,47 +8418,6 @@
             "preferredName": null,
             "title": "Engineer",
             "company": "Acme"
-          }
-        ],
-        [
-          "<contacts:Tom Bennett>",
-          {
-            "id": "<contacts:Tom Bennett>",
-            "fullName": "Tom Bennett",
-            "preferredName": null,
-            "title": "Staff Software Engineer",
-            "company": "Stripe"
-          }
-        ],
-        [
-          "<contacts:Dr. Elena Vasquez>",
-          {
-            "id": "<contacts:Dr. Elena Vasquez>",
-            "fullName": "Dr. Elena Vasquez",
-            "preferredName": null,
-            "title": "Professor of Computer Science",
-            "company": "UNC Chapel Hill"
-          }
-        ],
-        [
-          "<contacts:Aisha Rahman>",
-          {
-            "id": "<contacts:Aisha Rahman>",
-            "fullName": "Aisha Rahman",
-            "preferredName": null,
-            "title": "Senior Product Manager",
-            "company": "Google"
-          }
-        ],
-        [
-          "<contacts:Rachel Adeyemi>",
-          {
-            "id": "<contacts:Rachel Adeyemi>",
-            "fullName": "Rachel Adeyemi",
-            "preferredName": null,
-            "title": "Director of Talent",
-            "company": "Figma",
-            "lastInteractionAt": "<ts>"
           }
         ],
         [
@@ -8565,47 +8432,13 @@
           }
         ],
         [
-          "<contacts:James Okafor>",
+          "<contacts:Dr. Elena Vasquez>",
           {
-            "id": "<contacts:James Okafor>",
-            "fullName": "James Okafor",
+            "id": "<contacts:Dr. Elena Vasquez>",
+            "fullName": "Dr. Elena Vasquez",
             "preferredName": null,
-            "title": "Partner",
-            "company": "Bellwether Ventures",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
-          "<contacts:Amara Diallo>",
-          {
-            "id": "<contacts:Amara Diallo>",
-            "fullName": "Amara Diallo",
-            "preferredName": null,
-            "title": "Head of Talent",
-            "company": "Bellwether Ventures",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
-          "<contacts:Olivia Brooks>",
-          {
-            "id": "<contacts:Olivia Brooks>",
-            "fullName": "Olivia Brooks",
-            "preferredName": null,
-            "title": "Alumni Relations Lead",
-            "company": "UNC Chapel Hill",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
-          "<contacts:Ben Carter>",
-          {
-            "id": "<contacts:Ben Carter>",
-            "fullName": "Ben Carter",
-            "preferredName": null,
-            "title": "Computer Science Student",
-            "company": "UNC Chapel Hill",
-            "lastInteractionAt": "<ts>"
+            "title": "Professor of Computer Science",
+            "company": "UNC Chapel Hill"
           }
         ],
         [
@@ -8631,13 +8464,13 @@
           }
         ],
         [
-          "<contacts:Andre Silva>",
+          "<contacts:Maya Thompson>",
           {
-            "id": "<contacts:Andre Silva>",
-            "fullName": "Andre Silva",
+            "id": "<contacts:Maya Thompson>",
+            "fullName": "Maya Thompson",
             "preferredName": null,
-            "title": "Head of Platform",
-            "company": "Google",
+            "title": "Program Director",
+            "company": "Innovate Carolina",
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8653,23 +8486,23 @@
           }
         ],
         [
-          "<contacts:Maya Thompson>",
-          {
-            "id": "<contacts:Maya Thompson>",
-            "fullName": "Maya Thompson",
-            "preferredName": null,
-            "title": "Program Director",
-            "company": "Innovate Carolina",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
           "<contacts:Fatima Nasser>",
           {
             "id": "<contacts:Fatima Nasser>",
             "fullName": "Fatima Nasser",
             "preferredName": null,
             "title": "Product Manager",
+            "company": "Stripe",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Marcus Lee>",
+          {
+            "id": "<contacts:Marcus Lee>",
+            "fullName": "Marcus Lee",
+            "preferredName": null,
+            "title": "Technical Recruiter",
             "company": "Stripe",
             "lastInteractionAt": "<ts>"
           }
@@ -8686,46 +8519,24 @@
           }
         ],
         [
-          "<contacts:Daniel Osei>",
+          "<contacts:Ben Carter>",
           {
-            "id": "<contacts:Daniel Osei>",
-            "fullName": "Daniel Osei",
+            "id": "<contacts:Ben Carter>",
+            "fullName": "Ben Carter",
             "preferredName": null,
-            "title": "Founder & CTO",
-            "company": "Northlight Robotics",
+            "title": "Computer Science Student",
+            "company": "UNC Chapel Hill",
             "lastInteractionAt": "<ts>"
           }
         ],
         [
-          "<contacts:Hassan Ali>",
+          "<contacts:James Okafor>",
           {
-            "id": "<contacts:Hassan Ali>",
-            "fullName": "Hassan Ali",
+            "id": "<contacts:James Okafor>",
+            "fullName": "James Okafor",
             "preferredName": null,
-            "title": "Senior Backend Engineer",
-            "company": "Notion",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
-          "<contacts:Marcus Lee>",
-          {
-            "id": "<contacts:Marcus Lee>",
-            "fullName": "Marcus Lee",
-            "preferredName": null,
-            "title": "Technical Recruiter",
-            "company": "Stripe",
-            "lastInteractionAt": "<ts>"
-          }
-        ],
-        [
-          "<contacts:Yuki Tanaka>",
-          {
-            "id": "<contacts:Yuki Tanaka>",
-            "fullName": "Yuki Tanaka",
-            "preferredName": null,
-            "title": "Research Scientist",
-            "company": "Anthropic",
+            "title": "Partner",
+            "company": "Bellwether Ventures",
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8741,13 +8552,34 @@
           }
         ],
         [
-          "<contacts:Chris Nowak>",
+          "<contacts:Aisha Rahman>",
           {
-            "id": "<contacts:Chris Nowak>",
-            "fullName": "Chris Nowak",
+            "id": "<contacts:Aisha Rahman>",
+            "fullName": "Aisha Rahman",
             "preferredName": null,
-            "title": "Engineering Manager",
-            "company": "Google",
+            "title": "Senior Product Manager",
+            "company": "Google"
+          }
+        ],
+        [
+          "<contacts:Hassan Ali>",
+          {
+            "id": "<contacts:Hassan Ali>",
+            "fullName": "Hassan Ali",
+            "preferredName": null,
+            "title": "Senior Backend Engineer",
+            "company": "Notion",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Daniel Osei>",
+          {
+            "id": "<contacts:Daniel Osei>",
+            "fullName": "Daniel Osei",
+            "preferredName": null,
+            "title": "Founder & CTO",
+            "company": "Northlight Robotics",
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8763,6 +8595,38 @@
           }
         ],
         [
+          "<contacts:Amara Diallo>",
+          {
+            "id": "<contacts:Amara Diallo>",
+            "fullName": "Amara Diallo",
+            "preferredName": null,
+            "title": "Head of Talent",
+            "company": "Bellwether Ventures",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Yuki Tanaka>",
+          {
+            "id": "<contacts:Yuki Tanaka>",
+            "fullName": "Yuki Tanaka",
+            "preferredName": null,
+            "title": "Research Scientist",
+            "company": "Anthropic",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Tom Bennett>",
+          {
+            "id": "<contacts:Tom Bennett>",
+            "fullName": "Tom Bennett",
+            "preferredName": null,
+            "title": "Staff Software Engineer",
+            "company": "Stripe"
+          }
+        ],
+        [
           "<contacts:Leo Fernandez>",
           {
             "id": "<contacts:Leo Fernandez>",
@@ -8770,6 +8634,50 @@
             "preferredName": null,
             "title": "Founder",
             "company": "Tidepool Analytics",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Rachel Adeyemi>",
+          {
+            "id": "<contacts:Rachel Adeyemi>",
+            "fullName": "Rachel Adeyemi",
+            "preferredName": null,
+            "title": "Director of Talent",
+            "company": "Figma",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Olivia Brooks>",
+          {
+            "id": "<contacts:Olivia Brooks>",
+            "fullName": "Olivia Brooks",
+            "preferredName": null,
+            "title": "Alumni Relations Lead",
+            "company": "UNC Chapel Hill",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Chris Nowak>",
+          {
+            "id": "<contacts:Chris Nowak>",
+            "fullName": "Chris Nowak",
+            "preferredName": null,
+            "title": "Engineering Manager",
+            "company": "Google",
+            "lastInteractionAt": "<ts>"
+          }
+        ],
+        [
+          "<contacts:Andre Silva>",
+          {
+            "id": "<contacts:Andre Silva>",
+            "fullName": "Andre Silva",
+            "preferredName": null,
+            "title": "Head of Platform",
+            "company": "Google",
             "lastInteractionAt": "<ts>"
           }
         ]
@@ -9566,76 +9474,6 @@
           "contactIds": [
             "<contacts:Sarah Chen>",
             "<contacts:David Kim>"
-          ]
-        },
-        {
-          "id": "company:acme",
-          "name": "Acme",
-          "company": "Acme",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Golden Newperson>"
-          ]
-        },
-        {
-          "id": "company:independent",
-          "name": "Independent",
-          "company": "Independent",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Grace Whitfield>"
-          ]
-        },
-        {
-          "id": "company:linear",
-          "name": "Linear",
-          "company": "Linear",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Marcus Webb>"
-          ]
-        },
-        {
-          "id": "company:lumen health",
-          "name": "Lumen Health",
-          "company": "Lumen Health",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Nina Petrova>"
-          ]
-        },
-        {
-          "id": "company:northlight robotics",
-          "name": "Northlight Robotics",
-          "company": "Northlight Robotics",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Daniel Osei>"
-          ]
-        },
-        {
-          "id": "company:tidepool analytics",
-          "name": "Tidepool Analytics",
-          "company": "Tidepool Analytics",
-          "kind": "company",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Leo Fernandez>"
-          ]
-        },
-        {
-          "id": "school:unc chapel hill",
-          "name": "UNC Chapel Hill",
-          "company": "UNC Chapel Hill",
-          "kind": "school",
-          "count": 1,
-          "contactIds": [
-            "<contacts:Maya Thompson>"
           ]
         }
       ],
@@ -10698,76 +10536,6 @@
         "contactIds": [
           "<contacts:David Kim>",
           "<contacts:Sarah Chen>"
-        ]
-      },
-      {
-        "id": "company:acme",
-        "name": "Acme",
-        "company": "Acme",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Golden Newperson>"
-        ]
-      },
-      {
-        "id": "company:independent",
-        "name": "Independent",
-        "company": "Independent",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Grace Whitfield>"
-        ]
-      },
-      {
-        "id": "company:linear",
-        "name": "Linear",
-        "company": "Linear",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Marcus Webb>"
-        ]
-      },
-      {
-        "id": "company:lumen health",
-        "name": "Lumen Health",
-        "company": "Lumen Health",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Nina Petrova>"
-        ]
-      },
-      {
-        "id": "company:northlight robotics",
-        "name": "Northlight Robotics",
-        "company": "Northlight Robotics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Daniel Osei>"
-        ]
-      },
-      {
-        "id": "company:tidepool analytics",
-        "name": "Tidepool Analytics",
-        "company": "Tidepool Analytics",
-        "kind": "company",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Leo Fernandez>"
-        ]
-      },
-      {
-        "id": "school:unc chapel hill",
-        "name": "UNC Chapel Hill",
-        "company": "UNC Chapel Hill",
-        "kind": "school",
-        "count": 1,
-        "contactIds": [
-          "<contacts:Maya Thompson>"
         ]
       }
     ],
@@ -12783,6 +12551,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": "out",
+      "import_id": null,
       "raw_notes": "Accepted gladly and proposed a couple of times next week.",
       "sentiment": null,
       "ai_summary": null,
@@ -12803,6 +12572,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Accepted into the fall cohort. She sent the programme calendar.",
       "sentiment": null,
       "ai_summary": null,
@@ -12821,6 +12591,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Alumni mixer. She offered two introductions.",
       "sentiment": null,
       "ai_summary": null,
@@ -12839,6 +12610,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Asked her about eval design; she sent three papers.",
       "sentiment": null,
       "ai_summary": null,
@@ -12859,6 +12631,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Catch-up call. She walked me through how Cloud thinks about free tiers.",
       "sentiment": null,
       "ai_summary": null,
@@ -12880,6 +12653,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Coffee on campus. Walked her through Orbit's data model; she pushed back on storing derived scores and was right.",
       "sentiment": null,
       "ai_summary": null,
@@ -12901,6 +12675,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Coffee with Marcus. They are hiring two senior engineers this quarter and asked whether I knew anyone. Offered to look at their onboarding flow.",
       "sentiment": null,
       "ai_summary": null,
@@ -12921,6 +12696,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Compared early sales motions. He does founder-led demos.",
       "sentiment": null,
       "ai_summary": null,
@@ -12942,6 +12718,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Confirmed the showcase slot and sent the logistics.",
       "sentiment": null,
       "ai_summary": null,
@@ -12962,6 +12739,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": "out",
+      "import_id": null,
       "raw_notes": "Connected on LinkedIn and thanked her for the conversation about inference costs.",
       "sentiment": null,
       "ai_summary": null,
@@ -12982,6 +12760,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Dinner in Boston. Talked through Orbit's positioning — she pushed hard on picking one user, not four.",
       "sentiment": null,
       "ai_summary": null,
@@ -13000,6 +12779,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Dinner with Priya's team. Talked about Postgres indexing.",
       "sentiment": null,
       "ai_summary": null,
@@ -13020,6 +12800,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "First call, introduced by Rachel. Ran through the landing page live.",
       "sentiment": null,
       "ai_summary": null,
@@ -13038,6 +12819,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "First contact through a PR review on the library.",
       "sentiment": null,
       "ai_summary": null,
@@ -13056,6 +12838,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": "in",
+      "import_id": null,
       "raw_notes": "First LinkedIn message about the payments infra team. Asked for my resume and what I'm optimising for.",
       "sentiment": null,
       "ai_summary": null,
@@ -13074,6 +12857,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Founders panel green room. Long talk about hiring.",
       "sentiment": null,
       "ai_summary": null,
@@ -13092,6 +12876,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Golden add_note",
       "sentiment": null,
       "ai_summary": null,
@@ -13110,6 +12895,7 @@
       "topics": null,
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Golden MCP note",
       "sentiment": null,
       "ai_summary": null,
@@ -13128,6 +12914,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Golden: caught up about the launch.",
       "sentiment": null,
       "ai_summary": null,
@@ -13146,6 +12933,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Golden: met at the extension test.",
       "sentiment": null,
       "ai_summary": null,
@@ -13164,6 +12952,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Hallway conversation after the talk about multi-region writes.",
       "sentiment": null,
       "ai_summary": null,
@@ -13182,6 +12971,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "He cold-emailed me; the second reply was worth it.",
       "sentiment": null,
       "ai_summary": null,
@@ -13200,6 +12990,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "He found me in the UNC alumni Slack.",
       "sentiment": null,
       "ai_summary": null,
@@ -13218,6 +13009,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "He talked me out of a bad first hire.",
       "sentiment": null,
       "ai_summary": null,
@@ -13238,6 +13030,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Intro call from James. Direct, decides fast, wants quarterly updates.",
       "sentiment": null,
       "ai_summary": null,
@@ -13261,6 +13054,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Intro call from the YC alumni Slack. Immediately useful on early hiring.",
       "sentiment": null,
       "ai_summary": null,
@@ -13281,6 +13075,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Intro email from Sarah. He replied, said to ping him in a few weeks.",
       "sentiment": null,
       "ai_summary": null,
@@ -13299,6 +13094,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": "in",
+      "import_id": null,
       "raw_notes": "Intro from Marcus. She offered a walkthrough of activation metrics.",
       "sentiment": null,
       "ai_summary": null,
@@ -13319,6 +13115,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Introduced me to David Kim on her team for the evaluation-infrastructure conversation.",
       "sentiment": null,
       "ai_summary": null,
@@ -13340,6 +13137,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Introduced me to Grace Whitfield, an angel in Durham.",
       "sentiment": null,
       "ai_summary": null,
@@ -13361,6 +13159,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Introduced me to James Okafor at the UNC founders dinner.",
       "sentiment": null,
       "ai_summary": null,
@@ -13382,6 +13181,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Introduced me to Sofia Marchetti for a landing-page critique.",
       "sentiment": null,
       "ai_summary": null,
@@ -13400,6 +13200,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Joined the billing team together. She owned the invoicing roadmap.",
       "sentiment": null,
       "ai_summary": null,
@@ -13421,6 +13222,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Judged his HackNC project. Retrieval over course notes, shipped in a weekend, and he could explain every choice.",
       "sentiment": null,
       "ai_summary": null,
@@ -13441,6 +13243,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Met after her panel at the design systems meetup. Swapped contacts.",
       "sentiment": null,
       "ai_summary": null,
@@ -13462,6 +13265,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Met at the AWS Summit after the inference keynote. Talked through AI infrastructure costs — she thinks most teams over-provision by 3-4x. Mentioned the Codex partnerships team is looking at developer-tool integrations.",
       "sentiment": null,
       "ai_summary": null,
@@ -13484,6 +13288,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Met at the AWS Summit afterparty through Sarah. Long conversation about agent evaluation — she runs a homegrown harness and offered to share the design.",
       "sentiment": null,
       "ai_summary": null,
@@ -13502,6 +13307,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Met at the paper reading group.",
       "sentiment": null,
       "ai_summary": null,
@@ -13523,6 +13329,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Met at the UNC founders dinner. Asked good questions about retention rather than growth. Wants the monthly update, not a deck.",
       "sentiment": null,
       "ai_summary": null,
@@ -13543,6 +13350,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Met through James. Offered access to the candidate list.",
       "sentiment": null,
       "ai_summary": null,
@@ -13563,6 +13371,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Program intro meeting. She mapped out who to meet in the Triangle.",
       "sentiment": null,
       "ai_summary": null,
@@ -13581,6 +13390,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Quick check-in. She's hiring a PM and asked if I knew anyone.",
       "sentiment": null,
       "ai_summary": null,
@@ -13599,6 +13409,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Referral intro from Aisha. Brief exchange.",
       "sentiment": null,
       "ai_summary": null,
@@ -13617,6 +13428,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": "out",
+      "import_id": null,
       "raw_notes": "Replied with my resume and said I'm optimising for infra depth over title.",
       "sentiment": null,
       "ai_summary": null,
@@ -13638,6 +13450,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Reviewed Orbit's prompting. Told me to stop asking the model to count things it cannot see.",
       "sentiment": null,
       "ai_summary": null,
@@ -13658,6 +13471,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Screen-shared on API versioning. He argued for date-based versions.",
       "sentiment": null,
       "ai_summary": null,
@@ -13679,6 +13493,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Sent a first draft of the write-up. She replied same day, said she'd share it with her team and to ping her after their planning cycle.",
       "sentiment": null,
       "ai_summary": null,
@@ -13699,6 +13514,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Sent her the first Orbit prototype. She replied with a page of questions about consistency.",
       "sentiment": null,
       "ai_summary": null,
@@ -13717,6 +13533,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Sent her the redesign. She replied with six specific fixes; four shipped.",
       "sentiment": null,
       "ai_summary": null,
@@ -13735,6 +13552,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Sent her the revised positioning line. She liked it.",
       "sentiment": null,
       "ai_summary": null,
@@ -13753,6 +13571,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": "in",
+      "import_id": null,
       "raw_notes": "She replied asking for the retrieval write-up by email rather than here.",
       "sentiment": null,
       "ai_summary": null,
@@ -13774,6 +13593,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "She sent two student names for a possible internship and asked how the showcase prep is going.",
       "sentiment": null,
       "ai_summary": null,
@@ -13796,6 +13616,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "She walked me through her eval harness. Golden sets per workflow, graded weekly.",
       "sentiment": null,
       "ai_summary": null,
@@ -13814,6 +13635,7 @@
       "topics": [],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Swapped links about eval tooling. She's still planning to write the post.",
       "sentiment": null,
       "ai_summary": null,
@@ -13834,6 +13656,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Talked me through structuring the first engineering offer. Equity over salary, but not by much.",
       "sentiment": null,
       "ai_summary": null,
@@ -13855,6 +13678,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Thirty minutes on what a Codex integration would need. She wants a one-page architecture and a short demo video before their partner review.",
       "sentiment": null,
       "ai_summary": null,
@@ -13878,6 +13702,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Took her distributed systems course. Stayed after lectures most weeks.",
       "sentiment": null,
       "ai_summary": null,
@@ -13899,6 +13724,7 @@
       ],
       "user_id": "demo-user",
       "direction": null,
+      "import_id": null,
       "raw_notes": "Twenty-minute intro call. He was honest that headcount is frozen until January. Offered to make an intro to the platform team lead in the meantime.",
       "sentiment": null,
       "ai_summary": null,
@@ -13921,6 +13747,7 @@
       "list_id": "<reminder_lists:Fundraising>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:James Okafor>",
       "created_by": "user",
@@ -13944,6 +13771,7 @@
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": null,
       "created_by": "user",
@@ -13967,6 +13795,7 @@
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Tom Bennett>",
       "created_by": "user",
@@ -13990,6 +13819,7 @@
       "list_id": "<reminder_lists:Fundraising>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": null,
       "created_by": "user",
@@ -14013,6 +13843,7 @@
       "list_id": null,
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Golden Newperson>",
       "created_by": "extension",
@@ -14036,6 +13867,7 @@
       "list_id": null,
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Sarah Chen>",
       "created_by": "extension",
@@ -14059,6 +13891,7 @@
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
       "due_date": null,
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Sarah Chen>",
       "created_by": "user",
@@ -14082,6 +13915,7 @@
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Dr. Elena Vasquez>",
       "created_by": "user",
@@ -14105,6 +13939,7 @@
       "list_id": "<reminder_lists:Fundraising>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Grace Whitfield>",
       "created_by": "user",
@@ -14128,6 +13963,7 @@
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Maya Thompson>",
       "created_by": "user",
@@ -14151,6 +13987,7 @@
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Sarah Chen>",
       "created_by": "user",
@@ -14174,6 +14011,7 @@
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
       "due_date": "<ts>",
+      "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Nina Petrova>",
       "created_by": "user",

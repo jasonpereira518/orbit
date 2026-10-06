@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
 import type { EvidenceSource } from "@/lib/chat-evidence";
@@ -18,15 +18,18 @@ export function titleFromQuestion(question: string) {
  * route and the server action; a no-op (null ids) when the question was asked outside a
  * thread.
  *
- * The user's message is written HERE, not when the request arrives. Both callers used to
- * insert it up front, before the model was called, and neither rolled it back when the
- * call failed — so a failed send left the question sitting in the thread with no answer
- * and no failure marker, looking exactly like a conversation the assistant had ignored.
- * With no AI key configured, every send produced one.
+ * The CALLER writes the user's row, not this function. Both callers need its id and its
+ * `attachedContacts` before the model runs, and a version request has to write it into the
+ * slot it is versioning (`resolveVersionTarget`), so the write cannot move in here —
+ * attempting it wrote the question into the thread twice, the unversioned copy being the
+ * one a reloaded thread rendered.
  *
- * Those orphans were not merely cosmetic: `prepareChatContext` feeds the last
- * PRIOR_TURN_LIMIT (8) messages back to the model, so once a key was finally added, the
- * first real answer came preceded by up to eight unanswered questions.
+ * What a failed send must not leave behind is that row with no answer under it: it looks
+ * exactly like a conversation the assistant ignored, and `prepareChatContext` feeds the
+ * last PRIOR_TURN_LIMIT (8) messages back to the model, so once a key was finally added
+ * the first real answer came preceded by up to eight unanswered questions. With no AI key
+ * configured, every send produced one. `discardUnansweredQuestion` below is what clears
+ * it, called from both callers' failure paths.
  */
 export async function persistAssistantTurn(
   userId: string,
@@ -62,9 +65,6 @@ export async function persistAssistantTurn(
 ): Promise<{ messageId: string | null; title: string | null }> {
   if (!threadId) return { messageId: null, title: existingTitle };
   const db = await getDb();
-  await db
-    .insert(chatMessages)
-    .values({ threadId, userId, role: "user", content: question });
   const [assistantMessage] = await db
     .insert(chatMessages)
     .values({
@@ -94,6 +94,32 @@ export async function persistAssistantTurn(
     .set({ updatedAt: new Date(), title })
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
   return { messageId: assistantMessage?.id ?? null, title };
+}
+
+/**
+ * Remove a question whose turn failed before any answer was stored.
+ *
+ * Narrow on purpose: it deletes the one row by id, and only while it is still the LAST
+ * message in its thread. A retry that already landed an answer, or a later turn, leaves
+ * the question exactly where it is — a question with an answer under it is a real part of
+ * the conversation, however the first attempt went.
+ */
+export async function discardUnansweredQuestion(
+  userId: string,
+  threadId: string | null,
+  messageId: string | null
+) {
+  if (!threadId || !messageId) return;
+  const db = await getDb();
+  const last = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
+    orderBy: [desc(chatMessages.createdAt)],
+    columns: { id: true, role: true },
+  });
+  if (last?.id !== messageId || last.role !== "user") return;
+  await db
+    .delete(chatMessages)
+    .where(and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId)));
 }
 
 /**

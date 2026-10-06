@@ -23,7 +23,7 @@ import {
   type ChatSuggestion,
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
-import { persistAssistantTurn } from "@/lib/chat-persist";
+import { discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -337,8 +337,13 @@ async function askNetworkInner(
   options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
 ) {
   const requestStartedAt = Date.now();
+  // Hoisted so the failure path below can reach them: the question is written before the
+  // model runs, and if nothing answers it, it has to go.
+  let askedUserId: string | null = null;
+  let askedMessageId: string | null = null;
   try {
     const userId = await requireUserForSurface("page.chat");
+    askedUserId = userId;
     await consumeBucket("chat", userId, RATE_LIMITS.chat);
     const db = await getDb();
     const threadId = options?.threadId ?? null;
@@ -352,13 +357,17 @@ async function askNetworkInner(
     });
 
     if (threadId) {
-      await db.insert(chatMessages).values({
-        threadId,
-        userId,
-        role: "user",
-        content: ctx.q,
-        attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
-      });
+      const [userRow] = await db
+        .insert(chatMessages)
+        .values({
+          threadId,
+          userId,
+          role: "user",
+          content: ctx.q,
+          attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+        })
+        .returning();
+      askedMessageId = userRow?.id ?? null;
     }
 
     // The same routing as the streaming route, so the two paths cannot answer differently.
@@ -415,6 +424,16 @@ async function askNetworkInner(
       focusedContactId: options?.contactId?.trim() || null,
     };
   } catch (err) {
+    // The question is already in the thread (it is written before the model runs, carrying
+    // the people attached to it). Nothing answered it, so it does not stay — see
+    // `discardUnansweredQuestion`.
+    if (askedUserId) {
+      await discardUnansweredQuestion(
+        askedUserId,
+        options?.threadId ?? null,
+        askedMessageId
+      ).catch(() => {});
+    }
     // Returned as data, so unlike a throw it is never stripped in production — which
     // made `toUserFacingError` (it keeps `err.message`) a leak that reached users. On the
     // server the real error is still in hand, so `friendlyError` can recognise a genuine
