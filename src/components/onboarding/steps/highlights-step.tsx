@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { AnimatePresence, motion, useReducedMotionConfig, type PanInfo } from "motion/react";
+import { AnimatePresence, motion, type PanInfo } from "motion/react";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,7 +40,8 @@ const SWIPE_VELOCITY = 400;
  * chapter carries a live tag — Pro, Soon, Needs AI key, Upload when your export arrives —
  * computed from the account, never hard-coded.
  *
- * Chapter changes slide in the direction of travel. On a phone the preview is swipeable;
+ * The card's frame stays put between chapters; only its contents crossfade. On a phone the
+ * preview is swipeable;
  * everywhere, ← and → move between chapters.
  */
 export function HighlightsStep({
@@ -62,14 +63,11 @@ export function HighlightsStep({
   onTour?: () => void;
 }) {
   const chapters = useMemo(() => visibleChapters(hidden), [hidden]);
-  const [[index, direction], setPage] = useState<[number, 1 | -1]>([0, 1]);
+  const [index, setIndex] = useState(0);
   const last = chapters.length - 1;
   const chapter = chapters[Math.min(index, last)];
   // Swiping is for touch. With a mouse, a draggable card fights text selection and reads as
   // broken; the buttons and arrow keys cover it. Read once — this renders client-only.
-  // Zero travel for reduced motion — see the same note in onboarding-flow.tsx.
-  const travel = useReducedMotionConfig() ? 0 : 32;
-  const slide = useMemo(() => ({ dir: direction, travel }), [direction, travel]);
   const [coarsePointer] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches,
   );
@@ -77,7 +75,7 @@ export function HighlightsStep({
   const go = useCallback(
     (next: number) => {
       if (next < 0 || next > last) return;
-      setPage(([current]) => [next, next > current ? 1 : -1]);
+      setIndex(next);
     },
     [last],
   );
@@ -158,37 +156,61 @@ export function HighlightsStep({
             aria-label="Orbit features"
             className="relative overflow-hidden rounded-3xl border border-border/60 bg-card/60"
           >
-            <AnimatePresence mode="popLayout" initial={false} custom={slide}>
-              <motion.div
-                key={chapter.id}
-                custom={slide}
-                variants={SLIDE}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                drag={coarsePointer ? "x" : false}
-                dragConstraints={{ left: 0, right: 0 }}
-                dragElastic={0.18}
-                dragSnapToOrigin
-                onDragEnd={onDragEnd}
-                className="grid touch-pan-y gap-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]"
-                aria-roledescription="slide"
-                aria-label={`${index + 1} of ${chapters.length}: ${chapter.title}`}
-              >
-                <div className="h-[19rem] border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent p-4 sm:p-5 md:h-[19rem] md:border-r md:border-b-0">
-                  <chapter.Preview />
-                </div>
-                <ChapterCopy chapter={chapter} planFlags={planFlags} comingSoon={comingSoon} facts={facts} />
-              </motion.div>
-            </AnimatePresence>
+            {/* The frame never moves: the two panes and the divider between them are static,
+                and only what is inside them changes. The preview crossfades in its fixed-height
+                pane; every chapter's copy is stacked in one grid cell, so the cell is always as
+                tall as the longest one and switching chapters can't resize the card. */}
+            <motion.div
+              drag={coarsePointer ? "x" : false}
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.18}
+              dragSnapToOrigin
+              onDragEnd={onDragEnd}
+              className="grid touch-pan-y gap-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]"
+              aria-roledescription="slide"
+              aria-label={`${index + 1} of ${chapters.length}: ${chapter.title}`}
+            >
+              <div className="relative h-[19rem] overflow-hidden border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent md:h-auto md:min-h-[19rem] md:border-r md:border-b-0">
+                <AnimatePresence initial={false}>
+                  <motion.div
+                    key={chapter.id}
+                    className="absolute inset-0 p-4 sm:p-5"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1, transition: { duration: DUR.slow, ease: EASE_HOUSE } }}
+                    exit={{ opacity: 0, transition: { duration: DUR.base, ease: EASE_HOUSE } }}
+                  >
+                    <chapter.Preview />
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+              <div className="grid">
+                {chapters.map((c) => {
+                  const current = c.id === chapter.id;
+                  return (
+                    <div
+                      key={c.id}
+                      aria-hidden={!current}
+                      inert={!current}
+                      className={cn(
+                        "[grid-area:1/1] transition-opacity duration-300 ease-out motion-reduce:transition-none",
+                        current ? "opacity-100" : "pointer-events-none opacity-0",
+                      )}
+                    >
+                      <ChapterCopy chapter={c} planFlags={planFlags} comingSoon={comingSoon} facts={facts} />
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
           </section>
 
-          <div className="mt-4 flex items-center justify-between gap-3">
+          {/* Three columns, so the counter stays centred when Next becomes Go to dashboard. */}
+          <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
             <Button
               type="button"
               variant="outline"
               size="lg"
-              className="h-10"
+              className="h-10 justify-self-start"
               disabled={index === 0}
               onClick={prev}
               aria-label="Previous feature"
@@ -199,21 +221,25 @@ export function HighlightsStep({
             <p className="text-xs tabular-nums text-muted-foreground" aria-live="polite">
               {index + 1} / {chapters.length}
             </p>
-            <Button type="button" size="lg" className="h-10 px-4" onClick={next}>
+            <Button type="button" size="lg" className="h-10 justify-self-end px-4" onClick={next}>
               {index >= last ? "Go to dashboard" : "Next"}
               <ArrowRight className="size-4" aria-hidden />
             </Button>
           </div>
           <p className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-center text-xs text-muted-foreground lg:justify-end">
-            {index < last && (
-              <button
-                type="button"
-                onClick={onDone}
-                className="underline-offset-4 hover:text-foreground hover:underline"
-              >
-                Skip to the dashboard
-              </button>
-            )}
+            {/* Kept in place (just hidden) on the last chapter, so nothing below the card moves. */}
+            <button
+              type="button"
+              onClick={onDone}
+              tabIndex={index < last ? 0 : -1}
+              aria-hidden={index >= last}
+              className={cn(
+                "underline-offset-4 hover:text-foreground hover:underline",
+                index >= last && "invisible",
+              )}
+            >
+              Skip to the dashboard
+            </button>
             {onTour && (
               <button
                 type="button"
@@ -229,19 +255,6 @@ export function HighlightsStep({
     </Stagger>
   );
 }
-
-type Slide = { dir: 1 | -1; travel: number };
-
-/** Direction-aware slide; `travel` is 0 for reduced motion, leaving a crossfade. */
-const SLIDE = {
-  enter: ({ dir, travel }: Slide) => ({ opacity: 0, x: travel * dir }),
-  center: { opacity: 1, x: 0, transition: { duration: DUR.slow, ease: EASE_HOUSE } },
-  exit: ({ dir, travel }: Slide) => ({
-    opacity: 0,
-    x: -travel * dir,
-    transition: { duration: DUR.base, ease: EASE_HOUSE },
-  }),
-};
 
 function chapterSoon(chapter: HighlightChapter, comingSoon: ReadonlySet<string>) {
   return chapter.surfaceKey != null && comingSoon.has(chapter.surfaceKey);
@@ -354,9 +367,7 @@ function ChapterCopy({
   const chapterLocked = chapter.entitlement && !planFlags[chapter.entitlement];
   const soon = chapterSoon(chapter, comingSoon);
   return (
-    // The min-height keeps the card from resizing between chapters on a phone, where the
-    // copy stacks under the preview and differs in length chapter to chapter.
-    <Stagger className="flex min-h-[17rem] flex-col gap-3 p-5 md:min-h-0">
+    <Stagger className="flex flex-col gap-3 p-5">
       <StaggerItem className="flex flex-wrap items-center gap-2">
         <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-primary">
           <Icon className="size-4.5" aria-hidden />
