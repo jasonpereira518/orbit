@@ -40,6 +40,7 @@ import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
 import { listJobMatchesForContact } from "@/lib/jobs/contact-matches";
 import { getContactProfile } from "@/lib/contact-profile";
 import { getWorkHistoryTracking } from "@/lib/job-changes";
+import { getRelationshipHealth } from "@/lib/relationship-health-read";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
@@ -117,6 +118,10 @@ export default async function ContactDetailPage({
   const trackingPromise = userIdPromise
     .then((u) => getWorkHistoryTracking(u, id))
     .catch(() => ({ moves: [], nextCheckAt: null }));
+  // Same mandatory `.catch`: a failed read costs the health pill, never the page.
+  const healthPromise = userIdPromise
+    .then((u) => getRelationshipHealth(u, id))
+    .catch(() => null);
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -243,6 +248,7 @@ export default async function ContactDetailPage({
   // Awaited once here rather than inline: both the brief card's next-steps list and the
   // timeline's per-interaction "N open" chips read the same rows.
   const nextSteps = await nextStepsPromise;
+  const health = await healthPromise;
 
   const formInitial = {
     fullName: contact.fullName,
@@ -318,6 +324,7 @@ export default async function ContactDetailPage({
           closeness={closeness}
           lastTouchAt={lastTouchAt}
           hasLoggedInteraction={hasLoggedInteraction}
+          health={health}
           constellation={
             constellationConfig.enabled
               ? {
