@@ -99,6 +99,10 @@ export function useRecommendationActions(rec: { id: string; contactName: string 
     draftOpen,
     setDraftOpen,
     schedule,
+    /** Fold the card away for an email sent from its sheet; the send resolves it server-side. */
+    hide: () => setExiting(true),
+    /** Undo took the email back: the card is still live. */
+    unhide: () => setExiting(false),
     snooze: (length: "1w" | "1m") =>
       resolve(() => snoozeRecommendation(rec.id, length), length === "1w" ? "Snoozed for a week" : "Snoozed for a month"),
     dismiss: () => resolve(() => dismissRecommendation(rec.id), "Dismissed"),

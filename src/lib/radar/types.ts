@@ -105,6 +105,19 @@ export function leadReason(reasons: readonly RadarReason[]): RadarReason | undef
   return reasons.find((r) => r.points > 0 && !CONTEXT_CODES.has(r.code) && !r.code.startsWith("also:"));
 }
 
+/** A new role or title: news to congratulate. */
+export const JOB_MOVE_CODE = "job_change";
+/** A departure with no new role yet: a check-in, never a congratulation. */
+export const JOB_LEFT_CODE = "job_change_left";
+
+/** What a draft is for, in the card's own words, so it is about the reason the card exists. */
+export function draftIntent(target: { kind: RecommendationKind; reasons: readonly RadarReason[] }): string {
+  const lead = leadReason(target.reasons);
+  if (lead?.code === JOB_MOVE_CODE) return `Congratulate them on the new role: ${lead.label}. Warm and short; no ask.`;
+  if (lead?.code === JOB_LEFT_CODE) return `Check in after their move: ${lead.label}. Don't congratulate them.`;
+  return lead ? `${KIND_LABELS[target.kind]}: ${lead.label}` : KIND_LABELS[target.kind];
+}
+
 /**
  * The most specific fact behind a card, shown under the reasons ("Meeting · Thu 3 Oct").
  * `url` only for a public source (a headline), already through `safeHttpUrl`, and rendered

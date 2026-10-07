@@ -9,6 +9,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { recommendationFeedback, recommendations } from "@/db/schema";
 import { scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
+import { settleJobChangeCongratsForUser } from "@/lib/job-changes";
 import { recordFeedback } from "@/lib/radar/store";
 import { LIVE_RECOMMENDATION_STATUSES } from "@/lib/radar/types";
 
@@ -122,4 +123,33 @@ export async function restoreRecommendationForUser(userId: string, id: string) {
       )
     );
   return { restored: true };
+}
+
+/**
+ * The person wrote to this contact (an email from a card's sheet, or any follow-up send):
+ * every pending card about them is answered. `at` is the send time, so the send's own
+ * interaction counts as the outcome (`detectRadarOutcomes` wants interaction_date >= acted_at).
+ */
+export async function markContactRecommendationsActedForUser(userId: string, contactId: string, at: Date) {
+  const db = await getDb();
+  const acted = await db
+    .update(recommendations)
+    .set({ status: "accepted", resolvedAt: at, actedAt: at, updatedAt: new Date() })
+    .where(
+      and(eq(recommendations.userId, userId), eq(recommendations.contactId, contactId), eq(recommendations.status, "pending"))
+    )
+    .returning();
+  for (const rec of acted) {
+    await recordFeedback(userId, { contactId, recommendationId: rec.id, kind: rec.kind, action: "accepted" });
+  }
+}
+
+/**
+ * The person reached out to this contact — an email sent from Orbit, or a message they
+ * marked sent (LinkedIn has no send API). Their pending Radar cards are answered and any
+ * congratulations nudge retires. Every "I wrote to them" path calls this one function.
+ */
+export async function markContactReachedOutForUser(userId: string, contactId: string, at: Date) {
+  await markContactRecommendationsActedForUser(userId, contactId, at);
+  await settleJobChangeCongratsForUser(userId, contactId);
 }

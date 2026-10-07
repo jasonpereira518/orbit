@@ -21,13 +21,14 @@ import "./smoke/_env";
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, reminders, userSettings } from "../src/db/schema";
+import { aiSuggestions, contacts, recommendations, reminders, userSettings } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { snoozeReminder } from "../src/lib/reminders";
 import {
   clearContactFollowUp,
   scheduleContactFollowUp,
 } from "../src/actions/reminders";
+import { markContactReachedOutForUser } from "../src/lib/radar/actions-core";
 
 const USER = "demo-user";
 const HANDWRITTEN = "Send Priya the deck";
@@ -50,6 +51,7 @@ function daysFromToday(d: Date | null | undefined) {
 async function cleanup() {
   const db = await getDb();
   await db.delete(reminders).where(eq(reminders.userId, USER));
+  await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
 }
@@ -219,6 +221,25 @@ async function main() {
     clearedEmpty.remindersClosed === 0,
     `got ${clearedEmpty.remindersClosed}`
   );
+
+  // LinkedIn has no send API: "Mark sent on LinkedIn" (`completeFollowUpWithTouch`) is how
+  // that message is recorded, and it must close the Radar card and the congratulations nudge
+  // just as a sent email does. The action itself logs through `logInteraction`, whose
+  // revalidatePath needs a request, so the shared step it ends with is what runs here.
+  const onLinkedIn = await seedContact("Priya LinkedIn", 1);
+  const [card] = await db
+    .insert(recommendations)
+    .values({ userId: USER, contactId: onLinkedIn.id, kind: "heads_up", score: 40, bucket: "today", expiresAt: new Date(Date.now() + 86_400_000), inputsHash: "h" })
+    .returning();
+  const [nudge] = await db
+    .insert(aiSuggestions)
+    .values({ userId: USER, suggestionType: "job_change_congrats", title: "Priya joined Stripe", relatedContactIds: [onLinkedIn.id], status: "pending" })
+    .returning();
+  await markContactReachedOutForUser(USER, onLinkedIn.id, new Date());
+  const answered = await db.query.recommendations.findFirst({ where: eq(recommendations.id, card!.id) });
+  check("marking a LinkedIn message sent closes their Radar card", answered?.status === "accepted" && answered.actedAt !== null, answered?.status);
+  const retired = await db.query.aiSuggestions.findFirst({ where: eq(aiSuggestions.id, nudge!.id) });
+  check("…and retires the congratulations nudge", retired?.status === "dismissed", retired?.status);
 
   await cleanup();
   console.log("Follow-up actions: all checks passed");

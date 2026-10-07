@@ -63,15 +63,28 @@ async function followUpSection() {
   await createReminderForUser(USER, { contactId: c!.id, title: "Follow up with Maya", dueDate: new Date().toISOString() });
   const input = { to: ["maya@work.org"], subject: "Hi", bodyText: "Hey", origin: "follow_up" as const, originRef: c!.id, contactIds: [c!.id] };
   const status = async () => (await db.query.contacts.findFirst({ where: eq(schema.contacts.id, c!.id) }))?.followUpStatus;
+  // A Radar card and a congratulations nudge about Maya: a real send answers both.
+  const [card] = await db
+    .insert(schema.recommendations)
+    .values({ userId: USER, contactId: c!.id, kind: "heads_up", score: 40, bucket: "today", expiresAt: new Date(Date.now() + 86_400_000), inputsHash: "h" })
+    .returning();
+  const [nudge] = await db
+    .insert(schema.aiSuggestions)
+    .values({ userId: USER, suggestionType: "job_change_congrats", title: "Maya joined Ramp", relatedContactIds: [c!.id], status: "pending" })
+    .returning();
+  const cardNow = async () => (await db.query.recommendations.findFirst({ where: eq(schema.recommendations.id, card!.id) }))!;
+  const nudgeNow = async () => (await db.query.aiSuggestions.findFirst({ where: eq(schema.aiSuggestions.id, nudge!.id) }))!.status;
 
   await resetBucket();
   const undone = await enqueueEmail(USER, { ...input, delayMs: 10_000 });
   if (undone.ok) await cancelEmailSend(USER, undone.id);
   check("undone follow-up leaves the follow-up due", (await status()) === "due");
+  check("…and the Radar card and congrats nudge pending", (await cardNow()).status === "pending" && (await nudgeNow()) === "pending");
 
   fail = "permanent";
   await sendNow(input);
   check("failed follow-up leaves the follow-up due", (await status()) === "due");
+  check("…and the Radar card pending", (await cardNow()).status === "pending");
 
   fail = null;
   const { outcome } = await sendNow(input);
@@ -84,6 +97,11 @@ async function followUpSection() {
   check("pending reminders completed", open.length === 0);
   const logged = await db.select().from(schema.interactions).where(eq(schema.interactions.contactId, c!.id));
   check("one interaction, source follow_up", logged.length === 1 && logged[0]!.source === "follow_up", JSON.stringify(logged.map((l) => l.source)));
+  const answered = await cardNow();
+  check("sent follow-up accepts their Radar card", answered.status === "accepted" && answered.actedAt !== null, JSON.stringify(answered.status));
+  check("…acted at the send, so the send counts as its outcome",
+    answered.actedAt!.getTime() <= logged[0]!.interactionDate.getTime(), `${answered.actedAt?.toISOString()} vs ${logged[0]!.interactionDate.toISOString()}`);
+  check("…and retires the congrats nudge", (await nudgeNow()) === "dismissed");
 }
 
 async function chatSection() {

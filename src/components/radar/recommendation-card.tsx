@@ -26,7 +26,10 @@ import { companyBrandColor } from "@/lib/company-brand";
 import { safeHttpUrl } from "@/lib/safe-links";
 import { friendlyError } from "@/lib/errors";
 import {
+  JOB_MOVE_CODE,
   KIND_LABELS,
+  draftIntent,
+  leadReason,
   type RadarAiNote,
   type RadarDraft,
   type RadarEvidence,
@@ -321,17 +324,43 @@ export function RecommendationCard({
               <X className="size-4" aria-hidden />
             </Button>
           </div>
-          {draftOpen && (
-            <FollowUpDraftSheetLazy
-              open={draftOpen}
-              onOpenChange={setDraftOpen}
-              contactId={rec.contactId}
-              contactName={rec.contactName}
-              initialDraft={rec.draft?.body}
-            />
-          )}
+          {draftOpen && <RecommendationDraftSheet rec={rec} actions={actions} />}
         </article>
       </div>
     </div>
+  );
+}
+
+/**
+ * The draft sheet as a card opens it: told why the card exists, so a fallback draft or a
+ * Regenerate is about that and not a generic follow-up. A new job reads as a congratulation.
+ * A sent email folds the card away (the send retires it server-side once it goes out), and
+ * the toast's Undo brings it back.
+ */
+export function RecommendationDraftSheet({
+  rec,
+  actions,
+}: {
+  rec: RecommendationCardData;
+  actions: ReturnType<typeof useRecommendationActions>;
+}) {
+  const congrats = leadReason(rec.reasons)?.code === JOB_MOVE_CODE;
+  const firstName = rec.contactName.split(/\s+/)[0] || rec.contactName;
+  return (
+    <FollowUpDraftSheetLazy
+      open={actions.draftOpen}
+      onOpenChange={actions.setDraftOpen}
+      contactId={rec.contactId}
+      contactName={rec.contactName}
+      initialDraft={rec.draft?.body}
+      intent={draftIntent(rec)}
+      onSent={actions.hide}
+      onUndone={actions.unhide}
+      {...(congrats && {
+        title: `Congratulate ${firstName}`,
+        description: "A short note on the new role, then send it or mark it sent.",
+        subject: rec.company ? `Congrats on ${rec.company}` : "Congrats on the new role",
+      })}
+    />
   );
 }

@@ -28,6 +28,8 @@
  */
 import {
   CONTEXT_CODES,
+  JOB_LEFT_CODE,
+  JOB_MOVE_CODE,
   KIND_PRIORITY,
   type RadarEvidence,
   type RadarModel,
@@ -406,7 +408,7 @@ export function scoreContactKinds(
         add(
           drafts,
           "heads_up",
-          { code: "job_change", label: s.text, points: decayed(W.jobChange[s.move], age, RADAR_HALF_LIFE_DAYS.jobChange) },
+          { code: s.move === "left" ? JOB_LEFT_CODE : JOB_MOVE_CODE, label: s.text, points: decayed(W.jobChange[s.move], age, RADAR_HALF_LIFE_DAYS.jobChange) },
           { label: "Job move", at: iso(s.at) }
         );
         break;

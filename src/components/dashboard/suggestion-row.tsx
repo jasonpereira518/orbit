@@ -19,7 +19,8 @@ import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 
 const REASON_LABELS: Record<string, string> = {
-  job_change: "New role",
+  // `JOB_CHANGE_SUGGESTION_TYPE` in lib/job-changes.ts (not imported: it reaches the db).
+  job_change_congrats: "New role",
   awaiting_reply: "No reply yet",
   keep_in_touch: "Keep in touch",
   dormant_high_value: "Dormant",
@@ -30,6 +31,7 @@ const REASON_LABELS: Record<string, string> = {
 
 /** One line on what acting on each kind of suggestion does, under the reason pill. */
 const NEXT_STEP: Record<string, string> = {
+  job_change_congrats: "A short congratulations lands best in the first few weeks.",
   dormant_high_value: "A quick check-in keeps this relationship warm.",
   linkedin_thread_quiet: "Pick the LinkedIn conversation back up.",
   post_event: "Follow up while the introduction is still fresh.",
@@ -37,7 +39,7 @@ const NEXT_STEP: Record<string, string> = {
 };
 
 const REASON_STYLES: Record<string, string> = {
-  job_change: "bg-indigo-500/15 text-indigo-800 dark:text-indigo-200",
+  job_change_congrats: "bg-indigo-500/15 text-indigo-800 dark:text-indigo-200",
   awaiting_reply: "bg-rose-500/15 text-rose-800 dark:text-rose-200",
   keep_in_touch: "bg-teal-500/15 text-teal-800 dark:text-teal-200",
   dormant_high_value: "bg-amber-500/15 text-amber-800 dark:text-amber-200",

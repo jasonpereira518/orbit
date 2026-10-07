@@ -3,11 +3,8 @@
 import Link from "next/link";
 import { ArrowRight, CalendarPlus, PenLine, Radar, X } from "lucide-react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
-import {
-  FollowUpDraftSheetLazy,
-  preloadFollowUpDraftSheet,
-} from "@/components/follow-up/follow-up-draft-sheet-lazy";
-import type { RecommendationCardData } from "@/components/radar/recommendation-card";
+import { preloadFollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet-lazy";
+import { RecommendationDraftSheet, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { useRecommendationActions } from "@/components/radar/use-recommendation-actions";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -173,15 +170,7 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
           </button>
         </div>
       </div>
-      {actions.draftOpen && (
-        <FollowUpDraftSheetLazy
-          open={actions.draftOpen}
-          onOpenChange={actions.setDraftOpen}
-          contactId={rec.contactId}
-          contactName={rec.contactName}
-          initialDraft={rec.draft?.body}
-        />
-      )}
+      {actions.draftOpen && <RecommendationDraftSheet rec={rec} actions={actions} />}
     </li>
   );
 }

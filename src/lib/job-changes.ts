@@ -58,6 +58,41 @@ export const JOB_CHANGE_SUGGESTION_TYPE = "job_change_congrats";
 export const JOB_CHANGE_INTERACTION_TYPE = "job_change";
 export { jobChangeSentence };
 
+/**
+ * Retire a contact's pending congratulations nudge once the person has written to them, so
+ * the panel and chat stop asking after the email went out.
+ */
+export async function settleJobChangeCongratsForUser(userId: string, contactId: string) {
+  const db = await getDb();
+  await db
+    .update(aiSuggestions)
+    .set({ status: "dismissed" })
+    .where(
+      and(
+        eq(aiSuggestions.userId, userId),
+        eq(aiSuggestions.suggestionType, JOB_CHANGE_SUGGESTION_TYPE),
+        eq(aiSuggestions.status, "pending"),
+        sql`${aiSuggestions.relatedContactIds} ->> 0 = ${contactId}`
+      )
+    );
+}
+
+/**
+ * Whether a move is news worth congratulating: never a departure, and only a role that
+ * started within `CONGRATS_MAX_AGE_MONTHS`. Shared by the suggestion below and Radar's
+ * job-move signal, so neither says "congrats" on a move found a year late. Pure.
+ */
+export function isCongratsWorthy(
+  move: { kind: ContactJobChangeKind; startedYear: number | null; startedMonth: number | null },
+  now: Date
+): boolean {
+  if (move.kind === "left") return false;
+  if (move.startedYear === null) return true;
+  // An unknown month counts as December: the generous reading of "started in 2026".
+  const started = move.startedYear * 12 + (move.startedMonth ?? 12);
+  return now.getFullYear() * 12 + now.getMonth() + 1 - started <= CONGRATS_MAX_AGE_MONTHS;
+}
+
 /** One role in a snapshot, the only fields comparison needs. */
 export type SnapshotRole = {
   organization: string;
@@ -371,13 +406,7 @@ export async function recordJobChanges(
 
   // 3. A congratulations nudge — for news only: a move they made recently, not a move the
   //    first search after a long gap happened to find years late, and never for leaving.
-  const nowOrdinal = now.getFullYear() * 12 + now.getMonth() + 1;
-  const nudge = newChanges.find((c) => {
-    if (c.kind === "left") return false;
-    // An unknown month counts as December: the generous reading of "started in 2026".
-    const started = c.startedYear === null ? null : c.startedYear * 12 + (c.startedMonth ?? 12);
-    return started === null || nowOrdinal - started <= CONGRATS_MAX_AGE_MONTHS;
-  });
+  const nudge = newChanges.find((c) => isCongratsWorthy(c, now));
   if (nudge) {
     const contact = await db.query.contacts.findFirst({
       where: and(eq(contacts.userId, userId), eq(contacts.id, contactId)),

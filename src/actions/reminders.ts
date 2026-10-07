@@ -711,7 +711,10 @@ export async function completeFollowUpWithTouch(
     notes?: string;
   }
 ) {
+  const userId = await requireUserId();
   const channel = options?.channel ?? "note";
+  // Stamped before the touch is logged, so the card's acted_at never postdates it.
+  const at = new Date();
   const { logInteraction } = await import("@/actions/contacts");
   await logInteraction({
     contactId,
@@ -743,6 +746,10 @@ export async function completeFollowUpWithTouch(
           ? "Sent LinkedIn follow-up"
           : "Completed follow-up",
   });
+  // A message sent outside Orbit (LinkedIn has no send API) answers Radar like an email
+  // sent from it: the card closes and a congratulations nudge retires.
+  const { markContactReachedOutForUser } = await import("@/lib/radar/actions-core");
+  await markContactReachedOutForUser(userId, contactId, at);
   return clearContactFollowUp(contactId);
 }
 

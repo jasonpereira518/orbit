@@ -59,6 +59,7 @@ import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { loadRadarBriefing } from "../src/lib/radar/page-data";
 import { applyAutopilot, undoAutopilotForUser } from "../src/lib/radar/autopilot";
 import { draftChannel, draftTodayForRun } from "../src/lib/radar/drafts";
+import { draftIntent } from "../src/lib/radar/types";
 import { openRadarAi } from "../src/lib/radar/explain";
 import { listPendingRecommendations, loadModelTallies } from "../src/lib/radar/store";
 import { scaleContactRows } from "./lib/scale-fixture";
@@ -570,7 +571,34 @@ run(async () => {
       .where(and(eq(recommendations.contactId, mover!.id), eq(recommendations.status, "pending")));
     check("a logged job move becomes a heads-up card", card?.kind === "heads_up", JSON.stringify(card));
     check("that says what happened", card?.reasons.some((r) => r.label === "Joined Ramp as Staff PM (from Stripe)") === true);
-    await db.delete(contacts).where(eq(contacts.id, mover!.id));
+    check("and its draft is a congratulation", card ? draftIntent(card).startsWith("Congratulate") : false, card ? draftIntent(card) : "no card");
+
+    // A role that began two years before the check found it: history, not news.
+    const [late] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Late Lou", company: "Brex", title: "PM", firstInteractionAt: ago(400), lastInteractionAt: ago(40) })
+      .returning();
+    await db.insert(contactCareerMoves).values({
+      userId: USER,
+      contactId: late!.id,
+      kind: "joined",
+      fromOrg: "Stripe",
+      toOrg: "Brex",
+      toTitle: "PM",
+      startedYear: later.getFullYear() - 2,
+      startedMonth: 1,
+      source: "web",
+      dedupeKey: "smoke-radar-late-move",
+      detectedAt: new Date(later.getTime() - 2 * DAY),
+    });
+    await claimRadarLease(USER, later);
+    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    const lateCards = await db
+      .select({ kind: recommendations.kind })
+      .from(recommendations)
+      .where(and(eq(recommendations.contactId, late!.id), eq(recommendations.status, "pending")));
+    check("a move found two years late is no heads-up", lateCards.every((c) => c.kind !== "heads_up"), JSON.stringify(lateCards));
+    await db.delete(contacts).where(inArray(contacts.id, [mover!.id, late!.id]));
   }
 
   console.log("\ndrafts and autopilot");
