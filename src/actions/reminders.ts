@@ -41,6 +41,8 @@ import {
   createReminderForUser,
   scheduleContactFollowUpForUser,
   clearContactFollowUpForUser,
+  undoClearContactFollowUpForUser,
+  type ClearFollowUpSnapshot,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import { settle, unwrap } from "@/lib/settled";
@@ -699,12 +701,30 @@ export async function setKeepInTouchCadence(
 
 export async function clearContactFollowUp(contactId: string) {
   const userId = await requireUserId();
-  const { remindersClosed } = await clearContactFollowUpForUser(userId, contactId);
+  const { remindersClosed, snapshot } = await clearContactFollowUpForUser(userId, contactId);
   // The count is load-bearing, not telemetry: clearing a follow-up also marks every
   // pending reminder for the contact done (and completes their linked action items),
-  // which the caller has to be able to say out loud. It used to return a bare
-  // `{ ok: true }` and the UI said only "Follow-up cleared".
-  return { ok: true, remindersClosed };
+  // which the caller has to be able to say out loud. The snapshot is what lets it offer Undo.
+  return { ok: true, remindersClosed, snapshot };
+}
+
+/** Undo for `clearContactFollowUp`. The snapshot comes back from the client: validated. */
+export async function undoClearContactFollowUpAction(snapshot: ClearFollowUpSnapshot) {
+  const userId = await requireUserId();
+  if (
+    typeof snapshot?.contactId !== "string" ||
+    !isIsoOrNull(snapshot.previousNextFollowUpAt) ||
+    !(snapshot.previousFollowUpStatus === null || FOLLOW_UP_STATUSES.has(snapshot.previousFollowUpStatus)) ||
+    !Array.isArray(snapshot.completions) ||
+    snapshot.completions.length > BULK_LIMIT ||
+    !snapshot.completions.every(validCompletionSnapshot)
+  ) {
+    return { restored: false };
+  }
+  const result = await undoClearContactFollowUpForUser(userId, snapshot);
+  revalidateReminderPaths(snapshot.contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  return result;
 }
 
 export type FollowUpTouchChannel = "email" | "linkedin_message" | "note";

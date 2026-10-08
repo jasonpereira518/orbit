@@ -55,6 +55,8 @@ import {
   rescheduleReminderAction,
   restoreReminderAction,
   undoBulkReminderAction,
+  clearContactFollowUp,
+  undoClearContactFollowUpAction,
 } from "../src/actions/reminders";
 import {
   discardSuggestedReminder,
@@ -429,6 +431,29 @@ async function main() {
     check("ids that aren't yours touch nothing", foreign.ok && foreign.value.count === 0);
     const empty = await bulkReminderAction([], { op: "done" });
     check("an empty selection is refused with a readable message", !empty.ok);
+  }
+
+  /* --------------------------------- clear follow-up → one Undo puts it all back */
+
+  {
+    const { contact, reminder, originalDue } = await seedReminder("Quinn Avery");
+    const cleared = await clearContactFollowUp(contact.id);
+    check("clearing hands back a snapshot naming what it closed",
+      cleared.snapshot?.completions.length === 1 && cleared.snapshot.completions[0].reminderId === reminder.id,
+      JSON.stringify(cleared.snapshot));
+
+    const result = await undoClearContactFollowUpAction(cleared.snapshot);
+    check("Undo reports it restored", result.restored);
+    const r = await db.query.reminders.findFirst({ where: eq(reminders.id, reminder.id) });
+    check("the reminder it closed is pending again", r?.status === "pending");
+    const c = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    check("the follow-up clock is back exactly",
+      ms(c?.nextFollowUpAt) === ms(originalDue) && c?.followUpStatus === "pending");
+
+    const again = await undoClearContactFollowUpAction(cleared.snapshot);
+    check("a second Undo finds nothing to restore", again.restored === false);
+    const forged = await undoClearContactFollowUpAction({ ...cleared.snapshot, previousFollowUpStatus: "exploded" });
+    check("a forged clear snapshot is refused", forged.restored === false);
   }
 
   /* ------------------------------------------------ forged snapshots are refused */
