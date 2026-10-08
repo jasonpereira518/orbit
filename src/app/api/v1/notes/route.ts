@@ -7,6 +7,11 @@
  * review in the app's own capture queue, the same place a note typed there would land; the
  * returned id is for reference only (support, logs), not for a follow-up GET.
  *
+ * A note this account has already captured is not read again: the same text (by
+ * `hashSourceNote`, which ignores case and spacing) answers 200 `{ status: "duplicate" }` — and
+ * names the earlier job as `noteId` when there is one — BEFORE any rate-limit token or model
+ * call is spent, so a Shortcut that re-sends a note on every run costs nothing after the first.
+ *
  * Three things this route has to get right that a same-account app write does not:
  *
  *   - AI spend: extraction is a model call, and the app's own Extract button spends against
@@ -40,7 +45,8 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { apiError, apiHandler, apiOk, readJson } from "@/lib/api/http";
 import { noteBody } from "@/lib/api/schemas";
-import { createCaptureJob } from "@/lib/capture-jobs";
+import { createCaptureJob, findPriorCapture } from "@/lib/capture-jobs";
+import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { RATE_LIMITS, RateLimitedError, consumeBucket } from "@/lib/rate-limit";
 
@@ -69,6 +75,9 @@ export const POST = apiHandler({ scope: "write", bucket: "apiWrite" }, async (re
       return apiError({ code: "invalid_request", message: "No such contact.", param: "contactId" });
     }
   }
+
+  const prior = await findPriorCapture(caller.userId, hashSourceNote(body.text));
+  if (prior) return apiOk({ noteId: prior.jobId, status: "duplicate" }, { status: 200 });
 
   try {
     // Same budget the app's own Extract spends against — see the header comment.

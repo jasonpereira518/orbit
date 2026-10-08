@@ -1,12 +1,20 @@
 "use server";
 
-import type { MeetingDigest } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { gmailConnections, type MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
 import { deepgramEnabled } from "@/lib/deepgram";
+import { ReauthRequiredError } from "@/lib/errors";
+import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
+import { googleFetchWithRetry } from "@/lib/google-fetch";
+import { meetingCandidatesFrom, type MeetingCandidate } from "@/lib/meeting-calendar";
+import { listMeetingsFor, type MeetingsPage } from "@/lib/meetings-list";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
+  cleanUserNotes,
   formatTranscriptSegment,
   isSelf,
 } from "@/lib/meeting-digest";
@@ -201,6 +209,12 @@ export async function analyzeMeetingSession(
      * every "tomorrow" in it resolved a day late.
      */
     localDateIso?: string;
+    /**
+     * What the user typed into the notes box during the call. Not stored: it rides along
+     * with the request (the browser keeps it), and a stored digest is skipped when there is
+     * any, since that digest was made without it.
+     */
+    notes?: string;
   } = {}
 ): Promise<{ ok: true; analysis: MeetingAnalysis } | Fail> {
   let userId: string;
@@ -216,6 +230,7 @@ export async function analyzeMeetingSession(
     if (!t) return { ok: false, error: "That meeting no longer exists" };
     if (t.session.status === "saved") return { ok: false, error: "That meeting was already saved" };
 
+    const notes = cleanUserNotes(opts.notes);
     const paragraphs = t.segments
       .filter((s) => s.text.trim())
       .map((s) => formatTranscriptSegment(s));
@@ -230,7 +245,7 @@ export async function analyzeMeetingSession(
     const userName = [self.firstName, self.lastName].filter(Boolean).join(" ") || null;
     const attendeeNames = (t.session.attendees ?? []).map((a) => a.name);
 
-    let digest = !opts.force ? t.session.digest : null;
+    let digest = !opts.force && !notes ? t.session.digest : null;
     if (!digest) {
       try {
         digest = await analyzeMeetingTranscript(
@@ -241,6 +256,7 @@ export async function analyzeMeetingSession(
             startedAtIso: t.session.startedAt.toISOString(),
             userName,
             attendees: attendeeNames,
+            userNotes: notes || undefined,
           },
           { complete: completeJson, parseJson: parseAiJson }
         );
@@ -312,5 +328,97 @@ export async function discardMeetingSession(id: string): Promise<{ ok: true } | 
     return { ok: true };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t discard the meeting", "meetings.discard-meeting-session") };
+  }
+}
+
+export type MeetingCandidatesResult =
+  | {
+      ok: true;
+      /**
+       * `ok` — the calendar was read (`events` may be empty). The rest say why it could not
+       * be: nothing connected (quiet — most people have not), a Google connection from before
+       * calendar existed, or a grant Google has since revoked.
+       */
+      status: "ok" | "not-connected" | "needs-scope" | "reauth";
+      events: MeetingCandidate[];
+    }
+  | Fail;
+
+/** From a little before now (a meeting that already started) to the next few hours. */
+const CANDIDATES_PAST_MS = 45 * 60_000;
+const CANDIDATES_FUTURE_MS = 4 * 3_600_000;
+
+/**
+ * A minute's memory of each user's answer, so the setup card and the calendar nudge (and a
+ * second tab) share one Google read. Per server instance, not shared or durable — the
+ * established pattern here, since React `cache()` is a pass-through in Server Actions. Only
+ * an answer that read the calendar is kept: a refusal should be re-checked.
+ */
+const CANDIDATES_TTL_MS = 60_000;
+const candidatesCache = new Map<string, { at: number; result: MeetingCandidatesResult }>();
+
+/**
+ * The meetings on the user's Google calendar around now, to prefill the setup form.
+ *
+ * A live read of the primary calendar, nothing stored: it reuses the Google connection Orbit
+ * already holds for Gmail, Contacts and calendar sync (no second consent), and asks only for
+ * events starting within the window. Failures never block recording — the form works the same
+ * without a suggestion — so the caller treats anything but `ok` as "show nothing".
+ */
+export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
+  try {
+    const userId = await requireMeetingsUser();
+    const cached = candidatesCache.get(userId);
+    if (cached && Date.now() - cached.at < CANDIDATES_TTL_MS) return cached.result;
+    await consumeBucket("meetingCandidates", userId, RATE_LIMITS.meetingCandidates);
+    const db = await getDb();
+    const conn = await db.query.gmailConnections.findFirst({ where: eq(gmailConnections.userId, userId) });
+    if (!conn) return { ok: true, status: "not-connected", events: [] };
+    if (!hasCalendarScope(conn.scopes)) return { ok: true, status: "needs-scope", events: [] };
+    if (conn.status !== "active") return { ok: true, status: "reauth", events: [] };
+
+    let accessToken: string;
+    try {
+      accessToken = await getValidAccessToken(userId);
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) return { ok: true, status: "reauth", events: [] };
+      throw err;
+    }
+
+    const now = new Date();
+    const params = new URLSearchParams({
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "25",
+      timeMin: new Date(now.getTime() - CANDIDATES_PAST_MS).toISOString(),
+      timeMax: new Date(now.getTime() + CANDIDATES_FUTURE_MS).toISOString(),
+    });
+    const res = await googleFetchWithRetry(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 10_000 }
+    );
+    if (res.status === 401) return { ok: true, status: "reauth", events: [] };
+    if (res.status === 403) return { ok: true, status: "needs-scope", events: [] };
+    if (!res.ok) throw new Error(`Google Calendar ${res.status}`);
+
+    const page = (await res.json()) as { items?: Parameters<typeof meetingCandidatesFrom>[0] };
+    const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFrom(page.items ?? [], now) };
+    candidatesCache.set(userId, { at: Date.now(), result });
+    return result;
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t read your calendar", "meetings.get-meeting-candidates") };
+  }
+}
+
+/** One more page of past meetings, for the list's "Load more". */
+export async function listMeetingsPage(
+  q: string | null,
+  cursor: string | null
+): Promise<({ ok: true } & MeetingsPage) | Fail> {
+  try {
+    const userId = await requireMeetingsUser();
+    return { ok: true, ...(await listMeetingsFor(userId, { q, cursor })) };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t load your meetings", "meetings.list-meetings-page") };
   }
 }

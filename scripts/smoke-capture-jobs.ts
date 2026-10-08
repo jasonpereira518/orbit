@@ -26,6 +26,7 @@ import {
   createCaptureJobWithId,
   findCapturedFileRows,
   findJobBySourceHash,
+  findPriorCapture,
   heartbeatCaptureJob,
   markCaptureJobTranscribed,
   captureJobLooksStuck,
@@ -35,6 +36,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { assembleCaptureCorpus, runCaptureJobById } from "../src/lib/capture-job-runner";
 import type { CaptureParseResult } from "../src/lib/capture/types";
+import { emptyNoteBatchResult } from "../src/lib/note-batches";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -339,6 +341,43 @@ async function main() {
     check("a job is never its own duplicate", (await findJobBySourceHash(USER, hashSourceNote(text), read.id)) === null);
     await discardCaptureJobRow(USER, read.id);
     check("a discarded extraction no longer counts", (await findJobBySourceHash(USER, hashSourceNote(text))) === null);
+  }
+
+  console.log("\nHas this user already captured these notes? (a duplicate upload is not read again)");
+  {
+    await reset();
+    const db = await getDb();
+    const text = "Coffee with Priya about the pilot pricing.";
+    const hash = hashSourceNote(text);
+    check("nothing yet", (await findPriorCapture(USER, hash)) === null);
+
+    const job = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: text });
+    check("a job still being read has no hash, so it is not a prior capture", (await findPriorCapture(USER, hash)) === null);
+    await runCaptureJobById(job.id, deps);
+    const viaJob = await findPriorCapture(USER, hashSourceNote("  coffee WITH priya about the pilot pricing.  "));
+    check("an extracted job is a prior capture, however the text is spaced or cased", viaJob?.jobId === job.id);
+    check("a job is never its own prior capture", (await findPriorCapture(USER, hash, job.id)) === null);
+    check("another user never sees it", (await findPriorCapture("someone-else", hash)) === null);
+
+    await discardCaptureJobRow(USER, job.id);
+    check("a discarded job is not a prior capture", (await findPriorCapture(USER, hash)) === null);
+
+    // Saved from somewhere with no job behind it (the chat sheet, the API): the batch knows.
+    const [batch] = await db
+      .insert(noteBatches)
+      .values({
+        userId: USER,
+        sourceHash: hash,
+        sourceText: text,
+        anchorDate: new Date(),
+        result: emptyNoteBatchResult(),
+      })
+      .returning();
+    const viaBatch = await findPriorCapture(USER, hash);
+    check("a saved batch is a prior capture even with no job", viaBatch !== null && viaBatch.jobId === null);
+    check("and says when", viaBatch?.capturedAt.getTime() === batch!.createdAt.getTime());
+    await db.update(noteBatches).set({ status: "undone" }).where(eq(noteBatches.id, batch!.id));
+    check("an undone batch is not: the person took that capture back", (await findPriorCapture(USER, hash)) === null);
   }
 
   console.log("\nAn upload is reviewed together…");

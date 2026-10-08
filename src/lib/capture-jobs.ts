@@ -13,7 +13,7 @@ import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
 import { combineCaptureResults } from "@/lib/capture/combine-results";
 import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
-import { captureJobs } from "@/db/schema";
+import { captureJobs, noteBatches } from "@/db/schema";
 import type { CaptureParseHints } from "@/lib/ai";
 import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import {
@@ -459,6 +459,38 @@ export async function findJobBySourceHash(
     orderBy: [desc(captureJobs.createdAt)],
   });
   return row ?? null;
+}
+
+/**
+ * Whether this user has already captured notes with this hash (`hashSourceNote`), and when —
+ * the question a duplicate upload asks BEFORE it spends a model call.
+ *
+ * Two places can know: an extracted job (`capture_jobs.source_hash`, set when the parse
+ * finishes) and a saved batch (`note_batches.source_hash`, which also covers notes saved from
+ * the chat sheet or the API, where no job survives). An UNDONE batch does not count — the
+ * person took that capture back, so the same notes are fair game again — and neither does a
+ * discarded job, for the reason given on `findCapturedFileRows`. A job still being read has no
+ * hash yet, so two identical uploads racing each other are not caught; that costs one extra
+ * read, not a wrong answer.
+ */
+export async function findPriorCapture(
+  userId: string,
+  sourceHash: string,
+  excludeJobId?: string | null
+): Promise<{ jobId: string | null; capturedAt: Date } | null> {
+  const job = await findJobBySourceHash(userId, sourceHash, excludeJobId);
+  if (job) return { jobId: job.id, capturedAt: job.createdAt };
+  const db = await getDb();
+  const batch = await db.query.noteBatches.findFirst({
+    columns: { createdAt: true },
+    where: and(
+      eq(noteBatches.userId, userId),
+      eq(noteBatches.sourceHash, sourceHash),
+      eq(noteBatches.status, "saved")
+    ),
+    orderBy: [desc(noteBatches.createdAt)],
+  });
+  return batch ? { jobId: null, capturedAt: batch.createdAt } : null;
 }
 
 function clipInput(text: string | null | undefined): string | null {

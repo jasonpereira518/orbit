@@ -15,6 +15,7 @@ import { LearnedBrandColors } from "@/components/layout/learned-brand-colors";
 import { registerLearnedBrands } from "@/lib/brand-colors";
 import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
 import { OfflineSync } from "@/components/layout/offline-sync";
+import { MeetingSessionProvider } from "@/components/capture/meeting-session";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
@@ -137,7 +138,7 @@ export default async function AppLayout({
   // schools that the curated table does not know, plus which ones it has not looked up yet.
   // Those are learned after the response is sent, so a newly added company shows its own
   // color from the next page load on. A failed read costs only the colors, never the page.
-  const [{ plan }, visibility, linkedinReminder, brandColors] = await Promise.all([
+  const [{ plan, canUseMeetings }, visibility, linkedinReminder, brandColors] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
     getLinkedInReminderState(userId, settings),
@@ -158,6 +159,10 @@ export default async function AppLayout({
       {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
           color the shell and the page ask for is registered by then. */}
       <LearnedBrandColors brands={brandColors.learned} />
+      {/* Above AppShell, so a meeting that is recording keeps recording while the page under
+          it changes — the recorder cannot live in a page. The widget it drives is rendered
+          by AppShell's bottom-right job stack. */}
+      <MeetingSessionProvider canUseMeetings={canUseMeetings}>
       <AppShell
       userId={userId}
       clerkOn={clerkOn}
@@ -193,6 +198,7 @@ export default async function AppLayout({
       {showTermsNotice && <TermsUpdateNotice />}
       {children}
       </AppShell>
+      </MeetingSessionProvider>
 
       {/* Deliberately a SIBLING of AppShell, not a child. AppShell early-returns a bare
           shell for `/onboarding`, so mounting inside it would need the widget in two

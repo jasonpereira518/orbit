@@ -356,7 +356,8 @@ run(async () => {
   // 26: the outcome check (`detectRadarOutcomes`), the model's tallies
   // (`loadModelTallies`), the autopilot settings, the job-move read, the news probe and the
   // posts read; see smoke-page-budgets.
-  check("and a bounded number of them", statements <= 26, String(statements));
+  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
+  check("and a bounded number of them", statements <= 27, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);

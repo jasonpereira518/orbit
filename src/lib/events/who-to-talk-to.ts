@@ -22,6 +22,8 @@ import { loadTargetKeys } from "@/lib/events/companies";
 import { eventsTogetherForRoster } from "@/lib/events/people-store";
 import { listSchools } from "@/lib/events/target-companies";
 import { scoreAttendee, type RelevanceReason } from "@/lib/events/relevance";
+import { loadUserFocus } from "@/lib/career-profile-server";
+import { focusFitComponent } from "@/lib/focus-fit";
 import type { EventRecord } from "@/db/schema";
 
 export type WhoToTalkToRow = {
@@ -68,7 +70,7 @@ export async function whoToTalkTo(
   const limit = options.limit ?? 5;
   const db = await getDb();
 
-  const [roster, goals, targetKeys, history, userSchools] = await Promise.all([
+  const [roster, goals, targetKeys, history, userSchools, focus] = await Promise.all([
     db
       .execute(
         sql`
@@ -96,6 +98,7 @@ export async function whoToTalkTo(
     loadTargetKeys(userId),
     eventsTogetherForRoster(userId, event.id),
     listSchools(userId),
+    loadUserFocus(userId).catch(() => null),
   ]);
 
   if (roster.length === 0) {
@@ -128,6 +131,10 @@ export async function whoToTalkTo(
           notes: row.contact_notes,
         } as Parameters<typeof goalRelevanceComponent>[0],
         goals
+      ),
+      focusFit: focusFitComponent(
+        { title: row.title ?? row.contact_title, industry: row.contact_industry },
+        focus
       ),
       eventsTogether: history.get(row.id)?.count ?? 1,
       network: row.matched_contact_id

@@ -50,6 +50,7 @@ import {
 import { toolError, type OrbitTool } from "@/lib/tools/registry";
 import { searchMemories } from "@/lib/memory-search";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
+import { searchMeetingPassagesFor } from "@/lib/meetings-list";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
@@ -582,6 +583,41 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         contactIds: p.contactIds,
         snippet: p.snippet,
       }));
+    },
+  },
+
+  {
+    name: "search_meetings",
+    title: "Search your recorded meetings",
+    description:
+      "Search the transcripts and summaries of calls the user recorded with Orbit, by the " +
+      "words in them. Use it when the question is about a call: what came up about a topic, " +
+      "what was decided, what someone said in a meeting. Give short keywords — a name or a " +
+      "topic — not a whole sentence. Each passage says when in the meeting something was said " +
+      "but NOT who said it: speakers are not named, so never attribute a line to a person. " +
+      "A name matches the meetings that person was invited to. Narrow by date with after/before (YYYY-MM-DD).",
+    inputSchema: {
+      query: z.string().min(1).max(200).describe("Keywords: a topic and/or a name."),
+      after: isoDay.optional().describe("Only meetings on or after this day."),
+      before: isoDay.optional().describe("Only meetings on or before this day."),
+      limit: z.number().int().min(1).max(8).default(6),
+    },
+    annotations: { readOnlyHint: true },
+    // Transcripts are other people's words, verbatim — the same free-text fan-out that keeps
+    // `search_notes` off the MCP surface.
+    surfaces: CHAT_ONLY,
+    scope: "read",
+    resultLabel: "meeting passages",
+    fields: {
+      chat: ["meetingId", "title", "date", "startMs", "kind", "snippet"],
+    },
+    async run(userId, args: { query: string; after?: string; before?: string; limit: number }) {
+      return searchMeetingPassagesFor(userId, {
+        query: args.query,
+        after: dayBound(args.after, false),
+        before: dayBound(args.before, true),
+        limit: args.limit,
+      });
     },
   },
 

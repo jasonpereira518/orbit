@@ -13,6 +13,7 @@
  */
 import JSZip from "jszip";
 import {
+  LINKEDIN_LEFT_OUT,
   classifyByHead,
   classifyByName,
   detectImportFiles,
@@ -89,10 +90,17 @@ const ARCHIVE_NOISE = [
   "Invitations.csv",
   "Rich_Media.csv",
   "Registration.csv",
-  "Profile.csv",
-  "Skills.csv",
+  "Profile Summary.csv",
   "Endorsement_Received_Info.csv",
 ];
+
+/** The four members about the user, with the real header rows and made-up values. */
+const YOU_PROFILE =
+  "First Name,Last Name,Maiden Name,Address,Birth Date,Headline,Summary,Industry,Zip Code,Geo Location,Twitter Handles,Websites,Instant Messengers\nAda,T,,,,Engineer,,Technology,,Arlington,,,\n";
+const YOU_POSITIONS = "Company Name,Title,Description,Location,Started On,Finished On\nAcme,Engineer,,,May 2026,\n";
+const YOU_SKILLS = "Name\nGo\nPython\n";
+const YOU_ALERTS =
+  "ALERT_PARAMETERS,QUERY_CONTEXT,SAVED_SEARCH_ID\n\"{frequency=DAILY}\",\"{keywords=Software Engineer, spellCheckEnabled=true}\",1\n";
 
 /**
  * The two archive members that are not merely noise but actively misleading: each one
@@ -358,9 +366,87 @@ async function main() {
   );
   check(
     "...and says why, once",
-    exportFolder.ignored.every((d) => d.reason === "not needed from a LinkedIn export")
+    exportFolder.ignored.every((d) => d.reason === LINKEDIN_LEFT_OUT)
   );
   check("nothing is skipped", exportFolder.skipped.length === 0);
+
+  console.log("The files about you");
+  const withYou = await detectImportFiles([
+    folder("Connections.csv", CONNECTIONS_WITH_PREAMBLE),
+    folder("messages.csv", MESSAGES_CSV),
+    folder("Profile.csv", YOU_PROFILE),
+    folder("Positions.csv", YOU_POSITIONS),
+    folder("Skills.csv", YOU_SKILLS),
+    folder("SavedJobAlerts.csv", YOU_ALERTS),
+    folder("Profile Summary.csv", "Profile Summary\n\n"),
+    folder("Invitations.csv", INVITATIONS),
+  ]);
+  check(
+    "from an export folder: the two people files and the four about you, in run order",
+    withYou.staged.map((d) => d.target).join(",") ===
+      "linkedin_connections,linkedin_messages,linkedin_profile,linkedin_positions,linkedin_skills,linkedin_alerts",
+    withYou.staged.map((d) => `${d.file.name}:${d.target}`).join(" | ")
+  );
+  check(
+    "Profile Summary.csv and Invitations.csv are still left out",
+    withYou.ignored.length === 2 && withYou.ignored.every((d) => d.reason === LINKEDIN_LEFT_OUT),
+    withYou.ignored.map((d) => d.file.name).join(",")
+  );
+
+  // Generic names must not turn an ordinary folder into a "LinkedIn export": only Connections
+  // or messages do that. A résumé folder with a Profile.csv keeps everything else it holds.
+  const resumeFolder = await detectImportFiles([
+    drop("Profile.csv", "Role,Years\nEngineer,5\n", "resume-kit"),
+    drop("Skills.csv", YOU_SKILLS, "resume-kit"),
+    drop("friends.ics", ICS, "resume-kit"),
+  ]);
+  check(
+    "a folder with no Connections/messages is not treated as an export — nothing is 'left out'",
+    resumeFolder.ignored.every((d) => d.reason !== LINKEDIN_LEFT_OUT) && resumeFolder.staged.some((d) => d.target === "calendar_ics"),
+    resumeFolder.ignored.map((d) => `${d.file.name}:${d.reason}`).join(" | ")
+  );
+  check("…and a Profile.csv without LinkedIn's headers is not staged as one", !resumeFolder.staged.some((d) => d.target === "linkedin_profile"));
+
+  const loose = await detectImportFiles([
+    drop("Profile.csv", YOU_PROFILE),
+    drop("SavedJobAlerts.csv", YOU_ALERTS),
+    drop("Skills.csv", YOU_SKILLS),
+    drop("other.csv", YOU_SKILLS),
+  ]);
+  check(
+    "loose files are recognised by their headers; a lone Name column is skills only when the file is called Skills.csv",
+    ["linkedin_profile", "linkedin_skills", "linkedin_alerts"].every((t) =>
+      loose.staged.some((d) => d.target === t)
+    ) && !loose.staged.some((d) => d.file.name === "other.csv" && d.target === "linkedin_skills"),
+    loose.staged.map((d) => `${d.file.name}:${d.target}`).join(" | ")
+  );
+
+  const youZip = new JSZip();
+  youZip.file("Connections.csv", CONNECTIONS_WITH_PREAMBLE);
+  youZip.file("Profile.csv", YOU_PROFILE);
+  youZip.file("Positions.csv", YOU_POSITIONS);
+  youZip.file("Skills.csv", YOU_SKILLS);
+  youZip.file("SavedJobAlerts.csv", YOU_ALERTS);
+  const fromYouZip = await detectImportFiles([
+    { file: new File([await youZip.generateAsync({ type: "arraybuffer" })], "export.zip"), path: "" },
+  ]);
+  check(
+    "inside a ZIP they are extracted too",
+    fromYouZip.staged.map((d) => d.target).join(",") ===
+      "linkedin_connections,linkedin_profile,linkedin_positions,linkedin_skills,linkedin_alerts",
+    fromYouZip.staged.map((d) => d.target).join(",")
+  );
+  const junkZip = new JSZip();
+  junkZip.file("Profile.csv", "Role,Years\nEngineer,5\n");
+  junkZip.file("Connections.csv", CONNECTIONS_WITH_PREAMBLE);
+  const fromJunkZip = await detectImportFiles([
+    { file: new File([await junkZip.generateAsync({ type: "arraybuffer" })], "stuff.zip"), path: "" },
+  ]);
+  check(
+    "a ZIP's Profile.csv is only taken when its header agrees",
+    fromJunkZip.staged.map((d) => d.target).join(",") === "linkedin_connections",
+    fromJunkZip.staged.map((d) => d.target).join(",")
+  );
 
   // A bigger Invitations.csv would otherwise WIN the messages slot outright.
   const lopsided = await detectImportFiles([
@@ -409,11 +495,56 @@ async function main() {
     ordinary.staged.map((d) => d.target).join(",")
   );
 
+  // A folder holding either member IS a LinkedIn export, however it is named or trimmed: only
+  // those two are taken. (A heuristic used to ask it to also LOOK like an archive, which let
+  // the rest of a renamed or pared-down export through to be sniffed.)
+  console.log("Any folder with a LinkedIn member");
+  const renamedExport = await detectImportFiles([
+    drop("Connections.csv", CONNECTIONS_WITH_PREAMBLE, "my-export"),
+    drop("messages.csv", MESSAGES_CSV, "my-export"),
+    drop("work.ics", ICS, "my-export"),
+    drop("my-contacts.csv", GOOGLE_CSV, "my-export"),
+  ]);
+  check(
+    "a renamed, trimmed export keeps only Connections.csv and messages.csv",
+    renamedExport.staged.map((d) => d.target).join(",") === "linkedin_connections,linkedin_messages",
+    renamedExport.staged.map((d) => `${d.file.name}:${d.target}`).join(" | ")
+  );
+  check(
+    "the rest is left out and says why",
+    renamedExport.ignored.length === 2 && renamedExport.ignored.every((d) => d.reason === LINKEDIN_LEFT_OUT),
+    renamedExport.ignored.map((d) => `${d.file.name}:${d.reason}`).join(" | ")
+  );
+  const onlyMessages = await detectImportFiles([
+    drop("messages.csv", MESSAGES_CSV, "Downloads"),
+    drop("my-contacts.csv", GOOGLE_CSV, "Downloads"),
+  ]);
+  check(
+    "a messages.csv alone makes it an export folder too",
+    onlyMessages.staged.map((d) => d.file.name).join(",") === "messages.csv" && onlyMessages.ignored.length === 1,
+    onlyMessages.staged.map((d) => d.file.name).join(",")
+  );
+  const nested = await detectImportFiles([
+    drop("CONNECTIONS.CSV", CONNECTIONS_WITH_PREAMBLE, "Takeout/linkedin/data"),
+    drop("notes.csv", GOOGLE_CSV, "Takeout/linkedin/data"),
+    drop("my-contacts.csv", GOOGLE_CSV, "Takeout/other"),
+  ]);
+  check(
+    "any depth, any case — and only the folder the member sits in is gated",
+    nested.staged.map((d) => d.file.name).sort().join(",") === "CONNECTIONS.CSV,my-contacts.csv" &&
+      nested.ignored.map((d) => d.file.name).join(",") === "notes.csv",
+    `${nested.staged.map((d) => d.file.name).join(",")} / ${nested.ignored.map((d) => d.file.name).join(",")}`
+  );
+
   console.log("Contracts");
   const targets: ImportTarget[] = [
     "linkedin_connections",
     "contacts_file",
     "linkedin_messages",
+    "linkedin_profile",
+    "linkedin_positions",
+    "linkedin_skills",
+    "linkedin_alerts",
     "calendar_ics",
     "calendar_csv",
   ];

@@ -43,7 +43,17 @@ const MAX_EVIDENCE_CHARS = 20_000;
  * sourced passages: a note_batch or brief passage has no single dated event to cite and no
  * profile page to deep-link to, so it stays inside the uncited `evidence` text instead.
  */
-export type NotePassage = { sourceId: string; contactId: string | null; date: string | null; snippet: string };
+export type NotePassage = {
+  sourceId: string;
+  contactId: string | null;
+  date: string | null;
+  snippet: string;
+  /** Omitted for an interaction (the original and still the common case). */
+  kind?: "interaction" | "meeting";
+  /** A meeting passage: when in the call it was said (null for its summary), and its title. */
+  startMs?: number | null;
+  title?: string | null;
+};
 
 export type GatherResult = {
   /** Rendered for the answer prompt; null when nothing useful was gathered. */
@@ -63,7 +73,7 @@ const GATHER_SYSTEM = `You are the research step for Orbit, a personal networkin
 
 The answer-writer already has the contacts listed under "Already found", with their summaries, notes and recent interactions. Do not look those up again unless you need something specific about one of them.
 
-Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, and get_goals when the question is open-ended enough that what they are working towards decides the answer.
+Reach for search_notes first for anything about what was said, discussed, promised or learned, and when — that lives in the user's notes, not on a contact card. When the question is about a call the user recorded — "in my meeting with…", "what came up about pricing on the call" — also try search_meetings, which searches the recorded transcripts and summaries; its passages say when something was said but never who said it. Use after/before to scope a date ("in March" means that month of the most recent year that is not in the future). Use who_do_i_know_at and search_contacts to find people; get_contact to read one person's full record. Use get_timeline for when or how often something happened with one person, find_path_to for who could introduce the user to a company or a person, list_open_commitments for what they owe, and get_goals when the question is open-ended enough that what they are working towards decides the answer.
 
 Make at most three lookups per turn. When you have what the question needs — or when nothing more would help — reply with the single word DONE and make no lookups.
 
@@ -110,6 +120,8 @@ function describeCall(call: ToolCall, ctx: ChatContext): string {
       const range = text("after") || text("before") ? ` (${text("after") || "…"} to ${text("before") || "now"})` : "";
       return `Searching your notes for “${text("query")}”${range}`;
     }
+    case "search_meetings":
+      return `Searching your recorded meetings for “${text("query")}”`;
     case "search_contacts":
       return `Searching your contacts for “${text("query")}”`;
     case "get_contact": {
@@ -213,6 +225,23 @@ function renderEvidence(calls: ExecutedCall[]): string | null {
 function extractNotePassages(calls: ExecutedCall[]): NotePassage[] {
   const out: NotePassage[] = [];
   for (const c of calls) {
+    if (c.ok && c.call.name === "search_meetings") {
+      // A meeting passage is citable too: one chip per meeting, linking to its page.
+      for (const row of Array.isArray(c.result) ? c.result : []) {
+        const r = row as { meetingId?: unknown; title?: unknown; date?: unknown; startMs?: unknown; snippet?: unknown };
+        if (typeof r.meetingId !== "string" || typeof r.snippet !== "string") continue;
+        out.push({
+          kind: "meeting",
+          sourceId: r.meetingId,
+          contactId: null,
+          date: typeof r.date === "string" ? r.date.slice(0, 10) : null,
+          snippet: r.snippet,
+          startMs: typeof r.startMs === "number" ? r.startMs : null,
+          title: typeof r.title === "string" ? r.title : null,
+        });
+      }
+      continue;
+    }
     if (!c.ok || c.call.name !== "search_notes") continue;
     const rows = Array.isArray(c.result) ? c.result : [];
     for (const row of rows) {

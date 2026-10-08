@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { formatElapsed } from "@/lib/voice-recording";
 import { cn } from "@/lib/utils";
+import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 
 export type MeetingItemKind = "action" | "blocker" | "question";
 
@@ -31,15 +32,6 @@ type MeetingSummary = Pick<
   blockers: { text: string; owner: string | null }[];
   openQuestions: { text: string; askedBy: string | null }[];
 };
-
-export function formatMeetingDuration(ms: number): string {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 1) return "under a minute";
-  if (minutes < 60) return `${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return m ? `${h} h ${m} min` : `${h} h`;
-}
 
 /**
  * What a recorded meeting was: summary, decisions, and the three lists no per-person card

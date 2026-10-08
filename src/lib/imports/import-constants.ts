@@ -16,6 +16,10 @@ export const RUN_ORDER: readonly ImportTarget[] = [
   "linkedin_connections",
   "contacts_file",
   "linkedin_messages",
+  "linkedin_profile",
+  "linkedin_positions",
+  "linkedin_skills",
+  "linkedin_alerts",
   "calendar_ics",
   "calendar_csv",
 ];

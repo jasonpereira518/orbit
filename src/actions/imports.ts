@@ -36,6 +36,9 @@ import {
   type ImportStats,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { patchYou, previewYou } from "@/lib/career-profile";
+import { clearCareerProfile, loadYouCurrent, saveCareerPatch } from "@/lib/career-profile-server";
+import { isYouTarget, type YouTarget } from "@/lib/linkedin-you-shape";
 import { REVERT_REFUSAL_MESSAGE, describeRevert } from "@/lib/import-revert-policy";
 import { revertImport } from "@/lib/import-revert";
 import {
@@ -164,6 +167,59 @@ type PreviewRefusal = { error: string };
  */
 function refusal(message: string): PreviewRefusal {
   return { error: message };
+}
+
+// ------------------------------------------------------------ the files about the user
+
+/** Far above any real Profile/Positions/Skills/alerts file; stops a pasted multi-megabyte blob. */
+const MAX_YOU_FILE_CHARS = 2_000_000;
+
+/**
+ * What a Profile / Positions / Skills / SavedJobAlerts file would change, field by field, next
+ * to what Orbit holds now. Read-only. Refusals come back as data for the same reason as the
+ * other previews: a thrown message is stripped in production.
+ */
+export async function previewLinkedInYou(target: YouTarget, text: string) {
+  const userId = await requireUserId();
+  if (!isYouTarget(target) || text.length > MAX_YOU_FILE_CHARS) {
+    return refusal("That file isn’t one Orbit can read for your profile.");
+  }
+  try {
+    return { fields: previewYou(target, text, await loadYouCurrent(userId)) };
+  } catch (err) {
+    return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin-you"));
+  }
+}
+
+/**
+ * Save the fields the person kept ticked. Re-parses the text server-side; the browser only
+ * says which keys. Merges into `career_profile` one top-level key at a time, so importing
+ * Skills never disturbs the headline, and writes `sender_bio` only when the patch carries one.
+ */
+export async function applyLinkedInYou(input: { target: YouTarget; text: string; keys: string[] }) {
+  const userId = await requireUserId();
+  if (!isYouTarget(input.target) || input.text.length > MAX_YOU_FILE_CHARS) {
+    return refusal("That file isn’t one Orbit can read for your profile.");
+  }
+  let patch: ReturnType<typeof patchYou>;
+  try {
+    patch = patchYou(input.target, input.text, input.keys, await loadYouCurrent(userId), new Date());
+  } catch (err) {
+    return refusal(await linkedInExportErrorMessage(err, "imports.apply-linkedin-you"));
+  }
+  if (!patch) return refusal("Nothing was selected to save.");
+
+  await saveCareerPatch(userId, patch);
+  revalidatePath("/settings");
+  return { message: patch.message };
+}
+
+/** Forget everything imported from the user's LinkedIn export. Leaves what they typed alone. */
+export async function clearLinkedInYou() {
+  const userId = await requireUserId();
+  await clearCareerProfile(userId);
+  revalidatePath("/settings");
+  return { ok: true as const };
 }
 
 export async function previewLinkedInCsv(csvText: string) {

@@ -28,7 +28,7 @@ const SCREEN_OF: Record<string, Exclude<Screen, "profile"> | undefined> = {
 };
 
 /** Real nav items the preview leaves out, to keep the sidebar short. */
-const HIDDEN = new Set(["/reminders", "/imports", "/knowledge", "/settings", "/radar"]);
+const HIDDEN = new Set(["/reminders", "/imports", "/knowledge", "/settings", "/radar", "/meetings"]);
 const shown = (items: readonly AppNavItem[]) => items.filter((i) => !HIDDEN.has(i.href));
 
 /** The items under the divider that really are coming soon, and the poll option each is. */

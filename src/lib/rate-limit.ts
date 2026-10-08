@@ -25,6 +25,7 @@ const BUCKET_LABELS: Record<string, string> = {
   captureHandoff: "scan",
   captureParts: "capture",
   meetingChunk: "meeting transcription",
+  meetingCandidates: "calendar lookup",
   avatarResolve: "photo lookup",
   feedback: "feedback",
   radarRefresh: "Radar refresh",
@@ -121,6 +122,13 @@ export const RATE_LIMITS = {
    * connection comes back. Its own bucket so a long call can never starve capture's.
    */
   meetingChunk: { limit: 20, windowSec: 60 },
+  /**
+   * Reading the user's Google Calendar for the meeting about to be recorded
+   * (`getMeetingCandidates`): the setup card on open, and the calendar nudge every ten
+   * minutes per tab. Generous for several tabs, and tight enough that a client stuck in a
+   * loop cannot burn through the account's Google quota.
+   */
+  meetingCandidates: { limit: 30, windowSec: 600 },
   /**
    * On-demand photo resolution in `/api/avatars/[contactId]`.
    *

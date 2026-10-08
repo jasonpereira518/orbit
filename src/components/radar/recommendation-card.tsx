@@ -40,7 +40,7 @@ import { useRadarKeys } from "@/components/radar/use-radar-keys";
 import { useRecommendationActions } from "@/components/radar/use-recommendation-actions";
 
 /** Reasons that describe the person rather than a fact about now. Shown as quiet chips. */
-const CONTEXT_CODES = new Set(["tier", "priority", "stated_close", "target_company", "goal_match"]);
+const CONTEXT_CODES = new Set(["tier", "priority", "stated_close", "target_company", "goal_match", "focus_match"]);
 /** Reasons that argue against the card. Kept for the score, never shown. */
 const HIDDEN_CODES = new Set(["touched_recently", "dismissed_recently", "already_scheduled"]);
 
