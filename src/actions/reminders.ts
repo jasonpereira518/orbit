@@ -102,13 +102,20 @@ function validSnoozeSnapshot(snap: SnoozeSnapshot): boolean {
 }
 
 function validCompletionSnapshot(snap: CompletionSnapshot): boolean {
+  const cleared = snap?.clearedFollowUp;
   return (
     typeof snap?.reminderId === "string" &&
     REMINDER_STATUSES.has(snap.previousStatus) &&
     snap.previousStatus !== "done" &&
     Array.isArray(snap.closedActionItemIds) &&
     snap.closedActionItemIds.length <= 500 &&
-    snap.closedActionItemIds.every((id) => typeof id === "string")
+    snap.closedActionItemIds.every((id) => typeof id === "string") &&
+    (cleared === undefined ||
+      (typeof cleared?.contactId === "string" &&
+        typeof cleared.previousNextFollowUpAt === "string" &&
+        !Number.isNaN(Date.parse(cleared.previousNextFollowUpAt)) &&
+        (cleared.previousFollowUpStatus === null ||
+          FOLLOW_UP_STATUSES.has(cleared.previousFollowUpStatus))))
   );
 }
 
@@ -756,7 +763,8 @@ export async function completeFollowUpWithTouch(
 export async function markReminderDone(id: string) {
   const userId = await requireUserId();
   const snapshot = await completeReminder(userId, id);
-  revalidateReminderPaths();
+  revalidateReminderPaths(snapshot?.clearedFollowUp?.contactId);
+  if (snapshot?.clearedFollowUp) revalidatePathIfRequestScoped("/contacts");
   // Handed back so the toast can offer Undo; see `reopenReminderAction`.
   return snapshot;
 }
@@ -766,7 +774,8 @@ export async function reopenReminderAction(snapshot: CompletionSnapshot) {
   const userId = await requireUserId();
   if (!validCompletionSnapshot(snapshot)) return { restored: false };
   const result = await reopenReminder(userId, snapshot);
-  revalidateReminderPaths();
+  revalidateReminderPaths(snapshot.clearedFollowUp?.contactId);
+  if (snapshot.clearedFollowUp) revalidatePathIfRequestScoped("/contacts");
   return result;
 }
 

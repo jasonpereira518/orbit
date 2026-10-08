@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite, type AtomicStatement } from "@/db";
 import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
 import {
@@ -1482,6 +1482,16 @@ export type CompletionSnapshot = {
   reminderId: string;
   previousStatus: string;
   closedActionItemIds: string[];
+  /**
+   * Present only when this completion also cleared the contact's follow-up clock, because the
+   * reminder WAS that follow-up (same contact, same due instant). Optional so a snapshot minted
+   * before the field existed still validates and still undoes.
+   */
+  clearedFollowUp?: {
+    contactId: string;
+    previousNextFollowUpAt: string;
+    previousFollowUpStatus: string | null;
+  };
 };
 
 export async function completeReminder(
@@ -1491,9 +1501,18 @@ export async function completeReminder(
   const db = await getDb();
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
-    columns: { status: true },
+    columns: { status: true, contactId: true, dueDate: true },
   });
   if (!reminder) return null;
+
+  // Read the contact's clock BEFORE any write, as `snoozeReminderTo` does, so Undo can put it back.
+  const contact =
+    reminder.contactId && reminder.dueDate
+      ? await db.query.contacts.findFirst({
+          where: and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId)),
+          columns: { nextFollowUpAt: true, followUpStatus: true },
+        })
+      : null;
 
   await db
     .update(reminders)
@@ -1515,10 +1534,33 @@ export async function completeReminder(
     )
     .returning();
 
+  // Every path that books a follow-up (scheduleContactFollowUpForUser, snoozeReminderTo, the
+  // outreach queue, the extension, capture) writes the SAME instant to the reminder and to
+  // `contacts.next_follow_up_at`. A match means this reminder IS the follow-up, so finishing it
+  // finishes the follow-up. A different instant is a separate commitment and leaves the clock alone.
+  let clearedFollowUp: CompletionSnapshot["clearedFollowUp"];
+  if (
+    reminder.contactId &&
+    reminder.dueDate &&
+    contact?.nextFollowUpAt &&
+    contact.nextFollowUpAt.getTime() === reminder.dueDate.getTime()
+  ) {
+    await db
+      .update(contacts)
+      .set({ nextFollowUpAt: null, followUpStatus: "none", updatedAt: new Date() })
+      .where(and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId)));
+    clearedFollowUp = {
+      contactId: reminder.contactId,
+      previousNextFollowUpAt: contact.nextFollowUpAt.toISOString(),
+      previousFollowUpStatus: contact.followUpStatus ?? null,
+    };
+  }
+
   return {
     reminderId,
     previousStatus: reminder.status,
     closedActionItemIds: closed.map((row) => row.id),
+    ...(clearedFollowUp ? { clearedFollowUp } : {}),
   };
 }
 
@@ -1552,6 +1594,25 @@ export async function reopenReminder(
         and(
           eq(actionItems.userId, userId),
           inArray(actionItems.id, snap.closedActionItemIds)
+        )
+      );
+  }
+
+  // The clock only while it is still what the completion left (cleared): a follow-up booked
+  // since is newer and wins — the same rule as `unsnoozeReminder`.
+  if (snap.clearedFollowUp) {
+    await db
+      .update(contacts)
+      .set({
+        nextFollowUpAt: new Date(snap.clearedFollowUp.previousNextFollowUpAt),
+        followUpStatus: snap.clearedFollowUp.previousFollowUpStatus,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(contacts.id, snap.clearedFollowUp.contactId),
+          eq(contacts.userId, userId),
+          isNull(contacts.nextFollowUpAt)
         )
       );
   }
