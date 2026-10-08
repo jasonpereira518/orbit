@@ -16,7 +16,8 @@ function balancePhrase(
   reciprocity: number | null,
 ): string | null {
   if (reciprocity == null) return null;
-  if (reciprocity >= 0.6) return "balanced";
+  // Raw split, not the score: the score forgives up to 2:1, the label says what happened.
+  if (Math.min(inbound, outbound) / Math.max(inbound, outbound) >= 0.5) return "balanced";
   return inbound > outbound ? "mostly them" : "mostly you";
 }
 

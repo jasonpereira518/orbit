@@ -23,9 +23,13 @@ const WINDOW_DAYS = 90;
 /** A direction flip within this many days is a reply; past it, a new conversation. */
 const REPLY_MAX_DAYS = 14;
 /** An unanswered outbound counts against latency once it is older than this. */
-const OPEN_GRACE_HOURS = 48;
-/** Latency half-life: a 48h median reply scores 0.5. */
-const LATENCY_HALF_LIFE_HOURS = 48;
+const OPEN_GRACE_HOURS = 72;
+/** Latency half-life: a 3-day median reply scores 0.5 — people are busy. */
+const LATENCY_HALF_LIFE_HOURS = 72;
+/** Recency half-life without a stated cadence, and its clamp. 45d matches closeness. */
+const DEFAULT_CADENCE_DAYS = 45;
+const MIN_CADENCE_DAYS = 21;
+const MAX_CADENCE_DAYS = 180;
 const POINTS = 26;
 const STEP_DAYS = 7;
 const WEIGHTS = { recency: 0.4, reciprocity: 0.3, latency: 0.3 } as const;
@@ -81,8 +85,11 @@ function scoreAt(rows: HealthRow[], t: number, halfLifeDays: number): HealthComp
 
   const inbound = directed.filter((r) => r.direction === "in").length;
   const outbound = directed.length - inbound;
+  // A 2:1 split is still a healthy two-way relationship; only lopsided beyond that costs.
   const reciprocity =
-    inbound + outbound >= 2 ? Math.min(inbound, outbound) / Math.max(inbound, outbound) : null;
+    inbound + outbound >= 2
+      ? Math.min(1, (2 * Math.min(inbound, outbound)) / Math.max(inbound, outbound))
+      : null;
 
   const gaps: number[] = [];
   const replies = directed.filter((r) => !SESSION_SOURCES.has(r.source ?? ""));
@@ -130,7 +137,10 @@ export function relationshipHealth(
 ): RelationshipHealth | null {
   const sorted = [...rows].sort((a, b) => a.at.getTime() - b.at.getTime());
   const now = opts.now.getTime();
-  const halfLife = Math.min(120, Math.max(14, opts.cadenceDays ?? 30));
+  const halfLife = Math.min(
+    MAX_CADENCE_DAYS,
+    Math.max(MIN_CADENCE_DAYS, opts.cadenceDays ?? DEFAULT_CADENCE_DAYS)
+  );
   const current = scoreAt(sorted, now, halfLife);
   if (!current) return null;
 
