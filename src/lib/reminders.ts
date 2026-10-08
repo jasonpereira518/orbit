@@ -753,7 +753,9 @@ const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 
 /**
  * The reminders card: the first `REMINDER_CAP` pending reminders in due order, and how many
- * there are in all — the filter, the cap and the count in one statement.
+ * there are in all — the filter, the cap and the count in one statement. Besides generated
+ * reminders, it drops the one a day preset books beside a due contact's clock (same instant,
+ * title `Follow up with <name>`), since the Due follow-ups row already shows it.
  *
  * It used to read every pending reminder (every column, `description` and `source_excerpt`
  * included), drop in JavaScript the generated reminders whose contact already sits on the
@@ -780,16 +782,23 @@ export async function loadDashboardReminders(userId: string, now: Date) {
       and(
         eq(reminders.userId, userId),
         eq(reminders.status, "pending"),
-        // `reminder_type` is NOT NULL and the other two are plain booleans, so this NOT
-        // never meets a NULL: it is exactly `!(generated && contactId && due.has(contactId))`.
+        // Drops a reminder whose contact is on the due list when it is either generated, or
+        // the reminder a day preset booked beside the clock (same instant, the scheduler's own
+        // wording). `exists` is never NULL, so this NOT never meets one.
         sql`not (
-          ${reminders.reminderType} = 'generated'
-          and ${reminders.contactId} is not null
+          ${reminders.contactId} is not null
           and exists (
             select 1 from ${contacts} due
             where due.id = ${reminders.contactId}
               and due.user_id = ${userId}
               and ${followUpDueSql(sql.raw("due"), now)}
+              and (
+                ${reminders.reminderType} = 'generated'
+                or (
+                  due.next_follow_up_at = ${reminders.dueDate}
+                  and ${reminders.title} = 'Follow up with ' || coalesce(nullif(due.preferred_name, ''), due.full_name)
+                )
+              )
           )
         )`
       )

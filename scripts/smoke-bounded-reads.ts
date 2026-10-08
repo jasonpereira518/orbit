@@ -337,6 +337,8 @@ async function dashboardSection() {
     rem({ title: "generated, not-due contact", reminderType: "generated", contactId: notDue.id, dueDate: at(-9) }),
     rem({ title: "generated, no follow-up", reminderType: "generated", contactId: noFollowUp.id, dueDate: at(-8) }),
     rem({ title: "manual, due contact", contactId: due.id, dueDate: at(-7) }),
+    rem({ title: "Follow up with Due Dana", contactId: due.id, dueDate: at(-1) }), // the booked pair (dropped)
+    rem({ title: "Follow up with Due Dana", contactId: due.id, dueDate: at(-3) }), // same words, other instant (kept)
     rem({ title: "generated, no contact", reminderType: "generated", dueDate: at(-6) }),
     rem({ title: "ai_suggested, due contact", reminderType: "ai_suggested", contactId: due.id, dueDate: at(-5) }),
     rem({ title: "completed (not pending)", status: "completed", dueDate: at(-4) }),
@@ -371,7 +373,8 @@ async function dashboardSection() {
   await db.insert(aiSuggestions).values(sug({ userId: OTHER, title: "not yours", confidenceScore: 100 }));
 
   // The old code, verbatim in effect: read everything, filter in JavaScript, then cap.
-  const scan = await db.query.contacts.findMany({ where: eq(contacts.userId, DASH_USER), columns: { id: true, nextFollowUpAt: true } });
+  const scan = await db.query.contacts.findMany({ where: eq(contacts.userId, DASH_USER), columns: { id: true, nextFollowUpAt: true, fullName: true, preferredName: true } });
+  const scanById = new Map(scan.map((c) => [c.id, c]));
   const allContactIds = new Set(scan.map((c) => c.id));
   const dueFollowUpIds = new Set(scan.filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now).map((c) => c.id));
   const pending = await db.query.reminders.findMany({
@@ -379,9 +382,14 @@ async function dashboardSection() {
     orderBy: [asc(reminders.dueDate)],
   });
   const expectedReminders = pending.filter((r) => {
-    if (r.reminderType !== "generated") return true;
-    if (!r.contactId) return true;
-    return !dueFollowUpIds.has(r.contactId);
+    if (!r.contactId || !dueFollowUpIds.has(r.contactId)) return true;
+    if (r.reminderType === "generated") return false;
+    const c = scanById.get(r.contactId)!;
+    return !(
+      r.dueDate &&
+      new Date(r.dueDate).getTime() === new Date(c.nextFollowUpAt!).getTime() &&
+      r.title === `Follow up with ${c.preferredName || c.fullName}`
+    );
   });
   const pendingSuggestions = await db.query.aiSuggestions.findMany({
     where: and(eq(aiSuggestions.userId, DASH_USER), eq(aiSuggestions.status, "pending")),

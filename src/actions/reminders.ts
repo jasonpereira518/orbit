@@ -612,11 +612,10 @@ export async function scheduleContactFollowUpAt(
   if (existing) {
     const [updated] = await db
       .update(reminders)
+      // WHEN, not WHAT — same rule as `scheduleContactFollowUpForUser`: a hand-written
+      // "Send Priya the deck" must not be renamed "Follow up with Priya" by the date picker.
       .set({
-        title,
         dueDate: due,
-        reminderType: "manual",
-        actionKind,
         listId: existing.listId || inboxId,
       })
       .where(eq(reminders.id, existing.id))
