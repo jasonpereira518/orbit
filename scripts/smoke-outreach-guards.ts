@@ -23,7 +23,9 @@ import {
   prospectSearchStatus,
 } from "../src/lib/outreach-quality";
 import { sendOutreachMessage, getOutreachSendConfig } from "../src/lib/outreach-send";
-import { bulkSendOutreach, previewBulkSendQuality, searchProspects, sendOutreachMessageAction } from "../src/actions/outreach";
+import { bulkSendOutreach, markMessageAction, previewBulkSendQuality, searchProspects, sendOutreachMessageAction } from "../src/actions/outreach";
+import { ALREADY_SENT_MESSAGE } from "../src/lib/outreach-quality";
+import { isDeliveredMessage } from "../src/lib/outreach-metrics";
 import type { AudienceFilters } from "../src/db/schema";
 
 // FIRST, so no run of this script — including the failing one — can reach a real inbox:
@@ -215,6 +217,37 @@ run(async () => {
   );
   const sendableAfter = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, sendable.message.id) });
   check("…and bulk send under this campaign never touches it", sendableAfter?.status === "generated", String(sendableAfter?.status));
+
+  console.log("\nA delivered message is never sent twice");
+  check("a copied row with a sentAt counts as delivered",
+    isDeliveredMessage({ id: "x", status: "copied", outcome: null, sentAt: new Date() }));
+  const delivered = await seedProspectWithMessage(campaign.id, {
+    externalId: "delivered-1",
+    fullName: "Dana Delivered",
+    email: "dana@delivered.example.org",
+    status: "contacted",
+    enrichment: {},
+  });
+  const sentAt = new Date("2026-01-01T00:00:00Z");
+  await db.update(outreachMessages).set({ status: "sent", sentAt }).where(eq(outreachMessages.id, delivered.message.id));
+  const resend = await sendOutreachMessageAction(delivered.message.id).catch((err: unknown) => ({
+    ok: false as const, error: `threw: ${String(err)}`,
+  }));
+  check("the single send refuses an already-sent message",
+    resend.ok === false && resend.error === ALREADY_SENT_MESSAGE, JSON.stringify(resend));
+  const bulkResend = await outsideRequest(
+    bulkSendOutreach({ campaignId: campaign.id, messageIds: [delivered.message.id], ignoreWarnings: true }));
+  // The action ends in revalidatePath, which throws outside a request, so its return value
+  // is unreadable here; the row itself shows neither a resend nor a "failed" mark.
+  const afterBulk = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, delivered.message.id) });
+  check("bulk send skips it: neither sent nor failed",
+    afterBulk?.status === "sent" && afterBulk.sentAt?.getTime() === sentAt.getTime(),
+    `${afterBulk?.status} ${afterBulk?.sentAt?.toISOString()}`);
+  await outsideRequest(markMessageAction({ messageId: delivered.message.id, status: "copied" }));
+  const afterResend = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, delivered.message.id) });
+  check("…and copy never walks it back from sent",
+    afterResend?.status === "sent" && afterResend.sentAt?.getTime() === sentAt.getTime(),
+    `${afterResend?.status} ${afterResend?.sentAt?.toISOString()}`);
 
   console.log("\nReplies go to the sender");
   await db.update(userSettings).set({ email: "demo.sender@orbit.example.com" }).where(eq(userSettings.userId, USER));
