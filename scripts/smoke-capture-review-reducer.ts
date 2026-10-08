@@ -12,6 +12,8 @@ import {
   initialPhaseFor,
   opportunityRows,
   parseTagNames,
+  REMINDER_TITLE_MAX,
+  reminderTitleOverride,
   setAsidePeople,
 } from "../src/lib/capture/review-reducer";
 import type {
@@ -135,5 +137,10 @@ console.log("\nopportunity ticks and kind corrections");
   const restored = opportunityRows(accepted, whileAside);
   check("  so re-accepting them restores both", restored.find((r) => r.key === "b:0")?.checked === true && restored.find((r) => r.key === "b:0")?.kind === "referral");
 }
+
+check("an edited reminder title is trimmed", reminderTitleOverride("  Send the deck  ", "Follow up") === "Send the deck");
+check("a blank edit keeps the parsed title", reminderTitleOverride("   ", "Follow up") === undefined);
+check("editing back to the parsed title stores nothing", reminderTitleOverride("Follow up", "Follow up") === undefined);
+check("an edited title is capped at the reminder-title limit", reminderTitleOverride("x".repeat(500), "Follow up")?.length === REMINDER_TITLE_MAX);
 
 console.log("\nsmoke-capture-review-reducer: all checks passed");

@@ -34,6 +34,7 @@ import {
   opportunityKey,
   opportunityKindFor,
   reminderFactsFor,
+  reminderTitleOverride,
   saveTimeMergeTarget,
   setAsidePeople,
 } from "@/lib/capture/review-reducer";
@@ -490,7 +491,7 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
     .map((s) => {
       const o = overrides[s.key] ?? {};
       return {
-        title: s.title,
+        title: reminderTitleOverride(o.title, s.title) ?? s.title,
         description: s.description,
         rawDatePhrase: s.rawDatePhrase,
         yearInferred: s.yearInferred,

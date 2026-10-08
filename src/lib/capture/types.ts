@@ -253,7 +253,7 @@ export type CaptureDecision = {
 export type CaptureReminderChoices = {
   /** Keys of `result.suggestedReminders` that stay ticked. */
   checked: string[];
-  overrides: Record<string, { personName?: string | null; dueDateIso?: string }>;
+  overrides: Record<string, { personName?: string | null; dueDateIso?: string; title?: string }>;
 };
 
 /**
