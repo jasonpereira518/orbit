@@ -23,6 +23,7 @@ import {
   messageThreadToReviewPerson,
 } from "@/lib/imports/review-people";
 import {
+  acceptsNewDrop,
   advance,
   nextRunnable,
   queueFromDetection,
@@ -30,6 +31,7 @@ import {
   summarize,
   summaryMessage,
   type ImportQueueSnapshot,
+  type QueuePhase,
   type QueuedImport,
 } from "@/lib/imports/import-queue";
 import type {
@@ -38,6 +40,7 @@ import type {
   ImportTarget,
 } from "@/lib/imports/detect-import-file";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
+import { toast } from "@/lib/toast";
 
 /**
  * The store and driver behind a multi-file drop.
@@ -79,7 +82,7 @@ type QueueState = {
   /** Files the drop could not use, for the "Not imported" list. */
   ignored: { name: string; reason: string }[];
   truncated: boolean;
-  phase: "idle" | "previewing" | "review" | "running" | "done";
+  phase: QueuePhase;
   /** Set while the whole queue is being torn down by the Stop button. */
   stopping: boolean;
 };
@@ -209,7 +212,13 @@ function unrepeated(people: ReviewPerson[]): string[] {
 /**
  * Stage a drop: build the queue, then preview everything so one review screen can cover it.
  */
-export async function stageDrop(result: DetectionResult): Promise<void> {
+export async function stageDrop(result: DetectionResult): Promise<boolean> {
+  // Synchronous, before any await: two drops racing through detection both reach here, and
+  // only the first may stage. See `acceptsNewDrop`.
+  if (!acceptsNewDrop(state.phase)) {
+    toast.message(IMPORT_COPY.queueBusy);
+    return false;
+  }
   const items = queueFromDetection(result.staged);
   const payloads = new Map<
     string,
@@ -229,7 +238,7 @@ export async function stageDrop(result: DetectionResult): Promise<void> {
     phase: items.length ? "previewing" : "done",
     stopping: false,
   });
-  if (!items.length) return;
+  if (!items.length) return true;
 
   const byId = new Map(
     items.map(
@@ -284,6 +293,7 @@ export async function stageDrop(result: DetectionResult): Promise<void> {
       ? "review"
       : "done",
   });
+  return true;
 }
 
 function orderOf(a: Detected, b: Detected) {

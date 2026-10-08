@@ -49,7 +49,8 @@ import {
 } from "@/lib/use-window-file-drop";
 import { handOffChatFiles } from "@/lib/imports/chat-handoff";
 import { detectImportFiles, type DetectionResult } from "@/lib/imports/detect-import-file";
-import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
+import { acceptsNewDrop } from "@/lib/imports/import-queue";
+import { getImportQueueState, stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import {
   openDrivePicker,
@@ -437,6 +438,11 @@ export function ImportHub({
 
   const handleFiles = useCallback(
     async (files: DroppedFile[]) => {
+      // Also checked in `stageDrop`; here so a LinkedIn ZIP isn't read for seconds only to be refused.
+      if (!acceptsNewDrop(getImportQueueState().phase)) {
+        toast.message(IMPORT_COPY.queueBusy);
+        return;
+      }
       const capped = files.length > IMPORT_DROP_LIMITS.maxFiles;
       const kept = capped ? files.slice(0, IMPORT_DROP_LIMITS.maxFiles) : files;
       setScanning(true);
@@ -633,6 +639,7 @@ export function ImportHub({
         onFiles={(files) => void handleFiles(files)}
         chatImports={chatImports}
         busy={reading || scanning}
+        disabled={!acceptsNewDrop(queue.phase)}
         extraAction={
           driveConfigured ? (
             <Button
