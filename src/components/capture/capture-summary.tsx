@@ -28,7 +28,7 @@ export function suggestionsFromChoices(result: CaptureJobResult, choices: Captur
     const o = choices?.overrides?.[s.key];
     return {
       ...s,
-      title: o?.title ?? s.title,
+      title: reminderTitleOverride(o?.title, s.title) ?? s.title,
       dueDateIso: o?.dueDateIso ?? s.dueDateIso,
       checked: checked.has(s.key),
       personNameOverride: o?.personName === undefined ? null : o.personName,

@@ -142,5 +142,6 @@ check("an edited reminder title is trimmed", reminderTitleOverride("  Send the d
 check("a blank edit keeps the parsed title", reminderTitleOverride("   ", "Follow up") === undefined);
 check("editing back to the parsed title stores nothing", reminderTitleOverride("Follow up", "Follow up") === undefined);
 check("an edited title is capped at the reminder-title limit", reminderTitleOverride("x".repeat(500), "Follow up")?.length === REMINDER_TITLE_MAX);
+check("a non-string stored title is ignored, not thrown on", reminderTitleOverride(5 as unknown, "Follow up") === undefined && reminderTitleOverride({} as unknown, "Follow up") === undefined);
 
 console.log("\nsmoke-capture-review-reducer: all checks passed");

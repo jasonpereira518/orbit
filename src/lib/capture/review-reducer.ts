@@ -187,8 +187,9 @@ export const REMINDER_TITLE_MAX = 200;
  * trimmed and capped. Blank, or unchanged from the parsed title, means "no override".
  * The runner applies it too, because `decisions` is client-written JSON nothing validates.
  */
-export function reminderTitleOverride(edited: string | null | undefined, parsed: string): string | undefined {
-  const t = edited?.trim().slice(0, REMINDER_TITLE_MAX);
+export function reminderTitleOverride(edited: unknown, parsed: string): string | undefined {
+  if (typeof edited !== "string") return undefined;
+  const t = edited.trim().slice(0, REMINDER_TITLE_MAX);
   return t && t !== parsed ? t : undefined;
 }
 
