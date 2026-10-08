@@ -290,7 +290,10 @@ export function AppShell({
                 // illustrative arbitrary value in this very comment generated an invalid
                 // rule and took the entire stylesheet down with it.
                 "pr-[calc(1rem+var(--content-rail-gutter,0px))]",
-                "md:pr-[calc(2.5rem+var(--content-rail-gutter,0px))]",
+                // From md the bell and feedback rail floats over the right edge (2rem inset,
+                // 2.5rem wide), so the column always reserves 5rem there, or the contacts
+                // rail's gutter if that is larger.
+                "md:pr-[max(5rem,calc(2.5rem+var(--content-rail-gutter,0px)))]",
                 isViewportLocked
                   ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
                   : isSettings

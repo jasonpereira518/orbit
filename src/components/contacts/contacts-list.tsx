@@ -798,41 +798,45 @@ const ContactRow = memo(function ContactRow({
               closenessTier={c.closenessTier}
             />
 
-            {c.linkedinUrl ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Open ${c.fullName} on LinkedIn`}
-                className="tap-target relative shrink-0 text-muted-foreground"
-                onClick={(e: MouseEvent<HTMLButtonElement>) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  window.open(
-                    buildLinkedInUrl(c.linkedinUrl!),
-                    "_blank",
-                    "noopener,noreferrer"
-                  );
-                }}
-              >
-                <LinkedInIcon className="size-4" />
-              </Button>
-            ) : null}
+            {/* Phones give this width to the name: LinkedIn, follow-up and delete all
+                live on the contact page, one tap away. */}
+            <div className="hidden items-center gap-1 pointer-coarse:gap-4 md:flex">
+              {c.linkedinUrl ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Open ${c.fullName} on LinkedIn`}
+                  className="tap-target relative shrink-0 text-muted-foreground"
+                  onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.open(
+                      buildLinkedInUrl(c.linkedinUrl!),
+                      "_blank",
+                      "noopener,noreferrer"
+                    );
+                  }}
+                >
+                  <LinkedInIcon className="size-4" />
+                </Button>
+              ) : null}
 
-            <FollowUpRowButton
-              contactId={c.id}
-              contactName={c.preferredName || c.fullName}
-              nextFollowUpAt={c.nextFollowUpAt}
-              overdue={overdue}
-              scheduledLabel={scheduledLabel}
-              onOpenDraft={onOpenDraft}
-            />
+              <FollowUpRowButton
+                contactId={c.id}
+                contactName={c.preferredName || c.fullName}
+                nextFollowUpAt={c.nextFollowUpAt}
+                overdue={overdue}
+                scheduledLabel={scheduledLabel}
+                onOpenDraft={onOpenDraft}
+              />
 
-            <DeleteRowButton
-              name={c.fullName}
-              disabled={deleteDisabled}
-              onClick={() => onRequestDelete(c.id)}
-            />
+              <DeleteRowButton
+                name={c.fullName}
+                disabled={deleteDisabled}
+                onClick={() => onRequestDelete(c.id)}
+              />
+            </div>
           </div>
         </div>
       </div>
