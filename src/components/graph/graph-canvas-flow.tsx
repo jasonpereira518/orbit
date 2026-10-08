@@ -42,6 +42,7 @@ import {
   type StarDustData,
   type StarDustPoint,
 } from "@/components/graph/graph-nodes";
+import { createZoomSteps, ZoomStepsProvider } from "@/components/graph/zoom-steps";
 import type {
   GraphChartProps,
   GraphPayload,
@@ -769,6 +770,13 @@ function GraphCanvasInner({
     screenToFlowPosition,
   } = useReactFlow();
   const storeApi = useStoreApi();
+  // The one place the camera's zoom is read for every star and cluster name (see zoom-steps.ts);
+  // a step change, not each camera update, is what reaches them.
+  const zoomSteps = useMemo(() => createZoomSteps(storeApi.getState().transform[2]), [storeApi]);
+  useEffect(() => {
+    zoomSteps.set(storeApi.getState().transform[2]);
+    return storeApi.subscribe((s) => zoomSteps.set(s.transform[2]));
+  }, [storeApi, zoomSteps]);
   const prevClusterZoomKey = useRef("");
   const prevPeekZoomKey = useRef("");
 
@@ -2118,6 +2126,7 @@ function GraphCanvasInner({
 
   return (
     <>
+      <ZoomStepsProvider value={zoomSteps}>
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}
@@ -2176,6 +2185,7 @@ function GraphCanvasInner({
           outside the chart's composited layer — a cost on each frame of a zoom or pan for nothing.
         */}
       </ReactFlow>
+      </ZoomStepsProvider>
 
       {/*
         Three different empty skies, which used to be one. "Add contacts" is right only when
