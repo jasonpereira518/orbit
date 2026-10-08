@@ -141,3 +141,35 @@ export async function applyAiKeyChange(input: {
 
   return { embeddingReset };
 }
+
+/** Each provider's key column — a Record over AiProvider, so a new provider fails to compile here. */
+const KEY_COLUMN = {
+  gemini: "geminiApiKeyEncrypted",
+  openai: "openaiApiKeyEncrypted",
+  anthropic: "anthropicApiKeyEncrypted",
+  openrouter: "openrouterApiKeyEncrypted",
+} as const satisfies Record<AiProvider, string>;
+type KeyColumn = (typeof KEY_COLUMN)[AiProvider];
+
+/** The `user_settings` patch that clears one provider's key. */
+export function clearedKeyPatch(provider: AiProvider): Partial<Record<KeyColumn, null>> {
+  const patch: Partial<Record<KeyColumn, null>> = {};
+  patch[KEY_COLUMN[provider]] = null;
+  return patch;
+}
+
+/**
+ * Whether clearing `provider`'s key moves search to another embedding backend — the rule
+ * `clearApiKey` deletes vectors on, shared so Settings can warn before the click, not after.
+ */
+export function clearMovesEmbeddings(
+  provider: AiProvider,
+  settings: (Record<KeyColumn, string | null> & { aiProvider: string | null }) | null | undefined,
+  eligibility: ManagedEligibility,
+): boolean {
+  if (!settings) return false;
+  const selected = resolveAiProvider(settings.aiProvider);
+  const before = embeddingBackendFor(selected, settings, eligibility);
+  const after = embeddingBackendFor(selected, { ...settings, ...clearedKeyPatch(provider) }, eligibility);
+  return Boolean(before && after && before !== after);
+}
