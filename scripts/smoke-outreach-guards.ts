@@ -15,6 +15,7 @@ import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { outreachCampaigns, outreachMessages, outreachProspects, userSettings } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { isSurfaceHiddenError, setSurfaceComingSoon } from "../src/lib/surface-visibility";
 import {
   DEMO_PROSPECT_SEND_MESSAGE,
   PLACEHOLDER_ADDRESS_SEND_MESSAGE,
@@ -100,6 +101,12 @@ async function seedProspectWithMessage(
 run(async () => {
   await cleanup();
   await ensureUserSettings(USER);
+  console.log("A coming-soon Outreach refuses its actions, even for an admin without the preview cookie");
+  const closed = await sendOutreachMessageAction("00000000-0000-0000-0000-000000000000").then(
+    () => null, (err: unknown) => err);
+  check("send refuses while page.outreach is coming soon", isSurfaceHiddenError(closed), String(closed));
+  // page.outreach ships coming soon and its actions now refuse; this PGlite is throwaway (smoke/_env).
+  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", false);
   const db = await getDb();
 
   console.log("Sample search results are never pre-selected, and never at a real domain");

@@ -30,6 +30,7 @@ import {
 } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
 import {
   generateDueFollowUps as generateOutreachFollowUps,
   generateOutreachDrafts,
@@ -118,6 +119,8 @@ run(async () => {
   await cleanup();
   const db = await getDb();
   await ensureUserSettings(USER);
+  // page.outreach ships coming soon and its actions now refuse; this PGlite is throwaway (smoke/_env).
+  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", false);
   await db
     .update(userSettings)
     .set({ aiProvider: "openai", aiModel: "gpt-4o-mini", openaiApiKeyEncrypted: encrypt("fake-openai") })

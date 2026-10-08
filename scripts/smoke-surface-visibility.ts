@@ -12,11 +12,14 @@
  */
 import "./smoke/_env";
 
+import { readFileSync } from "node:fs";
 import { eq, like } from "drizzle-orm";
+import { callsIn } from "./smoke-connect-gates";
 import { getDb } from "../src/db";
 import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
 import {
   isSurfaceHiddenError,
+  requireReleasedSurface,
   requireVisibleSurface,
   isSurfaceLive,
   resolveSurfaceVisibility,
@@ -211,6 +214,39 @@ async function main() {
       dashboardOk = false;
     }
     check("an always-visible surface is never refused", dashboardOk);
+
+    console.log("\ncoming-soon closes actions, not just pages");
+    {
+      const SOON = [...DEFAULT_COMING_SOON_KEYS].find(
+        (k) => getSurface(k)?.kind === "page" && k !== target.key
+      )!;
+      let thrown: unknown = null;
+      try { await requireReleasedSurface(USER, SOON); } catch (err) { thrown = err; }
+      check("a coming-soon surface refuses its actions", isSurfaceHiddenError(thrown), SOON);
+      let older: unknown = null;
+      try { await requireVisibleSurface(USER, SOON); } catch (err) { older = err; }
+      check("while requireVisibleSurface still lets them through", older === null);
+      let always: unknown = null;
+      try { await requireReleasedSurface(USER, "page.dashboard"); } catch (err) { always = err; }
+      check("an always-visible surface is never refused", always === null);
+      let released: unknown = null;
+      try {
+        await setSurfaceComingSoon(ADMIN, SOON, false); // writes live:<SOON>, as /admin/product does
+        try { await requireReleasedSurface(USER, SOON); } catch (err) { released = err; }
+      } finally {
+        await setSurfaceComingSoon(ADMIN, SOON, true); // back to the code default
+      }
+      check("a live: override releases its actions too", released === null);
+
+      for (const file of ["src/actions/radar.ts", "src/actions/events.ts"]) {
+        check(`${file} never uses the visibility-only guard`, !/requireUserForSurface\(/.test(readFileSync(file, "utf8")));
+      }
+      check("requireOutreachUser requires a released surface",
+        callsIn("src/lib/plan-guards.ts", "requireOutreachUser").has("requireReleasedSurface"));
+      for (const fn of ["connectLuma", "connectEventFeed", "setGmailEventScan", "startEventbriteOAuth"]) {
+        check(`${fn} requires Events to be released`, callsIn("src/actions/events.ts", fn).has("requireReleasedSurface"));
+      }
+    }
 
     // The admin exemption. ADMIN_USER_IDS is read at call time, not module scope, which is
     // what makes this settable here at all. No request context exists, so `isViewingAsUser`
