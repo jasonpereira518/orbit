@@ -596,7 +596,9 @@ run(async () => {
           bucket: "today",
           reasons: [{ code: "inbound_unanswered", label: "They messaged you and haven’t heard back", points: 60 }],
           evidence: [],
-          expiresAt: ahead(7),
+          // The real clock, not the fixed NOW: listPendingRecommendations compares against
+          // the database's now(), so a card expiring at NOW+7d stopped being "pending" on Oct 8.
+          expiresAt: new Date(Date.now() + 7 * DAY),
           inputsHash: hash,
         })
         .returning()
