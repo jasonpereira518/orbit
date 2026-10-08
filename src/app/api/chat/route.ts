@@ -312,12 +312,13 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
+        // The question was written before the model ran (it carries the attached people and,
+        // on a regenerate, the slot). Nothing answered it — a failure or a Stop alike — so it
+        // does not stay. Before the client-gone return: a Stop is exactly when it is gone.
+        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
         // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
         // an error of ours either — the provider call was aborted on purpose.
         if (request.signal.aborted) return;
-        // The question was written before the model ran (it carries the attached people and,
-        // on a regenerate, the slot). Nothing answered it, so it does not stay.
-        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
         // The status line is already sent, so this reaches the client as an event. Report it:
         // a mid-stream failure used to leave no trace outside the person's screen.
         send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });

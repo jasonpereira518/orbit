@@ -48,6 +48,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-waitlist-demo-fidelity": "pure",
   "smoke-offline-queue": "pure",
   "smoke-chat-thread-prefetch": "pure",
+  "smoke-chat-answer-landed": "pure",
   "smoke-render-stamp-pages": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-oauth-return": "pure",
