@@ -176,7 +176,7 @@ export function FollowUpDraftComposer({
           disabled={sending || marking}
           onClick={() => onMarkSent(markChannel)}
         >
-          {marking ? "Saving…" : "Mark sent"}
+          {marking ? "Saving…" : markChannel === "linkedin_message" ? "Mark sent on LinkedIn" : "Mark sent"}
         </Button>
       </div>
     </div>

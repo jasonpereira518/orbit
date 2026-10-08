@@ -17,7 +17,7 @@ import type { AiAccess } from "@/lib/ai-access";
 import { guardModelOutput } from "@/lib/ai-security";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import { reportUnlessQuiet } from "@/lib/report-error";
-import { KIND_LABELS, leadReason, type RadarDraft, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
+import { draftIntent, type RadarDraft, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
 import { deadlineReached } from "@/lib/time-budget";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -45,12 +45,6 @@ type DraftTarget = {
 export function draftChannel(target: Pick<DraftTarget, "reasons" | "hasEmail">): RadarDraft["channel"] {
   if (target.reasons.some((r) => LINKEDIN_CODES.has(r.code))) return "linkedin";
   return target.hasEmail ? "email" : "linkedin";
-}
-
-/** What the draft is for, in the card's own words, so it is about the reason the card exists. */
-export function draftIntent(target: Pick<DraftTarget, "kind" | "reasons">): string {
-  const lead = leadReason(target.reasons);
-  return lead ? `${KIND_LABELS[target.kind]}: ${lead.label}` : KIND_LABELS[target.kind];
 }
 
 async function loadDraftTargets(userId: string): Promise<DraftTarget[]> {

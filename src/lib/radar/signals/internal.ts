@@ -17,6 +17,7 @@ import { attendedEventFilter } from "@/lib/events/store";
 import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { JOB_SIGNAL_SUGGESTION_TYPE } from "@/lib/jobs/matcher";
 import { jobChangeSentence } from "@/lib/contact-profile-format";
+import { isCongratsWorthy } from "@/lib/job-changes";
 import { OPEN_OPPORTUNITY_STATUSES } from "@/lib/opportunity-kinds";
 import { LINKEDIN_QUIET_MAX_DAYS } from "@/lib/outreach-thresholds";
 import { RADAR_WINDOWS, type RadarTier } from "@/lib/radar/score";
@@ -133,7 +134,8 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
     // Job moves the work-history check logged (`recordJobChanges`, lib/job-changes.ts): the
     // newest per contact in the window. Read, never re-derived, and already sanitized there.
     db.execute(sql`
-      SELECT DISTINCT ON (contact_id) contact_id, kind, from_org, from_title, to_org, to_title, detected_at
+      SELECT DISTINCT ON (contact_id) contact_id, kind, from_org, from_title, to_org, to_title,
+             started_year, started_month, detected_at
         FROM contact_career_moves
        WHERE user_id = ${userId}
          AND detected_at >= ${daysBefore(now, RADAR_WINDOWS.jobChangeMax)}
@@ -205,10 +207,15 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
     from_title: string | null;
     to_org: string | null;
     to_title: string | null;
+    started_year: number | null;
+    started_month: number | null;
     detected_at: string | Date;
   }>(moves)) {
     const at = asDate(r.detected_at);
     if (!at) continue;
+    // A new role that began long before the check found it is history, not news: no card
+    // that reads as "just joined". A departure stays a plain heads-up.
+    if (r.kind !== "left" && !isCongratsWorthy({ kind: r.kind, startedYear: r.started_year, startedMonth: r.started_month }, now)) continue;
     const text = jobChangeSentence({
       kind: r.kind,
       fromOrg: r.from_org,

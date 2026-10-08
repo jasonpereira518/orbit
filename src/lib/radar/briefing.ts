@@ -3,10 +3,10 @@
  * are news, and how the briefing summarises a list. No database, so the smoke pins it and the
  * dashboard and `/radar` agree on what "changed" means.
  */
-import { leadReason, type RadarDraft, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
+import { JOB_LEFT_CODE, JOB_MOVE_CODE, leadReason, type RadarDraft, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
 
 /** Reasons that come from outside Orbit: a job move, a headline, a post. */
-export const SIGNAL_CODES: ReadonlySet<string> = new Set(["job_change", "company_news", "social_post"]);
+export const SIGNAL_CODES: ReadonlySet<string> = new Set([JOB_MOVE_CODE, JOB_LEFT_CODE, "company_news", "social_post"]);
 /** People the dashboard's briefing shows; the rest are a count and a link. */
 export const BRIEFING_TOP = 3;
 export const WHAT_CHANGED_MAX = 4;

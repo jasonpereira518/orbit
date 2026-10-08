@@ -17,6 +17,7 @@ import { isLoggedTouch } from "../src/lib/interaction-provenance";
 import {
   detectJobChanges,
   getRecentMoveLines,
+  isCongratsWorthy,
   JOB_CHANGE_SUGGESTION_TYPE,
   recentMoveAsFieldChanges,
   type JobBaseline,
@@ -106,6 +107,15 @@ function detection() {
 
   const again = detectJobChanges(baseline([snap("Stripe")]), [role("Ramp", { title: "Staff PM", startYear: 2026 })]);
   check("the same move detected twice has the same dedupe key", again[0]?.dedupeKey === joined[0]?.dedupeKey);
+
+  const oct = new Date(2026, 9, 7);
+  const move = (kind: "joined" | "left" | "title_change", startedYear: number | null, startedMonth: number | null) => ({ kind, startedYear, startedMonth });
+  check("a new job two months old is worth a congrats", isCongratsWorthy(move("joined", 2026, 8), oct));
+  check("…a new title too", isCongratsWorthy(move("title_change", 2026, 8), oct));
+  check("seven months old is history", !isCongratsWorthy(move("joined", 2026, 3), oct));
+  check("an unknown start is given the benefit of the doubt", isCongratsWorthy(move("joined", null, null), oct));
+  check("a year with no month reads as December of it", isCongratsWorthy(move("joined", 2026, null), oct));
+  check("a departure never is", !isCongratsWorthy(move("left", 2026, 9), oct));
 }
 
 async function recording() {

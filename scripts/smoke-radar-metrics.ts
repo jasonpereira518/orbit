@@ -129,21 +129,31 @@ async function main() {
     const tooLate = await card({ contactId: late, status: "accepted", actedAt: ago(25) });
     const onlyDerived = await card({ contactId: derived, status: "accepted", actedAt: ago(10) });
     const notAccepted = await card({ contactId: dismissedContact, status: "dismissed", actedAt: ago(10) });
+    const ownSend = await person("Own-send Olu");
+    const replier = await person("Replied Rae");
+    const onlyMine = await card({ contactId: ownSend, status: "accepted", actedAt: ago(10) });
+    const replied = await card({ contactId: replier, status: "accepted", actedAt: ago(10) });
     await db.insert(interactions).values([
       { userId: USER, contactId: talk, interactionType: "meeting", interactionDate: ago(6) },
       { userId: USER, contactId: talk, interactionType: "note", interactionDate: ago(4) },
       { userId: USER, contactId: late, interactionType: "meeting", interactionDate: ago(2) },
       { userId: USER, contactId: derived, interactionType: "meeting", interactionDate: ago(6), source: "ai_derived" },
       { userId: USER, contactId: dismissedContact, interactionType: "meeting", interactionDate: ago(6) },
+      // Acting on the card (an email you sent) is not its outcome; their reply is.
+      { userId: USER, contactId: ownSend, interactionType: "email", direction: "out", interactionDate: ago(9) },
+      { userId: USER, contactId: replier, interactionType: "email", direction: "out", interactionDate: ago(9) },
+      { userId: USER, contactId: replier, interactionType: "email", direction: "in", interactionDate: ago(7) },
     ]);
     const converted = await detectRadarOutcomes(USER, NOW);
     const read = async (id: string) => (await db.select().from(recommendations).where(eq(recommendations.id, id)))[0];
-    check("one card converted", converted === 1, `got ${converted}`);
+    check("two cards converted", converted === 2, `got ${converted}`);
     check("a conversation within 14 days of the accept is an outcome, dated to the first one",
       (await read(talked.id))?.outcomeAt?.getTime() === ago(6).getTime());
     check("one after the window is not", (await read(tooLate.id))?.outcomeAt === null);
     check("an AI-derived row is not a conversation", (await read(onlyDerived.id))?.outcomeAt === null);
     check("a dismissed card has no outcome", (await read(notAccepted.id))?.outcomeAt === null);
+    check("your own send is not the outcome", (await read(onlyMine.id))?.outcomeAt === null);
+    check("their reply is, dated to the reply", (await read(replied.id))?.outcomeAt?.getTime() === ago(7).getTime());
     check("a second pass converts nothing new", (await detectRadarOutcomes(USER, NOW)) === 0);
     for (const id of [talk, late, derived, dismissedContact]) await db.delete(contacts).where(eq(contacts.id, id));
   }
