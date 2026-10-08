@@ -13,8 +13,11 @@ import { requireReleasedSurface, requireVisibleSurface } from "@/lib/surface-vis
  * WHICH ACTION MODULES ARE GATED ON A SURFACE, AND WHY NOT THE REST.
  *
  * Only modules whose every export belongs to exactly one hideable page are gated:
- * knowledge, graph, chat, outreach, recruiters, meetings (`page.capture`, via
- * `requireMeetingsUser` — note this is `meetings.ts`, not `capture.ts` itself; see below).
+ * knowledge, graph, chat, recruiters, meetings (`page.capture`, via `requireMeetingsUser` —
+ * note this is `meetings.ts`, not `capture.ts` itself; see below) use the visibility-only
+ * guard (hidden refuses). Radar, events and outreach ship closed, so their actions use
+ * `requireUserForReleasedSurface` / `requireReleasedSurface`, which refuse a coming-soon
+ * page as well as a hidden one.
  * The rest were examined and deliberately left alone, because their actions are
  * load-bearing for surfaces that stay visible:
  *

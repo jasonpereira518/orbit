@@ -235,7 +235,7 @@ run(async () => {
   }));
   check("the single send refuses an already-sent message",
     resend.ok === false && resend.error === ALREADY_SENT_MESSAGE, JSON.stringify(resend));
-  const bulkResend = await outsideRequest(
+  await outsideRequest(
     bulkSendOutreach({ campaignId: campaign.id, messageIds: [delivered.message.id], ignoreWarnings: true }));
   // The action ends in revalidatePath, which throws outside a request, so its return value
   // is unreadable here; the row itself shows neither a resend nor a "failed" mark.

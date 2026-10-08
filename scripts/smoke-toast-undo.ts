@@ -442,6 +442,15 @@ async function main() {
       cleared.snapshot?.completions.length === 1 && cleared.snapshot.completions[0].reminderId === reminder.id,
       JSON.stringify(cleared.snapshot));
 
+    // Forged BEFORE the real Undo: afterwards the guards would refuse it anyway (nothing left
+    // to restore), so only here does the check prove the snapshot itself is validated.
+    const forged = await undoClearContactFollowUpAction({ ...cleared.snapshot, previousFollowUpStatus: "exploded" });
+    check("a forged clear snapshot is refused", forged.restored === false);
+    const rForged = await db.query.reminders.findFirst({ where: eq(reminders.id, reminder.id) });
+    const cForged = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    check("a refused forged snapshot changes nothing",
+      rForged?.status === "done" && cForged?.nextFollowUpAt == null, JSON.stringify({ r: rForged?.status, c: cForged?.nextFollowUpAt }));
+
     const result = await undoClearContactFollowUpAction(cleared.snapshot);
     check("Undo reports it restored", result.restored);
     const r = await db.query.reminders.findFirst({ where: eq(reminders.id, reminder.id) });
@@ -452,8 +461,6 @@ async function main() {
 
     const again = await undoClearContactFollowUpAction(cleared.snapshot);
     check("a second Undo finds nothing to restore", again.restored === false);
-    const forged = await undoClearContactFollowUpAction({ ...cleared.snapshot, previousFollowUpStatus: "exploded" });
-    check("a forged clear snapshot is refused", forged.restored === false);
   }
 
   /* ------------------------------------------------ forged snapshots are refused */

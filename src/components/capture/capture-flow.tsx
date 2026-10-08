@@ -378,15 +378,18 @@ export function CaptureFlow({
   /**
    * Try again on an extraction failure: re-queue the SAME row (`queueCaptureJobRow` accepts
    * `failed`) with what is in the box now — or, when the box is empty (a meeting, or a
-   * failure seen from another tab), the text the job still holds. Never empty: the action
-   * writes `text || null` over `input_text`.
+   * failure seen from another tab), the text the job still holds. Blank text is refused here
+   * (and the button is hidden): the action writes `text || null` over `input_text`, so a
+   * blank retry would wipe the stored text and queue nothing to extract.
    */
   const retryExtraction = useCallback(() => {
     if (!job || job.result) return;
     const ingest = job.sourceKind === "voice" ? voice : messy;
     const fromBox = Boolean(ingest.notes.trim());
+    const text = fromBox ? ingest.notes : captureJobText(job);
+    if (!text.trim()) return;
     void startExtraction({
-      text: fromBox ? ingest.notes : captureJobText(job),
+      text,
       hints: fromBox ? ingest.hints : null, // null keeps the row's stored hints
       jobId: job.id,
       sourceKind: job.sourceKind,
@@ -394,6 +397,9 @@ export function CaptureFlow({
       mentionPicks: fromBox ? ingest.mentionPicks : job.mentionPicks,
     });
   }, [job, messy, voice, startExtraction]);
+
+  const retryBox = job?.sourceKind === "voice" ? voice : messy;
+  const canRetry = Boolean(job && !job.result && (retryBox.notes.trim() || captureJobText(job).trim()));
 
   const save = useCallback(async (jobId: string) => {
     const res = await saveCaptureJob(jobId);
@@ -476,11 +482,11 @@ export function CaptureFlow({
               <button type="button" className="font-medium text-primary hover:underline" onClick={() => void save(job.id)}>
                 Try saving again
               </button>
-            ) : (
+            ) : canRetry ? (
               <button type="button" className="font-medium text-primary hover:underline" onClick={retryExtraction}>
                 Try again
               </button>
-            )}
+            ) : null}
             {/* An extraction failure dismisses like Stop: the job goes, the notes stay. */}
             <button type="button" className="font-medium text-muted-foreground hover:underline" onClick={job.result ? () => void startOver() : stopExtraction}>
               Dismiss
