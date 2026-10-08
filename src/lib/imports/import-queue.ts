@@ -129,6 +129,10 @@ export type ImportQueueSnapshot = {
 export const TARGET_LABEL: Record<Exclude<ImportTarget, "unknown">, string> = {
   linkedin_connections: "LinkedIn connections",
   linkedin_messages: "LinkedIn messages",
+  linkedin_profile: "LinkedIn profile",
+  linkedin_positions: "LinkedIn current role",
+  linkedin_skills: "LinkedIn skills",
+  linkedin_alerts: "LinkedIn job alerts",
   contacts_file: "Contacts",
   calendar_ics: "Calendar",
   calendar_csv: "Calendar",
@@ -146,6 +150,10 @@ export const TARGET_LABEL_INLINE: Record<
 > = {
   linkedin_connections: "LinkedIn connections",
   linkedin_messages: "LinkedIn messages",
+  linkedin_profile: "LinkedIn profile",
+  linkedin_positions: "current role",
+  linkedin_skills: "skills",
+  linkedin_alerts: "job alerts",
   contacts_file: "contacts",
   calendar_ics: "calendar",
   calendar_csv: "calendar",

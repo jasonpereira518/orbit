@@ -57,6 +57,9 @@ export function SourceChip({ messageId, id, number }: { messageId: string; id: s
           <p className="text-xs text-muted-foreground">That note has been removed.</p>
         ) : (
           <div className="flex flex-col gap-1.5 text-xs">
+            {snippet.kind === "meeting" ? (
+              <p className="font-medium text-foreground">{snippet.title}</p>
+            ) : (
             <div className="flex items-center gap-2">
               {snippet.contactId && (
                 <ContactAvatar
@@ -71,12 +74,19 @@ export function SourceChip({ messageId, id, number }: { messageId: string; id: s
                 {snippet.contactName ?? "Not tied to a contact"}
               </span>
             </div>
+            )}
+            {snippet.kind === "meeting" && <p className="text-muted-foreground">{snippet.date} · Recorded meeting</p>}
             {snippet.kind === "interaction" && (
               <p className="text-muted-foreground">
                 {snippet.date} · {interactionTypeLabel(snippet.interactionType)}
               </p>
             )}
             {snippet.snippet && <p className="leading-relaxed text-foreground">{snippet.snippet}</p>}
+            {snippet.kind === "meeting" && (
+              <Link href={`/meetings/${snippet.meetingId}`} className="mt-0.5 text-primary underline underline-offset-2">
+                Open meeting
+              </Link>
+            )}
             {snippet.contactId && (
               <Link
                 href={

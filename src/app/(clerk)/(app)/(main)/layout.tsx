@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { ComingSoon } from "@/components/coming-soon/coming-soon";
+import { SurfaceGate } from "@/components/coming-soon/surface-gate";
 import { SurfaceUnavailable } from "@/components/surface-unavailable";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
@@ -57,12 +58,27 @@ export default async function MainAppLayout({
   const surface = surfaceForPathname(pathname);
   if (surface) {
     const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+    // Wrapped, never returned bare: this layout is NOT re-run when the user clicks to
+    // another route in the group, so a bare `return <ComingSoon/>` stays on screen forever
+    // and hides every page they navigate to. `SurfaceGate` lets it step aside on the client
+    // as soon as the URL leaves the surface.
     if (hidden.has(surface.key)) {
-      return <SurfaceUnavailable label={surface.label} />;
+      return (
+        <SurfaceGate surfaceKey={surface.key} blocked={<SurfaceUnavailable label={surface.label} />}>
+          {children}
+        </SurfaceGate>
+      );
     }
     // After `hidden` on purpose: a page an operator switched off is off, announced or not.
     if (comingSoon.has(surface.key)) {
-      return <ComingSoon surfaceKey={surface.key} label={surface.label} />;
+      return (
+        <SurfaceGate
+          surfaceKey={surface.key}
+          blocked={<ComingSoon surfaceKey={surface.key} label={surface.label} />}
+        >
+          {children}
+        </SurfaceGate>
+      );
     }
   }
 

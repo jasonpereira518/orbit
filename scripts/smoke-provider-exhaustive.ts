@@ -230,13 +230,13 @@ const ALLOWLIST: Record<string, string> = {
     "\"gemini\" — Anthropic has no speech-to-text and OpenRouter transcription is " +
     "deliberately not wired up (multipart body, no valid model slug); the two are " +
     "exhaustive for every grant transcribeAudioWithAI can receive today.",
-  "src/lib/ai.ts:2236": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:592.)",
+  "src/lib/ai.ts:2239": OPENROUTER_ROUTED_AWAY + " (streamText's gemini arm; see ai.ts:592.)",
   // webSearchJson: four explicit arms in order — gemini, openrouter, openai, then anthropic
   // as the fallthrough. OpenRouter has its own arm (its search is a request plugin, not the
   // Responses API tool the openai arm uses), so neither literal below can receive it.
-  "src/lib/ai.ts:2694": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
+  "src/lib/ai.ts:2705": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
     "arm follows it, so the four arms are exhaustive over AiProvider.",
-  "src/lib/ai.ts:2747": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
+  "src/lib/ai.ts:2758": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
     "above (plugin-based search, not the Responses API), so it never reaches this one.",
   "src/lib/errors.ts:37": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
@@ -277,13 +277,13 @@ const ALLOWLIST: Record<string, string> = {
     "Action despite taking a caller-supplied userId.)",
   "src/lib/ai-settings-write.ts:101": "same independent-ternary shape as line 97 — see that entry.",
   "src/lib/ai-settings-write.ts:105": "same independent-ternary shape as line 97 — see that entry.",
-  "src/actions/settings.ts:277": "clearApiKey's `patch` ternary — the final `else` arm is " +
+  "src/actions/settings.ts:283": "clearApiKey's `patch` ternary — the final `else` arm is " +
     "the literal `{ openrouterApiKeyEncrypted: null }`, so the three narrowed comparisons " +
     "plus that default are exhaustive over AiProvider. (Line shifted again by Task 5's fix " +
     "round 1, which moved applyAiKeyChange and its helpers out of this file entirely, and by " +
     "two more when getSettings gained radarDigestEnabled — was line 241, then 339, then 251, originally 314 — the merge of main moved it again.)",
-  "src/actions/settings.ts:279": "same ternary as line 277 — see that entry.",
-  "src/actions/settings.ts:281": "same ternary as line 277 — see that entry.",
+  "src/actions/settings.ts:279": "same ternary as line 283 — see that entry.",
+  "src/actions/settings.ts:281": "same ternary as line 283 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
   "src/components/settings/ai-settings.tsx:289": "the standalone \"Anthropic has no " +

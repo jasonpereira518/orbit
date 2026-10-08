@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useEtaCountdown } from "@/lib/use-eta-countdown";
 import { toast } from "@/lib/toast";
+import { MeetingNudgeCard, useMeetingNudgeCard } from "@/components/capture/meeting-nudge";
+import { MeetingWidget } from "@/components/capture/meeting-widget";
+import { useMeetingFlow } from "@/components/capture/meeting-session";
 import {
   dismissBackgroundJob,
   hideBackgroundJobFromWidget,
@@ -29,6 +32,11 @@ export function GlobalJobProgressBar() {
     (job) => job.kind !== "avatar-backfill" && !job.hiddenFromWidget
   );
   const stackRef = useRef<HTMLDivElement | null>(null);
+  // A meeting recording on another page lives in this same corner — see `MeetingWidget`.
+  const showMeeting = useMeetingFlow()?.widgetVisible ?? false;
+  // The offer to record a meeting that is about to start — see `MeetingNudgeCard`.
+  const nudge = useMeetingNudgeCard();
+  const showNudge = nudge !== null;
 
   // Publish how much of the corner this widget occupies so the toast stack can
   // sit above it instead of painting over it. On <html>, because the toaster is
@@ -56,9 +64,9 @@ export function GlobalJobProgressBar() {
       observer.disconnect();
       root.style.setProperty("--orbit-job-stack-height", "0px");
     };
-  }, [jobs.length]);
+  }, [jobs.length, showMeeting, showNudge]);
 
-  if (jobs.length === 0) return null;
+  if (jobs.length === 0 && !showMeeting && !showNudge) return null;
 
   return (
     <div
@@ -67,6 +75,8 @@ export function GlobalJobProgressBar() {
       role="status"
       aria-live="polite"
     >
+      {nudge && <MeetingNudgeCard snap={nudge} />}
+      {showMeeting && <MeetingWidget />}
       {jobs.map((job) => (
         <JobRow key={job.id} job={job} />
       ))}

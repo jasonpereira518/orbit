@@ -2139,7 +2139,10 @@ export function buildChatPrompt({
     ? `Passages from your notes found for this question:\n${notePassages
         .map(
           (p) =>
-            `- [${ledger.mint({ kind: "interaction", sourceId: p.sourceId, contactId: p.contactId, date: p.date })}] ${p.date ?? "undated"}: ${sanitizeProfileLine(p.snippet)}`
+            p.kind === "meeting"
+              ? // A recorded call: said at some point in it, by someone the transcript does not name.
+                `- [${ledger.mint({ kind: "meeting", sourceId: p.sourceId, date: p.date, startMs: p.startMs ?? null })}] ${p.date ?? "undated"}, in the recorded meeting “${sanitizeProfileLine(p.title ?? "Untitled")}” (speakers are not named): ${sanitizeProfileLine(p.snippet)}`
+              : `- [${ledger.mint({ kind: "interaction", sourceId: p.sourceId, contactId: p.contactId, date: p.date })}] ${p.date ?? "undated"}: ${sanitizeProfileLine(p.snippet)}`
         )
         .join("\n")}\n\n`
     : "";
@@ -2577,7 +2580,15 @@ export async function chatWithNetwork(
    * Citable passages the research step found via `search_notes` — one interaction each, so
    * each can carry its own `[eN]` marker unlike the rest of `evidence`. See `@/lib/chat-evidence`.
    */
-  notePassages: Array<{ sourceId: string; contactId: string | null; date: string | null; snippet: string }> = [],
+  notePassages: Array<{
+    sourceId: string;
+    contactId: string | null;
+    date: string | null;
+    snippet: string;
+    kind?: "interaction" | "meeting";
+    startMs?: number | null;
+    title?: string | null;
+  }> = [],
   /** The user's writing notes. Loaded by the caller (`ChatContext.writingInstructions`). */
   writingPreferences: string | null = null,
 ) {

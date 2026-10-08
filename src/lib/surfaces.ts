@@ -94,6 +94,13 @@ const PAGES: Surface[] = [
     href: "/capture",
   },
   {
+    key: "page.meetings",
+    kind: "page",
+    label: "Meetings",
+    description: "Past recorded meetings, searchable.",
+    href: "/meetings",
+  },
+  {
     key: "page.imports",
     kind: "page",
     label: "Imports",

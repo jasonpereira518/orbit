@@ -242,4 +242,27 @@ for (const rate of [48_000, 44_100]) {
   );
 }
 
+// ── Pause that keeps the share: flush, then a fresh chunker at the meeting's total ─────
+console.log("\npause and resume");
+{
+  const first = new MeetingChunker();
+  const early = feed(first, tone(2_500));
+  const tail = first.flush();
+  check("pause: the partial chunk is emitted, not lost", early.length === 0 && tail !== null && tail.samples.length === msToSamples(2_500));
+  check("pause: flushing again emits nothing (a second Stop while paused)", first.flush() === null);
+  const pausedAt = first.elapsedMs;
+  check("pause: the clock stops at what was recorded", Math.abs(pausedAt - 2_500) < 1, String(pausedAt));
+
+  // Resume: a new chunker, its timeline starting where the meeting left off.
+  const second = new MeetingChunker({ startOffsetMs: pausedAt });
+  feed(second, tone(1_000));
+  const resumed = second.flush()!;
+  check(
+    "resume: the next chunk starts where the paused one ended, not at zero",
+    Math.abs(resumed.startMs - tail!.endMs) <= 1,
+    `${resumed.startMs} vs ${tail!.endMs}`
+  );
+  check("resume: its own clock restarts, the meeting's total is offset + elapsed", Math.abs(second.elapsedMs - 1_000) < 1);
+}
+
 console.log("\nsmoke-meeting-chunking: all checks passed");

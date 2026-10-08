@@ -46,7 +46,18 @@ function input(over: Partial<RelevanceInput> = {}): RelevanceInput {
   };
 }
 
+function focusChecks() {
+  console.log("\nskills and watched roles (focus fit)");
+  const base = scoreAttendee(input());
+  const fit = scoreAttendee(input({ focusFit: 1 }));
+  check("a full fit adds exactly its weight", fit.score - base.score === RELEVANCE_WEIGHTS.focusMatch, `${fit.score} vs ${base.score}`);
+  check("and says why, in plain words", fit.reasons.some((r) => r.code === "focus_match" && /skills/.test(r.label)));
+  check("no fit, or an absent one, changes nothing", scoreAttendee(input({ focusFit: 0 })).score === base.score);
+  check("it is clamped, not unbounded", scoreAttendee(input({ focusFit: 9 })).score === fit.score);
+}
+
 function main() {
+  focusChecks();
   console.log("\nreading a job title");
   {
     // Recruiter is checked first on purpose: "Technical Recruiting Lead" is a recruiter, and

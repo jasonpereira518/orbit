@@ -89,6 +89,8 @@ export const RADAR_WEIGHTS = {
   statedClose: 4,
   targetCompany: { 1: 14, 2: 10, 3: 5 },
   goalFit: 10,
+  // skills and watched job titles from the LinkedIn export; smaller than goals, which the user typed
+  focusFit: 8,
   // what the person already did or has
   recentTouchPenalty: -25,
   dismissedPenalty: -30,
@@ -160,6 +162,8 @@ export type RadarContact = {
   targetPriority: 1 | 2 | 3 | null;
   /** 0..1 from `goalRelevanceComponent`. */
   goalFit: number;
+  /** 0..1 from `focusFitComponent` (skills + watched job titles). Absent means 0. */
+  focusFit?: number;
   /**
    * Whether the closeness score rests on real evidence (`closeness_evidence` at or above
    * `EVIDENCE_FLOOR`). Every import stamps `last_interaction_at`, so without this a month-old
@@ -511,6 +515,10 @@ export function scoreContactKinds(
     }
     const goalPoints = Math.round(W.goalFit * Math.min(1, Math.max(0, contact.goalFit)));
     if (goalPoints > 0) reasons.push({ code: "goal_match", label: "Fits what you’re working on", points: goalPoints });
+    const focusPoints = Math.round(W.focusFit * Math.min(1, Math.max(0, contact.focusFit ?? 0)));
+    if (focusPoints > 0) {
+      reasons.push({ code: "focus_match", label: "Fits your skills and the roles you’re watching", points: focusPoints });
+    }
     if (touchedRecently && (kind === "reach_out" || kind === "reconnect")) {
       reasons.push({ code: "touched_recently", label: "You spoke recently", points: W.recentTouchPenalty });
     }

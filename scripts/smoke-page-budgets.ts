@@ -266,7 +266,8 @@ async function main() {
   // posts read (recent `contact_signals` posts, one windowed read, LIMIT 200). The nightly
   // post check itself runs on `schedule` runs only and is not counted here.
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
-  check("radar run issues ≤ 26 statements", radarRunCount <= 26, `got ${radarRunCount}`);
+  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
+  check("radar run issues ≤ 27 statements", radarRunCount <= 27, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),

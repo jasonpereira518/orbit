@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * The Meeting tab: the existing recorder machine, handing its analysis to the capture
- * flow instead of mounting the old review panel.
+ * The Meeting tab: a view of the recorder in `MeetingSessionProvider`. The capture flow
+ * collects the finished analysis from that provider (`claimAnalysis`).
  */
 import { useSyncExternalStore } from "react";
 import { MeetingCapturePanel } from "@/components/capture/meeting-capture-panel";
-import type { MeetingAnalysis } from "@/actions/meetings";
 import { LockedFeature } from "@/components/locked-feature";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { isMeetingCaptureSupported, isMicMeetingCaptureSupported } from "@/lib/use-meeting-recorder";
@@ -41,8 +40,6 @@ export function MeetingCaptureTab({
   canTranscribe,
   canUseMeetings,
   meetingsDeniedMessage,
-  onBusyChange,
-  onAnalyzed,
   panelId,
   tabId,
 }: {
@@ -55,8 +52,6 @@ export function MeetingCaptureTab({
   /** `FEATURE_DENIAL.meetings`, read on the server and threaded down — this is a client
    * component and cannot import `@/lib/entitlements` (it reaches the database). */
   meetingsDeniedMessage: string;
-  onBusyChange: (busy: boolean) => void;
-  onAnalyzed: (analysis: MeetingAnalysis, sessionId: string) => void;
   panelId: string;
   tabId: string;
 }) {
@@ -72,8 +67,6 @@ export function MeetingCaptureTab({
           canTranscribe={canTranscribe}
           captureSupported={supported}
           micSupported={micSupported}
-          onBusyChange={onBusyChange}
-          onAnalyzed={onAnalyzed}
         />
       ) : (
         <LockedFeature

@@ -71,6 +71,7 @@ const ROUTE_AREAS: Array<[prefix: string, area: FeedbackArea]> = [
   ["/dashboard", "dashboard"],
   ["/contacts", "contacts"],
   ["/capture", "capture"],
+  ["/meetings", "capture"],
   ["/imports", "import"],
   ["/reminders", "reminders"],
   ["/radar", "radar"],
