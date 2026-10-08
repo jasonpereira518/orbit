@@ -41,6 +41,7 @@ import {
 import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-check";
 import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
 import { demoAccountReason } from "@/lib/demo-account";
+import { normalizeSocialLinks } from "@/lib/safe-links";
 import {
   applyAiKeyChange,
   clearedKeyPatch, clearMovesEmbeddings,
@@ -428,14 +429,12 @@ export async function saveSocialLinks(input: {
   website?: string;
 }) {
   const userId = await requireUserId();
+  // Checked here, not only in the field: the stored value becomes a link on the sun's
+  // inspect panel, and a Server Action is reachable without this form.
+  const normalized = normalizeSocialLinks(input);
+  if (!normalized.ok) return normalized;
+  const socialLinks = normalized.links;
   const db = await getDb();
-
-  const socialLinks = {
-    linkedin: input.linkedin?.trim() || undefined,
-    twitter: input.twitter?.trim() || undefined,
-    github: input.github?.trim() || undefined,
-    website: input.website?.trim() || undefined,
-  };
 
   await db
     .insert(userSettings)
@@ -447,7 +446,7 @@ export async function saveSocialLinks(input: {
 
   revalidatePath("/settings");
   revalidatePath("/graph");
-  return { ok: true };
+  return { ok: true as const, links: socialLinks };
 }
 
 
