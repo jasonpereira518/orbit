@@ -66,6 +66,9 @@ async function cleanup() {
   // Prospects and messages cascade from the campaign.
   await db.delete(outreachCampaigns).where(inArray(outreachCampaigns.userId, [USER, OTHER]));
   await db.delete(userSettings).where(inArray(userSettings.userId, [USER, OTHER]));
+  // The suite shares one PGlite across smokes: put page.outreach back to its coming-soon
+  // default so a later script (smoke-surface-visibility) does not inherit the release below.
+  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", true);
 }
 
 async function seedCampaign(userId: string, name: string, filters: AudienceFilters) {

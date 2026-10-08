@@ -113,6 +113,9 @@ async function cleanup() {
   await db.delete(chatThreads).where(inArray(chatThreads.userId, users));
   await db.delete(contacts).where(inArray(contacts.userId, users));
   await db.delete(userSettings).where(inArray(userSettings.userId, users));
+  // The suite shares one PGlite across smokes: put page.outreach back to its coming-soon
+  // default so a later script (smoke-surface-visibility) does not inherit the release below.
+  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", true);
 }
 
 run(async () => {
