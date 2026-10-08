@@ -455,6 +455,7 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
       mergeContactId,
       createReminder: facts.createReminder,
       relationshipScore: facts.closeness,
+      closenessChosen: decision.closenessChosen === true,
       tagNames: decision.tagNames?.length ? decision.tagNames : parsed.tags,
       // A rhythm the person stated outranks both the model's inference and the closeness
       // table — they said the interval out loud. `reminderFactsFor` applies it, so the

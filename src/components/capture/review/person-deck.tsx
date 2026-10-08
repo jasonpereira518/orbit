@@ -62,6 +62,7 @@ export function draftFromItem(item: BulkNotePersonPreview, decision: CaptureDeci
     },
     mergeContactId: decision ? decision.mergeContactId : defaultMergeId(item, preferredContactId),
     closeness: clampCloseness(decision?.relationshipScore ?? item.parsed.relationship_score_suggestion),
+    closenessChosen: decision?.closenessChosen ?? false,
   };
 }
 
@@ -71,6 +72,7 @@ export function decisionFromDraft(kind: CaptureDecisionKind, index: number, draf
     index,
     mergeContactId: draft.mergeContactId,
     relationshipScore: draft.closeness,
+    closenessChosen: draft.closenessChosen ?? false,
     tagNames: parseTagNames(draft.fields.tags),
     edits: {
       name: draft.fields.name.trim() || null,

@@ -451,6 +451,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-opportunity-taxonomy": "pure",
   "smoke-interaction-detail": "pglite",
   "smoke-note-batch": "pglite",
+  "smoke-merge-closeness": "pglite",
   "smoke-opportunities": "pglite",
   "smoke-capture-history": "pglite",
   "smoke-org-brand-colors": "pglite",

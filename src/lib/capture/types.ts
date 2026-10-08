@@ -242,6 +242,8 @@ export type CaptureDecision = {
   index: number;
   mergeContactId: string | null;
   relationshipScore: number;
+  /** The person moved the closeness control. Absent = the model's suggestion, never written over an existing contact's rating. */
+  closenessChosen?: boolean;
   tagNames: string[];
   edits?: Partial<CapturePersonEdits>;
   decidedAt: string;
