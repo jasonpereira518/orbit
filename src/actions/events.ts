@@ -46,7 +46,7 @@ import { whoToTalkTo, type WhoToTalkTo } from "@/lib/events/who-to-talk-to";
 import { explainAttendeeForUser } from "@/lib/events/explain";
 import { userCanUseAi } from "@/lib/ai";
 import { getAiAccessStatus } from "@/lib/ai-access";
-import { AI_ACCESS_COPY } from "@/lib/ai-access-copy";
+import { refusalCopyFor } from "@/lib/ai-access-copy";
 import { diffEventAgainstPage, type EventFieldChange } from "@/lib/events/resync";
 import { resolveThemeColor } from "@/lib/events/theme";
 import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
@@ -678,7 +678,7 @@ export async function explainAttendee(
   const ai = await getAiAccessStatus(userId);
   if (!ai.ready) {
     // The gate's own words: "add a key", "this month's included AI is used", "still clearing".
-    return { ok: false, error: AI_ACCESS_COPY[ai.reason ?? "key_required"] };
+    return { ok: false, error: refusalCopyFor(ai.reason, ai.plan) };
   }
 
   try {

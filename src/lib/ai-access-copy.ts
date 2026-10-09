@@ -102,6 +102,20 @@ export const AI_HINT_COPY: Record<AiAccessDenial, string> = {
   managed_unavailable: "Orbit’s AI is unavailable right now — add your own API key in Settings for summaries",
 };
 
+/** The one-line refusal for this reason on this plan: Free at zero never hears about packs. */
+export function refusalCopyFor(reason: AiAccessDenial | null, plan: Plan): string {
+  if (reason === "managed_limit" && plan === "free") return FREE_LIMIT_MESSAGE;
+  return AI_ACCESS_COPY[reason ?? "key_required"];
+}
+
+/** The field hint for this reason on this plan, same rule. */
+export function hintCopyFor(reason: AiAccessDenial | null, plan: Plan): string {
+  if (reason === "managed_limit" && plan === "free") {
+    return "This month’s AI credits are used — add your own API key in Settings for summaries";
+  }
+  return AI_HINT_COPY[reason ?? "key_required"];
+}
+
 /** "October 1" — fixed locale and UTC, so server and client render the same string. */
 export function formatAllowanceReset(resetsAt: string): string {
   return new Date(resetsAt).toLocaleDateString("en-US", {

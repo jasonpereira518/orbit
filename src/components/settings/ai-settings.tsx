@@ -26,7 +26,7 @@ import { Disclosure } from "@/components/settings/disclosure";
 import { ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { AI_NOTICE_COPY, FREE_AI_EXPLAINER } from "@/lib/ai-access-copy";
+import { FREE_AI_EXPLAINER, noticeCopyFor } from "@/lib/ai-access-copy";
 import { managedModel } from "@/lib/managed-ai-policy";
 import { setAiKeyPreference } from "@/actions/credits";
 import { CreditsCard } from "@/components/credits/credits-card";
@@ -270,7 +270,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                       : `Your ${providerMeta.label} key is saved and runs first — it never uses credits`
                     : `Your ${providerMeta.label} key is saved`
                 : provider === ai.selectedProvider && ai.reason
-                  ? AI_NOTICE_COPY[ai.reason].title("use AI")
+                  ? noticeCopyFor(ai.reason, ai.plan, null).title("use AI")
                   : managedRuns
                     ? onLocalDevKeys
                       ? `Using your .env.local ${providerMeta.label} key — ${modelLabel(provider, managedRuns)}`
