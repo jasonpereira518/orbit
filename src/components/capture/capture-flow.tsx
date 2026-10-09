@@ -383,14 +383,13 @@ export function CaptureFlow({
     if (id) void discardCaptureJob(id);
   }, [pendingStart, job?.id]);
 
-  const save = useCallback(async (jobId: string): Promise<boolean> => {
+  const save = useCallback(async (jobId: string) => {
     const res = await saveCaptureJob(jobId);
     if (!res.ok) {
       toast.error(res.error);
-      return false;
+      return;
     }
     seedCaptureJob(res.job, { force: true });
-    return true;
   }, []);
 
   const applyDecision = useCallback(
@@ -659,7 +658,7 @@ function SummaryStep({
   saving: boolean;
   headerSlot: React.ReactNode;
   onDecide: (key: string, decision: CaptureDecision) => void;
-  onSave: () => Promise<boolean>;
+  onSave: () => Promise<void>;
   onStartOver: () => void;
   onBack: () => void;
 }) {
@@ -671,10 +670,10 @@ function SummaryStep({
   const [opportunityChoices, setOpportunityChoices] = useState(() => job.decisions.opportunities);
   const timer = useRef<number | null>(null);
   const opportunityTimer = useRef<number | null>(null);
-  // The job status when Save was pressed. Busy until the server moves the job on, so the
-  // button reads "Saving…" from the click; a refused save, or a later status, releases it.
-  const [pressedAt, setPressedAt] = useState<string | null>(null);
-  const busy = saving || pressedAt === job.status;
+  // "Saving…" from the click until the action replies; by then a successful save has
+  // already moved the job to "saving" (save() seeds it before returning).
+  const [pressed, setPressed] = useState(false);
+  const busy = saving || pressed;
 
   function change(next: SuggestionReviewItem[]) {
     setSuggestions(next);
@@ -704,23 +703,27 @@ function SummaryStep({
    * the tick — the write the runner reads is the one in the database, not the one on screen.
    */
   async function saveNow() {
-    setPressedAt(job.status);
-    const pending: Parameters<typeof recordCaptureChoices>[1] = {};
-    if (timer.current) {
-      window.clearTimeout(timer.current);
-      timer.current = null;
-      pending.reminders = choicesFromSuggestions(suggestions, result.suggestedReminders);
+    setPressed(true);
+    try {
+      const pending: Parameters<typeof recordCaptureChoices>[1] = {};
+      if (timer.current) {
+        window.clearTimeout(timer.current);
+        timer.current = null;
+        pending.reminders = choicesFromSuggestions(suggestions, result.suggestedReminders);
+      }
+      if (opportunityTimer.current) {
+        window.clearTimeout(opportunityTimer.current);
+        opportunityTimer.current = null;
+        pending.opportunities = opportunityChoices;
+      }
+      if (Object.keys(pending).length) {
+        const res = await recordCaptureChoices(job.id, pending);
+        if (res.ok) seedCaptureJob(res.job, { force: true });
+      }
+      await onSave();
+    } finally {
+      setPressed(false);
     }
-    if (opportunityTimer.current) {
-      window.clearTimeout(opportunityTimer.current);
-      opportunityTimer.current = null;
-      pending.opportunities = opportunityChoices;
-    }
-    if (Object.keys(pending).length) {
-      const res = await recordCaptureChoices(job.id, pending);
-      if (res.ok) seedCaptureJob(res.job, { force: true });
-    }
-    if (!(await onSave())) setPressedAt(null);
   }
 
   const meetingExtraCount = job.decisions.meeting?.extraReminderKeys.length ?? 0;

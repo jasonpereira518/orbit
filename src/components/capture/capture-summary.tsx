@@ -215,8 +215,8 @@ export function CaptureSummary({
 
         {followUpWhy.length > 0 && (
           <ul className="space-y-0.5 text-xs text-muted-foreground">
-            {followUpWhy.map((w) => (
-              <li key={w.name}>
+            {followUpWhy.map((w, i) => (
+              <li key={i}>
                 <span className="font-medium text-foreground">{w.name}</span>: {w.line}
               </li>
             ))}
