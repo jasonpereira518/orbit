@@ -1,8 +1,8 @@
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
-import type { Plan } from "@/lib/plans/plan-config";
+import { FREE_STARTER_CREDITS, PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 
 /**
- * What a person reads when the AI gate says no. Client-safe (no imports beyond a type), so
+ * What a person reads when the AI gate says no. Client-safe (imports only the pure plan-config module), so
  * `errors.ts` can list these in `OWN_WORDS` and the notices can render the same words.
  *
  * One constraint shapes the wording: all three refusals keep the words "API key". Seven call
@@ -127,3 +127,6 @@ export function allowancePercentUsed(allowance: { granted: number; remaining: nu
   const used = allowance.granted - Math.max(0, allowance.remaining);
   return Math.min(100, Math.max(0, Math.round((used / allowance.granted) * 100)));
 }
+
+/** Settings → AI provider, top line, Free only. */
+export const FREE_AI_EXPLAINER = `Free includes ${PLAN_CONFIG.free.monthlyCredits} AI credits a month and ${FREE_STARTER_CREDITS} to start. Add your own key to use AI with no limit`;

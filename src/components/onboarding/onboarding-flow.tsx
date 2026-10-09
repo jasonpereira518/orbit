@@ -392,7 +392,7 @@ export function OnboardingFlow({
                 hidden={hiddenSet}
                 comingSoon={comingSoonSet}
                 planFlags={planFlags}
-                facts={{ hasApiKey: apiKey, linkedinPending: requested && !linkedinImported }}
+                facts={{ linkedinPending: requested && !linkedinImported }}
                 onBack={() => retreat("overview")}
                 onDone={() => leave(true)}
                 onTour={switchToTour}

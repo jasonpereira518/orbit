@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { AnimatePresence, motion, type PanInfo } from "motion/react";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,15 +17,13 @@ import {
   type HighlightChapter,
   type PlanFlag,
 } from "@/components/onboarding/highlights/chapters";
-import { integrationHref } from "@/components/settings/sections";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 export type PlanFlags = Record<PlanFlag, boolean>;
 
-/** Live facts the overview tags each chapter with, so "Needs AI key" is true, not generic. */
+/** Live facts the overview tags each chapter with, so "Uses AI credits" is true, not generic. */
 export type OverviewFacts = {
-  hasApiKey: boolean;
   /** A LinkedIn export was requested and nothing from it has been imported yet. */
   linkedinPending: boolean;
 };
@@ -37,7 +34,7 @@ const SWIPE_VELOCITY = 400;
 /**
  * Quick setup's overview: one chapter per thing Orbit does, self-paced on purpose (the old
  * tour advanced every seven seconds and took the choice of reading speed away). Each
- * chapter carries a live tag — Pro, Soon, Needs AI key, Upload when your export arrives —
+ * chapter carries a live tag — Pro, Soon, Uses AI credits, Upload when your export arrives —
  * computed from the account, never hard-coded.
  *
  * The card's frame stays put between chapters; only its contents crossfade. On a phone the
@@ -339,13 +336,7 @@ function ChapterRail({
 function NeedTag({ chapter, facts }: { chapter: HighlightChapter; facts: OverviewFacts }) {
   const base =
     "inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-px text-[11px] font-medium text-muted-foreground";
-  if (chapter.needs === "ai" && !facts.hasApiKey) {
-    return (
-      <Link href={integrationHref("ai")} className={cn(base, "underline-offset-2 hover:text-foreground hover:underline")}>
-        Needs AI key
-      </Link>
-    );
-  }
+  if (chapter.needs === "ai") return <span className={base}>Uses AI credits</span>;
   if (chapter.needs === "linkedin" && facts.linkedinPending) {
     return <span className={base}>Upload when your export arrives</span>;
   }

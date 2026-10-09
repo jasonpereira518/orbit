@@ -39,6 +39,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-onboarding-steps": "pure",
   "smoke-onboarding-examples-cast": "pure",
   "smoke-onboarding-gate": "pure",
+  "smoke-onboarding-copy": "pure",
   "smoke-tour-stops": "pure",
   "smoke-chat-parsers": "pure",
   "smoke-chat-sessions": "pure",
