@@ -32,7 +32,7 @@ import {
   type AiProvider,
   type EmbeddingBackend,
 } from "@/lib/ai-providers";
-import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
+import { AI_ACCESS_COPY, FREE_LIMIT_MESSAGE, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
 import { deepgramEnabled } from "@/lib/deepgram";
 import { speechAllowance } from "@/lib/speech-quota";
@@ -596,7 +596,7 @@ export class AiAccess {
         ? creditsToMicros(monthly * BACKGROUND_FLOOR_SHARE)
         : 0,
     });
-    if (!hold) throw this.refusal("managed_limit");
+    if (!hold) throw this.refusal("managed_limit", this.plan === "free" ? FREE_LIMIT_MESSAGE : undefined);
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */
@@ -737,7 +737,7 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   // callers rely on.
   const monthlyCredits = PLAN_CONFIG[access.plan].monthlyCredits;
   const [balance, speech, paused] = await Promise.all([
-    monthlyCredits ? getCreditBalance(userId, access.plan, access.settings, now) : null,
+    monthlyCredits && access.eligibility === "plan" ? getCreditBalance(userId, access.plan, access.settings, now) : null,
     deepgramEnabled() ? speechAllowance(userId, "shortform") : null,
     access.eligibility === "plan" ? managedAiPaused() : Promise.resolve(false),
   ]);

@@ -24,10 +24,17 @@ export const AI_ACCESS_COPY: Record<AiAccessDenial, string> = {
 export const MANAGED_PROVIDER_FAILURE_MESSAGE =
   "Orbit’s AI couldn’t answer just now — try again in a moment, or add your own API key in Settings";
 
+/**
+ * A Free account at zero. Keeps "API key" so `isMissingAiApiKeyError` flips every notice, and
+ * `aiDenialFromMessage` maps it to `managed_limit` by exact match.
+ */
+export const FREE_LIMIT_MESSAGE = "You’ve used this month’s AI credits — add your own API key in Settings for no limit";
+
 /** Every string above, for `OWN_WORDS`. */
 export const AI_ACCESS_MESSAGES: readonly string[] = [
   ...Object.values(AI_ACCESS_COPY),
   MANAGED_PROVIDER_FAILURE_MESSAGE,
+  FREE_LIMIT_MESSAGE,
 ];
 
 /**
@@ -41,6 +48,7 @@ export function aiDenialFromMessage(message: string | null | undefined): AiAcces
     if (message === copy) return reason as AiAccessDenial;
   }
   if (message === MANAGED_PROVIDER_FAILURE_MESSAGE) return "managed_unavailable";
+  if (message === FREE_LIMIT_MESSAGE) return "managed_limit";
   return /api key/i.test(message) ? "key_required" : null;
 }
 
