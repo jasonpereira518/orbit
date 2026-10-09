@@ -234,7 +234,7 @@ export const FEATURE_DENIAL: Record<FeatureKey, string> = {
   sync: `Calendar subscriptions and event sources are available on ${availableOn("sync")}.`,
   extension: `The Orbit extension is available on ${availableOn("extension")}.`,
   meetings: `Meeting transcription is available on ${availableOn("meetings")}.`,
-  hostedAi: `AI on Orbit's keys is included on ${availableOn("hostedAi")}. On Orbit Lifetime, AI runs on your own key.`,
+  hostedAi: `AI on Orbit's keys is included on ${availableOn("hostedAi")}.`,
   creditPacks: `Credit packs are available on ${availableOn("creditPacks")}.`,
   extraConnections: EXTRA_CONNECTION_DENIAL,
 };
