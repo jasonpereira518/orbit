@@ -1,4 +1,5 @@
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import type { Plan } from "@/lib/plans/plan-config";
 
 /**
  * What a person reads when the AI gate says no. Client-safe (no imports beyond a type), so
@@ -58,15 +59,16 @@ export function aiDenialFromMessage(message: string | null | undefined): AiAcces
 /**
  * The notices' wording, per refusal. `verb` completes "…to {verb}". `offer` is the way out
  * besides a key: `upgrade` ("Pro and Max include AI", Free accounts only) or `credits`
- * ("Buy a pack ($5)", plus "Upgrade to Max" on Pro). Nothing is ever charged automatically.
+ * ("Buy a pack ($5)", plus "Upgrade to Max" on Pro), or `plans` (Free at zero: compare plans).
+ * Nothing is ever charged automatically.
  */
 export const AI_NOTICE_COPY: Record<
   AiAccessDenial,
-  { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | null; linkToKeys: boolean }
+  { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | "plans" | null; linkToKeys: boolean }
 > = {
   key_required: {
     title: (verb) => `Add an AI API key to ${verb}`,
-    body: "On the Free Plan, AI runs on your own Gemini, OpenAI, or Anthropic key.",
+    body: "AI runs on your own Gemini, OpenAI, or Anthropic key.",
     offer: "upgrade",
     linkToKeys: true,
   },
@@ -98,6 +100,24 @@ export function formatAllowanceReset(resetsAt: string): string {
     day: "numeric",
     timeZone: "UTC",
   });
+}
+
+export type NoticeCopy = { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | "plans" | null; linkToKeys: boolean };
+
+/**
+ * The notice's words for this refusal on this plan. Free at zero gets its own state, with
+ * the refill date; everything else is `AI_NOTICE_COPY`.
+ */
+export function noticeCopyFor(reason: AiAccessDenial | null, plan: Plan, resetsAt: string | null): NoticeCopy {
+  if (reason === "managed_limit" && plan === "free") {
+    return {
+      title: () => "You’ve used this month’s AI credits",
+      body: `They refill on ${resetsAt ? formatAllowanceReset(resetsAt) : "the 1st"}. Add your own key for no limit`,
+      offer: "plans",
+      linkToKeys: true,
+    };
+  }
+  return AI_NOTICE_COPY[reason ?? "key_required"];
 }
 
 /** Share of this cycle's allowance used, 0-100. */

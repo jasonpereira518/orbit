@@ -31,7 +31,7 @@ import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { SetupChecklistCard, type SetupChecklistItem } from "@/components/dashboard/setup-checklist-card";
 import { integrationHref } from "@/components/settings/sections";
-import { aiReadyFromSettings } from "@/lib/ai-access";
+import { aiDenialFromSettings } from "@/lib/ai-access";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import { countTourExamples, hasOwnInteraction } from "@/lib/onboarding-examples/status";
 import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
@@ -125,11 +125,15 @@ export async function SetupChecklistSection() {
   ]);
 
   const items: SetupChecklistItem[] = [];
-  if (!aiReadyFromSettings(userId, settings)) {
+  const aiDenial = aiDenialFromSettings(userId, settings);
+  if (aiDenial) {
     items.push({
       id: "ai-key",
-      label: "Add your AI key",
-      detail: "Capture from notes, Chat and profile briefs run on it.",
+      label: aiDenial === "key_required" ? "Add your AI key" : "Add your own AI key",
+      detail:
+        aiDenial === "key_required"
+          ? "Capture from notes, Chat and profile briefs run on it."
+          : "Orbit’s AI isn’t available right now, so capture, Chat and briefs need a key of your own",
       href: integrationHref("ai"),
     });
   }

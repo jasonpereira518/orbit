@@ -55,6 +55,7 @@ import type { AiOperationId } from "../src/lib/ai-operations";
 import { DEFAULT_MODELS } from "../src/lib/ai-providers";
 import {
   AiAccessError,
+  aiDenialFromSettings,
   aiReadyFromSettings,
   geminiClient,
   getAiAccessStatus,
@@ -602,6 +603,9 @@ async function realGate() {
   for (const u of [U.proOwn, U.proNone, U.freeOwn, U.freeNone, U.lifetimeNone]) {
     const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, u) });
     check(`the notification alert agrees with the gate (${u})`, aiReadyFromSettings(u, row ?? null) === (await getAiAccessStatus(u)).ready);
+    const st = await getAiAccessStatus(u);
+    check(`aiDenialFromSettings agrees with the status, short of credits (${u})`,
+      aiDenialFromSettings(u, row ?? null) === (st.reason === "managed_limit" ? null : st.reason));
   }
 
   console.log("\nFree at zero");

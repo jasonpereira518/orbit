@@ -44,7 +44,6 @@ import {
 import {
   chooseCompletionKey,
   chooseEmbeddingKey,
-  aiReadyFromFacts,
   holdEstimateMicros,
   managedEligibility,
   managedModel,
@@ -769,27 +768,26 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   };
 }
 
+type AiSettingsRow = {
+  aiProvider?: string | null;
+  aiModel?: string | null;
+  aiKeyPreference?: string | null;
+  geminiApiKeyEncrypted?: string | null;
+  openaiApiKeyEncrypted?: string | null;
+  anthropicApiKeyEncrypted?: string | null;
+  openrouterApiKeyEncrypted?: string | null;
+} & BillingColumns;
+
 /**
- * The presence-only answer, for the notifications panel's 120-second poll: no decryption,
- * no credit query, no Stripe. Same policy function as the gate, so the "add your API
- * key" alert and the gate cannot disagree about who needs a key.
+ * The settings-level denial: presence only, no credits and no admin pause (like the alert it
+ * feeds). Null = AI would run. No decryption, no credit query, no Stripe, and the same policy
+ * function as the gate, so the "add your API key" alert and the gate cannot disagree about
+ * who needs a key.
  */
-export function aiReadyFromSettings(
-  userId: string,
-  row: {
-    aiProvider?: string | null;
-    aiModel?: string | null;
-    aiKeyPreference?: string | null;
-    geminiApiKeyEncrypted?: string | null;
-    openaiApiKeyEncrypted?: string | null;
-    anthropicApiKeyEncrypted?: string | null;
-    openrouterApiKeyEncrypted?: string | null;
-  } & BillingColumns | null,
-): boolean {
+export function aiDenialFromSettings(userId: string, row: AiSettingsRow | null): AiAccessDenial | null {
   const selectedProvider = resolveAiProvider(row?.aiProvider);
   const { plan } = resolvePlan(row);
-  const configured = managedKeysConfigured();
-  return aiReadyFromFacts({
+  const facts = {
     eligibility: managedEligibility(plan, demoCountsAsManaged(userId)),
     selectedProvider,
     selectedModel: resolveAiModel(selectedProvider, row?.aiModel),
@@ -799,8 +797,15 @@ export function aiReadyFromSettings(
       anthropic: Boolean(row?.anthropicApiKeyEncrypted),
       openrouter: Boolean(row?.openrouterApiKeyEncrypted),
     },
-    managed: configured,
-  });
+    managed: managedKeysConfigured(),
+  };
+  const choice = chooseCompletionKey(facts);
+  return choice.ok ? null : choice.reason;
+}
+
+/** The presence-only yes/no, for the notifications panel's 120-second poll. */
+export function aiReadyFromSettings(userId: string, row: AiSettingsRow | null): boolean {
+  return aiDenialFromSettings(userId, row) === null;
 }
 
 /** For Settings copy: the label of each provider Orbit can pay for. */
