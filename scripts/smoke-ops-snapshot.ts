@@ -202,7 +202,7 @@ run(async () => {
   await db.insert(creditGrants).values(
     (["free", "orbit", "max"] as const).map((plan) => ({
       userId: `snap-cap-${plan}`,
-      kind: "allowance",
+      kind: "allowance" as const,
       grantKey: `snap-cap-${plan}`,
       plan,
       microsGranted: 100_000,
