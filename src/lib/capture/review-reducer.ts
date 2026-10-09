@@ -16,6 +16,7 @@ import type {
 import { clampCloseness } from "@/lib/capture/closeness";
 import {
   followUpDaysFor,
+  planNameKey,
   planReminders,
   shouldCreateFollowUp,
   type PlannedReminder,
@@ -309,6 +310,28 @@ export function plannedCaptureReminders(
     anchorIso: result.anchorIso,
     participants: acceptedPeople(result.items, decisions).map(({ item, decision }) => reminderFactsFor(item, decision)),
     commitments,
+  });
+}
+
+/**
+ * Why each automatic follow-up exists, for the summary: the notes asked for one, or the
+ * person is close enough that Orbit keeps in touch. Only people whose planned reminder IS
+ * the follow-up (no action item or dated commitment took its place).
+ */
+export function followUpReasons(
+  result: Pick<CaptureJobResult, "items" | "anchorIso">,
+  decisions: CaptureDecisions | null | undefined,
+  planned: readonly PlannedReminder[]
+): Array<{ name: string; line: string }> {
+  const followUps = new Set(planned.filter((p) => p.kind === "follow_up").map((p) => p.contactKey));
+  return acceptedPeople(result.items, decisions).flatMap(({ item, decision }) => {
+    const facts = reminderFactsFor(item, decision);
+    const key = planNameKey(facts.name);
+    if (!facts.createReminder || !facts.name || !key || !followUps.has(key)) return [];
+    const line = item.parsed.follow_up_recommendation
+      ? "Your notes asked for a follow-up"
+      : `You marked this a real conversation, so Orbit set a follow-up in ${facts.followUpDays} days`;
+    return [{ name: facts.name, line }];
   });
 }
 

@@ -18,7 +18,7 @@ import type { PersonDraft } from "@/components/capture/review/person-card";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { SuggestedOpportunitiesReview } from "@/components/capture/suggested-opportunities-review";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
-import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions, plannedCaptureReminders, saveButtonLabel } from "@/lib/capture/review-reducer";
+import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions, followUpReasons, plannedCaptureReminders, saveButtonLabel } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobResult, CaptureOpportunityChoices, CaptureReminderChoices, OpportunityReviewItem } from "@/lib/capture/types";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 
@@ -111,6 +111,7 @@ export function CaptureSummary({
     opportunities: checkedOpportunities,
   });
   const actionItemCount = planned.filter((p) => p.kind === "action_item").length;
+  const followUpWhy = useMemo(() => followUpReasons(result, decisions, planned), [result, decisions, planned]);
   const dueLabel = result.anchorIso ? format(addDays(new Date(`${result.anchorIso}T12:00:00`), 14), "MMM d") : "in 2 weeks";
   const editingEntry = editing ? accepted.find((a) => a.item.key === editing) ?? null : null;
   const canSave = hasMeeting || accepted.length > 0 || checkedDates > 0;
@@ -210,6 +211,16 @@ export function CaptureSummary({
           <p className="text-xs text-muted-foreground">
             {actionItemCount} action item{actionItemCount === 1 ? "" : "s"} will also become reminders due {dueLabel}. Follow-ups are timed by how close you said you are.
           </p>
+        )}
+
+        {followUpWhy.length > 0 && (
+          <ul className="space-y-0.5 text-xs text-muted-foreground">
+            {followUpWhy.map((w) => (
+              <li key={w.name}>
+                <span className="font-medium text-foreground">{w.name}</span>: {w.line}
+              </li>
+            ))}
+          </ul>
         )}
 
         <SuggestedRemindersReview

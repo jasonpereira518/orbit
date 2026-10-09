@@ -383,13 +383,14 @@ export function CaptureFlow({
     if (id) void discardCaptureJob(id);
   }, [pendingStart, job?.id]);
 
-  const save = useCallback(async (jobId: string) => {
+  const save = useCallback(async (jobId: string): Promise<boolean> => {
     const res = await saveCaptureJob(jobId);
     if (!res.ok) {
       toast.error(res.error);
-      return;
+      return false;
     }
     seedCaptureJob(res.job, { force: true });
+    return true;
   }, []);
 
   const applyDecision = useCallback(
@@ -608,7 +609,7 @@ export function CaptureFlow({
             saving={phase === "saving"}
             headerSlot={meetingHeader}
             onDecide={applyDecision}
-            onSave={() => void save(job.id)}
+            onSave={() => save(job.id)}
             onStartOver={() => void startOver()}
             onBack={() => {
               const last = acceptedPeople(items, job.decisions).at(-1) ?? null;
@@ -658,7 +659,7 @@ function SummaryStep({
   saving: boolean;
   headerSlot: React.ReactNode;
   onDecide: (key: string, decision: CaptureDecision) => void;
-  onSave: () => void;
+  onSave: () => Promise<boolean>;
   onStartOver: () => void;
   onBack: () => void;
 }) {
@@ -670,6 +671,10 @@ function SummaryStep({
   const [opportunityChoices, setOpportunityChoices] = useState(() => job.decisions.opportunities);
   const timer = useRef<number | null>(null);
   const opportunityTimer = useRef<number | null>(null);
+  // The job status when Save was pressed. Busy until the server moves the job on, so the
+  // button reads "Saving…" from the click; a refused save, or a later status, releases it.
+  const [pressedAt, setPressedAt] = useState<string | null>(null);
+  const busy = saving || pressedAt === job.status;
 
   function change(next: SuggestionReviewItem[]) {
     setSuggestions(next);
@@ -699,6 +704,7 @@ function SummaryStep({
    * the tick — the write the runner reads is the one in the database, not the one on screen.
    */
   async function saveNow() {
+    setPressedAt(job.status);
     const pending: Parameters<typeof recordCaptureChoices>[1] = {};
     if (timer.current) {
       window.clearTimeout(timer.current);
@@ -714,7 +720,7 @@ function SummaryStep({
       const res = await recordCaptureChoices(job.id, pending);
       if (res.ok) seedCaptureJob(res.job, { force: true });
     }
-    onSave();
+    if (!(await onSave())) setPressedAt(null);
   }
 
   const meetingExtraCount = job.decisions.meeting?.extraReminderKeys.length ?? 0;
@@ -730,7 +736,7 @@ function SummaryStep({
       onSave={() => void saveNow()}
       onStartOver={onStartOver}
       onBack={onBack}
-      saving={saving}
+      saving={busy}
       error={job.status === "failed" ? job.error : null}
       headerSlot={headerSlot}
       hasMeeting={Boolean(job.meetingSessionId)}
