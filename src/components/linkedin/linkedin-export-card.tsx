@@ -3,11 +3,14 @@
 import Link from "next/link";
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { X } from "lucide-react";
+import { toast } from "@/lib/toast";
 import { markLinkedInExportRequested } from "@/actions/linkedin-export";
 import { Button } from "@/components/ui/button";
 import { LinkedInExportInstructions } from "@/components/linkedin/linkedin-export-instructions";
 import { LINKEDIN_DATA_URL } from "@/lib/linkedin-export";
 import { linkedinCardState } from "@/lib/linkedin-export-card";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const DISMISS_KEY = "orbit-linkedin-card-dismissed-v1";
 const listeners = new Set<() => void>();
@@ -59,7 +62,15 @@ export function LinkedInExportCard({ requestedAt: initial, where }: { requestedA
             <Button
               type="button"
               disabled={pending}
-              onClick={() => start(async () => setRequestedAt((await markLinkedInExportRequested()).requestedAt))}
+              onClick={() =>
+                start(async () => {
+                  try {
+                    setRequestedAt((await markLinkedInExportRequested()).requestedAt);
+                  } catch (err) {
+                    toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+                  }
+                })
+              }
             >
               I’ve requested it
             </Button>

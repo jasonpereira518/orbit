@@ -145,13 +145,14 @@ export function FloatingAskBar() {
   const chatThreadIdRef = useRef<string | null>(null);
 
   const [open, setOpen] = useState(false);
-  const { aiReason } = useViewerPlan();
+  const { aiReason, plan } = useViewerPlan();
   const [askDenial, setAskDenial] = useState<AiAccessDenial | null>(null);
   const [creditsLeft, setCreditsLeft] = useState<number | null>(null);
   const denial = askDenial ?? aiReason;
 
   useEffect(() => {
-    if (!open) return;
+    // Only Free shows the count; server actions serialize per tab, so skip the call elsewhere.
+    if (!open || plan !== "free") return;
     let live = true;
     getFreeCreditsLeft().then(
       (n) => {
@@ -162,7 +163,7 @@ export function FloatingAskBar() {
     return () => {
       live = false;
     };
-  }, [open]);
+  }, [open, plan]);
   const [hidden, setHidden] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KeywordSearchHit[]>([]);
