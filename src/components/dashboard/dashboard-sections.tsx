@@ -13,6 +13,8 @@ import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
 import { LinkedInExportNudge } from "@/components/dashboard/linkedin-export-nudge";
+import { LinkedInExportCard } from "@/components/linkedin/linkedin-export-card";
+import { linkedinCardState } from "@/lib/linkedin-export-card";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
@@ -94,15 +96,20 @@ const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
 
 /**
- * The dashboard card that follows the full-screen LinkedIn reminder. Renders nothing for
- * almost everyone: the settings row alone rules it out unless the reminder has been shown or
- * the export requested, the account is under 30 days old, and no LinkedIn import exists yet.
+ * The LinkedIn export card (start it, then "ready about …") or the arrival nudge that follows
+ * the full-screen reminder. Renders nothing once a LinkedIn import exists.
  */
 export async function LinkedInExportNudgeSection() {
   const userId = await requireUserId();
   const settings = await ensureUserSettings(userId);
-  if (!(await getLinkedInNudgeVisible(userId, settings))) return null;
-  return <LinkedInExportNudge email={settings.email ?? null} />;
+  if (await getLinkedInNudgeVisible(userId, settings)) return <LinkedInExportNudge email={settings.email ?? null} />;
+  const state = linkedinCardState({
+    imported: await hasLinkedInImport(userId),
+    requestedAt: settings.linkedinExportRequestedAt ?? null,
+    onboardingDone: Boolean(settings.onboardingCompletedAt),
+  });
+  if (!state.show) return null;
+  return <LinkedInExportCard where="dashboard" requestedAt={settings.linkedinExportRequestedAt?.toISOString() ?? null} />;
 }
 
 /**
@@ -115,11 +122,10 @@ export async function SetupChecklistSection() {
   const settings = await ensureUserSettings(userId);
   if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
 
-  const [gmail, outlook, usage, linkedinImported, examples, logged] = await Promise.all([
+  const [gmail, outlook, usage, examples, logged] = await Promise.all([
     getGmailConnectionStatus(),
     getOutlookConnectionStatus(),
     contactUsageForUser(userId),
-    hasLinkedInImport(userId),
     countTourExamples(userId),
     hasOwnInteraction(userId),
   ]);
@@ -137,24 +143,8 @@ export async function SetupChecklistSection() {
       href: integrationHref("ai"),
     });
   }
-  // What onboarding set up, in its order: the AI key, the LinkedIn export, Google/Microsoft,
-  // then the things the tour practised. Each item leaves as soon as it is done.
-  if (!settings.linkedinExportRequestedAt && !linkedinImported) {
-    items.push({
-      id: "linkedin-request",
-      label: "Start your LinkedIn export",
-      detail: "LinkedIn takes about a day to package it, so start it now.",
-      href: "/imports#import-panel-connections",
-    });
-  }
-  if (settings.linkedinExportRequestedAt && !linkedinImported) {
-    items.push({
-      id: "linkedin",
-      label: "Upload your LinkedIn export when it arrives",
-      detail: "LinkedIn emails a ZIP, usually within a day.",
-      href: "/imports#import-panel-connections",
-    });
-  }
+  // What onboarding set up, in its order: the AI key, Google/Microsoft, then the things the
+  // tour practised. Each item leaves as soon as it is done. LinkedIn has its own card.
   const anyConfigured = gmail.configured || outlook.configured;
   const connected = gmail.connected || outlook.connected;
   if (anyConfigured && !connected) {

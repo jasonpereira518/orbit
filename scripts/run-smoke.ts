@@ -204,6 +204,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-handoff": "pure",
   "smoke-import-detect": "pure",
   "smoke-linkedin-you": "pure",
+  "smoke-linkedin-export-card": "pure",
   "smoke-focus-fit": "pure",
   "smoke-import-rank": "pure",
   "smoke-import-errors": "pure",

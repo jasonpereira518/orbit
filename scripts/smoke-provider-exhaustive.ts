@@ -177,13 +177,11 @@ const ALLOWLIST: Record<string, string> = {
     "onboarding grid never renders an OpenRouter tile, so no OpenRouter mark is drawn.",
   "src/components/onboarding/provider-logo.tsx:38": "ProviderLogo's OpenAI mark — same " +
     "reason as line 21.",
-  "src/components/onboarding/steps/ai-key-step.tsx:110": "the Gemini-only free-tier note " +
-    "under the key link; no other provider has one to show.",
-  "src/lib/ai-access.ts:633": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts:632": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
-  "src/lib/ai-access.ts:322": "isOpenAiShaped's own body: `provider === \"openai\" || " +
+  "src/lib/ai-access.ts:321": "isOpenAiShaped's own body: `provider === \"openai\" || " +
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
@@ -286,7 +284,7 @@ const ALLOWLIST: Record<string, string> = {
   "src/actions/settings.ts:281": "same ternary as line 283 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:289": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx:291": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +

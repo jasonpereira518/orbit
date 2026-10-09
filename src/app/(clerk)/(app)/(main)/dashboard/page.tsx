@@ -66,7 +66,7 @@ export default async function DashboardPage() {
       <RenderStamp />
       <DashboardHeader />
 
-      {/* Streams in on its own and renders nothing unless a LinkedIn export is outstanding. */}
+      {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import exists. */}
       <Suspense fallback={null}>
         <LinkedInExportNudgeSection />
       </Suspense>
