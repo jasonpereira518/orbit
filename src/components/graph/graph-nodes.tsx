@@ -13,6 +13,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { useCameraMoving } from "@/components/graph/camera-motion";
+import { useZoomStep } from "@/components/graph/zoom-steps";
 import { createSkyBitmapLane } from "@/components/graph/sky-bitmap-client";
 import {
   drawSkyBitmap,
@@ -220,10 +221,10 @@ function ContactNodeComponent({
    * the same values at the same zooms as before.
    */
   const reliefDisc = isComet ? size + 2 : starDisc;
-  // One selector, not two: React Flow runs every drawn star's selectors on every camera update.
-  // Relief is never below 1, so the sign can carry whether the label threshold is reached.
-  const zoomView = useStore((s) => {
-    const k = Math.round(s.transform[2] * 20) / 20;
+  // One selector, not two. Relief is never below 1, so the sign can carry whether the label
+  // threshold is reached. The zoom comes from the chart's shared zoom steps (zoom-steps.ts), so a
+  // camera update inside one step costs no selector run per star.
+  const zoomView = useZoomStep("star", (k) => {
     const relief = starZoomRelief(reliefDisc, k);
     return k >= LABEL_HIDE_BELOW_ZOOM ? relief : -relief;
   });
@@ -751,9 +752,7 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
   const { data } = props;
   // Sixteenth-of-an-octave steps: proportional, so a far-out zoom (where the 12px floor sets the
   // size) does not jump by a quarter at a time the way a fixed 1/40 step did.
-  const zoom = useStore((s) =>
-    Math.pow(2, Math.round(Math.log2(Math.max(s.transform[2], 0.01)) * 16) / 16)
-  );
+  const zoom = useZoomStep("name", (step) => step);
   const scale = clusterNameScale(zoom);
   const showCount = Boolean(data.summary) && (data.count ?? 0) > 0;
 
