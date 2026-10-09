@@ -37,7 +37,7 @@ process.env.ORBIT_MANAGED_GEMINI_API_KEY = "managed-gemini-key";
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   billingEvents,
@@ -70,6 +70,7 @@ import {
 } from "../src/lib/ai-access";
 import {
   AI_ACCESS_COPY,
+  BACKGROUND_RESERVE_MESSAGE,
   FREE_LIMIT_MESSAGE,
   MANAGED_PROVIDER_FAILURE_MESSAGE,
   aiDenialFromMessage,
@@ -608,6 +609,20 @@ async function realGate() {
       aiDenialFromSettings(u, row ?? null) === (st.reason === "managed_limit" ? null : st.reason));
   }
 
+  console.log("\nFree background work never spends the starter credits");
+  await db.update(creditGrants).set({ microsRemaining: 40_000 })
+    .where(and(eq(creditGrants.userId, U.freeNone), eq(creditGrants.kind, "allowance")));
+  r = await lastSent(() => json(U.freeNone, "radar.rerank"));
+  check("full starter, allowance below half: a background operation is refused, nothing sent",
+    isAiAccessError(r.err) && r.count === 0, r.err);
+  check("…with words that don't claim the credits are gone",
+    (r.err as Error | null)?.message === BACKGROUND_RESERVE_MESSAGE && !/used/i.test(BACKGROUND_RESERVE_MESSAGE), r.err);
+  check("…which the client reads as a key-remedy refusal, not out-of-credits",
+    aiDenialFromMessage(BACKGROUND_RESERVE_MESSAGE) === "managed_unavailable" && isMissingAiApiKeyError(BACKGROUND_RESERVE_MESSAGE));
+  r = await lastSent(() => json(U.freeNone, "chat.answer"));
+  check("…while a foreground operation still runs", r.req?.key === MANAGED, r.req?.key ?? r.err);
+  await settle();
+
   console.log("\nFree at zero");
   await db.update(creditGrants).set({ microsRemaining: 0 }).where(eq(creditGrants.userId, U.freeNone));
   r = await lastSent(() => json(U.freeNone, "chat.answer"));
@@ -674,8 +689,10 @@ async function transitions() {
   // 40% left: below the background floor (half the allowance), above zero.
   await setAllowance(80 * 10_000);
   r = await lastSent(() => json(U.capped, "import.linkedin.timeline"));
+  // Credits remain, so it is not "out of credits": the reserve refusal (final review #2).
   check("background work stops at half the allowance",
-    isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" && r.count === 0, r.err);
+    isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_unavailable" &&
+      (r.err as Error).message === BACKGROUND_RESERVE_MESSAGE && r.count === 0, r.err);
   r = await lastSent(() => json(U.capped, "chat.answer"));
   check("…while the person can still ask", r.req?.key === MANAGED, r.err);
   await settle();

@@ -32,7 +32,12 @@ import {
   type AiProvider,
   type EmbeddingBackend,
 } from "@/lib/ai-providers";
-import { AI_ACCESS_COPY, FREE_LIMIT_MESSAGE, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
+import {
+  AI_ACCESS_COPY,
+  BACKGROUND_RESERVE_MESSAGE,
+  FREE_LIMIT_MESSAGE,
+  MANAGED_PROVIDER_FAILURE_MESSAGE,
+} from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
 import { deepgramEnabled } from "@/lib/deepgram";
 import { speechAllowance } from "@/lib/speech-quota";
@@ -586,16 +591,23 @@ export class AiAccess {
     await ensureAllowance(this.userId, this.plan, creditPeriodFor(this.settings));
     const tier = (AI_OPERATIONS as Record<string, { tier?: string }>)[operation]?.tier;
     const monthly = PLAN_CONFIG[this.plan].monthlyCredits ?? 0;
+    const background = BACKGROUND_OPERATIONS.has(operation);
     const hold = await placeHold({
       userId: this.userId,
       micros: holdEstimateMicros(tier),
       operation,
       packs: packsUsable(this.plan),
-      floorMicros: BACKGROUND_OPERATIONS.has(operation)
-        ? creditsToMicros(monthly * BACKGROUND_FLOOR_SHARE)
-        : 0,
+      floorMicros: background ? creditsToMicros(monthly * BACKGROUND_FLOOR_SHARE) : 0,
+      // Free's one-time starter credits are for things the person asks for, never background work.
+      reserveStarter: background && this.plan === "free",
     });
-    if (!hold) throw this.refusal("managed_limit", this.plan === "free" ? FREE_LIMIT_MESSAGE : undefined);
+    if (hold) return;
+    // Below the background floor with credits left is not "you've used your credits".
+    if (background) {
+      const balance = await getCreditBalance(this.userId, this.plan, this.settings, undefined, { ensure: false });
+      if (balance.spendable > 0) throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
+    }
+    throw this.refusal("managed_limit", this.plan === "free" ? FREE_LIMIT_MESSAGE : undefined);
   }
 
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */

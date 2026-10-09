@@ -34,11 +34,20 @@ export const FREE_LOW_CREDITS = 3;
  */
 export const FREE_LIMIT_MESSAGE = "You’ve used this month’s AI credits — add your own API key in Settings for no limit";
 
+/**
+ * Background work on Orbit's key stopped at the floor that keeps the last credits for things a
+ * person asks for. Credits remain, so it must not say they are used; `aiDenialFromMessage`
+ * reads it as `managed_unavailable` (comes back on its own, or add a key).
+ */
+export const BACKGROUND_RESERVE_MESSAGE =
+  "Orbit saves your last AI credits for things you ask for — add your own API key in Settings to keep going";
+
 /** Every string above, for `OWN_WORDS`. */
 export const AI_ACCESS_MESSAGES: readonly string[] = [
   ...Object.values(AI_ACCESS_COPY),
   MANAGED_PROVIDER_FAILURE_MESSAGE,
   FREE_LIMIT_MESSAGE,
+  BACKGROUND_RESERVE_MESSAGE,
 ];
 
 /**
@@ -51,7 +60,7 @@ export function aiDenialFromMessage(message: string | null | undefined): AiAcces
   for (const [reason, copy] of Object.entries(AI_ACCESS_COPY)) {
     if (message === copy) return reason as AiAccessDenial;
   }
-  if (message === MANAGED_PROVIDER_FAILURE_MESSAGE) return "managed_unavailable";
+  if (message === MANAGED_PROVIDER_FAILURE_MESSAGE || message === BACKGROUND_RESERVE_MESSAGE) return "managed_unavailable";
   if (message === FREE_LIMIT_MESSAGE) return "managed_limit";
   return /api key/i.test(message) ? "key_required" : null;
 }

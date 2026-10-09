@@ -222,6 +222,11 @@ function spendableSql(userId: string, packs: boolean) {
     ))`;
 }
 
+function starterSql(userId: string) {
+  return sql`(SELECT coalesce(sum(g.micros_remaining), 0) FROM credit_grants g
+    WHERE g.user_id = ${userId} AND g.status = 'active' AND g.kind = 'starter')`;
+}
+
 function heldSql(userId: string) {
   return sql`(SELECT coalesce(sum(h.micros), 0) FROM credit_holds h
     WHERE h.user_id = ${userId} AND h.expires_at > now())`;
@@ -242,6 +247,8 @@ export async function placeHold(input: {
    * half the monthly allowance for background work (`BACKGROUND_FLOOR_SHARE`).
    */
   floorMicros?: number;
+  /** Add the starter grant's remaining micros to the floor: Free background work never spends it. */
+  reserveStarter?: boolean;
 }): Promise<string | null> {
   const db = await getDb();
   const expiresAt = new Date(Date.now() + (input.ttlMs ?? HOLD_TTL_MS));
@@ -252,6 +259,7 @@ export async function placeHold(input: {
     tx.execute(sql`INSERT INTO credit_holds (user_id, micros, operation, expires_at)
       SELECT ${input.userId}, ${Math.max(1, Math.round(input.micros))}, ${input.operation}, ${expiresAt.toISOString()}::timestamptz
       WHERE ${spendableSql(input.userId, input.packs)} - ${heldSql(input.userId)} > ${Math.max(0, Math.round(input.floorMicros ?? 0))}
+        + ${input.reserveStarter ? starterSql(input.userId) : sql`0`}
       RETURNING id`),
   ]);
   const inserted = rowsOf<{ id: string }>(results[1] as never);

@@ -4,7 +4,7 @@ import {
   isMicrosoftPurpose,
   missingScopeMessage as missingMicrosoftScopeMessage,
 } from "@/lib/microsoft-scopes";
-import { AI_ACCESS_COPY, AI_ACCESS_MESSAGES, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
+import { AI_ACCESS_MESSAGES } from "@/lib/ai-access-copy";
 
 /**
  * Shown whenever AI features fail because the user has NO provider key.
@@ -53,12 +53,7 @@ const MISSING_KEY_PATTERNS = [
  * The AI gate's refusals whose remedy includes "add your own key" (`src/lib/ai-access-copy.ts`).
  * Listed by exact text, so the notice can still tell out-of-credits from no-key.
  */
-const KEY_REMEDY_DENIALS: ReadonlySet<string> = new Set([
-  AI_ACCESS_COPY.key_required,
-  AI_ACCESS_COPY.managed_limit,
-  AI_ACCESS_COPY.managed_unavailable,
-  MANAGED_PROVIDER_FAILURE_MESSAGE,
-]);
+const KEY_REMEDY_DENIALS: ReadonlySet<string> = new Set(AI_ACCESS_MESSAGES);
 
 /**
  * Whether `message` means "this account has no usable AI key", so the UI should show the
