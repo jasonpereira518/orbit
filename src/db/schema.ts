@@ -4703,7 +4703,8 @@ export const gateEvents = pgTable(
  *  - allowance: inside [period_start, period_end); it never rolls over.
  *  - pack: while the account is on a plan with managed AI. A downgrade FREEZES packs by this
  *    rule alone — nothing is written, so a resubscribe finds them exactly as they were.
- * Consumption spends allowance first, then packs oldest-first.
+ *  - starter: always (a Free account's one-time grant, `starter:<user>`).
+ * Consumption spends allowance first, then starter, then adjustments, then packs oldest-first.
  *
  * `grant_key` is the idempotency key: `pack:cs:<checkout session>` for a pack (so a retried
  * webhook grants once), `allowance:<user>:<period start>` for an allowance.
@@ -4717,10 +4718,10 @@ export const creditGrants = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id"),
-    kind: text("kind").$type<"allowance" | "pack" | "adjustment">().notNull(),
+    kind: text("kind").$type<"allowance" | "starter" | "pack" | "adjustment">().notNull(),
     grantKey: text("grant_key").notNull(),
     /** The plan whose allowance this is (allowance rows only). */
-    plan: text("plan").$type<"orbit" | "max">(),
+    plan: text("plan").$type<"free" | "orbit" | "max">(),
     microsGranted: integer("micros_granted").notNull(),
     microsRemaining: integer("micros_remaining").notNull(),
     periodStart: timestamp("period_start", { withTimezone: true }),

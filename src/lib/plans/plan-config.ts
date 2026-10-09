@@ -43,6 +43,9 @@ export type PlanSource = "comp" | "lifetime" | "subscription" | "free";
 
 export const FREE_CONTACT_LIMIT = 500;
 
+/** A Free account's one-time AI grant, spent after each month's allowance. Never renews. */
+export const FREE_STARTER_CREDITS = 25;
+
 export const PLAN_LABELS: Record<Plan, string> = {
   free: "Free Plan",
   orbit: "Orbit Pro",
@@ -71,7 +74,7 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  *   extension's own gate (open PR #248), not by this flag.
  * - `sync`: pasted-ICS calendar subscriptions and event sources.
  * - `extraConnections`: a second Google or Microsoft account. Free keeps its first one.
- * - `hostedAi`: AI on Orbit's provider keys, metered in credits (Pro and Max only).
+ * - `hostedAi`: AI on Orbit's provider keys, metered in credits (Free, Pro and Max; not Lifetime).
  * - `creditPacks`: buying a $5 top-up pack (Pro and Max only).
  */
 export const FEATURE_KEYS = [
@@ -133,7 +136,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     monthlyPriceCents: 0,
     annualPriceCents: 0,
     contactLimit: FREE_CONTACT_LIMIT,
-    monthlyCredits: null,
+    monthlyCredits: 10,
     speech: { meetingSeconds: 0, shortformSeconds: 1 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: 1,
@@ -147,7 +150,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
       extension: true,
       api: false,
       meetings: false,
-      hostedAi: false,
+      hostedAi: true,
       creditPacks: false,
       extraConnections: false,
     },
