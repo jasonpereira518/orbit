@@ -112,7 +112,8 @@ export function noticeCopyFor(reason: AiAccessDenial | null, plan: Plan, resetsA
   if (reason === "managed_limit" && plan === "free") {
     return {
       title: () => "You’ve used this month’s AI credits",
-      body: `They refill on ${resetsAt ? formatAllowanceReset(resetsAt) : "the 1st"}. Add your own key for no limit`,
+      // The notice continues it: " — add your own key for no limit under Settings…".
+      body: `They refill on ${resetsAt ? formatAllowanceReset(resetsAt) : "the 1st"}`,
       offer: "plans",
       linkToKeys: true,
     };

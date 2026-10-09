@@ -31,7 +31,10 @@ export function AiKeyNotice({
   reason?: AiAccessDenial | null;
   compact?: boolean;
 }) {
-  const extra = compact ? "hidden sm:inline" : undefined;
+  const { plan, includedAiAvailable, creditsResetAt } = useViewerPlan();
+  const copy = noticeCopyFor(reason ?? null, plan, creditsResetAt);
+  // Free at zero keeps everything on phones too: the refill date is the point of that state.
+  const extra = compact && copy.offer !== "plans" ? "hidden sm:inline" : undefined;
   const verb =
     feature === "chat"
       ? "answer questions about your network"
@@ -44,8 +47,6 @@ export function AiKeyNotice({
             : feature === "draft"
               ? "write a follow-up"
             : "read your notes and answer questions";
-  const { plan, includedAiAvailable, creditsResetAt } = useViewerPlan();
-  const copy = noticeCopyFor(reason ?? null, plan, creditsResetAt);
   // "Pro and Max include AI" only to a Free account, and only where it can actually run.
   const offerUpgrade = copy.offer === "upgrade" && plan === "free" && includedAiAvailable;
   const offerCredits = copy.offer === "credits" && (plan === "orbit" || plan === "max");
@@ -60,7 +61,7 @@ export function AiKeyNotice({
         <span className={extra}>{copy.body} </span>
         {copy.linkToKeys && (
           <>
-            {offerCredits ? "Or use your own key under " : copy.offer === "upgrade" || copy.offer === "plans" ? "Add one under " : "Keys live under "}
+            {offerCredits ? "Or use your own key under " : copy.offer === "plans" ? "— add your own key for no limit under " : copy.offer === "upgrade" ? "Add one under " : "Keys live under "}
             <Link href={integrationHref("ai")} className={link}>
               Settings → Integrations → AI provider
             </Link>
