@@ -170,18 +170,11 @@ const OPENROUTER_ROUTED_AWAY =
   "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
-  // Onboarding's AI key step never offers OpenRouter (it renders from
-  // SELECTABLE_AI_PROVIDERS minus openrouter, which smoke-ai-providers pins), so its
-  // per-provider branches need no openrouter arm.
-  "src/components/onboarding/provider-logo.tsx:21": "ProviderLogo's Gemini mark; the " +
-    "onboarding grid never renders an OpenRouter tile, so no OpenRouter mark is drawn.",
-  "src/components/onboarding/provider-logo.tsx:38": "ProviderLogo's OpenAI mark — same " +
-    "reason as line 21.",
-  "src/lib/ai-access.ts:632": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts:644": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
-  "src/lib/ai-access.ts:321": "isOpenAiShaped's own body: `provider === \"openai\" || " +
+  "src/lib/ai-access.ts:326": "isOpenAiShaped's own body: `provider === \"openai\" || " +
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
