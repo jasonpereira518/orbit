@@ -44,6 +44,8 @@ import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -96,6 +98,7 @@ export function ContactFollowUpSection({
   const router = useRouter();
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [draft, setDraft] = useState("");
+  const [aiError, setAiError] = useState<string | null>(null);
   const [intent, setIntent] = useState(initialIntent?.trim() || "");
   const [pending, start] = useTransition();
   const [sending, startSend] = useTransition();
@@ -184,6 +187,11 @@ export function ContactFollowUpSection({
           channel: p,
           intent: intent.trim() || undefined,
         });
+        if (!result.ok) {
+          setAiError(result.error);
+          return;
+        }
+        setAiError(null);
         setDraft(result.body);
         toast.success("Draft ready");
       } catch (err) {
@@ -435,6 +443,8 @@ export function ContactFollowUpSection({
             ) : null}
           </div>
         </div>
+
+        {aiError && <AiKeyNotice feature="draft" reason={aiDenialFromMessage(aiError)} compact />}
 
         {pending && !draft ? (
           <p className="text-sm text-muted-foreground">Drafting…</p>

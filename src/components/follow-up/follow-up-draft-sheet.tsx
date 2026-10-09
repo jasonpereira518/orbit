@@ -21,6 +21,8 @@ import {
 } from "@/components/ui/sheet";
 import { FollowUpDraftComposer } from "@/components/follow-up/follow-up-draft-composer";
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -58,6 +60,7 @@ export function FollowUpDraftSheet({
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState("");
+  const [aiError, setAiError] = useState<string | null>(null);
   const [sendOptions, setSendOptions] =
     useState<ContactFollowUpSendOptions | null>(null);
   const [pending, start] = useTransition();
@@ -69,6 +72,7 @@ export function FollowUpDraftSheet({
     if (!open) return;
     const session = ++sessionRef.current;
     setDraft("");
+    setAiError(null);
     setSendOptions(null);
 
     start(async () => {
@@ -97,7 +101,10 @@ export function FollowUpDraftSheet({
         ? Promise.resolve()
         : draftContactFollowUp(contactId, { reuse: true, intent }).then(
             (result) => {
-              if (session === sessionRef.current) setDraft(result.body);
+              if (session !== sessionRef.current) return;
+              if (!result.ok) return setAiError(result.error);
+              setAiError(null);
+              setDraft(result.body);
             },
             report
           );
@@ -112,6 +119,11 @@ export function FollowUpDraftSheet({
     start(async () => {
       try {
         const result = await draftContactFollowUp(contactId, { intent });
+        if (!result.ok) {
+          setAiError(result.error);
+          return;
+        }
+        setAiError(null);
         setDraft(result.body);
         toast.success("Draft ready");
       } catch (err) {
@@ -197,6 +209,7 @@ export function FollowUpDraftSheet({
               {pending ? "Drafting…" : draft ? "Regenerate" : "Generate"}
             </Button>
           </div>
+          {aiError && <AiKeyNotice feature="draft" reason={aiDenialFromMessage(aiError)} compact />}
           <FollowUpDraftComposer
             contactName={contactName}
             draft={draft}

@@ -4,7 +4,7 @@ import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
 import { parseAiJson } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
-import type { AiAccess } from "@/lib/ai-access";
+import { isAiAccessError, type AiAccess } from "@/lib/ai-access";
 import type { AiOperationId } from "@/lib/ai-operations";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
@@ -351,4 +351,19 @@ export async function generateContactFollowUpDraft(
     access: options?.access,
     signal: options?.signal,
   });
+}
+
+/**
+ * `generateContactFollowUpDraft`, with an AI-gate refusal returned as data. Thrown, it is
+ * digested in production and the person only sees a generic failure.
+ */
+export async function draftFollowUpResult(
+  ...args: Parameters<typeof generateContactFollowUpDraft>
+): Promise<({ ok: true } & Awaited<ReturnType<typeof generateContactFollowUpDraft>>) | { ok: false; error: string }> {
+  try {
+    return { ok: true, ...(await generateContactFollowUpDraft(...args)) };
+  } catch (err) {
+    if (isAiAccessError(err)) return { ok: false, error: err.message };
+    throw err;
+  }
 }

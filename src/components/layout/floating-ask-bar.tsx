@@ -21,6 +21,11 @@ import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import { useViewerPlan } from "@/components/viewer-plan";
+import { aiDenialFromMessage, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import { getFreeCreditsLeft } from "@/actions/credits";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
 import {
@@ -140,6 +145,24 @@ export function FloatingAskBar() {
   const chatThreadIdRef = useRef<string | null>(null);
 
   const [open, setOpen] = useState(false);
+  const { aiReason } = useViewerPlan();
+  const [askDenial, setAskDenial] = useState<AiAccessDenial | null>(null);
+  const [creditsLeft, setCreditsLeft] = useState<number | null>(null);
+  const denial = askDenial ?? aiReason;
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    getFreeCreditsLeft().then(
+      (n) => {
+        if (live) setCreditsLeft(n);
+      },
+      () => {}
+    );
+    return () => {
+      live = false;
+    };
+  }, [open]);
   const [hidden, setHidden] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KeywordSearchHit[]>([]);
@@ -450,7 +473,9 @@ export function FloatingAskBar() {
             },
             onError: (message) => {
               smoother.cancel();
-              toast.error(message);
+              const d = aiDenialFromMessage(message);
+              if (d) setAskDenial(d);
+              else toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               setQuery(q);
             },
@@ -471,6 +496,7 @@ export function FloatingAskBar() {
     setMessages([]);
     setQuery("");
     setHits([]);
+    setAskDenial(null);
     chatThreadIdRef.current = null;
   }
 
@@ -607,6 +633,12 @@ export function FloatingAskBar() {
                   </Button>
                 </div>
               </div>
+
+              {denial && (
+                <div className="px-3 pb-2">
+                  <AiKeyNotice feature="chat" reason={denial} compact />
+                </div>
+              )}
 
               <div className="max-h-[min(56vh,30rem)] overflow-y-auto">
                 {messages.length === 0 && !chatPending && hits.length === 0 && (
@@ -873,6 +905,11 @@ export function FloatingAskBar() {
             )}
           </Button>
         </motion.div>
+        {creditsLeft !== null && creditsLeft > 0 && creditsLeft <= FREE_LOW_CREDITS && (
+          <p className="px-4 pb-2 text-xs text-muted-foreground">
+            {creditsLeft} AI {creditsLeft === 1 ? "credit" : "credits"} left this month
+          </p>
+        )}
       </motion.div>
     </motion.div>
   );
