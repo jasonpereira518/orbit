@@ -54,7 +54,8 @@ async function writeNote(
   userId: string,
   target: NoteTarget,
   access: AiAccess,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  operation: "radar.why" | "radar.why.ask" = "radar.why"
 ): Promise<RadarAiNote | null> {
   const inputs = radarWhyInputs(target);
   if (inputs.facts.length === 0) return null;
@@ -62,7 +63,7 @@ async function writeNote(
   const raw = await completeJson(userId, {
     system,
     user,
-    operation: "radar.why",
+    operation,
     maxOutputTokens: 300,
     access,
     signal,
@@ -176,7 +177,7 @@ export async function explainRecommendation(
   const access = await openRadarAi(userId);
   if (!access) return { ok: false, reason: "no_key" };
   try {
-    const note = await writeNote(userId, target, access, AbortSignal.timeout(20_000));
+    const note = await writeNote(userId, target, access, AbortSignal.timeout(20_000), "radar.why.ask");
     return note ? { ok: true, note } : { ok: false, reason: "no_facts" };
   } catch (err) {
     return { ok: false, reason: "ai_error", message: friendlyError(err, "Couldn’t write that just now — try again?") };

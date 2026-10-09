@@ -622,6 +622,11 @@ async function realGate() {
   r = await lastSent(() => json(U.freeNone, "chat.answer"));
   check("…while a foreground operation still runs", r.req?.key === MANAGED, r.req?.key ?? r.err);
   await settle();
+  r = await lastSent(() => json(U.freeNone, "radar.why.ask"));
+  check("…and the Radar button's own request (radar.why.ask) runs", r.req?.key === MANAGED, r.req?.key ?? r.err);
+  await settle();
+  r = await lastSent(() => json(U.freeNone, "radar.why"));
+  check("…while the nightly radar.why is refused", isAiAccessError(r.err) && r.count === 0, r.err);
 
   console.log("\nFree at zero");
   await db.update(creditGrants).set({ microsRemaining: 0 }).where(eq(creditGrants.userId, U.freeNone));
