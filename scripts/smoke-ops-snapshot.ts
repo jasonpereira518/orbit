@@ -12,12 +12,13 @@ delete process.env.VERCEL_ENV;
 
 import { and, eq, gt, inArray, like, or, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, cronRuns, embeddingFailures, errorEvents, rateLimitBuckets, usageEvents } from "../src/db/schema";
+import { contacts, creditGrants, cronRuns, embeddingFailures, errorEvents, rateLimitBuckets, usageEvents } from "../src/db/schema";
 import { RATE_LIMITS } from "../src/lib/rate-limit";
 import { recordBackfillFailure } from "../src/lib/backfill-failures";
 import { ERROR_SOURCES } from "../src/lib/error-events";
 import { evaluateOpsConditions } from "../src/lib/ops-alerts";
 import { loadOpsSnapshot } from "../src/lib/ops-sweep";
+import { loadManagedAiOpsFacts } from "../src/lib/managed-ai-ops";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -193,6 +194,27 @@ run(async () => {
   check("which open both conditions",
     budgetIds.includes("avatar.source_exhausted") && budgetIds.includes("apollo.hosted_cap_hits"), budgetIds.join(","));
   await db.delete(rateLimitBuckets).where(budgetRows);
+
+  console.log("\nAccounts at their AI cap...");
+  await db.delete(creditGrants).where(like(creditGrants.userId, "snap-cap-%"));
+  const capBefore = (await loadManagedAiOpsFacts(new Date())).accountsAtCap;
+  const day = 86_400_000;
+  await db.insert(creditGrants).values(
+    (["free", "orbit", "max"] as const).map((plan) => ({
+      userId: `snap-cap-${plan}`,
+      kind: "allowance",
+      grantKey: `snap-cap-${plan}`,
+      plan,
+      microsGranted: 100_000,
+      microsRemaining: 0,
+      periodStart: new Date(Date.now() - day),
+      periodEnd: new Date(Date.now() + day),
+    })),
+  );
+  const capAfter = (await loadManagedAiOpsFacts(new Date())).accountsAtCap;
+  check("Pro and Max at zero count; Free at zero does not (the alert says Pro or Max)",
+    capAfter === capBefore + 2, `${capBefore} → ${capAfter}`);
+  await db.delete(creditGrants).where(like(creditGrants.userId, "snap-cap-%"));
 
   // (new sections go above this line)
 
