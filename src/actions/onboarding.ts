@@ -8,7 +8,7 @@ import { requireUserId } from "@/lib/auth";
 import { TERMS_VERSION } from "@/lib/legal";
 import { persistOnboardingComplete } from "@/lib/onboarding";
 import { removeTourExamples } from "@/lib/onboarding-examples/remove";
-import { isOnboardingPath, isOnboardingStep, type OnboardingPath } from "@/lib/onboarding-steps";
+import { isOnboardingPath, isOnboardingStep, stepAllowedOnPath, type OnboardingPath } from "@/lib/onboarding-steps";
 import { ensureUserSettings, recordTermsAcceptance } from "@/lib/user-settings";
 
 function revalidateOnboarding() {
@@ -26,12 +26,13 @@ export async function acceptTerms() {
 }
 
 /**
- * The welcome screen's choice: the guided tour or quick setup. Both paths open on the
- * LinkedIn step. `wizard_offered_at` keeps its old funnel meaning of "reached setup",
+ * The welcome screen's choice: the guided tour or quick setup. Both paths open on their
+ * first main-line step. `wizard_offered_at` keeps its old funnel meaning of "reached setup",
  * write-once in SQL so choosing again later does not move it.
  */
-export async function startOnboardingPath(path: string) {
+export async function startOnboardingPath(path: string, first: string) {
   if (!isOnboardingPath(path)) return { ok: false as const };
+  const step = isOnboardingStep(first) && stepAllowedOnPath(first, path) ? first : "welcome";
   const userId = await requireUserId();
   const db = await getDb();
   await ensureUserSettings(userId);
@@ -39,7 +40,7 @@ export async function startOnboardingPath(path: string) {
     .update(userSettings)
     .set({
       onboardingPath: path,
-      onboardingStep: "linkedin",
+      onboardingStep: step,
       wizardOfferedAt: sql`COALESCE(${userSettings.wizardOfferedAt}, now())`,
       updatedAt: new Date(),
     })

@@ -12,7 +12,9 @@ import {
   ONBOARDING_PATHS,
   ONBOARDING_STEPS,
   PATH_STAGES,
+  RETIRED_STEPS,
   STAGE_LABELS,
+  firstStep,
   isOnboardingPath,
   isOnboardingStep,
   mainLine,
@@ -28,9 +30,8 @@ function check(label: string, condition: boolean, detail?: string) {
   console.log(`  ok  ${label}`);
 }
 
-const ALL = { hasApiKey: false, connectConfigured: true };
-const KEYED = { hasApiKey: true, connectConfigured: true };
-const BARE = { hasApiKey: true, connectConfigured: false };
+const ALL = { connectConfigured: true };
+const BARE = { connectConfigured: false };
 
 function main() {
   console.log("Onboarding steps…");
@@ -38,6 +39,7 @@ function main() {
   console.log("\nevery step round-trips on a path that allows it");
   for (const step of ONBOARDING_STEPS) {
     check(`"${step}" is accepted`, isOnboardingStep(step));
+    if (RETIRED_STEPS.includes(step)) continue;
     const path = ONBOARDING_PATHS.find((p) => stepAllowedOnPath(step, p));
     check(`"${step}" is allowed on some path`, path != null);
     if (step !== "welcome" && path) {
@@ -66,21 +68,26 @@ function main() {
   for (const step of ["capture", "manual", "triage"] as const) {
     check(`"${step}" lights the people node`, stageOf(step, "quick") === "people");
   }
-  check("import lights linkedin on the tour path", stageOf("import", "tour") === "linkedin");
-  check("import lights people on the quick path", stageOf("import", "quick") === "people");
-
-  console.log("\nskips follow the facts");
-  check("tour with nothing set walks every setup step", mainLine("tour", ALL).join(">") === "welcome>linkedin>ai-key>connect>launch");
-  check("a saved key skips the key step", !mainLine("quick", KEYED).includes("ai-key"));
-  check("no configured provider skips connect", !mainLine("tour", BARE).includes("connect"));
+  check("import lights people", stageOf("import", "quick") === "people");
+  check("quick goes people first", mainLine("quick", ALL).join(">") === "welcome>people>connect>overview");
+  check("the tour is welcome, connect, launch", mainLine("tour", ALL).join(">") === "welcome>connect>launch");
+  check("no configured provider skips connect", !mainLine("tour", BARE).includes("connect") && !mainLine("quick", BARE).includes("connect"));
+  check("quick starts on people", firstStep("quick", ALL) === "people");
+  check("the tour starts on connect, or launch without providers", firstStep("tour", ALL) === "connect" && firstStep("tour", BARE) === "launch");
+  check("quick: people → connect → overview", nextStep("people", "quick", ALL) === "connect" && nextStep("connect", "quick", ALL) === "overview");
+  check("quick, bare: people goes straight to the overview", nextStep("people", "quick", BARE) === "overview");
   check("tour: after connect comes the launch", nextStep("connect", "tour", ALL) === "launch");
-  check("quick: after connect come the people", nextStep("connect", "quick", ALL) === "people");
-  check("quick: linkedin skips straight to people when keyed and bare", nextStep("linkedin", "quick", BARE) === "people");
   check("the last step has no next", nextStep("launch", "tour", ALL) === null && nextStep("overview", "quick", ALL) === null);
   check("welcome has no previous", prevStep("welcome", "tour", ALL) === null);
-  check("back from connect skips a skipped key step", prevStep("connect", "tour", KEYED) === "linkedin");
-  check("a branch step's neighbours are its node's", nextStep("capture", "quick", ALL) === "overview" && prevStep("triage", "quick", ALL) === "connect");
-  check("a key saved ON the key step still advances", nextStep("ai-key", "tour", KEYED) === "connect" && nextStep("ai-key", "quick", { hasApiKey: true, connectConfigured: false }) === "people");
+  check("a branch step's neighbours are its node's", nextStep("capture", "quick", ALL) === "connect" && prevStep("triage", "quick", ALL) === "welcome");
+  for (const retired of RETIRED_STEPS) {
+    check(`a stored "${retired}" resumes on quick's first step`, resumeStep(retired, "quick", ALL) === "people");
+    check(`a stored "${retired}" resumes on the tour's first step`, resumeStep(retired, "tour", ALL) === "connect");
+    check(`a stored "${retired}" resumes on launch when nothing is configured`, resumeStep(retired, "tour", BARE) === "launch");
+  }
+  check("a stored tour import resumes on the tour's first step", resumeStep("import", "tour", ALL) === "connect");
+  check("a stored quick import still resumes as itself", resumeStep("import", "quick", ALL) === "import");
+  check("STAGE_LABELS covers exactly the stages", Object.keys(STAGE_LABELS).sort().join(",") === "connect,launch,overview,people,welcome");
 
   console.log("\nAll onboarding step checks passed.");
 }
