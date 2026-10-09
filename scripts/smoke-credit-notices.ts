@@ -5,7 +5,7 @@
  *  - 80% sends once; the next run sends nothing; 100% then sends once more.
  *  - Crossing both levels between runs sends only the 100% email.
  *  - At 100%, an account with pack credits hears it is on packs; one without hears AI paused.
- *  - Opted out, or on a plan without included AI: nothing.
+ *  - Opted out, or on Free (in-app notice only): nothing.
  *  - A send the mailer refuses gives the claim back, so the next run tries again.
  *  - Unsubscribe links are signed, verified, and turn the email off.
  *
@@ -74,7 +74,7 @@ run(async () => {
     allowance(PACKS, 200),
     { userId: PACKS, kind: "pack", grantKey: `${P}pack`, microsGranted: 2_500_000, microsRemaining: 2_500_000, amountCents: 500, stripeRef: "cs_cn" },
     allowance(OPTED_OUT, 200),
-    allowance(FREE, 200),
+    allowance(FREE, 180),
     allowance(REFUSED, 180),
     allowance(MAX, 450, 500),
   ]);
@@ -101,7 +101,7 @@ run(async () => {
   check("at 100% with pack credits: now on packs, with how many", to(PACKS).length === 1 &&
     /pack credits/.test(to(PACKS)[0].subject) && /250 left/.test(to(PACKS)[0].text), to(PACKS)[0]?.text);
   check("opted out: nothing", to(OPTED_OUT).length === 0);
-  check("a plan without included AI: nothing", to(FREE).length === 0);
+  check("Free: 90% used, in-app only, never an email", to(FREE).length === 0);
   check("Max is never offered Max", to(MAX).length === 1 && !/move to Orbit Max/.test(to(MAX)[0].text));
   check("every email carries its one-click unsubscribe link",
     sent.every((m) => m.unsubscribeUrl.includes("/api/credits/email/unsubscribe?token=") && m.text.includes(m.unsubscribeUrl) &&

@@ -193,6 +193,7 @@ export type HealthInput = {
     allowanceGranted: number;
     allowanceRemaining: number;
     packRemaining: number;
+    starterRemaining?: number;
     spendable: number;
     resetsAt: string | null;
   } | null;
@@ -417,7 +418,7 @@ export function evaluateAccountHealth(
     const c = input.credits;
     const resetsAt = c.resetsAt;
     if (c.spendable <= 0) {
-      findings.push({ code: "plan.credits_out", severity: "error", data: { resetsAt } });
+      findings.push({ code: "plan.credits_out", severity: "error", data: { resetsAt, free: input.plan === "free" } });
     } else if (c.allowanceGranted > 0 && c.allowanceRemaining <= 0 && c.packRemaining > 0) {
       findings.push({
         code: "plan.credits_on_packs",
@@ -425,13 +426,14 @@ export function evaluateAccountHealth(
         data: { resetsAt, packCredits: Math.floor(c.packRemaining / 10_000) },
       });
     } else if (
+      (c.starterRemaining ?? 0) <= 0 &&
       c.allowanceGranted > 0 &&
       c.allowanceGranted - c.allowanceRemaining >= Math.floor(c.allowanceGranted * CREDITS_WARN_RATIO)
     ) {
       findings.push({
         code: "plan.credits_near",
         severity: "warn",
-        data: { resetsAt, left: Math.floor(Math.max(0, c.allowanceRemaining) / 10_000) },
+        data: { resetsAt, left: Math.floor(Math.max(0, c.allowanceRemaining) / 10_000), free: input.plan === "free" },
       });
     }
   }
@@ -601,7 +603,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `Add your ${str(f.data.providerLabel) ?? "AI"} API key`,
-          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. On the Free Plan AI runs on your own key; Orbit Pro and Max include it.",
+          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. Add your own key in Settings to keep AI running",
           cta: {
             label: "Open AI settings",
             href: integrationHref("ai"),
@@ -811,10 +813,12 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
               ? "You’re out of AI credits"
               : f.code === "plan.credits_on_packs"
                 ? "Your monthly AI credits are used"
-                : `${left} ${plural(left, "credit", "credits")} left this cycle`,
+                : `${left} ${plural(left, "credit", "credits")} left this ${f.data.free ? "month" : "cycle"}`,
           body:
             f.code === "plan.credits_out"
-              ? `Included AI is paused${when ? ` until ${when}` : ""}. Nothing is charged automatically — add a $5 pack, or use your own key.`
+              ? f.data.free
+                ? `Orbit’s AI refills${when ? ` on ${when}` : " next month"}. Add your own key for no limit`
+                : `Included AI is paused${when ? ` until ${when}` : ""}. Nothing is charged automatically — add a $5 pack, or use your own key.`
               : f.code === "plan.credits_on_packs"
                 ? `Orbit is now using your pack credits (${packs} left)${when ? ` until your allowance resets on ${when}` : ""}.`
                 : `You’ve used 80% of this cycle’s AI credits${when ? `; they reset on ${when}` : ""}.`,

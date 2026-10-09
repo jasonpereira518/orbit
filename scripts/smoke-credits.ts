@@ -167,10 +167,18 @@ run(async () => {
       importStalledLabel: null, importStalledRows: null, importStalledTotal: null, plan: "orbit", planSource: "subscription",
       subscriptionStatus: "active", subscriptionPeriodEnd: null, contactLimit: null, contactCount: null, credits,
     } as Parameters<typeof evaluateAccountHealth>[0]).map((f) => f.code);
-  const c = (allowanceRemaining: number, packRemaining = 0) => ({
-    allowanceGranted: 2_000_000, allowanceRemaining, packRemaining,
-    spendable: allowanceRemaining + packRemaining, resetsAt: "2026-11-03T09:00:00.000Z",
+  const c = (allowanceRemaining: number, packRemaining = 0, starterRemaining = 0) => ({
+    allowanceGranted: 2_000_000, allowanceRemaining, packRemaining, starterRemaining,
+    spendable: allowanceRemaining + packRemaining + starterRemaining, resetsAt: "2026-11-03T09:00:00.000Z",
   });
+  const healthFree = (credits: Parameters<typeof evaluateAccountHealth>[0]["credits"]) =>
+    toAccountAlerts(evaluateAccountHealth({
+      hasAiKey: true, aiProvider: "gemini", onboardingCompletedAt: new Date(), gmail: null, outlook: null,
+      googleCalendar: null, microsoftCalendar: null, appleCalendar: null, calendarErrorCount: 0, calendarErrorLabel: null,
+      calendarErrorDetail: null, importFailedCount: 0, importFailedLabel: null, importFailedDetail: null, importStalledCount: 0,
+      importStalledLabel: null, importStalledRows: null, importStalledTotal: null, plan: "free", planSource: "free",
+      subscriptionStatus: null, subscriptionPeriodEnd: null, contactLimit: null, contactCount: null, credits,
+    } as Parameters<typeof evaluateAccountHealth>[0]));
   check("under 80% used: quiet", health(c(1_000_000)).every((code) => !code.startsWith("plan.credits")));
   check("80% used: a heads-up", health(c(400_000)).includes("plan.credits_near"));
   check("100% used with packs: now on pack credits", health(c(0, 500_000)).includes("plan.credits_on_packs"));
@@ -179,6 +187,13 @@ run(async () => {
     isDismissible("plan.credits_near") && isDismissible("plan.credits_on_packs") && !isDismissible("plan.credits_out"));
   const out = toAccountAlerts(evaluateAccountHealth({ ...({} as object), credits: c(0) } as never)).find((a) => a.code === "plan.credits_out");
   check("…and says nothing is charged automatically", /Nothing is charged automatically/.test(out?.body ?? ""), out?.body);
+  check("an allowance spent with starter credits left is NOT 'near'",
+    !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_near"));
+  check("…nor 'out'", !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_out"));
+  const outAlert = healthFree({ allowanceGranted: 100_000, allowanceRemaining: 0, packRemaining: 0, starterRemaining: 0, spendable: 0, resetsAt: "2026-11-01T00:00:00.000Z" })
+    .find((a) => a.title === "You’re out of AI credits");
+  check("Free's out-of-credits alert offers a key, never a pack",
+    Boolean(outAlert) && !/pack/i.test(outAlert!.body) && /own key/.test(outAlert!.body), outAlert);
   check("no credits, no credit notices", health(null).every((code) => !code.startsWith("plan.credits")));
 
   console.log("\nEquivalents from measured cost");
