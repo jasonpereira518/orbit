@@ -4,7 +4,7 @@ import {
   isMicrosoftPurpose,
   missingScopeMessage as missingMicrosoftScopeMessage,
 } from "@/lib/microsoft-scopes";
-import { AI_ACCESS_MESSAGES } from "@/lib/ai-access-copy";
+import { AI_ACCESS_MESSAGES, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
 
 /**
  * Shown whenever AI features fail because the user has NO provider key.
@@ -220,6 +220,10 @@ export function isQuietFailureMessage(message: string): boolean {
   ) {
     return true;
   }
+  // The AI gate's refusals (out of credits, no key, background floor) are the plan's state,
+  // not a fault. A reference appended to one also hid it from `aiDenialFromMessage`, so the
+  // Free out-of-credits notice read as "add a key". Orbit's own provider failure IS a fault.
+  if (message !== MANAGED_PROVIDER_FAILURE_MESSAGE && AI_ACCESS_MESSAGES.includes(message)) return true;
   return AI_PROVIDER_LABELS.some(
     (label) => message === AI_FAILURE_COPY.auth(label) || message === AI_FAILURE_COPY.rate_limit(label)
   );

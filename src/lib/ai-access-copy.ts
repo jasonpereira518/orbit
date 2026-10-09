@@ -57,6 +57,8 @@ export const AI_ACCESS_MESSAGES: readonly string[] = [
  */
 export function aiDenialFromMessage(message: string | null | undefined): AiAccessDenial | null {
   if (!message) return null;
+  // `withReference` (errors.ts) appends " (ref xxxx)" to a reported failure; match the bare words.
+  message = message.replace(/ \(ref [^)]*\)$/, "");
   for (const [reason, copy] of Object.entries(AI_ACCESS_COPY)) {
     if (message === copy) return reason as AiAccessDenial;
   }

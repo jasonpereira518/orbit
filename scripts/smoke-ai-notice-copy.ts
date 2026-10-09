@@ -7,12 +7,15 @@ import { readFileSync } from "node:fs";
 import {
   AI_ACCESS_COPY,
   AI_ACCESS_MESSAGES,
+  aiDenialFromMessage,
   BACKGROUND_RESERVE_MESSAGE,
   FREE_LIMIT_MESSAGE,
+  MANAGED_PROVIDER_FAILURE_MESSAGE,
   hintCopyFor,
   noticeCopyFor,
   refusalCopyFor,
 } from "../src/lib/ai-access-copy";
+import { isQuietFailureMessage } from "../src/lib/errors";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -49,6 +52,13 @@ for (const file of ["src/actions/events.ts", "src/components/contacts/log-intera
   const src = readFileSync(file, "utf8");
   check(`${file} words refusals per plan, never a raw copy table lookup`, !/AI_(ACCESS|HINT|NOTICE)_COPY\[/.test(src));
 }
+
+// A refusal that went through reportedFailure can carry " (ref xxxx)"; it must still map.
+check("Free-limit message with a ref maps to managed_limit", aiDenialFromMessage(`${FREE_LIMIT_MESSAGE} (ref abc123)`) === "managed_limit");
+check("provider-failure message with a ref maps to managed_unavailable", aiDenialFromMessage(`${MANAGED_PROVIDER_FAILURE_MESSAGE} (ref x)`) === "managed_unavailable");
+check("Free-limit message is a quiet failure (no ref appended)", isQuietFailureMessage(FREE_LIMIT_MESSAGE));
+check("every account-state refusal is quiet", AI_ACCESS_MESSAGES.filter((m) => m !== MANAGED_PROVIDER_FAILURE_MESSAGE).every(isQuietFailureMessage));
+check("Orbit's own provider failure is still reported", !isQuietFailureMessage(MANAGED_PROVIDER_FAILURE_MESSAGE));
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);
