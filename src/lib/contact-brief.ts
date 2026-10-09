@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { isAiAccessError } from "@/lib/ai-access";
 import { getDb } from "@/db";
 import { contactBriefs, contactOpportunities, contacts, interactions, relationshipDigests, reminders } from "@/db/schema";
 import { completeJson, getAiConfig } from "@/lib/ai";
@@ -293,7 +294,7 @@ export async function generateAndStoreContactBrief(
   userId: string,
   contactId: string,
   options?: { force?: boolean; engines?: Engines }
-): Promise<{ summary: string | null; standing: string | null; nextStep?: string | null } | null> {
+): Promise<{ summary: string | null; standing: string | null; nextStep?: string | null; aiError: string | null } | null> {
   const db = await getDb();
   // Projected to exactly what the prompt, the deterministic fallback and the stored brief
   // read. Unprojected, the contact brought its inline avatar and every enrichment column,
@@ -437,7 +438,7 @@ export async function generateAndStoreContactBrief(
     interactionSnippets.length > 0;
 
   if (!hasSignal && !options?.force) {
-    return { summary: contact.aiSummary, standing: null };
+    return { summary: contact.aiSummary, standing: null, aiError: null };
   }
 
   const profileBlock = [
@@ -511,7 +512,7 @@ export async function generateAndStoreContactBrief(
         .update(contactBriefs)
         .set({ generatedAt: new Date() })
         .where(and(eq(contactBriefs.contactId, contactId), eq(contactBriefs.userId, userId)));
-      return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep };
+      return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep, aiError: null };
     }
     // The input changed — a tag, a logged call, an edited note — but a changed input is not
     // the same as a changed relationship, and rewriting the brief to say what it already
@@ -533,7 +534,7 @@ export async function generateAndStoreContactBrief(
           .update(contactBriefs)
           .set({ generatedAt: new Date(), inputHash })
           .where(and(eq(contactBriefs.contactId, contactId), eq(contactBriefs.userId, userId)));
-        return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep };
+        return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep, aiError: null };
       }
     }
   }
@@ -542,6 +543,7 @@ export async function generateAndStoreContactBrief(
   let standing: string | null = null;
   let nextStep: string | null = null;
   let model: string | null = null;
+  let aiError: string | null = null;
   let goalFit: GoalFit | null = null;
 
   try {
@@ -564,6 +566,7 @@ export async function generateAndStoreContactBrief(
       ? { judged: goals.map((g) => g.id), items: sanitizeGoalFit(parsed.goal_fit, goals) }
       : null;
   } catch (err) {
+    if (isAiAccessError(err)) aiError = err.message;
     // The deterministic summary is a fine fallback, but a brief that silently never uses
     // the model is a fault worth seeing — unless the cause is the person's own key setup.
     reportUnlessQuiet(err, { where: "job.contact-brief", userId, extra: { contactId } });
@@ -589,7 +592,7 @@ export async function generateAndStoreContactBrief(
     goalFit = null;
   }
 
-  if (!summary?.trim()) return { summary: contact.aiSummary, standing: null };
+  if (!summary?.trim()) return { summary: contact.aiSummary, standing: null, aiError };
 
   await db
     .update(contacts)
@@ -645,7 +648,7 @@ export async function generateAndStoreContactBrief(
     return null;
   });
 
-  return { summary: summary.trim(), standing, nextStep };
+  return { summary: summary.trim(), standing, nextStep, aiError };
 }
 
 /**

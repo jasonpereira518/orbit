@@ -604,7 +604,9 @@ function ContactPanelBody({
                 start(async () => {
                   try {
                     const res = await regenerateContactSummary(id);
-                    if (res.summary) {
+                    if (res.aiError) {
+                      toast.error(res.aiError);
+                    } else if (res.summary) {
                       setSummaryText(res.summary);
                       onContactPatch?.(id, { aiSummary: res.summary });
                       toast.success("Summary updated");

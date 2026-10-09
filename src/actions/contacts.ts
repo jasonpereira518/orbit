@@ -971,7 +971,7 @@ export async function regenerateContactSummary(contactId: string) {
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/graph");
   revalidatePath("/dashboard");
-  return { summary: out?.summary ?? null };
+  return { summary: out?.summary ?? null, aiError: out?.aiError ?? null };
 }
 
 export type LinkedInRefreshTarget = {
