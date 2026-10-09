@@ -48,11 +48,6 @@ function getWorker(): Worker | null {
   return worker;
 }
 
-/** Whether bitmaps can be drawn off the main thread here. */
-export function skyBitmapWorkerAvailable() {
-  return getWorker() !== null;
-}
-
 export function renderSkyBitmap(job: SkyBitmapJob): Promise<Blob | null> {
   const w = getWorker();
   if (!w) return Promise.resolve(null);

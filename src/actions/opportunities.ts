@@ -18,7 +18,6 @@ import { contactOpportunities, type ContactOpportunity } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
   insertOpportunities,
-  listOpportunitiesForContact,
   syncContactOpportunityMirror,
 } from "@/lib/contact-opportunities";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
@@ -59,12 +58,6 @@ async function afterWrite(userId: string, contactId: string) {
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/dashboard");
   after(() => generateAndStoreContactBrief(userId, contactId).catch(() => null));
-}
-
-export async function listContactOpportunities(contactId: string): Promise<ContactOpportunity[]> {
-  const userId = await requireUserId();
-  if (typeof contactId !== "string" || !contactId.trim()) return [];
-  return listOpportunitiesForContact(userId, contactId.trim());
 }
 
 export async function createOpportunity(input: {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, ScanLine, Smartphone, Upload } from "lucide-react";
+import { Camera, Smartphone, Upload } from "lucide-react";
 import { ScanCameraLazy } from "@/components/scan/scan-camera-lazy";
 import { ScanQrHandoff } from "@/components/scan/scan-qr-handoff";
 import { Button } from "@/components/ui/button";
@@ -352,15 +352,6 @@ function ScanTile({
       <span className="text-sm font-medium text-ink">{label}</span>
       <span className="text-xs text-muted-foreground">{hint}</span>
     </button>
-  );
-}
-
-/** The chip that marks a scan-related header, matching the import panels' icon chips. */
-export function ScanChip() {
-  return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-scan/10 text-import-scan">
-      <ScanLine className="h-4 w-4" />
-    </span>
   );
 }
 

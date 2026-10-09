@@ -47,12 +47,6 @@ export type RailTarget =
   | { kind: "view"; view: ReminderView | "suggested" }
   | { kind: "list"; id: string };
 
-export function sameTarget(a: RailTarget, b: RailTarget) {
-  return a.kind === "view" && b.kind === "view"
-    ? a.view === b.view
-    : a.kind === "list" && b.kind === "list" && a.id === b.id;
-}
-
 const VIEWS: Array<{
   view: ReminderView;
   label: string;
