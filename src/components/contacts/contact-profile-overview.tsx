@@ -76,8 +76,9 @@ export function ContactProfileOverview({
               onClick={() =>
                 start(async () => {
                   try {
-                    await regenerateContactSummary(contactId);
-                    toast.success("Summary updated");
+                    const res = await regenerateContactSummary(contactId);
+                    if (res.aiError) toast.error(res.aiError);
+                    else toast.success("Summary updated");
                     router.refresh();
                   } catch (err) {
                     toast.error(
