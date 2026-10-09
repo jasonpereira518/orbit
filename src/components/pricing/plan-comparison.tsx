@@ -1,5 +1,6 @@
 import { Check, Minus } from "lucide-react";
 import {
+  FREE_STARTER_CREDITS,
   PLAN_CONFIG,
   PLAN_LABELS,
   type PurchasablePlan,
@@ -47,7 +48,7 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
     label: "AI for capture, chat and summaries",
     cells: each((plan) => {
       const credits = PLAN_CONFIG[plan].monthlyCredits;
-      return credits ? `Included: ${credits} credits a month` : "Your own key";
+      return credits ? `Included: ${credits} credits a month${plan === "free" ? ` + ${FREE_STARTER_CREDITS} to start` : ""}` : "Your own key";
     }),
   },
   { label: "Credit packs ($5 = 250 credits)", cells: feature("creditPacks") },

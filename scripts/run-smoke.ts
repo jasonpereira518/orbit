@@ -473,6 +473,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
   "smoke-plan-card-copy": "pure",
+  "smoke-free-ai-copy": "pure",
   "smoke-plan-downgrade": "pure",
   "smoke-plan-upgrade-claim": "pglite",
   "smoke-presence": "pglite",
