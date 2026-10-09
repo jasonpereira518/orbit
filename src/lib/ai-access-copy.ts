@@ -24,13 +24,13 @@ export const AI_ACCESS_COPY: Record<AiAccessDenial, string> = {
 export const MANAGED_PROVIDER_FAILURE_MESSAGE =
   "Orbit’s AI couldn’t answer just now — try again in a moment, or add your own API key in Settings";
 
+/** At or below this many credits, a Free account sees "N AI credits left this month". */
+export const FREE_LOW_CREDITS = 3;
+
 /**
  * A Free account at zero. Keeps "API key" so `isMissingAiApiKeyError` flips every notice, and
  * `aiDenialFromMessage` maps it to `managed_limit` by exact match.
  */
-/** At or below this many credits, a Free account sees "N AI credits left this month". */
-export const FREE_LOW_CREDITS = 3;
-
 export const FREE_LIMIT_MESSAGE = "You’ve used this month’s AI credits — add your own API key in Settings for no limit";
 
 /** Every string above, for `OWN_WORDS`. */

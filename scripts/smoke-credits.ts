@@ -189,6 +189,10 @@ run(async () => {
   check("…and says nothing is charged automatically", /Nothing is charged automatically/.test(out?.body ?? ""), out?.body);
   check("an allowance spent with starter credits left is NOT 'near'",
     !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_near"));
+  // creditFacts is not reachable here; this mirrors its output for a Free account downgraded from
+  // Pro (packs frozen, so packRemaining is 0), allowance spent, starter left.
+  check("Free with frozen packs, allowance spent, starter left: not 'on packs'",
+    !healthFree({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).some((a) => /pack credits/.test(a.body ?? "")));
   check("…nor 'out'", !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_out"));
   const outAlert = healthFree({ allowanceGranted: 100_000, allowanceRemaining: 0, packRemaining: 0, starterRemaining: 0, spendable: 0, resetsAt: "2026-11-01T00:00:00.000Z" })
     .find((a) => a.title === "You’re out of AI credits");

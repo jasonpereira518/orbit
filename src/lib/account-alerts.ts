@@ -821,7 +821,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
                 : `Included AI is paused${when ? ` until ${when}` : ""}. Nothing is charged automatically — add a $5 pack, or use your own key.`
               : f.code === "plan.credits_on_packs"
                 ? `Orbit is now using your pack credits (${packs} left)${when ? ` until your allowance resets on ${when}` : ""}.`
-                : `You’ve used 80% of this cycle’s AI credits${when ? `; they reset on ${when}` : ""}.`,
+                : `You’ve used 80% of this ${f.data.free ? "month" : "cycle"}’s AI credits${when ? `; they reset on ${when}` : ""}.`,
           cta: { label: "View credits", href: integrationHref("ai"), external: false },
           surfaceKey: "settings.ai",
         });

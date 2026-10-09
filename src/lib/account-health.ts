@@ -445,11 +445,13 @@ async function creditFacts(
   if (ownKey && row?.aiKeyPreference !== "included") return null;
   try {
     const balance = await getCreditBalance(userId, plan, settings, now, { ensure: false });
-    if (!balance.allowance && balance.packRemaining === 0 && balance.starterRemaining === 0) return null;
+    // Frozen packs (a downgrade from Pro) are never spent, so they are not part of the facts.
+    const packRemaining = balance.packsFrozen ? 0 : balance.packRemaining;
+    if (!balance.allowance && packRemaining === 0 && balance.starterRemaining === 0) return null;
     return {
       allowanceGranted: balance.allowance?.granted ?? 0,
       allowanceRemaining: balance.allowance?.remaining ?? 0,
-      packRemaining: balance.packRemaining,
+      packRemaining,
       starterRemaining: balance.starterRemaining,
       spendable: balance.spendable,
       resetsAt: balance.allowance?.periodEnd ?? null,

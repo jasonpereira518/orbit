@@ -29,6 +29,7 @@ const JUMP = `${P}jump`;
 const PACKS = `${P}packs`;
 const OPTED_OUT = `${P}optout`;
 const FREE = `${P}free`;
+const LIFETIME = `${P}lifetime`;
 const REFUSED = `${P}refused`;
 const MAX = `${P}max`;
 const DAY = 86_400_000;
@@ -44,7 +45,7 @@ run(async () => {
   check("all used is 100", notices.noticeLevelFor(2_000_000, 0) === 100 && notices.noticeLevelFor(2_000_000, -5) === 100);
 
   const db = await getDb();
-  const users = [LOW, JUMP, PACKS, OPTED_OUT, FREE, REFUSED, MAX];
+  const users = [LOW, JUMP, PACKS, OPTED_OUT, FREE, LIFETIME, REFUSED, MAX];
   const reset = async () => {
     await db.delete(schema.creditGrants).where(inArray(schema.creditGrants.userId, users));
     await db.delete(schema.errorEvents).where(inArray(schema.errorEvents.userId, users));
@@ -62,6 +63,7 @@ run(async () => {
   await db.insert(schema.userSettings).values([
     pro(LOW), pro(JUMP), pro(PACKS), pro(OPTED_OUT, { creditEmailEnabled: 0 }), pro(REFUSED),
     { userId: FREE, email: `${FREE}@example.test` },
+    { userId: LIFETIME, email: `${LIFETIME}@example.test`, lifetimePurchasedAt: periodStart },
     { ...pro(MAX), subscriptionPlan: "max" },
   ]);
   const allowance = (userId: string, usedCredits: number, granted = 200) => ({
@@ -75,6 +77,7 @@ run(async () => {
     { userId: PACKS, kind: "pack", grantKey: `${P}pack`, microsGranted: 2_500_000, microsRemaining: 2_500_000, amountCents: 500, stripeRef: "cs_cn" },
     allowance(OPTED_OUT, 200),
     allowance(FREE, 180),
+    allowance(LIFETIME, 180),
     allowance(REFUSED, 180),
     allowance(MAX, 450, 500),
   ]);
@@ -102,6 +105,7 @@ run(async () => {
     /pack credits/.test(to(PACKS)[0].subject) && /250 left/.test(to(PACKS)[0].text), to(PACKS)[0]?.text);
   check("opted out: nothing", to(OPTED_OUT).length === 0);
   check("Free: 90% used, in-app only, never an email", to(FREE).length === 0);
+  check("a plan without included AI (Lifetime): nothing", to(LIFETIME).length === 0);
   check("Max is never offered Max", to(MAX).length === 1 && !/move to Orbit Max/.test(to(MAX)[0].text));
   check("every email carries its one-click unsubscribe link",
     sent.every((m) => m.unsubscribeUrl.includes("/api/credits/email/unsubscribe?token=") && m.text.includes(m.unsubscribeUrl) &&
