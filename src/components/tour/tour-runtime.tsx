@@ -30,7 +30,7 @@ import { useAnchorRect, useSelectorRect } from "@/lib/tour/use-anchor-rect";
 import { tourAnchorSelector } from "@/lib/tour/tour-anchors";
 import { examplePerson } from "@/lib/onboarding-examples/cast";
 
-const TOUR_MAYA_NAME = examplePerson("maya").fullName;
+const TOUR_LEAD_NAME = examplePerson("priya").fullName;
 import { useMediaQuery } from "@/lib/use-media-query";
 
 export type TourSeed = {
@@ -251,7 +251,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
         break;
       default:
         satisfied = events.seq > armedSeq.current && events.last?.name === stop.doneWhen;
-        // Opening the example Maya from the search stop does "open a person" too.
+        // Opening the example lead (Priya) from the search stop does "open a person" too.
         if (!satisfied && stop.id === "contacts.search" && events.seq > armedSeq.current && events.last?.name === "contacts.opened-example") {
           const open = stops.find((s) => s.id === "contacts.open");
           const log = stops.find((s) => s.id === "contact.log");
@@ -300,7 +300,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
   }, []);
 
   const anchor = useAnchorRect(onRoute && !closed ? stop.anchor : null, stop.id);
-  // "Open a person" is about the example Maya. If her row isn't in the list (the search stop
+  // "Open a person" is about the example lead (Priya). If her row isn't in the list (the search stop
   // was skipped and the list starts at A), search for her, once per visit, so there is
   // something to open and to point at.
   const searchedFor = useRef<number | null>(null);
@@ -309,7 +309,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
     const t = window.setTimeout(() => {
       if (document.querySelector(tourAnchorSelector("contacts.row"))) return;
       searchedFor.current = entry;
-      router.replace(`/contacts?q=${encodeURIComponent(TOUR_MAYA_NAME)}`);
+      router.replace(`/contacts?q=${encodeURIComponent(TOUR_LEAD_NAME)}`);
     }, 900);
     return () => window.clearTimeout(t);
   }, [alreadyDone, entry, onRoute, router, stop.id]);

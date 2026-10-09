@@ -616,7 +616,7 @@ function rowMetaFor(c: ContactListItem): ContactRowMeta {
   return meta;
 }
 
-const TOUR_MAYA_NAME = examplePerson("maya").fullName;
+const TOUR_LEAD_NAME = examplePerson("priya").fullName;
 
 const ContactRow = memo(function ContactRow({
   c,
@@ -640,9 +640,9 @@ const ContactRow = memo(function ContactRow({
   onOpenDraft: (contact: { id: string; name: string }) => void;
   onRequestDelete: (id: string) => void;
 }) {
-  // The guided tour's "open a person" stop is about its example Maya, and only her row is
-  // highlighted and only opening her moves the tour on — a real Maya Thompson is not her.
-  const isTourMaya = isTourExampleSource(c.source) && c.fullName === TOUR_MAYA_NAME;
+  // The guided tour's "open a person" stop is about its example lead (Priya), and only her row is
+  // highlighted and only opening her moves the tour on — a real Priya Patel is not her.
+  const isTourLead = isTourExampleSource(c.source) && c.fullName === TOUR_LEAD_NAME;
   const { overdue, scheduledLabel, overdueText, lastTouch, details } = meta;
 
   function seeMarked() {
@@ -651,7 +651,7 @@ const ContactRow = memo(function ContactRow({
 
   function openContact() {
     if (exiting) return;
-    if (isTourMaya) emitTourEvent("contacts.opened-example");
+    if (isTourLead) emitTourEvent("contacts.opened-example");
     seeMarked();
     onOpen(c.id);
   }
@@ -672,7 +672,7 @@ const ContactRow = memo(function ContactRow({
     <li
       role="link"
       tabIndex={0}
-      {...(isTourMaya ? tourAnchor("contacts.row") : {})}
+      {...(isTourLead ? tourAnchor("contacts.row") : {})}
       onClick={openContact}
       onKeyDown={onRowKeyDown}
       // Hover or keyboard focus counts as having seen them: the mark fades.

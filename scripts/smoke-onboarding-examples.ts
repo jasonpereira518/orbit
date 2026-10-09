@@ -1,7 +1,7 @@
 /**
  * The guided tour's example people, end to end on PGlite: seeding plants exactly the cast
  * and nothing the plan or the gate can see; removal takes every example row with it — the
- * reminder someone marked done, the note they logged on Maya, a twin a capture created —
+ * reminder someone marked done, the note they logged on Priya, a twin a capture created —
  * and leaves every real row alone, including a real person merged with an example either
  * way round. Then a full purge leaves nothing behind.
  *
@@ -100,25 +100,25 @@ async function main() {
   check("the first-run gate still sees an empty account", await needsOnboarding(USER));
 
   console.log("\nwhat a person might do during the tour");
-  const maya = (await exampleIds()).find((c) => c.fullName.startsWith("Maya"))!;
-  const daniel = (await exampleIds()).find((c) => c.fullName.startsWith("Daniel"))!;
-  const sofia = (await exampleIds()).find((c) => c.fullName.startsWith("Sofia"))!;
-  await db.insert(interactions).values({ userId: USER, contactId: maya.id, interactionType: "note", interactionDate: new Date(), rawNotes: "Practice note on Maya" });
-  await createReminderForUser(USER, { contactId: maya.id, title: "Practice reminder" });
+  const priya = (await exampleIds()).find((c) => c.fullName.startsWith("Priya"))!;
+  const marcus = (await exampleIds()).find((c) => c.fullName.startsWith("Marcus"))!;
+  const sam = (await exampleIds()).find((c) => c.fullName.startsWith("Sam"))!;
+  await db.insert(interactions).values({ userId: USER, contactId: priya.id, interactionType: "note", interactionDate: new Date(), rawNotes: "Practice note on Priya" });
+  await createReminderForUser(USER, { contactId: priya.id, title: "Practice reminder" });
   // A real person, and a real person's own reminder.
   const [real] = await db.insert(contacts).values({ userId: USER, fullName: "Ada Real", firstName: "Ada", lastName: "Real" }).returning();
   await createReminderForUser(USER, { contactId: real.id, title: "Real reminder" });
   // A capture that missed the matcher and created an unmarked twin of the example.
-  await db.insert(contacts).values({ userId: USER, fullName: "Maya Okonkwo-Reyes", firstName: "Maya", lastName: "Okonkwo-Reyes", notes: TOUR_EXAMPLE_NOTE });
+  await db.insert(contacts).values({ userId: USER, fullName: "Priya Natarajan", firstName: "Priya", lastName: "Natarajan", notes: TOUR_EXAMPLE_NOTE });
   // Merges either way round.
   const [realWinner] = await db.insert(contacts).values({ userId: USER, fullName: "Bea Winner", source: "linkedin" }).returning();
-  await mergeContacts(USER, realWinner.id, daniel.id);
+  await mergeContacts(USER, realWinner.id, marcus.id);
   const [realLoser] = await db.insert(contacts).values({ userId: USER, fullName: "Cal Loser", source: "linkedin" }).returning();
-  await mergeContacts(USER, sofia.id, realLoser.id);
+  await mergeContacts(USER, sam.id, realLoser.id);
   const winnerRow = await db.query.contacts.findFirst({ where: eq(contacts.id, realWinner.id), columns: { source: true } });
   check("a real winner keeps its own source after absorbing an example", winnerRow?.source === "linkedin", String(winnerRow?.source));
-  const sofiaRow = await db.query.contacts.findFirst({ where: eq(contacts.id, sofia.id), columns: { source: true } });
-  check("an example that absorbs a real person stops being an example", sofiaRow?.source !== TOUR_EXAMPLE_SOURCE, String(sofiaRow?.source));
+  const samRow = await db.query.contacts.findFirst({ where: eq(contacts.id, sam.id), columns: { source: true } });
+  check("an example that absorbs a real person stops being an example", samRow?.source !== TOUR_EXAMPLE_SOURCE, String(samRow?.source));
 
   console.log("\nremoval");
   const settingsRow = await ensureUserSettings(USER);
@@ -128,15 +128,14 @@ async function main() {
   check("removes the remaining examples and the twin", removed.removed === 5, String(removed.removed));
   const left = await db.select({ id: contacts.id, fullName: contacts.fullName, source: contacts.source }).from(contacts).where(eq(contacts.userId, USER));
   const names = left.map((c) => c.fullName).sort();
-  check("the real people survive: Ada, Bea (winner) and Sofia (now real)", names.join(",") === ["Ada Real", "Bea Winner", "Sofia Marchetti"].join(","), names.join(","));
+  check("the real people survive: Ada, Bea (winner) and Sam (now real)", names.join(",") === ["Ada Real", "Bea Winner", "Sam Okafor"].join(","), names.join(","));
   check("no example marker is left anywhere", left.every((c) => c.source !== TOUR_EXAMPLE_SOURCE));
   const rem = (await db.select({ title: reminders.title }).from(reminders).where(eq(reminders.userId, USER))).map((r) => r.title);
-  check("the practice reminder went with Maya", !rem.includes("Practice reminder"), rem.join(","));
+  check("the practice reminder went with Priya", !rem.includes("Practice reminder"), rem.join(","));
   check("the real reminder stays", rem.includes("Real reminder"), rem.join(","));
-  // Daniel's reminder was repointed to Bea by the merge and Sofia is real now: both stay,
-  // because the person chose to keep that data when they merged.
-  check("reminders adopted through a merge stay with their real owner", rem.includes("Call Daniel about the API pilot") && rem.includes("Share the traction update with Sofia"), rem.join(","));
-  const notes = await db.select({ id: interactions.id }).from(interactions).where(and(eq(interactions.userId, USER), eq(interactions.contactId, maya.id)));
+  // Marcus's reminder was repointed to Bea by the merge; Sam is real now and has none.
+  check("the reminder adopted through a merge stays with its real owner", rem.includes("Email Marcus after you apply"), rem.join(","));
+  const notes = await db.select({ id: interactions.id }).from(interactions).where(and(eq(interactions.userId, USER), eq(interactions.contactId, priya.id)));
   check("the practice note is gone", notes.length === 0);
   const orphaned = await db.execute(sql`SELECT count(*)::int AS n FROM ${companies} co WHERE co.user_id = ${USER} AND NOT EXISTS (SELECT 1 FROM ${contacts} c WHERE c.company_id = co.id)`);
   check("no cast company is left without a contact", Number((orphaned.rows?.[0] as { n?: number } | undefined)?.n ?? 0) === 0);
