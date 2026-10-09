@@ -296,7 +296,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "imports.dropzone",
     title: "When your LinkedIn export lands",
     body: "LinkedIn emails a ZIP, usually within a day. Drop it on this page as it arrived, no unzipping, and Orbit works out what it is and brings everyone in. Contacts files, calendars and profile links work the same way; Google and Outlook are in the list below.",
-    tryThis: "Nothing to do yet; come back with the ZIP.",
+    tryThis: "When the ZIP arrives, drop it here as it is.",
     chip: "Drop the ZIP here",
     doneWhen: null,
     surfaceKey: "page.imports",

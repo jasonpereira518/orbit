@@ -545,7 +545,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
         finish={
           isFinish ? (
             <TourFinishCard
-              facts={{ hasApiKey: seed.hasApiKey, linkedinRequested: seed.linkedinRequested, completed }}
+              facts={{ hasApiKey: seed.hasApiKey, completed }}
               pending={pending}
               onFinish={finish}
             />
