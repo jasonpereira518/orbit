@@ -26,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan and paid plans also include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on that same key. Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan, Orbit Pro and Orbit Max include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on the same key or account. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -191,7 +191,7 @@ export default function PrivacyPage() {
           <ul>
             <li>Authenticate you and keep every query scoped to your account</li>
             <li>Run the CRM itself — search, reminders, the relationship graph and the dashboard</li>
-            <li>Power the AI features you use, on your key</li>
+            <li>Power the AI features you use, on your key or Orbit’s</li>
             <li>Run the imports, syncs, enrichment and outbound email or SMS you set up</li>
             <li>Look up public profile photos for your contacts</li>
             <li>Apply plan limits and process payments if you upgrade</li>
@@ -238,9 +238,10 @@ export default function PrivacyPage() {
             In practice: Orbit uses Google data only to provide the features in the table, shown to
             you inside Orbit. It does not sell it, does not use it for advertising, and does not use
             it to develop or train AI models. Where a feature uses AI (the recruiter scan), the text
-            involved goes to the AI provider you chose — on your own key, or, when you have no key of your own, on
-            Orbit&rsquo;s account with that provider — only to produce the result you asked for. A person at Orbit reads Google data only with your permission for a
-            support request you raise, to investigate abuse or a security problem, or where the law
+            involved goes to the AI provider you chose — on your own key, or on
+            Orbit&rsquo;s account with that provider when that is the one in use — only to produce
+            the result you asked for. A person at Orbit reads Google data only with your
+            permission for a support request you raise, to investigate abuse or a security problem, or where the law
             requires it.
           </p>
           <p>
@@ -369,10 +370,11 @@ export default function PrivacyPage() {
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
             the people you talked with most. Deriving timeline events from imported LinkedIn
-            conversations happens automatically, on the AI provider and key described above: a thread with a single message
-            gets a rule-based note and no AI call, and the cap of {TIMELINE_DAILY_CONTACT_CAP} conversations
-            a day only counts the conversations that reach the model. Without an AI key connected,
-            Orbit falls back to simple keyword matching instead. Settings → Integrations → AI
+            conversations happens automatically, on the AI provider and key described above: a thread with a single
+            message gets a rule-based note and no AI call, and the cap of{" "}
+            {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the conversations that
+            reach the model. When no AI is available to you, Orbit falls back to simple keyword
+            matching instead. Settings → Integrations → AI
             provider shows every call from the last 30 days and its estimated cost.
           </p>
           <p>

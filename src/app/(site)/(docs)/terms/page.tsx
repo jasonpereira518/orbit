@@ -272,10 +272,11 @@ export default function TermsPage() {
             conversations, without you turning anything on first. The cap of{" "}
             {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the
             conversations that reach the model; a thread with a single message
-            gets a rule-based note instead, with no AI call. On Pro and Max,
-            background AI work uses credits too, and pauses once half of the
-            month&apos;s credits are used, so what you ask for yourself comes
-            first. Settings shows the last 30 days of AI usage and its
+            gets a rule-based note instead, with no AI call. On every plan with
+            included AI (the Free Plan, Orbit Pro and Orbit Max), background AI
+            work on Orbit&apos;s accounts uses credits too, and pauses while
+            less than half a month&apos;s credits remain, so what you ask for
+            yourself comes first. Settings shows the last 30 days of AI usage and its
             estimated cost. For calls on your own key, the bill itself comes
             from your provider; included AI shows as credits used.
           </p>
@@ -361,8 +362,11 @@ export default function TermsPage() {
               credit is one cent of the provider&apos;s list price for the work
               done. Your plan&apos;s monthly credits reset each month — on an
               annual plan too, on the same day each month — and do not roll over.
-              When your credits run out, included AI stops until they reset or
-              you add a pack; at most the one request already in progress
+              On the Free Plan, the monthly allowance resets on the 1st of each
+              month (UTC), the one-time starter grant is used once and does not
+              reset, and credit packs are not available. When your credits run
+              out, included AI stops until they reset or, on Pro and Max, you
+              add a pack; at most the one request already in progress
               finishes. Orbit never charges you automatically for more.
             </li>
             <li>

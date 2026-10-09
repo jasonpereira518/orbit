@@ -29,7 +29,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What happens when my AI credits run out?",
-    a: "AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews; to keep going before then, add a $5 pack, move to Max, or switch to your own key. Everything else in Orbit keeps working.",
+    a: `AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews (on the Free Plan, on the 1st of each month); to keep going before then, add your own key, upgrade, or on Pro add a $5 pack. The Free Plan’s ${FREE_STARTER_CREDITS} starter credits are used once and do not come back. Everything else in Orbit keeps working.`,
   },
   {
     q: "How do credit packs work?",
