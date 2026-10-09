@@ -56,7 +56,6 @@ export type ExamplePerson = {
   reminder: { title: string; description: string; inDays: number } | null;
 };
 
-
 export const EXAMPLE_PEOPLE: ExamplePerson[] = [
   {
     key: "priya",

@@ -234,7 +234,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "reminders.row-done",
     chipAnchor: "reminders.rail-today",
     title: "Clear what’s due",
-    body: `Today holds what’s due and anything overdue: ${priya.firstName}’s deck is late and ${marcus.firstName}’s call is due today. Upcoming, Anytime and Done are one click away.`,
+    body: `Today holds what’s due and anything overdue: ${priya.firstName}’s resume is late and emailing ${marcus.firstName} is due today. Upcoming, Anytime and Done are one click away.`,
     tryThis: "Tick the circle beside a reminder to mark it done.",
     missingHint: "Switch to Today to see what’s due.",
     chip: "Mark done",
