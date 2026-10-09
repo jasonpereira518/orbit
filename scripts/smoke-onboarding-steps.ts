@@ -8,6 +8,7 @@
  *
  * Run: npx tsx scripts/smoke-onboarding-steps.ts
  */
+import { readFileSync } from "node:fs";
 import {
   ONBOARDING_PATHS,
   ONBOARDING_STEPS,
@@ -80,6 +81,10 @@ function main() {
   check("the last step has no next", nextStep("launch", "tour", ALL) === null && nextStep("overview", "quick", ALL) === null);
   check("welcome has no previous", prevStep("welcome", "tour", ALL) === null);
   check("a branch step's neighbours are its node's", nextStep("capture", "quick", ALL) === "connect" && prevStep("triage", "quick", ALL) === "welcome");
+  check("quick branch steps all lead to connect", (["triage", "capture", "manual", "import"] as const).every((b) => nextStep(b, "quick", ALL) === "connect"));
+  check("quick branch steps skip to overview when bare", nextStep("triage", "quick", BARE) === "overview");
+  const flow = readFileSync("src/components/onboarding/onboarding-flow.tsx", "utf8");
+  check("the flow never jumps straight to overview", !/goTo\(\s*["']overview["']\s*\)/.test(flow));
   for (const retired of RETIRED_STEPS) {
     check(`a stored "${retired}" resumes on quick's first step`, resumeStep(retired, "quick", ALL) === "people");
     check(`a stored "${retired}" resumes on the tour's first step`, resumeStep(retired, "tour", ALL) === "connect");

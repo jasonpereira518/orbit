@@ -38,6 +38,7 @@ import {
   mainLine,
   nextStep,
   prevStep,
+  RETIRED_STEPS,
   resumeStep,
   stageOf,
   stepDirection,
@@ -174,7 +175,7 @@ export function OnboardingFlow({
         return;
       }
       const target = (e.state as Record<string, unknown> | null)?.[HISTORY_KEY];
-      if (typeof target !== "string" || !isOnboardingStep(target)) return;
+      if (typeof target !== "string" || !isOnboardingStep(target) || RETIRED_STEPS.includes(target)) return;
       const mirror = entries.current;
       if (mirror.list[mirror.at - 1] === target) mirror.at -= 1;
       else if (mirror.list[mirror.at + 1] === target) mirror.at += 1;
@@ -250,9 +251,10 @@ export function OnboardingFlow({
   const afterPeople = useCallback(() => {
     start(async () => {
       const candidates = await getTriageCandidates().catch(() => []);
-      goTo(candidates.length >= TRIAGE_MIN ? "triage" : "overview");
+      if (candidates.length >= TRIAGE_MIN) return goTo("triage");
+      advance("people");
     });
-  }, [goTo]);
+  }, [goTo, advance]);
 
   const switchToTour = () =>
     start(async () => {
@@ -349,7 +351,7 @@ export function OnboardingFlow({
             {step === "people" && (
               <PeopleStep
                 onBack={() => retreat("people")}
-                onLater={() => goTo("overview")}
+                onLater={() => advance("people")}
                 onChoose={goTo}
               />
             )}
@@ -381,7 +383,7 @@ export function OnboardingFlow({
                 title="How close are you?"
                 description="A quick rating tells Orbit who matters most, so your follow-ups start in the right place."
               >
-                <TriageStep onDone={() => goTo("overview")} />
+                <TriageStep onDone={() => advance("triage")} />
               </BranchStep>
             )}
 
