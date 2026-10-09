@@ -241,8 +241,8 @@ export default function PrivacyPage() {
             involved goes to the AI provider you chose — on your own key, or on
             Orbit&rsquo;s account with that provider when that is the one in use — only to produce
             the result you asked for. A person at Orbit reads Google data only with your
-            permission for a support request you raise, to investigate abuse or a security problem, or where the law
-            requires it.
+            permission for a support request you raise, to investigate abuse or a
+            security problem, or where the law requires it.
           </p>
           <p>
             Disconnecting Google in Orbit deletes the tokens Orbit holds. To also revoke the grant
@@ -370,12 +370,13 @@ export default function PrivacyPage() {
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
             the people you talked with most. Deriving timeline events from imported LinkedIn
-            conversations happens automatically, on the AI provider and key described above: a thread with a single
-            message gets a rule-based note and no AI call, and the cap of{" "}
+            conversations happens automatically, on the AI provider and key described
+            above: a thread with a single message gets a rule-based note and no AI
+            call, and the cap of{" "}
             {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the conversations that
             reach the model. When no AI is available to you, Orbit falls back to simple keyword
-            matching instead. Settings → Integrations → AI
-            provider shows every call from the last 30 days and its estimated cost.
+            matching instead. Settings → Integrations → AI provider shows every call
+            from the last 30 days and its estimated cost.
           </p>
           <p>
             <strong>

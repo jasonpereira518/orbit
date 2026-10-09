@@ -244,9 +244,9 @@ export default function TermsPage() {
             becomes impractical to maintain.
           </p>
           <p>
-            Included AI (the Free Plan’s allowance, and Orbit Pro and Orbit Max) is different: it runs on
-            Orbit&apos;s own accounts with those providers, is paid for by your
-            plan and measured in credits (see{" "}
+            Included AI (the Free Plan’s allowance, and Orbit Pro and Orbit Max) is
+            different: it runs on Orbit&apos;s own accounts with those providers, is
+            paid for by your plan and measured in credits (see{" "}
             <a href="#plans">Plans and payment</a>), and the provider does not
             bill you.
           </p>
@@ -274,10 +274,10 @@ export default function TermsPage() {
             conversations that reach the model; a thread with a single message
             gets a rule-based note instead, with no AI call. On every plan with
             included AI (the Free Plan, Orbit Pro and Orbit Max), background AI
-            work on Orbit&apos;s accounts uses credits too, and pauses while
-            less than half a month&apos;s credits remain, so what you ask for
-            yourself comes first. Settings shows the last 30 days of AI usage and its
-            estimated cost. For calls on your own key, the bill itself comes
+            work on Orbit&apos;s accounts uses credits too, and pauses once
+            half a month&apos;s credits or fewer remain, so what you ask for
+            yourself comes first. Settings shows the last 30 days of AI usage
+            and its estimated cost. For calls on your own key, the bill itself comes
             from your provider; included AI shows as credits used.
           </p>
           <p>
@@ -307,9 +307,9 @@ export default function TermsPage() {
         <DocSection id="plans" index={10} title="Plans and payment">
           <p>
             The Free Plan covers up to {FREE_CONTACT_LIMIT} contacts and costs
-            nothing, and includes a small AI allowance each month plus a one-time starter grant. Orbit Pro and Orbit Max
-            are subscriptions, billed monthly or yearly (a year paid up front is
-            two months free), that lift that cap and include AI, along with the
+            nothing, and includes a small AI allowance each month plus a one-time
+            starter grant. Orbit Pro and Orbit Max are subscriptions, billed
+            monthly or yearly (a year paid up front is two months free), that lift that cap and include AI, along with the
             other allowances listed on the pricing page. Current prices are on
             the <Link href="/pricing">pricing page</Link> and apply from the
             moment you subscribe. Orbit Lifetime is no longer sold. Accounts
