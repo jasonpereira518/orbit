@@ -723,7 +723,7 @@ async function transitions() {
   console.log("\nDowngrading freezes packs, resubscribing restores them");
   await db.update(userSettings).set({ subscriptionStatus: "canceled", subscriptionPeriodEnd: PAST }).where(eq(userSettings.userId, U.capped));
   r = await lastSent(() => json(U.capped, "chat.answer"));
-  check("on Free the call runs on Free's own allowance", r.req?.key === MANAGED, r.err);
+  check("on Free the call runs on Free's own allowance", r.req?.key === MANAGED, r.req?.key ?? r.err);
   await settle();
   const frozen = await remaining(U.capped);
   check("…and the pack is frozen, untouched",
@@ -906,8 +906,8 @@ async function localDevAndByok() {
     setNodeEnv("production");
     local = await lastSent(() => json(U.localDev));
     const prodStatus = await getAiAccessStatus(U.localDev);
-    check("neither does a production build off Vercel: no demo exemption, the account is metered",
-      prodStatus.eligibility === "plan" && prodStatus.credits !== null, JSON.stringify(prodStatus));
+    check("a production build off Vercel gets no demo exemption: metered on the bare env key",
+      local.req?.key === DEV_KEY && prodStatus.eligibility === "plan" && prodStatus.credits !== null, JSON.stringify(prodStatus));
     setNodeEnv(undefined);
 
     console.log("\nA grant cannot be forged");

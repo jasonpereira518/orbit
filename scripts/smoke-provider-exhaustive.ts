@@ -241,11 +241,11 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/errors.ts:37": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
   "src/lib/errors.ts:39": "same function as line 37 — see that entry.",
-  "src/lib/managed-ai-policy.ts:264": "the \"anthropic\" half of `selected === \"anthropic\" " +
+  "src/lib/managed-ai-policy.ts:265": "the \"anthropic\" half of `selected === \"anthropic\" " +
     "|| selected === \"openrouter\"` (this commit's fix) — the openrouter half is the " +
     "literal on the same line, which this checker does not flag; both fall to the plain " +
     "EMBEDDING_ORDER, per the comment above EMBEDDING_ORDER.",
-  "src/lib/managed-ai-policy.ts:273": "managedOrder only ever chooses between \"openai\" and " +
+  "src/lib/managed-ai-policy.ts:274": "managedOrder only ever chooses between \"openai\" and " +
     "\"gemini\": Orbit holds no managed OpenRouter key (facts.managed.openrouter is " +
     "hardcoded false and MANAGED_PROVIDER_ORDER excludes it), so no selected provider — " +
     "openrouter included — ever needs a third slot here.",
