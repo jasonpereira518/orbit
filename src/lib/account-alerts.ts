@@ -418,7 +418,7 @@ export function evaluateAccountHealth(
     const c = input.credits;
     const resetsAt = c.resetsAt;
     if (c.spendable <= 0) {
-      findings.push({ code: "plan.credits_out", severity: "error", data: { resetsAt, free: input.plan === "free" } });
+      findings.push({ code: "plan.credits_out", severity: "error", data: { resetsAt, free: input.plan === "free" ? 1 : 0 } });
     } else if (c.allowanceGranted > 0 && c.allowanceRemaining <= 0 && c.packRemaining > 0) {
       findings.push({
         code: "plan.credits_on_packs",
@@ -433,7 +433,7 @@ export function evaluateAccountHealth(
       findings.push({
         code: "plan.credits_near",
         severity: "warn",
-        data: { resetsAt, left: Math.floor(Math.max(0, c.allowanceRemaining) / 10_000), free: input.plan === "free" },
+        data: { resetsAt, left: Math.floor(Math.max(0, c.allowanceRemaining) / 10_000), free: input.plan === "free" ? 1 : 0 },
       });
     }
   }

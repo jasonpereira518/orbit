@@ -193,7 +193,7 @@ run(async () => {
   const outAlert = healthFree({ allowanceGranted: 100_000, allowanceRemaining: 0, packRemaining: 0, starterRemaining: 0, spendable: 0, resetsAt: "2026-11-01T00:00:00.000Z" })
     .find((a) => a.title === "You’re out of AI credits");
   check("Free's out-of-credits alert offers a key, never a pack",
-    Boolean(outAlert) && !/pack/i.test(outAlert!.body) && /own key/.test(outAlert!.body), outAlert);
+    Boolean(outAlert) && !/pack/i.test((outAlert?.body ?? "")) && /own key/.test((outAlert?.body ?? "")), outAlert);
   check("no credits, no credit notices", health(null).every((code) => !code.startsWith("plan.credits")));
 
   console.log("\nEquivalents from measured cost");
