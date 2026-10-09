@@ -570,6 +570,13 @@ export async function generateAndStoreContactBrief(
     // The deterministic summary is a fine fallback, but a brief that silently never uses
     // the model is a fault worth seeing — unless the cause is the person's own key setup.
     reportUnlessQuiet(err, { where: "job.contact-brief", userId, extra: { contactId } });
+    // A failed or refused refresh never replaces a brief the model wrote (`model` is set
+    // only on those) with template text. Nothing is touched, `generatedAt` included: a stale
+    // brief stays stale, so it is retried on the next open — once per open, not in a loop.
+    const onFile = await getContactBrief(userId, contactId).catch(() => null);
+    if (onFile?.model && contact.aiSummary?.trim()) {
+      return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep, aiError };
+    }
     summary = buildDeterministicSummary({
       fullName: contact.fullName,
       preferredName: contact.preferredName,
