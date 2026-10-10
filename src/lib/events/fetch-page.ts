@@ -45,6 +45,23 @@ export {
 const SIGN_IN_PATH = /\/(log-?in|sign-?in|sign-?up|auth|authenticate)(\/|$)/i;
 
 /**
+ * Luma's terms allow access only through its "publicly supported interfaces": the host API
+ * (`connectors/luma.ts`) and the calendar ICS feed. Its event pages are not one, so they are
+ * not read until a legal review says otherwise (the public web-data plan, step E0).
+ * The Luma platform adapter stays, so lifting this is deleting the check below.
+ *
+ * ponytail: checks the pasted link only. A non-Luma short link that REDIRECTS to Luma is still
+ * followed; refusing per hop needs a host hook in `guardedFetchText`, add it if one shows up.
+ */
+function isLumaPage(url: string): boolean {
+  try {
+    return /(^|\.)(lu\.ma|luma\.com)$/.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Did we land on a login wall rather than the event?
  *
  * Worth detecting because the failure is silent otherwise: a login page parses perfectly
@@ -84,6 +101,12 @@ export async function fetchEventPage(
   const outcome = canonicalizeEventUrl(rawUrl);
   if (outcome.kind === "invalid") throw new EventPageError("blocked", outcome.message);
   if (outcome.kind === "private") throw new EventPageError("private_page", outcome.message);
+  if (outcome.candidates.some(isLumaPage)) {
+    throw new EventPageError(
+      "declined_host",
+      "Orbit doesn’t read Luma pages. Paste the guest list instead, or connect your Luma calendar."
+    );
+  }
 
   let lastError: EventPageError | null = null;
   for (const candidate of outcome.candidates) {

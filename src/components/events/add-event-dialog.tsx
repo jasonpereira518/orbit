@@ -102,7 +102,7 @@ export function AddEventDialog() {
                 id="event-url"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://lu.ma/… or your ticket link"
+                placeholder="https://partiful.com/… or your ticket link"
                 className="mt-1"
               />
             </div>
