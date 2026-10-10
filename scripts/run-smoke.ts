@@ -146,6 +146,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-event-resync": "pure",
   "smoke-event-theme": "pure",
   "smoke-event-url-guard": "pure",
+  "smoke-web-read-page": "pure",
   "smoke-event-wall-clock": "pure",
   "smoke-events-page": "pure",
   "smoke-closeness-materialized": "pure",
