@@ -36,10 +36,9 @@ test("the guided tour walks the real pages with example people, then removes the
       if (await consent.isVisible()) await consent.check();
       await start.click();
     },
-    () => expect(page.getByRole("heading", { name: "Start your LinkedIn export" })).toBeVisible({ timeout: 5_000 })
+    () => expect(start).toBeHidden({ timeout: 5_000 })
   );
-  // The stub key skips the AI key step; connect shows only where an OAuth client is set up.
-  await page.getByRole("button", { name: "I don't use LinkedIn" }).click();
+  // The tour is welcome → connect → launch; connect shows only where an OAuth client is set up.
   await skipConnectIfShown(page, page.getByRole("heading", { name: "Setting the stage" }));
   await expect(page).toHaveURL(/\/dashboard$/, { timeout: 60_000 });
 
@@ -92,7 +91,7 @@ test("the guided tour walks the real pages with example people, then removes the
 
   // Stop 10: imports, then the finish card.
   await expect(page).toHaveURL(/\/imports$/, { timeout: 60_000 });
-  // "I don't use LinkedIn" on the stage: the stop explains the export instead of waiting for it.
+  // No export requested: the stop explains the export instead of waiting for it.
   await expect(rail).toContainText("Bring in everyone you know", { timeout: 15_000 });
   await rail.getByRole("button", { name: "Next" }).click();
   await expect(rail).toContainText("You’re in orbit", { timeout: 60_000 });
