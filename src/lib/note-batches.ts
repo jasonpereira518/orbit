@@ -254,7 +254,7 @@ export type ReminderPlanCommitment = { title: string; dueDateIso: string; dateBa
 /** Mirrors `MAX_ACTION_ITEMS_PER_INTERACTION` in src/lib/action-items.ts, which reaches @/db and cannot be imported here. */
 const PLAN_MAX_ACTION_ITEMS = 10;
 
-function planNameKey(name: string | null | undefined): string | null {
+export function planNameKey(name: string | null | undefined): string | null {
   return name?.trim().toLowerCase() || null;
 }
 function planIsoNoon(iso: string): Date {

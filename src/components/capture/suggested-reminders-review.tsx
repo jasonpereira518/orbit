@@ -21,7 +21,7 @@ import { shortDayLabel } from "@/lib/reminder-due-bucket";
 import { cn } from "@/lib/utils";
 import type { RejectedCounts } from "@/lib/date-commitment-extract";
 import { skippedNoteText } from "@/lib/capture/skipped-note";
-
+import { REMINDER_TITLE_MAX } from "@/lib/capture/review-reducer";
 export type ReviewablePerson = { key: string; name: string };
 
 export function SuggestedRemindersReview({
@@ -122,6 +122,7 @@ function ReminderRow({
           <Input
             value={item.title}
             onChange={(e) => update(item.key, { title: e.target.value })}
+            maxLength={REMINDER_TITLE_MAX}
             aria-label="Reminder title"
           />
 

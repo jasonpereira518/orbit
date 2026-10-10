@@ -54,6 +54,7 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
         FROM credit_grants a
        WHERE a.kind = 'allowance' AND a.status = 'active'
          AND a.period_start <= now() AND a.period_end > now()
+         AND a.plan IN ('orbit', 'max')
          AND a.micros_remaining = 0
          AND NOT EXISTS (
            SELECT 1 FROM credit_grants p

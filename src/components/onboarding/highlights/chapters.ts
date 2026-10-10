@@ -117,7 +117,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
       { label: "Answers quote the note they came from" },
       { label: "Log it, remind me, follow up: proposed, saved when you confirm" },
       { label: "An ask bar on every page, ⌘K to jump anywhere" },
-      { label: "Runs on the AI key you bring" },
+      { label: "Answers from your own notes" },
     ],
     needs: "ai",
     surfaceKey: "page.chat",

@@ -45,6 +45,22 @@ export async function getCreditsOverview(): Promise<CreditsOverview | null> {
   };
 }
 
+/**
+ * Whole credits a Free account can still spend, for the ask bar's low-credit line. Null for
+ * any other plan, or when the account runs on its own key (credits are not what it spends).
+ */
+export async function getFreeCreditsLeft(): Promise<number | null> {
+  const userId = await requireUserId();
+  const { plan } = await getEntitlements(userId);
+  if (plan !== "free") return null;
+  const db = await getDb();
+  const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) });
+  const ownKey = Boolean(row?.geminiApiKeyEncrypted || row?.openaiApiKeyEncrypted || row?.anthropicApiKeyEncrypted || row?.openrouterApiKeyEncrypted);
+  if (ownKey && row?.aiKeyPreference !== "included") return null;
+  const balance = await getCreditBalance(userId, plan, row, new Date(), { ensure: false });
+  return Math.floor(balance.spendable / 10_000);
+}
+
 /** Which key runs by default when the account has both. Pro and Max only. */
 export async function setAiKeyPreference(preference: "included" | "own"): Promise<{ ok: boolean }> {
   const userId = await requireUserId();

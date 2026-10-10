@@ -25,6 +25,7 @@ export function isPlaceholderAddress(email: string | null | undefined): boolean 
 
 export const DEMO_PROSPECT_SEND_MESSAGE =
   "This is a sample prospect Orbit made up, so there’s no real inbox to send to";
+export const ALREADY_SENT_MESSAGE = "This message was already sent, so Orbit won’t send it again";
 export const PLACEHOLDER_ADDRESS_SEND_MESSAGE =
   "That’s a placeholder address, so there’s no real inbox to send to";
 

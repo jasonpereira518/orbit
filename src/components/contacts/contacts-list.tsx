@@ -616,7 +616,7 @@ function rowMetaFor(c: ContactListItem): ContactRowMeta {
   return meta;
 }
 
-const TOUR_MAYA_NAME = examplePerson("maya").fullName;
+const TOUR_LEAD_NAME = examplePerson("priya").fullName;
 
 const ContactRow = memo(function ContactRow({
   c,
@@ -640,9 +640,9 @@ const ContactRow = memo(function ContactRow({
   onOpenDraft: (contact: { id: string; name: string }) => void;
   onRequestDelete: (id: string) => void;
 }) {
-  // The guided tour's "open a person" stop is about its example Maya, and only her row is
-  // highlighted and only opening her moves the tour on — a real Maya Thompson is not her.
-  const isTourMaya = isTourExampleSource(c.source) && c.fullName === TOUR_MAYA_NAME;
+  // The guided tour's "open a person" stop is about its example lead (Priya), and only her row is
+  // highlighted and only opening her moves the tour on — a real Priya Patel is not her.
+  const isTourLead = isTourExampleSource(c.source) && c.fullName === TOUR_LEAD_NAME;
   const { overdue, scheduledLabel, overdueText, lastTouch, details } = meta;
 
   function seeMarked() {
@@ -651,7 +651,7 @@ const ContactRow = memo(function ContactRow({
 
   function openContact() {
     if (exiting) return;
-    if (isTourMaya) emitTourEvent("contacts.opened-example");
+    if (isTourLead) emitTourEvent("contacts.opened-example");
     seeMarked();
     onOpen(c.id);
   }
@@ -672,7 +672,7 @@ const ContactRow = memo(function ContactRow({
     <li
       role="link"
       tabIndex={0}
-      {...(isTourMaya ? tourAnchor("contacts.row") : {})}
+      {...(isTourLead ? tourAnchor("contacts.row") : {})}
       onClick={openContact}
       onKeyDown={onRowKeyDown}
       // Hover or keyboard focus counts as having seen them: the mark fades.
@@ -798,41 +798,45 @@ const ContactRow = memo(function ContactRow({
               closenessTier={c.closenessTier}
             />
 
-            {c.linkedinUrl ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Open ${c.fullName} on LinkedIn`}
-                className="tap-target relative shrink-0 text-muted-foreground"
-                onClick={(e: MouseEvent<HTMLButtonElement>) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  window.open(
-                    buildLinkedInUrl(c.linkedinUrl!),
-                    "_blank",
-                    "noopener,noreferrer"
-                  );
-                }}
-              >
-                <LinkedInIcon className="size-4" />
-              </Button>
-            ) : null}
+            {/* Phones give this width to the name: LinkedIn, follow-up and delete all
+                live on the contact page, one tap away. */}
+            <div className="hidden items-center gap-1 pointer-coarse:gap-4 md:flex">
+              {c.linkedinUrl ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Open ${c.fullName} on LinkedIn`}
+                  className="tap-target relative shrink-0 text-muted-foreground"
+                  onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.open(
+                      buildLinkedInUrl(c.linkedinUrl!),
+                      "_blank",
+                      "noopener,noreferrer"
+                    );
+                  }}
+                >
+                  <LinkedInIcon className="size-4" />
+                </Button>
+              ) : null}
 
-            <FollowUpRowButton
-              contactId={c.id}
-              contactName={c.preferredName || c.fullName}
-              nextFollowUpAt={c.nextFollowUpAt}
-              overdue={overdue}
-              scheduledLabel={scheduledLabel}
-              onOpenDraft={onOpenDraft}
-            />
+              <FollowUpRowButton
+                contactId={c.id}
+                contactName={c.preferredName || c.fullName}
+                nextFollowUpAt={c.nextFollowUpAt}
+                overdue={overdue}
+                scheduledLabel={scheduledLabel}
+                onOpenDraft={onOpenDraft}
+              />
 
-            <DeleteRowButton
-              name={c.fullName}
-              disabled={deleteDisabled}
-              onClick={() => onRequestDelete(c.id)}
-            />
+              <DeleteRowButton
+                name={c.fullName}
+                disabled={deleteDisabled}
+                onClick={() => onRequestDelete(c.id)}
+              />
+            </div>
           </div>
         </div>
       </div>

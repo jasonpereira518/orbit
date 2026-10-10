@@ -78,6 +78,7 @@ import { AnswerActions } from "@/components/chat/answer-actions";
 import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
 import { Skeleton } from "@/components/ui/skeleton";
+import { headerTitleAfterAnswer, threadsAfterAnswer } from "@/lib/chat-answer-landed";
 import { createThreadPrefetcher } from "@/lib/chat-thread-prefetch";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource } from "@/lib/chat-evidence";
@@ -879,6 +880,10 @@ export function ChatPanel({
 
   const removeThread = useCallback(
     (id: string) => {
+      // Deletes are locked while an answer streams; if one of the open thread gets through anyway,
+      // end the answer FIRST. Left running it fails on the deleted thread (reported, question put
+      // back) or lands and re-adds the row.
+      if (threadId === id) abortRef.current?.abort();
       start(async () => {
         try {
           await deleteChatThread(id);
@@ -1025,19 +1030,12 @@ export function ChatPanel({
                 persisted: Boolean(info.messageId),
               }));
               if (info.notice) toast.message(info.notice);
-              if (info.title) setThreadTitle(info.title);
-              setThreads((prev) => {
-                const next = prev.filter((t) => t.id !== activeId);
-                return [
-                  {
-                    id: activeId,
-                    title: info.title ?? null,
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
-                  },
-                  ...next,
-                ];
-              });
+              // The header names the thread ON SCREEN; the list update is about the answered
+              // thread wherever the person is (see @/lib/chat-answer-landed).
+              const headerTitle = headerTitleAfterAnswer(activeId, threadIdRef.current, info.title);
+              if (headerTitle) setThreadTitle(headerTitle);
+              const landedAt = new Date();
+              setThreads((prev) => threadsAfterAnswer(prev, activeId, info.title, landedAt));
             },
             onError: (message) => {
               // A stop is the user's own doing, not a failure: keep whatever arrived and
@@ -1058,8 +1056,8 @@ export function ChatPanel({
         if (controller.signal.aborted) {
           // Stopping during retrieval means no answer bubble was ever placed, which used to
           // leave the question sitting alone with nothing to say what happened. The user
-          // message may already be saved server-side by then, so the honest move is to mark
-          // the turn stopped rather than delete a question that was really asked.
+          // message may already be saved server-side by then; the server drops an unanswered
+          // question on a stop, so mark the turn stopped and say it was not saved.
           if (!placed) ensurePlaceholder();
           patch((m) => ({ ...m, streaming: false, stopped: true }));
         }
@@ -1439,6 +1437,7 @@ export function ChatPanel({
                   <DropdownMenuItem
                     key={thread.id}
                     className="group items-start gap-2 py-2"
+                    disabled={busy}
                     onPointerEnter={() => prefetchHandlers.hover(thread.id)}
                     onPointerLeave={prefetchHandlers.leave}
                     onFocus={() => prefetchHandlers.now(thread.id)}
@@ -1459,8 +1458,9 @@ export function ChatPanel({
                     </div>
                     <button
                       type="button"
-                      className="mt-0.5 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100"
+                      className="mt-0.5 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 disabled:invisible"
                       aria-label="Delete chat"
+                      disabled={busy}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -2049,7 +2049,7 @@ const AssistantBubble = memo(function AssistantBubble({
         )}
         {msg.stopped && (
           <p className="text-xs text-muted-foreground">
-            Stopped — this answer wasn’t saved.
+            Stopped — this turn wasn’t saved.
           </p>
         )}
         {msg.recommendations.length > 0 && (

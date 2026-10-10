@@ -1,6 +1,7 @@
 "use server";
 
 import { and, asc, count, eq, gt } from "drizzle-orm";
+import { isAiAccessError } from "@/lib/ai-access";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
@@ -114,6 +115,7 @@ export async function refreshConstellationBatch(input?: {
   let failed = 0;
   let firstError: unknown = null;
   let firstFailedId: string | null = null;
+  let aiError: string | null = null;
   for (const row of slice) {
     // Unattempted rows are simply not counted as processed; the client asks again, from
     // the cursor, which only ever advances past rows that were attempted.
@@ -128,6 +130,7 @@ export async function refreshConstellationBatch(input?: {
       await rebuildContactEmbedding(userId, row.id, undefined, { strict: true });
     } catch (err) {
       failed += 1;
+      if (!aiError && isAiAccessError(err)) aiError = err.message;
       if (!firstError) {
         firstError = err;
         firstFailedId = row.id;
@@ -171,6 +174,8 @@ export async function refreshConstellationBatch(input?: {
     done,
     /** Pass back as `after` on the next tick. */
     cursor,
+    /** Set when the AI gate refused embeddings: the refresh cannot succeed until that changes. */
+    aiError,
     graph,
   };
 }

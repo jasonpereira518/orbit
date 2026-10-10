@@ -170,20 +170,11 @@ const OPENROUTER_ROUTED_AWAY =
   "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
-  // Onboarding's AI key step never offers OpenRouter (it renders from
-  // SELECTABLE_AI_PROVIDERS minus openrouter, which smoke-ai-providers pins), so its
-  // per-provider branches need no openrouter arm.
-  "src/components/onboarding/provider-logo.tsx:21": "ProviderLogo's Gemini mark; the " +
-    "onboarding grid never renders an OpenRouter tile, so no OpenRouter mark is drawn.",
-  "src/components/onboarding/provider-logo.tsx:38": "ProviderLogo's OpenAI mark — same " +
-    "reason as line 21.",
-  "src/components/onboarding/steps/ai-key-step.tsx:110": "the Gemini-only free-tier note " +
-    "under the key link; no other provider has one to show.",
-  "src/lib/ai-access.ts:633": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts:644": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
-  "src/lib/ai-access.ts:322": "isOpenAiShaped's own body: `provider === \"openai\" || " +
+  "src/lib/ai-access.ts:326": "isOpenAiShaped's own body: `provider === \"openai\" || " +
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
@@ -241,11 +232,11 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/errors.ts:37": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
   "src/lib/errors.ts:39": "same function as line 37 — see that entry.",
-  "src/lib/managed-ai-policy.ts:264": "the \"anthropic\" half of `selected === \"anthropic\" " +
+  "src/lib/managed-ai-policy.ts:265": "the \"anthropic\" half of `selected === \"anthropic\" " +
     "|| selected === \"openrouter\"` (this commit's fix) — the openrouter half is the " +
     "literal on the same line, which this checker does not flag; both fall to the plain " +
     "EMBEDDING_ORDER, per the comment above EMBEDDING_ORDER.",
-  "src/lib/managed-ai-policy.ts:273": "managedOrder only ever chooses between \"openai\" and " +
+  "src/lib/managed-ai-policy.ts:274": "managedOrder only ever chooses between \"openai\" and " +
     "\"gemini\": Orbit holds no managed OpenRouter key (facts.managed.openrouter is " +
     "hardcoded false and MANAGED_PROVIDER_ORDER excludes it), so no selected provider — " +
     "openrouter included — ever needs a third slot here.",
@@ -253,12 +244,12 @@ const ALLOWLIST: Record<string, string> = {
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
   "src/lib/admin-user-detail.ts:572": "the \"anthropic\" arm of the same ternary — see line 570.",
-  "src/actions/settings.ts:121": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
+  "src/actions/settings.ts:122": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
     "anthropic key for an openrouter row) — exhaustive over AiProvider.",
-  "src/actions/settings.ts:123": "the \"openai\" arm of the same ternary — see line 121.",
-  "src/actions/settings.ts:125": "the \"anthropic\" arm of the same ternary — see line 121; " +
+  "src/actions/settings.ts:124": "the \"openai\" arm of the same ternary — see line 122.",
+  "src/actions/settings.ts:126": "the \"anthropic\" arm of the same ternary — see line 122; " +
     "this is the comparison that was added, moving openrouter off the anthropic default.",
   "src/lib/outreach-readiness-server.ts:82": "the \"gemini\" arm of hasAiKeyFor's " +
     "personal-key ternary, which now has an explicit `provider === \"openrouter\"` arm " +
@@ -277,16 +268,9 @@ const ALLOWLIST: Record<string, string> = {
     "Action despite taking a caller-supplied userId.)",
   "src/lib/ai-settings-write.ts:101": "same independent-ternary shape as line 97 — see that entry.",
   "src/lib/ai-settings-write.ts:105": "same independent-ternary shape as line 97 — see that entry.",
-  "src/actions/settings.ts:283": "clearApiKey's `patch` ternary — the final `else` arm is " +
-    "the literal `{ openrouterApiKeyEncrypted: null }`, so the three narrowed comparisons " +
-    "plus that default are exhaustive over AiProvider. (Line shifted again by Task 5's fix " +
-    "round 1, which moved applyAiKeyChange and its helpers out of this file entirely, and by " +
-    "two more when getSettings gained radarDigestEnabled — was line 241, then 339, then 251, originally 314 — the merge of main moved it again.)",
-  "src/actions/settings.ts:279": "same ternary as line 283 — see that entry.",
-  "src/actions/settings.ts:281": "same ternary as line 283 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:289": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx:291": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +

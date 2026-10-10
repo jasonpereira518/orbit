@@ -8,6 +8,10 @@ import {
 import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { ImportHub } from "@/components/imports/import-hub";
+import { LinkedInExportCard } from "@/components/linkedin/linkedin-export-card";
+import { linkedinCardState } from "@/lib/linkedin-export-card";
+import { hasLinkedInImport } from "@/lib/linkedin-reminder";
+import { ensureUserSettings } from "@/lib/user-settings";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { CHAT_IMPORTS_SURFACE_KEY } from "@/lib/surfaces";
@@ -28,7 +32,7 @@ export default async function ImportsPage() {
   // so the calendar section knows on first paint whether anything is syncing — and so the
   // contacts cards stop flashing "Not connected" before their own fetch resolves.
   const userId = await requireUserId();
-  const [history, latestFinish, calendarSubscriptions, entitlements, gmail, outlook, chatImports] =
+  const [history, latestFinish, calendarSubscriptions, entitlements, gmail, outlook, chatImports, settings, linkedinImported] =
     await Promise.all([
       listImports(),
       getLatestFinishedImport(),
@@ -37,6 +41,8 @@ export default async function ImportsPage() {
       getGmailConnectionStatus().catch(() => null),
       getOutlookConnectionStatus().catch(() => null),
       isSurfaceLive(userId, CHAT_IMPORTS_SURFACE_KEY),
+      ensureUserSettings(userId),
+      hasLinkedInImport(userId),
     ]);
 
   const google: ProviderCalendarInput | null = gmail
@@ -84,6 +90,12 @@ export default async function ImportsPage() {
           .
         </p>
       </div>
+
+      {linkedinCardState({
+        imported: linkedinImported,
+        requestedAt: settings.linkedinExportRequestedAt ?? null,
+        onboardingDone: Boolean(settings.onboardingCompletedAt),
+      }).show && <LinkedInExportCard where="imports" requestedAt={settings.linkedinExportRequestedAt?.toISOString() ?? null} />}
 
       <ImportHub
         history={history}

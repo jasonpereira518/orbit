@@ -23,6 +23,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { requireOutreachUser } from "@/lib/plan-guards";
 import {
+  isDeliveredMessage,
   computeCampaignMetrics,
   computeChannelBreakdown,
   computeStepBreakdown,
@@ -33,6 +34,7 @@ import {
   generateOutreachDraftsBatch,
 } from "@/lib/outreach-drafts";
 import {
+  ALREADY_SENT_MESSAGE,
   assessOutreachQuality,
   DEMO_PROSPECT_SEND_MESSAGE,
   isDemoProspect,
@@ -934,6 +936,10 @@ export async function markMessageAction(input: {
     throw new Error("Message not found");
   }
 
+  // Copying or reopening a delivered message must not walk it back from "sent", or log its
+  // interaction and schedule its follow-up a second time.
+  if (isDeliveredMessage(message)) return null;
+
   const now = new Date();
   const [updated] = await db
     .update(outreachMessages)
@@ -1287,6 +1293,14 @@ async function sendOutreachMessageNow(messageId: string) {
     throw new UserFacingError(DEMO_PROSPECT_SEND_MESSAGE);
   }
 
+  // A delivered message is never sent twice. The bulk bar and a stale tab can both still
+  // point at one. Outside the try below: a refusal is not a failed send.
+  // ponytail: check-then-send, so two concurrent sends can still both pass; a conditional
+  // UPDATE claiming the row only while it is undelivered is the upgrade.
+  if (isDeliveredMessage(message)) {
+    throw new UserFacingError(ALREADY_SENT_MESSAGE);
+  }
+
   const quality = assessOutreachQuality([
     {
       messageId: message.id,
@@ -1448,7 +1462,9 @@ export async function bulkSendOutreach(input: {
 
   // Same scope as the preview above: only this campaign's messages are ever sent from here.
   const inCampaign = new Set(
-    (await campaignMessages(input.campaignId, input.messageIds)).map((m) => m.id)
+    (await campaignMessages(input.campaignId, input.messageIds))
+      .filter((m) => !isDeliveredMessage(m))
+      .map((m) => m.id)
   );
   const ids = input.messageIds.filter((id) => inCampaign.has(id)).slice(0, BULK_SEND_LIMIT);
   const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];

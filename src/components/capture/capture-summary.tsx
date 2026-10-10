@@ -18,7 +18,7 @@ import type { PersonDraft } from "@/components/capture/review/person-card";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { SuggestedOpportunitiesReview } from "@/components/capture/suggested-opportunities-review";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
-import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions, plannedCaptureReminders, saveButtonLabel } from "@/lib/capture/review-reducer";
+import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions, followUpReasons, plannedCaptureReminders, reminderTitleOverride, saveButtonLabel } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobResult, CaptureOpportunityChoices, CaptureReminderChoices, OpportunityReviewItem } from "@/lib/capture/types";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 
@@ -28,6 +28,7 @@ export function suggestionsFromChoices(result: CaptureJobResult, choices: Captur
     const o = choices?.overrides?.[s.key];
     return {
       ...s,
+      title: reminderTitleOverride(o?.title, s.title) ?? s.title,
       dueDateIso: o?.dueDateIso ?? s.dueDateIso,
       checked: checked.has(s.key),
       personNameOverride: o?.personName === undefined ? null : o.personName,
@@ -35,13 +36,15 @@ export function suggestionsFromChoices(result: CaptureJobResult, choices: Captur
   });
 }
 
-export function choicesFromSuggestions(items: SuggestionReviewItem[], base: readonly { key: string; dueDateIso: string }[]): CaptureReminderChoices {
+export function choicesFromSuggestions(items: SuggestionReviewItem[], base: readonly { key: string; dueDateIso: string; title: string }[]): CaptureReminderChoices {
   const overrides: CaptureReminderChoices["overrides"] = {};
   for (const it of items) {
     const original = base.find((b) => b.key === it.key);
-    const o: { personName?: string | null; dueDateIso?: string } = {};
+    const o: { personName?: string | null; dueDateIso?: string; title?: string } = {};
     if (it.personNameOverride !== null) o.personName = it.personNameOverride;
     if (original && it.dueDateIso !== original.dueDateIso) o.dueDateIso = it.dueDateIso;
+    const title = original ? reminderTitleOverride(it.title, original.title) : undefined;
+    if (title) o.title = title;
     if (Object.keys(o).length) overrides[it.key] = o;
   }
   return { checked: items.filter((i) => i.checked).map((i) => i.key), overrides };
@@ -111,6 +114,7 @@ export function CaptureSummary({
     opportunities: checkedOpportunities,
   });
   const actionItemCount = planned.filter((p) => p.kind === "action_item").length;
+  const followUpWhy = useMemo(() => followUpReasons(result, decisions, planned), [result, decisions, planned]);
   const dueLabel = result.anchorIso ? format(addDays(new Date(`${result.anchorIso}T12:00:00`), 14), "MMM d") : "in 2 weeks";
   const editingEntry = editing ? accepted.find((a) => a.item.key === editing) ?? null : null;
   const canSave = hasMeeting || accepted.length > 0 || checkedDates > 0;
@@ -210,6 +214,16 @@ export function CaptureSummary({
           <p className="text-xs text-muted-foreground">
             {actionItemCount} action item{actionItemCount === 1 ? "" : "s"} will also become reminders due {dueLabel}. Follow-ups are timed by how close you said you are.
           </p>
+        )}
+
+        {followUpWhy.length > 0 && (
+          <ul className="space-y-0.5 text-xs text-muted-foreground">
+            {followUpWhy.map((w, i) => (
+              <li key={i}>
+                <span className="font-medium text-foreground">{w.name}</span>: {w.line}
+              </li>
+            ))}
+          </ul>
         )}
 
         <SuggestedRemindersReview

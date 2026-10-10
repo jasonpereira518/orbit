@@ -39,13 +39,16 @@ function check(label: string, condition: boolean, detail?: string) {
  * before any network call, so that refusal is expected to reach here on every local run.
  * This is the same shape as the `revalidatePath` invariant `smoke-import-engine.ts`
  * tolerates: a real environment gap, not a mock, and anything other than the gate's typed
- * "no key" refusal still escapes and fails the run.
+ * "no usable key" refusal still escapes and fails the run.
  */
 async function attemptBackfill(userId: string) {
   try {
     return await runEmbeddingBackfill(userId);
   } catch (err) {
-    if (isAiAccessError(err) && err.reason === "key_required") {
+    // Free is plan-eligible now, so with no key AND no managed key it reads
+    // `managed_unavailable` (Lifetime would read `key_required`): both are the gate's typed
+    // "nothing can run" refusal, before any network call.
+    if (isAiAccessError(err) && (err.reason === "key_required" || err.reason === "managed_unavailable")) {
       return { embedded: 0, remaining: -1 };
     }
     throw err;

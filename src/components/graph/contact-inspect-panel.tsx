@@ -28,7 +28,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { safeHttpUrl } from "@/lib/safe-links";
+import { safeHttpUrl, safeProfileUrl } from "@/lib/safe-links";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { closenessPercentChipClass, closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
@@ -204,7 +204,14 @@ function YouPanelBody({
   data: GraphNodeData;
   summary: Extract<InspectSelection, { type: "user" }>["summary"];
 }) {
-  const socials = summary.socialLinks || {};
+  // Values saved before saves were normalised can still be anything typed into the field.
+  const stored = summary.socialLinks || {};
+  const socials = {
+    linkedin: safeProfileUrl(stored.linkedin),
+    twitter: safeProfileUrl(stored.twitter),
+    github: safeProfileUrl(stored.github),
+    website: safeProfileUrl(stored.website),
+  };
   const hasSocials = Boolean(
     socials.linkedin || socials.twitter || socials.github || socials.website
   );
@@ -604,7 +611,9 @@ function ContactPanelBody({
                 start(async () => {
                   try {
                     const res = await regenerateContactSummary(id);
-                    if (res.summary) {
+                    if (res.aiError) {
+                      toast.error(res.aiError);
+                    } else if (res.summary) {
                       setSummaryText(res.summary);
                       onContactPatch?.(id, { aiSummary: res.summary });
                       toast.success("Summary updated");

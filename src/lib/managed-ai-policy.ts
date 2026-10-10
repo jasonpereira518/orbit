@@ -5,9 +5,10 @@ import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 /**
  * Who may run AI on whose key — the whole rule, as pure functions.
  *
- * THE RULE (pricing v2). Free is bring-your-own-key. Orbit Pro and Orbit Max include AI on
- * Orbit's own provider keys, metered in credits (`src/lib/credits/`). Orbit Lifetime is every
- * Max entitlement EXCEPT this one: its AI runs on its own key only.
+ * THE RULE (pricing v2, Sprint B). Free gets a small monthly allowance plus a one-time starter
+ * on Orbit's own provider keys; Orbit Pro and Orbit Max include more. All of it is metered in
+ * credits (`src/lib/credits/`). Orbit Lifetime is every Max entitlement EXCEPT this one: its
+ * AI runs on its own key only.
  *
  * A paid account may still save its own key. Which one runs by default is the account's
  * choice (`user_settings.ai_key_preference`): `included` puts Orbit's key first, `own` the
@@ -37,11 +38,11 @@ export const MANAGED_AI_ENABLED: boolean = true;
 /**
  * Why AI cannot run for this account right now.
  *
- *  - `key_required`         Free or Lifetime (or an included-AI account whose AI is paused)
+ *  - `key_required`         Lifetime (or an account whose included AI is paused)
  *                           with no key of their own for what was asked
- *  - `managed_unavailable`  Pro or Max, no key of their own, and Orbit holds no managed key
+ *  - `managed_unavailable`  Free, Pro or Max, no key of their own, and Orbit holds no managed key
  *                           for any provider right now
- *  - `managed_limit`        Pro or Max on Orbit's key, and the credits are spent: the hard
+ *  - `managed_limit`        Free, Pro or Max on Orbit's key, and the credits are spent: the hard
  *                           stop. Buy a pack, upgrade to Max, or use your own key.
  */
 export type AiAccessDenial = "key_required" | "managed_unavailable" | "managed_limit";

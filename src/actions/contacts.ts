@@ -67,7 +67,7 @@ import {
   buildOutlookContactIndex,
   fetchOutlookContactPhoto,
 } from "@/lib/contact-avatar-connectors";
-import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
+import { draftFollowUpResult } from "@/lib/follow-up-drafts";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   countAvatarBackfillCandidates,
@@ -971,7 +971,7 @@ export async function regenerateContactSummary(contactId: string) {
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/graph");
   revalidatePath("/dashboard");
-  return { summary: out?.summary ?? null };
+  return { summary: out?.summary ?? null, aiError: out?.aiError ?? null };
 }
 
 export type LinkedInRefreshTarget = {
@@ -1421,7 +1421,7 @@ export async function draftContactFollowUp(
   const userId = await requireUserId();
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
-  return generateContactFollowUpDraft(userId, contactId, goals, { ...options, writingInstructions });
+  return draftFollowUpResult(userId, contactId, goals, { ...options, writingInstructions });
 }
 
 export type ContactFollowUpSendOptions = {

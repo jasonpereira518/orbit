@@ -34,6 +34,7 @@ export const IMPORT_COPY = {
   driveUnavailable: "Couldn’t open Google Drive — try again in a moment",
   drivePaywalled: "Google Drive is on paid plans",
   driveWaitForQueue: "Finish or clear the files above first",
+  queueBusy: "One drop at a time — let the files above finish first",
 
   // --- Undoing an import ---------------------------------------------------------------
   // Every line a person reads on the way back out of an import. The counts and the names are

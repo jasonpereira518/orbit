@@ -248,14 +248,26 @@ async function main() {
   }
 
   {
-    // A legitimate redirect — lu.ma short links do this — must still work.
+    // A legitimate redirect — event short links do this — must still work.
     const scripted = scriptedFetch([
-      redirect("https://lu.ma/real-event"),
+      redirect("https://example.com/real-event"),
       html('<html><head><title>Real</title><meta property="og:title" content="Real Event"></head></html>'),
     ]);
-    const details = await fetchEventPage("https://lu.ma/abc", scripted);
+    const details = await fetchEventPage("https://example.com/abc", scripted);
     check("a normal redirect is followed", details.title === "Real Event", String(details.title));
     check("and the final URL is recorded", details.sourceUrl.endsWith("/real-event"), details.sourceUrl);
+  }
+
+  console.log("\nLuma pages are not read (its terms; the API and ICS feed stay)");
+  for (const url of ["https://lu.ma/abc", "https://luma.com/abc", "https://www.luma.com/abc"]) {
+    const scripted = scriptedFetch([html("<title>Should not be read</title>")]);
+    await refuses(`refuses ${url}`, () => fetchEventPage(url, scripted), "declined_host");
+    check(`and makes no request for ${url}`, scripted.seen.length === 0, scripted.seen.join(", "));
+  }
+  {
+    const scripted = scriptedFetch([html('<html><head><meta property="og:title" content="Not Luma"></head></html>')]);
+    const details = await fetchEventPage("https://example.com/lu.ma/abc", scripted);
+    check("lu.ma elsewhere in the URL is still read", details.title === "Not Luma", String(details.title));
   }
 
   console.log("\ncalendar feeds are the same hazard in a different content type");

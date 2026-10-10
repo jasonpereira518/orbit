@@ -34,8 +34,9 @@ import { activePicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import { friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { AI_HINT_COPY, aiDenialFromMessage } from "@/lib/ai-access-copy";
+import { aiDenialFromMessage, hintCopyFor } from "@/lib/ai-access-copy";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import { useViewerPlan } from "@/components/viewer-plan";
 
 function todayYmd() {
   return format(new Date(), "yyyy-MM-dd");
@@ -84,6 +85,7 @@ export function LogInteractionSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  const { plan } = useViewerPlan();
   const submitRef = useRef<HTMLButtonElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
 
@@ -407,7 +409,7 @@ export function LogInteractionSheet({
               <Sparkles className="mt-px size-3 shrink-0" />
               {hasApiKey
                 ? "Write it however you like — the summary, action items and any dates get pulled out for you. Type @ to link someone else who came up."
-                : `Saved as written. ${AI_HINT_COPY[aiReason ?? "key_required"]}.`}
+                : `Saved as written. ${hintCopyFor(aiReason, plan)}.`}
             </p>
           </div>
 

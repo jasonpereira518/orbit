@@ -5,11 +5,9 @@
  * Pure — no React, no icons — so `src/actions/onboarding.ts` can validate against it
  * without pulling a client component into the server bundle.
  *
- * Two paths share one stage: the **guided tour** (setup, then a coach rail over the real
- * pages) and **quick setup** (setup, first people, a paged overview). Both run LinkedIn →
- * AI key → Connect in that order: the 24-hour item goes first because it costs one click,
- * the highest-friction step lands after an easy win, and the step most free accounts see
- * locked comes last.
+ * Two paths: the **guided tour** (welcome → connect → a coach rail over the real pages) and
+ * **quick setup** (welcome → your people → connect → a paged overview). People come first:
+ * the person's own contacts are the easy win.
  */
 
 export const ONBOARDING_STEPS = [
@@ -62,33 +60,33 @@ export function isOnboardingPath(value: string | null | undefined): value is Onb
 }
 
 /**
- * The main line of each path — the steps the progress orbit draws and Back/Next walk.
- * Branch steps (`import` from the LinkedIn step; `capture`, `manual`, `import` and `triage`
- * under "your people") return to the main line through the controller's own continuations.
+ * The two main lines. Quick setup goes straight to the person's own people; the tour shows
+ * them around. `linkedin` and `ai-key` left both lines (Sprint B): the LinkedIn export is a
+ * dashboard card now, and Free includes AI. Their ids stay in ONBOARDING_STEPS so a stored
+ * step still parses, and `resumeStep` moves it onto the path's first step.
  */
 export const PATH_STAGES = {
-  tour: ["welcome", "linkedin", "ai-key", "connect", "launch"],
-  quick: ["welcome", "linkedin", "ai-key", "connect", "people", "overview"],
+  tour: ["welcome", "connect", "launch"],
+  quick: ["welcome", "people", "connect", "overview"],
 } as const satisfies Record<OnboardingPath, readonly OnboardingStep[]>;
 
 export type OnboardingStage = (typeof PATH_STAGES)[OnboardingPath][number];
 
+export const RETIRED_STEPS: readonly OnboardingStep[] = ["linkedin", "ai-key"];
+
 export const STAGE_LABELS: Record<OnboardingStage, string> = {
   welcome: "Welcome",
-  linkedin: "LinkedIn export",
-  "ai-key": "Your AI key",
-  connect: "Your accounts",
   people: "Your people",
+  connect: "Your accounts",
   overview: "What Orbit does",
   launch: "The tour",
 };
 
 /** Which progress node a step lights. Branch steps share their parent's node. */
 export function stageOf(step: OnboardingStep, path: OnboardingPath): OnboardingStage {
+  void path;
   switch (step) {
     case "welcome":
-    case "linkedin":
-    case "ai-key":
     case "connect":
     case "overview":
     case "launch":
@@ -97,40 +95,35 @@ export function stageOf(step: OnboardingStep, path: OnboardingPath): OnboardingS
     case "capture":
     case "manual":
     case "triage":
-      return "people";
     case "import":
-      // Reached from the LinkedIn step on the tour path (there is no people node there);
-      // the controller substitutes "linkedin" on the quick path too when that is where it
-      // came from.
-      return path === "tour" ? "linkedin" : "people";
+      return "people";
+    case "linkedin":
+    case "ai-key":
+      // Retired: `resumeStep` never lands here. Welcome is the harmless answer.
+      return "welcome";
   }
 }
 
 export function stepAllowedOnPath(step: OnboardingStep, path: OnboardingPath): boolean {
-  if (step === "welcome" || step === "linkedin" || step === "import") return true;
-  if (step === "ai-key" || step === "connect") return true;
+  if (RETIRED_STEPS.includes(step)) return false;
+  if (step === "welcome" || step === "connect") return true;
   return path === "quick" ? step !== "launch" : step === "launch";
 }
 
 /** What decides which setup steps an account can skip outright. */
 export type StepFacts = {
-  /** AI already runs for this account (a saved key, a managed key, or the local dev key). */
-  hasApiKey: boolean;
   /** At least one of Google / Microsoft is configured on this deployment. */
   connectConfigured: boolean;
 };
 
-/**
- * The main line with the skippable steps removed. The ids stay in `ONBOARDING_STEPS`, so a
- * stored `ai-key` still resumes correctly for someone who added a key elsewhere meanwhile
- * (they simply see the step with its "already set" state).
- */
+/** The main line with the skippable steps removed. */
 export function mainLine(path: OnboardingPath, facts: StepFacts): OnboardingStage[] {
-  return (PATH_STAGES[path] as readonly OnboardingStage[]).filter((step) => {
-    if (step === "ai-key") return !facts.hasApiKey;
-    if (step === "connect") return facts.connectConfigured;
-    return true;
-  });
+  return (PATH_STAGES[path] as readonly OnboardingStage[]).filter((step) => step !== "connect" || facts.connectConfigured);
+}
+
+/** The first step after welcome on this path's main line. */
+export function firstStep(path: OnboardingPath, facts: StepFacts): OnboardingStage {
+  return nextStep("welcome", path, facts) ?? "welcome";
 }
 
 /**
@@ -173,10 +166,14 @@ export function prevStep(
 export function resumeStep(
   value: string | null | undefined,
   path: string | null | undefined,
+  facts: StepFacts = { connectConfigured: true },
 ): OnboardingStep {
   if (!isOnboardingStep(value) || value === "welcome") return "welcome";
   if (!isOnboardingPath(path)) return "welcome";
-  return stepAllowedOnPath(value, path) ? value : "welcome";
+  if (stepAllowedOnPath(value, path)) return value;
+  // A step this path no longer has (a stored LinkedIn or AI-key screen, or the tour's old
+  // import branch) moves on, never back to the start.
+  return RETIRED_STEPS.includes(value) || value === "import" ? firstStep(path, facts) : "welcome";
 }
 
 /** Direction of travel between two steps, for the slide transition. */

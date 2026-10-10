@@ -9,8 +9,8 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  * `scripts/smoke-legal-pages.ts` holds a lock over the two page sources and fails when they
  * move and these two do not, so the rule above is enforced rather than merely written down.
  */
-export const TERMS_VERSION = "2026-10-04";
-export const LEGAL_LAST_UPDATED = "October 4, 2026";
+export const TERMS_VERSION = "2026-10-09";
+export const LEGAL_LAST_UPDATED = "October 9, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

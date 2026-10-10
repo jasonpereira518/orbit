@@ -10,8 +10,8 @@ import type { TourStopId } from "@/lib/tour/tour-stops";
 import { cn } from "@/lib/utils";
 
 export type TourFinishFacts = {
+  /** AI can run (the gate's reason is null), on a key or on Orbit's credits. */
   hasApiKey: boolean;
-  linkedinRequested: boolean;
   completed: ReadonlySet<TourStopId>;
 };
 
@@ -45,8 +45,7 @@ export function TourFinishCard({
   }, []);
 
   const rows: Array<{ label: string; done: boolean | null }> = [
-    { label: "AI key", done: facts.hasApiKey },
-    { label: "LinkedIn export requested", done: facts.linkedinRequested },
+    { label: "AI ready", done: facts.hasApiKey },
     { label: "Google or Microsoft connected", done: connected },
     { label: "Logged an interaction", done: facts.completed.has("contact.log") },
     { label: "Cleared a reminder", done: facts.completed.has("reminders.done") },

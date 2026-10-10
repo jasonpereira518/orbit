@@ -57,6 +57,12 @@ export type NoteBatchParticipantInput = {
   mergeContactId?: string | null;
   createReminder: boolean;
   relationshipScore: number;
+  /**
+   * The person picked `relationshipScore` themselves (touched a closeness control). A merge
+   * writes the score only then: a model suggestion must never overwrite a rating someone set
+   * by hand. Creates always write it — there is nothing to overwrite.
+   */
+  closenessChosen?: boolean;
   tagNames: string[];
   followUpDays?: number | null;
   interactionDate?: string | null;
@@ -281,7 +287,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         // Tags are ADDED to the contact's own, never a replacement list: `updateContactForUser`
         // sets the full list, and the note's tags alone would delete the rest (an empty list
         // deleted them all).
-        const { tagNames, phone, xHandle, website, school, industry, keyFacts: noteFacts, ...rest } = fields;
+        const { tagNames, phone, xHandle, website, school, industry, keyFacts: noteFacts, relationshipScore, statedCloseness, ...rest } = fields;
         // Handles fill gaps and never overwrite: a phone the person typed on the contact
         // outranks one a note happened to mention. Key facts accumulate — writing the note's
         // list outright would delete everything earlier notes taught Orbit about them.
@@ -313,6 +319,8 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           {
             fullName: parsed.name || undefined,
             ...rest,
+            // updateContactForUser mirrors this into statedCloseness.
+            ...(p.closenessChosen ? { relationshipScore } : {}),
             ...gaps,
             ...(addedFacts.length ? { keyFacts: [...priorFacts, ...addedFacts] } : {}),
             ...(tagNames?.length ? { tagNames: await withExistingTagNames(userId, contactId, tagNames) } : {}),

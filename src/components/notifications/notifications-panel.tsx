@@ -29,6 +29,7 @@ import {
   markReminderDone,
   reopenReminderAction,
   snoozeReminderAction,
+  undoClearContactFollowUpAction,
   unsnoozeReminderAction,
 } from "@/actions/reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -183,8 +184,8 @@ export function NotificationsPanelButton({
     );
   }
 
-  // No Undo: this closes an unbounded set of the contact's reminders and returns only
-  // how many, not which. It can say the count honestly, which it could not before.
+  // Undo puts back the contact's clock and every reminder this closed, each behind its own
+  // staleness guard — the snapshot names them, where the bare count could not.
   function clearFollowUp(contactId: string) {
     start(() =>
       runToastAction({
@@ -195,6 +196,7 @@ export function NotificationsPanelButton({
             : "Follow-up cleared",
         failure: "Couldn’t clear that follow-up — try again?",
         refresh,
+        undo: (res) => () => undoClearContactFollowUpAction(res.snapshot),
       }).then(() => undefined)
     );
   }

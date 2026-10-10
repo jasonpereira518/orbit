@@ -714,6 +714,7 @@ export function NetworkGraph({
       let processed = 0;
       let total: number | undefined;
       let done = false;
+      let anyFailed = false;
       while (!done) {
         if (operationsStoppedRef.current || refreshStoppedRef.current) return;
         const result = await refreshConstellationBatch({
@@ -734,6 +735,11 @@ export function NetworkGraph({
         processed = result.processed;
         total = result.total;
         done = result.done;
+        anyFailed ||= result.failed > 0;
+        if (result.aiError) {
+          finishBackgroundJob(jobId, { status: "failed", error: result.aiError });
+          return;
+        }
         // Hand the app back to whatever else it was doing before asking for the next batch.
         // Server actions are issued one at a time, and each batch holds a 20s budget, so a
         // back-to-back loop starves every other request this client makes — including the
@@ -752,7 +758,7 @@ export function NetworkGraph({
       }
       finishBackgroundJob(jobId, {
         status: "completed",
-        resultMessage: "Constellation refreshed",
+        resultMessage: anyFailed ? "Constellation refreshed, with some people skipped" : "Constellation refreshed",
       });
     } catch (err) {
       console.error(err);

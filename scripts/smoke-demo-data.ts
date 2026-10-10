@@ -55,6 +55,8 @@ const REMOTE_USER = "smoke-demo-remote";
 const EXISTING = "smoke-demo-existing";
 /** A second local account, seeded later onto the recruiter rows FRESH created. */
 const SECOND = "smoke-demo-second";
+/** Seeded with `ORBIT_DEMO_PERSONA=student`. */
+const STUDENT = "smoke-demo-student";
 const DEMO_RECRUITER_EMAILS = ["alex@riveratalent.example", "morgan.blake@insightglobal.example", "marcus.lee@example.com"];
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -82,7 +84,7 @@ const contactCount = (userId: string) => rowsFor(contacts, contacts.userId, user
  */
 async function cleanup() {
   const db = await getDb();
-  const users = [FRESH, REMOTE_USER, EXISTING, SECOND];
+  const users = [FRESH, REMOTE_USER, EXISTING, SECOND, STUDENT];
   for (const table of [
     suggestedReminders, reminders, reminderLists, outreachCampaigns, events, chatThreads,
     recruiterMessages, userRecruiterLinks, imports, userGoals, contacts, companies, tags,
@@ -97,9 +99,11 @@ async function main() {
   console.log("Demo workspace smoke test (pglite)…");
   const priorNodeEnv = env.NODE_ENV;
   const priorFlag = env.ORBIT_DEMO_DATA;
+  const priorPersona = env.ORBIT_DEMO_PERSONA;
   delete env.ORBIT_DEMO_DATA;
+  delete env.ORBIT_DEMO_PERSONA;
   const db = await getDb();
-  for (const u of [FRESH, REMOTE_USER, EXISTING, SECOND]) await ensureUserSettings(u);
+  for (const u of [FRESH, REMOTE_USER, EXISTING, SECOND, STUDENT]) await ensureUserSettings(u);
 
   try {
     console.log("\noff localhost");
@@ -223,11 +227,35 @@ async function main() {
     const reused = await db.select().from(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
     check("a later account reuses the rows rather than duplicating them", reused.length === 3, String(reused.length));
     check("…and still sees their details", (await seenBy(SECOND)) === 3, String(await seenBy(SECOND)));
+
+    console.log("\nthe student persona");
+    env.ORBIT_DEMO_PERSONA = "student";
+    try {
+      await ensureLocalDemoData(STUDENT);
+    } finally {
+      delete env.ORBIT_DEMO_PERSONA;
+    }
+    const { STUDENT_PEOPLE, STUDENT_GOALS, STUDENT_LISTS } = await import("../src/lib/demo-data/student");
+    const studentContacts = await contactCount(STUDENT);
+    check("seeds the student network", studentContacts === STUDENT_PEOPLE.length, String(studentContacts));
+    check("about thirty people", STUDENT_PEOPLE.length >= 28 && STUDENT_PEOPLE.length <= 32, String(STUDENT_PEOPLE.length));
+    const lists = (await db.select({ name: reminderLists.name }).from(reminderLists).where(eq(reminderLists.userId, STUDENT))).map((l) => l.name);
+    check("Recruiters, Alumni and Referrals lists", STUDENT_LISTS.every((n) => lists.includes(n)), lists.join(", "));
+    const goals = (await db.select({ text: userGoals.text }).from(userGoals).where(eq(userGoals.userId, STUDENT))).map((g) => g.text);
+    check("student goals, nothing about fundraising", goals.length === STUDENT_GOALS.length && !goals.some((g) => /fundrais|investor/i.test(g)), goals.join(" | "));
+    const studentEvents = await db.select({ title: events.title }).from(events).where(eq(events.userId, STUDENT));
+    check("a career fair is on the calendar", studentEvents.some((e) => /career fair/i.test(e.title)), studentEvents.map((e) => e.title).join(", "));
+    check("no outreach campaign", (await db.select({ id: outreachCampaigns.id }).from(outreachCampaigns).where(eq(outreachCampaigns.userId, STUDENT))).length === 0);
+    check("every student email is on a reserved example domain", STUDENT_PEOPLE.every((p) => !p.email || /@([a-z0-9-]+\.)*example(\.[a-z]+)?$/.test(p.email)));
+    check("names are unique", new Set(STUDENT_PEOPLE.map((p) => p.fullName)).size === STUDENT_PEOPLE.length);
+    check("the founder persona is still the default", (await contactCount(FRESH)) === people.length);
   } finally {
     setNodeEnv(priorNodeEnv);
     await cleanup();
     if (priorFlag === undefined) delete env.ORBIT_DEMO_DATA;
     else env.ORBIT_DEMO_DATA = priorFlag;
+    if (priorPersona === undefined) delete env.ORBIT_DEMO_PERSONA;
+    else env.ORBIT_DEMO_PERSONA = priorPersona;
   }
 
   console.log("\nAll demo workspace checks passed.");

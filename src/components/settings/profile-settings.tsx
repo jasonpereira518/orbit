@@ -260,7 +260,18 @@ export function ProfileSettings({
           onClick={() =>
             start(async () => {
               try {
-                await saveSocialLinks(socials);
+                const res = await saveSocialLinks(socials);
+                if (!res.ok) {
+                  toast.error(res.error);
+                  return;
+                }
+                // Show what was stored: `linkedin.com/in/ada` comes back as its https link.
+                setSocials({
+                  linkedin: res.links.linkedin ?? "",
+                  twitter: res.links.twitter ?? "",
+                  github: res.links.github ?? "",
+                  website: res.links.website ?? "",
+                });
                 toast.success("Social links saved");
               } catch (err) {
                 toast.error(

@@ -169,13 +169,13 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
                             onPointerLeave={onIntentEnd}
                             onFocus={onIntentNow ? () => onIntentNow(thread.id) : undefined}
                             onTouchStart={onIntentNow ? () => onIntentNow(thread.id) : undefined}
-                            disabled={busy && !active}
+                            disabled={busy}
                             aria-current={active ? "true" : undefined}
                             className={cn(
-                              "w-full rounded-lg px-2 py-1.5 pr-7 text-left text-sm leading-snug transition-colors disabled:opacity-50",
+                              "w-full rounded-lg px-2 py-1.5 pr-7 text-left text-sm leading-snug transition-colors",
                               active
                                 ? "bg-primary/10 font-medium text-primary"
-                                : "text-foreground/80 hover:bg-muted"
+                                : "text-foreground/80 hover:bg-muted disabled:opacity-50"
                             )}
                           >
                             {/* Keyed on the label so a chat's name fades in when its summary
@@ -194,7 +194,8 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
                             type="button"
                             aria-label={`Delete chat: ${label}`}
                             onClick={() => onDelete(thread.id)}
-                            className="absolute right-1 top-1.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                            disabled={busy}
+                            className="absolute right-1 top-1.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 disabled:invisible"
                           >
                             <Trash2 className="size-3.5" />
                           </button>

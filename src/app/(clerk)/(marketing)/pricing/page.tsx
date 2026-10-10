@@ -96,9 +96,9 @@ export default function PricingPage() {
           </Reveal>
           <Reveal className="reveal-celestial" delay={90}>
             <p className="mx-auto mt-5 max-w-[46ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
-              Bring your own AI key on the Free Plan. Orbit Pro and Orbit Max
-              keep every contact, follow-up and warm intro in one place — with
-              AI included.
+              Free includes a small AI allowance to get you started. Orbit Pro
+              and Orbit Max keep every contact, follow-up and warm intro in one
+              place, with more AI included.
             </p>
           </Reveal>
         </section>

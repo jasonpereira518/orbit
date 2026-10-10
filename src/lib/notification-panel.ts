@@ -149,24 +149,32 @@ export async function loadNotificationPanel(
   /**
    * Contacts that already appear below as a due follow-up.
    *
-   * The dashboard drops a *generated* reminder whose contact is in this set
-   * (`filteredReminders` in lib/reminders.ts); the panel did not, so the same piece of
-   * work was listed twice — "Send Sarah the retrieval write-up" and "Follow up with
-   * Sarah Chen", both 12 days ago — and the bell's badge was inflated for exactly the
-   * contacts the user was most behind on. A hand-written reminder is NOT dropped: that
-   * is a real, separate thing the user said they would do.
+   * The dashboard drops two kinds of reminder beside such a contact (`loadDashboardReminders`
+   * in lib/reminders.ts); the panel did not, so the same piece of work was listed twice and
+   * the bell's badge was inflated for exactly the contacts the user was most behind on:
+   *
+   *   1. a *generated* reminder ("Send Sarah the retrieval write-up" beside "Follow up with
+   *      Sarah Chen");
+   *   2. the reminder a day preset books beside the contact's clock: the same instant, the
+   *      scheduler's own wording. It IS the follow-up row below.
+   *
+   * A hand-written reminder that merely shares the instant is still its own thing and is
+   * still listed.
    */
-  const dueFollowUpContactIds = new Set(
+  const dueFollowUpContacts = new Map(
     contactRows
       .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
-      .map((c) => c.id)
+      .map((c) => [c.id, c])
   );
 
   for (const r of pendingReminders) {
+    const pair = r.contactId ? dueFollowUpContacts.get(r.contactId) : undefined;
     if (
-      r.reminderType === "generated" &&
-      r.contactId &&
-      dueFollowUpContactIds.has(r.contactId)
+      pair &&
+      (r.reminderType === "generated" ||
+        (r.dueDate !== null &&
+          new Date(r.dueDate).getTime() === new Date(pair.nextFollowUpAt!).getTime() &&
+          r.title === `Follow up with ${pair.preferredName || pair.fullName}`))
     ) {
       continue;
     }

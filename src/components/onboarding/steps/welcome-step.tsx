@@ -11,8 +11,6 @@ import type { OnboardingPath } from "@/lib/onboarding-steps";
 import { cn } from "@/lib/utils";
 
 const TOUR_SETS_UP = [
-  "Your AI key, checked as you save it",
-  "Your LinkedIn export, started now so it’s ready tomorrow",
   "Your Google or Outlook contacts, brought in with one click",
   "Every page, with six example people already in place",
 ];
@@ -93,7 +91,7 @@ export function WelcomeStep({
             primary
             eyebrow="Recommended"
             title="Guided tour"
-            time="A few setup steps, then a three-minute tour of the real pages."
+            time="Connect your accounts, then a three-minute tour of the real pages."
             action="Start the tour"
             disabled={blocked}
             onClick={() => onChoose("tour")}
@@ -117,8 +115,8 @@ export function WelcomeStep({
             onClick={() => onChoose("quick")}
           >
             <p className="text-sm text-muted-foreground">
-              Just the essentials and a quick look at what Orbit can do. The tour is always in
-              Settings → Help if you want it later.
+              Your people first, then your accounts, then a quick look at what Orbit can do. The
+              tour is always in Settings → Help if you want it later.
             </p>
           </PathCard>
         </StaggerItem>

@@ -632,7 +632,7 @@ export function RemindersStage({
   ) : null;
 
   return (
-    <div data-fill-route data-clear-floating-controls className="flex min-h-0 flex-1 flex-col gap-4">
+    <div data-fill-route className="flex min-h-0 flex-1 flex-col gap-4">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
         {/* Calendar sync lives at the foot of the rail now, with its status. */}
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Reminders</h1>

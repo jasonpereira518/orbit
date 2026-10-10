@@ -7,15 +7,17 @@ import {
   StaggerItem,
   StepHeading,
 } from "@/components/onboarding/onboarding-ui";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type PeoplePath = "capture" | "manual" | "import";
 
-const PATHS: Array<{ id: PeoplePath; icon: LucideIcon; title: string; body: string }> = [
+const PATHS: Array<{ id: PeoplePath; icon: LucideIcon; title: string; body: string; recommended?: boolean }> = [
   {
     id: "capture",
     icon: Sparkles,
     title: "Capture from notes",
+    recommended: true,
     body: "Paste notes about people you’ve met. Orbit works out who they are and what to follow up on.",
   },
   {
@@ -47,7 +49,7 @@ export function PeopleStep({
         <StaggerItem>
           <BackButton onClick={onBack} />
         </StaggerItem>
-        <StepHeading eyebrow="Last step" title="Add your first people">
+        <StepHeading eyebrow="Your people" title="Add your first people">
           Start with whatever you have on hand. Adding more later is just as easy.
         </StepHeading>
       </div>
@@ -70,7 +72,14 @@ export function PeopleStep({
                   <Icon className="size-5" aria-hidden />
                 </span>
                 <span>
-                  <span className="block font-medium text-ink">{path.title}</span>
+                  <span className="block font-medium text-ink">
+                    {path.title}
+                    {path.recommended && (
+                      <span className="ml-2 inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-px text-[11px] font-medium text-primary">
+                        Recommended
+                      </span>
+                    )}
+                  </span>
                   <span className="mt-1 block text-sm text-muted-foreground">{path.body}</span>
                 </span>
               </button>
@@ -80,13 +89,9 @@ export function PeopleStep({
       </Stagger>
 
       <StaggerItem className="text-center">
-        <button
-          type="button"
-          onClick={onLater}
-          className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          I&apos;ll add people later
-        </button>
+        <Button type="button" variant="outline" onClick={onLater}>
+          I’ll add people later
+        </Button>
       </StaggerItem>
     </Stagger>
   );

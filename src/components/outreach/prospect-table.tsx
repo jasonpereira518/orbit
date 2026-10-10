@@ -45,6 +45,7 @@ export type ProspectRow = {
     stepIndex?: number | null;
     outcome?: string | null;
     scheduledFor?: Date | string | null;
+    sentAt?: Date | string | null;
   } | null;
   messages?: Array<{
     id: string;
@@ -203,6 +204,7 @@ export function ProspectTable({
                   id: message.id,
                   status: message.status,
                   outcome: message.outcome ?? null,
+                  sentAt: message.sentAt ?? null,
                 });
               const delivered =
                 message &&
@@ -210,6 +212,7 @@ export function ProspectTable({
                   id: message.id,
                   status: message.status,
                   outcome: message.outcome ?? null,
+                  sentAt: message.sentAt ?? null,
                 });
               const profileUrl = prospect.linkedinUrl
                 ? buildLinkedInUrl(prospect.linkedinUrl)

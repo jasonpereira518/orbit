@@ -4,7 +4,8 @@ import { skipConnectIfShown, untilHydrated } from "./helpers";
 /**
  * Quick setup, end to end, on an empty account. The e2e account runs on the Gemini stub key
  * (so the AI key step is skipped) with no Google or Microsoft client configured (so the
- * connect step is skipped too): the walk is welcome → LinkedIn → people → overview.
+ * connect step is skipped too): the walk is welcome → people → overview. The LinkedIn export
+ * is a dashboard card now, not a step.
  */
 test("an empty account goes through quick setup and lands on the empty dashboard", async ({ page }) => {
   await page.goto("/dashboard");
@@ -21,15 +22,12 @@ test("an empty account goes through quick setup and lands on the empty dashboard
   );
   await quick.click();
 
-  await expect(page.getByRole("heading", { name: "Start your LinkedIn export" })).toBeVisible();
-  await page.getByRole("button", { name: "I don't use LinkedIn" }).click();
+  await expect(page.getByRole("heading", { name: "Add your first people" })).toBeVisible();
+  await page.getByRole("button", { name: "I’ll add people later" }).click();
 
-  const people = page.getByRole("heading", { name: "Add your first people" });
-  await skipConnectIfShown(page, people);
-  await expect(people).toBeVisible();
-  await page.getByRole("button", { name: "I'll add people later" }).click();
-
-  await expect(page.getByRole("heading", { name: "Here’s what Orbit can do" })).toBeVisible();
+  const overview = page.getByRole("heading", { name: "Here’s what Orbit can do" });
+  await skipConnectIfShown(page, overview);
+  await expect(overview).toBeVisible();
   // The overview lists Capture (which needs a key) and the dashboard; the account has a key
   // via the stub, so no "Needs AI key" tag anywhere.
   await expect(page.getByRole("heading", { name: "Capture people in seconds" })).toBeVisible();

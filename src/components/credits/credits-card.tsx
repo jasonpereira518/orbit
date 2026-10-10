@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { confirmCheckoutSession, startPlanSwitch } from "@/actions/billing";
@@ -16,7 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatAllowanceReset, allowancePercentUsed } from "@/lib/ai-access-copy";
+import { formatAllowanceReset, allowancePercentUsed, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
 import { toast } from "@/lib/toast";
 
 const MICROS_PER_CREDIT = 10_000;
@@ -92,6 +93,9 @@ export function CreditsCard() {
   if (overview === null) return null;
 
   const { balance, monthlyCredits, plan } = overview;
+  const packsSold = plan === "orbit" || plan === "max";
+  const starterLeft = credits(balance.starterRemaining);
+  const spendableLeft = credits(balance.spendable);
   const allowance = balance.allowance;
   const allowanceLeft = allowance ? credits(allowance.remaining) : 0;
   const packLeft = credits(balance.packRemaining);
@@ -130,7 +134,13 @@ export function CreditsCard() {
         </div>
       )}
 
-      {(packLeft > 0 || monthlyCredits > 0) && (
+      {starterLeft > 0 && (
+        <p className="text-sm text-muted-foreground">
+          <strong className="font-medium text-ink">{fmt(starterLeft)}</strong> starter credits left, used after your monthly credits
+        </p>
+      )}
+
+      {(packsSold || balance.packsFrozen) && (packLeft > 0 || monthlyCredits > 0) && (
         <p className="text-sm text-muted-foreground">
           {balance.packsFrozen ? (
             <>
@@ -150,21 +160,35 @@ export function CreditsCard() {
 
       {out ? (
         <p role="status" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
-          You’ve used your credits, so Orbit’s AI is paused until {allowance ? formatAllowanceReset(allowance.periodEnd) : "your plan renews"}.
-          Nothing is charged automatically — add a pack to keep going{plan === "orbit" ? ", or move to Max for 500 credits a month" : ""}.
+          {packsSold ? (
+            <>
+              You’ve used your credits, so Orbit’s AI is paused until {allowance ? formatAllowanceReset(allowance.periodEnd) : "your plan renews"}.
+              Nothing is charged automatically — add a pack to keep going{plan === "orbit" ? ", or move to Max for 500 credits a month" : ""}.
+            </>
+          ) : (
+            <>You’ve used this month’s AI credits. They refill on {allowance ? formatAllowanceReset(allowance.periodEnd) : "the 1st"}. Add your own key below for no limit</>
+          )}
         </p>
+      ) : plan === "free" && spendableLeft <= FREE_LOW_CREDITS ? (
+        <p className="text-sm text-foreground">{spendableLeft} AI {spendableLeft === 1 ? "credit" : "credits"} left this month</p>
       ) : (
         line && <p className="text-sm text-muted-foreground">{line}</p>
       )}
 
-      {monthlyCredits > 0 && (
+      {plan === "free" && (
+        <Link href="/pricing" className="text-sm font-medium text-primary underline-offset-2 hover:underline">
+          Compare plans
+        </Link>
+      )}
+
+      {monthlyCredits > 0 && packsSold && (
         <div className="flex flex-wrap items-center gap-2">
           <BuyPackButton variant={out ? "default" : "outline"} />
           {plan === "orbit" && <UpgradeToMaxButton />}
         </div>
       )}
 
-      {monthlyCredits > 0 && <CreditEmailToggle initial={overview.creditEmailEnabled} />}
+      {monthlyCredits > 0 && packsSold && <CreditEmailToggle initial={overview.creditEmailEnabled} />}
 
       <MaxNudgeDialog open={nudgeOpen} onOpenChange={setNudgeOpen} />
     </section>

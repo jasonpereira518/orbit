@@ -7,7 +7,7 @@ import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
-import { discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
+import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
@@ -312,12 +312,16 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
+        // The question was written before the model ran (it carries the attached people and,
+        // on a regenerate, the slot). Nothing answered it — a failure or a Stop alike — so it
+        // does not stay. Before the client-gone return: a Stop is exactly when it is gone.
+        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
+        // A first message that never got an answer leaves the thread empty: remove it too
+        // (a no-op when the thread has any message).
+        await discardEmptyThread(userId, threadId).catch(() => {});
         // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
         // an error of ours either — the provider call was aborted on purpose.
         if (request.signal.aborted) return;
-        // The question was written before the model ran (it carries the attached people and,
-        // on a regenerate, the slot). Nothing answered it, so it does not stay.
-        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
         // The status line is already sent, so this reaches the client as an event. Report it:
         // a mid-stream failure used to leave no trace outside the person's screen.
         send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });

@@ -34,6 +34,7 @@ import {
   opportunityKey,
   opportunityKindFor,
   reminderFactsFor,
+  reminderTitleOverride,
   saveTimeMergeTarget,
   setAsidePeople,
 } from "@/lib/capture/review-reducer";
@@ -455,6 +456,7 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
       mergeContactId,
       createReminder: facts.createReminder,
       relationshipScore: facts.closeness,
+      closenessChosen: decision.closenessChosen === true,
       tagNames: decision.tagNames?.length ? decision.tagNames : parsed.tags,
       // A rhythm the person stated outranks both the model's inference and the closeness
       // table — they said the interval out loud. `reminderFactsFor` applies it, so the
@@ -489,7 +491,7 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
     .map((s) => {
       const o = overrides[s.key] ?? {};
       return {
-        title: s.title,
+        title: reminderTitleOverride(o.title, s.title) ?? s.title,
         description: s.description,
         rawDatePhrase: s.rawDatePhrase,
         yearInferred: s.yearInferred,

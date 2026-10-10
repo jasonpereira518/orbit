@@ -44,7 +44,11 @@ export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussi
         <CardAction>
           <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
             onClick={() => start(async () => {
-              try { await regenerateContactSummary(contactId); router.refresh(); }
+              try {
+                const res = await regenerateContactSummary(contactId);
+                if (res.aiError) toast.error(res.aiError);
+                router.refresh();
+              }
               catch (err) { toast.error(friendlyError(err, "Couldn’t refresh that — try again?")); }
             })}>
             <RefreshCw className="size-3.5" /> {stale ? "Updating…" : "Refresh"}
