@@ -18,7 +18,7 @@ import type { PersonDraft } from "@/components/capture/review/person-card";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { SuggestedOpportunitiesReview } from "@/components/capture/suggested-opportunities-review";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
-import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions, plannedCaptureReminders, saveButtonLabel } from "@/lib/capture/review-reducer";
+import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions, plannedCaptureReminders, reminderTitleOverride, saveButtonLabel } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobResult, CaptureOpportunityChoices, CaptureReminderChoices, OpportunityReviewItem } from "@/lib/capture/types";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 
@@ -28,6 +28,7 @@ export function suggestionsFromChoices(result: CaptureJobResult, choices: Captur
     const o = choices?.overrides?.[s.key];
     return {
       ...s,
+      title: reminderTitleOverride(o?.title, s.title) ?? s.title,
       dueDateIso: o?.dueDateIso ?? s.dueDateIso,
       checked: checked.has(s.key),
       personNameOverride: o?.personName === undefined ? null : o.personName,
@@ -35,13 +36,15 @@ export function suggestionsFromChoices(result: CaptureJobResult, choices: Captur
   });
 }
 
-export function choicesFromSuggestions(items: SuggestionReviewItem[], base: readonly { key: string; dueDateIso: string }[]): CaptureReminderChoices {
+export function choicesFromSuggestions(items: SuggestionReviewItem[], base: readonly { key: string; dueDateIso: string; title: string }[]): CaptureReminderChoices {
   const overrides: CaptureReminderChoices["overrides"] = {};
   for (const it of items) {
     const original = base.find((b) => b.key === it.key);
-    const o: { personName?: string | null; dueDateIso?: string } = {};
+    const o: { personName?: string | null; dueDateIso?: string; title?: string } = {};
     if (it.personNameOverride !== null) o.personName = it.personNameOverride;
     if (original && it.dueDateIso !== original.dueDateIso) o.dueDateIso = it.dueDateIso;
+    const title = original ? reminderTitleOverride(it.title, original.title) : undefined;
+    if (title) o.title = title;
     if (Object.keys(o).length) overrides[it.key] = o;
   }
   return { checked: items.filter((i) => i.checked).map((i) => i.key), overrides };

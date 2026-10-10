@@ -19,6 +19,7 @@ import { getDb } from "../src/db";
 import { contactEmbeddings, contacts, userSettings } from "../src/db/schema";
 import { clearApiKey } from "../src/actions/settings";
 import { encrypt } from "../src/lib/crypto";
+import { clearMovesEmbeddings, managedEligibilityFor } from "../src/lib/ai-settings-write";
 
 const USER = "demo-user";
 let failures = 0;
@@ -52,6 +53,10 @@ async function embeddingCount() {
 
 run(async () => {
   await seed();
+  const seeded = (await (await getDb()).query.userSettings.findFirst({ where: eq(userSettings.userId, USER) }))!;
+  const eligibility = await managedEligibilityFor(USER);
+  check("Settings warns before clearing OpenAI — it moves search", clearMovesEmbeddings("openai", seeded, eligibility) === true);
+  check("…and not before clearing Anthropic, which never embeds", clearMovesEmbeddings("anthropic", seeded, eligibility) === false);
   let result: Awaited<ReturnType<typeof clearApiKey>> | null = null;
   let thrown: unknown = null;
   try {

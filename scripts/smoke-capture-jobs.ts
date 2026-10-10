@@ -253,6 +253,9 @@ async function main() {
   const failed = await runCaptureJobById(broken.id, { parse: async () => { throw new Error("model exploded"); }, enrich: false });
   check("a parse failure is recorded as failed with a message", failed?.status === "failed" && Boolean(failed.error), failed?.error ?? "");
   check("a recently failed job is still surfaced to the page", (await findActiveCaptureJob(USER))?.id === broken.id);
+  check("an extraction failure keeps the notes on the row and has no result", failed?.inputText === "x" && failed?.result === null);
+  const retried = await queueCaptureJobRow(USER, broken.id, { inputText: "x" });
+  check("Try again re-queues the same failed row, error cleared", retried?.id === broken.id && retried.status === "queued" && retried.error === null && retried.inputText === "x");
   check("discarding it works", await discardCaptureJobRow(USER, broken.id));
   check("a discarded job cannot be discarded twice", !(await discardCaptureJobRow(USER, broken.id)));
   await discardCaptureJobRow(USER, media.id);

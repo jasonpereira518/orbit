@@ -54,6 +54,7 @@ const SESSION_DERIVING = new Set([
   "requireUserId",
   "requireAdminUserId",
   "requireUserForSurface",
+  "requireUserForReleasedSurface",
   "requireSyncUser",
   "requireOutreachUser",
   "requireRecruitersUser",

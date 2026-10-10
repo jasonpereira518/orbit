@@ -11,10 +11,11 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-capture-reminder-count";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { captureJobs, contacts, ignoredPeople, noteBatches, reminders, userSettings } from "../src/db/schema";
-import { createCaptureJob, getCaptureJobById, recordCaptureDecisionRow } from "../src/lib/capture-jobs";
+import { createCaptureJob, getCaptureJobById, recordCaptureChoicesRow, recordCaptureDecisionRow } from "../src/lib/capture-jobs";
 import { runCaptureJobById } from "../src/lib/capture-job-runner";
 import { defaultReminderKeys, plannedCaptureReminders, saveButtonLabel } from "../src/lib/capture/review-reducer";
 import type { CaptureParseResult } from "../src/lib/capture/types";
+import { choicesFromSuggestions, suggestionsFromChoices } from "../src/components/capture/capture-summary";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { run } from "./smoke/_env";
@@ -120,6 +121,31 @@ run(async () => {
       JSON.stringify(rows.map((r) => r.title).sort()) === JSON.stringify(planned.map((p) => p.title).sort()),
       JSON.stringify(rows.map((r) => r.title))
     );
+
+    console.log("\nAn edited reminder title is what gets saved…");
+    await cleanup(); // also drops the batch, so findBatchForCorpus can't short-circuit the second save of NOTE
+    await ensureUserSettings(USER);
+    const edited = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: NOTE });
+    await runCaptureJobById(edited.id, deps);
+    await recordCaptureDecisionRow(USER, edited.id, "0-Priya Raman", { decision: "accept", index: 0, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt });
+    const editedRow = (await getCaptureJobById(edited.id))!;
+    const onScreen = suggestionsFromChoices(editedRow.result!, editedRow.decisions?.reminders).map((s) =>
+      s.key === "0-next week" ? { ...s, title: "  Send Priya the PM deck  " } : s
+    );
+    const choices = choicesFromSuggestions(onScreen, editedRow.result!.suggestedReminders);
+    check("the stored choices carry the edit, trimmed", choices.overrides["0-next week"]?.title === "Send Priya the PM deck", JSON.stringify(choices));
+    check("a reload shows the edit", suggestionsFromChoices(editedRow.result!, choices).find((s) => s.key === "0-next week")?.title === "Send Priya the PM deck");
+    check(
+      "an untouched title stores nothing",
+      choicesFromSuggestions(suggestionsFromChoices(editedRow.result!, undefined), editedRow.result!.suggestedReminders).overrides["0-next week"] === undefined
+    );
+    await recordCaptureChoicesRow(USER, edited.id, { reminders: choices });
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, edited.id));
+    const editedSaved = await runCaptureJobById(edited.id, deps);
+    check("the edited capture saves", editedSaved?.status === "saved", `${editedSaved?.status} ${editedSaved?.error}`);
+    const editedTitles = (await db.query.reminders.findMany({ where: eq(reminders.userId, USER) })).map((r) => r.title);
+    check("the reminder carries the edited title", editedTitles.includes("Send Priya the PM deck"), JSON.stringify(editedTitles));
+    check("  not the parsed one", !editedTitles.includes("Follow up with Priya about the PM role"), JSON.stringify(editedTitles));
   } finally {
     await cleanup();
   }

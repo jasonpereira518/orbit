@@ -146,6 +146,26 @@ export function initialPhaseFor(
   }
 }
 
+/** The text a job's notes box shows: the typed text, then every transcribed block. */
+export function captureJobText(job: { inputText: string | null; blocks: readonly { text: string }[] }): string {
+  return [job.inputText, ...job.blocks.map((b) => b.text)].filter(Boolean).join("\n\n---\n\n");
+}
+
+/**
+ * The job whose notes go back in the box on load: a transcript waiting for Extract, or an
+ * EXTRACTION that failed (no result) — the draft was cleared when it queued, so the row is
+ * the only copy. A SAVE failure has a result; its notes were read and "Try saving again" is
+ * the way on. A failure with no text is not prefilled: an empty box holding a job id
+ * discards that job (`useCaptureIngest`), which would take the error banner with it.
+ */
+export function prefillJobFor<J extends { status: CaptureJobStatus; result: unknown; inputText: string | null; blocks: readonly { text: string }[] }>(
+  job: J | null
+): J | null {
+  if (!job) return null;
+  if (job.status === "transcribed") return job;
+  return job.status === "failed" && !job.result && captureJobText(job).trim() ? job : null;
+}
+
 /** The bar an EXPLICIT dated commitment clears to arrive pre-ticked, as the old panel did. */
 export const EXPLICIT_AUTO_TICK_CONFIDENCE = 60;
 
@@ -177,6 +197,20 @@ export function defaultReminderKeys(
         : s.confidenceScore >= EXPLICIT_AUTO_TICK_CONFIDENCE
     )
     .map((s) => s.key);
+}
+
+/** The same cap as every other reminder-title boundary (`tools/definitions.ts`, `api/schemas.ts`). */
+export const REMINDER_TITLE_MAX = 200;
+
+/**
+ * An edited dated-commitment title, as the summary stores it and the runner saves it:
+ * trimmed and capped. Blank, or unchanged from the parsed title, means "no override".
+ * The runner applies it too, because `decisions` is client-written JSON nothing validates.
+ */
+export function reminderTitleOverride(edited: unknown, parsed: string): string | undefined {
+  if (typeof edited !== "string") return undefined;
+  const t = edited.trim().slice(0, REMINDER_TITLE_MAX);
+  return t && t !== parsed ? t : undefined;
 }
 
 /**

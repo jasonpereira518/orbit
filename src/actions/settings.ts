@@ -41,9 +41,10 @@ import {
 import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-check";
 import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
 import { demoAccountReason } from "@/lib/demo-account";
+import { normalizeSocialLinks } from "@/lib/safe-links";
 import {
   applyAiKeyChange,
-  embeddingBackendFor,
+  clearedKeyPatch, clearMovesEmbeddings,
   managedEligibilityFor,
 } from "@/lib/ai-settings-write";
 
@@ -127,6 +128,8 @@ export async function getSettings() {
               : Boolean(settings?.openrouterApiKeyEncrypted),
       /** Orbit holds a managed key for this provider AND this account may use it. */
       managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id],
+      /** Clearing this key moves search to another provider, which drops and rebuilds its index. */
+      clearResetsSearch: clearMovesEmbeddings(p.id, settings, ai.eligibility),
     })),
     // Mirrors the plan gate in `getOutreachSendConfig` / `getApolloApiKey`: Orbit's shared
     // keys only count as configured when the plan actually permits hosted sends, so the
@@ -275,14 +278,7 @@ export async function clearApiKey(provider?: AiProvider) {
   });
   const active = resolveAiProvider(provider || existing?.aiProvider);
 
-  const patch =
-    active === "gemini"
-      ? { geminiApiKeyEncrypted: null }
-      : active === "openai"
-        ? { openaiApiKeyEncrypted: null }
-        : active === "anthropic"
-          ? { anthropicApiKeyEncrypted: null }
-          : { openrouterApiKeyEncrypted: null };
+  const patch = clearedKeyPatch(active);
 
   await db
     .update(userSettings)
@@ -294,12 +290,8 @@ export async function clearApiKey(provider?: AiProvider) {
   // go, by the same rule `saveAiSettings` applies when a save changes the backend.
   let embeddingReset = false;
   if (existing) {
-    const selected = resolveAiProvider(existing.aiProvider);
     // Eligibility matters: on Lifetime, clearing a key can move search onto Orbit's managed key.
-    const eligibility = await managedEligibilityFor(userId);
-    const previousBackend = embeddingBackendFor(selected, existing, eligibility);
-    const nextBackend = embeddingBackendFor(selected, { ...existing, ...patch }, eligibility);
-    embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
+    embeddingReset = clearMovesEmbeddings(active, existing, await managedEligibilityFor(userId));
     if (embeddingReset) {
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
     }
@@ -439,14 +431,12 @@ export async function saveSocialLinks(input: {
   website?: string;
 }) {
   const userId = await requireUserId();
+  // Checked here, not only in the field: the stored value becomes a link on the sun's
+  // inspect panel, and a Server Action is reachable without this form.
+  const normalized = normalizeSocialLinks(input);
+  if (!normalized.ok) return normalized;
+  const socialLinks = normalized.links;
   const db = await getDb();
-
-  const socialLinks = {
-    linkedin: input.linkedin?.trim() || undefined,
-    twitter: input.twitter?.trim() || undefined,
-    github: input.github?.trim() || undefined,
-    website: input.website?.trim() || undefined,
-  };
 
   await db
     .insert(userSettings)
@@ -458,7 +448,7 @@ export async function saveSocialLinks(input: {
 
   revalidatePath("/settings");
   revalidatePath("/graph");
-  return { ok: true };
+  return { ok: true as const, links: socialLinks };
 }
 
 

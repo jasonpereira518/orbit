@@ -19,6 +19,7 @@ export type PersonDraft = {
   fields: PersonFieldValues;
   mergeContactId: string | null;
   closeness: ClosenessLevel;
+  closenessChosen?: boolean;
 };
 
 export function PersonCardBody({
@@ -122,7 +123,7 @@ export function PersonCardBody({
         <ClosenessControl
           name={`${idPrefix}-closeness`}
           value={draft.closeness}
-          onChange={(closeness) => onDraft({ closeness })}
+          onChange={(closeness) => onDraft({ closeness, closenessChosen: true })}
         />
       </div>
     </div>

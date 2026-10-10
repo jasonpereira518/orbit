@@ -43,7 +43,7 @@ import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import { clearCaptureJob, refreshCaptureJob, seedCaptureJob, useCaptureJob } from "@/lib/capture/job-store";
-import { acceptedPeople, choicesFromOpportunities, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
+import { acceptedPeople, captureJobText, choicesFromOpportunities, firstPendingIndex, initialPhaseFor, prefillJobFor, type CapturePhase } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
@@ -131,7 +131,7 @@ export function CaptureFlow({
   const [mode, setMode] = useState<CaptureMode>(() =>
     meetingFlow?.busy
       ? "meeting"
-      : initialJob && (initialJob.status === "transcribed" || initialJob.status === "ingesting")
+      : initialJob && (initialJob.status === "ingesting" || prefillJobFor(initialJob))
         ? tabForSource(initialJob.sourceKind)
         : defaultMode
   );
@@ -230,8 +230,8 @@ export function CaptureFlow({
   const [foundHold, setFoundHold] = useState(false);
   const [meetingAnalysis, setMeetingAnalysis] = useState<MeetingAnalysis | null>(null);
 
-  const prefill = initialJob && initialJob.status === "transcribed" ? initialJob : null;
-  const prefillText = prefill ? [prefill.inputText, ...prefill.blocks.map((b) => b.text)].filter(Boolean).join("\n\n---\n\n") : "";
+  const prefill = prefillJobFor(initialJob);
+  const prefillText = prefill ? captureJobText(prefill) : "";
 
   const messy = useCaptureIngest({
     sourceKind: "messy",
@@ -383,6 +383,32 @@ export function CaptureFlow({
     if (id) void discardCaptureJob(id);
   }, [pendingStart, job?.id]);
 
+  /**
+   * Try again on an extraction failure: re-queue the SAME row (`queueCaptureJobRow` accepts
+   * `failed`) with what is in the box now — or, when the box is empty (a meeting, or a
+   * failure seen from another tab), the text the job still holds. Blank text is refused here
+   * (and the button is hidden): the action writes `text || null` over `input_text`, so a
+   * blank retry would wipe the stored text and queue nothing to extract.
+   */
+  const retryExtraction = useCallback(() => {
+    if (!job || job.result) return;
+    const ingest = job.sourceKind === "voice" ? voice : messy;
+    const fromBox = Boolean(ingest.notes.trim());
+    const text = fromBox ? ingest.notes : captureJobText(job);
+    if (!text.trim()) return;
+    void startExtraction({
+      text,
+      hints: fromBox ? ingest.hints : null, // null keeps the row's stored hints
+      jobId: job.id,
+      sourceKind: job.sourceKind,
+      meetingSessionId: job.meetingSessionId,
+      mentionPicks: fromBox ? ingest.mentionPicks : job.mentionPicks,
+    });
+  }, [job, messy, voice, startExtraction]);
+
+  const retryBox = job?.sourceKind === "voice" ? voice : messy;
+  const canRetry = Boolean(job && !job.result && (retryBox.notes.trim() || captureJobText(job).trim()));
+
   const save = useCallback(async (jobId: string) => {
     const res = await saveCaptureJob(jobId);
     if (!res.ok) {
@@ -470,12 +496,17 @@ export function CaptureFlow({
         <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-destructive/30 bg-destructive/[0.04] px-3 py-2 text-sm">
           <span>{job.error ?? "Couldn’t finish that capture"}</span>
           <div className="flex gap-2">
-            {job.result && (
+            {job.result ? (
               <button type="button" className="font-medium text-primary hover:underline" onClick={() => void save(job.id)}>
                 Try saving again
               </button>
-            )}
-            <button type="button" className="font-medium text-muted-foreground hover:underline" onClick={() => void startOver()}>
+            ) : canRetry ? (
+              <button type="button" className="font-medium text-primary hover:underline" onClick={retryExtraction}>
+                Try again
+              </button>
+            ) : null}
+            {/* An extraction failure dismisses like Stop: the job goes, the notes stay. */}
+            <button type="button" className="font-medium text-muted-foreground hover:underline" onClick={job.result ? () => void startOver() : stopExtraction}>
               Dismiss
             </button>
           </div>

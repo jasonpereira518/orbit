@@ -10,7 +10,7 @@
  * Nothing about the writes changed in the move; the comments explaining *why* each write
  * looks the way it does travelled with the code.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, reminders, type ReminderActionKind } from "@/db/schema";
 import {
@@ -19,7 +19,7 @@ import {
 } from "@/lib/reminder-action-kind";
 import { findReminderListForUser, getInboxListId } from "@/lib/reminder-lists";
 import { revalidatePathIfRequestScoped, revalidateReminderPaths } from "@/lib/reminder-paths";
-import { completeReminder } from "@/lib/reminders";
+import { completeReminder, reopenReminder, type CompletionSnapshot } from "@/lib/reminders";
 import { settle, unwrap } from "@/lib/settled";
 
 export type CreateReminderInput = {
@@ -186,6 +186,14 @@ export async function scheduleContactFollowUpForUser(
   return { reminder: row, dueDate: due.toISOString(), days };
 }
 
+/** What `clearContactFollowUpForUser` changed, so an Undo can put exactly that back. */
+export type ClearFollowUpSnapshot = {
+  contactId: string;
+  previousNextFollowUpAt: string | null;
+  previousFollowUpStatus: string | null;
+  completions: CompletionSnapshot[];
+};
+
 /**
  * Clears a contact's due follow-up and completes every pending reminder for them. Takes a
  * `userId` so the email dispatcher can call it from the drain, where there is no request;
@@ -194,8 +202,12 @@ export async function scheduleContactFollowUpForUser(
 export async function clearContactFollowUpForUser(
   userId: string,
   contactId: string
-): Promise<{ remindersClosed: number }> {
+): Promise<{ remindersClosed: number; snapshot: ClearFollowUpSnapshot }> {
   const db = await getDb();
+  const before = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: { nextFollowUpAt: true, followUpStatus: true },
+  });
   await db
     .update(contacts)
     .set({ nextFollowUpAt: null, followUpStatus: "none", updatedAt: new Date() })
@@ -203,10 +215,48 @@ export async function clearContactFollowUpForUser(
   const open = await db.query.reminders.findMany({
     where: and(eq(reminders.userId, userId), eq(reminders.contactId, contactId), eq(reminders.status, "pending")),
   });
+  const completions: CompletionSnapshot[] = [];
   for (const r of open) {
-    await completeReminder(userId, r.id);
+    const snap = await completeReminder(userId, r.id);
+    if (snap) completions.push(snap);
   }
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
-  return { remindersClosed: open.length };
+  return {
+    remindersClosed: open.length,
+    snapshot: {
+      contactId,
+      previousNextFollowUpAt: before?.nextFollowUpAt ? before.nextFollowUpAt.toISOString() : null,
+      previousFollowUpStatus: before?.followUpStatus ?? null,
+      completions,
+    },
+  };
+}
+
+/**
+ * Reverse a `clearContactFollowUpForUser`: each reminder through `reopenReminder` (its own
+ * still-done guard), and the clock only while it is still cleared — a follow-up booked since
+ * is newer and wins.
+ */
+export async function undoClearContactFollowUpForUser(
+  userId: string,
+  snap: ClearFollowUpSnapshot
+): Promise<{ restored: boolean }> {
+  const db = await getDb();
+  let reopened = 0;
+  for (const c of snap.completions) {
+    if ((await reopenReminder(userId, c)).restored) reopened++;
+  }
+  const clock = snap.previousNextFollowUpAt
+    ? await db
+        .update(contacts)
+        .set({
+          nextFollowUpAt: new Date(snap.previousNextFollowUpAt),
+          followUpStatus: snap.previousFollowUpStatus,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(contacts.id, snap.contactId), eq(contacts.userId, userId), isNull(contacts.nextFollowUpAt)))
+        .returning() // bare: a field selector breaks over the Db union
+    : [];
+  return { restored: reopened > 0 || clock.length > 0 };
 }

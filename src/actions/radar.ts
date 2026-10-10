@@ -2,13 +2,13 @@
 
 /**
  * The `/radar` page's server actions. Each derives the user from the session and checks
- * the surface first (`requireUserForSurface`), then calls the request-free functions in
+ * the surface first (`requireUserForReleasedSurface`), then calls the request-free functions in
  * `src/lib/radar/actions-core.ts`, so the smoke drives the same code.
  */
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { friendlyError } from "@/lib/errors";
-import { requireUserForSurface } from "@/lib/plan-guards";
+import { requireUserForReleasedSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { revalidatePathIfRequestScoped, revalidateReminderPaths } from "@/lib/reminder-paths";
 import {
@@ -47,7 +47,7 @@ function revalidateRadar() {
  * on an empty page; a list older than a day is rebuilt after the response.
  */
 export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats: NetworkStats | null }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   await ensureRadarRun(userId).catch(() => false);
   after(() => maybeRefreshRadar(userId).catch(() => undefined));
   const { getNetworkStats } = await import("@/lib/network-stats");
@@ -68,7 +68,7 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
  * has never run gets its first build after the response and keeps the legacy card until then.
  */
 export async function fetchRadarBriefing(): Promise<RadarBriefing> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const briefing = await loadRadarBriefing(userId);
   const shown = briefing.top.map((r) => r.id);
   after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
@@ -81,7 +81,7 @@ export async function fetchRadarBriefing(): Promise<RadarBriefing> {
 export type RadarActionResult = { ok: true; message?: string } | { ok: false; message: string };
 
 export async function scheduleFromRecommendation(id: string, days: ScheduleDays): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   if (!SCHEDULE_DAYS.includes(days)) return { ok: false, message: "Pick 3, 7 or 14 days" };
   const result = await scheduleRecommendationForUser(userId, id, days);
   if (!result.ok) return { ok: false, message: "That card has already changed — refresh to see the latest" };
@@ -91,7 +91,7 @@ export async function scheduleFromRecommendation(id: string, days: ScheduleDays)
 }
 
 export async function snoozeRecommendation(id: string, length: SnoozeLength): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   if (!(length in SNOOZE_DAYS)) return { ok: false, message: "Pick a week or a month" };
   const result = await snoozeRecommendationForUser(userId, id, length);
   revalidateRadar();
@@ -99,21 +99,21 @@ export async function snoozeRecommendation(id: string, length: SnoozeLength): Pr
 }
 
 export async function dismissRecommendation(id: string): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const result = await dismissRecommendationForUser(userId, id);
   revalidateRadar();
   return result.ok ? { ok: true } : { ok: false, message: "That card has already changed — refresh to see the latest" };
 }
 
 export async function neverForContact(id: string): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const result = await neverForContactForUser(userId, id);
   revalidateRadar();
   return result.ok ? { ok: true } : { ok: false, message: "That card has already changed — refresh to see the latest" };
 }
 
 export async function restoreRecommendation(id: string): Promise<{ restored: boolean }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const result = await restoreRecommendationForUser(userId, id);
   revalidateRadar();
   return result;
@@ -121,7 +121,7 @@ export async function restoreRecommendation(id: string): Promise<{ restored: boo
 
 /** "Refresh now": the same run the nightly pass does, inline and rate-limited. */
 export async function refreshRadarNow(): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   try {
     await consumeBucket("radarRefresh", userId, RATE_LIMITS.radarRefresh);
   } catch (err) {
@@ -141,7 +141,7 @@ export async function refreshRadarNow(): Promise<RadarActionResult> {
 }
 
 export async function explainRecommendationAction(id: string): Promise<RadarActionResult & { why?: string; opener?: string }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const result = await explainRecommendation(userId, id);
   if (result.ok) {
     revalidateRadar();
@@ -154,7 +154,7 @@ export async function explainRecommendationAction(id: string): Promise<RadarActi
 
 /** Undo one autopilot action: the follow-up it set goes, and so does the card. */
 export async function undoAutopilot(id: string): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const result = await undoAutopilotForUser(userId, id);
   if (!result.ok) return { ok: false, message: "That card has already changed — refresh to see the latest" };
   revalidateReminderPaths();
@@ -167,7 +167,7 @@ export async function undoAutopilot(id: string): Promise<RadarActionResult> {
 
 /** Turn autopilot on or off for one kind of card. Autopilot schedules; it never sends. */
 export async function setRadarAutopilot(kind: RecommendationKind, on: boolean): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   if (!RECOMMENDATION_KINDS.includes(kind)) return { ok: false, message: "That isn’t a kind of card Radar makes" };
   const db = await getDb();
   await db
@@ -179,7 +179,7 @@ export async function setRadarAutopilot(kind: RecommendationKind, on: boolean): 
 }
 
 export async function setRadarPaused(paused: boolean): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const db = await getDb();
   await db.update(userSettings).set({ radarPaused: paused ? 1 : 0 }).where(eq(userSettings.userId, userId));
   revalidateRadar();
@@ -188,7 +188,7 @@ export async function setRadarPaused(paused: boolean): Promise<RadarActionResult
 
 /** Radar's Monday email on or off. Also reachable from Settings and the email's own link. */
 export async function setRadarDigest(on: boolean): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const db = await getDb();
   await db.update(userSettings).set({ radarDigestEnabled: on ? 1 : 0 }).where(eq(userSettings.userId, userId));
   revalidateRadar();
@@ -198,7 +198,7 @@ export async function setRadarDigest(on: boolean): Promise<RadarActionResult> {
 
 /** Whether the extension may save LinkedIn posts by known contacts as Radar activity. */
 export async function setRadarCaptureLinkedin(on: boolean): Promise<RadarActionResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const db = await getDb();
   await db.update(userSettings).set({ radarCaptureLinkedinActivity: on ? 1 : 0 }).where(eq(userSettings.userId, userId));
   revalidateRadar();

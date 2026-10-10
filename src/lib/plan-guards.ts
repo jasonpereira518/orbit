@@ -1,6 +1,6 @@
 import { requireUserId } from "@/lib/auth";
 import { requireEntitlement } from "@/lib/entitlements";
-import { requireVisibleSurface } from "@/lib/surface-visibility";
+import { requireReleasedSurface, requireVisibleSurface } from "@/lib/surface-visibility";
 
 /**
  * Auth + plan + surface visibility in one call, so gated server actions keep the same
@@ -13,8 +13,11 @@ import { requireVisibleSurface } from "@/lib/surface-visibility";
  * WHICH ACTION MODULES ARE GATED ON A SURFACE, AND WHY NOT THE REST.
  *
  * Only modules whose every export belongs to exactly one hideable page are gated:
- * knowledge, graph, chat, outreach, recruiters, meetings (`page.capture`, via
- * `requireMeetingsUser` — note this is `meetings.ts`, not `capture.ts` itself; see below).
+ * knowledge, graph, chat, recruiters, meetings (`page.capture`, via `requireMeetingsUser` —
+ * note this is `meetings.ts`, not `capture.ts` itself; see below) use the visibility-only
+ * guard (hidden refuses). Radar, events and outreach ship closed, so their actions use
+ * `requireUserForReleasedSurface` / `requireReleasedSurface`, which refuse a coming-soon
+ * page as well as a hidden one.
  * The rest were examined and deliberately left alone, because their actions are
  * load-bearing for surfaces that stay visible:
  *
@@ -40,7 +43,7 @@ import { requireVisibleSurface } from "@/lib/surface-visibility";
 export async function requireOutreachUser() {
   const userId = await requireUserId();
   await requireEntitlement(userId, "outreach");
-  await requireVisibleSurface(userId, "page.outreach");
+  await requireReleasedSurface(userId, "page.outreach");
   return userId;
 }
 
@@ -68,5 +71,12 @@ export async function requireMeetingsUser() {
 export async function requireUserForSurface(surfaceKey: string) {
   const userId = await requireUserId();
   await requireVisibleSurface(userId, surfaceKey);
+  return userId;
+}
+
+/** `requireUserForSurface`, but a coming-soon page refuses too: for the actions of a page that ships closed. */
+export async function requireUserForReleasedSurface(surfaceKey: string) {
+  const userId = await requireUserId();
+  await requireReleasedSurface(userId, surfaceKey);
   return userId;
 }

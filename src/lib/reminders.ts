@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite, type AtomicStatement } from "@/db";
 import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
 import {
@@ -753,7 +753,9 @@ const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 
 /**
  * The reminders card: the first `REMINDER_CAP` pending reminders in due order, and how many
- * there are in all — the filter, the cap and the count in one statement.
+ * there are in all — the filter, the cap and the count in one statement. Besides generated
+ * reminders, it drops the one a day preset books beside a due contact's clock (same instant,
+ * title `Follow up with <name>`), since the Due follow-ups row already shows it.
  *
  * It used to read every pending reminder (every column, `description` and `source_excerpt`
  * included), drop in JavaScript the generated reminders whose contact already sits on the
@@ -780,16 +782,23 @@ export async function loadDashboardReminders(userId: string, now: Date) {
       and(
         eq(reminders.userId, userId),
         eq(reminders.status, "pending"),
-        // `reminder_type` is NOT NULL and the other two are plain booleans, so this NOT
-        // never meets a NULL: it is exactly `!(generated && contactId && due.has(contactId))`.
+        // Drops a reminder whose contact is on the due list when it is either generated, or
+        // the reminder a day preset booked beside the clock (same instant, the scheduler's own
+        // wording). `exists` is never NULL, so this NOT never meets one.
         sql`not (
-          ${reminders.reminderType} = 'generated'
-          and ${reminders.contactId} is not null
+          ${reminders.contactId} is not null
           and exists (
             select 1 from ${contacts} due
             where due.id = ${reminders.contactId}
               and due.user_id = ${userId}
               and ${followUpDueSql(sql.raw("due"), now)}
+              and (
+                ${reminders.reminderType} = 'generated'
+                or (
+                  due.next_follow_up_at = ${reminders.dueDate}
+                  and ${reminders.title} = 'Follow up with ' || coalesce(nullif(due.preferred_name, ''), due.full_name)
+                )
+              )
           )
         )`
       )
@@ -1482,6 +1491,16 @@ export type CompletionSnapshot = {
   reminderId: string;
   previousStatus: string;
   closedActionItemIds: string[];
+  /**
+   * Present only when this completion also cleared the contact's follow-up clock, because the
+   * reminder WAS that follow-up (same contact, same due instant). Optional so a snapshot minted
+   * before the field existed still validates and still undoes.
+   */
+  clearedFollowUp?: {
+    contactId: string;
+    previousNextFollowUpAt: string;
+    previousFollowUpStatus: string | null;
+  };
 };
 
 export async function completeReminder(
@@ -1491,9 +1510,18 @@ export async function completeReminder(
   const db = await getDb();
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
-    columns: { status: true },
+    columns: { status: true, contactId: true, dueDate: true },
   });
   if (!reminder) return null;
+
+  // Read the contact's clock BEFORE any write, as `snoozeReminderTo` does, so Undo can put it back.
+  const contact =
+    reminder.contactId && reminder.dueDate
+      ? await db.query.contacts.findFirst({
+          where: and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId)),
+          columns: { nextFollowUpAt: true, followUpStatus: true },
+        })
+      : null;
 
   await db
     .update(reminders)
@@ -1515,10 +1543,33 @@ export async function completeReminder(
     )
     .returning();
 
+  // Every path that books a follow-up (scheduleContactFollowUpForUser, snoozeReminderTo, the
+  // outreach queue, the extension, capture) writes the SAME instant to the reminder and to
+  // `contacts.next_follow_up_at`. A match means this reminder IS the follow-up, so finishing it
+  // finishes the follow-up. A different instant is a separate commitment and leaves the clock alone.
+  let clearedFollowUp: CompletionSnapshot["clearedFollowUp"];
+  if (
+    reminder.contactId &&
+    reminder.dueDate &&
+    contact?.nextFollowUpAt &&
+    contact.nextFollowUpAt.getTime() === reminder.dueDate.getTime()
+  ) {
+    await db
+      .update(contacts)
+      .set({ nextFollowUpAt: null, followUpStatus: "none", updatedAt: new Date() })
+      .where(and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId)));
+    clearedFollowUp = {
+      contactId: reminder.contactId,
+      previousNextFollowUpAt: contact.nextFollowUpAt.toISOString(),
+      previousFollowUpStatus: contact.followUpStatus ?? null,
+    };
+  }
+
   return {
     reminderId,
     previousStatus: reminder.status,
     closedActionItemIds: closed.map((row) => row.id),
+    ...(clearedFollowUp ? { clearedFollowUp } : {}),
   };
 }
 
@@ -1552,6 +1603,25 @@ export async function reopenReminder(
         and(
           eq(actionItems.userId, userId),
           inArray(actionItems.id, snap.closedActionItemIds)
+        )
+      );
+  }
+
+  // The clock only while it is still what the completion left (cleared): a follow-up booked
+  // since is newer and wins — the same rule as `unsnoozeReminder`.
+  if (snap.clearedFollowUp) {
+    await db
+      .update(contacts)
+      .set({
+        nextFollowUpAt: new Date(snap.clearedFollowUp.previousNextFollowUpAt),
+        followUpStatus: snap.clearedFollowUp.previousFollowUpStatus,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(contacts.id, snap.clearedFollowUp.contactId),
+          eq(contacts.userId, userId),
+          isNull(contacts.nextFollowUpAt)
         )
       );
   }

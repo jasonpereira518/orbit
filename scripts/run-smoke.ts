@@ -34,6 +34,7 @@ type Tier = "pure" | "pglite" | "manual";
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
+  "smoke-interaction-edit": "pure",
   "smoke-inbox-search": "pure",
   "smoke-onboarding-steps": "pure",
   "smoke-onboarding-examples-cast": "pure",
@@ -47,6 +48,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-waitlist-demo-fidelity": "pure",
   "smoke-offline-queue": "pure",
   "smoke-chat-thread-prefetch": "pure",
+  "smoke-chat-answer-landed": "pure",
   "smoke-render-stamp-pages": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-oauth-return": "pure",
@@ -454,6 +456,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-opportunity-taxonomy": "pure",
   "smoke-interaction-detail": "pglite",
   "smoke-note-batch": "pglite",
+  "smoke-merge-closeness": "pglite",
   "smoke-opportunities": "pglite",
   "smoke-capture-history": "pglite",
   "smoke-capture-duplicate-upload": "pglite",
@@ -474,6 +477,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-pgvector-local": "pglite",
   "smoke-plan-card-copy": "pure",
   "smoke-plan-downgrade": "pure",
+  "smoke-social-links": "pure",
   "smoke-plan-upgrade-claim": "pglite",
   "smoke-presence": "pglite",
   "smoke-follow-up-actions": "pglite",

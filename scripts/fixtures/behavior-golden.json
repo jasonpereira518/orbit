@@ -5235,25 +5235,29 @@
         "id": "gemini",
         "label": "Google Gemini",
         "hasPersonalKey": false,
-        "managedAvailable": false
+        "managedAvailable": false,
+        "clearResetsSearch": false
       },
       {
         "id": "openai",
         "label": "OpenAI",
         "hasPersonalKey": false,
-        "managedAvailable": false
+        "managedAvailable": false,
+        "clearResetsSearch": false
       },
       {
         "id": "anthropic",
         "label": "Anthropic",
         "hasPersonalKey": false,
-        "managedAvailable": false
+        "managedAvailable": false,
+        "clearResetsSearch": false
       },
       {
         "id": "openrouter",
         "label": "OpenRouter",
         "hasPersonalKey": false,
-        "managedAvailable": false
+        "managedAvailable": false,
+        "clearResetsSearch": false
       }
     ],
     "outreach": {
