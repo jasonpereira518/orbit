@@ -244,12 +244,12 @@ const ALLOWLIST: Record<string, string> = {
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
   "src/lib/admin-user-detail.ts:572": "the \"anthropic\" arm of the same ternary — see line 570.",
-  "src/actions/settings.ts:121": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
+  "src/actions/settings.ts:122": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
     "anthropic key for an openrouter row) — exhaustive over AiProvider.",
-  "src/actions/settings.ts:123": "the \"openai\" arm of the same ternary — see line 121.",
-  "src/actions/settings.ts:125": "the \"anthropic\" arm of the same ternary — see line 121; " +
+  "src/actions/settings.ts:124": "the \"openai\" arm of the same ternary — see line 122.",
+  "src/actions/settings.ts:126": "the \"anthropic\" arm of the same ternary — see line 122; " +
     "this is the comparison that was added, moving openrouter off the anthropic default.",
   "src/lib/outreach-readiness-server.ts:82": "the \"gemini\" arm of hasAiKeyFor's " +
     "personal-key ternary, which now has an explicit `provider === \"openrouter\"` arm " +
@@ -268,13 +268,6 @@ const ALLOWLIST: Record<string, string> = {
     "Action despite taking a caller-supplied userId.)",
   "src/lib/ai-settings-write.ts:101": "same independent-ternary shape as line 97 — see that entry.",
   "src/lib/ai-settings-write.ts:105": "same independent-ternary shape as line 97 — see that entry.",
-  "src/actions/settings.ts:283": "clearApiKey's `patch` ternary — the final `else` arm is " +
-    "the literal `{ openrouterApiKeyEncrypted: null }`, so the three narrowed comparisons " +
-    "plus that default are exhaustive over AiProvider. (Line shifted again by Task 5's fix " +
-    "round 1, which moved applyAiKeyChange and its helpers out of this file entirely, and by " +
-    "two more when getSettings gained radarDigestEnabled — was line 241, then 339, then 251, originally 314 — the merge of main moved it again.)",
-  "src/actions/settings.ts:279": "same ternary as line 283 — see that entry.",
-  "src/actions/settings.ts:281": "same ternary as line 283 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
   "src/components/settings/ai-settings.tsx:291": "the standalone \"Anthropic has no " +

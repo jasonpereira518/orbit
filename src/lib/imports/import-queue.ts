@@ -161,6 +161,18 @@ export const TARGET_LABEL_INLINE: Record<
 
 const TERMINAL: readonly QueuedImportStatus[] = ["done", "failed", "skipped"];
 
+export type QueuePhase = "idle" | "previewing" | "review" | "running" | "done";
+
+/**
+ * Whether a new drop may replace the queue. Never while previews or the run are in flight:
+ * both write into the queue by id, and ids repeat across drops (`q0-linkedin_connections`),
+ * so the old loops would preview, advance and import the new drop's rows. A queue in review
+ * has nothing in flight — and re-dropping is the only way out of review — so it stays open.
+ */
+export function acceptsNewDrop(phase: QueuePhase): boolean {
+  return phase !== "previewing" && phase !== "running";
+}
+
 export function isTerminal(status: QueuedImportStatus): boolean {
   return TERMINAL.includes(status);
 }

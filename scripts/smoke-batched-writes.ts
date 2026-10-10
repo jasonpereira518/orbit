@@ -30,6 +30,7 @@ import {
 } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
 import {
   generateDueFollowUps as generateOutreachFollowUps,
   generateOutreachDrafts,
@@ -112,12 +113,17 @@ async function cleanup() {
   await db.delete(chatThreads).where(inArray(chatThreads.userId, users));
   await db.delete(contacts).where(inArray(contacts.userId, users));
   await db.delete(userSettings).where(inArray(userSettings.userId, users));
+  // The suite shares one PGlite across smokes: put page.outreach back to its coming-soon
+  // default so a later script (smoke-surface-visibility) does not inherit the release below.
+  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", true);
 }
 
 run(async () => {
   await cleanup();
   const db = await getDb();
   await ensureUserSettings(USER);
+  // page.outreach ships coming soon and its actions now refuse; this PGlite is throwaway (smoke/_env).
+  await setSurfaceComingSoon("smoke-outreach-admin", "page.outreach", false);
   await db
     .update(userSettings)
     .set({ aiProvider: "openai", aiModel: "gpt-4o-mini", openaiApiKeyEncrypted: encrypt("fake-openai") })

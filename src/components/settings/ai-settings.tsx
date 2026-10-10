@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { Disclosure } from "@/components/settings/disclosure";
-import { ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
+import { ClearKeyButton, ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { FREE_AI_EXPLAINER, noticeCopyFor } from "@/lib/ai-access-copy";
@@ -362,20 +362,16 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                   {/* Per key, not per selected provider: switching provider used to leave the
                       old key live for embeddings and transcription with no way to remove it. */}
                   {p.hasPersonalKey ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
+                    <ClearKeyButton
+                      label={p.label}
+                      resetsSearch={p.clearResetsSearch}
                       disabled={pending}
+                      variant="ghost"
                       aria-label={`Clear saved ${p.label} key`}
-                      onClick={() =>
-                        start(async () => {
-                          await clearKey(p.id);
-                        })
-                      }
+                      onConfirm={() => start(async () => { await clearKey(p.id); })}
                     >
                       Clear
-                    </Button>
+                    </ClearKeyButton>
                   ) : null}
                 </li>
               ))}

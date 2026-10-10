@@ -94,6 +94,7 @@ type ReviewItem = BulkNotePersonPreview & {
   mergeContactId: string | null;
   createReminder: boolean;
   relationshipScore: number;
+  closenessChosen?: boolean;
   tagNames: string;
   followUpDays: number;
   /** Locked to `lockedParticipantId` — the panel was opened from that contact's profile. */
@@ -549,6 +550,7 @@ export function BulkNotesPanel({
           mergeContactId: i.mergeContactId,
           createReminder: i.createReminder,
           relationshipScore: i.relationshipScore,
+          closenessChosen: i.closenessChosen === true,
           tagNames: i.tagNames
             .split(",")
             .map((t) => t.trim())
@@ -1692,6 +1694,7 @@ function PersonReviewCard({
               onChange({
                 ...item,
                 relationshipScore: Number(e.target.value),
+                closenessChosen: true,
               })
             }
           />

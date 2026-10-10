@@ -55,6 +55,8 @@ import {
   rescheduleReminderAction,
   restoreReminderAction,
   undoBulkReminderAction,
+  clearContactFollowUp,
+  undoClearContactFollowUpAction,
 } from "../src/actions/reminders";
 import {
   discardSuggestedReminder,
@@ -163,7 +165,7 @@ async function main() {
   /* ------------------------------------------------------------ complete → reopen */
 
   {
-    const { contact, reminder } = await seedReminder("Priya Nair");
+    const { contact, reminder, originalDue } = await seedReminder("Priya Nair");
     const [interaction] = await db
       .insert(interactions)
       .values({ userId: USER, contactId: contact.id })
@@ -205,6 +207,15 @@ async function main() {
       ms(doneAfterComplete?.completedAt) === ms(finishedEarlier),
       `${doneAfterComplete?.completedAt?.toISOString()}`);
 
+    const clearedNow = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    check("completing the contact's follow-up reminder clears their follow-up clock",
+      clearedNow?.nextFollowUpAt === null && clearedNow?.followUpStatus === "none",
+      `${clearedNow?.nextFollowUpAt?.toISOString()} ${clearedNow?.followUpStatus}`);
+    check("…and the snapshot remembers what it cleared",
+      snap?.clearedFollowUp?.contactId === contact.id &&
+        snap.clearedFollowUp.previousNextFollowUpAt === originalDue.toISOString(),
+      JSON.stringify(snap?.clearedFollowUp));
+
     const result = await reopenReminder(USER, snap!);
     check("reopen reports it restored", result.restored);
 
@@ -218,8 +229,35 @@ async function main() {
     check("the item done beforehand stays done", untouched?.status === "done");
     check("…with its original completedAt", ms(untouched?.completedAt) === ms(finishedEarlier));
 
+    const clockBack = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    check("reopen puts the follow-up clock back exactly",
+      ms(clockBack?.nextFollowUpAt) === ms(originalDue) && clockBack?.followUpStatus === "pending");
+
     const again = await reopenReminder(USER, snap!);
     check("reopening a reminder that is no longer done does nothing", again.restored === false);
+  }
+
+  /* ------------------------- a reminder at another instant is not the follow-up */
+  {
+    const { contact, reminder, originalDue } = await seedReminder("Alex Moreno");
+    await db.update(reminders).set({ dueDate: new Date(originalDue.getTime() + 86_400_000) })
+      .where(eq(reminders.id, reminder.id));
+    const snap = await completeReminder(USER, reminder.id);
+    const c = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    check("a reminder due at a different instant leaves the clock alone",
+      ms(c?.nextFollowUpAt) === ms(originalDue) && snap?.clearedFollowUp === undefined);
+  }
+
+  /* --------------------- Undo of a completion never clobbers a newer booking */
+  {
+    const { contact, reminder } = await seedReminder("Taylor Brooks");
+    const snap = await completeReminder(USER, reminder.id);
+    await scheduleContactFollowUp(contact.id, 3);
+    const rebooked = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    await reopenReminder(USER, snap!);
+    const c = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    check("a follow-up booked after the completion survives its Undo",
+      ms(c?.nextFollowUpAt) === ms(rebooked?.nextFollowUpAt));
   }
 
   /* ------------------------------------------------ dismiss suggestion → restore */
@@ -395,6 +433,36 @@ async function main() {
     check("an empty selection is refused with a readable message", !empty.ok);
   }
 
+  /* --------------------------------- clear follow-up → one Undo puts it all back */
+
+  {
+    const { contact, reminder, originalDue } = await seedReminder("Quinn Avery");
+    const cleared = await clearContactFollowUp(contact.id);
+    check("clearing hands back a snapshot naming what it closed",
+      cleared.snapshot?.completions.length === 1 && cleared.snapshot.completions[0].reminderId === reminder.id,
+      JSON.stringify(cleared.snapshot));
+
+    // Forged BEFORE the real Undo: afterwards the guards would refuse it anyway (nothing left
+    // to restore), so only here does the check prove the snapshot itself is validated.
+    const forged = await undoClearContactFollowUpAction({ ...cleared.snapshot, previousFollowUpStatus: "exploded" });
+    check("a forged clear snapshot is refused", forged.restored === false);
+    const rForged = await db.query.reminders.findFirst({ where: eq(reminders.id, reminder.id) });
+    const cForged = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    check("a refused forged snapshot changes nothing",
+      rForged?.status === "done" && cForged?.nextFollowUpAt == null, JSON.stringify({ r: rForged?.status, c: cForged?.nextFollowUpAt }));
+
+    const result = await undoClearContactFollowUpAction(cleared.snapshot);
+    check("Undo reports it restored", result.restored);
+    const r = await db.query.reminders.findFirst({ where: eq(reminders.id, reminder.id) });
+    check("the reminder it closed is pending again", r?.status === "pending");
+    const c = await db.query.contacts.findFirst({ where: eq(contacts.id, contact.id) });
+    check("the follow-up clock is back exactly",
+      ms(c?.nextFollowUpAt) === ms(originalDue) && c?.followUpStatus === "pending");
+
+    const again = await undoClearContactFollowUpAction(cleared.snapshot);
+    check("a second Undo finds nothing to restore", again.restored === false);
+  }
+
   /* ------------------------------------------------ forged snapshots are refused */
 
   {
@@ -406,6 +474,11 @@ async function main() {
     const completion = await completeReminder(USER, reminder.id);
     const forgedReopen = await reopenReminderAction({ ...completion!, previousStatus: "done" });
     check("a completion snapshot claiming it was already done is refused", forgedReopen.restored === false);
+    const forgedClock = await reopenReminderAction({
+      ...completion!, previousStatus: "pending",
+      clearedFollowUp: { contactId: reminder.contactId!, previousNextFollowUpAt: "not a date", previousFollowUpStatus: "pending" },
+    });
+    check("a completion snapshot with a malformed clock is refused", forgedClock.restored === false);
   }
 
   await cleanup();

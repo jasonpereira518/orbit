@@ -242,6 +242,8 @@ export type CaptureDecision = {
   index: number;
   mergeContactId: string | null;
   relationshipScore: number;
+  /** The person moved the closeness control. Absent = the model's suggestion, never written over an existing contact's rating. */
+  closenessChosen?: boolean;
   tagNames: string[];
   edits?: Partial<CapturePersonEdits>;
   decidedAt: string;
@@ -251,7 +253,7 @@ export type CaptureDecision = {
 export type CaptureReminderChoices = {
   /** Keys of `result.suggestedReminders` that stay ticked. */
   checked: string[];
-  overrides: Record<string, { personName?: string | null; dueDateIso?: string }>;
+  overrides: Record<string, { personName?: string | null; dueDateIso?: string; title?: string }>;
 };
 
 /**

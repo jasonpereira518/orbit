@@ -11,6 +11,7 @@
  * Run: npx tsx scripts/smoke-import-queue.ts
  */
 import {
+  acceptsNewDrop,
   advance,
   finishedImportIds,
   isTerminal,
@@ -491,6 +492,20 @@ check("one", joinList(["A"]) === "A");
 check("two", joinList(["A", "B"]) === "A and B");
 check("three", joinList(["A", "B", "C"]) === "A, B and C", joinList(["A", "B", "C"]));
 check("none", joinList([]) === "");
+
+console.log("A new drop never lands on a queue that is still working");
+for (const phase of ["idle", "review", "done"] as const) {
+  check(`a drop is staged while ${phase}`, acceptsNewDrop(phase));
+}
+for (const phase of ["previewing", "running"] as const) {
+  check(`a drop is refused while ${phase}`, !acceptsNewDrop(phase));
+}
+// Why: ids repeat across drops, so the running loop cannot tell the old rows from the new.
+const firstDrop = queueFromDetection([detected("linkedin_connections", "A.csv")]);
+const secondDrop = reviewed(queueFromDetection([detected("linkedin_connections", "B.csv")]));
+check("ids repeat across drops", firstDrop[0]!.id === secondDrop[0]!.id);
+check("…so an unguarded run would import the new drop's rows unasked",
+  nextRunnable(secondDrop)?.fileName === "B.csv");
 
 if (failures) {
   console.error(`\n${failures} queue check${failures === 1 ? "" : "s"} failed`);

@@ -4,6 +4,7 @@
  */
 import {
   acceptedPeople,
+  captureJobText,
   choicesFromOpportunities,
   countDecisions,
   defaultMergeId,
@@ -14,12 +15,16 @@ import {
   opportunityRows,
   parseTagNames,
   plannedCaptureReminders,
+  prefillJobFor,
+  REMINDER_TITLE_MAX,
+  reminderTitleOverride,
   setAsidePeople,
 } from "../src/lib/capture/review-reducer";
 import { FOLLOW_UP_DAYS_BY_CLOSENESS } from "../src/lib/note-batches";
 import type {
   BulkNotePersonPreview,
   CaptureDecisions,
+  CaptureJobStatus,
   CaptureOpportunityPreview,
 } from "../src/lib/capture/types";
 
@@ -162,5 +167,23 @@ console.log("\nwhy each follow-up was booked");
     why.some((w) => w.name === "Ben" && w.line === "Your notes asked for a follow-up"), detail);
   check("someone whose action item became the reminder gets no follow-up line", !why.some((w) => w.name === "Cy"), detail);
 }
+check("an edited reminder title is trimmed", reminderTitleOverride("  Send the deck  ", "Follow up") === "Send the deck");
+check("a blank edit keeps the parsed title", reminderTitleOverride("   ", "Follow up") === undefined);
+check("editing back to the parsed title stores nothing", reminderTitleOverride("Follow up", "Follow up") === undefined);
+check("an edited title is capped at the reminder-title limit", reminderTitleOverride("x".repeat(500), "Follow up")?.length === REMINDER_TITLE_MAX);
+check("a non-string stored title is ignored, not thrown on", reminderTitleOverride(5 as unknown, "Follow up") === undefined && reminderTitleOverride({} as unknown, "Follow up") === undefined);
+
+const failedView = (over: { status?: CaptureJobStatus; result?: typeof result | null; inputText?: string | null; blocks?: { text: string }[] } = {}) =>
+  ({ status: "failed" as CaptureJobStatus, result: null, inputText: "Met Priya at the dinner.", blocks: [], ...over });
+check("an extraction failure gives its notes back", prefillJobFor(failedView())?.inputText === "Met Priya at the dinner.");
+check("a transcript waiting for Extract is prefilled", prefillJobFor(failedView({ status: "transcribed" })) !== null);
+check("a SAVE failure is not prefilled (its notes were read)", prefillJobFor(failedView({ result })) === null);
+check("a failure with nothing to give back is not prefilled", prefillJobFor(failedView({ inputText: null })) === null);
+check("a failure that holds only blocks is prefilled", prefillJobFor(failedView({ inputText: null, blocks: [{ text: "voice memo" }] })) !== null);
+for (const status of ["queued", "extracting", "ready", "reviewing", "saving", "saved", "discarded", "ingesting"] as const) {
+  check(`${status} is not prefilled`, prefillJobFor(failedView({ status })) === null);
+}
+check("the box text joins typed text and blocks", captureJobText({ inputText: "typed", blocks: [{ text: "voice" }] }) === "typed\n\n---\n\nvoice");
+check("no prefill for no job", prefillJobFor(null) === null);
 
 console.log("\nsmoke-capture-review-reducer: all checks passed");

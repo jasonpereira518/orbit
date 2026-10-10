@@ -33,11 +33,9 @@ export default async function KnowledgePage({
 
   return (
     // The page does not scroll: it fills the route (`data-fill-route`), the header holds its
-    // place, and the list and the dossier each scroll inside their own pane. The floating
-    // bell and feedback buttons get their gutter from `data-clear-floating-controls`.
+    // place, and the list and the dossier each scroll inside their own pane.
     <div
       data-fill-route
-      data-clear-floating-controls
       className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4"
     >
       <RenderStamp />

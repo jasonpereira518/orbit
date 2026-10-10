@@ -41,6 +41,8 @@ import {
   createReminderForUser,
   scheduleContactFollowUpForUser,
   clearContactFollowUpForUser,
+  undoClearContactFollowUpForUser,
+  type ClearFollowUpSnapshot,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import { settle, unwrap } from "@/lib/settled";
@@ -102,13 +104,20 @@ function validSnoozeSnapshot(snap: SnoozeSnapshot): boolean {
 }
 
 function validCompletionSnapshot(snap: CompletionSnapshot): boolean {
+  const cleared = snap?.clearedFollowUp;
   return (
     typeof snap?.reminderId === "string" &&
     REMINDER_STATUSES.has(snap.previousStatus) &&
     snap.previousStatus !== "done" &&
     Array.isArray(snap.closedActionItemIds) &&
     snap.closedActionItemIds.length <= 500 &&
-    snap.closedActionItemIds.every((id) => typeof id === "string")
+    snap.closedActionItemIds.every((id) => typeof id === "string") &&
+    (cleared === undefined ||
+      (typeof cleared?.contactId === "string" &&
+        typeof cleared.previousNextFollowUpAt === "string" &&
+        !Number.isNaN(Date.parse(cleared.previousNextFollowUpAt)) &&
+        (cleared.previousFollowUpStatus === null ||
+          FOLLOW_UP_STATUSES.has(cleared.previousFollowUpStatus))))
   );
 }
 
@@ -605,11 +614,10 @@ export async function scheduleContactFollowUpAt(
   if (existing) {
     const [updated] = await db
       .update(reminders)
+      // WHEN, not WHAT — same rule as `scheduleContactFollowUpForUser`: a hand-written
+      // "Send Priya the deck" must not be renamed "Follow up with Priya" by the date picker.
       .set({
-        title,
         dueDate: due,
-        reminderType: "manual",
-        actionKind,
         listId: existing.listId || inboxId,
       })
       .where(eq(reminders.id, existing.id))
@@ -693,12 +701,30 @@ export async function setKeepInTouchCadence(
 
 export async function clearContactFollowUp(contactId: string) {
   const userId = await requireUserId();
-  const { remindersClosed } = await clearContactFollowUpForUser(userId, contactId);
+  const { remindersClosed, snapshot } = await clearContactFollowUpForUser(userId, contactId);
   // The count is load-bearing, not telemetry: clearing a follow-up also marks every
   // pending reminder for the contact done (and completes their linked action items),
-  // which the caller has to be able to say out loud. It used to return a bare
-  // `{ ok: true }` and the UI said only "Follow-up cleared".
-  return { ok: true, remindersClosed };
+  // which the caller has to be able to say out loud. The snapshot is what lets it offer Undo.
+  return { ok: true, remindersClosed, snapshot };
+}
+
+/** Undo for `clearContactFollowUp`. The snapshot comes back from the client: validated. */
+export async function undoClearContactFollowUpAction(snapshot: ClearFollowUpSnapshot) {
+  const userId = await requireUserId();
+  if (
+    typeof snapshot?.contactId !== "string" ||
+    !isIsoOrNull(snapshot.previousNextFollowUpAt) ||
+    !(snapshot.previousFollowUpStatus === null || FOLLOW_UP_STATUSES.has(snapshot.previousFollowUpStatus)) ||
+    !Array.isArray(snapshot.completions) ||
+    snapshot.completions.length > BULK_LIMIT ||
+    !snapshot.completions.every(validCompletionSnapshot)
+  ) {
+    return { restored: false };
+  }
+  const result = await undoClearContactFollowUpForUser(userId, snapshot);
+  revalidateReminderPaths(snapshot.contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  return result;
 }
 
 export type FollowUpTouchChannel = "email" | "linkedin_message" | "note";
@@ -756,7 +782,8 @@ export async function completeFollowUpWithTouch(
 export async function markReminderDone(id: string) {
   const userId = await requireUserId();
   const snapshot = await completeReminder(userId, id);
-  revalidateReminderPaths();
+  revalidateReminderPaths(snapshot?.clearedFollowUp?.contactId);
+  if (snapshot?.clearedFollowUp) revalidatePathIfRequestScoped("/contacts");
   // Handed back so the toast can offer Undo; see `reopenReminderAction`.
   return snapshot;
 }
@@ -766,7 +793,8 @@ export async function reopenReminderAction(snapshot: CompletionSnapshot) {
   const userId = await requireUserId();
   if (!validCompletionSnapshot(snapshot)) return { restored: false };
   const result = await reopenReminder(userId, snapshot);
-  revalidateReminderPaths();
+  revalidateReminderPaths(snapshot.clearedFollowUp?.contactId);
+  if (snapshot.clearedFollowUp) revalidatePathIfRequestScoped("/contacts");
   return result;
 }
 
