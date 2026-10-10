@@ -1,5 +1,6 @@
 import {
   FREE_CONTACT_LIMIT,
+  FREE_STARTER_CREDITS,
   PLAN_CONFIG,
   annualMonthlyEquivalentCents,
   formatPlanPrice,
@@ -52,7 +53,7 @@ export type PlanCopy = {
 };
 
 /** The one-line positioning, used wherever plans are summarised. */
-export const AI_POSITIONING = "Free: bring your own AI key. Pro and Max: AI included.";
+export const AI_POSITIONING = "Free: a small AI allowance to start. Pro and Max: AI included.";
 
 const HOURS = (seconds: number) => `${seconds / 3600} hour${seconds === 3600 ? "" : "s"}`;
 const pro = PLAN_CONFIG.orbit;
@@ -85,7 +86,7 @@ export const PLAN_COPY: PlanCopy[] = [
     price: samePrice({ amount: "$0", cadence: "forever" }),
     features: [
       `Up to ${FREE_CONTACT_LIMIT} contacts`,
-      "Capture notes, chat with your network, and summaries, on your own AI key",
+      `Capture notes, chat with your network, and summaries: ${free.monthlyCredits} AI credits a month + ${FREE_STARTER_CREDITS} to start`,
       "Constellation map",
       "Reminders and follow-up feed",
       "Knowledge base",
@@ -94,7 +95,7 @@ export const PLAN_COPY: PlanCopy[] = [
       "One Google or Microsoft account",
       `${HOURS(free.speech.shortformSeconds)} of voice notes a month`,
     ],
-    caveat: "Bring your own AI key.",
+    caveat: "Add your own AI key any time for no limit.",
   },
   {
     id: "orbit",

@@ -114,8 +114,8 @@ export function isTourStopId(value: string | null | undefined): value is TourSto
   return value != null && Object.hasOwn(TOUR_STOP_IDS, value);
 }
 
-const maya = examplePerson("maya");
-const daniel = examplePerson("daniel");
+const priya = examplePerson("priya");
+const marcus = examplePerson("marcus");
 
 export const TOUR_STOPS: readonly TourStop[] = [
   {
@@ -124,7 +124,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     route: "/dashboard",
     anchor: "dashboard.stats",
     title: "Your dashboard",
-    body: `What needs you today. ${maya.firstName} is overdue for a follow-up, so Due follow-ups already counts one; the cards further down say who and why.`,
+    body: `What needs you today. ${priya.firstName} is overdue for a follow-up, so Due follow-ups already counts one; the cards further down say who and why.`,
     tryThis: "Glance at the four numbers, then press Next.",
     chip: "Today at a glance",
     doneWhen: null,
@@ -138,7 +138,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "contacts.search",
     title: "Find anyone in a keystroke",
     body: "Contacts is everyone you know, with how you met, what you discussed and how close you are.",
-    tryThis: `Type “${maya.firstName}” in the search box.`,
+    tryThis: `Type “${priya.firstName}” in the search box.`,
     chip: "Search here",
     doneWhen: "contacts.searched",
     doneLabel: { pending: "Done when you search", done: "Found" },
@@ -154,11 +154,11 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "contacts.row",
     title: "Open a person",
     body: "The chip on each row is closeness: how well you actually keep in touch, worked out from your notes and meetings.",
-    tryThis: `Open ${maya.fullName}, the one marked Example.`,
-    missingHint: `${maya.firstName} isn’t in this list. Clear the search to find her.`,
-    chip: `Open ${maya.firstName}`,
+    tryThis: `Open ${priya.fullName}, the one marked Example.`,
+    missingHint: `${priya.firstName} isn’t in this list. Clear the search to find her.`,
+    chip: `Open ${priya.firstName}`,
     doneWhen: "contacts.opened-example",
-    doneLabel: { pending: `Done when you open ${maya.firstName}`, done: "Opened" },
+    doneLabel: { pending: `Done when you open ${priya.firstName}`, done: "Opened" },
     surfaceKey: "page.contacts",
     seconds: 12,
   },
@@ -184,7 +184,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     route: "/capture",
     anchor: "capture.notes",
     title: "Capture from messy notes",
-    body: `Paste anything after a meeting and Orbit works out who you met and what to do next. A note about ${maya.firstName} is already in the box.`,
+    body: `Paste anything after a coffee chat or a career fair and Orbit works out who you met and what to do next. A note about ${priya.firstName} is already in the box.`,
     tryThis: "Press Extract people under the note.",
     missingHint: "Switch to the Messy Notes tab, or finish the capture on screen first.",
     chip: "Press Extract",
@@ -234,7 +234,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "reminders.row-done",
     chipAnchor: "reminders.rail-today",
     title: "Clear what’s due",
-    body: `Today holds what’s due and anything overdue: ${maya.firstName}’s deck is late and ${daniel.firstName}’s call is due today. Upcoming, Anytime and Done are one click away.`,
+    body: `Today holds what’s due and anything overdue: ${priya.firstName}’s resume is late and emailing ${marcus.firstName} is due today. Upcoming, Anytime and Done are one click away.`,
     tryThis: "Tick the circle beside a reminder to mark it done.",
     missingHint: "Switch to Today to see what’s due.",
     chip: "Mark done",
@@ -296,7 +296,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "imports.dropzone",
     title: "When your LinkedIn export lands",
     body: "LinkedIn emails a ZIP, usually within a day. Drop it on this page as it arrived, no unzipping, and Orbit works out what it is and brings everyone in. Contacts files, calendars and profile links work the same way; Google and Outlook are in the list below.",
-    tryThis: "Nothing to do yet; come back with the ZIP.",
+    tryThis: "When the ZIP arrives, drop it here as it is.",
     chip: "Drop the ZIP here",
     doneWhen: null,
     surfaceKey: "page.imports",

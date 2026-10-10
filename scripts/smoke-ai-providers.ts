@@ -41,10 +41,7 @@ check("AI_PROVIDERS lists every provider", PROVIDERS.every((p) => AI_PROVIDERS.s
  * why this list is pinned: not because four is wrong, but so its membership is always a
  * decision someone made on purpose.
  *
- * OpenRouter is now selectable, because the AI page gives it a card with a key field. The
- * onboarding AI key step still offers only the first-party three, and the check below is what
- * holds that line — flipping `selectable` alone must not put a fourth tile in front of a
- * brand-new account.
+ * OpenRouter is now selectable, because the AI page gives it a card with a key field.
  */
 const SELECTABLE_IDS = SELECTABLE_AI_PROVIDERS.map((p) => p.id);
 check(
@@ -52,13 +49,6 @@ check(
   JSON.stringify(SELECTABLE_IDS) === JSON.stringify(["gemini", "openai", "anthropic", "openrouter"])
 );
 check("openrouter is selectable", isSelectableAiProvider("openrouter"));
-{
-  const wizard = readFileSync("src/components/onboarding/steps/ai-key-step.tsx", "utf8");
-  check(
-    "the onboarding AI key step still excludes openrouter from its tiles",
-    /SELECTABLE_AI_PROVIDERS\s*\.filter\(\s*\(p\)\s*=>\s*p\.id\s*!==\s*"openrouter"\s*\)/.test(wizard)
-  );
-}
 check(
   "every selectable provider is a real AI_PROVIDERS entry",
   SELECTABLE_IDS.every((id) => AI_PROVIDERS.some((e) => e.id === id))
@@ -73,7 +63,6 @@ check(
 // is the exact regression above.
 for (const file of [
   "src/components/settings/ai-settings.tsx",
-  "src/components/onboarding/steps/ai-key-step.tsx",
 ]) {
   const source = readFileSync(file, "utf8");
   check(`${file} does not map over AI_PROVIDERS`, !/\bAI_PROVIDERS\s*\.\s*map\b/.test(source));

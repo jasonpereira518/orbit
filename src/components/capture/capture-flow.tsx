@@ -639,7 +639,7 @@ export function CaptureFlow({
             saving={phase === "saving"}
             headerSlot={meetingHeader}
             onDecide={applyDecision}
-            onSave={() => void save(job.id)}
+            onSave={() => save(job.id)}
             onStartOver={() => void startOver()}
             onBack={() => {
               const last = acceptedPeople(items, job.decisions).at(-1) ?? null;
@@ -689,7 +689,7 @@ function SummaryStep({
   saving: boolean;
   headerSlot: React.ReactNode;
   onDecide: (key: string, decision: CaptureDecision) => void;
-  onSave: () => void;
+  onSave: () => Promise<void>;
   onStartOver: () => void;
   onBack: () => void;
 }) {
@@ -701,6 +701,10 @@ function SummaryStep({
   const [opportunityChoices, setOpportunityChoices] = useState(() => job.decisions.opportunities);
   const timer = useRef<number | null>(null);
   const opportunityTimer = useRef<number | null>(null);
+  // "Saving…" from the click until the action replies; by then a successful save has
+  // already moved the job to "saving" (save() seeds it before returning).
+  const [pressed, setPressed] = useState(false);
+  const busy = saving || pressed;
 
   function change(next: SuggestionReviewItem[]) {
     setSuggestions(next);
@@ -730,22 +734,27 @@ function SummaryStep({
    * the tick — the write the runner reads is the one in the database, not the one on screen.
    */
   async function saveNow() {
-    const pending: Parameters<typeof recordCaptureChoices>[1] = {};
-    if (timer.current) {
-      window.clearTimeout(timer.current);
-      timer.current = null;
-      pending.reminders = choicesFromSuggestions(suggestions, result.suggestedReminders);
+    setPressed(true);
+    try {
+      const pending: Parameters<typeof recordCaptureChoices>[1] = {};
+      if (timer.current) {
+        window.clearTimeout(timer.current);
+        timer.current = null;
+        pending.reminders = choicesFromSuggestions(suggestions, result.suggestedReminders);
+      }
+      if (opportunityTimer.current) {
+        window.clearTimeout(opportunityTimer.current);
+        opportunityTimer.current = null;
+        pending.opportunities = opportunityChoices;
+      }
+      if (Object.keys(pending).length) {
+        const res = await recordCaptureChoices(job.id, pending);
+        if (res.ok) seedCaptureJob(res.job, { force: true });
+      }
+      await onSave();
+    } finally {
+      setPressed(false);
     }
-    if (opportunityTimer.current) {
-      window.clearTimeout(opportunityTimer.current);
-      opportunityTimer.current = null;
-      pending.opportunities = opportunityChoices;
-    }
-    if (Object.keys(pending).length) {
-      const res = await recordCaptureChoices(job.id, pending);
-      if (res.ok) seedCaptureJob(res.job, { force: true });
-    }
-    onSave();
   }
 
   const meetingExtraCount = job.decisions.meeting?.extraReminderKeys.length ?? 0;
@@ -761,7 +770,7 @@ function SummaryStep({
       onSave={() => void saveNow()}
       onStartOver={onStartOver}
       onBack={onBack}
-      saving={saving}
+      saving={busy}
       error={job.status === "failed" ? job.error : null}
       headerSlot={headerSlot}
       hasMeeting={Boolean(job.meetingSessionId)}

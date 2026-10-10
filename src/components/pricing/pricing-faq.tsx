@@ -1,7 +1,8 @@
 import { Plus } from "lucide-react";
 import { CREDIT_PACK_CREDITS } from "@/lib/stripe-config";
-import { FREE_CONTACT_LIMIT, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
+import { FREE_CONTACT_LIMIT, FREE_STARTER_CREDITS, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
 
+const free = PLAN_CONFIG.free;
 const pro = PLAN_CONFIG.orbit;
 const max = PLAN_CONFIG.max;
 const h = (seconds: number) => `${seconds / 3600} hours`;
@@ -20,7 +21,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "Do I need my own AI key?",
-    a: `On the Free Plan, yes: capture, chat and summaries run on a key you add from Google, OpenAI, or Anthropic. Orbit Pro and Orbit Max include AI — ${pro.monthlyCredits} and ${max.monthlyCredits} credits a month — so there is nothing to set up. You can still add your own key on any plan and choose which one runs first; calls on your own key never use credits.`,
+    a: `No. The Free Plan includes ${free.monthlyCredits} AI credits a month, plus ${FREE_STARTER_CREDITS} to start, on Orbit’s own AI accounts. Orbit Pro and Orbit Max include ${pro.monthlyCredits} and ${max.monthlyCredits} credits a month. You can add your own key on any plan and choose which one runs first; calls on your own key never use credits.`,
   },
   {
     q: "What is the difference between Orbit Pro and Orbit Max?",
@@ -28,7 +29,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What happens when my AI credits run out?",
-    a: "AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews; to keep going before then, add a $5 pack, move to Max, or switch to your own key. Everything else in Orbit keeps working.",
+    a: `AI pauses — Orbit never charges you automatically. Your monthly credits come back when your plan renews (on the Free Plan, on the 1st of each month); to keep going before then, add your own key, upgrade, or on Pro or Max, add a $5 pack. The Free Plan’s ${FREE_STARTER_CREDITS} starter credits are used once and do not come back. Everything else in Orbit keeps working.`,
   },
   {
     q: "How do credit packs work?",

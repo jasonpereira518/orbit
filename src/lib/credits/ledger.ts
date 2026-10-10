@@ -1,7 +1,7 @@
 import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { creditGrants, creditHolds } from "@/db/schema";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { FREE_STARTER_CREDITS, PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 import { creditsToMicros } from "@/lib/credits/grants";
 
 /**
@@ -12,9 +12,10 @@ import { creditsToMicros } from "@/lib/credits/grants";
  * that are usable now, less its open holds:
  *   - an allowance only inside its own billing period (it never rolls over);
  *   - an admin adjustment always;
+ *   - the starter grant always;
  *   - a pack only while the account's plan includes managed AI. A downgrade therefore
  *     FREEZES packs by rule — nothing is written — and a resubscribe finds them intact.
- * Spending takes allowance first, then adjustments, then packs oldest-first.
+ * Spending takes allowance first, then starter, then adjustments, then packs oldest-first.
  *
  * THE HARD STOP. A managed call first places a HOLD for its estimated cost. The hold is
  * inserted only if spendable-minus-held is still above zero, and the insert runs in the same
@@ -112,6 +113,19 @@ export function creditPeriodFor(
 }
 
 /**
+ * A Free account's one-time starter grant. `starter:<user>` is unique, so this is idempotent,
+ * and a deleted account's anonymised row keeps the key, so the same user id never gets two.
+ */
+export async function ensureStarterGrant(userId: string): Promise<void> {
+  const micros = creditsToMicros(FREE_STARTER_CREDITS);
+  const db = await getDb();
+  await db
+    .insert(creditGrants)
+    .values({ userId, kind: "starter", grantKey: `starter:${userId}`, microsGranted: micros, microsRemaining: micros })
+    .onConflictDoNothing({ target: creditGrants.grantKey });
+}
+
+/**
  * Make sure this cycle's allowance grant exists — the reset.
  *
  * ONE allowance covers any moment. When a grant already covers `now`, it is ADOPTED rather
@@ -133,7 +147,8 @@ export async function ensureAllowance(
   now = new Date()
 ): Promise<void> {
   const credits = PLAN_CONFIG[plan].monthlyCredits;
-  if (!credits || (plan !== "orbit" && plan !== "max")) return;
+  if (!credits || plan === "lifetime") return;
+  if (plan === "free") await ensureStarterGrant(userId);
   const micros = creditsToMicros(credits);
   const grantKey = `allowance:${userId}:${period.start.toISOString()}`;
   const db = await getDb();
@@ -202,9 +217,14 @@ function spendableSql(userId: string, packs: boolean) {
   return sql`(SELECT coalesce(sum(g.micros_remaining), 0) FROM credit_grants g
     WHERE g.user_id = ${userId} AND g.status = 'active' AND g.micros_remaining > 0 AND (
       (g.kind = 'allowance' AND g.period_start <= now() AND g.period_end > now())
-      OR g.kind = 'adjustment'
+      OR g.kind IN ('adjustment', 'starter')
       OR (g.kind = 'pack' AND ${packs})
     ))`;
+}
+
+function starterSql(userId: string) {
+  return sql`(SELECT coalesce(sum(g.micros_remaining), 0) FROM credit_grants g
+    WHERE g.user_id = ${userId} AND g.status = 'active' AND g.kind = 'starter')`;
 }
 
 function heldSql(userId: string) {
@@ -227,6 +247,8 @@ export async function placeHold(input: {
    * half the monthly allowance for background work (`BACKGROUND_FLOOR_SHARE`).
    */
   floorMicros?: number;
+  /** Add the starter grant's remaining micros to the floor: Free background work never spends it. */
+  reserveStarter?: boolean;
 }): Promise<string | null> {
   const db = await getDb();
   const expiresAt = new Date(Date.now() + (input.ttlMs ?? HOLD_TTL_MS));
@@ -237,6 +259,7 @@ export async function placeHold(input: {
     tx.execute(sql`INSERT INTO credit_holds (user_id, micros, operation, expires_at)
       SELECT ${input.userId}, ${Math.max(1, Math.round(input.micros))}, ${input.operation}, ${expiresAt.toISOString()}::timestamptz
       WHERE ${spendableSql(input.userId, input.packs)} - ${heldSql(input.userId)} > ${Math.max(0, Math.round(input.floorMicros ?? 0))}
+        + ${input.reserveStarter ? starterSql(input.userId) : sql`0`}
       RETURNING id`),
   ]);
   const inserted = rowsOf<{ id: string }>(results[1] as never);
@@ -244,7 +267,7 @@ export async function placeHold(input: {
 }
 
 /**
- * Deduct a managed call's real cost, allowance first, then adjustments, then packs
+ * Deduct a managed call's real cost, allowance first, then starter, then adjustments, then packs
  * oldest-first, and release the oldest open hold for its operation. Never takes a grant
  * below zero. Packs are always eligible here: a call only ran because its plan allowed it.
  */
@@ -257,12 +280,12 @@ export async function settleCredits(input: { userId: string; operation: string; 
     tx.execute(sql`WITH usable AS (
         SELECT g.id, g.micros_remaining,
           sum(g.micros_remaining) OVER (
-            ORDER BY CASE g.kind WHEN 'allowance' THEN 0 WHEN 'adjustment' THEN 1 ELSE 2 END, g.created_at, g.id
+            ORDER BY CASE g.kind WHEN 'allowance' THEN 0 WHEN 'starter' THEN 1 WHEN 'adjustment' THEN 2 ELSE 3 END, g.created_at, g.id
           ) AS running
         FROM credit_grants g
         WHERE g.user_id = ${input.userId} AND g.status = 'active' AND g.micros_remaining > 0 AND (
           (g.kind = 'allowance' AND g.period_start <= now() AND g.period_end > now())
-          OR g.kind IN ('adjustment', 'pack')
+          OR g.kind IN ('starter', 'adjustment', 'pack')
         )
       )
       UPDATE credit_grants g
@@ -297,6 +320,8 @@ export async function sweepExpiredHolds(now = new Date()): Promise<number> {
 export type CreditBalance = {
   /** This cycle's allowance, in micros; null when the plan has none. */
   allowance: { granted: number; remaining: number; periodStart: string; periodEnd: string } | null;
+  /** A Free account's one-time starter credits still unused, in micros (0 when none). */
+  starterRemaining: number;
   /** Purchased pack credits still unused (spendable only on Pro and Max). */
   packRemaining: number;
   /** Packs exist but the plan cannot spend them (downgraded): kept, frozen. */
@@ -305,7 +330,7 @@ export type CreditBalance = {
   packsThisCycle: number;
   /** Micros held by calls in flight. */
   held: number;
-  /** What the next call can draw on: allowance + usable packs + adjustments − held. */
+  /** What the next call can draw on: allowance + starter + adjustments + usable packs − held. */
   spendable: number;
 };
 
@@ -345,6 +370,7 @@ export async function getCreditBalance(
   const packs = grants.filter((g) => g.kind === "pack");
   const packRemaining = packs.reduce((sum, g) => sum + g.microsRemaining, 0);
   const adjustments = grants.filter((g) => g.kind === "adjustment").reduce((sum, g) => sum + g.microsRemaining, 0);
+  const starterRemaining = grants.filter((g) => g.kind === "starter").reduce((sum, g) => sum + g.microsRemaining, 0);
   const usable = packsUsable(plan);
   const held = Number(holds[0]?.micros ?? 0);
   const allowanceRemaining = allowanceGrant?.microsRemaining ?? 0;
@@ -363,11 +389,12 @@ export async function getCreditBalance(
           periodEnd: allowanceGrant.periodEnd!.toISOString(),
         }
       : null,
+    starterRemaining,
     packRemaining,
     packsFrozen: !usable && packRemaining > 0,
     packsThisCycle: n,
     held,
-    spendable: Math.max(0, allowanceRemaining + adjustments + (usable ? packRemaining : 0) - held),
+    spendable: Math.max(0, allowanceRemaining + starterRemaining + adjustments + (usable ? packRemaining : 0) - held),
   };
 }
 

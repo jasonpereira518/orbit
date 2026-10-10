@@ -108,9 +108,55 @@ run(async () => {
   await ledger.ensureAllowance(USER, "orbit", cycle1);
   grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
   check("a switch back to Pro never lowers the cycle it happens in", grants[0].microsGranted === 500 * 10_000 && grants[0].microsRemaining === 350 * 10_000);
-  await ledger.ensureAllowance(USER, "free", cycle1);
   await ledger.ensureAllowance(USER, "lifetime", cycle1);
-  check("Free and Lifetime get no allowance", (await db.select().from(creditGrants).where(eq(creditGrants.userId, USER))).length === 1);
+  check("Lifetime gets no allowance", (await db.select().from(creditGrants).where(eq(creditGrants.userId, USER))).length === 1);
+
+  console.log("\nFree: 10 a month plus 25 to start");
+  await reset();
+  const month = ledger.creditPeriodFor(null);
+  await ledger.ensureAllowance(USER, "free", month);
+  await ledger.ensureAllowance(USER, "free", month);
+  grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
+  const freeAllowance = grants.filter((g) => g.kind === "allowance");
+  const starter = grants.filter((g) => g.kind === "starter");
+  check("Free gets one 10-credit allowance on the calendar month",
+    freeAllowance.length === 1 && freeAllowance[0].microsGranted === 10 * 10_000 && freeAllowance[0].plan === "free" &&
+      freeAllowance[0].periodStart?.getTime() === month.start.getTime(), freeAllowance);
+  check("…and exactly one 25-credit starter grant, with no period",
+    starter.length === 1 && starter[0].microsGranted === 25 * 10_000 && starter[0].grantKey === `starter:${USER}` &&
+      starter[0].periodStart === null && starter[0].periodEnd === null, starter);
+  let fbal = await ledger.getCreditBalance(USER, "free", null);
+  check("the balance shows 35 spendable, 25 of them starter",
+    fbal.spendable === 35 * 10_000 && fbal.starterRemaining === 25 * 10_000 && fbal.allowance?.granted === 10 * 10_000, fbal);
+
+  await ledger.settleCredits({ userId: USER, operation: "x", micros: 12 * 10_000 });
+  grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
+  check("spending takes the monthly allowance first, then starter",
+    grants.find((g) => g.kind === "allowance")?.microsRemaining === 0 &&
+      grants.find((g) => g.kind === "starter")?.microsRemaining === 23 * 10_000, grants.map((g) => [g.kind, g.microsRemaining]));
+  await db.insert(creditGrants).values({ userId: USER, kind: "adjustment", grantKey: `adj:smoke:${USER}`, microsGranted: 5 * 10_000, microsRemaining: 5 * 10_000 });
+  await ledger.settleCredits({ userId: USER, operation: "x", micros: 24 * 10_000 });
+  grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
+  check("…then adjustments once the starter is gone",
+    grants.find((g) => g.kind === "starter")?.microsRemaining === 0 &&
+      grants.find((g) => g.kind === "adjustment")?.microsRemaining === 4 * 10_000, grants.map((g) => [g.kind, g.microsRemaining]));
+
+  const nextMonth = { start: month.end, end: new Date(Date.UTC(month.end.getUTCFullYear(), month.end.getUTCMonth() + 1, 1)) };
+  const inNext = new Date(month.end.getTime() + DAY);
+  await ledger.ensureAllowance(USER, "free", nextMonth, inNext);
+  grants = await db.select().from(creditGrants).where(eq(creditGrants.userId, USER));
+  check("next month brings a fresh 10 and never a second starter",
+    grants.filter((g) => g.kind === "starter").length === 1 &&
+      grants.some((g) => g.kind === "allowance" && g.periodStart?.getTime() === nextMonth.start.getTime() && g.microsRemaining === 10 * 10_000));
+
+  console.log("\nPaid plans never get a starter; a downgrade keeps one");
+  await reset();
+  await ledger.ensureAllowance(USER, "orbit", cycle1);
+  check("Pro gets no starter", (await db.select().from(creditGrants).where(eq(creditGrants.userId, USER))).every((g) => g.kind !== "starter"));
+  await reset();
+  await ledger.ensureAllowance(USER, "free", ledger.creditPeriodFor(null));
+  fbal = await ledger.getCreditBalance(USER, "orbit", null, new Date(), { ensure: false });
+  check("an account that had a starter keeps spending it on another plan", fbal.starterRemaining === 25 * 10_000 && fbal.spendable >= 25 * 10_000, fbal);
 
   console.log("\nThe 80% and 100% notices");
   const health = (credits: Parameters<typeof evaluateAccountHealth>[0]["credits"]) =>
@@ -121,10 +167,18 @@ run(async () => {
       importStalledLabel: null, importStalledRows: null, importStalledTotal: null, plan: "orbit", planSource: "subscription",
       subscriptionStatus: "active", subscriptionPeriodEnd: null, contactLimit: null, contactCount: null, credits,
     } as Parameters<typeof evaluateAccountHealth>[0]).map((f) => f.code);
-  const c = (allowanceRemaining: number, packRemaining = 0) => ({
-    allowanceGranted: 2_000_000, allowanceRemaining, packRemaining,
-    spendable: allowanceRemaining + packRemaining, resetsAt: "2026-11-03T09:00:00.000Z",
+  const c = (allowanceRemaining: number, packRemaining = 0, starterRemaining = 0) => ({
+    allowanceGranted: 2_000_000, allowanceRemaining, packRemaining, starterRemaining,
+    spendable: allowanceRemaining + packRemaining + starterRemaining, resetsAt: "2026-11-03T09:00:00.000Z",
   });
+  const healthFree = (credits: Parameters<typeof evaluateAccountHealth>[0]["credits"]) =>
+    toAccountAlerts(evaluateAccountHealth({
+      hasAiKey: true, aiProvider: "gemini", onboardingCompletedAt: new Date(), gmail: null, outlook: null,
+      googleCalendar: null, microsoftCalendar: null, appleCalendar: null, calendarErrorCount: 0, calendarErrorLabel: null,
+      calendarErrorDetail: null, importFailedCount: 0, importFailedLabel: null, importFailedDetail: null, importStalledCount: 0,
+      importStalledLabel: null, importStalledRows: null, importStalledTotal: null, plan: "free", planSource: "free",
+      subscriptionStatus: null, subscriptionPeriodEnd: null, contactLimit: null, contactCount: null, credits,
+    } as Parameters<typeof evaluateAccountHealth>[0]));
   check("under 80% used: quiet", health(c(1_000_000)).every((code) => !code.startsWith("plan.credits")));
   check("80% used: a heads-up", health(c(400_000)).includes("plan.credits_near"));
   check("100% used with packs: now on pack credits", health(c(0, 500_000)).includes("plan.credits_on_packs"));
@@ -133,6 +187,17 @@ run(async () => {
     isDismissible("plan.credits_near") && isDismissible("plan.credits_on_packs") && !isDismissible("plan.credits_out"));
   const out = toAccountAlerts(evaluateAccountHealth({ ...({} as object), credits: c(0) } as never)).find((a) => a.code === "plan.credits_out");
   check("…and says nothing is charged automatically", /Nothing is charged automatically/.test(out?.body ?? ""), out?.body);
+  check("an allowance spent with starter credits left is NOT 'near'",
+    !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_near"));
+  // creditFacts is not reachable here; this mirrors its output for a Free account downgraded from
+  // Pro (packs frozen, so packRemaining is 0), allowance spent, starter left.
+  check("Free with frozen packs, allowance spent, starter left: not 'on packs'",
+    !healthFree({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).some((a) => /pack credits/.test(a.body ?? "")));
+  check("…nor 'out'", !health({ ...c(0, 0, 250_000), allowanceGranted: 100_000, spendable: 250_000 }).includes("plan.credits_out"));
+  const outAlert = healthFree({ allowanceGranted: 100_000, allowanceRemaining: 0, packRemaining: 0, starterRemaining: 0, spendable: 0, resetsAt: "2026-11-01T00:00:00.000Z" })
+    .find((a) => a.title === "You’re out of AI credits");
+  check("Free's out-of-credits alert offers a key, never a pack",
+    Boolean(outAlert) && !/pack/i.test((outAlert?.body ?? "")) && /own key/.test((outAlert?.body ?? "")), outAlert);
   check("no credits, no credit notices", health(null).every((code) => !code.startsWith("plan.credits")));
 
   console.log("\nEquivalents from measured cost");

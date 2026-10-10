@@ -26,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key", body: "You choose the provider and supply the key. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on that same key. Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan, Orbit Pro and Orbit Max include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on the same key or account. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -64,7 +64,7 @@ const PROCESSORS = [
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or — for included AI on Orbit Pro and Orbit Max — on Orbit's account with that provider." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro and Orbit Max) on Orbit's account with that provider." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, your mail for the recruiter scan you start, and sending the email you write from your own address. See What Orbit collects and The recruiter scan." },
@@ -191,7 +191,7 @@ export default function PrivacyPage() {
           <ul>
             <li>Authenticate you and keep every query scoped to your account</li>
             <li>Run the CRM itself — search, reminders, the relationship graph and the dashboard</li>
-            <li>Power the AI features you use, on your key</li>
+            <li>Power the AI features you use, on your key or Orbit’s</li>
             <li>Run the imports, syncs, enrichment and outbound email or SMS you set up</li>
             <li>Look up public profile photos for your contacts</li>
             <li>Apply plan limits and process payments if you upgrade</li>
@@ -238,10 +238,11 @@ export default function PrivacyPage() {
             In practice: Orbit uses Google data only to provide the features in the table, shown to
             you inside Orbit. It does not sell it, does not use it for advertising, and does not use
             it to develop or train AI models. Where a feature uses AI (the recruiter scan), the text
-            involved goes to the AI provider you chose — on your own key, or on Pro and Max on
-            Orbit&rsquo;s account with that provider — only to produce the result you asked for. A person at Orbit reads Google data only with your permission for a
-            support request you raise, to investigate abuse or a security problem, or where the law
-            requires it.
+            involved goes to the AI provider you chose — on your own key, or on
+            Orbit&rsquo;s account with that provider when that is the one in use — only to produce
+            the result you asked for. A person at Orbit reads Google data only with your
+            permission for a support request you raise, to investigate abuse or a
+            security problem, or where the law requires it.
           </p>
           <p>
             Disconnecting Google in Orbit deletes the tokens Orbit holds. To also revoke the grant
@@ -335,13 +336,14 @@ export default function PrivacyPage() {
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
             photos of pages you scan, recruiter emails when you run the scan — is sent to the
-            provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On the Free Plan and
-            Orbit Lifetime, every call runs on an API key you supply, so the request lands on your own
+            provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On Orbit
+            Lifetime, every call runs on an API key you supply, so the request lands on your own
             account with that provider and is governed by the retention settings you have agreed with
-            them. On Orbit Pro and Orbit Max, AI is included: calls run on Orbit&rsquo;s own accounts
-            with those providers, under Orbit&rsquo;s agreements with them, which do not allow your
-            content to be used to train their models. Providers may keep requests for a limited period
-            for abuse monitoring under those agreements. If you choose your own key on Pro or Max,
+            them. On the Free Plan, Orbit includes a small monthly AI allowance and a one-time starter
+            grant, and on Orbit Pro and Orbit Max AI is included: those calls run on Orbit&rsquo;s own
+            accounts with those providers, under Orbit&rsquo;s agreements with them, which do not allow
+            your content to be used to train their models. Providers may keep requests for a limited
+            period for abuse monitoring under those agreements. If you add your own key and choose it,
             those calls run on your account instead.
           </p>
           <p>
@@ -368,11 +370,13 @@ export default function PrivacyPage() {
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
             the people you talked with most. Deriving timeline events from imported LinkedIn
-            conversations happens automatically, on your own AI key: a thread with a single message
-            gets a rule-based note and no AI call, and the cap of {TIMELINE_DAILY_CONTACT_CAP} conversations
-            a day only counts the conversations that reach the model. Without an AI key connected,
-            Orbit falls back to simple keyword matching instead. Settings → Integrations → AI
-            provider shows every call from the last 30 days and its estimated cost.
+            conversations happens automatically, on the AI provider and key described
+            above: a thread with a single message gets a rule-based note and no AI
+            call, and the cap of{" "}
+            {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the conversations that
+            reach the model. When no AI is available to you, Orbit falls back to simple keyword
+            matching instead. Settings → Integrations → AI provider shows every call
+            from the last 30 days and its estimated cost.
           </p>
           <p>
             <strong>

@@ -96,6 +96,9 @@ export const AI_OPERATIONS = {
   // One sentence about a Radar card the scorer already chose, written during the nightly
   // pass on the account's own key: work on the person's behalf, not something they wait on.
   "radar.why": { label: "Radar: why this person", tier: "fast", thinking: "minimal", background: true },
+  // The same sentence when the person clicks "Write a one-line why": they asked, so it may
+  // spend starter credits like any foreground operation (radar.why above may not).
+  "radar.why.ask": { label: "Radar: why this person", tier: "fast", thinking: "minimal" },
   // One call per nightly run: nudges the scorer's shortlist within ±15 points, given the
   // account's goals. It can reorder cards the rules already chose; it can never add one.
   "radar.rerank": { label: "Radar: ranking the shortlist", tier: "fast", thinking: "minimal", background: true },

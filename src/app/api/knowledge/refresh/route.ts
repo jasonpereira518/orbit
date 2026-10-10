@@ -55,5 +55,8 @@ export async function POST(request: Request) {
   // model is asked.
   const out = await generateAndStoreContactBrief(userId, contactId, { force: body?.force === true }).catch(() => null);
   if (!out) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // A forced refresh the AI gate refused stored the plain-language brief; say why, so the
+  // click does not read as a fresh AI summary. Background refreshes stay quiet.
+  if (out.aiError && body?.force === true) return NextResponse.json({ error: out.aiError }, { status: 409 });
   return NextResponse.json({ ok: true });
 }

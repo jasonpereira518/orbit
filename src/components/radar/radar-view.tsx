@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { format, formatDistanceToNow } from "date-fns";
 import { ChevronLeft, ChevronRight, Focus, LayoutList, Play, RefreshCw, Wand2 } from "lucide-react";
+import { AiKeyNotice } from "@/components/ai-key-notice";
 import { Button } from "@/components/ui/button";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
@@ -70,6 +72,7 @@ function prefersReducedMotion() {
 export function RadarView(props: RadarViewProps) {
   const { recommendations, lastRunAt, nextRunAt, paused, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, focusId } =
     props;
+  const { aiReason } = useViewerPlan();
   const router = useRouter();
   const [pending, start] = useTransition();
   const linked = focusId ? recommendations.findIndex((r) => r.id === focusId) : -1;
@@ -167,6 +170,8 @@ export function RadarView(props: RadarViewProps) {
 
       {changes.length > 0 && <WhatChanged changes={changes} onJump={jumpTo} />}
       {autopilot.length > 0 && <AutopilotDid items={autopilot} />}
+
+      {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "key_required"} compact />}
 
       {recommendations.length === 0 ? (
         <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />

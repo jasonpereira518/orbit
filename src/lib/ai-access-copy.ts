@@ -1,7 +1,8 @@
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import { FREE_STARTER_CREDITS, PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 
 /**
- * What a person reads when the AI gate says no. Client-safe (no imports beyond a type), so
+ * What a person reads when the AI gate says no. Client-safe (imports only the pure plan-config module), so
  * `errors.ts` can list these in `OWN_WORDS` and the notices can render the same words.
  *
  * One constraint shapes the wording: all three refusals keep the words "API key". Seven call
@@ -24,10 +25,29 @@ export const AI_ACCESS_COPY: Record<AiAccessDenial, string> = {
 export const MANAGED_PROVIDER_FAILURE_MESSAGE =
   "Orbit’s AI couldn’t answer just now — try again in a moment, or add your own API key in Settings";
 
+/** At or below this many credits, a Free account sees "N AI credits left this month". */
+export const FREE_LOW_CREDITS = 3;
+
+/**
+ * A Free account at zero. Keeps "API key" so `isMissingAiApiKeyError` flips every notice, and
+ * `aiDenialFromMessage` maps it to `managed_limit` by exact match.
+ */
+export const FREE_LIMIT_MESSAGE = "You’ve used this month’s AI credits — add your own API key in Settings for no limit";
+
+/**
+ * Background work on Orbit's key stopped at the floor that keeps the last credits for things a
+ * person asks for. Credits remain, so it must not say they are used; `aiDenialFromMessage`
+ * reads it as `managed_unavailable` (comes back on its own, or add a key).
+ */
+export const BACKGROUND_RESERVE_MESSAGE =
+  "Orbit saves your last AI credits for things you ask for — add your own API key in Settings to keep going";
+
 /** Every string above, for `OWN_WORDS`. */
 export const AI_ACCESS_MESSAGES: readonly string[] = [
   ...Object.values(AI_ACCESS_COPY),
   MANAGED_PROVIDER_FAILURE_MESSAGE,
+  FREE_LIMIT_MESSAGE,
+  BACKGROUND_RESERVE_MESSAGE,
 ];
 
 /**
@@ -37,25 +57,29 @@ export const AI_ACCESS_MESSAGES: readonly string[] = [
  */
 export function aiDenialFromMessage(message: string | null | undefined): AiAccessDenial | null {
   if (!message) return null;
+  // `withReference` (errors.ts) appends " (ref xxxx)" to a reported failure; match the bare words.
+  message = message.replace(/ \(ref [^)]*\)$/, "");
   for (const [reason, copy] of Object.entries(AI_ACCESS_COPY)) {
     if (message === copy) return reason as AiAccessDenial;
   }
-  if (message === MANAGED_PROVIDER_FAILURE_MESSAGE) return "managed_unavailable";
+  if (message === MANAGED_PROVIDER_FAILURE_MESSAGE || message === BACKGROUND_RESERVE_MESSAGE) return "managed_unavailable";
+  if (message === FREE_LIMIT_MESSAGE) return "managed_limit";
   return /api key/i.test(message) ? "key_required" : null;
 }
 
 /**
  * The notices' wording, per refusal. `verb` completes "…to {verb}". `offer` is the way out
  * besides a key: `upgrade` ("Pro and Max include AI", Free accounts only) or `credits`
- * ("Buy a pack ($5)", plus "Upgrade to Max" on Pro). Nothing is ever charged automatically.
+ * ("Buy a pack ($5)", plus "Upgrade to Max" on Pro), or `plans` (Free at zero: compare plans).
+ * Nothing is ever charged automatically.
  */
 export const AI_NOTICE_COPY: Record<
   AiAccessDenial,
-  { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | null; linkToKeys: boolean }
+  { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | "plans" | null; linkToKeys: boolean }
 > = {
   key_required: {
     title: (verb) => `Add an AI API key to ${verb}`,
-    body: "On the Free Plan, AI runs on your own Gemini, OpenAI, or Anthropic key.",
+    body: "AI runs on your own Gemini, OpenAI, or Anthropic key.",
     offer: "upgrade",
     linkToKeys: true,
   },
@@ -80,6 +104,20 @@ export const AI_HINT_COPY: Record<AiAccessDenial, string> = {
   managed_unavailable: "Orbit’s AI is unavailable right now — add your own API key in Settings for summaries",
 };
 
+/** The one-line refusal for this reason on this plan: Free at zero never hears about packs. */
+export function refusalCopyFor(reason: AiAccessDenial | null, plan: Plan): string {
+  if (reason === "managed_limit" && plan === "free") return FREE_LIMIT_MESSAGE;
+  return AI_ACCESS_COPY[reason ?? "key_required"];
+}
+
+/** The field hint for this reason on this plan, same rule. */
+export function hintCopyFor(reason: AiAccessDenial | null, plan: Plan): string {
+  if (reason === "managed_limit" && plan === "free") {
+    return "This month’s AI credits are used — add your own API key in Settings for summaries";
+  }
+  return AI_HINT_COPY[reason ?? "key_required"];
+}
+
 /** "October 1" — fixed locale and UTC, so server and client render the same string. */
 export function formatAllowanceReset(resetsAt: string): string {
   return new Date(resetsAt).toLocaleDateString("en-US", {
@@ -89,9 +127,31 @@ export function formatAllowanceReset(resetsAt: string): string {
   });
 }
 
+export type NoticeCopy = { title: (verb: string) => string; body: string; offer: "upgrade" | "credits" | "plans" | null; linkToKeys: boolean };
+
+/**
+ * The notice's words for this refusal on this plan. Free at zero gets its own state, with
+ * the refill date; everything else is `AI_NOTICE_COPY`.
+ */
+export function noticeCopyFor(reason: AiAccessDenial | null, plan: Plan, resetsAt: string | null): NoticeCopy {
+  if (reason === "managed_limit" && plan === "free") {
+    return {
+      title: () => "You’ve used this month’s AI credits",
+      // The notice continues it: " — add your own key for no limit under Settings…".
+      body: `They refill on ${resetsAt ? formatAllowanceReset(resetsAt) : "the 1st"}`,
+      offer: "plans",
+      linkToKeys: true,
+    };
+  }
+  return AI_NOTICE_COPY[reason ?? "key_required"];
+}
+
 /** Share of this cycle's allowance used, 0-100. */
 export function allowancePercentUsed(allowance: { granted: number; remaining: number }): number {
   if (allowance.granted <= 0) return 100;
   const used = allowance.granted - Math.max(0, allowance.remaining);
   return Math.min(100, Math.max(0, Math.round((used / allowance.granted) * 100)));
 }
+
+/** Settings → AI provider, top line, Free only. */
+export const FREE_AI_EXPLAINER = `Free includes ${PLAN_CONFIG.free.monthlyCredits} AI credits a month and ${FREE_STARTER_CREDITS} to start. Add your own key to use AI with no limit`;

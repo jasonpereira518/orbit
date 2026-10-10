@@ -18,13 +18,11 @@ import {
   StaggerItem,
   StepHeading,
 } from "@/components/onboarding/onboarding-ui";
-import { AiKeyStep } from "@/components/onboarding/steps/ai-key-step";
 import { CaptureStep } from "@/components/onboarding/steps/capture-step";
 import { ConnectStep } from "@/components/onboarding/steps/connect-step";
 import { HighlightsStep, type PlanFlags } from "@/components/onboarding/steps/highlights-step";
 import { ImportStep } from "@/components/onboarding/steps/import-step";
 import { LaunchStep } from "@/components/onboarding/steps/launch-step";
-import { LinkedInStep } from "@/components/onboarding/steps/linkedin-step";
 import { ManualStep } from "@/components/onboarding/steps/manual-step";
 import { PeopleStep } from "@/components/onboarding/steps/people-step";
 import { TriageStep } from "@/components/onboarding/steps/triage-step";
@@ -34,11 +32,13 @@ import { useImportJob } from "@/lib/import-job-runner";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { connectConfigured, type ConnectAccount, type ConnectProvider } from "@/lib/onboarding-connect";
 import {
+  firstStep,
   isOnboardingPath,
   isOnboardingStep,
   mainLine,
   nextStep,
   prevStep,
+  RETIRED_STEPS,
   resumeStep,
   stageOf,
   stepDirection,
@@ -109,14 +109,12 @@ export function OnboardingFlow({
     isOnboardingPath(initialPath) ? initialPath : null,
   );
   const [[step, direction], setPosition] = useState<[OnboardingStep, 1 | -1]>(() => [
-    resumeStep(initialStepId, initialPath),
+    resumeStep(initialStepId, initialPath, { connectConfigured: connectConfigured(connect) }),
     1,
   ]);
-  const [apiKey, setApiKey] = useState(hasApiKey);
-  const [requested, setRequested] = useState(linkedinRequested);
+  const [apiKey] = useState(hasApiKey);
+  const [requested] = useState(linkedinRequested);
   const [termsDone, setTermsDone] = useState(!needsTerms);
-  // Where the import branch was entered from decides where Back and Continue go.
-  const [importFrom, setImportFrom] = useState<"linkedin" | "people">("linkedin");
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
   const comingSoonSet = useMemo(() => new Set(comingSoon), [comingSoon]);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -126,10 +124,7 @@ export function OnboardingFlow({
   const travel = useReducedMotionConfig() ? 0 : 40;
   const slide = useMemo(() => ({ dir: direction, travel }), [direction, travel]);
 
-  const facts: StepFacts = useMemo(
-    () => ({ hasApiKey: apiKey, connectConfigured: connectConfigured(connect) }),
-    [apiKey, connect],
-  );
+  const facts: StepFacts = useMemo(() => ({ connectConfigured: connectConfigured(connect) }), [connect]);
 
   // The stage's own entries, mirrored so an on-screen Back can be a real `history.back()`
   // when the entry behind is that step. Pushing instead would leave the browser's Back
@@ -180,7 +175,7 @@ export function OnboardingFlow({
         return;
       }
       const target = (e.state as Record<string, unknown> | null)?.[HISTORY_KEY];
-      if (typeof target !== "string" || !isOnboardingStep(target)) return;
+      if (typeof target !== "string" || !isOnboardingStep(target) || RETIRED_STEPS.includes(target)) return;
       const mirror = entries.current;
       if (mirror.list[mirror.at - 1] === target) mirror.at -= 1;
       else if (mirror.list[mirror.at + 1] === target) mirror.at += 1;
@@ -210,9 +205,9 @@ export function OnboardingFlow({
 
   /** Forward along the path's main line from `from`'s node, skipping what the facts skip. */
   const advance = useCallback(
-    (from: OnboardingStep, override?: Partial<StepFacts>) => {
+    (from: OnboardingStep) => {
       if (!path) return goTo("welcome");
-      const next = nextStep(from, path, { ...facts, ...override });
+      const next = nextStep(from, path, facts);
       if (next) goTo(next);
     },
     [facts, goTo, path],
@@ -231,10 +226,11 @@ export function OnboardingFlow({
         await acceptTerms();
         setTermsDone(true);
       }
-      await startOnboardingPath(chosen);
+      const first = firstStep(chosen, facts);
+      await startOnboardingPath(chosen, first);
       setPath(chosen);
-      pushStepEntry("linkedin");
-      setPosition(() => ["linkedin", 1]);
+      pushStepEntry(first);
+      setPosition(() => [first, 1]);
     });
 
   const leave = useCallback(
@@ -255,23 +251,20 @@ export function OnboardingFlow({
   const afterPeople = useCallback(() => {
     start(async () => {
       const candidates = await getTriageCandidates().catch(() => []);
-      goTo(candidates.length >= TRIAGE_MIN ? "triage" : "overview");
+      if (candidates.length >= TRIAGE_MIN) return goTo("triage");
+      advance("people");
     });
-  }, [goTo]);
+  }, [goTo, advance]);
 
   const switchToTour = () =>
     start(async () => {
-      await startOnboardingPath("tour");
+      await startOnboardingPath("tour", "launch");
       setPath("tour");
       goTo("launch");
     });
 
   const stages = path ? mainLine(path, facts) : [];
-  const stage = path
-    ? step === "import" && importFrom === "linkedin"
-      ? "linkedin"
-      : stageOf(step, path)
-    : null;
+  const stage = path ? stageOf(step, path) : null;
   const showSkip = step !== "welcome" && step !== "launch";
 
   return (
@@ -334,47 +327,15 @@ export function OnboardingFlow({
               </Centered>
             )}
 
-            {step === "linkedin" && (
-              <LinkedInStep
-                alreadyRequested={requested}
-                onRequested={() => setRequested(true)}
-                onContinue={() => advance("linkedin")}
-                onHaveExport={() => {
-                  setImportFrom("linkedin");
-                  goTo("import");
-                }}
-                onBack={() => retreat("linkedin")}
-              />
-            )}
-
             {step === "import" && (
               <BranchStep
                 eyebrow="Your people"
                 title="Upload your LinkedIn export"
                 wide
-                onBack={() => backTo(importFrom === "linkedin" ? "linkedin" : "people")}
+                onBack={() => backTo("people")}
               >
                 <ImportStep
-                  onContinue={(started) => {
-                    if (importFrom === "linkedin") return advance("linkedin");
-                    return started ? afterPeople() : goTo("people");
-                  }}
-                />
-              </BranchStep>
-            )}
-
-            {step === "ai-key" && (
-              <BranchStep
-                eyebrow="Your AI"
-                title="Add your AI key"
-                onBack={() => retreat("ai-key")}
-              >
-                <AiKeyStep
-                  onSaved={() => {
-                    setApiKey(true);
-                    advance("ai-key", { hasApiKey: true });
-                  }}
-                  onSkip={() => advance("ai-key")}
+                  onContinue={(started) => (started ? afterPeople() : goTo("people"))}
                 />
               </BranchStep>
             )}
@@ -390,11 +351,8 @@ export function OnboardingFlow({
             {step === "people" && (
               <PeopleStep
                 onBack={() => retreat("people")}
-                onLater={() => goTo("overview")}
-                onChoose={(choice) => {
-                  if (choice === "import") setImportFrom("people");
-                  goTo(choice);
-                }}
+                onLater={() => advance("people")}
+                onChoose={goTo}
               />
             )}
 
@@ -425,7 +383,7 @@ export function OnboardingFlow({
                 title="How close are you?"
                 description="A quick rating tells Orbit who matters most, so your follow-ups start in the right place."
               >
-                <TriageStep onDone={() => goTo("overview")} />
+                <TriageStep onDone={() => advance("triage")} />
               </BranchStep>
             )}
 
@@ -434,7 +392,7 @@ export function OnboardingFlow({
                 hidden={hiddenSet}
                 comingSoon={comingSoonSet}
                 planFlags={planFlags}
-                facts={{ hasApiKey: apiKey, linkedinPending: requested && !linkedinImported }}
+                facts={{ linkedinPending: requested && !linkedinImported }}
                 onBack={() => retreat("overview")}
                 onDone={() => leave(true)}
                 onTour={switchToTour}

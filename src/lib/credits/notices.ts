@@ -280,9 +280,9 @@ export async function sendCreditNotices(
       stats.skipped++;
       continue;
     }
-    // Only an account still on included AI hears about its credits.
+    // Only Pro and Max hear about credits by email; Free sees the in-app notice.
     const ent = await getEntitlements(c.user_id);
-    if (!ent.canUseHostedAi) {
+    if (!ent.canUseHostedAi || ent.plan === "free") {
       stats.skipped++;
       continue;
     }

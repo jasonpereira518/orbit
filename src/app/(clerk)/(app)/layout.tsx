@@ -23,7 +23,9 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
-import { aiReadyFromSettings } from "@/lib/ai-access";
+import { aiDenialFromSettings } from "@/lib/ai-access";
+import { creditPeriodFor } from "@/lib/credits/ledger";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import { getLinkedInReminderState } from "@/lib/linkedin-reminder";
 import { tourRailVisible } from "@/lib/tour/tour-state";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
@@ -153,9 +155,11 @@ export default async function AppLayout({
 
   // Whether included AI can run on this deployment at all — see ViewerPlanProvider.
   const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean);
+  const aiReason = aiDenialFromSettings(userId, settings);
+  const creditsResetAt = PLAN_CONFIG[plan].monthlyCredits ? creditPeriodFor(settings).end.toISOString() : null;
 
   return (
-    <ViewerPlanProvider value={{ plan, includedAiAvailable }}>
+    <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, creditsResetAt }}>
       {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
           color the shell and the page ask for is registered by then. */}
       <LearnedBrandColors brands={brandColors.learned} />
@@ -178,7 +182,7 @@ export default async function AppLayout({
       tour={{
         active: tourRailVisible(settings),
         stop: settings.tourStop,
-        hasApiKey: aiReadyFromSettings(userId, settings),
+        hasApiKey: aiReason === null,
         linkedinRequested: settings.linkedinExportRequestedAt != null,
       }}
     >

@@ -16,6 +16,7 @@ const inFlight = new Map<string, Promise<void>>();
  * touched. Because the check is "no contacts", clearing an account's data on localhost
  * (Settings → delete data) re-seeds it on the next request — a free "reset demo".
  *
+ * `ORBIT_DEMO_PERSONA=student` seeds the student / new-grad workspace instead.
  * `ORBIT_DEMO_DATA=off` disables it, for working on onboarding or empty states locally.
  * Never runs off localhost: `isLocalhost()` is `next dev`, which no deployment runs.
  */
@@ -36,7 +37,8 @@ export async function ensureLocalDemoData(userId: string): Promise<void> {
     // Loaded on demand: the seeder and its data never enter the module graph of a
     // request that does not need them.
     const { seedDemoWorkspace } = await import("@/lib/demo-data/seed");
-    const summary = await seedDemoWorkspace(userId, { extended: true });
+    const persona = process.env.ORBIT_DEMO_PERSONA === "student" ? "student" : undefined;
+    const summary = await seedDemoWorkspace(userId, persona ? { persona } : { extended: true });
     console.info(`[demo-data] seeded a demo workspace for ${userId}`, summary);
   })()
     .catch((err) => {

@@ -81,7 +81,7 @@ const SPEC: Record<
     extension: boolean;
   }
 > = {
-  free: { contactLimit: 500, credits: null, packs: false, meeting: 0, shortform: 1 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: false, extension: true },
+  free: { contactLimit: 500, credits: 10, packs: false, meeting: 0, shortform: 1 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: true, extension: true },
   orbit: { contactLimit: null, credits: 200, packs: true, meeting: 5 * HOUR, shortform: 5 * HOUR, enrich: 10, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
   max: { contactLimit: null, credits: 500, packs: true, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
   lifetime: { contactLimit: null, credits: null, packs: false, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 25, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: false, extension: true },

@@ -26,7 +26,7 @@ import { Disclosure } from "@/components/settings/disclosure";
 import { ClearKeyButton, ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { AI_NOTICE_COPY } from "@/lib/ai-access-copy";
+import { FREE_AI_EXPLAINER, noticeCopyFor } from "@/lib/ai-access-copy";
 import { managedModel } from "@/lib/managed-ai-policy";
 import { setAiKeyPreference } from "@/actions/credits";
 import { CreditsCard } from "@/components/credits/credits-card";
@@ -140,9 +140,11 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
     <SettingsSection
       title="AI provider"
       description={
-        onIncluded
-          ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits — or bring your own key, which never uses credits."
-          : ai.plan === "lifetime"
+        onIncluded && ai.plan === "free"
+          ? FREE_AI_EXPLAINER
+          : onIncluded
+            ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits — or bring your own key, which never uses credits."
+            : ai.plan === "lifetime"
             ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. On Orbit Lifetime, AI runs on your own key — pick a provider and paste it. Keys are encrypted at rest and only used for your account."
             : "Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
       }
@@ -268,7 +270,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                       : `Your ${providerMeta.label} key is saved and runs first — it never uses credits`
                     : `Your ${providerMeta.label} key is saved`
                 : provider === ai.selectedProvider && ai.reason
-                  ? AI_NOTICE_COPY[ai.reason].title("use AI")
+                  ? noticeCopyFor(ai.reason, ai.plan, null).title("use AI")
                   : managedRuns
                     ? onLocalDevKeys
                       ? `Using your .env.local ${providerMeta.label} key — ${modelLabel(provider, managedRuns)}`

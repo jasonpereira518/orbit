@@ -7,6 +7,7 @@
  */
 import { cookies } from "next/headers";
 import { after } from "next/server";
+import { AI_ACCESS_COPY } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { requireUserForReleasedSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -147,7 +148,7 @@ export async function explainRecommendationAction(id: string): Promise<RadarActi
     revalidateRadar();
     return { ok: true, why: result.note.why, opener: result.note.opener };
   }
-  if (result.reason === "no_key") return { ok: false, message: "Add your AI API key in Settings to use this" };
+  if (result.reason === "no_key") return { ok: false, message: AI_ACCESS_COPY.key_required };
   if (result.reason === "not_found") return { ok: false, message: "That card has already changed — refresh to see the latest" };
   return { ok: false, message: result.message ?? friendlyError(null, "Couldn’t write that just now — try again?") };
 }
