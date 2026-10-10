@@ -54,3 +54,12 @@ export function writeSeen(token: string, standing: PassStanding, storage?: Stora
     // Blocked or full: the next visit just has nothing to compare with.
   }
 }
+
+/** Whether this device has shown any pass, i.e. someone here already joined. */
+export function hasSeenAnyPass(storage?: Storage): boolean {
+  try {
+    return Boolean((storage ?? local())?.getItem(KEY));
+  } catch {
+    return false;
+  }
+}

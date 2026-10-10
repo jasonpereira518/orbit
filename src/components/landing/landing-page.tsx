@@ -1,3 +1,4 @@
+import { EarlyAccessPill } from "@/components/landing/early-access-pill";
 import { LandingHeroCopy } from "@/components/landing/landing-hero";
 import { LandingPageShell } from "@/components/landing/landing-page-shell";
 import { LandingHowItWorks } from "@/components/landing/landing-how-it-works";
@@ -60,6 +61,8 @@ export function LandingPage({
         <SceneFeatures />
         <SceneFinale {...authProps} />
       </LandingPageShell>
+
+      <EarlyAccessPill />
 
       {/* Pinned to the viewport corner on every scroll position. Must stay a
        * direct child of this untransformed root, like the starfield. */}
