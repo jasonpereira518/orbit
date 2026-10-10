@@ -117,6 +117,14 @@ export type GuardedFetchOptions = {
    * data that was never seen.
    */
   onOverflow?: "truncate" | "error";
+  /**
+   * Called with every URL before it is requested: the entry URL and each redirect hop.
+   * Throw to refuse it; the error propagates as thrown.
+   *
+   * For host POLICY (a site Orbit never reads), which has to hold when a short link
+   * redirects there too. The SSRF fence runs regardless and is not this hook's job.
+   */
+  beforeRequest?: (url: string) => void;
 };
 
 export type GuardedFetchResult = {
@@ -321,6 +329,7 @@ export async function guardedFetchText(
 
   let url = start;
   for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+    options.beforeRequest?.(url);
     let result: Awaited<ReturnType<typeof attemptOnce>>;
     try {
       result = await attemptOnce(url, resolved);
