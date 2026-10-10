@@ -67,6 +67,8 @@ export class EventPageError extends Error {
     | "private_page"
     /** The link resolved to a login wall, whose title is not this event's title. */
     | "sign_in_required"
+    /** A platform whose terms rule out reading its pages this way. Policy, not a fault. */
+    | "declined_host"
     /**
      * The body ran past `maxBytes` and the caller asked to be told rather than handed a
      * truncated one. Only reachable with `onOverflow: "error"` — see `GuardedFetchOptions`.

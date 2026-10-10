@@ -398,13 +398,14 @@ run(async () => {
           selfEmails: [`${USER}@example.com`],
           events: [
             {
-              uid: "gcal-luma-party",
+              // Partiful, not Luma: Luma's pages are deliberately not read (fetch-page.ts).
+              uid: "gcal-partiful-party",
               summary: "AI Tinkerers SF",
-              description: "RSVP: https://lu.ma/ai-tinkerers-sched",
+              description: "RSVP: https://partiful.com/e/ai-tinkerers-sched",
               location: "Shack15",
               start: new Date("2026-06-01T18:00:00.000Z"),
               end: new Date("2026-06-01T21:00:00.000Z"),
-              organizer: { name: "Luma", email: "invites@lu.ma" },
+              organizer: { name: "Partiful", email: "invites@partiful.com" },
               attendees: [
                 { name: "You", email: `${USER}@example.com` },
                 { name: "Ada Lovelace", email: "ada@analytical.io" },
