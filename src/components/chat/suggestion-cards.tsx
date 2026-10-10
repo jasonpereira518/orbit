@@ -259,39 +259,3 @@ export function SuggestionCardsSkeleton() {
     </Scroller>
   );
 }
-
-/**
- * The same suggestions as plain pills, for the floating ask bar.
- *
- * Its popover is `w-80` inside a 48vh cap, so this variant wraps instead of scrolling and
- * the caller caps how many it shows. No tooltip: a tooltip inside a popover has to escape
- * two stacking contexts to be read, and the bar is a transient surface people type in
- * rather than browse. The reason rides on `title` instead, which costs nothing.
- */
-export function SuggestionPills({
-  items,
-  disabled,
-  onPick,
-}: {
-  items: readonly ChatSuggestion[];
-  disabled?: boolean;
-  onPick: (suggestion: ChatSuggestion) => void;
-}) {
-  if (!items.length) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {items.map((s) => (
-        <button
-          key={s.id}
-          type="button"
-          disabled={disabled}
-          title={s.basis || undefined}
-          onClick={() => onPick(s)}
-          className="max-w-full truncate rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-        >
-          {s.question}
-        </button>
-      ))}
-    </div>
-  );
-}

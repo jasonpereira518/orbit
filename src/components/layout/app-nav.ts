@@ -13,6 +13,7 @@ import {
   BookOpen,
   PartyPopper,
   Radar,
+  AudioLines,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -95,6 +96,11 @@ const RADAR: AppNavItem = {
   label: "Radar",
   icon: Radar,
 };
+const MEETINGS: AppNavItem = {
+  href: "/meetings",
+  label: "Meetings",
+  icon: AudioLines,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -121,7 +127,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
  * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [MEETINGS, EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -150,6 +156,7 @@ export const MOBILE_MORE_NAV = [
   REMINDERS,
   IMPORTS,
   CONSTELLATION,
+  MEETINGS,
   EVENTS,
   OUTREACH,
   KNOWLEDGE,

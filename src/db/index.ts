@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   last_name text,
   profile_image_url text,
   sender_bio text,
+  career_profile jsonb,
   email_activity_sync integer NOT NULL DEFAULT 0,
   signup_referrer text,
   signup_utm_source text,
@@ -2589,7 +2590,11 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // email_activity_sync) while this branch also declared 149 — the same silent collision this
 // log records above, caught on the merge. Rescanned every remote ref, every local branch and
 // every worktree's working file on Oct 6 2026: 149 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 150;
+//
+// 151 = importing the user's OWN LinkedIn profile (Profile, Positions, Skills, SavedJobAlerts):
+// user_settings.career_profile. Rescanned every remote ref and every worktree's working file on
+// Oct 8 2026: 150 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 151;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3383,6 +3388,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interactions", "direction", "text");
   await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(client, "user_settings", "sender_bio", "text");
+  await ensureColumn(client, "user_settings", "career_profile", "jsonb");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
@@ -4157,6 +4163,7 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,

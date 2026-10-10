@@ -94,6 +94,19 @@ console.log("\nan upload already started is never started again");
   check("the input is not mutated", entries.every((e) => e.status === "pending"));
 }
 
+console.log("\na file whose text was already captured is skipped, not queued");
+
+{
+  const dup: UploadOutcome = { ok: true, jobId: "dropped-job", duplicate: true, notice: "Already captured on Oct 3 — not read again" };
+  const applied = applyOutcome(entry("a"), dup, NOW);
+  check("it is skipped, not queued", applied.status === "skipped", applied.status);
+  check("  no job is left to wait on", applied.jobId === null, String(applied.jobId));
+  check("  it is not an error", applied.error === null);
+  check("  and says why", applied.notice === "Already captured on Oct 3 — not read again", String(applied.notice));
+  const summary = summarize([applied, applyOutcome(entry("b"), { ok: true, jobId: "j2" }, NOW)]);
+  check("  the run still finishes, counting only the one actually read", summary.done && summary.queued === 1, JSON.stringify(summary));
+}
+
 console.log("\na 429 waits and comes back — it never drops the file");
 
 {

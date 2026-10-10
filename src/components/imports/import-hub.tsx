@@ -48,7 +48,7 @@ import {
   useWindowFilePaste,
 } from "@/lib/use-window-file-drop";
 import { handOffChatFiles } from "@/lib/imports/chat-handoff";
-import { detectImportFiles, type DetectionResult } from "@/lib/imports/detect-import-file";
+import { LINKEDIN_LEFT_OUT, detectImportFiles, type DetectionResult } from "@/lib/imports/detect-import-file";
 import { acceptsNewDrop } from "@/lib/imports/import-queue";
 import { getImportQueueState, stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
@@ -452,6 +452,16 @@ export function ImportHub({
           truncated: capped,
           chatImports,
         });
+        // A LinkedIn export folder is ~30 files and only six are read. Say so up front, so a
+        // person who dropped the whole folder is not left wondering where the rest went.
+        const leftOut = result.ignored.filter((d) => d.reason === LINKEDIN_LEFT_OUT).length;
+        if (leftOut > 0) {
+          toast.info(
+            `Only your connections, messages, profile, role, skills and job alerts are imported from a LinkedIn export — ${leftOut} other ${
+              leftOut === 1 ? "file was" : "files were"
+            } left out`,
+          );
+        }
         if (result.chatFiles.length) {
           // Open the row first: the card mounts with it and picks the files up on mount.
           setOpen("import-panel-chats");

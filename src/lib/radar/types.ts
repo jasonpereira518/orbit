@@ -88,6 +88,7 @@ export const CONTEXT_CODES: ReadonlySet<string> = new Set([
   "stated_close",
   "target_company",
   "goal_match",
+  "focus_match",
   "touched_recently",
   "dismissed_recently",
   "already_scheduled",

@@ -333,7 +333,19 @@ export type AnalyzeInput = {
   startedAtIso: string;
   userName: string | null;
   attendees: string[];
+  /**
+   * What the user typed into the notes box during the call, as one block. Shown to every
+   * piece of a long call, since a name jotted at minute 5 matters at minute 50.
+   */
+  userNotes?: string;
 };
+
+export const MAX_USER_NOTES_CHARS = 20_000;
+
+/** Untrusted input from the browser → trimmed, bounded text ("" when there is none). */
+export function cleanUserNotes(raw: unknown): string {
+  return typeof raw === "string" ? raw.trim().slice(0, MAX_USER_NOTES_CHARS) : "";
+}
 
 /**
  * "you" -> "You", "speaker-2" -> "Speaker 2". Null (no speaker identified for that
@@ -380,6 +392,9 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
     part
       ? `This is part ${part.index} of ${part.total} of the transcript. Extract only what is in this part.`
       : "",
+    input.userNotes
+      ? `The user also typed their own notes while the call was running (given below the transcript as MY NOTES). They are the user's words, not speech from the call: trust their spelling of names and what they say about who is who, and use them as context for the whole call. A person named only in the notes is "present": false unless the notes say they were on the call. A to-do the user wrote down for themselves is an action item with owner "me". Never treat the notes as something a speaker said, and never quote them as source_excerpt or dated_quotes.`
+      : "",
     "Return JSON of exactly this shape:",
     SHAPE,
     "Rules:",
@@ -404,7 +419,8 @@ function userPrompt(input: AnalyzeInput, transcript: string): string {
     `Date: ${input.startedAtIso.slice(0, 10)}`,
     input.attendees.length ? `Attendees the user listed: ${input.attendees.join(", ")}` : "",
   ].filter(Boolean);
-  return `${context.join("\n")}\n\nTRANSCRIPT:\n${fenceUntrusted("TRANSCRIPT", transcript)}`;
+  const notes = input.userNotes ? `\n\nMY NOTES:\n${fenceUntrusted("NOTES", input.userNotes)}` : "";
+  return `${context.join("\n")}\n\nTRANSCRIPT:\n${fenceUntrusted("TRANSCRIPT", transcript)}${notes}`;
 }
 
 function reducePrompt(input: AnalyzeInput) {

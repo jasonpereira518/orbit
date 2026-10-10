@@ -13,6 +13,7 @@ import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { RadarDigestSetting } from "@/components/settings/radar-digest-setting";
+import { MeetingNudgeSetting } from "@/components/settings/meeting-nudge-setting";
 import { PlanSettings } from "@/components/settings/plan-settings";
 import { ProfileSettings } from "@/components/settings/profile-settings";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -177,6 +178,7 @@ export default async function SettingsPage() {
             clerkEnabled={isClerkConfigured()}
             initialSocialLinks={initialSettings.socialLinks}
             initialSenderBio={initialSettings.senderBio}
+            initialCareer={initialSettings.careerProfile}
           />
         </Section>
         <Section id="settings-plan" hidden={hidden}>
@@ -217,6 +219,7 @@ export default async function SettingsPage() {
             {shows("settings-notifications") && radarLive ? (
               <RadarDigestSetting initialEnabled={initialSettings.radarDigestEnabled} />
             ) : null}
+            {shows("settings-notifications") ? <MeetingNudgeSetting /> : null}
           </SettingsSection>
         ) : null}
         <Section id="settings-email" hidden={hidden}>

@@ -2,11 +2,16 @@
 
 import { useSyncExternalStore } from "react";
 import {
+  applyLinkedInYou,
   previewCalendarImport,
   previewContactsFile,
   previewLinkedInCsv,
   previewLinkedInMessagesCsv,
+  previewLinkedInYou,
 } from "@/actions/imports";
+import type { YouField } from "@/lib/career-profile";
+import { isYouTarget, type YouTarget } from "@/lib/linkedin-you-shape";
+import { RUN_ORDER } from "@/lib/imports/import-constants";
 import { failureText, friendlyError, UserFacingError } from "@/lib/errors";
 import {
   awaitImportJob,
@@ -57,7 +62,7 @@ import { toast } from "@/lib/toast";
  * the runner's shorter one. Two vocabularies with one crossing, rather than three.
  */
 const KIND_FOR_TARGET: Record<
-  Exclude<ImportTarget, "unknown">,
+  Exclude<ImportTarget, "unknown" | YouTarget>,
   ImportJobKind
 > = {
   linkedin_connections: "connections",
@@ -79,6 +84,11 @@ type QueueState = {
     { text: string; fileName: string; target: ImportTarget }
   >;
   people: Map<string, ReviewPerson[]>;
+  /**
+   * What each "about you" file would change, by item id. Their `ids` are the field keys the
+   * person kept ticked, which is how they reuse the people-selection plumbing.
+   */
+  you: Map<string, YouField[]>;
   /** Files the drop could not use, for the "Not imported" list. */
   ignored: { name: string; reason: string }[];
   truncated: boolean;
@@ -91,6 +101,7 @@ const EMPTY: QueueState = {
   items: [],
   payloads: new Map(),
   people: new Map(),
+  you: new Map(),
   ignored: [],
   truncated: false,
   phase: "idle",
@@ -121,12 +132,13 @@ export function getImportQueueState() {
 }
 
 export function clearImportQueue() {
-  state = { ...EMPTY, payloads: new Map(), people: new Map() };
+  state = { ...EMPTY, payloads: new Map(), people: new Map(), you: new Map() };
   emit();
 }
 
 export type ImportQueueView = ImportQueueSnapshot & {
   people: Map<string, ReviewPerson[]>;
+  you: Map<string, YouField[]>;
   ignored: { name: string; reason: string }[];
   truncated: boolean;
   phase: QueueState["phase"];
@@ -142,6 +154,7 @@ export function useImportQueue(): ImportQueueView {
   return {
     ...summarize(snap.items),
     people: snap.people,
+    you: snap.you,
     ignored: snap.ignored,
     truncated: snap.truncated,
     phase: snap.phase,
@@ -164,6 +177,8 @@ type PreviewOutcome =
       ids: string[];
       text: string;
       fileName: string;
+      /** Set for the "about you" files: what each would change. */
+      fields?: YouField[];
     }
   | { ok: false; error: string };
 
@@ -172,6 +187,12 @@ async function previewOne(d: Detected): Promise<PreviewOutcome> {
   try {
     const text = await readText(d);
 
+    if (isYouTarget(d.target)) {
+      const res = await previewLinkedInYou(d.target, text);
+      if ("error" in res) throw new UserFacingError(res.error);
+      const ids = res.fields.filter((f) => f.defaultOn).map((f) => f.key);
+      return { ok: true, people: [], ids, text, fileName, fields: res.fields };
+    }
     if (d.target === "linkedin_connections") {
       const res = await previewLinkedInCsv(text);
       if ("error" in res) throw new UserFacingError(res.error);
@@ -225,11 +246,13 @@ export async function stageDrop(result: DetectionResult): Promise<boolean> {
     { text: string; fileName: string; target: ImportTarget }
   >();
   const people = new Map<string, ReviewPerson[]>();
+  const you = new Map<string, YouField[]>();
 
   setState({
     items,
     payloads,
     people,
+    you,
     ignored: [...result.ignored, ...result.skipped].map((d) => ({
       name: d.displayName,
       reason: d.reason,
@@ -276,11 +299,12 @@ export async function stageDrop(result: DetectionResult): Promise<boolean> {
           target: source.target,
         });
         state.people.set(item.id, outcome.people);
+        if (outcome.fields) state.you.set(item.id, outcome.fields);
         setState({
           items: advance(state.items, item.id, {
             status: "needs_review",
             ids: outcome.ids,
-            reviewCount: outcome.people.length,
+            reviewCount: outcome.fields?.length ?? outcome.people.length,
           }),
         });
       }
@@ -297,22 +321,7 @@ export async function stageDrop(result: DetectionResult): Promise<boolean> {
 }
 
 function orderOf(a: Detected, b: Detected) {
-  return (
-    [
-      "linkedin_connections",
-      "contacts_file",
-      "linkedin_messages",
-      "calendar_ics",
-      "calendar_csv",
-    ].indexOf(a.target) -
-    [
-      "linkedin_connections",
-      "contacts_file",
-      "linkedin_messages",
-      "calendar_ics",
-      "calendar_csv",
-    ].indexOf(b.target)
-  );
+  return RUN_ORDER.indexOf(a.target) - RUN_ORDER.indexOf(b.target);
 }
 
 /** Change which people a step will import. */
@@ -333,8 +342,9 @@ function inputFor(item: QueuedImport): ImportJobInput | null {
   const ids = item.ids ?? [];
 
   // Through the one map, not a second switch over targets — the whole point of having it.
+  if (isYouTarget(payload.target)) return null;
   const kind =
-    KIND_FOR_TARGET[payload.target as Exclude<ImportTarget, "unknown">];
+    KIND_FOR_TARGET[payload.target as Exclude<ImportTarget, "unknown" | YouTarget>];
   switch (kind) {
     case "connections":
     case "messages":
@@ -377,6 +387,38 @@ export async function runQueue(): Promise<RunResult> {
   for (;;) {
     const item = nextRunnable(state.items);
     if (!item) break;
+
+    // The files about the user are a few KB and one write, so they skip the job runner (no
+    // progress bar, no cancel, nothing to resume) and save through their own action.
+    if (isYouTarget(item.target)) {
+      const payload = state.payloads.get(item.id);
+      state.payloads.delete(item.id);
+      if (!payload) {
+        setState({ items: advance(state.items, item.id, { status: "skipped" }) });
+        continue;
+      }
+      setState({ items: advance(state.items, item.id, { status: "running" }) });
+      try {
+        const res = await applyLinkedInYou({ target: item.target, text: payload.text, keys: item.ids ?? [] });
+        setState({
+          items: advance(
+            state.items,
+            item.id,
+            "error" in res
+              ? { status: "failed", error: res.error }
+              : { status: "done", result: res.message },
+          ),
+        });
+      } catch (err) {
+        setState({
+          items: advance(state.items, item.id, {
+            status: "failed",
+            error: friendlyError(err, IMPORT_COPY.importFailed),
+          }),
+        });
+      }
+      continue;
+    }
 
     const input = inputFor(item);
     // The runner holds the text from here on, and nothing re-runs a step, so the queue's

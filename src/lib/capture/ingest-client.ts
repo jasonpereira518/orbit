@@ -67,6 +67,11 @@ export type CaptureUploadResult =
       hints: CaptureParseHints;
       sources: string[];
       transcriptionEngine: string | null;
+      /**
+       * Set by an `autoQueue` upload whose text this user has already captured: the server
+       * dropped the job instead of reading it again. `job` is that dropped (discarded) row.
+       */
+      duplicate?: { jobId: string | null; capturedAt: string };
     }
   | {
       ok: false;
@@ -182,6 +187,7 @@ export async function uploadCaptureMedia(input: UploadInput): Promise<CaptureUpl
     hints,
     sources,
     transcriptionEngine,
+    duplicate: last!.duplicate,
   };
 }
 
@@ -258,7 +264,14 @@ async function postCapturePart(
     hints: (body.hints as CaptureParseHints) ?? {},
     sources: Array.isArray(body.sources) ? (body.sources as string[]) : [],
     transcriptionEngine: typeof body.transcriptionEngine === "string" ? body.transcriptionEngine : null,
+    duplicate: duplicateOf(body.duplicate),
   };
+}
+
+function duplicateOf(raw: unknown): { jobId: string | null; capturedAt: string } | undefined {
+  const d = raw as { jobId?: unknown; capturedAt?: unknown } | null | undefined;
+  if (!d || typeof d.capturedAt !== "string") return undefined;
+  return { jobId: typeof d.jobId === "string" ? d.jobId : null, capturedAt: d.capturedAt };
 }
 
 /** Base64 → Blob, for a recording the recorder hands over already encoded. */

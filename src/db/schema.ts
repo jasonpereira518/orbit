@@ -256,6 +256,17 @@ export const userSettings = pgTable("user_settings", {
    */
   senderBio: text("sender_bio"),
   /**
+   * What the user's own LinkedIn export says about them: headline, industry, current role,
+   * skills and the job titles they have alerts for. Written only by the LinkedIn profile
+   * imports, one key per file, so re-importing Skills.csv never touches the headline.
+   *
+   * Deliberately NOT `sender_bio`: that is what the person typed, and an import must not
+   * overwrite it. It feeds ranking (who to reach out to) and a fenced "about you" prompt block,
+   * never the drafts' voice. NULL means nothing imported. Content, so a "preferences" wipe
+   * clears it and the data export includes it.
+   */
+  careerProfile: jsonb("career_profile").$type<CareerProfile>(),
+  /**
    * Whether a connected mailbox may be read for relationship activity. 0 by default.
    *
    * Opt-in rather than implied by the Gmail connection, which users make to import contacts,
@@ -1752,6 +1763,16 @@ export type ContactExperienceKind = "role" | "education";
  * another change to the stored shape.
  */
 export type ContactProfileSource = "extension" | "web" | "apollo" | "messages";
+
+/** `user_settings.career_profile`. Every key is optional: each import writes only its own. */
+export type CareerProfile = {
+  profile?: { headline?: string; summary?: string; industry?: string; location?: string };
+  role?: { title: string; company: string };
+  skills?: string[];
+  /** Job titles from saved job alerts, de-duplicated. */
+  roleKeywords?: string[];
+  importedAt?: string;
+};
 
 export type ProfileSkill = { name: string };
 export type ProfileCertification = { name: string; issuer: string | null; year: number | null };

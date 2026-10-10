@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import type { FinishArrival } from "@/components/imports/import-finish-scene";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
+import { ImportYouReview } from "@/components/imports/import-you-review";
+import { isYouTarget } from "@/lib/linkedin-you-shape";
+import type { YouField } from "@/lib/career-profile";
 import { ImportProgress } from "@/components/imports/import-utils";
 import { useImportJob } from "@/lib/import-job-runner";
 import { getFinishedImportsFor } from "@/actions/imports";
@@ -277,6 +280,7 @@ export function ImportQueueCard({
               key={item.id}
               item={item}
               people={queue.people.get(item.id) ?? []}
+              fields={queue.you.get(item.id)}
               expanded={open === item.id}
               onToggle={() => setOpen(open === item.id ? null : item.id)}
               locked={isRunning || queue.phase === "done"}
@@ -392,7 +396,11 @@ function groupIgnored(
  * what produced "1 of 0 selected", and it inflated the total under the button.
  */
 function isPeopleImport(item: QueuedImport): boolean {
-  return item.target !== "calendar_ics" && item.target !== "calendar_csv";
+  return (
+    item.target !== "calendar_ics" &&
+    item.target !== "calendar_csv" &&
+    !isYouTarget(item.target)
+  );
 }
 
 const STATUS_BADGE: Record<
@@ -416,11 +424,14 @@ const STOPPED_BADGE = { label: "Stopped", variant: "outline" } as const;
 function QueueRow({
   item,
   people,
+  fields,
   expanded,
   onToggle,
   locked,
 }: {
   item: QueuedImport;
+  /** Set for the LinkedIn files about the user: a before/after per field, not people. */
+  fields?: YouField[];
   people: ReturnType<typeof useImportQueue>["people"] extends Map<
     string,
     infer P
@@ -434,7 +445,8 @@ function QueueRow({
   // Stop outranks the status: a stopped step is `skipped` or `done`, and neither "Skipped"
   // (which is also what a file the person chose not to import says) nor "Imported" is true.
   const badge = item.stopped ? STOPPED_BADGE : STATUS_BADGE[item.status];
-  const reviewable = item.status === "needs_review" && people.length > 0;
+  const reviewable =
+    item.status === "needs_review" && (people.length > 0 || (fields?.length ?? 0) > 0);
   // The icon follows the same rule: a step stopped mid-run is `done`, but a tick beside it
   // would say it finished.
   const look = item.stopped ? "skipped" : item.status;
@@ -473,9 +485,11 @@ function QueueRow({
               : item.result
                 ? item.result
                 : item.status === "needs_review"
-                  ? isPeopleImport(item)
-                    ? `${item.fileName} — ${item.ids?.length ?? 0} of ${item.reviewCount ?? 0} selected`
-                    : `${item.fileName} — meetings with people you already know`
+                  ? fields
+                    ? `${item.fileName} — ${item.ids?.length ?? 0} of ${item.reviewCount ?? 0} details selected`
+                    : isPeopleImport(item)
+                      ? `${item.fileName} — ${item.ids?.length ?? 0} of ${item.reviewCount ?? 0} selected`
+                      : `${item.fileName} — meetings with people you already know`
                   : item.fileName}
           </p>
         </div>
@@ -510,7 +524,17 @@ function QueueRow({
         ) : null}
       </div>
 
-      {expanded && reviewable ? (
+      {expanded && reviewable && fields ? (
+        <div className="border-t border-border/60 p-3">
+          <ImportYouReview
+            fields={fields}
+            selected={new Set(item.ids ?? [])}
+            onChange={(next) => setSelection(item.id, next)}
+          />
+        </div>
+      ) : null}
+
+      {expanded && reviewable && !fields ? (
         <div className="border-t border-border/60 p-3">
           <ImportPeopleReview
             people={people}

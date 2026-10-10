@@ -167,6 +167,8 @@ export async function getSettings() {
       canUseExtension: entitlements.canUseExtension,
     },
     senderBio: settings?.senderBio || "",
+    /** What the LinkedIn export imports wrote about the user; null when nothing was imported. */
+    careerProfile: settings?.careerProfile ?? null,
     socialLinks: {
       linkedin: settings?.socialLinks?.linkedin || "",
       twitter: settings?.socialLinks?.twitter || "",

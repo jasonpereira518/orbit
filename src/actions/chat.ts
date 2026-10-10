@@ -7,6 +7,8 @@ import {
   chatThreads,
   contacts,
   interactions,
+  meetingSessions,
+  meetingTranscriptSegments,
   type ChatRecommendation,
 } from "@/db/schema";
 import { chatWithNetwork } from "@/lib/ai";
@@ -263,6 +265,40 @@ export async function getEvidenceSnippet(messageId: string, id: string) {
       contactId: contact.id,
       contactName: contact.preferredName || contact.fullName,
       snippet: (contact.aiSummary || contact.notes || "").trim().slice(0, 600),
+    };
+  }
+
+  if (source.kind === "meeting") {
+    const meeting = await db.query.meetingSessions.findFirst({
+      where: and(
+        eq(meetingSessions.id, source.sourceId),
+        eq(meetingSessions.userId, userId),
+        inArray(meetingSessions.status, ["analyzed", "saved"])
+      ),
+      columns: { id: true, title: true, startedAt: true, digest: true },
+    });
+    if (!meeting) return { found: false as const };
+    // The line that was cited, when there is one; otherwise how the meeting went overall.
+    const line =
+      source.startMs === null
+        ? null
+        : await db.query.meetingTranscriptSegments.findFirst({
+            where: and(
+              eq(meetingTranscriptSegments.sessionId, meeting.id),
+              eq(meetingTranscriptSegments.userId, userId),
+              eq(meetingTranscriptSegments.startMs, source.startMs)
+            ),
+            columns: { text: true },
+          });
+    return {
+      found: true as const,
+      kind: "meeting" as const,
+      meetingId: meeting.id,
+      contactId: null,
+      contactName: null,
+      title: meeting.title?.trim() || meeting.digest?.title?.trim() || "Untitled meeting",
+      date: meeting.startedAt.toISOString().slice(0, 10),
+      snippet: (line?.text || meeting.digest?.summary || "").trim().slice(0, 600),
     };
   }
 

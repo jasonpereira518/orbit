@@ -33,6 +33,7 @@ import { discardCaptureBatch, getActiveCaptureJobs, mergeCaptureBatch } from "@/
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
 import { MeetingCaptureTab } from "@/components/capture/meeting-capture-tab";
+import { useMeetingFlow } from "@/components/capture/meeting-session";
 import { MeetingSummaryCard, type SelectableMeetingItem } from "@/components/capture/meeting-summary-card";
 import { MessyNotesCapture } from "@/components/capture/messy-notes-capture";
 import { PersonDeck } from "@/components/capture/review/person-deck";
@@ -124,8 +125,15 @@ export function CaptureFlow({
   }, [initialJob]);
   const job = seeded.current ? storeJob : (storeJob ?? initialJob);
 
+  // A meeting still recording (or paused) in the background wins: coming back to Capture
+  // from the widget's "Open" must land on it, not on whichever tab the URL names.
+  const meetingFlow = useMeetingFlow();
   const [mode, setMode] = useState<CaptureMode>(() =>
-    initialJob && (initialJob.status === "ingesting" || prefillJobFor(initialJob)) ? tabForSource(initialJob.sourceKind) : defaultMode
+    meetingFlow?.busy
+      ? "meeting"
+      : initialJob && (initialJob.status === "ingesting" || prefillJobFor(initialJob))
+        ? tabForSource(initialJob.sourceKind)
+        : defaultMode
   );
   /**
    * The queue over a multi-file drop.
@@ -216,7 +224,7 @@ export function CaptureFlow({
       });
   }, [activeBatchId, queueBusy, batchReadyCount]);
 
-  const [meetingBusy, setMeetingBusy] = useState(false);
+  const meetingBusy = meetingFlow?.busy ?? false;
   const [pendingStart, setPendingStart] = useState(false);
   const [reviewOpened, setReviewOpened] = useState(false);
   const [foundHold, setFoundHold] = useState(false);
@@ -452,6 +460,16 @@ export function CaptureFlow({
     [startExtraction]
   );
 
+  // A meeting the user finished while elsewhere is summarized in the background; this is
+  // where it is collected, whenever Capture next mounts.
+  const hasPendingMeeting = meetingFlow?.hasPendingAnalysis ?? false;
+  const claimMeeting = meetingFlow?.claimAnalysis;
+  useEffect(() => {
+    if (!hasPendingMeeting || !claimMeeting) return;
+    const done = claimMeeting();
+    if (done) onMeetingAnalyzed(done.analysis, done.sessionId);
+  }, [hasPendingMeeting, claimMeeting, onMeetingAnalyzed]);
+
   // ── Render ──────────────────────────────────────────────────────────────────────────
   const items = job?.result?.items ?? [];
   const reviewIndex = job ? firstPendingIndex(items, job.decisions) : -1;
@@ -537,8 +555,6 @@ export function CaptureFlow({
                 canTranscribe={canTranscribe}
                 canUseMeetings={canUseMeetings}
                 meetingsDeniedMessage={meetingsDeniedMessage}
-                onBusyChange={setMeetingBusy}
-                onAnalyzed={onMeetingAnalyzed}
                 panelId={capturePanelId("meeting")}
                 tabId={captureTabId("meeting")}
               />

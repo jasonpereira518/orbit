@@ -7,7 +7,9 @@ import {
   appendSourceFileHashes,
   createCaptureJob,
   createCaptureJobWithId,
+  discardCaptureJobRow,
   failCaptureJob,
+  findPriorCapture,
   markCaptureJobTranscribed,
   queueCaptureJobRow,
   toCaptureJobView,
@@ -15,7 +17,8 @@ import {
   setIngestingHints,
 } from "@/lib/capture-jobs";
 import { mergeHints } from "@/lib/capture/merge-hints";
-import { runCaptureJobById } from "@/lib/capture-job-runner";
+import { assembleCaptureCorpus, runCaptureJobById } from "@/lib/capture-job-runner";
+import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import type { CaptureJobSource } from "@/lib/capture/types";
 import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
@@ -244,6 +247,29 @@ export async function POST(request: Request) {
     // pressing Extract. The single-capture flow still queues separately, so its edit step
     // survives. `after` is valid in a Route Handler and inherits this route's maxDuration.
     if (autoQueue && isFinalPart) {
+      // The text was already captured — a different file with the same words in it (a re-saved
+      // doc, a re-exported PDF), which the browser's byte hash cannot see. Read it AGAIN is
+      // the one thing this must not do: it is a model call for an answer the person already
+      // has. So the job is dropped before it is queued, and the response says whose notes
+      // they were. `force` is the person insisting; nothing in the fan-out sends it yet.
+      const forced = String(form.get("force") ?? "") === "1";
+      const current = await getCaptureJobRow(userId, job.id);
+      const corpus = current ? assembleCaptureCorpus(current) : "";
+      const prior = corpus && !forced ? await findPriorCapture(userId, hashSourceNote(corpus), job.id) : null;
+      if (prior) {
+        await discardCaptureJobRow(userId, job.id);
+        await discardCapturePhotos(userId, photos.map((p) => p.id)).catch(() => {});
+        const dropped = await getCaptureJobRow(userId, job.id);
+        return NextResponse.json({
+          ok: true,
+          duplicate: { jobId: prior.jobId, capturedAt: prior.capturedAt.toISOString() },
+          job: toCaptureJobView(dropped ?? job),
+          text: normalized.text,
+          hints: normalized.hints,
+          sources: normalized.sources,
+          transcriptionEngine: normalized.transcriptionEngine ?? null,
+        });
+      }
       const hints = anchorDate && !noteHints.eventDate
         ? { ...noteHints, eventDate: anchorDate }
         : noteHints;

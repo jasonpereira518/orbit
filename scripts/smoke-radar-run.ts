@@ -357,7 +357,8 @@ run(async () => {
   // 26: the outcome check (`detectRadarOutcomes`), the model's tallies
   // (`loadModelTallies`), the autopilot settings, the job-move read, the news probe and the
   // posts read; see smoke-page-budgets.
-  check("and a bounded number of them", statements <= 26, String(statements));
+  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
+  check("and a bounded number of them", statements <= 27, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);
@@ -623,7 +624,9 @@ run(async () => {
           bucket: "today",
           reasons: [{ code: "inbound_unanswered", label: "They messaged you and haven’t heard back", points: 60 }],
           evidence: [],
-          expiresAt: ahead(7),
+          // The real clock, not the fixed NOW: listPendingRecommendations compares against
+          // the database's now(), so a card expiring at NOW+7d stopped being "pending" on Oct 8.
+          expiresAt: new Date(Date.now() + 7 * DAY),
           inputsHash: hash,
         })
         .returning()

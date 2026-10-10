@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, Contact, FileQuestion, Users, MessageSquare, Sparkles, X } from "lucide-react";
+import { CalendarDays, Contact, FileQuestion, Users, MessageSquare, Sparkles, UserRound, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Detected, DetectionResult, ImportTarget } from "@/lib/imports/detect-import-file";
@@ -20,6 +20,10 @@ import { cn } from "@/lib/utils";
 const KIND: Record<ImportTarget, { label: string; Icon: typeof Contact; tone: string }> = {
   linkedin_connections: { label: "LinkedIn connections", Icon: Users, tone: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
   linkedin_messages: { label: "LinkedIn messages", Icon: MessageSquare, tone: "bg-violet-500/15 text-violet-700 dark:text-violet-300" },
+  linkedin_profile: { label: "LinkedIn profile", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
+  linkedin_positions: { label: "LinkedIn current role", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
+  linkedin_skills: { label: "LinkedIn skills", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
+  linkedin_alerts: { label: "LinkedIn job alerts", Icon: UserRound, tone: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
   contacts_file: { label: "Contacts", Icon: Contact, tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
   calendar_ics: { label: "Calendar", Icon: CalendarDays, tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },
   calendar_csv: { label: "Calendar", Icon: CalendarDays, tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },

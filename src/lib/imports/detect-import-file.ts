@@ -30,6 +30,12 @@ import { headerFields } from "@/lib/imports/csv-header";
 import { isIgnorableFile, type DroppedFile } from "@/lib/capture/file-drop";
 import { RUN_ORDER } from "@/lib/imports/import-constants";
 import {
+  looksLikeLinkedInAlerts,
+  looksLikeLinkedInPositions,
+  looksLikeLinkedInProfile,
+  looksLikeLinkedInSkills,
+} from "@/lib/linkedin-you-shape";
+import {
   detectChatSource,
   pickChatMember,
 } from "@/lib/conversations/read-files";
@@ -45,6 +51,12 @@ import {
 export type ImportTarget =
   | "linkedin_connections"
   | "linkedin_messages"
+  // The four members that describe YOU, not other people. Not contact imports: they fill in
+  // `user_settings.career_profile`.
+  | "linkedin_profile"
+  | "linkedin_positions"
+  | "linkedin_skills"
+  | "linkedin_alerts"
   | "contacts_file"
   | "calendar_ics"
   | "calendar_csv"
@@ -210,7 +222,7 @@ function looksLikeCalendarCsv(fields: string[]): boolean {
  * What the first few KB say. `head` is raw file text, not lowercased — the vCard and iCalendar
  * checks want the real casing, and the CSV predicates lowercase their own fields.
  */
-export function classifyByHead(head: string): Classification | null {
+export function classifyByHead(head: string, name = ""): Classification | null {
   const trimmed = head.replace(/^﻿/, "").trimStart();
 
   if (/^BEGIN:VCALENDAR/i.test(trimmed) || /^BEGIN:VEVENT/im.test(trimmed)) {
@@ -246,6 +258,21 @@ export function classifyByHead(head: string): Classification | null {
       confidence: "likely",
       reason: "your LinkedIn messages",
     };
+  }
+  // The files about YOU. Distinctive headers, checked before the permissive contacts and
+  // calendar predicates. `Skills.csv` is a lone `Name` column, which says nothing on its own, so
+  // it also has to be called that.
+  if (looksLikeLinkedInProfile(fields)) {
+    return { target: "linkedin_profile", confidence: "likely", reason: "your LinkedIn profile" };
+  }
+  if (looksLikeLinkedInPositions(fields)) {
+    return { target: "linkedin_positions", confidence: "likely", reason: "your LinkedIn positions" };
+  }
+  if (looksLikeLinkedInAlerts(fields)) {
+    return { target: "linkedin_alerts", confidence: "likely", reason: "your LinkedIn job alerts" };
+  }
+  if (looksLikeLinkedInSkills(fields) && /^skills\.csv$/i.test(baseName(name))) {
+    return { target: "linkedin_skills", confidence: "likely", reason: "your LinkedIn skills" };
   }
   // Calendar before contacts: a calendar CSV often carries an organizer email, which the
   // contacts recogniser is permissive enough to accept.
@@ -299,7 +326,7 @@ async function classifyFile(entry: DroppedFile): Promise<Detected> {
 
   let byHead: Classification | null = null;
   try {
-    byHead = classifyByHead(await readHead(file));
+    byHead = classifyByHead(await readHead(file), file.name);
   } catch {
     // Unreadable as text — a binary that happens to end in .csv. The name is all we have.
     byHead = null;
@@ -334,20 +361,37 @@ async function classifyFile(entry: DroppedFile): Promise<Detected> {
  */
 const LINKEDIN_EXPORT_MEMBER = /^(connections|messages)\.csv$/i;
 
-/** CSVs a folder needs before it is treated as a LinkedIn archive. The real ones have ~25. */
-const LINKEDIN_EXPORT_MIN_CSVS = 6;
+/**
+ * The members about the user. They are taken from a LinkedIn folder but never make a folder
+ * count as one: `Profile.csv` and `Skills.csv` are names a résumé folder has, and treating that
+ * folder as an export would throw away everything else in it.
+ */
+const LINKEDIN_YOU_MEMBER = /^(profile|positions|skills|savedjobalerts)\.csv$/i;
 
-/** Members that exist in a LinkedIn archive and nowhere else a person would keep files. */
-const LINKEDIN_ARCHIVE_ONLY =
-  /^(invitations|profile|positions|education|skills|ad_targeting|rich_media|registration|endorsement_\w+|receipts|logins|shares|reactions|company follows)\.csv$/i;
+function isLinkedInYouMember(name: string): boolean {
+  return LINKEDIN_YOU_MEMBER.test(baseName(name));
+}
+
+/** Why every other file in a LinkedIn export folder is set aside — also how the hub counts them. */
+export const LINKEDIN_LEFT_OUT = "not needed from a LinkedIn export";
 
 function isLinkedInExportMember(name: string): boolean {
   return LINKEDIN_EXPORT_MEMBER.test(baseName(name));
 }
 
 /** Names inside a LinkedIn archive worth extracting. Everything else in it is noise. */
-const ZIP_MEMBERS: { pattern: RegExp; target: ImportTarget; reason: string }[] =
+const ZIP_MEMBERS: {
+  pattern: RegExp;
+  target: ImportTarget;
+  reason: string;
+  /** Generic names: only taken when the header agrees, so a résumé zip's Profile.csv is not. */
+  verify?: boolean;
+}[] =
   [
+    { pattern: /(^|\/)profile\.csv$/i, target: "linkedin_profile", reason: "your LinkedIn profile", verify: true },
+    { pattern: /(^|\/)positions\.csv$/i, target: "linkedin_positions", reason: "your LinkedIn positions", verify: true },
+    { pattern: /(^|\/)skills\.csv$/i, target: "linkedin_skills", reason: "your LinkedIn skills", verify: true },
+    { pattern: /(^|\/)savedjobalerts\.csv$/i, target: "linkedin_alerts", reason: "your LinkedIn job alerts", verify: true },
     {
       pattern: /(^|\/)connections\.csv$/i,
       target: "linkedin_connections",
@@ -382,6 +426,7 @@ async function expandZip(
     const member = members.find((m) => known.pattern.test(m.name));
     if (!member) continue;
     const text = await member.async("string");
+    if (known.verify && classifyByHead(text.slice(0, HEAD_BYTES), member.name)?.target !== known.target) continue;
     out.push({
       file: entry.file,
       path: member.name,
@@ -480,34 +525,18 @@ export async function detectImportFiles(
   // else is uploaded or written to `import_job_rows`, and 28 files' heads are never opened.
   // See `LINKEDIN_EXPORT_MEMBER` for why sniffing them is unsafe as well as merely wasteful.
   //
+  // A FOLDER holding Connections.csv or messages.csv IS a LinkedIn export, whatever it is
+  // called and however many files it has: from such a folder only those two are taken. This
+  // used to ask the folder to also LOOK like an archive (LinkedIn in its name, an archive-only
+  // member, six or more CSVs) so that a hand-assembled Downloads folder was left alone; that
+  // let the rest of a renamed or trimmed export through to be sniffed — including the
+  // lookalikes above. The person who wanted other files from a folder can drop those loose.
+  //
   // Scoped to the folder the member sits in, and never to loose files. Someone who drops a
   // Connections.csv and a calendar together has hand-picked both, and throwing the calendar
   // away because a LinkedIn file was in the same gesture would be its own bug.
-  //
-  // "A folder with Connections.csv in it" is not enough to call it an export: a Downloads folder
-  // holding that file beside a contacts file and a calendar is a hand-assembled pick, and
-  // dismissing everything else in it as noise left the person with one file and no explanation.
-  // So the folder has to look like an archive: LinkedIn in its name, a member only an archive
-  // has (Invitations, Profile, Ad_Targeting…), or the couple dozen CSVs a real one carries.
-  const csvCountByFolder = new Map<string, number>();
-  const archiveMarkerFolders = new Set<string>();
-  for (const f of files) {
-    if (f.path === "") continue;
-    if (extensionOf(f.file.name) === ".csv") {
-      csvCountByFolder.set(f.path, (csvCountByFolder.get(f.path) ?? 0) + 1);
-    }
-    if (LINKEDIN_ARCHIVE_ONLY.test(baseName(f.file.name))) archiveMarkerFolders.add(f.path);
-  }
-  const looksLikeExportFolder = (path: string) =>
-    /linkedin/i.test(path) ||
-    archiveMarkerFolders.has(path) ||
-    (csvCountByFolder.get(path) ?? 0) >= LINKEDIN_EXPORT_MIN_CSVS;
   const linkedInFolders = new Set(
-    files
-      .filter(
-        (f) => f.path !== "" && isLinkedInExportMember(f.file.name) && looksLikeExportFolder(f.path),
-      )
-      .map((f) => f.path),
+    files.filter((f) => f.path !== "" && isLinkedInExportMember(f.file.name)).map((f) => f.path),
   );
 
   const detected: Detected[] = [];
@@ -520,13 +549,17 @@ export async function detectImportFiles(
       detected.push(...expanded.detected);
       continue;
     }
-    if (linkedInFolders.has(entry.path) && !isLinkedInExportMember(entry.file.name)) {
+    if (
+      linkedInFolders.has(entry.path) &&
+      !isLinkedInExportMember(entry.file.name) &&
+      !isLinkedInYouMember(entry.file.name)
+    ) {
       detected.push({
         file: entry.file,
         path: entry.path,
         target: "unknown",
         confidence: "certain",
-        reason: "not needed from a LinkedIn export",
+        reason: LINKEDIN_LEFT_OUT,
         bytes: entry.file.size,
         displayName: entry.file.name,
       });

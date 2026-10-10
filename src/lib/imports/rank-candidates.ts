@@ -11,12 +11,19 @@
  * last word in the review.
  */
 import type { Detected, ImportTarget } from "@/lib/imports/detect-import-file";
+import { isYouTarget } from "@/lib/linkedin-you-shape";
 
 /** What a kind is worth on its own: the people list first, calendars last. */
 const TARGET_WEIGHT: Partial<Record<ImportTarget, number>> = {
   linkedin_connections: 25,
   contacts_file: 20,
   linkedin_messages: 15,
+  // Tiny files that are the only one of their kind in an export, so ranking is moot; weighted
+  // like messages so the folder card ticks them rather than hiding them.
+  linkedin_profile: 15,
+  linkedin_positions: 15,
+  linkedin_skills: 15,
+  linkedin_alerts: 15,
   calendar_ics: 10,
   calendar_csv: 10,
 };
@@ -26,6 +33,11 @@ const LOW_VALUE_NAME = /(\bcopy\b|\(\d+\)|\bbackup\b|\bold\b|\barchive\b|\btest\
 
 /** Under this a file is a header and nothing else — a one-event calendar is already past it. */
 const NEARLY_EMPTY_BYTES = 64;
+
+/** A short skills list or a one-line profile is a whole file, not an empty one. */
+function isNearlyEmpty(d: Detected): boolean {
+  return d.bytes < NEARLY_EMPTY_BYTES && !isYouTarget(d.target);
+}
 
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -52,7 +64,7 @@ export function scoreCandidate(d: Detected, now = Date.now()): { score: number; 
     score -= 30;
     notes.push("looks like a copy or backup");
   }
-  if (d.bytes < NEARLY_EMPTY_BYTES) {
+  if (isNearlyEmpty(d)) {
     score -= 30;
     notes.push("almost empty");
   } else {
@@ -83,7 +95,7 @@ export function rankCandidates(candidates: readonly Detected[], now = Date.now()
 
   const claimed = new Set<ImportTarget>();
   return scored.map(({ detected, score, notes }) => {
-    const poor = detected.bytes < NEARLY_EMPTY_BYTES;
+    const poor = isNearlyEmpty(detected);
     const suggested = !poor && !claimed.has(detected.target);
     if (suggested) claimed.add(detected.target);
     const why = [detected.reason, ...notes].join(" · ");
