@@ -126,6 +126,18 @@ async function dbChecks() {
     `got ${yaraAfter} — the threshold must be a live read of the column, not a one-time write`
   );
 
+  section("The tier default reaches low-score contacts too");
+
+  const lowScore = { priorityLevel: 0, relationshipScore: 2, lastInteractionAt: realDaysAgo(35) };
+  const inner = await person("Inner Ines", { ...lowScore, closenessTier: "inner" });
+  const outer = await person("Outer Otto", { ...lowScore, closenessTier: "outer" });
+  await refreshOutreachSuggestions(USER);
+  const tierRows = await db.query.aiSuggestions.findMany({ where: eq(aiSuggestions.userId, USER) });
+  const tierTypeOf = (id: string) =>
+    tierRows.find((r) => (r.relatedContactIds as string[] | null)?.includes(id))?.suggestionType ?? null;
+  check("an inner contact 35 days quiet gets dormant_high_value", tierTypeOf(inner.id) === "dormant_high_value", `got ${tierTypeOf(inner.id)}`);
+  check("an outer contact 35 days quiet gets none", tierTypeOf(outer.id) === null, `got ${tierTypeOf(outer.id)}`);
+
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));

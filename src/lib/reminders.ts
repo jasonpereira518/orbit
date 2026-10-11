@@ -8,7 +8,9 @@ import {
   interactions,
   reminders,
   userGoals,
+  type ClosenessTier,
 } from "@/db/schema";
+import { effectiveCadenceDays } from "@/lib/keep-in-touch";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
 import {
@@ -165,6 +167,8 @@ async function buildOutreachSuggestions(userId: string) {
         // and silently falls back to the default for everybody.
         cadenceDays: true,
         cadencePhrase: true,
+        // The materialized tier: its default cadence applies when no rhythm was stated.
+        closenessTier: true,
         // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
         // an optional field here would let a caller forget the column and quietly never
         // suppress anything, with nothing failing to say so.
@@ -266,12 +270,12 @@ async function buildOutreachSuggestions(userId: string) {
     });
   }
 
-  const dormantHighValue = all.filter(
-    (c) =>
-      isDiscoveryEligible(c) &&
-      (c.priorityLevel >= 2 || c.relationshipScore >= 4) &&
-      daysAgo(c.lastInteractionAt) >= idleThresholdFor(c.cadenceDays, DORMANT_DAYS)
-  );
+  const dormantHighValue = all.filter((c) => {
+    if (!isDiscoveryEligible(c)) return false;
+    const cadence = effectiveCadenceDays({ cadenceDays: c.cadenceDays, closenessTier: c.closenessTier });
+    if (cadence === null && !(c.priorityLevel >= 2 || c.relationshipScore >= 4)) return false;
+    return daysAgo(c.lastInteractionAt) >= idleThresholdFor(cadence, DORMANT_DAYS);
+  });
   for (const c of dormantHighValue) {
     const idle = daysAgo(c.lastInteractionAt);
     upsertCandidate(c.id, {
@@ -381,12 +385,16 @@ function followUpCandidateScore(contact: {
   lastInteractionAt: Date | string | null;
   nextFollowUpAt: Date | string | null;
   cadenceDays?: number | null;
+  closenessTier?: ClosenessTier | null;
 }) {
   const idleDays = Math.min(daysAgo(contact.lastInteractionAt), 365);
   // Idle time measured against this person's OWN rhythm, so the score means "how overdue",
   // not "how long". Dividing everyone by 30 ranked a quarterly contact above a weekly one
   // purely for sitting still.
-  const window = idleThresholdFor(contact.cadenceDays, DORMANT_DAYS);
+  const window = idleThresholdFor(
+    effectiveCadenceDays({ cadenceDays: contact.cadenceDays ?? null, closenessTier: contact.closenessTier ?? null }),
+    DORMANT_DAYS
+  );
   const idleScore = Number.isFinite(idleDays) ? idleDays / window : 2;
   return (
     (contact.priorityLevel || 0) * 4 +
@@ -414,6 +422,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
       lastInteractionAt: true,
       nextFollowUpAt: true,
       cadenceDays: true,
+      closenessTier: true,
     },
   });
 

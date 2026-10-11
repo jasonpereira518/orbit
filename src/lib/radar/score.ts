@@ -38,6 +38,7 @@ import {
   type RecommendationBucket,
   type RecommendationKind,
 } from "@/lib/radar/types";
+import { effectiveCadenceDays } from "@/lib/keep-in-touch";
 import { isLearnableReason, kindMultiplier, reasonMultiplier } from "@/lib/radar/model";
 import {
   DORMANT_DAYS,
@@ -463,8 +464,9 @@ export function scoreContactKinds(
   // Dormancy, against the rhythm the person stated or the default window. Unknown recency
   // is not dormancy: a contact with no touch on record is skipped rather than nagged about.
   const idle = daysSince(contact.lastInteractionAt, now);
-  if (idle !== null && isHighValue(contact)) {
-    const window = idleThresholdFor(contact.cadenceDays, DORMANT_DAYS);
+  const cadence = effectiveCadenceDays({ cadenceDays: contact.cadenceDays, closenessTier: contact.tier });
+  if (idle !== null && (cadence !== null || isHighValue(contact))) {
+    const window = idleThresholdFor(cadence, DORMANT_DAYS);
     if (idle >= window) {
       const overdue = Math.min(W.dormantOverdueCap, Math.round(W.dormantOverdueStep * (idle / window - 1)));
       add(

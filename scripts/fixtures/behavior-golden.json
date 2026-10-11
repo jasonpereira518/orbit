@@ -14277,18 +14277,6 @@
       ]
     },
     {
-      "id": "<ai_suggestions:Reach out to Sofia Marchetti>",
-      "title": "Reach out to Sofia Marchetti",
-      "status": "pending",
-      "user_id": "demo-user",
-      "description": "Gone quiet — last touch 63 days ago",
-      "suggestion_type": "dormant_high_value",
-      "confidence_score": 80,
-      "related_contact_ids": [
-        "<contacts:Sofia Marchetti>"
-      ]
-    },
-    {
       "id": "<ai_suggestions:Reach out to Tom Bennett>",
       "title": "Reach out to Tom Bennett",
       "status": "pending",
@@ -14298,18 +14286,6 @@
       "confidence_score": 80,
       "related_contact_ids": [
         "<contacts:Tom Bennett>"
-      ]
-    },
-    {
-      "id": "<ai_suggestions:Reach out to Yuki Tanaka>",
-      "title": "Reach out to Yuki Tanaka",
-      "status": "pending",
-      "user_id": "demo-user",
-      "description": "Gone quiet — last touch 88 days ago",
-      "suggestion_type": "dormant_high_value",
-      "confidence_score": 80,
-      "related_contact_ids": [
-        "<contacts:Yuki Tanaka>"
       ]
     }
   ],
