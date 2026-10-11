@@ -95,6 +95,10 @@ export type ContactsPageFilters = {
   company?: string;
   minScore?: number;
   followUp?: "due";
+  /** Only people who went to one of the user's schools. */
+  alumni?: boolean;
+  /** Only people at one of the user's target companies. */
+  targets?: boolean;
   /**
    * Only contacts whose last logged interaction is at least this many days old. Contacts
    * with no interaction at all are included: "never" is quieter than any threshold.

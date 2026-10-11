@@ -87,6 +87,7 @@ function candidate(id: string, company: string): RadarCandidateRow {
     preferredName: null,
     title: null,
     company,
+    school: null,
     industry: null,
     tier: "mid",
     hasEvidence: true,
@@ -216,7 +217,7 @@ run(async () => {
     const contact: RadarContact = {
       id: "x", company: "Ramp", tier: "mid", priorityLevel: 0, relationshipScore: 2, statedCloseness: null,
       firstInteractionAt: null, lastInteractionAt: new Date(NOW.getTime() - 10 * DAY), nextFollowUpAt: null, constellationPin: null,
-      cadenceDays: null, cadencePhrase: null, targetPriority: null, goalFit: 0, hasEvidence: true,
+      cadenceDays: null, cadencePhrase: null, targetPriority: null, alumniSchool: null, goalFit: 0, hasEvidence: true,
     };
     if (ramp) {
       const heads = scoreContactKinds(contact, [{ ...ramp, contactId: "x" }], NO_SUPPRESSION, NOW).find((k) => k.kind === "heads_up");
@@ -293,7 +294,7 @@ run(async () => {
     const contact: RadarContact = {
       id: "x", company: null, tier: "mid", priorityLevel: 0, relationshipScore: 2, statedCloseness: null,
       firstInteractionAt: null, lastInteractionAt: new Date(NOW.getTime() - 10 * DAY), nextFollowUpAt: null, constellationPin: null,
-      cadenceDays: null, cadencePhrase: null, targetPriority: null, goalFit: 0, hasEvidence: true,
+      cadenceDays: null, cadencePhrase: null, targetPriority: null, alumniSchool: null, goalFit: 0, hasEvidence: true,
     };
     const skyCard = scoreContactKinds(contact, [{ ...sky!, contactId: "x" }], NO_SUPPRESSION, NOW).find((k) => k.kind === "heads_up");
     const liCard = scoreContactKinds(contact, [{ ...linked!, contactId: "x", at: sky!.at }], NO_SUPPRESSION, NOW).find((k) => k.kind === "heads_up");

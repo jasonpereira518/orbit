@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import type { ContactSort } from "@/lib/contacts-page";
 import { Copy, Plus } from "lucide-react";
-import { listContactLetters, listContactsPage } from "@/actions/contacts";
+import { getAudienceFilterAvailability, listContactLetters, listContactsPage } from "@/actions/contacts";
 import {
   CONTACTS_PAGE_SIZE,
   isContactSort,
@@ -28,6 +28,8 @@ export default async function ContactsPage({
     company?: string;
     minScore?: string;
     followUp?: string;
+    alumni?: string;
+    targets?: string;
     sort?: string;
     quiet?: string;
     letter?: string;
@@ -49,6 +51,8 @@ export default async function ContactsPage({
     company: params.company,
     minScore: params.minScore ? Number(params.minScore) : undefined,
     followUp: params.followUp === "due" ? ("due" as const) : undefined,
+    alumni: params.alumni === "1" || undefined,
+    targets: params.targets === "1" || undefined,
     quiet: quiet ?? undefined,
     sort,
     letter: params.letter,
@@ -61,6 +65,8 @@ export default async function ContactsPage({
       params.company?.trim() ||
       params.minScore ||
       params.followUp === "due" ||
+      params.alumni === "1" ||
+      params.targets === "1" ||
       params.tag?.trim() ||
       quiet !== null
   );
@@ -70,12 +76,13 @@ export default async function ContactsPage({
   // thing in this `Promise.all`, so it decided when the list appeared. The quota notice
   // stays here — it renders a line above the list for every free account, and arriving
   // late it would shove the list down after it had painted.
-  const [page, letters, planOverview] = await Promise.all([
+  const [page, letters, planOverview, audience] = await Promise.all([
     // One page, not the whole network. Filtering, searching and ordering all happen in
     // Postgres now, so this costs the same whether the user knows 50 people or 50,000.
     listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE }),
     listContactLetters(),
     getPlanOverview(),
+    getAudienceFilterAvailability(),
   ]);
 
   return (
@@ -124,6 +131,10 @@ export default async function ContactsPage({
           initialCompany={params.company || ""}
           initialMinScore={params.minScore || ""}
           initialFollowUp={params.followUp || ""}
+          initialAlumni={params.alumni === "1" ? "1" : ""}
+          initialTargets={params.targets === "1" ? "1" : ""}
+          hasSchools={audience.hasSchools}
+          hasTargets={audience.hasTargets}
           initialSort={sort}
           initialQuiet={quiet === null ? "" : String(quiet)}
           initialTag={params.tag || ""}
@@ -137,7 +148,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, params.tag, String(quiet), sort, params.importId].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, params.alumni, params.targets, params.tag, String(quiet), sort, params.importId].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}

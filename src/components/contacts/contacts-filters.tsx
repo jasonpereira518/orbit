@@ -2,6 +2,7 @@
 
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Building2, ChevronDown, X } from "lucide-react";
@@ -40,6 +41,8 @@ type FilterState = {
   company: string;
   minScore: string;
   followUp: string;
+  alumni: string;
+  targets: string;
   sort: string;
   quiet: string;
 };
@@ -49,6 +52,10 @@ export function ContactsFilters({
   initialCompany,
   initialMinScore,
   initialFollowUp,
+  initialAlumni,
+  initialTargets,
+  hasSchools,
+  hasTargets,
   initialSort,
   initialQuiet,
   initialTag,
@@ -60,6 +67,11 @@ export function ContactsFilters({
   initialCompany: string;
   initialMinScore: string;
   initialFollowUp?: string;
+  initialAlumni?: string;
+  initialTargets?: string;
+  /** Whether the user has saved any schools / target companies; the toggles are inert without. */
+  hasSchools: boolean;
+  hasTargets: boolean;
   initialSort?: string;
   initialQuiet?: string;
   /**
@@ -84,6 +96,8 @@ export function ContactsFilters({
   const [companyOpen, setCompanyOpen] = useState(false);
   const [minScore, setMinScore] = useState(initialMinScore || "any");
   const [followUp, setFollowUp] = useState(initialFollowUp || "");
+  const [alumni, setAlumni] = useState(initialAlumni || "");
+  const [targets, setTargets] = useState(initialTargets || "");
   const [sort, setSort] = useState(initialSort || "name");
   const [quiet, setQuiet] = useState(initialQuiet || "");
   const debounceRef = useRef<number | null>(null);
@@ -100,12 +114,16 @@ export function ContactsFilters({
     const cc = (next?.company ?? company).trim();
     const ms = next?.minScore ?? minScore;
     const fu = next?.followUp ?? followUp;
+    const al = next?.alumni ?? alumni;
+    const tg = next?.targets ?? targets;
     const so = next?.sort ?? sort;
     const qt = next?.quiet ?? quiet;
     if (qq) params.set("q", qq);
     if (cc) params.set("company", cc);
     if (ms && ms !== "any") params.set("minScore", ms);
     if (fu === "due") params.set("followUp", "due");
+    if (al === "1") params.set("alumni", "1");
+    if (tg === "1") params.set("targets", "1");
     if (so && so !== "name") params.set("sort", so);
     if (qt) params.set("quiet", qt);
     // Neither is editable from this component, but both live in the same URL. Rebuilding
@@ -280,6 +298,47 @@ export function ContactsFilters({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+
+        <Button
+          type="button"
+          size="sm"
+          className="h-8"
+          variant={alumni === "1" ? "default" : "outline"}
+          aria-pressed={alumni === "1"}
+          disabled={!hasSchools}
+          title={hasSchools ? "People from your schools" : "Add your schools in Settings → Goals and targets"}
+          onClick={() => {
+            const next = alumni === "1" ? "" : "1";
+            setAlumni(next);
+            apply({ alumni: next });
+          }}
+        >
+          Alumni
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          className="h-8"
+          variant={targets === "1" ? "default" : "outline"}
+          aria-pressed={targets === "1"}
+          disabled={!hasTargets}
+          title={hasTargets ? "People at your target companies" : "Add target companies in Settings → Goals and targets"}
+          onClick={() => {
+            const next = targets === "1" ? "" : "1";
+            setTargets(next);
+            apply({ targets: next });
+          }}
+        >
+          Target companies
+        </Button>
+        {(!hasSchools || !hasTargets) && (
+          <Link
+            href="/settings#settings-targets"
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            Add schools and targets
+          </Link>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">

@@ -236,6 +236,7 @@ export type RadarCandidateRow = {
   preferredName: string | null;
   title: string | null;
   company: string | null;
+  school: string | null;
   industry: string | null;
   tier: RadarTier | null;
   hasEvidence: boolean;
@@ -270,6 +271,7 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
     preferred_name: string | null;
     title: string | null;
     company: string | null;
+    school: string | null;
     industry: string | null;
     closeness_tier: RadarTier | null;
     closeness_evidence: number | null;
@@ -286,7 +288,7 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
     mastodon_acct: string | null;
   }>(
     await db.execute(sql`
-      SELECT id, full_name, preferred_name, title, company, industry, closeness_tier, closeness_evidence,
+      SELECT id, full_name, preferred_name, title, company, school, industry, closeness_tier, closeness_evidence,
              priority_level, relationship_score, stated_closeness, first_interaction_at,
              last_interaction_at, next_follow_up_at, constellation_pin, cadence_days, cadence_phrase,
              bluesky_handle, mastodon_acct
@@ -314,6 +316,7 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
     preferredName: r.preferred_name,
     title: r.title,
     company: r.company,
+    school: r.school,
     industry: r.industry,
     tier: r.closeness_tier,
     hasEvidence: (r.closeness_evidence ?? 0) >= EVIDENCE_FLOOR,

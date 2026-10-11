@@ -172,6 +172,8 @@ export type ContactsListFilters = {
   company?: string;
   minScore?: number;
   followUp?: "due";
+  alumni?: boolean;
+  targets?: boolean;
   /** Days since the last logged interaction — see `parseQuietDays`. */
   quiet?: number;
   sort?: ContactSort;
@@ -372,6 +374,8 @@ export function ContactsList({
     if (filters.minScore) params.set("minScore", String(filters.minScore));
     if (filters.followUp) params.set("followUp", filters.followUp);
     if (filters.tag) params.set("tag", filters.tag);
+    if (filters.alumni) params.set("alumni", "1");
+    if (filters.targets) params.set("targets", "1");
     if (filters.quiet) params.set("quiet", String(filters.quiet));
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
     if (filters.importId) params.set("importId", filters.importId);

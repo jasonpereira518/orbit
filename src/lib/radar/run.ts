@@ -15,6 +15,8 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite } from "@/db";
 import { radarRuns, userSettings } from "@/db/schema";
+import { sharesSchool } from "@/lib/school-name";
+import { listSchools } from "@/lib/events/target-companies";
 import { goalRelevanceComponent } from "@/lib/closeness";
 import { companyMatchKeys } from "@/lib/events/company-list-parse";
 import { loadTargetKeys } from "@/lib/events/companies";
@@ -164,7 +166,8 @@ function toRadarContact(
   row: RadarCandidateRow,
   targetKeys: Map<string, number>,
   goals: string[],
-  focus: UserFocus | null = null
+  focus: UserFocus | null = null,
+  schools: string[] = []
 ): RadarContact {
   let targetPriority: 1 | 2 | 3 | null = null;
   for (const key of companyMatchKeys(row.company)) {
@@ -185,6 +188,7 @@ function toRadarContact(
     cadenceDays: row.cadenceDays,
     cadencePhrase: row.cadencePhrase,
     targetPriority,
+    alumniSchool: row.school && schools.length && sharesSchool(schools, [row.school]) ? row.school : null,
     goalFit: goals.length ? goalRelevanceComponent({ company: row.company, title: row.title, industry: row.industry }, goals) : 0,
     focusFit: focus ? focusFitComponent({ title: row.title, industry: row.industry }, focus) : 0,
     hasEvidence: row.hasEvidence,
@@ -200,9 +204,10 @@ export function scoreCandidates(
   suppressions: Map<string, RadarSuppression>,
   now: Date,
   model: RadarModel | null = null,
-  focus: UserFocus | null = null
+  focus: UserFocus | null = null,
+  schools: string[] = []
 ): NewRecommendation[] {
-  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus), RADAR_CAPS);
+  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus, schools), RADAR_CAPS);
 }
 
 /** Every person's winning card, before the caps: what the rerank chooses its shortlist from. */
@@ -214,7 +219,8 @@ export function scorePicks(
   suppressions: Map<string, RadarSuppression>,
   now: Date,
   model: RadarModel | null = null,
-  focus: UserFocus | null = null
+  focus: UserFocus | null = null,
+  schools: string[] = []
 ): NewRecommendation[] {
   const byContact = new Map<string, RadarSignal[]>();
   for (const s of signals) {
@@ -226,7 +232,7 @@ export function scorePicks(
   const rowById = new Map<string, RadarCandidateRow>();
   for (const row of candidates) {
     rowById.set(row.id, row);
-    const contact = toRadarContact(row, targetKeys, goals, focus);
+    const contact = toRadarContact(row, targetKeys, goals, focus, schools);
     const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now, model);
     const pick = pickWinner(row.id, kinds, now);
     if (pick) picks.push(pick);
@@ -283,10 +289,11 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
 
-        const [signals, goals, targetKeys, focus, live, outcomes, tallies] = await Promise.all([
+        const [signals, goals, targetKeys, schools, focus, live, outcomes, tallies] = await Promise.all([
           produceInternalSignals(userId, now),
           listActiveGoalTextsForUser(userId, { limit: 8 }),
           loadTargetKeys(userId),
+          listSchools(userId),
           // Skills and watched job titles from the LinkedIn export. A failure costs the nudge,
           // never the run.
           loadUserFocus(userId).catch((err) => {
@@ -333,7 +340,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
           return [];
         });
-        const picks = scorePicks(candidates, [...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model, focus);
+        const picks = scorePicks(candidates, [...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model, focus, schools);
 
         // AI, on the account's own key, in one shared budget. First the rerank, which may
         // nudge the shortlist before the caps choose the final list; then, once the list is

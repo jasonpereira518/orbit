@@ -89,6 +89,7 @@ export const RADAR_WEIGHTS = {
   priorityMedium: 4,
   statedClose: 4,
   targetCompany: { 1: 14, 2: 10, 3: 5 },
+  alumni: 6,
   goalFit: 10,
   // skills and watched job titles from the LinkedIn export; smaller than goals, which the user typed
   focusFit: 8,
@@ -161,6 +162,8 @@ export type RadarContact = {
   cadencePhrase: string | null;
   /** 1 dream, 2 target, 3 curious — from `target_companies`, or null. */
   targetPriority: 1 | 2 | 3 | null;
+  /** The contact's school, when it is one of the user's own; the "went to X too" reason. */
+  alumniSchool: string | null;
   /** 0..1 from `goalRelevanceComponent`. */
   goalFit: number;
   /** 0..1 from `focusFitComponent` (skills + watched job titles). Absent means 0. */
@@ -514,6 +517,9 @@ export function scoreContactKinds(
         label: contact.company ? `Works at ${contact.company}, on your target list` : "At a company on your target list",
         points: W.targetCompany[contact.targetPriority],
       });
+    }
+    if (contact.alumniSchool) {
+      reasons.push({ code: "alumni", label: `Went to ${contact.alumniSchool} too`, points: W.alumni });
     }
     const goalPoints = Math.round(W.goalFit * Math.min(1, Math.max(0, contact.goalFit)));
     if (goalPoints > 0) reasons.push({ code: "goal_match", label: "Fits what you’re working on", points: goalPoints });

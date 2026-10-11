@@ -27,6 +27,7 @@ import {
   encodeContactsCursor,
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
+import { alumniSchoolValues, targetCompanyValues } from "@/lib/audience-filters";
 import { effectiveCadenceSql, followUpDueSql } from "@/lib/contact-cadence-sql";
 import type { RankedContact } from "@/lib/hybrid-search";
 import {
@@ -131,6 +132,14 @@ export async function listContactsPage(
 
   if (filters?.followUp === "due") {
     conditions.push(followUpDueSql(sql`now()`));
+  }
+  if (filters?.alumni) {
+    const schools = await alumniSchoolValues(userId);
+    conditions.push(schools.length ? inArray(contacts.school, schools) : sql`false`);
+  }
+  if (filters?.targets) {
+    const companies = await targetCompanyValues(userId);
+    conditions.push(companies.length ? inArray(contacts.company, companies) : sql`false`);
   }
 
   // One id, or the comma-separated list the done card sends. It no longer narrows the list —

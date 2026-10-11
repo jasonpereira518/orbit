@@ -72,6 +72,7 @@ function contact(over: Partial<RadarContact> = {}): RadarContact {
     cadenceDays: null,
     cadencePhrase: null,
     targetPriority: null,
+    alumniSchool: null,
     goalFit: 0,
     hasEvidence: true,
     ...over,
@@ -190,6 +191,18 @@ function main() {
     check("the reason is shown, in plain words", reasons.some((r) => r.code === "focus_match" && /skills/.test(r.label) && r.points > 0));
     check("but it never leads the card — the message does", pickWinner("c1", fit, NOW)?.kind === "reach_out" && CONTEXT_CODES.has("focus_match"));
     check("an out-of-range fit is clamped", (scoreOf(kinds(contact({ lastInteractionAt: ago(45), focusFit: 9 }), [inbound]), "reach_out") ?? 0) === (scoreOf(fit, "reach_out") ?? -1));
+  }
+
+  console.log("\nalumni (went to the same school)");
+  {
+    const inbound: RadarSignal = { kind: "inbound_unanswered", contactId: "c1", at: ago(9) };
+    const alum = kinds(contact({ lastInteractionAt: ago(45), alumniSchool: "UNC Chapel Hill" }), [inbound]);
+    const reason = pickWinner("c1", alum, NOW)?.reasons.find((r) => r.code === "alumni");
+    check("an alumnus gets a reason worth 6 with the school in its label",
+      reason?.points === 6 && reason.label === "Went to UNC Chapel Hill too");
+    check("it is context, so it never leads the card", CONTEXT_CODES.has("alumni") && pickWinner("c1", alum, NOW)?.kind === "reach_out");
+    check("it never creates a recommendation on its own",
+      kinds(contact({ alumniSchool: "UNC Chapel Hill", lastInteractionAt: ago(3) })).length === 0);
   }
 
   console.log("\nmessage windows");

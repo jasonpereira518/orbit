@@ -358,7 +358,8 @@ run(async () => {
   // (`loadModelTallies`), the autopilot settings, the job-move read, the news probe and the
   // posts read; see smoke-page-budgets.
   // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
-  check("and a bounded number of them", statements <= 27, String(statements));
+  // 27 + the one constant read of the user's schools (`listSchools`) for the alumni reason.
+  check("and a bounded number of them", statements <= 28, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);

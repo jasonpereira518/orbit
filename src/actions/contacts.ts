@@ -23,6 +23,7 @@ import {
   type ContactsPageFilters,
 } from "@/lib/contacts-page";
 import { listContactsPage as listContactsPageForUser } from "@/lib/contacts-page-query";
+import { audienceFilterAvailability } from "@/lib/audience-filters";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
@@ -114,6 +115,11 @@ export async function listContactsPage(
 ): Promise<ContactsPage> {
   const userId = await requireUserId();
   return listContactsPageForUser(userId, filters);
+}
+
+/** Whether the Alumni and Target companies filters have anything to match against. */
+export async function getAudienceFilterAvailability() {
+  return audienceFilterAvailability(await requireUserId());
 }
 
 /**
