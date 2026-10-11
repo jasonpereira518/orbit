@@ -85,6 +85,7 @@ export function CaptureFlow({
   history = null,
   canUseSync = false,
   drive = null,
+  onSaved,
 }: {
   initialJob: CaptureJobView | null;
   /** Every reachable job, so a multi-file drop can render its queue. */
@@ -111,6 +112,12 @@ export function CaptureFlow({
   canUseSync?: boolean;
   /** Google Picker config, from the server's env. Any gap hides the Drive button. */
   drive?: DriveCaptureConfig | null;
+  /**
+   * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
+   * hands back to the caller instead of showing the saved screen. The store is cleared
+   * first, so coming back to the step later starts on an empty box.
+   */
+  onSaved?: () => void;
 }) {
   const router = useRouter();
   const { job: storeJob } = useCaptureJob();
@@ -470,6 +477,15 @@ export function CaptureFlow({
     if (done) onMeetingAnalyzed(done.analysis, done.sessionId);
   }, [hasPendingMeeting, claimMeeting, onMeetingAnalyzed]);
 
+  // Once per save: the effect re-runs on every phase change, and the caller moves on.
+  const handedOffRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onSaved || phase !== "saved" || !job || handedOffRef.current === job.id) return;
+    handedOffRef.current = job.id;
+    clearCaptureJob();
+    onSaved();
+  }, [onSaved, phase, job]);
+
   // ── Render ──────────────────────────────────────────────────────────────────────────
   const items = job?.result?.items ?? [];
   const reviewIndex = job ? firstPendingIndex(items, job.decisions) : -1;
@@ -485,7 +501,7 @@ export function CaptureFlow({
     <div className="space-y-6">
       {phase === "input" && quota && !initialContactId && <ContactQuotaNotice used={quota.used} limit={quota.limit} />}
 
-      {phase === "input" && (
+      {phase === "input" && !onSaved && (
         <div className="space-y-2">
           <CaptureTabs mode={mode} onChange={setMode} disabled={inputLocked} />
           {blurb && <p className="text-sm text-muted-foreground">{blurb}</p>}
@@ -649,7 +665,7 @@ export function CaptureFlow({
           />
         )}
 
-        {phase === "saved" && job?.result && (
+        {phase === "saved" && job?.result && !onSaved && (
           <motion.div key="saved" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
             {meetingHeader}
             <CaptureSaved result={job.result} decisions={job.decisions} onCaptureMore={() => void startOver()} />
@@ -658,7 +674,7 @@ export function CaptureFlow({
       </AnimatePresence>
 
       {phase === "input" && history}
-      {phase !== "review" && <IgnoredPeopleSection initialCount={ignoredCount} />}
+      {phase !== "review" && !onSaved && <IgnoredPeopleSection initialCount={ignoredCount} />}
     </div>
   );
 }

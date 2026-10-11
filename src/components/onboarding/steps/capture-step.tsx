@@ -1,19 +1,31 @@
 "use client";
 
-import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
+import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
+import type { CaptureJobView } from "@/lib/capture-jobs";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
+/**
+ * /capture's own flow, notes only. Extracting writes a durable capture job, so a reload
+ * mid-review comes back to the same cards (`initialJob`), exactly as /capture resumes.
+ */
 export function CaptureStep({
+  initialJob,
   hasApiKey,
+  aiReason,
   onSaved,
 }: {
+  initialJob: CaptureJobView | null;
   hasApiKey: boolean;
-  onSaved: (count: number) => void;
+  aiReason: AiAccessDenial | null;
+  onSaved: () => void;
 }) {
   return (
-    <BulkNotesPanel
-      compact
+    <CaptureFlowLazy
+      initialJob={initialJob}
       hasApiKey={hasApiKey}
-      onSaved={(res) => onSaved(res.created + res.updated)}
+      aiReason={aiReason}
+      meetingsDeniedMessage=""
+      onSaved={onSaved}
     />
   );
 }
