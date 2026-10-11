@@ -142,6 +142,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-reminder-due-bucket": "pure",
   "smoke-follow-up-presets": "pure",
   "smoke-follow-up-preset-surfaces": "pure",
+  "smoke-follow-up-intents": "pure",
   "smoke-triage-keys": "pure",
   "smoke-event-canonical-url": "pure",
   "smoke-event-connectors": "pure",

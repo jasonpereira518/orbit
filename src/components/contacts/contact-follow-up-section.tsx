@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/card";
 import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
+import { FOLLOW_UP_INTENTS } from "@/lib/follow-up-intents";
 import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
 import {
   FOLLOW_UP_PRESETS,
@@ -181,13 +182,14 @@ export function ContactFollowUpSection({
     });
   }
 
-  function draftFor(p: Platform) {
+  function draftFor(p: Platform, intentOverride?: string) {
     setPlatform(p);
+    const useIntent = (intentOverride ?? intent).trim();
     start(async () => {
       try {
         const result = await draftContactFollowUp(contactId, {
           channel: p,
-          intent: intent.trim() || undefined,
+          intent: useIntent || undefined,
         });
         if (!result.ok) {
           setAiError(result.error);
@@ -401,15 +403,35 @@ export function ContactFollowUpSection({
           <p className="mb-2 text-xs font-medium text-muted-foreground">
             Draft for
           </p>
-          {initialIntent || intent ? (
-            <input
-              type="text"
-              value={intent}
-              onChange={(e) => setIntent(e.target.value)}
-              placeholder="Optional intent (e.g. ask for intro)"
-              className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-border"
-            />
-          ) : null}
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {FOLLOW_UP_INTENTS.map((i) => (
+              <Button
+                key={i.id}
+                type="button"
+                size="sm"
+                variant={intent === i.instruction ? "default" : "outline"}
+                aria-pressed={intent === i.instruction}
+                className="h-8 px-2.5"
+                disabled={pending}
+                onClick={() => {
+                  setIntent(i.instruction);
+                  // Draft right away on the chosen channel, else the first one the contact has.
+                  const p = platform ?? platforms.find((x) => x.available)?.id;
+                  if (p) draftFor(p, i.instruction);
+                }}
+              >
+                {i.label}
+              </Button>
+            ))}
+          </div>
+          <input
+            type="text"
+            value={intent}
+            onChange={(e) => setIntent(e.target.value)}
+            aria-label="What this message is for"
+            placeholder="What’s this message for? (optional)"
+            className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-border"
+          />
           <div className="flex flex-wrap gap-1.5">
             {platforms.map((p) => (
               <Button

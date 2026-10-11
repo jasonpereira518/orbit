@@ -23,6 +23,7 @@ import { FollowUpDraftComposer } from "@/components/follow-up/follow-up-draft-co
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
+import { FOLLOW_UP_INTENTS } from "@/lib/follow-up-intents";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -60,6 +61,7 @@ export function FollowUpDraftSheet({
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState("");
+  const [intentText, setIntentText] = useState(intent ?? "");
   const [aiError, setAiError] = useState<string | null>(null);
   const [sendOptions, setSendOptions] =
     useState<ContactFollowUpSendOptions | null>(null);
@@ -72,6 +74,7 @@ export function FollowUpDraftSheet({
     if (!open) return;
     const session = ++sessionRef.current;
     setDraft("");
+    setIntentText(intent ?? "");
     setAiError(null);
     setSendOptions(null);
 
@@ -115,10 +118,12 @@ export function FollowUpDraftSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contactId]);
 
-  function regenerate() {
+  function regenerate(next?: string) {
     start(async () => {
       try {
-        const result = await draftContactFollowUp(contactId, { intent });
+        const result = await draftContactFollowUp(contactId, {
+          intent: (next ?? intentText).trim() || undefined,
+        });
         if (!result.ok) {
           setAiError(result.error);
           return;
@@ -197,13 +202,43 @@ export function FollowUpDraftSheet({
           </SheetDescription>
         </SheetHeader>
         <div className="flex flex-1 flex-col gap-4 px-4 pb-6">
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Draft for</p>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {FOLLOW_UP_INTENTS.map((i) => (
+                <Button
+                  key={i.id}
+                  type="button"
+                  size="sm"
+                  variant={intentText === i.instruction ? "default" : "outline"}
+                  aria-pressed={intentText === i.instruction}
+                  className="h-8 px-2.5"
+                  disabled={pending}
+                  onClick={() => {
+                    setIntentText(i.instruction);
+                    regenerate(i.instruction);
+                  }}
+                >
+                  {i.label}
+                </Button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={intentText}
+              onChange={(e) => setIntentText(e.target.value)}
+              aria-label="What this message is for"
+              placeholder="What’s this message for? (optional)"
+              className="w-full rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-border"
+            />
+          </div>
           <div className="flex justify-end">
             <Button
               type="button"
               variant="outline"
               size="sm"
               disabled={pending}
-              onClick={regenerate}
+              onClick={() => regenerate()}
             >
               <RefreshCw className={`size-3.5 ${pending ? "animate-spin" : ""}`} />
               {pending ? "Drafting…" : draft ? "Regenerate" : "Generate"}
