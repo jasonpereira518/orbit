@@ -32,15 +32,6 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-keep-in-touch";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiSuggestions, contacts, userSettings } from "../src/db/schema";
-import {
-  KEEP_IN_TOUCH_MAX_DAYS,
-  KEEP_IN_TOUCH_PRESETS,
-  cadenceLabel,
-  keepInTouchDescription,
-  keepInTouchDue,
-  normalizeCadence,
-  type CadenceContact,
-} from "../src/lib/keep-in-touch";
 import { refreshOutreachSuggestions } from "../src/lib/reminders";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -57,94 +48,6 @@ function section(name: string) {
 }
 
 const USER = "smoke-keep-in-touch-user";
-const NOW = new Date("2026-09-20T12:00:00Z");
-const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
-const row = (over: Partial<CadenceContact> = {}): CadenceContact => ({
-  contactId: "c1",
-  keepInTouchDays: 90,
-  lastInteractionAt: daysAgo(100),
-  ...over,
-});
-
-function pureChecks() {
-  section("Due when the stated interval has passed");
-
-  check("past the interval is due", keepInTouchDue([row()], NOW).length === 1);
-  check(
-    "exactly the interval is due",
-    keepInTouchDue([row({ lastInteractionAt: daysAgo(90) })], NOW).length === 1,
-    "quarterly must fire ON day 90, not silently wait for 91"
-  );
-  check(
-    "one day short is not",
-    keepInTouchDue([row({ lastInteractionAt: daysAgo(89) })], NOW).length === 0
-  );
-  check(
-    "the elapsed days are reported, not the interval",
-    keepInTouchDue([row({ lastInteractionAt: daysAgo(104) })], NOW)[0]?.daysSince === 104
-  );
-
-  section("No cadence means no opinion");
-
-  check("null is not a cadence", keepInTouchDue([row({ keepInTouchDays: null })], NOW).length === 0);
-  check("zero is not a cadence", keepInTouchDue([row({ keepInTouchDays: 0 })], NOW).length === 0);
-  check(
-    "a negative is not a cadence",
-    keepInTouchDue([row({ keepInTouchDays: -30 })], NOW).length === 0,
-    "a negative interval is overdue by construction and cannot be cleared from the UI"
-  );
-  check("a missing timestamp is skipped", keepInTouchDue([row({ lastInteractionAt: null })], NOW).length === 0);
-  check(
-    "an unparseable timestamp is skipped",
-    keepInTouchDue([row({ lastInteractionAt: "not-a-date" })], NOW).length === 0
-  );
-  check(
-    "a future timestamp is not overdue",
-    keepInTouchDue([row({ lastInteractionAt: new Date(NOW.getTime() + 86_400_000) })], NOW).length === 0
-  );
-
-  section("normalizeCadence is the only gate on what gets stored");
-
-  check("rejects zero", normalizeCadence(0) === null);
-  check("rejects negatives", normalizeCadence(-1) === null);
-  check("rejects NaN", normalizeCadence(Number.NaN) === null);
-  check("rejects Infinity", normalizeCadence(Number.POSITIVE_INFINITY) === null);
-  check("rejects junk strings", normalizeCadence("soon") === null);
-  check("rejects past the ceiling", normalizeCadence(KEEP_IN_TOUCH_MAX_DAYS + 1) === null);
-  check("accepts the ceiling itself", normalizeCadence(KEEP_IN_TOUCH_MAX_DAYS) === KEEP_IN_TOUCH_MAX_DAYS);
-  check("accepts a numeric string from a form field", normalizeCadence("90") === 90);
-  check("rounds a fraction rather than storing it", normalizeCadence(90.4) === 90);
-  check(
-    "every preset the UI offers survives its own validator",
-    KEEP_IN_TOUCH_PRESETS.every((p) => normalizeCadence(p.days) === p.days),
-    "a preset the action would reject is a button that silently does nothing"
-  );
-
-  section("Ordering and copy");
-
-  const many = keepInTouchDue(
-    [
-      row({ contactId: "slightly", lastInteractionAt: daysAgo(91) }),
-      row({ contactId: "very", lastInteractionAt: daysAgo(400) }),
-      row({ contactId: "somewhat", lastInteractionAt: daysAgo(120) }),
-    ],
-    NOW
-  );
-  check(
-    "most overdue first",
-    many.map((d) => d.contactId).join(",") === "very,somewhat,slightly",
-    `got ${many.map((d) => d.contactId).join(",")}`
-  );
-  check("a preset reads as its own name", cadenceLabel(90) === "Quarterly");
-  check("a custom interval still reads", cadenceLabel(45) === "Every 45 days");
-  check(
-    "the copy states the interval and the elapsed time",
-    keepInTouchDescription(90, 104) === "Quarterly check-in — last touch 104 days ago",
-    `got ${JSON.stringify(keepInTouchDescription(90, 104))}`
-  );
-  check("one day is singular", keepInTouchDescription(1, 1).includes("1 day ago"));
-}
-
 /** The cross-module half: a cadence must actually reach the queue, and displace the guess. */
 async function dbChecks() {
   const db = await getDb();
@@ -229,7 +132,6 @@ async function dbChecks() {
 }
 
 async function main() {
-  pureChecks();
   await dbChecks();
 
   if (failures > 0) {

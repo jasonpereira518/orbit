@@ -36,20 +36,6 @@ export type KeepInTouchCadence = (typeof KEEP_IN_TOUCH_PRESETS)[number]["days"];
 /** Longest interval we will store. A cadence beyond this is indistinguishable from none. */
 export const KEEP_IN_TOUCH_MAX_DAYS = 365;
 
-export type CadenceContact = {
-  contactId: string;
-  keepInTouchDays: number | null;
-  lastInteractionAt: Date | string | null;
-};
-
-export type CadenceDue = {
-  contactId: string;
-  /** The interval the user chose, echoed back so callers need not re-read the row. */
-  cadenceDays: number;
-  /** Whole days since the last recorded touch. Always >= `cadenceDays`. */
-  daysSince: number;
-};
-
 /**
  * Normalize whatever a caller hands us into a cadence we are willing to store.
  *
@@ -65,60 +51,59 @@ export function normalizeCadence(value: unknown): number | null {
   return days;
 }
 
-function daysBetween(from: Date, to: Date): number {
-  return Math.floor((to.getTime() - from.getTime()) / 86_400_000);
-}
+/**
+ * How often to keep in touch when the person never said: closest people monthly, the middle
+ * ring quarterly, everyone else not at all. Not a setting. A contact's own cadence always wins.
+ */
+export const TIER_DEFAULT_CADENCE = { inner: 30, mid: 90, outer: null } as const;
 
-function asDate(value: Date | string | null): Date | null {
-  if (!value) return null;
-  const d = value instanceof Date ? value : new Date(value);
+type Tier = "inner" | "mid" | "outer";
+export type CadenceInput = {
+  cadenceDays: number | null;
+  closenessTier: Tier | null;
+  lastInteractionAt: Date | string | null;
+  dateMet?: Date | string | null;
+  createdAt?: Date | string | null;
+  nextFollowUpAt: Date | string | null;
+};
+
+const DAY_MS = 86_400_000;
+const toDate = (v: Date | string | null | undefined): Date | null => {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
+};
+
+export function effectiveCadenceDays(c: Pick<CadenceInput, "cadenceDays" | "closenessTier">): number | null {
+  if (c.cadenceDays && c.cadenceDays > 0) return c.cadenceDays;
+  return c.closenessTier ? TIER_DEFAULT_CADENCE[c.closenessTier] : null;
 }
 
-/**
- * Which contacts are past the interval their user set for them.
- *
- * Sorted by how far past, longest first — the same ordering the rest of the queue uses, so
- * the person most overdue is the one the user sees.
- *
- * `lastInteractionAt` is the clock. It is stamped when a contact is created, so a contact
- * with no logged interaction is measured from when they were added rather than skipped:
- * "you added them three months ago and have never spoken" is exactly the case a cadence is
- * meant to catch. A row with no timestamp at all is skipped, because there is nothing to
- * subtract from.
- */
-export function keepInTouchDue(
-  rows: CadenceContact[],
-  now: Date = new Date()
-): CadenceDue[] {
-  const due: CadenceDue[] = [];
-  for (const row of rows) {
-    const cadenceDays = normalizeCadence(row.keepInTouchDays);
-    if (cadenceDays === null) continue;
-    const last = asDate(row.lastInteractionAt);
-    if (!last) continue;
-    const daysSince = daysBetween(last, now);
-    // A future timestamp means clock skew or bad import data, never a real touch. Treating
-    // the negative as "0 days since" is right either way: not overdue.
-    if (daysSince < cadenceDays) continue;
-    due.push({ contactId: row.contactId, cadenceDays, daysSince });
-  }
-  return due.sort((a, b) => b.daysSince - a.daysSince);
+export function isTierDefaultCadence(c: Pick<CadenceInput, "cadenceDays" | "closenessTier">): boolean {
+  return !(c.cadenceDays && c.cadenceDays > 0) && effectiveCadenceDays(c) !== null;
 }
 
-/** "Quarterly" for a preset, "Every 45 days" for anything else. */
-export function cadenceLabel(days: number): string {
+/** When the cadence lapses: last touch (else date met, else creation) plus the cadence. */
+export function cadenceDueAt(c: CadenceInput): Date | null {
+  const days = effectiveCadenceDays(c);
+  const anchor = toDate(c.lastInteractionAt) ?? toDate(c.dateMet) ?? toDate(c.createdAt);
+  return days === null || !anchor ? null : new Date(anchor.getTime() + days * DAY_MS);
+}
+
+/** A booked follow-up always decides; the cadence speaks only when nothing is booked. */
+export function followUpDueAt(c: CadenceInput): Date | null {
+  return toDate(c.nextFollowUpAt) ?? cadenceDueAt(c);
+}
+
+export function isFollowUpDue(c: CadenceInput, now: Date): boolean {
+  const at = followUpDueAt(c);
+  return at !== null && at.getTime() <= now.getTime();
+}
+
+export function cadenceName(days: number): string {
   const preset = KEEP_IN_TOUCH_PRESETS.find((p) => p.days === days);
-  return preset ? preset.label : `Every ${days} days`;
-}
-
-/**
- * Says what is true — the interval the user chose, and how long it has actually been —
- * and does not editorialize about the relationship. The user set this cadence; they do not
- * need to be told the contact has "gone quiet".
- */
-export function keepInTouchDescription(cadenceDays: number, daysSince: number): string {
-  return `${cadenceLabel(cadenceDays)} check-in — last touch ${daysSince} day${
-    daysSince === 1 ? "" : "s"
-  } ago`;
+  if (preset) return preset.label;
+  if (days === 7) return "Weekly";
+  if (days === 14) return "Every 2 weeks";
+  return `Every ${days} days`;
 }
