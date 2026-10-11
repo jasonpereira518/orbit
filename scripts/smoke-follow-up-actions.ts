@@ -34,6 +34,7 @@ import {
   markReminderDone,
   scheduleContactFollowUp,
   scheduleContactFollowUpAt,
+  scheduleFromSuggestion,
   undoClearContactFollowUpAction,
   undoKeepInTouchDoneAction,
 } from "../src/actions/reminders";
@@ -432,6 +433,19 @@ async function main() {
     const foreignAfter = await db.query.contacts.findFirst({ where: eq(contacts.id, foreign.id) });
     check("markKeepInTouchDone on another user's contact is not found and writes nothing",
       refused !== "" && foreignAfter?.lastInteractionAt?.getTime() === foreign.lastInteractionAt?.getTime(), refused);
+  }
+
+  /* ----- a suggestion's Schedule takes the shared presets' absolute instant */
+  {
+    const fromSuggestion = await seedContact("Sam Suggested", 0);
+    const [sug] = await db.insert(aiSuggestions).values({
+      userId: USER, suggestionType: "keep_in_touch", title: "Keep in touch with Sam",
+      relatedContactIds: [fromSuggestion.id], status: "pending",
+    }).returning();
+    const target = new Date(Date.now() + 2 * 86_400_000);
+    target.setUTCHours(14, 0, 0, 0);
+    const res = await scheduleFromSuggestion(sug.id, target.toISOString());
+    check("scheduleFromSuggestion books the ISO instant it is given", res.dueDate === target.toISOString(), res.dueDate);
   }
 
   await cleanup();

@@ -1236,7 +1236,7 @@ export async function restoreSuggestion(id: string) {
   return { restored: restored.length > 0 };
 }
 
-export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
+export async function scheduleFromSuggestion(suggestionId: string, when: number | string = 7) {
   const userId = await requireUserId();
   const db = await getDb();
   const { aiSuggestions } = await import("@/db/schema");
@@ -1252,7 +1252,7 @@ export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
   const contactId = suggestion.relatedContactIds?.[0];
   if (!contactId) throw new Error("No contact linked to this suggestion");
 
-  const result = await scheduleContactFollowUp(contactId, days);
+  const result = await scheduleContactFollowUp(contactId, when);
   await dismissSuggestion(suggestionId);
   return result;
 }

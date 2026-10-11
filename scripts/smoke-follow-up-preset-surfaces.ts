@@ -12,6 +12,8 @@ const SURFACES = [
   "src/components/radar/recommendation-card.tsx",
   "src/components/radar/morning-briefing.tsx",
   "src/components/notifications/notifications-panel.tsx",
+  "src/components/dashboard/suggestion-row.tsx",
+  "src/components/reminders/reminder-done-snooze.tsx",
 ];
 let failures = 0;
 for (const file of SURFACES) {
@@ -20,6 +22,7 @@ for (const file of SURFACES) {
   if (/\{\s*days:\s*\d+,\s*label:/.test(src)) { failures++; console.error(`  FAIL ${file} defines its own day presets`); }
   if (/schedule\((3|7|14)\)/.test(src)) { failures++; console.error(`  FAIL ${file} hard-codes a schedule day count`); }
   if (/snoozeReminderAction\([^,]+,\s*7\)/.test(src)) { failures++; console.error(`  FAIL ${file} hard-codes a 7-day snooze`); }
+  if (/scheduleFromSuggestion\([^,]+,\s*\d+\)/.test(src)) { failures++; console.error(`  FAIL ${file} hard-codes a suggestion day count`); }
 }
 for (const gone of ["SCHEDULE_DAYS", "REMIND_PRESETS"]) {
   for (const file of [...SURFACES, "src/lib/radar/actions-core.ts", "src/actions/radar.ts"]) {

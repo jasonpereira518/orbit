@@ -17,10 +17,9 @@ import type { OfflineRunners } from "@/lib/offline-queue-store";
  */
 export const OFFLINE_RUNNERS: OfflineRunners = {
   "reminder.done": ({ args: [reminderId] }) => markReminderDone(reminderId),
-  // Snooze counts days from when it is SENT, so a week's snooze queued this morning and sent
-  // tonight lands tonight-plus-a-week. Hours of drift on a week is harmless for the one-click
-  // "snooze a week" buttons; the reminders page's day picker queues `reminder.reschedule`,
-  // which is absolute.
+  // The snooze menus queue an absolute ISO instant, re-validated at replay: one that has gone
+  // stale by the time it is sent is refused, not drifted. A legacy day count still counts from
+  // when it is SENT. The reminders page's day picker queues `reminder.reschedule`.
   "reminder.snooze": ({ args: [reminderId, when] }) => snoozeReminderAction(reminderId, when),
   "reminder.reschedule": ({ args: [reminderId, ymd] }) => rescheduleReminderAction(reminderId, ymd),
 };

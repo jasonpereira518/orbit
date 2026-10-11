@@ -17,6 +17,20 @@ import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge"
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  FOLLOW_UP_PRESETS,
+  browserTimeZone,
+  followUpSetMessage,
+  resolvePreset,
+  type FollowUpPresetId,
+} from "@/lib/follow-up-presets";
 
 const REASON_LABELS: Record<string, string> = {
   // `JOB_CHANGE_SUGGESTION_TYPE` in lib/job-changes.ts (not imported: it reaches the db).
@@ -81,6 +95,19 @@ export function SuggestionRow({
     : null;
   const nextStep = NEXT_STEP[suggestionType];
   const companyColor = companyBrandColor(contactCompany);
+
+  function schedule(preset: FollowUpPresetId) {
+    const due = resolvePreset(preset, new Date(), browserTimeZone());
+    start(async () => {
+      try {
+        await scheduleFromSuggestion(id, due.toISOString());
+        toast.success(followUpSetMessage(due));
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t schedule that follow-up — try again?"));
+      }
+    });
+  }
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
@@ -160,28 +187,29 @@ export function SuggestionRow({
                 Accept score
               </Button>
             ) : (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={pending || !contactId}
-                className="h-8"
-                onClick={() =>
-                  start(async () => {
-                    try {
-                      await scheduleFromSuggestion(id, 7);
-                      toast.success("Follow-up set for a week from now");
-                      router.refresh();
-                    } catch (err) {
-                      toast.error(
-                        friendlyError(err, "Couldn’t schedule that follow-up — try again?")
-                      );
-                    }
-                  })
-                }
-              >
-                Schedule 7d
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={pending || !contactId}
+                      className="h-8"
+                    />
+                  }
+                >
+                  Schedule
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuLabel>Follow up</DropdownMenuLabel>
+                  {FOLLOW_UP_PRESETS.map((p) => (
+                    <DropdownMenuItem key={p.id} onClick={() => schedule(p.id)}>
+                      {p.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             {contactId && (
               <IntentLink
