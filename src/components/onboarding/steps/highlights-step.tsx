@@ -128,8 +128,8 @@ export function HighlightsStep({
           <BackButton onClick={onBack} />
         </StaggerItem>
         <StepHeading eyebrow="You’re set up" title="Here’s what Orbit can do">
-          Everything here is one click from the sidebar. The tags show what needs a key, an import,
-          or a plan upgrade.
+          Everything here is one click from the sidebar. The tags show what uses AI credits, waits
+          on an import or comes with Pro
         </StepHeading>
       </div>
 

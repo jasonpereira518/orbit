@@ -14,6 +14,7 @@ import {
   hintCopyFor,
   noticeCopyFor,
   refusalCopyFor,
+  refusalWithRefill,
 } from "../src/lib/ai-access-copy";
 import { isQuietFailureMessage } from "../src/lib/errors";
 
@@ -59,6 +60,16 @@ check("provider-failure message with a ref maps to managed_unavailable", aiDenia
 check("Free-limit message is a quiet failure (no ref appended)", isQuietFailureMessage(FREE_LIMIT_MESSAGE));
 check("every account-state refusal is quiet", AI_ACCESS_MESSAGES.filter((m) => m !== MANAGED_PROVIDER_FAILURE_MESSAGE).every(isQuietFailureMessage));
 check("Orbit's own provider failure is still reported", !isQuietFailureMessage(MANAGED_PROVIDER_FAILURE_MESSAGE));
+
+// A one-line refusal (the constellation refresh's failed job) names the refill date on Free.
+const refill = refusalWithRefill(FREE_LIMIT_MESSAGE, "free", "2026-11-01T00:00:00.000Z");
+check("Free out of credits: the refusal line names the refill date", refill.includes("They refill on November 1"), refill);
+check("…and obeys the copy rules", !/\.$/.test(refill) && (refill.match(/ — /g) ?? []).length <= 1 && !refill.includes("'"), refill);
+check("…and still points at a key", /api key/i.test(refill), refill);
+check("any other message passes through", refusalWithRefill("Something else broke", "free", null) === "Something else broke");
+check("Pro out of credits passes through", refusalWithRefill(FREE_LIMIT_MESSAGE, "orbit", null) === FREE_LIMIT_MESSAGE);
+const graph = readFileSync("src/components/graph/network-graph.tsx", "utf8");
+check("the constellation refresh words its refusal with the refill date", /error: refusalWithRefill\(result\.aiError/.test(graph));
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);

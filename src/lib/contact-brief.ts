@@ -204,6 +204,27 @@ export function isBriefStale(
   return generated < last;
 }
 
+/**
+ * Whether a page open may start a brief refresh on its own. An explicit Refresh click is not
+ * gated by this: it runs, and shows the refusal.
+ *
+ * With AI available, a stale brief or unjudged goals are worth a refresh. Without it, only a
+ * template brief (or none) gains: the deterministic rebuild is free and clears the staleness.
+ * A refused refresh keeps a model-written brief untouched and still stale, so starting one
+ * would just be refused again on every open.
+ */
+export function shouldAutoRefreshBrief(input: {
+  stale: boolean;
+  goalsUnjudged: boolean;
+  /** `getAiAccessStatus(...).ready`, which counts Free's credits. */
+  aiReady: boolean;
+  /** The brief on file has `model` set. */
+  modelWritten: boolean;
+}): boolean {
+  if (input.aiReady) return input.stale || input.goalsUnjudged;
+  return input.stale && !input.modelWritten;
+}
+
 export async function getContactBrief(
   userId: string,
   contactId: string

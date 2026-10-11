@@ -21,7 +21,7 @@ run(async () => {
   const { eq } = await import("drizzle-orm");
   const { getDb } = await import("../src/db");
   const { contactBriefs, contacts, userSettings } = await import("../src/db/schema");
-  const { generateAndStoreContactBrief } = await import("../src/lib/contact-brief");
+  const { generateAndStoreContactBrief, shouldAutoRefreshBrief } = await import("../src/lib/contact-brief");
   const db = await getDb();
   const clean = async () => {
     await db.delete(contactBriefs).where(eq(contactBriefs.userId, USER));
@@ -51,6 +51,17 @@ run(async () => {
     check("…returns the standing/next step on file", kept?.standing === before?.standing && kept?.nextStep === before?.nextStep, kept);
     check("…leaves contacts.aiSummary untouched", row?.aiSummary === AI, row?.aiSummary);
     check("…leaves the brief row untouched", JSON.stringify(after) === JSON.stringify(before), { before, after });
+
+    // …so an automatic refresh (page open, dossier open) must not fire while AI is refused:
+    // it would be refused again on every open. A template brief still gains from the free
+    // deterministic rebuild, and an explicit Refresh click is not gated by this at all.
+    const base = { stale: true, goalsUnjudged: false, aiReady: false, modelWritten: true };
+    check("no auto refresh of an AI brief while AI is refused", shouldAutoRefreshBrief(base) === false);
+    check("…nor for unjudged goals while AI is refused", shouldAutoRefreshBrief({ ...base, stale: false, goalsUnjudged: true }) === false);
+    check("a stale template brief still auto-rebuilds without AI", shouldAutoRefreshBrief({ ...base, modelWritten: false }) === true);
+    check("a stale AI brief auto-refreshes when AI can run", shouldAutoRefreshBrief({ ...base, aiReady: true }) === true);
+    check("unjudged goals auto-refresh when AI can run", shouldAutoRefreshBrief({ ...base, stale: false, goalsUnjudged: true, aiReady: true }) === true);
+    check("a fresh, judged brief never auto-refreshes", shouldAutoRefreshBrief({ ...base, stale: false, aiReady: true }) === false);
   } finally {
     await clean();
   }

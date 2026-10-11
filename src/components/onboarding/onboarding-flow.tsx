@@ -28,6 +28,8 @@ import { PeopleStep } from "@/components/onboarding/steps/people-step";
 import { TriageStep } from "@/components/onboarding/steps/triage-step";
 import { WelcomeStep } from "@/components/onboarding/steps/welcome-step";
 import { cn } from "@/lib/utils";
+import type { CaptureJobView } from "@/lib/capture-jobs";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { useImportJob } from "@/lib/import-job-runner";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { connectConfigured, type ConnectAccount, type ConnectProvider } from "@/lib/onboarding-connect";
@@ -53,6 +55,9 @@ export type OnboardingFlowProps = {
   /** Clerk recorded no consent for this account: the welcome shows the checkbox. */
   needsTerms: boolean;
   hasApiKey: boolean;
+  aiReason: AiAccessDenial | null;
+  /** The open capture job, so the capture step resumes its review after a reload. */
+  captureJob: CaptureJobView | null;
   linkedinRequested: boolean;
   linkedinImported: boolean;
   /** Surface keys hidden from this viewer; their overview chapters are skipped. */
@@ -89,6 +94,8 @@ export function OnboardingFlow({
   initialPath,
   needsTerms,
   hasApiKey,
+  aiReason,
+  captureJob: initialCaptureJob,
   linkedinRequested,
   linkedinImported,
   hidden,
@@ -113,6 +120,9 @@ export function OnboardingFlow({
     1,
   ]);
   const [apiKey] = useState(hasApiKey);
+  // Handed to the capture step until it is left: after that the capture job store holds the
+  // fresher copy, and re-seeding this page-load snapshot would rewind it.
+  const [captureJob, setCaptureJob] = useState(initialCaptureJob);
   const [requested] = useState(linkedinRequested);
   const [termsDone, setTermsDone] = useState(!needsTerms);
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
@@ -361,9 +371,20 @@ export function OnboardingFlow({
                 eyebrow="Your people"
                 title="Capture from notes"
                 description="Paste anything: meeting notes, a list of names, a brain dump after an event."
-                onBack={() => backTo("people")}
+                onBack={() => {
+                  setCaptureJob(null);
+                  backTo("people");
+                }}
               >
-                <CaptureStep hasApiKey={apiKey} onSaved={afterPeople} />
+                <CaptureStep
+                  initialJob={captureJob}
+                  hasApiKey={apiKey}
+                  aiReason={aiReason}
+                  onSaved={() => {
+                    setCaptureJob(null);
+                    afterPeople();
+                  }}
+                />
               </BranchStep>
             )}
 

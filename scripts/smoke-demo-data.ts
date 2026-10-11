@@ -241,6 +241,13 @@ async function main() {
     check("about thirty people", STUDENT_PEOPLE.length >= 28 && STUDENT_PEOPLE.length <= 32, String(STUDENT_PEOPLE.length));
     const lists = (await db.select({ name: reminderLists.name }).from(reminderLists).where(eq(reminderLists.userId, STUDENT))).map((l) => l.name);
     check("Recruiters, Alumni and Referrals lists", STUDENT_LISTS.every((n) => lists.includes(n)), lists.join(", "));
+    const listed = await db
+      .select({ name: reminderLists.name })
+      .from(reminders)
+      .innerJoin(reminderLists, eq(reminders.listId, reminderLists.id))
+      .where(eq(reminders.userId, STUDENT));
+    const listedNames = new Set(listed.map((r) => r.name));
+    check("every student list has a reminder in it", STUDENT_LISTS.every((n) => listedNames.has(n)), [...listedNames].join(", "));
     const goals = (await db.select({ text: userGoals.text }).from(userGoals).where(eq(userGoals.userId, STUDENT))).map((g) => g.text);
     check("student goals, nothing about fundraising", goals.length === STUDENT_GOALS.length && !goals.some((g) => /fundrais|investor/i.test(g)), goals.join(" | "));
     const studentEvents = await db.select({ title: events.title }).from(events).where(eq(events.userId, STUDENT));

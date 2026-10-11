@@ -85,6 +85,7 @@ export function CaptureFlow({
   history = null,
   canUseSync = false,
   drive = null,
+  onSaved,
 }: {
   initialJob: CaptureJobView | null;
   /** Every reachable job, so a multi-file drop can render its queue. */
@@ -111,6 +112,12 @@ export function CaptureFlow({
   canUseSync?: boolean;
   /** Google Picker config, from the server's env. Any gap hides the Drive button. */
   drive?: DriveCaptureConfig | null;
+  /**
+   * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
+   * hands back to the caller instead of showing the saved screen. The store is cleared
+   * first, so coming back to the step later starts on an empty box.
+   */
+  onSaved?: () => void;
 }) {
   const router = useRouter();
   const { job: storeJob } = useCaptureJob();
@@ -128,13 +135,16 @@ export function CaptureFlow({
   // A meeting still recording (or paused) in the background wins: coming back to Capture
   // from the widget's "Open" must land on it, not on whichever tab the URL names.
   const meetingFlow = useMeetingFlow();
-  const [mode, setMode] = useState<CaptureMode>(() =>
-    meetingFlow?.busy
+  const [mode, setMode] = useState<CaptureMode>(() => {
+    const initial = meetingFlow?.busy
       ? "meeting"
       : initialJob && (initialJob.status === "ingesting" || prefillJobFor(initialJob))
         ? tabForSource(initialJob.sourceKind)
-        : defaultMode
-  );
+        : defaultMode;
+    // Embedded (onboarding) hides the tabs and has no meetings, so a resumed failed meeting
+    // would open on a blank denied panel. Its text prefills the notes box, so open there.
+    return onSaved && initial === "meeting" ? "messy" : initial;
+  });
   /**
    * The queue over a multi-file drop.
    *
@@ -470,6 +480,28 @@ export function CaptureFlow({
     if (done) onMeetingAnalyzed(done.analysis, done.sessionId);
   }, [hasPendingMeeting, claimMeeting, onMeetingAnalyzed]);
 
+  // Once per save made HERE: the effect re-runs on every phase change, and the caller moves
+  // on. A job already "saved" when first seen (saved on /capture earlier this session and
+  // still in the module-level store) never hands off, or onboarding would skip the step: it
+  // is cleared instead, so the step opens on an empty notes box (embedded has no saved screen).
+  const handedOffRef = useRef<string | null>(null);
+  const seenUnsavedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onSaved || !job) return;
+    if (phase !== "saved") {
+      seenUnsavedRef.current = job.id;
+      return;
+    }
+    if (handedOffRef.current === job.id) return;
+    if (seenUnsavedRef.current !== job.id) {
+      clearCaptureJob();
+      return;
+    }
+    handedOffRef.current = job.id;
+    clearCaptureJob();
+    onSaved();
+  }, [onSaved, phase, job]);
+
   // ── Render ──────────────────────────────────────────────────────────────────────────
   const items = job?.result?.items ?? [];
   const reviewIndex = job ? firstPendingIndex(items, job.decisions) : -1;
@@ -485,7 +517,7 @@ export function CaptureFlow({
     <div className="space-y-6">
       {phase === "input" && quota && !initialContactId && <ContactQuotaNotice used={quota.used} limit={quota.limit} />}
 
-      {phase === "input" && (
+      {phase === "input" && !onSaved && (
         <div className="space-y-2">
           <CaptureTabs mode={mode} onChange={setMode} disabled={inputLocked} />
           {blurb && <p className="text-sm text-muted-foreground">{blurb}</p>}
@@ -649,7 +681,7 @@ export function CaptureFlow({
           />
         )}
 
-        {phase === "saved" && job?.result && (
+        {phase === "saved" && job?.result && !onSaved && (
           <motion.div key="saved" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
             {meetingHeader}
             <CaptureSaved result={job.result} decisions={job.decisions} onCaptureMore={() => void startOver()} />
@@ -658,7 +690,7 @@ export function CaptureFlow({
       </AnimatePresence>
 
       {phase === "input" && history}
-      {phase !== "review" && <IgnoredPeopleSection initialCount={ignoredCount} />}
+      {phase !== "review" && !onSaved && <IgnoredPeopleSection initialCount={ignoredCount} />}
     </div>
   );
 }
