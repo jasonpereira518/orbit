@@ -81,7 +81,7 @@ A student or new grad can follow up within a day or two of meeting someone, in o
   - `target_role` text, up to 120 chars.
   - `graduation_year` int (nullable, 1950–2100).
   - `search_status` text: `not_looking` | `open` | `active`, nullable meaning not set.
-- **Schema version 152.** Before bumping, scan every remote ref for the highest claimed version; 151 is the highest as of Oct 11. The column follows the three-place pattern:
+- **Schema version 153.** Before bumping, scan every remote ref and every worktree for the highest claimed version. As of Oct 11, remotes top out at 151 and the unpushed calendar-events-p0 worktree holds 152. The column follows the three-place pattern:
   1. the CREATE TABLE template;
   2. the `alters` list;
   3. `ensureColumn` in `migratePglite`.
@@ -112,7 +112,7 @@ A student or new grad can follow up within a day or two of meeting someone, in o
   - Tests are `scripts/smoke-*.ts`, registered in `scripts/run-smoke.ts`, and DB smokes start with `import "./smoke/_env";`.
   - The shared suite PGlite means any smoke that changes shared state restores it in `cleanup()`.
   - `smoke-behavior-golden` must be re-recorded only where a change is intended and named in the commit.
-- **Schema:** one schema change (C5) and one version bump, 152. No other migrations.
+- **Schema:** one schema change (C5) and one version bump, 153. No other migrations.
 - **Copy:** no trailing period on short UI copy, curly apostrophes, at most one " — ".
 - **Tailwind:** no Tailwind class names in code comments, and device switches are `md:` classes.
 - **Server actions:** `"use server"` files export only async functions.
