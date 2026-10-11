@@ -135,13 +135,16 @@ export function CaptureFlow({
   // A meeting still recording (or paused) in the background wins: coming back to Capture
   // from the widget's "Open" must land on it, not on whichever tab the URL names.
   const meetingFlow = useMeetingFlow();
-  const [mode, setMode] = useState<CaptureMode>(() =>
-    meetingFlow?.busy
+  const [mode, setMode] = useState<CaptureMode>(() => {
+    const initial = meetingFlow?.busy
       ? "meeting"
       : initialJob && (initialJob.status === "ingesting" || prefillJobFor(initialJob))
         ? tabForSource(initialJob.sourceKind)
-        : defaultMode
-  );
+        : defaultMode;
+    // Embedded (onboarding) hides the tabs and has no meetings, so a resumed failed meeting
+    // would open on a blank denied panel. Its text prefills the notes box, so open there.
+    return onSaved && initial === "meeting" ? "messy" : initial;
+  });
   /**
    * The queue over a multi-file drop.
    *
@@ -477,10 +480,23 @@ export function CaptureFlow({
     if (done) onMeetingAnalyzed(done.analysis, done.sessionId);
   }, [hasPendingMeeting, claimMeeting, onMeetingAnalyzed]);
 
-  // Once per save: the effect re-runs on every phase change, and the caller moves on.
+  // Once per save made HERE: the effect re-runs on every phase change, and the caller moves
+  // on. A job already "saved" when first seen (saved on /capture earlier this session and
+  // still in the module-level store) never hands off, or onboarding would skip the step: it
+  // is cleared instead, so the step opens on an empty notes box (embedded has no saved screen).
   const handedOffRef = useRef<string | null>(null);
+  const seenUnsavedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!onSaved || phase !== "saved" || !job || handedOffRef.current === job.id) return;
+    if (!onSaved || !job) return;
+    if (phase !== "saved") {
+      seenUnsavedRef.current = job.id;
+      return;
+    }
+    if (handedOffRef.current === job.id) return;
+    if (seenUnsavedRef.current !== job.id) {
+      clearCaptureJob();
+      return;
+    }
     handedOffRef.current = job.id;
     clearCaptureJob();
     onSaved();

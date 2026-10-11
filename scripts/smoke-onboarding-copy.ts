@@ -30,6 +30,11 @@ const captureStep = readFileSync("src/components/onboarding/steps/capture-step.t
 check("the onboarding page loads the open capture job", onboardingPage.includes("getActiveCaptureJob()"));
 check("the onboarding capture step runs on CaptureFlow, not the job-less panel",
   /CaptureFlow/.test(captureStep) && /initialJob=/.test(captureStep) && !captureStep.includes("BulkNotesPanel"));
+const captureFlow = readFileSync("src/components/capture/capture-flow.tsx", "utf8");
+check("embedded capture never opens on the meeting tab (tabs hidden, no meetings)",
+  /onSaved && initial === "meeting" \? "messy" : initial/.test(captureFlow));
+check("embedded capture hands off only a save it saw happen, never a stale saved job",
+  /seenUnsavedRef\.current !== job\.id\) \{\s*clearCaptureJob\(\);\s*return;/.test(captureFlow));
 const chapters = readFileSync("src/components/onboarding/highlights/chapters.ts", "utf8");
 check("the ask chapter no longer says it runs on your key", !chapters.includes("Runs on the AI key you bring"));
 check("the Settings explainer names both numbers",
