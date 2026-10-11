@@ -29,7 +29,7 @@ export const GET = apiHandler({ scope: "read", bucket: "apiRead" }, async (reque
       company: c.company ?? null,
       title: c.title ?? null,
       email: c.email ?? null,
-      dueAt: c.nextFollowUpAt ? new Date(c.nextFollowUpAt).toISOString() : null,
+      dueAt: c.dueAt ? c.dueAt.toISOString() : null,
       lastInteractionAt: c.lastInteractionAt
         ? new Date(c.lastInteractionAt).toISOString()
         : null,

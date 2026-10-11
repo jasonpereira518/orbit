@@ -28,8 +28,8 @@ export const keepInTouchOf = (c: {
   effectiveCadence: number | string | null;
   cadenceIsOwn: boolean | null;
 }) => ({
-  keepInTouchDays: c.nextFollowUpAt || c.effectiveCadence === null ? null : Number(c.effectiveCadence),
-  keepInTouchIsDefault: !c.nextFollowUpAt && c.effectiveCadence !== null && !c.cadenceIsOwn,
+  keepInTouchDays: c.nextFollowUpAt || c.effectiveCadence == null ? null : Number(c.effectiveCadence),
+  keepInTouchIsDefault: !c.nextFollowUpAt && c.effectiveCadence != null && !c.cadenceIsOwn,
 });
 
 /** The three computed extras both due lists read; never the raw columns. */
@@ -73,6 +73,8 @@ export type DueFollowUp = {
   title: string | null;
   email: string | null;
   nextFollowUpAt: Date | null;
+  /** When it came due: the booked follow-up, else the lapsed cadence. Never null on a due row. */
+  dueAt: Date | null;
   lastInteractionAt: Date | null;
   /** The ring the cohort puts them in — the dashboard's `closenessById.get(id)?.tier`. */
   closenessTier: "inner" | "mid" | "outer" | null;
@@ -138,6 +140,7 @@ export async function loadDueFollowUps(
       title: d.title ?? null,
       email: d.email ?? null,
       nextFollowUpAt: c.nextFollowUpAt ?? null,
+      dueAt: dueAtOf(c),
       lastInteractionAt: d.lastInteractionAt ?? null,
       closenessTier: cohort.byId.get(c.id)?.tier ?? null,
       ...keepInTouchOf(c),

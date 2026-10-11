@@ -77,14 +77,20 @@ function contactScans(statements: string[]) {
 
 /** True when the column is selected as a bare value (not merely referenced inside an expression). */
 function selectsBare(statement: string, column: string) {
-  // A column inside a parenthesised expression with no `from` of its own (a `coalesce(…)`,
-  // a cast) is an input to a computed value, not a selected column: strip those first.
-  let s = statement;
-  for (let prev = ""; prev !== s; ) {
-    prev = s;
-    s = s.replace(/\([^()]*\)/g, (m) => (/\bfrom\b/i.test(m) ? m.replace(/[()]/g, " ") : ""));
-  }
-  return new RegExp(`"${column}"\\s*(,|\\bfrom\\b)`, "i").test(s);
+  return new RegExp(`"${column}"\\s*(,|\\bfrom\\b)`, "i").test(statement);
+}
+
+/**
+ * The network scan with the cadence extras' anchor `coalesce(last_interaction_at, date_met,
+ * created_at)` removed: that is an input to the computed `cadence_due_at`, not a selected
+ * column. Only the `last_interaction_at` check reads through this; every other guard still
+ * sees function-wrapped columns.
+ */
+function withoutCadenceAnchor(statement: string) {
+  return statement.replace(
+    /coalesce\("contacts"\."last_interaction_at", "contacts"\."date_met", "contacts"\."created_at"\)/gi,
+    ""
+  );
 }
 
 type SpecialRow = {
@@ -852,12 +858,18 @@ async function main() {
   // `contacts`, so the scan has to be named by something only it asks for.
   const networkScan = dashboardScans.find((q) => selectsBare(q, "constellation_pin"));
   check("the dashboard's network scan is identifiable", Boolean(networkScan));
+  check("a function-wrapped column still counts as selected",
+    selectsBare(`select coalesce("notes", '') from "contacts"`, "notes"));
+  const anchorRe = /coalesce\("contacts"\."last_interaction_at"/i;
+  check("the scan carries the cadence anchor, and only it is removed",
+    Boolean(networkScan) && anchorRe.test(networkScan!) && !anchorRe.test(withoutCadenceAnchor(networkScan!)));
   for (const column of [
     "full_name", "ai_summary", "email", "title", "last_interaction_at", "created_at",
   ]) {
     check(
       `the network scan does not select ${column}`,
-      Boolean(networkScan) && !selectsBare(networkScan!, column),
+      Boolean(networkScan) &&
+        !selectsBare(column === "last_interaction_at" ? withoutCadenceAnchor(networkScan!) : networkScan!, column),
       networkScan?.slice(0, 220)
     );
   }

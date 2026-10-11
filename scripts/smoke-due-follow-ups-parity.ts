@@ -23,7 +23,7 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 import { startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { scaleContactRows } from "./lib/scale-fixture";
 import { listContactsPage } from "../src/lib/contacts-page-query";
-import { isFollowUpDue } from "../src/lib/keep-in-touch";
+import { cadenceDueAt, isFollowUpDue } from "../src/lib/keep-in-touch";
 
 const USER = "smoke-due-parity-user";
 // A small second network for the cadence cases: in the 600-contact one, years-lapsed
@@ -163,6 +163,15 @@ run(async () => {
   check("stats.dueFollowUps is exact (booked, inner lapsed, own cadence)", small.stats.dueFollowUps === 3,
     String(small.stats.dueFollowUps));
   check("loadDueFollowUps agrees", smallLoader.some((c) => c.id === innerLapsed.id));
+  // External payloads (v1, MCP, webhook) read `dueAt`: a cadence-due row carries its lapse instant.
+  const lapsedRow = smallLoader.find((c) => c.id === innerLapsed.id);
+  const lapsedStored = await db.query.contacts.findFirst({ where: eq(contacts.id, innerLapsed.id) });
+  const lapsedAt = lapsedStored && cadenceDueAt(lapsedStored);
+  check("a cadence-due row's dueAt is its cadence due instant",
+    Boolean(lapsedRow?.dueAt && lapsedAt) && lapsedRow!.dueAt!.getTime() === lapsedAt!.getTime(),
+    `${lapsedRow?.dueAt?.toISOString()} vs ${lapsedAt?.toISOString()}`);
+  check("a booked row's dueAt is its booked date",
+    smallLoader.find((c) => c.id === booked.id)?.dueAt?.getTime() === booked.nextFollowUpAt?.getTime());
   const smallById = new Map(smallLoader.map((c) => [c.id, c]));
   check("loadDueFollowUps matches the dashboard on the small network",
     JSON.stringify(view(small.dueFollowUps, (id) => small.closenessById.get(id)?.tier ?? null)) ===

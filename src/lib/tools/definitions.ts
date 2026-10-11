@@ -267,7 +267,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         contactId: c.id,
         name: c.fullName,
         company: c.company,
-        dueAt: c.nextFollowUpAt ? new Date(c.nextFollowUpAt).toISOString() : null,
+        dueAt: c.dueAt ? c.dueAt.toISOString() : null,
         lastInteractionAt: c.lastInteractionAt
           ? new Date(c.lastInteractionAt).toISOString()
           : null,

@@ -392,9 +392,7 @@ export async function emitDueFollowupEvents(
             name: contact.fullName,
             company: contact.company ?? null,
             email: contact.email ?? null,
-            dueAt: contact.nextFollowUpAt
-              ? new Date(contact.nextFollowUpAt).toISOString()
-              : null,
+            dueAt: contact.dueAt ? contact.dueAt.toISOString() : null,
           },
           eventId: `followup:${contact.id}:${day}`,
         }))
