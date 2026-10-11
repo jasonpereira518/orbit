@@ -41,6 +41,13 @@ import {
 import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
+import {
+  FOLLOW_UP_PRESETS,
+  browserTimeZone,
+  followUpSetMessage,
+  resolvePreset,
+  type FollowUpPresetId,
+} from "@/lib/follow-up-presets";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
@@ -50,12 +57,6 @@ import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Platform = "email" | "linkedin" | "sms";
-
-const REMIND_PRESETS = [
-  { days: 1, label: "1d" },
-  { days: 3, label: "3d" },
-  { days: 7, label: "7d" },
-] as const;
 
 function smsHref(phone: string, body: string) {
   const digits = phone.replace(/[^\d+]/g, "");
@@ -124,15 +125,16 @@ export function ContactFollowUpSection({
       })()
     : null;
 
-  function scheduleDays(days: number) {
+  function schedulePreset(id: FollowUpPresetId) {
+    const due = resolvePreset(id, new Date(), browserTimeZone());
     startSchedule(async () => {
       try {
-        await scheduleContactFollowUp(contactId, days);
+        await scheduleContactFollowUp(contactId, due.toISOString());
         const permission = await promptNotificationsAfterFollowUpAction();
         toast.success(
           permission === "granted"
-            ? `Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now — desktop alerts are on`
-            : `Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now`
+            ? `${followUpSetMessage(due)} — desktop alerts are on`
+            : followUpSetMessage(due)
         );
         router.refresh();
       } catch (err) {
@@ -306,17 +308,19 @@ export function ContactFollowUpSection({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            {REMIND_PRESETS.map((p) => (
+            {FOLLOW_UP_PRESETS.map((p) => (
               <Button
-                key={p.days}
+                key={p.id}
                 type="button"
                 size="sm"
                 variant="outline"
                 disabled={scheduling}
                 className="h-8 px-2.5"
-                onClick={() => scheduleDays(p.days)}
+                title={p.label}
+                aria-label={`Follow up in ${p.label.toLowerCase()}`}
+                onClick={() => schedulePreset(p.id)}
               >
-                {p.label}
+                {p.short}
               </Button>
             ))}
             <DatePickerButton

@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { IntentLink } from "@/components/ui/intent-link";
+import { FOLLOW_UP_PRESETS } from "@/lib/follow-up-presets";
 import { cardLine, type ChangeLine } from "@/lib/radar/briefing";
 import { KIND_LABELS } from "@/lib/radar/types";
 import { cn } from "@/lib/utils";
@@ -153,10 +154,10 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
               <CalendarPlus className="size-4" aria-hidden />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuLabel>Follow up in</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => actions.schedule(3)}>3 days</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => actions.schedule(7)}>1 week</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => actions.schedule(14)}>2 weeks</DropdownMenuItem>
+              <DropdownMenuLabel>Follow up</DropdownMenuLabel>
+              {FOLLOW_UP_PRESETS.map((p) => (
+                <DropdownMenuItem key={p.id} onClick={() => actions.schedule(p.id)}>{p.label}</DropdownMenuItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
           <button

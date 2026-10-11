@@ -15,12 +15,13 @@ import {
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
-
-const PRESETS = [
-  { days: 3, label: "3d" },
-  { days: 7, label: "7d" },
-  { days: 14, label: "14d" },
-] as const;
+import {
+  FOLLOW_UP_PRESETS,
+  browserTimeZone,
+  followUpSetMessage,
+  resolvePreset,
+  type FollowUpPresetId,
+} from "@/lib/follow-up-presets";
 
 export function EasyFollowUp({
   contactId,
@@ -78,19 +79,16 @@ export function EasyFollowUp({
       ? new Date(nextFollowUpAt) <= new Date()
       : false;
 
-  function schedule(days: number) {
+  function schedule(id: FollowUpPresetId) {
+    const due = resolvePreset(id, new Date(), browserTimeZone());
     start(async () => {
       try {
-        const res = await scheduleContactFollowUp(contactId, days);
+        const res = await scheduleContactFollowUp(contactId, due.toISOString());
         onScheduled?.(res.dueDate);
         const permission = await promptNotificationsAfterFollowUpAction();
-        if (permission === "granted") {
-          // `${days} days` read "1 days" — and the same action's other caller, in
-          // contact-follow-up-section, called it a "Reminder". One wording for one action.
-          toast.success(`Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now — desktop alerts are on`);
-        } else {
-          toast.success(`Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now`);
-        }
+        toast.success(
+          permission === "granted" ? `${followUpSetMessage(due)} — desktop alerts are on` : followUpSetMessage(due)
+        );
         router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t set that follow-up — try again?"));
@@ -154,21 +152,22 @@ export function EasyFollowUp({
             those are opposite outcomes, so the group is labelled rather than left
             to be guessed at. */}
         <span className="ml-0.5 text-xs text-muted-foreground">Remind in</span>
-        {PRESETS.map((p) => (
+        {(compact ? FOLLOW_UP_PRESETS.slice(0, 4) : FOLLOW_UP_PRESETS).map((p) => (
           <Button
-            key={p.days}
+            key={p.id}
             type="button"
             size="sm"
             variant="ghost"
             disabled={pending}
             className="h-8 px-2.5"
+            title={p.label}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              schedule(p.days);
+              schedule(p.id);
             }}
           >
-            {p.label}
+            {p.short}
           </Button>
         ))}
 

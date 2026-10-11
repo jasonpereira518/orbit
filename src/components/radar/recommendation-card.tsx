@@ -38,6 +38,7 @@ import {
   type RadarReason,
   type RecommendationKind,
 } from "@/lib/radar/types";
+import { FOLLOW_UP_PRESETS } from "@/lib/follow-up-presets";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { KIND_STYLES } from "@/components/radar/kind-styles";
@@ -92,7 +93,7 @@ export function RecommendationCard({
 
   useRadarKeys(shortcuts && !actions.collapsed, (command) => {
     if (pending) return;
-    if (command === "schedule") actions.schedule(7);
+    if (command === "schedule") actions.schedule("next-business-week");
     else if (command === "draft") setDraftOpen(true);
     else if (command === "snooze") actions.snooze("1w");
     else if (command === "dismiss") actions.dismiss();
@@ -267,10 +268,10 @@ export function RecommendationCard({
                     Schedule
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-44">
-                    <DropdownMenuLabel>Follow up in</DropdownMenuLabel>
-                    <DropdownMenuItem onClick={() => schedule(3)}>3 days</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => schedule(7)}>1 week</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => schedule(14)}>2 weeks</DropdownMenuItem>
+                    <DropdownMenuLabel>Follow up</DropdownMenuLabel>
+                    {FOLLOW_UP_PRESETS.map((p) => (
+                      <DropdownMenuItem key={p.id} onClick={() => schedule(p.id)}>{p.label}</DropdownMenuItem>
+                    ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <Button

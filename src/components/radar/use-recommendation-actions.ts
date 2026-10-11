@@ -10,6 +10,7 @@ import {
   snoozeRecommendation,
 } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
+import { browserTimeZone, followUpSetMessage, resolvePreset, type FollowUpPresetId } from "@/lib/follow-up-presets";
 import { runToastAction, toast } from "@/lib/toast";
 
 /**
@@ -75,24 +76,25 @@ export function useRecommendationActions(rec: { id: string; contactName: string 
       router.refresh();
     });
 
-  // Interim: still takes a day count; Task 3 swaps in the preset picker's ISO instant.
-  const schedule = (days: 3 | 7 | 14) =>
+  const schedule = (id: FollowUpPresetId) => {
+    const due = resolvePreset(id, new Date(), browserTimeZone());
     start(async () => {
       setExiting(true);
       try {
-        const [result] = await Promise.all([scheduleFromRecommendation(rec.id, new Date(Date.now() + days * 86_400_000).toISOString()), settle()]);
+        const [result] = await Promise.all([scheduleFromRecommendation(rec.id, due.toISOString()), settle()]);
         if (!result.ok) {
           setExiting(false);
           toast.error(result.message);
           return;
         }
-        toast.success(days === 7 ? "Follow-up set for a week from now" : `Follow-up set for ${days} days from now`);
+        toast.success(followUpSetMessage(due));
         router.refresh();
       } catch (err) {
         setExiting(false);
         toast.error(friendlyError(err, "Couldn’t schedule that follow-up — try again?"));
       }
     });
+  };
 
   return {
     pending,

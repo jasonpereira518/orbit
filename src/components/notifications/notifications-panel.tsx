@@ -9,7 +9,15 @@ import {
   useState,
   useTransition,
 } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { FOLLOW_UP_PRESETS, browserTimeZone, resolvePreset, type FollowUpPresetId } from "@/lib/follow-up-presets";
 import {
   Bell,
   Check,
@@ -171,15 +179,16 @@ export function NotificationsPanelButton({
     );
   }
 
-  function snooze(reminderId: string) {
+  function snooze(reminderId: string, id: FollowUpPresetId) {
+    const due = resolvePreset(id, new Date(), browserTimeZone());
     start(() =>
       runToastAction({
-        run: () => snoozeReminderAction(reminderId, 7),
-        success: "Snoozed for a week",
+        run: () => snoozeReminderAction(reminderId, due.toISOString()),
+        success: `Snoozed until ${format(due, "EEE MMM d, h:mm a")}`,
         failure: "Couldn’t snooze that — try again?",
         refresh,
         undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
-        offline: { kind: "reminder.snooze", args: [reminderId, 7], subject: reminderId },
+        offline: { kind: "reminder.snooze", args: [reminderId, due.toISOString()], subject: reminderId },
       }).then(() => undefined)
     );
   }
@@ -323,9 +332,9 @@ export function NotificationsPanelButton({
                           clearFollowUp(item.contactId);
                         }
                       }}
-                      onSnooze={() => {
+                      onSnooze={(id) => {
                         if (item.kind === "reminder" && item.reminderId) {
-                          snooze(item.reminderId);
+                          snooze(item.reminderId, id);
                         }
                       }}
                       onNavigate={() => setOpen(false)}
@@ -668,7 +677,7 @@ function NotificationRow({
   item: PanelItem;
   pending: boolean;
   onDone?: () => void;
-  onSnooze?: () => void;
+  onSnooze?: (id: FollowUpPresetId) => void;
   onNavigate: () => void;
 }) {
   const Icon =
@@ -716,17 +725,19 @@ function NotificationRow({
         </span>
       </Link>
       {item.kind === "reminder" && onSnooze && (
-        <Button
-          size="icon"
-          variant="ghost"
-          className={ICON_BTN}
-          disabled={pending}
-          aria-label="Snooze 7 days"
-          title="Snooze 7 days"
-          onClick={onSnooze}
-        >
-          <Clock className="h-3.5 w-3.5" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button size="icon" variant="ghost" className={ICON_BTN} disabled={pending} aria-label="Snooze" title="Snooze" />}
+          >
+            <Clock className="h-3.5 w-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Snooze until</DropdownMenuLabel>
+            {FOLLOW_UP_PRESETS.map((p) => (
+              <DropdownMenuItem key={p.id} onClick={() => onSnooze(p.id)}>{p.label}</DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
       {onDone && (
         <Button
