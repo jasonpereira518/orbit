@@ -25,11 +25,15 @@ const ahead = (d: number) => new Date(now.getTime() + d * DAY);
 async function main() {
   console.log("pure rule");
   check("own cadence wins", effectiveCadenceDays({ cadenceDays: 14, closenessTier: "inner" }) === 14);
-  check("inner defaults monthly", effectiveCadenceDays({ cadenceDays: null, closenessTier: "inner" }) === 30);
-  check("mid defaults quarterly", effectiveCadenceDays({ cadenceDays: null, closenessTier: "mid" }) === 90);
-  check("outer has none", effectiveCadenceDays({ cadenceDays: null, closenessTier: "outer" }) === null);
-  check("no tier has none", effectiveCadenceDays({ cadenceDays: null, closenessTier: null }) === null);
-  check("tier default flagged", isTierDefaultCadence({ cadenceDays: null, closenessTier: "inner" }));
+  check("inner defaults monthly", effectiveCadenceDays({ cadenceDays: null, closenessTier: "inner", closenessEvidence: 0.5 }) === 30);
+  check("mid defaults quarterly", effectiveCadenceDays({ cadenceDays: null, closenessTier: "mid", closenessEvidence: 0.5 }) === 90);
+  check("outer has none", effectiveCadenceDays({ cadenceDays: null, closenessTier: "outer", closenessEvidence: 0.5 }) === null);
+  check("no tier has none", effectiveCadenceDays({ cadenceDays: null, closenessTier: null, closenessEvidence: 0.5 }) === null);
+  check("a tier on thin evidence gives no default", effectiveCadenceDays({ cadenceDays: null, closenessTier: "inner", closenessEvidence: 0.1 }) === null);
+  check("a tier with unknown evidence gives no default", effectiveCadenceDays({ cadenceDays: null, closenessTier: "inner" }) === null);
+  check("own cadence needs no evidence", effectiveCadenceDays({ cadenceDays: 14, closenessTier: "inner", closenessEvidence: null }) === 14);
+  check("tier default flagged", isTierDefaultCadence({ cadenceDays: null, closenessTier: "inner", closenessEvidence: 0.5 }));
+  check("thin-evidence tier not flagged", !isTierDefaultCadence({ cadenceDays: null, closenessTier: "inner", closenessEvidence: 0.1 }));
   check("own cadence not flagged", !isTierDefaultCadence({ cadenceDays: 30, closenessTier: "inner" }));
   check("names", [30, 90, 180, 365, 7, 14, 45].map(cadenceName).join("|") === "Monthly|Quarterly|Twice a year|Yearly|Weekly|Every 2 weeks|Every 45 days");
   check("future follow-up blocks cadence-due",
@@ -57,14 +61,17 @@ async function main() {
   const FIXTURE = [
     { fullName: "Own 30 lapsed", cadenceDays: 30, closenessTier: "outer", lastInteractionAt: ago(31) },
     { fullName: "Own 30 fresh", cadenceDays: 30, closenessTier: "outer", lastInteractionAt: ago(5) },
-    { fullName: "Inner default lapsed", cadenceDays: null, closenessTier: "inner", lastInteractionAt: ago(31) },
-    { fullName: "Mid default fresh", cadenceDays: null, closenessTier: "mid", lastInteractionAt: ago(60) },
+    { fullName: "Inner default lapsed", closenessEvidence: 0.5, cadenceDays: null, closenessTier: "inner", lastInteractionAt: ago(31) },
+    { fullName: "Mid default fresh", closenessEvidence: 0.5, cadenceDays: null, closenessTier: "mid", lastInteractionAt: ago(60) },
     { fullName: "Outer none", cadenceDays: null, closenessTier: "outer", lastInteractionAt: ago(400) },
     { fullName: "Scheduled ahead", cadenceDays: 30, closenessTier: "inner", lastInteractionAt: ago(90), nextFollowUpAt: ahead(2) },
     { fullName: "Scheduled due", cadenceDays: 30, closenessTier: "inner", lastInteractionAt: ago(90), nextFollowUpAt: ago(1) },
     { fullName: "No touch, date met", cadenceDays: 14, closenessTier: null, lastInteractionAt: null, dateMet: ago(20) },
     { fullName: "No anchor, created fallback", cadenceDays: 30, closenessTier: null, lastInteractionAt: null },
-    { fullName: "Zero cadence inner default", cadenceDays: 0, closenessTier: "inner", lastInteractionAt: ago(31) },
+    { fullName: "Zero cadence inner default", closenessEvidence: 0.5, cadenceDays: 0, closenessTier: "inner", lastInteractionAt: ago(31) },
+    { fullName: "Inner thin evidence lapsed", cadenceDays: null, closenessTier: "inner", closenessEvidence: 0.1, lastInteractionAt: ago(31) },
+    { fullName: "Inner evidenced lapsed", cadenceDays: null, closenessTier: "inner", closenessEvidence: 0.5, lastInteractionAt: ago(31) },
+    { fullName: "Own 14 null evidence", cadenceDays: 14, closenessTier: "inner", closenessEvidence: null, lastInteractionAt: ago(15) },
     { fullName: "No cadence no tier", cadenceDays: null, closenessTier: null, lastInteractionAt: ago(400) },
   ] as const;
   const ids: string[] = [];
@@ -74,7 +81,7 @@ async function main() {
       ids.push(row.id);
     }
     const rows = await db.select({
-      id: contacts.id, fullName: contacts.fullName, cadenceDays: contacts.cadenceDays, closenessTier: contacts.closenessTier,
+      id: contacts.id, fullName: contacts.fullName, cadenceDays: contacts.cadenceDays, closenessTier: contacts.closenessTier, closenessEvidence: contacts.closenessEvidence,
       lastInteractionAt: contacts.lastInteractionAt, dateMet: contacts.dateMet, createdAt: contacts.createdAt,
       nextFollowUpAt: contacts.nextFollowUpAt,
       sqlEffective: effectiveCadenceSql(), sqlDueAt: cadenceDueAtSql(), sqlDue: followUpDueSql(sql`${now.toISOString()}::timestamptz`),
@@ -87,7 +94,7 @@ async function main() {
       check(`${r.fullName}: due`, Boolean(r.sqlDue) === isFollowUpDue(r, now));
     }
     const dueNames = rows.filter((r) => isFollowUpDue(r, now)).map((r) => r.fullName).sort();
-    check("due set", JSON.stringify(dueNames) === JSON.stringify(["Inner default lapsed", "No touch, date met", "Own 30 lapsed", "Scheduled due", "Zero cadence inner default"]));
+    check("due set", JSON.stringify(dueNames) === JSON.stringify(["Inner default lapsed", "Inner evidenced lapsed", "No touch, date met", "Own 14 null evidence", "Own 30 lapsed", "Scheduled due", "Zero cadence inner default"]));
   } finally {
     if (ids.length) await db.delete(contacts).where(inArray(contacts.id, ids));
   }

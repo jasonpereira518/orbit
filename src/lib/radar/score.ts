@@ -464,7 +464,7 @@ export function scoreContactKinds(
   // Dormancy, against the rhythm the person stated or the default window. Unknown recency
   // is not dormancy: a contact with no touch on record is skipped rather than nagged about.
   const idle = daysSince(contact.lastInteractionAt, now);
-  const cadence = effectiveCadenceDays({ cadenceDays: contact.cadenceDays, closenessTier: contact.tier });
+  const cadence = effectiveCadenceDays({ cadenceDays: contact.cadenceDays, closenessTier: contact.tier, closenessEvidence: contact.hasEvidence ? 1 : 0 });
   if (idle !== null && (cadence !== null || isHighValue(contact))) {
     const window = idleThresholdFor(cadence, DORMANT_DAYS);
     if (idle >= window) {

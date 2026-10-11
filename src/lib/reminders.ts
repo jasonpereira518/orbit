@@ -169,6 +169,7 @@ async function buildOutreachSuggestions(userId: string) {
         cadencePhrase: true,
         // The materialized tier: its default cadence applies when no rhythm was stated.
         closenessTier: true,
+        closenessEvidence: true,
         // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
         // an optional field here would let a caller forget the column and quietly never
         // suppress anything, with nothing failing to say so.
@@ -272,7 +273,7 @@ async function buildOutreachSuggestions(userId: string) {
 
   const dormantHighValue = all.filter((c) => {
     if (!isDiscoveryEligible(c)) return false;
-    const cadence = effectiveCadenceDays({ cadenceDays: c.cadenceDays, closenessTier: c.closenessTier });
+    const cadence = effectiveCadenceDays({ cadenceDays: c.cadenceDays, closenessTier: c.closenessTier, closenessEvidence: c.closenessEvidence });
     if (cadence === null && !(c.priorityLevel >= 2 || c.relationshipScore >= 4)) return false;
     return daysAgo(c.lastInteractionAt) >= idleThresholdFor(cadence, DORMANT_DAYS);
   });
@@ -386,13 +387,14 @@ function followUpCandidateScore(contact: {
   nextFollowUpAt: Date | string | null;
   cadenceDays?: number | null;
   closenessTier?: ClosenessTier | null;
+  closenessEvidence?: number | null;
 }) {
   const idleDays = Math.min(daysAgo(contact.lastInteractionAt), 365);
   // Idle time measured against this person's OWN rhythm, so the score means "how overdue",
   // not "how long". Dividing everyone by 30 ranked a quarterly contact above a weekly one
   // purely for sitting still.
   const window = idleThresholdFor(
-    effectiveCadenceDays({ cadenceDays: contact.cadenceDays ?? null, closenessTier: contact.closenessTier ?? null }),
+    effectiveCadenceDays({ cadenceDays: contact.cadenceDays ?? null, closenessTier: contact.closenessTier ?? null, closenessEvidence: contact.closenessEvidence ?? null }),
     DORMANT_DAYS
   );
   const idleScore = Number.isFinite(idleDays) ? idleDays / window : 2;
@@ -423,6 +425,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
       nextFollowUpAt: true,
       cadenceDays: true,
       closenessTier: true,
+      closenessEvidence: true,
     },
   });
 

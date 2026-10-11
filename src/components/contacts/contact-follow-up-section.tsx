@@ -84,6 +84,7 @@ export function ContactFollowUpSection({
   keepInTouchDays,
   cadencePhrase,
   closenessTier,
+  closenessEvidence,
   sendOptions,
   phone,
   initialIntent,
@@ -98,6 +99,8 @@ export function ContactFollowUpSection({
   cadencePhrase?: string | null;
   /** The materialized tier, for the default cadence when none is set. */
   closenessTier?: "inner" | "mid" | "outer" | null;
+  /** Gates the tier default: a guessed tier gives no cadence. */
+  closenessEvidence?: number | null;
   sendOptions: ContactFollowUpSendOptions;
   phone?: string | null;
   /** Prefill intent for intro/reach-out drafts (e.g. related person). */
@@ -122,7 +125,7 @@ export function ContactFollowUpSection({
   const [cadence, setCadence] = useState<number | null>(keepInTouchDays ?? null);
 
   const own = cadence;
-  const effective = effectiveCadenceDays({ cadenceDays: own, closenessTier: closenessTier ?? null });
+  const effective = effectiveCadenceDays({ cadenceDays: own, closenessTier: closenessTier ?? null, closenessEvidence });
   const cadenceStatus =
     // The phrase belongs to the saved cadence, not one just picked and not yet refreshed.
     own && cadencePhrase && own === keepInTouchDays ? `“${cadencePhrase}”`

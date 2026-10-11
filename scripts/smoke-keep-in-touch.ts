@@ -129,13 +129,15 @@ async function dbChecks() {
   section("The tier default reaches low-score contacts too");
 
   const lowScore = { priorityLevel: 0, relationshipScore: 2, lastInteractionAt: realDaysAgo(35) };
-  const inner = await person("Inner Ines", { ...lowScore, closenessTier: "inner" });
-  const outer = await person("Outer Otto", { ...lowScore, closenessTier: "outer" });
+  const inner = await person("Inner Ines", { ...lowScore, closenessTier: "inner", closenessEvidence: 0.5 });
+  const outer = await person("Outer Otto", { ...lowScore, closenessTier: "outer", closenessEvidence: 0.5 });
+  const guessed = await person("Guessed Gil", { ...lowScore, closenessTier: "inner", closenessEvidence: 0.1 });
   await refreshOutreachSuggestions(USER);
   const tierRows = await db.query.aiSuggestions.findMany({ where: eq(aiSuggestions.userId, USER) });
   const tierTypeOf = (id: string) =>
     tierRows.find((r) => (r.relatedContactIds as string[] | null)?.includes(id))?.suggestionType ?? null;
   check("an inner contact 35 days quiet gets dormant_high_value", tierTypeOf(inner.id) === "dormant_high_value", `got ${tierTypeOf(inner.id)}`);
+  check("an inner tier resting on thin evidence gets none", tierTypeOf(guessed.id) === null, `got ${tierTypeOf(guessed.id)} — a guessed tier is not a rhythm`);
   check("an outer contact 35 days quiet gets none", tierTypeOf(outer.id) === null, `got ${tierTypeOf(outer.id)}`);
 
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, USER));

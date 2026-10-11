@@ -1,6 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 import { contacts } from "@/db/schema";
+import { EVIDENCE_FLOOR } from "@/lib/closeness-evidence";
 
 /**
  * The SQL twin of `keep-in-touch.ts`: effective cadence, when it lapses, and "is this follow-up
@@ -11,12 +12,13 @@ import { contacts } from "@/db/schema";
  */
 type Ref = AnyColumn | SQL;
 export type CadenceColumns = {
-  cadenceDays: Ref; closenessTier: Ref; lastInteractionAt: Ref; dateMet: Ref; createdAt: Ref; nextFollowUpAt: Ref;
+  cadenceDays: Ref; closenessTier: Ref; closenessEvidence: Ref; lastInteractionAt: Ref; dateMet: Ref; createdAt: Ref; nextFollowUpAt: Ref;
 };
 
 export const contactColumns: CadenceColumns = {
   cadenceDays: contacts.cadenceDays,
   closenessTier: contacts.closenessTier,
+  closenessEvidence: contacts.closenessEvidence,
   lastInteractionAt: contacts.lastInteractionAt,
   dateMet: contacts.dateMet,
   createdAt: contacts.createdAt,
@@ -28,7 +30,7 @@ export function aliasColumns(alias: string): CadenceColumns {
   if (!/^[a-z_]+$/.test(alias)) throw new Error("bad alias");
   const col = (name: string) => sql.raw(`${alias}.${name}`);
   return {
-    cadenceDays: col("cadence_days"), closenessTier: col("closeness_tier"), lastInteractionAt: col("last_interaction_at"),
+    cadenceDays: col("cadence_days"), closenessTier: col("closeness_tier"), closenessEvidence: col("closeness_evidence"), lastInteractionAt: col("last_interaction_at"),
     dateMet: col("date_met"), createdAt: col("created_at"), nextFollowUpAt: col("next_follow_up_at"),
   };
 }
@@ -36,7 +38,7 @@ export function aliasColumns(alias: string): CadenceColumns {
 export function effectiveCadenceSql(c: CadenceColumns = contactColumns): SQL<number | null> {
   return sql<number | null>`coalesce(
     case when ${c.cadenceDays} > 0 then ${c.cadenceDays} end,
-    case ${c.closenessTier} when 'inner' then 30 when 'mid' then 90 end
+    case when ${c.closenessEvidence} >= ${EVIDENCE_FLOOR} then case ${c.closenessTier} when 'inner' then 30 when 'mid' then 90 end end
   )`;
 }
 

@@ -140,9 +140,9 @@ run(async () => {
     { userId: CADENCE_USER, fullName: "Own Cadence", lastInteractionAt: ago(20), cadenceDays: 14 },
   ]).returning();
   await recalibrateCloseness(CADENCE_USER);
-  // After the recalibration, which writes the column: the tier the effective cadence reads.
+  // After the recalibration, which writes the column: the tier (and the evidence behind it) the effective cadence reads.
   const setTier = (id: string, tier: "inner" | "mid" | "outer") =>
-    db.update(contacts).set({ closenessTier: tier }).where(eq(contacts.id, id));
+    db.update(contacts).set({ closenessTier: tier, closenessEvidence: 0.5 }).where(eq(contacts.id, id));
   await setTier(innerLapsed.id, "inner");
   await setTier(outerQuiet.id, "outer");
   await setTier(booked.id, "inner");

@@ -160,13 +160,18 @@ function main() {
     check("a low-value acquaintance is never nagged",
       scoreOf(kinds(contact({ tier: "outer", priorityLevel: 0, relationshipScore: 2, lastInteractionAt: ago(200) })), "reconnect") === null);
     check("a guessed tier without evidence is not dormant",
-      scoreOf(kinds(contact({ tier: "mid", hasEvidence: false, lastInteractionAt: ago(60) })), "reconnect") === null);
+      scoreOf(kinds(contact({ tier: "mid", hasEvidence: false, lastInteractionAt: ago(100) })), "reconnect") === null);
     check("but a stated priority is, evidence or not",
       scoreOf(kinds(contact({ tier: "outer", hasEvidence: false, priorityLevel: 2, lastInteractionAt: ago(60) })), "reconnect") !== null);
     const outerOwn = { tier: "outer" as const, relationshipScore: 2, priorityLevel: 0, hasEvidence: false, lastInteractionAt: ago(20) };
     const ownReason = kinds(contact({ ...outerOwn, cadenceDays: 14 })).find((k) => k.kind === "reconnect");
     check("a low-value contact with its own cadence is dormant once it lapses", ownReason?.reasons.some((r) => r.code === "dormant") === true);
     check("the same contact with no cadence is not", scoreOf(kinds(contact({ ...outerOwn, cadenceDays: null })), "reconnect") === null);
+    const innerBase = { tier: "inner" as const, priorityLevel: 0, relationshipScore: 2, cadenceDays: null, lastInteractionAt: ago(35) };
+    check("an evidenced inner contact is dormant on the tier default",
+      kinds(contact({ ...innerBase, hasEvidence: true })).find((k) => k.kind === "reconnect")?.reasons.some((r) => r.code === "dormant") === true);
+    check("the same contact on a guessed tier is not",
+      scoreOf(kinds(contact({ ...innerBase, hasEvidence: false })), "reconnect") === null);
     check("context alone never creates a recommendation",
       kinds(contact({ tier: "inner", priorityLevel: 3, targetPriority: 1, goalFit: 1, lastInteractionAt: ago(3) })).length === 0);
     check("a fit with your skills and watched roles is context too — it never creates one",

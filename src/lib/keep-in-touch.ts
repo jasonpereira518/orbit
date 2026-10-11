@@ -57,10 +57,14 @@ export function normalizeCadence(value: unknown): number | null {
  */
 export const TIER_DEFAULT_CADENCE = { inner: 30, mid: 90, outer: null } as const;
 
+import { EVIDENCE_FLOOR } from "@/lib/closeness-evidence";
+
 type Tier = "inner" | "mid" | "outer";
 export type CadenceInput = {
   cadenceDays: number | null;
   closenessTier: Tier | null;
+  /** The tier default applies only when the tier rests on evidence (>= EVIDENCE_FLOOR); a guessed tier is not a rhythm. */
+  closenessEvidence?: number | null;
   lastInteractionAt: Date | string | null;
   dateMet?: Date | string | null;
   createdAt?: Date | string | null;
@@ -74,12 +78,14 @@ const toDate = (v: Date | string | null | undefined): Date | null => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
-export function effectiveCadenceDays(c: Pick<CadenceInput, "cadenceDays" | "closenessTier">): number | null {
+export function effectiveCadenceDays(
+  c: Pick<CadenceInput, "cadenceDays" | "closenessTier" | "closenessEvidence">
+): number | null {
   if (c.cadenceDays && c.cadenceDays > 0) return c.cadenceDays;
-  return c.closenessTier ? TIER_DEFAULT_CADENCE[c.closenessTier] : null;
+  return c.closenessTier && (c.closenessEvidence ?? 0) >= EVIDENCE_FLOOR ? TIER_DEFAULT_CADENCE[c.closenessTier] : null;
 }
 
-export function isTierDefaultCadence(c: Pick<CadenceInput, "cadenceDays" | "closenessTier">): boolean {
+export function isTierDefaultCadence(c: Pick<CadenceInput, "cadenceDays" | "closenessTier" | "closenessEvidence">): boolean {
   return !(c.cadenceDays && c.cadenceDays > 0) && effectiveCadenceDays(c) !== null;
 }
 

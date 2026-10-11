@@ -409,6 +409,7 @@ export default async function ContactDetailPage({
           keepInTouchDays={contact.cadenceDays}
           cadencePhrase={contact.cadencePhrase}
           closenessTier={contact.closenessTier}
+          closenessEvidence={contact.closenessEvidence}
           phone={contact.phone}
         />
       </Suspense>
@@ -510,6 +511,7 @@ async function StreamedFollowUp({
   keepInTouchDays: number | null;
   cadencePhrase: string | null;
   closenessTier: "inner" | "mid" | "outer" | null;
+  closenessEvidence: number | null;
   phone: string | null;
 }) {
   const resolved = await sendOptions;
