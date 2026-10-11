@@ -16,6 +16,8 @@
  * Pure: no database. `buildOutreachSuggestions` does the query and passes rows here.
  */
 
+import { EVIDENCE_FLOOR } from "@/lib/closeness-evidence";
+
 /**
  * The intervals offered in the UI, in days.
  *
@@ -56,8 +58,6 @@ export function normalizeCadence(value: unknown): number | null {
  * ring quarterly, everyone else not at all. Not a setting. A contact's own cadence always wins.
  */
 export const TIER_DEFAULT_CADENCE = { inner: 30, mid: 90, outer: null } as const;
-
-import { EVIDENCE_FLOOR } from "@/lib/closeness-evidence";
 
 type Tier = "inner" | "mid" | "outer";
 export type CadenceInput = {

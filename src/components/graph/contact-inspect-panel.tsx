@@ -279,7 +279,7 @@ function YouPanelBody({
 
         <div>
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            By orbit
+            By strength
           </p>
           <ul className="space-y-1 text-sm">
             {[5, 4, 3, 2, 1].map((score) => (
@@ -492,7 +492,7 @@ function ContactPanelBody({
               closenessChipClass(data.closeness, data.closenessTier)
             )}
           >
-            {RING_LABELS[(data.score || 2) as 1 | 2 | 3 | 4 | 5] || "Orbit"}
+            {RING_LABELS[(data.score || 2) as 1 | 2 | 3 | 4 | 5] || "Ring"}
             {typeof data.closeness === "number"
               ? ` · ${Math.round(data.closeness * 100)}%`
               : ` · ${data.score}/5`}

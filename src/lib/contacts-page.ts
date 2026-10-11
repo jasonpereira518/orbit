@@ -137,6 +137,8 @@ export type ContactListRow = {
   nextFollowUpAt: Date | null;
   /** The effective keep-in-touch cadence in days: the contact's own, else the tier default. */
   keepInTouchDays: number | null;
+  /** True when `keepInTouchDays` is the tier default, not the contact's own cadence. */
+  keepInTouchIsDefault: boolean;
   lastInteractionAt: Date | null;
   /** `contacts.source`; the list only reads it for the guided tour's "Example" chip. */
   source: string | null;

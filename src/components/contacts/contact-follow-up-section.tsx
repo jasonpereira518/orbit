@@ -66,8 +66,6 @@ function smsHref(phone: string, body: string) {
   return `sms:${digits}${encoded ? `?&body=${encoded}` : ""}`;
 }
 
-// Task 11 replaces this with the shared orbit tier labels.
-
 function dueYmd(value: string | Date | null | undefined): string | null {
   if (!value) return null;
   try {

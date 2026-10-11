@@ -93,6 +93,7 @@ export type ContactListItem = {
   nextFollowUpAt?: string | Date | null;
   /** The effective keep-in-touch cadence in days (own, else the tier default). */
   keepInTouchDays?: number | null;
+  keepInTouchIsDefault?: boolean;
   lastInteractionAt?: string | Date | null;
   tags: string[];
   matchReason?: string | null;
@@ -161,7 +162,6 @@ function overdueFollowUpLabel(nextFollowUpAt?: string | Date | null) {
   );
   return `Overdue ${days} day${days === 1 ? "" : "s"}`;
 }
-
 
 export type ContactsListFilters = {
   q?: string;
@@ -761,6 +761,7 @@ const ContactRow = memo(function ContactRow({
               {c.keepInTouchDays ? (
                 <span className="hidden shrink-0 rounded-full border border-border/60 px-1.5 text-[11px] text-muted-foreground md:inline-flex">
                   {cadenceName(c.keepInTouchDays)}
+                  {c.keepInTouchIsDefault ? " (default)" : ""}
                 </span>
               ) : null}
             </div>

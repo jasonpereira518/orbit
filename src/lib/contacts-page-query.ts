@@ -29,6 +29,7 @@ import {
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
 import { alumniSchoolValues, targetCompanyValues } from "@/lib/audience-filters";
 import { effectiveCadenceSql, followUpDueSql } from "@/lib/contact-cadence-sql";
+import { cadenceExtras } from "@/lib/due-follow-ups";
 import type { RankedContact } from "@/lib/hybrid-search";
 import {
   CONTACTS_PAGE_SIZE,
@@ -164,7 +165,12 @@ export async function listContactsPage(
   if (cursor) conditions.push(contactsCursorCondition(cursor, tier));
 
   const rows = await db
-    .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2`, keepInTouchDays: effectiveCadenceSql() })
+    .select({
+      ...contactsListSelection,
+      nameTier: tier ?? sql<number>`2`,
+      keepInTouchDays: effectiveCadenceSql(),
+      cadenceIsOwn: cadenceExtras().cadenceIsOwn,
+    })
     .from(contacts)
     .where(and(...conditions))
     .orderBy(...contactsOrderBy(sort, tier, semanticIds))
@@ -204,6 +210,8 @@ export async function listContactsPage(
       priorityLevel: row.priorityLevel,
       nextFollowUpAt: row.nextFollowUpAt,
       keepInTouchDays: row.keepInTouchDays === null ? null : Number(row.keepInTouchDays),
+      // The due list's rule (`keepInTouchOf`), minus "nothing booked": the list labels the cadence itself.
+      keepInTouchIsDefault: row.keepInTouchDays !== null && !row.cadenceIsOwn,
       lastInteractionAt: row.lastInteractionAt,
       source: row.source ?? null,
       tags: tagsByContact.get(row.id) ?? [],

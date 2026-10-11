@@ -385,16 +385,16 @@ function followUpCandidateScore(contact: {
   relationshipScore: number;
   lastInteractionAt: Date | string | null;
   nextFollowUpAt: Date | string | null;
-  cadenceDays?: number | null;
-  closenessTier?: ClosenessTier | null;
-  closenessEvidence?: number | null;
+  cadenceDays: number | null;
+  closenessTier: ClosenessTier | null;
+  closenessEvidence: number | null;
 }) {
   const idleDays = Math.min(daysAgo(contact.lastInteractionAt), 365);
   // Idle time measured against this person's OWN rhythm, so the score means "how overdue",
   // not "how long". Dividing everyone by 30 ranked a quarterly contact above a weekly one
   // purely for sitting still.
   const window = idleThresholdFor(
-    effectiveCadenceDays({ cadenceDays: contact.cadenceDays ?? null, closenessTier: contact.closenessTier ?? null, closenessEvidence: contact.closenessEvidence ?? null }),
+    effectiveCadenceDays(contact),
     DORMANT_DAYS
   );
   const idleScore = Number.isFinite(idleDays) ? idleDays / window : 2;

@@ -186,6 +186,10 @@ run(async () => {
     all.items.find((c) => c.id === innerLapsed.id)?.keepInTouchDays === 30 &&
       all.items.find((c) => c.id === ownCadence.id)?.keepInTouchDays === 14 &&
       all.items.find((c) => c.id === outerQuiet.id)?.keepInTouchDays === null);
+  check("the list marks a tier default as default, a contact's own cadence and none as not",
+    all.items.find((c) => c.id === innerLapsed.id)?.keepInTouchIsDefault === true &&
+      all.items.find((c) => c.id === ownCadence.id)?.keepInTouchIsDefault === false &&
+      all.items.find((c) => c.id === outerQuiet.id)?.keepInTouchIsDefault === false);
 
   await cleanup();
 

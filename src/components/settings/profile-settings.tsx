@@ -212,7 +212,7 @@ export function ProfileSettings({
           />
           <select
             aria-label="Search status"
-            className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
+            className="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             value={search.searchStatus ?? ""}
             onChange={(e) =>
               setSearch({ ...search, searchStatus: (e.target.value || null) as SearchStatus | null })

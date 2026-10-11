@@ -27,6 +27,10 @@ if (/>\s*Closeness\s*</.test(filters) || /"Closeness"/.test(filters)) fail("the 
 const graph = read("src/components/graph/network-graph.tsx");
 if (/(Inner|Mid|Outer|Core) orbit/.test(graph)) fail("network-graph ring filter still says orbit");
 
+const inspect = read("src/components/graph/contact-inspect-panel.tsx");
+if (/By orbit/.test(inspect)) fail("contact-inspect-panel ring heading still says By orbit");
+if (/\|\|\s*"Orbit"/.test(inspect)) fail("contact-inspect-panel ring fallback still says Orbit");
+
 for (const f of [
   "src/components/dashboard/closeness-tier-badge.tsx",
   "src/components/knowledge/dossier-pane.tsx",
