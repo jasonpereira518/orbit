@@ -1,5 +1,6 @@
 "use client";
 
+import { ORBIT_LABEL, ORBIT_TIER_SHORT } from "@/lib/score-labels";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowRight, Bell, Check, Sparkles, Users, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -71,9 +72,9 @@ export function DashboardScreen() {
     { label: "3+ links", v: DEMO_PEOPLE.filter((p) => degree(p) >= 3).length, tone: "bg-emerald-500" },
   ];
   const strength = [
-    { label: "Close", v: tiers.inner, dot: "bg-emerald-500", text: "text-emerald-400" },
-    { label: "Warm", v: tiers.mid, dot: "bg-amber-500", text: "text-amber-400" },
-    { label: "Cool", v: tiers.outer, dot: "bg-sky-500", text: "text-sky-400" },
+    { label: ORBIT_TIER_SHORT.inner, v: tiers.inner, dot: "bg-emerald-500", text: "text-emerald-400" },
+    { label: ORBIT_TIER_SHORT.mid, v: tiers.mid, dot: "bg-amber-500", text: "text-amber-400" },
+    { label: ORBIT_TIER_SHORT.outer, v: tiers.outer, dot: "bg-sky-500", text: "text-sky-400" },
   ];
 
   return (
@@ -101,7 +102,7 @@ export function DashboardScreen() {
             Network depth
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">How close your network feels and how people connect to each other</p>
-          <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">Relationship strength</p>
+          <p className="mt-4 text-xs uppercase tracking-wide text-muted-foreground">{ORBIT_LABEL}</p>
           <div className="mt-2 flex h-2.5 overflow-hidden rounded-full" aria-hidden="true">
             {strength.map((t) => (
               <span key={t.label} className={t.dot} style={{ width: `${(t.v / n) * 100}%` }} />

@@ -26,13 +26,7 @@ export { orderConstellationMembers };
 export const RING_RADII = [160, 260, 360, 470, 580] as const;
 
 /** Score 5 = closest to you (the sun) … Score 1 = furthest out */
-export const RING_LABELS: Record<number, string> = {
-  5: "Core orbit",
-  4: "Inner orbit",
-  3: "Mid orbit",
-  2: "Outer orbit",
-  1: "Deep space",
-};
+export { RING_LABELS } from "@/lib/score-labels";
 
 export type GraphContactInput = {
   id: string;

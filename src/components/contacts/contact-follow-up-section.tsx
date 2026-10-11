@@ -1,5 +1,6 @@
 "use client";
 
+import { ORBIT_TIER_LABELS } from "@/lib/score-labels";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Mail, MessageSquare, RefreshCw } from "lucide-react";
@@ -66,7 +67,6 @@ function smsHref(phone: string, body: string) {
 }
 
 // Task 11 replaces this with the shared orbit tier labels.
-const TIER_NAMES = { inner: "Inner orbit", mid: "Mid orbit", outer: "Outer orbit" } as const;
 
 function dueYmd(value: string | Date | null | undefined): string | null {
   if (!value) return null;
@@ -130,7 +130,7 @@ export function ContactFollowUpSection({
     // The phrase belongs to the saved cadence, not one just picked and not yet refreshed.
     own && cadencePhrase && own === keepInTouchDays ? `“${cadencePhrase}”`
     : own ? cadenceName(own)
-    : effective && closenessTier ? `${cadenceName(effective)} (${TIER_NAMES[closenessTier]} default)`
+    : effective && closenessTier ? `${cadenceName(effective)} (${ORBIT_TIER_LABELS[closenessTier]} default)`
     : "Not set";
 
   const scheduledYmd = dueYmd(nextFollowUpAt);

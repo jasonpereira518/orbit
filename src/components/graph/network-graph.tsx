@@ -1,5 +1,6 @@
 "use client";
 
+import { RING_LABELS } from "@/lib/score-labels";
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import {
   useCallback,
@@ -1008,7 +1009,7 @@ export function NetworkGraph({
                   </div>
                   <div className="space-y-1.5">
                     <p className="text-[11px] uppercase tracking-wide text-white/45">
-                      Min strength (orbit)
+                      Min strength
                     </p>
                     <Select
                       value={minScore}
@@ -1018,11 +1019,11 @@ export function NetworkGraph({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="1">1+ Deep space</SelectItem>
-                        <SelectItem value="2">2+ Outer orbit</SelectItem>
-                        <SelectItem value="3">3+ Mid orbit</SelectItem>
-                        <SelectItem value="4">4+ Inner orbit</SelectItem>
-                        <SelectItem value="5">5 Core orbit</SelectItem>
+                        {([1, 2, 3, 4, 5] as const).map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n === 5 ? "5" : `${n}+`} {RING_LABELS[n]}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

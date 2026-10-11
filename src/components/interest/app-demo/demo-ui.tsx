@@ -1,5 +1,6 @@
 "use client";
 
+import { ORBIT_TIER_LABELS } from "@/lib/score-labels";
 import { CalendarDays, Mail, UserRound } from "lucide-react";
 import { useId } from "react";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
@@ -144,9 +145,9 @@ export function Avatar({ person, size = 32, className }: { person: DemoPerson; s
 }
 
 const TIER_STYLE = {
-  inner: { chip: "bg-emerald-400/15 text-emerald-200 ring-emerald-300/25", label: "Inner orbit" },
-  mid: { chip: "bg-sky-400/15 text-sky-200 ring-sky-300/25", label: "Mid orbit" },
-  outer: { chip: "bg-amber-400/15 text-amber-200 ring-amber-300/25", label: "Outer orbit" },
+  inner: { chip: "bg-emerald-400/15 text-emerald-200 ring-emerald-300/25", label: ORBIT_TIER_LABELS.inner },
+  mid: { chip: "bg-sky-400/15 text-sky-200 ring-sky-300/25", label: ORBIT_TIER_LABELS.mid },
+  outer: { chip: "bg-amber-400/15 text-amber-200 ring-amber-300/25", label: ORBIT_TIER_LABELS.outer },
 } as const;
 
 /** The app's own tier badge (`components/dashboard/closeness-tier-badge.tsx`). */

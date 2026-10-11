@@ -1,5 +1,6 @@
 "use client";
 
+import { ORBIT_TIER_LABELS, STRENGTH_LABEL } from "@/lib/score-labels";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { examplePerson } from "@/lib/onboarding-examples/cast";
@@ -161,11 +162,6 @@ function overdueFollowUpLabel(nextFollowUpAt?: string | Date | null) {
   return `Overdue ${days} day${days === 1 ? "" : "s"}`;
 }
 
-const TIER_TOOLTIP: Record<"inner" | "mid" | "outer", string> = {
-  inner: "Inner orbit",
-  mid: "Mid orbit",
-  outer: "Outer orbit",
-};
 
 export type ContactsListFilters = {
   q?: string;
@@ -1050,7 +1046,7 @@ function ClosenessChip({
   const label =
     typeof closeness === "number"
       ? `${Math.round(closeness * 100)}%`
-      : `Score ${relationshipScore}`;
+      : `${STRENGTH_LABEL} ${relationshipScore}`;
 
   const chipClass =
     typeof closeness === "number"
@@ -1059,7 +1055,7 @@ function ClosenessChip({
         ? closenessTierChipClass(closenessTier)
         : "bg-muted text-muted-foreground";
 
-  const tierHint = closenessTier ? ` (${TIER_TOOLTIP[closenessTier]})` : "";
+  const tierHint = closenessTier ? ` (${ORBIT_TIER_LABELS[closenessTier]})` : "";
 
   return (
     <Tooltip>
@@ -1078,7 +1074,7 @@ function ClosenessChip({
         {label}
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-[240px] text-left leading-snug">
-        Closeness combines relationship strength, how recently you’ve
+        Closeness combines your Strength rating, how recently you’ve
         interacted, how often you’re in touch, and fit with your goals — scored
         relative to everyone else in your orbit{tierHint}.
       </TooltipContent>

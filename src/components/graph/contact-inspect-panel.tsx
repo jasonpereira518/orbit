@@ -288,7 +288,7 @@ function YouPanelBody({
                 className="flex items-center justify-between rounded-lg px-2 py-1.5"
               >
                 <span>
-                  {RING_LABELS[score]}
+                  {RING_LABELS[score as 1 | 2 | 3 | 4 | 5]}
                   <span className="ml-1.5 text-xs text-muted-foreground">
                     ({score})
                   </span>
@@ -492,7 +492,7 @@ function ContactPanelBody({
               closenessChipClass(data.closeness, data.closenessTier)
             )}
           >
-            {RING_LABELS[data.score || 2] || "Orbit"}
+            {RING_LABELS[(data.score || 2) as 1 | 2 | 3 | 4 | 5] || "Orbit"}
             {typeof data.closeness === "number"
               ? ` · ${Math.round(data.closeness * 100)}%`
               : ` · ${data.score}/5`}

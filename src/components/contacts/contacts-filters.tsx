@@ -1,5 +1,6 @@
 "use client";
 
+import { STRENGTH_LABEL } from "@/lib/score-labels";
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import Link from "next/link";
@@ -28,7 +29,7 @@ import { cn } from "@/lib/utils";
 
 const SEARCH_DEBOUNCE_MS = 250;
 
-const CLOSENESS_OPTIONS = [
+const STRENGTH_OPTIONS = [
   { value: "any", label: "Any" },
   { value: "2", label: "2+" },
   { value: "3", label: "3+" },
@@ -153,7 +154,7 @@ export function ContactsFilters({
   }
 
   const closenessLabel =
-    CLOSENESS_OPTIONS.find((o) => o.value === minScore)?.label ?? "Any";
+    STRENGTH_OPTIONS.find((o) => o.value === minScore)?.label ?? "Any";
   const sortLabel =
     CONTACT_SORTS.find((o) => o.value === (sort as ContactSort))?.label ?? "Name";
   const quietActive = Boolean(quiet);
@@ -483,15 +484,14 @@ function SearchPill({
           )}
         >
           <span className="truncate">
-            {/* The control filters on `minScore`, which is CLOSENESS — the blended
-                score — not the 1-5 rating the profile calls "Your rating". Labelling it
-                "Strength" made three different numbers share two names. */}
-            {closenessActive ? closenessLabel : "Closeness"}
+            {/* The control filters on `minScore`: the 1–5 Strength rating. Closeness is
+                the computed % and has its own sort option. */}
+            {closenessActive ? closenessLabel : STRENGTH_LABEL}
           </span>
           <ChevronDown className="size-3 opacity-60" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[8rem]">
-          {CLOSENESS_OPTIONS.map((opt) => (
+          {STRENGTH_OPTIONS.map((opt) => (
             <DropdownMenuItem
               key={opt.value}
               onClick={() => onMinScoreChange(opt.value)}

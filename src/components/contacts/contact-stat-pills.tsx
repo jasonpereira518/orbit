@@ -56,7 +56,7 @@ export function ContactStatPills({
         body={
           <>
             <p className="text-muted-foreground">
-              Where this person sits in your network: your rating, how recently and how often
+              Where this person sits in your network: your Strength rating, how recently and how often
               you&apos;re in touch, and how they fit your goals — ranked against everyone else
               you know.
             </p>

@@ -1,3 +1,4 @@
+import { HEALTH_LABEL } from "@/lib/score-labels";
 import { StatPillExplainer } from "@/components/contacts/stat-pill-explainer";
 import type { RelationshipHealth } from "@/lib/relationship-health";
 
@@ -56,7 +57,7 @@ export function HealthSparkline({ health }: { health: RelationshipHealth }) {
 
   return (
     <StatPillExplainer
-      label={`Relationship health ${current} of 100, ${trend}. ${detail}. Show what this means.`}
+      label={`${HEALTH_LABEL} ${current} of 100, ${trend}. ${detail}. Show what this means.`}
       className="gap-2 border border-border bg-transparent"
       title={`Health ${current} · how it's going`}
       body={

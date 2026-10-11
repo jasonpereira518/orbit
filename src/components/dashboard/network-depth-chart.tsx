@@ -1,3 +1,4 @@
+import { ORBIT_LABEL, ORBIT_TIER_SHORT } from "@/lib/score-labels";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { NetworkMetrics } from "@/lib/network-metrics";
 import { cn } from "@/lib/utils";
@@ -15,19 +16,19 @@ import { cn } from "@/lib/utils";
 const TIER_META = [
   {
     key: "inner" as const,
-    label: "Close",
+    label: ORBIT_TIER_SHORT.inner,
     color: "bg-emerald-500",
     text: "text-emerald-700 dark:text-emerald-300",
   },
   {
     key: "mid" as const,
-    label: "Warm",
+    label: ORBIT_TIER_SHORT.mid,
     color: "bg-amber-500",
     text: "text-amber-700 dark:text-amber-300",
   },
   {
     key: "outer" as const,
-    label: "Cool",
+    label: ORBIT_TIER_SHORT.outer,
     color: "bg-sky-500",
     text: "text-sky-700 dark:text-sky-300",
   },
@@ -44,7 +45,7 @@ function pct(count: number, total: number) {
   return Math.round((count / total) * 100);
 }
 
-/** Honest bar widths from the real Close/Warm/Cool shares. */
+/** Honest bar widths from the real Inner/Mid/Outer shares. */
 function tierBarWidths(tierCounts: NetworkMetrics["tierCounts"], total: number) {
   return {
     inner: pct(tierCounts.inner, total),
@@ -87,7 +88,7 @@ export function NetworkDepthChart({
       <CardContent className="space-y-5">
         <div className="space-y-2.5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Relationship strength
+            {ORBIT_LABEL}
           </p>
           <div className="flex h-3.5 overflow-hidden rounded-full bg-muted/40">
             {TIER_META.map((t) => {

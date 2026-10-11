@@ -1,3 +1,4 @@
+import { ORBIT_TIER_LABELS } from "@/lib/score-labels";
 import { count, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { companies, interactions } from "@/db/schema";
@@ -159,7 +160,7 @@ export async function getNetworkStats(
         value: interactionCount,
       },
       {
-        label: "Inner orbit",
+        label: ORBIT_TIER_LABELS.inner,
         value: innerCircle,
         detail: "Closest ties",
       },

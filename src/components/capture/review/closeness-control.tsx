@@ -5,6 +5,7 @@
  * work for free), the selected segment carried by the same `layoutId` pill every
  * segmented control uses. The label row is the legend the model was scored against.
  */
+import { STRENGTH_LABEL } from "@/lib/score-labels";
 import { motion } from "motion/react";
 import { CLOSENESS_LEVELS, clampCloseness, type ClosenessLevel } from "@/lib/capture/closeness";
 import { SPRING_PILL } from "@/lib/motion";
@@ -14,7 +15,7 @@ export function ClosenessControl({
   value,
   onChange,
   name,
-  label = "How close are you?",
+  label = STRENGTH_LABEL,
 }: {
   value: number;
   onChange: (next: ClosenessLevel) => void;

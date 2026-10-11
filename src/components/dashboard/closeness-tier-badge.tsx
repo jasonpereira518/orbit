@@ -1,10 +1,5 @@
+import { ORBIT_TIER_LABELS } from "@/lib/score-labels";
 import { cn } from "@/lib/utils";
-
-const TIER_LABELS = {
-  inner: "Inner orbit",
-  mid: "Mid orbit",
-  outer: "Outer orbit",
-} as const;
 
 const TIER_STYLES = {
   inner: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
@@ -35,7 +30,7 @@ export function ClosenessTierBadge({
           TIER_DOT[tier],
           className
         )}
-        title={TIER_LABELS[tier]}
+        title={ORBIT_TIER_LABELS[tier]}
       />
     );
   }
@@ -48,7 +43,7 @@ export function ClosenessTierBadge({
         className
       )}
     >
-      {TIER_LABELS[tier]}
+      {ORBIT_TIER_LABELS[tier]}
     </span>
   );
 }

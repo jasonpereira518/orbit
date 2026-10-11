@@ -12,9 +12,8 @@ import { getAiAccessStatus } from "@/lib/ai-access";
 import { closenessTierChipClass } from "@/lib/closeness";
 import { loadKnowledgeDossier } from "@/lib/knowledge-dossier";
 import { requireUserForSurface } from "@/lib/plan-guards";
+import { ORBIT_TIER_LABELS } from "@/lib/score-labels";
 import { cn } from "@/lib/utils";
-
-const TIER_LABEL = { inner: "Inner orbit", mid: "Mid orbit", outer: "Outer orbit" } as const;
 
 /**
  * One person, everything Orbit knows, read-only. Editing, notes and reminders stay on the
@@ -87,7 +86,7 @@ export async function DossierPane({ contactId }: { contactId: string }) {
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {tier ? (
               <Badge variant="secondary" className={cn("text-[10px]", closenessTierChipClass(tier))}>
-                {TIER_LABEL[tier]}
+                {ORBIT_TIER_LABELS[tier]}
               </Badge>
             ) : null}
             {contact.location ? <span>{contact.location}</span> : null}

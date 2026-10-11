@@ -178,7 +178,7 @@ async function mainAsync() {
       "Close + warm",
       "Network depth",
       "How close your network feels and how people connect to each other",
-      "Relationship strength",
+      "Orbit",
       "Peer connections",
       "Constellation preview",
       "Your network at a glance — each constellation is a company or school",
@@ -225,6 +225,7 @@ async function mainAsync() {
     "@/components/dashboard/closeness-tier-badge",
     "@/components/layout/app-nav",
     "@/lib/interaction-types",
+    "@/lib/score-labels",
   ]);
   const bad: string[] = [];
   for (const f of demoFiles) {
